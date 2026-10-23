@@ -204,6 +204,13 @@ const (
 	stemLength = 3.5
 	// dynamicDrop is how far below the bottom staff line a dynamic sits.
 	dynamicDrop = 3.2
+
+	// lyricDrop is how far below the bottom staff line the first verse is
+	// written, and lyricLine the distance from one verse to the next.
+	lyricDrop = 6.2
+	lyricLine = 2.2
+	// lyricSize is the type size words are set at, in staff spaces.
+	lyricSize = 1.75
 )
 
 // clefPitchOffset converts a pitch's diatonic index into a staff step, where
@@ -348,6 +355,30 @@ func (e *engraver) run() {
 //
 // It is measured rather than reserved always: a score with no repeats and no
 // octave signs should not be pushed down the page for marks it does not have.
+// verses is how many lines of words are written under the staves, which is
+// what the gap between systems has to clear.
+func (e *engraver) verses() int {
+	most := 0
+	for _, p := range e.score.Parts {
+		for _, m := range p.Measures {
+			for _, v := range m.Voices {
+				for _, el := range v.Elements {
+					mk := marksOf(el)
+					if mk == nil {
+						continue
+					}
+					for _, ly := range mk.Lyrics {
+						if ly.Verse > most {
+							most = ly.Verse
+						}
+					}
+				}
+			}
+		}
+	}
+	return most
+}
+
 func (e *engraver) headroom() float64 {
 	need := 0.0
 	for _, p := range e.score.Parts {
@@ -812,6 +843,12 @@ func (e *engraver) drawSystem(parts []*model.Part, boxes [][]measureBox,
 	// once above the top one before the staves move the cursor down.
 	e.drawVoltas(parts, columns, start, end, top)
 
+	// Words written under a staff need the staff below to move out of the way.
+	wordRoom := 0.0
+	if n := e.verses(); n > 0 {
+		wordRoom = lyricDrop + float64(n-1)*lyricLine
+	}
+
 	for pi, p := range parts {
 		e.clef = p.Clef
 		// A hairpin or an octave line cut off at the end of the last system
@@ -852,12 +889,12 @@ func (e *engraver) drawSystem(parts []*model.Part, boxes [][]measureBox,
 		e.breakSpans(pi, right-sp.Margin)
 
 		if pi < len(parts)-1 {
-			e.y += staffHeight + sp.StaffGap
+			e.y += staffHeight + sp.StaffGap + wordRoom
 		}
 	}
 
-	e.y = top + float64(len(parts)-1)*(staffHeight+sp.StaffGap)
-	e.y += staffHeight + sp.SystemGap
+	e.y = top + float64(len(parts)-1)*(staffHeight+sp.StaffGap+wordRoom)
+	e.y += staffHeight + sp.SystemGap + wordRoom
 
 	if r := right + sp.Margin; r > e.lay.Width {
 		e.lay.Width = r

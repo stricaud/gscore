@@ -189,6 +189,9 @@
     <button class="menu-title">Staff</button>
     <div class="menu-items">
       <button data-action="set-instrument"><span>Set instrument…</span></button>
+      <button data-action="set-lyrics"><span>Lyrics…</span><kbd>L</kbd></button>
+      <button data-action="fingering"><span>Show fingering</span><kbd>F2</kbd></button>
+      <hr>
       <button data-action="tab" disabled><span>Tab</span></button>
       <button data-action="chord-builder" disabled><span>Chord builder…</span></button>
       <button data-action="tab-transposition" disabled><span>Tab transposition…</span></button>
@@ -277,6 +280,10 @@
     <div class="insp-group">
       <div class="insp-label">Staves</div>
       <div id="part-info"></div>
+    </div>
+    <div class="insp-group" id="fingering-group" hidden>
+      <div class="insp-label">Fingering</div>
+      <div id="fingering"></div>
     </div>
   </aside>
 
@@ -373,6 +380,31 @@
   </form>
 </dialog>
 
+<dialog id="lyrics">
+  <h2>Lyrics</h2>
+  <p class="small">
+    Type the verse as you would write it. The words are handed out to the notes
+    in order, one syllable each. Break a word across notes with hyphens —
+    <b>Glo-ri-a</b> — and hold a syllable over the next note with an underscore:
+    <b>A-men_ _</b>. Rests are skipped.
+  </p>
+  <form method="dialog" id="lyrics-form">
+    <div class="lyrics-row">
+      <label for="lyrics-staff">Staff</label>
+      <select id="lyrics-staff"></select>
+      <label for="lyrics-verse">Verse</label>
+      <input type="number" id="lyrics-verse" min="1" max="8" value="1" style="width:60px">
+    </div>
+    <textarea id="lyrics-text" rows="6" spellcheck="false"
+              placeholder="Re-qui-em ae-ter-nam do-na e-is Do-mi-ne"></textarea>
+    <p class="small" id="lyrics-count"></p>
+    <div class="ask-buttons">
+      <button value="cancel" type="submit">Cancel</button>
+      <button value="ok" type="submit" class="primary">Apply</button>
+    </div>
+  </form>
+</dialog>
+
 <dialog id="print">
   <h2>Print</h2>
   <p class="small">Choose what to print. Paper size, margins and “Save as PDF”
@@ -408,6 +440,7 @@
 </dialog>
 
 <script src="palette.js"></script>
+<script src="fingering.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

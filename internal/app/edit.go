@@ -13,6 +13,7 @@
 package app
 
 import (
+	"fmt"
 	"net/http"
 	"net/url"
 	"sort"
@@ -1378,3 +1379,195 @@ func cloneMarks(m model.Marks) model.Marks {
 	}
 	return out
 }
+
+/*
+ * Lyrics
+ */
+
+// handleLyrics puts a verse of words under a staff.
+//
+// The words arrive as one block of text rather than syllable by syllable,
+// which is how NoteWorthy Composer asks for them and is far and away the
+// fastest way to enter a song: you type the verse as you would write it, and
+// it is handed out to the notes in order. Hyphens break a word across notes
+// and an underscore holds the last syllable over the next one — the
+// conventions every notation program shares, because they are the ones
+// singers' copies already use.
+//
+//	Glo-ri-a in ex-cel-sis De-o
+//	A-men_ _
+//
+// Rests take no words. A syllable landing on a tied note goes on the note the
+// syllable is actually sung on, which is the first of the tie.
+func (a *App) handleLyrics(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST required", http.StatusMethodNotAllowed)
+		return
+	}
+	q := r.URL.Query()
+	partIdx, _ := strconv.Atoi(q.Get("part"))
+	verse, err := strconv.Atoi(q.Get("verse"))
+	if err != nil || verse < 1 {
+		verse = 1
+	}
+
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	if partIdx < 0 || partIdx >= len(a.score.Parts) {
+		http.Error(w, "no such staff", http.StatusBadRequest)
+		return
+	}
+	p := a.score.Parts[partIdx]
+
+	syllables := splitLyrics(q.Get("text"))
+	sung := singableNotes(p)
+
+	// Every note of this verse starts clear, so retyping the words replaces
+	// them rather than leaving the tail of a longer version behind.
+	for _, mk := range sung {
+		out := mk.Lyrics[:0]
+		for _, ly := range mk.Lyrics {
+			if ly.Verse != verse {
+				out = append(out, ly)
+			}
+		}
+		mk.Lyrics = out
+	}
+
+	n := len(syllables)
+	if n > len(sung) {
+		n = len(sung)
+	}
+	for i := 0; i < n; i++ {
+		s := syllables[i]
+		s.Verse = verse
+		sung[i].Lyrics = append(sung[i].Lyrics, s)
+	}
+
+	resp := map[string]any{"set": n, "notes": len(sung), "syllables": len(syllables)}
+	if len(syllables) > len(sung) {
+		resp["warning"] = fmt.Sprintf(
+			"there are %d syllables and only %d notes to sing them on",
+			len(syllables), len(sung))
+	}
+	writeJSON(w, resp)
+}
+
+// singableNotes lists the marks of everything in a part that a syllable can be
+// written under, in reading order.
+//
+// Rests are left out, and so is the far side of a tie: a tied pair is one
+// sound and gets one syllable.
+func singableNotes(p *model.Part) []*model.Marks {
+	var out []*model.Marks
+	for _, m := range p.Measures {
+		if len(m.Voices) == 0 {
+			continue
+		}
+		for _, el := range m.Voices[0].Elements {
+			mk := marksOfElement(el)
+			if mk == nil {
+				continue
+			}
+			switch el.(type) {
+			case *model.Note, *model.Chord:
+			default:
+				continue
+			}
+			if mk.TieStop && !mk.TieStart {
+				continue
+			}
+			out = append(out, mk)
+		}
+	}
+	return out
+}
+
+// splitLyrics turns a typed verse into syllables.
+//
+// A hyphen inside a word splits it and marks the halves as joined, so the
+// engraver can draw the hyphen between them. An underscore on its own holds
+// the previous syllable over another note. Line breaks are nothing more than
+// spaces: a verse laid out over several lines is still one verse.
+func splitLyrics(text string) []model.Lyric {
+	var out []model.Lyric
+	for _, word := range strings.Fields(text) {
+		if word == "_" {
+			// Held over: the syllable before it keeps sounding.
+			if len(out) > 0 {
+				out[len(out)-1].Extend = true
+			}
+			out = append(out, model.Lyric{Syllabic: model.SyllableSingle, Extend: true})
+			continue
+		}
+		parts := strings.Split(word, "-")
+		if len(parts) == 1 {
+			out = append(out, model.Lyric{Text: word, Syllabic: model.SyllableSingle})
+			continue
+		}
+		for i, piece := range parts {
+			if piece == "" {
+				continue // "Glo--ri" is a typo, not an empty syllable
+			}
+			kind := model.SyllableMiddle
+			switch i {
+			case 0:
+				kind = model.SyllableBegin
+			case len(parts) - 1:
+				kind = model.SyllableEnd
+			}
+			out = append(out, model.Lyric{Text: piece, Syllabic: kind})
+		}
+	}
+	return out
+}
+
+// handleGetLyrics gives back a verse as typed, so it can be edited rather than
+// written again from nothing.
+func (a *App) handleGetLyrics(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	partIdx, _ := strconv.Atoi(q.Get("part"))
+	verse, err := strconv.Atoi(q.Get("verse"))
+	if err != nil || verse < 1 {
+		verse = 1
+	}
+
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	if partIdx < 0 || partIdx >= len(a.score.Parts) {
+		http.Error(w, "no such staff", http.StatusBadRequest)
+		return
+	}
+	p := a.score.Parts[partIdx]
+
+	var b strings.Builder
+	verses := 0
+	for _, mk := range singableNotes(p) {
+		for _, ly := range mk.Lyrics {
+			if ly.Verse > verses {
+				verses = ly.Verse
+			}
+			if ly.Verse != verse {
+				continue
+			}
+			if ly.Text == "" {
+				b.WriteString(" _")
+				continue
+			}
+			if b.Len() > 0 && !endsHyphenated(b.String()) {
+				b.WriteByte(' ')
+			}
+			b.WriteString(ly.Text)
+			if ly.NeedsHyphen() {
+				b.WriteByte('-')
+			}
+		}
+	}
+	writeJSON(w, map[string]any{
+		"text": b.String(), "verse": verse, "verses": verses,
+		"notes": len(singableNotes(p)),
+	})
+}
+
+func endsHyphenated(s string) bool { return strings.HasSuffix(s, "-") }

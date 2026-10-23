@@ -278,6 +278,8 @@ func (a *App) APIRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/nudge", a.handleNudge)
 	mux.HandleFunc("/api/copy", a.handleCopy)
 	mux.HandleFunc("/api/paste", a.handlePaste)
+	mux.HandleFunc("/api/lyrics", a.handleLyrics)
+	mux.HandleFunc("/api/getlyrics", a.handleGetLyrics)
 	mux.HandleFunc("/api/dynamic", a.handleDynamic)
 	mux.HandleFunc("/api/articulation", a.handleArticulation)
 	mux.HandleFunc("/api/deleteselection", a.handleDeleteSelection)

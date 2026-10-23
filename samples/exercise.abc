@@ -1,0 +1,9 @@
+X:1
+T:Exercise 01 - C major
+M:4/4
+L:1/8
+Q:1/4=96
+K:C
+%%MIDI program 73
+CDEF GABc | cBAG FEDC | EFGA Bcde | edcB AGFE |
+GABc defg | gfed cBAG | c4 z4 |]

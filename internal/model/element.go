@@ -307,6 +307,40 @@ type Marks struct {
 	// it are written where they are drawn and sound where the line says, so
 	// the model keeps the written pitch and playback does the shifting.
 	Octave *OctaveShift
+
+	// Lyrics are the syllables sung on this note, one per verse.
+	Lyrics []Lyric
+}
+
+// Syllabic says where a syllable falls in its word, which is what decides
+// whether a hyphen is drawn after it.
+type Syllabic int
+
+// A syllable is a whole word, or the start, middle or end of one.
+const (
+	SyllableSingle Syllabic = iota
+	SyllableBegin
+	SyllableMiddle
+	SyllableEnd
+)
+
+// Lyric is one syllable under one note.
+//
+// Verses are numbered from 1 and stack under the staff, so a hymn with four
+// verses puts four lines of words under the same music.
+type Lyric struct {
+	Text     string
+	Verse    int
+	Syllabic Syllabic
+	// Extend draws the long line that carries a held syllable across the
+	// notes it is sung over.
+	Extend bool
+}
+
+// NeedsHyphen reports whether a hyphen is drawn after this syllable, joining
+// it to the next one of the same word.
+func (l Lyric) NeedsHyphen() bool {
+	return l.Syllabic == SyllableBegin || l.Syllabic == SyllableMiddle
 }
 
 // HairpinKind is which way a hairpin opens.

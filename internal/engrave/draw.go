@@ -119,6 +119,7 @@ func (e *engraver) drawMeasure(part *model.Part, b measureBox, x float64, stretc
 			e.drawArticulations(m, p.x+noteheadWidth(p.value)/2, p.step, e.stemUp(p), p.index)
 			e.drawDynamic(m, p)
 			e.spanAt(m, p)
+			e.drawLyrics(m, p)
 		}
 	}
 
@@ -702,6 +703,44 @@ func (e *engraver) drawDynamic(m *model.Marks, p *placed) {
 	}
 	x := p.x + noteheadWidth(p.value)/2 - smufl.Advance(name)/2
 	e.lay.Glyphs = append(e.lay.Glyphs, Glyph{Name: name, X: x, Y: y})
+}
+
+// drawLyrics writes the words under the staff, one line per verse.
+//
+// The syllable is centred on the notehead it is sung on, and a word broken
+// across notes carries a hyphen to the next one — without it "Glo-ri-a" reads
+// as three words. A held syllable draws the line that says to keep singing it.
+func (e *engraver) drawLyrics(m *model.Marks, p *placed) {
+	if len(m.Lyrics) == 0 {
+		return
+	}
+	x := p.x + noteheadWidth(p.value)/2
+	for _, ly := range m.Lyrics {
+		verse := ly.Verse
+		if verse < 1 {
+			verse = 1
+		}
+		y := e.y + staffHeight + lyricDrop + float64(verse-1)*lyricLine
+		if ly.Text != "" {
+			e.lay.Texts = append(e.lay.Texts, Text{
+				S: ly.Text, X: x, Y: y, Size: lyricSize, Anchor: "middle",
+			})
+		}
+		// A hyphen between the halves of a word, drawn midway to the next
+		// note rather than hard against this one.
+		if ly.NeedsHyphen() {
+			e.lay.Texts = append(e.lay.Texts, Text{
+				S: "-", X: x + p.width*0.55, Y: y, Size: lyricSize, Anchor: "middle",
+			})
+		}
+		if ly.Extend && p.width > 1 {
+			e.lay.Lines = append(e.lay.Lines, Line{
+				X1: x + float64(len(ly.Text))*lyricSize*0.3, Y1: y + 0.25,
+				X2: x + p.width*0.9, Y2: y + 0.25,
+				Thickness: e.opt.Defaults.StaffLineThickness,
+			})
+		}
+	}
 }
 
 func (e *engraver) drawArticulations(m *model.Marks, x float64, step int, stemUp bool, ref int) {

@@ -1,0 +1,142 @@
+<!doctype html>
+<!--
+  Embedding gscore in a page.
+  (C) Copyright 2026 Sebastien Tricaud. GPL v2 or later.
+
+  One file, nothing to install, no build step. Open it in a browser and the
+  scores below are engraved and played by gscore running inside an iframe.
+
+  This is what to copy if you have a page about a piece of music — a method
+  book, a set of exercises, a tune you have written — and you want readers to
+  see it and hear it without being handed an editor.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>gscore, embedded</title>
+<style>
+  :root {
+    --ink: #1a1a1a;
+    --muted: #666;
+    --line: #e2e0dc;
+    --paper: #fffdf9;
+    --accent: #3b6ea5;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ink: #eceae6; --muted: #9b968e; --line: #3a3733;
+      --paper: #1c1b19; --accent: #7aa7d8;
+    }
+  }
+  body {
+    margin: 0 auto;
+    max-width: 50rem;
+    padding: 2rem 16px 4rem;
+    background: var(--paper);
+    color: var(--ink);
+    font: 16px/1.65 Georgia, "Times New Roman", serif;
+  }
+  h1 { font-size: 1.7rem; margin-bottom: .2em; }
+  h2 { font-size: 1.15rem; margin-top: 2.4em; }
+  p.lead { color: var(--muted); margin-top: 0; }
+  code, pre {
+    font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  pre {
+    background: rgba(128,128,128,.09);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    padding: 12px 14px;
+    overflow-x: auto;
+  }
+  /* The player is an ordinary iframe. Give it a height and it fills it. */
+  .score {
+    width: 100%;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: #fff;
+  }
+  .controls { margin-top: .6rem; }
+  button {
+    font: inherit;
+    padding: 5px 12px;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    background: transparent;
+    color: inherit;
+    cursor: pointer;
+  }
+  button:hover { border-color: var(--accent); color: var(--accent); }
+  .note { color: var(--muted); font-size: .9rem; }
+</style>
+</head>
+<body>
+
+<h1>A page with music on it</h1>
+<p class="lead">
+  gscore running as a player: the score is engraved and played in the browser,
+  with nothing on screen that could change it.
+</p>
+
+<h2>A score, with a play button</h2>
+<!--
+  GSCORE is where gscore is published. Point it at your own copy or at
+  https://stricaud.github.io/gscore/ and nothing else changes.
+
+  player=1   take away the menus, the palette and the inspector
+  score=…    the file to open, relative to the gscore page or an absolute URL
+  zoom=9     staff space in pixels
+-->
+<iframe class="score" id="first" height="200"
+        title="Exercise in C major"
+        src="../web/dist/index.html?player=1&zoom=9&score=exercise.abc"></iframe>
+
+<h2>Only the score</h2>
+<p>
+  With <code>player=bare</code> there is no transport at all: the score itself
+  is the button, and clicking it starts and stops the music.
+</p>
+<iframe class="score" id="second" height="180"
+        title="The same exercise, with no controls"
+        src="../web/dist/index.html?player=bare&zoom=9&loop=1&score=exercise.abc"></iframe>
+<p class="note"><code>loop=1</code> makes it go round again, which is what you
+   want for something to practise along with.</p>
+
+<h2>Driving it from the page</h2>
+<p>
+  The player answers messages, so your own buttons can run it. This is how to
+  replace a player you have already written without rebuilding the page around
+  it.
+</p>
+<div class="controls">
+  <button onclick="send('first','play')">Play the first one</button>
+  <button onclick="send('first','stop')">Stop</button>
+</div>
+
+<pre>&lt;iframe id="score" src="https://stricaud.github.io/gscore/?player=1&amp;score=tune.abc"&gt;&lt;/iframe&gt;
+
+&lt;script&gt;
+  const frame = document.getElementById("score");
+  frame.contentWindow.postMessage({ gscore: "play" }, "*");
+&lt;/script&gt;</pre>
+
+<h2>What it reads</h2>
+<p>
+  Whatever gscore reads: ABC, MusicXML (<code>.musicxml</code>,
+  <code>.mxl</code>), NoteWorthy Composer (<code>.nwc</code>,
+  <code>.nwctxt</code>) and gscore's own <code>.gscore</code>. The file is
+  fetched by the page and read in the browser; nothing is uploaded anywhere.
+</p>
+
+<script>
+  // Talking to the player. Every message is {gscore: "<what>"} and anything
+  // else is ignored, so this cannot be confused with other traffic on the page.
+  function send(id, what, value) {
+    const f = document.getElementById(id);
+    f.contentWindow.postMessage({ gscore: what, value: value }, "*");
+  }
+</script>
+
+</body>
+</html>

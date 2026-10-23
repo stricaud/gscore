@@ -791,3 +791,68 @@ body.fullscreen #canvas-wrap { padding: 10px; }
 /* A hand-drawn symbol can be picked up and moved, so it says so. */
 #canvas image[data-symbol] { cursor: grab; }
 #canvas image[data-symbol].dragging { cursor: grabbing; opacity: .75; }
+
+/* The lyric editor: one box for the whole verse, the way a singer's copy has
+   it, rather than a click and a field for every syllable. */
+#lyrics { max-width: 560px; }
+.lyrics-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 12px 0 8px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.lyrics-row select, .lyrics-row input {
+  font: inherit;
+  padding: 4px 6px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: var(--paper);
+  color: #111;
+}
+#lyrics textarea {
+  width: 100%;
+  font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: var(--paper);
+  color: #111;
+  resize: vertical;
+}
+#lyrics textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+#lyrics-count { margin-top: 6px; }
+
+/* ---- player mode ---- */
+
+/*
+ * gscore with everything taken away but the music and a play button.
+ *
+ * This is what a page about a piece of music wants: a score you can see and
+ * hear, and nothing to click that would change it. Everything that edits is
+ * hidden rather than merely disabled, because a disabled menu bar is still a
+ * menu bar and still says "this is a program" to somebody who came to listen.
+ */
+body.player #menubar .menu,
+body.player #palette,
+body.player #inspector,
+body.player #statusbar,
+body.player #empty-hint,
+body.player #zoombar { display: none; }
+
+body.player { grid-template-rows: auto 1fr; }
+body.player #menubar {
+  background: transparent;
+  border-bottom: 0;
+  height: 30px;
+  padding: 0 6px;
+}
+body.player .brand { display: none; }
+body.player #canvas-wrap { padding: 6px; }
+body.player #canvas { box-shadow: none; }
+body.player .transport { margin: 0 0 0 auto; }
+
+/* Chrome off entirely: just the score, playing when it is clicked. */
+body.player.bare #menubar { display: none; }
+body.player.bare { grid-template-rows: 1fr; }

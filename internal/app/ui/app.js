@@ -53,6 +53,9 @@ const state = {
   multi: [],
   // Where a shift-click measures from: the last note picked up on its own.
   anchor: null,
+  // Player mode: nothing edits, and playing may go round again at the end.
+  readOnly: false,
+  loop: false,
   // Where each measure's closing barline was drawn, so one can be clicked.
   barlines: [],
 };
@@ -339,6 +342,9 @@ async function action(name) {
       break;
     case "set-instrument":
       await setInstrumentDialog();
+      break;
+    case "set-lyrics":
+      await lyricsDialog();
       break;
     case "save":
       await saveScore();
@@ -751,7 +757,7 @@ function setupCanvasClicks() {
     // it, and of gscore testing Selection.object_type == CURSOR before
     // deciding what the mouse means. Shift asks for the same thing without
     // putting the tool down.
-    if (picking) {
+    if (picking || state.readOnly) {
       markSelection();
       status(`Measure ${hit.measure + 1}`);
       return;
@@ -1634,6 +1640,66 @@ async function openBarlinePicker(bar) {
   status("Barline changed");
 }
 
+// lyricsDialog types a whole verse at once, which is how NoteWorthy asks for
+// words and is still the quickest way anyone has found.
+async function lyricsDialog() {
+  const parts = state.info?.parts || [];
+  if (!parts.length) return;
+
+  const dlg = $("#lyrics");
+  const staff = $("#lyrics-staff");
+  const verse = $("#lyrics-verse");
+  const text = $("#lyrics-text");
+  const count = $("#lyrics-count");
+
+  staff.innerHTML = parts
+    .map((p, i) => `<option value="${i}">${escapeHTML(p.name || "Staff " + (i + 1))}</option>`)
+    .join("");
+  staff.value = String(state.selection?.part ?? 0);
+  verse.value = "1";
+
+  // Whatever is already there comes back as it would be typed, so a verse is
+  // corrected rather than written again.
+  const load = async () => {
+    const p = new URLSearchParams({ part: staff.value, verse: verse.value });
+    const res = await fetch("/api/getlyrics?" + p.toString());
+    if (!res.ok) return;
+    const d = await res.json();
+    text.value = d.text || "";
+    count.textContent = `${d.notes} note${d.notes === 1 ? "" : "s"} to sing on` +
+      (d.verses > 1 ? ` · ${d.verses} verses written so far` : "");
+  };
+  await load();
+  staff.onchange = load;
+  verse.onchange = load;
+
+  const chosen = await new Promise((resolve) => {
+    const done = () => {
+      dlg.removeEventListener("close", done);
+      resolve(dlg.returnValue === "ok");
+    };
+    dlg.addEventListener("close", done);
+    dlg.showModal();
+    setTimeout(() => text.focus(), 0);
+  });
+  staff.onchange = null;
+  verse.onchange = null;
+  if (!chosen) return;
+
+  const p = new URLSearchParams({
+    part: staff.value, verse: verse.value, text: text.value,
+  });
+  const res = await fetch("/api/lyrics?" + p.toString(), { method: "POST" });
+  if (!res.ok) {
+    status("Could not set the words: " + (await res.text()).trim());
+    return;
+  }
+  const d = await res.json();
+  await refreshScore();
+  status(d.warning ? d.warning
+                   : `${d.set} syllable${d.set === 1 ? "" : "s"} written`);
+}
+
 /* ---------- key signature picker ---------- */
 
 // The picker shows each signature engraved on a staff rather than named, which
@@ -1767,10 +1833,11 @@ async function openFile(file) {
   });
   if (!res.ok) {
     status("Could not open: " + (await res.text()).trim());
-    return;
+    return false;
   }
   await reopen();
   status("Opened " + file.name);
+  return true;
 }
 
 // openScore asks the system for a file when gscore is running as an
@@ -2121,16 +2188,23 @@ function follow(pb) {
     const ref = active ? active.ref : null;
     if (ref !== current) {
       if (current !== null) {
-        svg?.querySelector(`[data-ref="${current}"]`)?.classList.remove("playing");
+        svg?.querySelectorAll(`[data-ref="${current}"]`)
+           .forEach((n) => n.classList.remove("playing"));
       }
       if (ref !== null) {
-        svg?.querySelector(`[data-ref="${ref}"]`)?.classList.add("playing");
+        svg?.querySelectorAll(`[data-ref="${ref}"]`)
+           .forEach((n) => n.classList.add("playing"));
       }
       current = ref;
     }
 
     if (now >= total + 0.3) {
       stop();
+      window.dispatchEvent(new CustomEvent("gscore:ended"));
+      // A page that embeds a scale or an exercise often wants it to go round
+      // again, so the learner can keep playing along without reaching for
+      // the mouse.
+      if (state.loop) setTimeout(() => { if (state.loop) void play(); }, 400);
       return;
     }
     rafID = requestAnimationFrame(tick);
@@ -2590,6 +2664,7 @@ function setupKeys() {
         else clearSelection();
         break;
       case "m": action("add-measure"); break;
+      case "l": action("set-lyrics"); break;
       case "N": case "i":
         selectTool(!state.tool.select);
         break;
@@ -2749,6 +2824,74 @@ function selectionTargets() {
   return `${sel.part}:${sel.measure}:${sel.at - 1}`;
 }
 
+/* ---------- player mode ---------- */
+
+// Reading the settings in the page's address.
+//
+// gscore is an editor, but a page that is about a piece of music does not want
+// an editor on it: it wants the music, and a way to hear it. Player mode is
+// that — the same program with everything that edits taken away, which is
+// better than a second, lesser program that only plays, because there is only
+// one engraver and one synthesiser to get right.
+//
+//   ?player=1      no menus, no palette, no inspector: the score and a play button
+//   ?player=bare   not even that: only the score, which plays when clicked
+//   ?score=URL     the file to show, fetched and opened
+//   ?autoplay=1    start playing as soon as it can
+//   ?tune=N        which tune of a book to show
+//   ?zoom=N        staff space in pixels
+//   ?loop=1        start again at the end
+//
+// Autoplay is asked for, not taken: a browser will not make a sound until
+// somebody has clicked on the page, so the first click plays it.
+function readOptions() {
+  const q = new URLSearchParams(location.search);
+  const opt = {
+    player: q.get("player"),
+    score: q.get("score"),
+    autoplay: q.get("autoplay") === "1",
+    loop: q.get("loop") === "1",
+    tune: q.has("tune") ? Number(q.get("tune")) : null,
+    zoom: q.has("zoom") ? Number(q.get("zoom")) : null,
+  };
+  opt.isPlayer = opt.player === "1" || opt.player === "bare" || opt.player === "true";
+  opt.bare = opt.player === "bare";
+  return opt;
+}
+
+// applyPlayerMode strips the editor down to a player.
+async function applyPlayerMode(opt) {
+  document.body.classList.add("player");
+  if (opt.bare) document.body.classList.add("bare");
+
+  // Nothing writes any more, so a click on the staff is not an edit.
+  state.tool.select = true;
+  state.readOnly = true;
+
+  if (opt.bare) {
+    // With no transport to press, the score itself is the button.
+    $("#canvas-wrap").addEventListener("click", () => {
+      state.playing ? stop() : play();
+    });
+    $("#canvas-wrap").style.cursor = "pointer";
+  }
+  if (opt.loop) state.loop = true;
+}
+
+// loadFromURL opens a score named in the address, so a page can point at one.
+async function loadFromURL(url) {
+  status("Loading…");
+  const res = await fetch(url);
+  if (!res.ok) {
+    status("Could not fetch " + url);
+    return false;
+  }
+  const blob = await res.blob();
+  const name = url.split("/").pop() || "score";
+  const ok = await openFile(new File([blob], name));
+  return ok !== false;
+}
+
 async function main() {
   // The palette and the menus are built first: they need nothing from the
   // core and showing them at once makes the window look alive.
@@ -2777,9 +2920,102 @@ async function main() {
   $("#stop-btn").addEventListener("click", stop);
   $("#input-btn").addEventListener("click", () => selectTool(!state.tool.select));
 
-  await reopen();
+  const opt = readOptions();
+  if (opt.isPlayer) await applyPlayerMode(opt);
+  if (opt.zoom) setZoom(opt.zoom);
+
+  // As a page, the core is WebAssembly and is still starting.
+  if (window.gscoreCoreReady) {
+    status("Starting…");
+    await window.gscoreCoreReady;
+  }
+
+  if (opt.score) {
+    await loadFromURL(opt.score);
+  } else {
+    await reopen();
+  }
+  if (opt.tune !== null && !Number.isNaN(opt.tune)) {
+    await selectTune(opt.tune);
+  }
+
   const n = (state.info?.tunes || []).length;
   status(n > 1 ? `${n} tunes in this file` : "Ready");
+
+  if (opt.autoplay) {
+    // Browsers refuse to make a sound before the page has been clicked, so
+    // this tries and, if it is refused, arms the next click to play.
+    try {
+      await play();
+    } catch (_) {
+      const once = () => {
+        document.removeEventListener("click", once);
+        void play();
+      };
+      document.addEventListener("click", once);
+    }
+  }
+
+  // A page that embeds gscore can drive it, and wants to know when it may.
+  window.gscore = {
+    play, stop, loadFromURL,
+    selectTune,
+    isPlaying: () => state.playing,
+    setZoom,
+  };
+  window.dispatchEvent(new CustomEvent("gscore:ready", { detail: window.gscore }));
+  setupEmbedMessages();
+  announceToParent();
+}
+
+// Being driven from the page that embeds it.
+//
+// An iframe is a different document on a different origin, so a page cannot
+// simply call into it: the only way across is a message. Every message gscore
+// answers carries a `gscore` key, so nothing else on the page can be mistaken
+// for one, and anything it does not recognise is ignored rather than guessed
+// at.
+//
+//   { gscore: "play" }                  start, from the beginning
+//   { gscore: "stop" }
+//   { gscore: "toggle" }
+//   { gscore: "tune",  value: 3 }       show tune 3 of a book
+//   { gscore: "load",  value: "x.abc" } open another score
+//   { gscore: "zoom",  value: 10 }
+//
+// It sends two of its own back to whoever embedded it: "ready" once the score
+// is up, and "ended" when the music stops.
+function setupEmbedMessages() {
+  window.addEventListener("message", async (e) => {
+    const m = e.data;
+    if (!m || typeof m !== "object" || typeof m.gscore !== "string") return;
+    switch (m.gscore) {
+      case "play": await playFromStart(); break;
+      case "stop": stop(); break;
+      case "toggle": state.playing ? stop() : await play(); break;
+      case "tune": await selectTune(Number(m.value) || 0); break;
+      case "load": await loadFromURL(String(m.value)); break;
+      case "zoom": setZoom(Number(m.value) || state.zoom); break;
+    }
+  });
+}
+
+// announceToParent tells the embedding page that the score is up and that it
+// may start sending messages.
+function announceToParent() {
+  if (window.parent === window) return;
+  const send = (what, extra) => {
+    try {
+      window.parent.postMessage(Object.assign({ gscore: what }, extra), "*");
+    } catch (_) {
+      /* a parent on another origin that refuses messages is not an error */
+    }
+  };
+  send("ready", {
+    title: state.info?.title || "",
+    tunes: (state.info?.tunes || []).length,
+  });
+  window.addEventListener("gscore:ended", () => send("ended"));
 }
 
 main();

@@ -257,6 +257,7 @@ func (a *App) APIRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/playback", a.handlePlayback)
 	mux.HandleFunc("/api/keysignatures", a.handleKeySignatures)
 	mux.HandleFunc("/api/instruments", a.handleInstruments)
+	mux.HandleFunc("/api/percussion", a.handlePercussion)
 	mux.HandleFunc("/api/getlyrics", a.handleGetLyrics)
 	mux.HandleFunc("/api/symbols", a.handleSymbols)
 	mux.HandleFunc("/api/copy", a.handleCopy)
@@ -459,8 +460,15 @@ func (a *App) handleInfo(w http.ResponseWriter, r *http.Request) {
 				notes += len(v.Elements)
 			}
 		}
+		// A drum staff has no General MIDI program; saying "piano" because
+		// that is what the unused field holds would be a lie the inspector
+		// tells every time it is opened.
+		instrument := p.Instrument.String()
+		if p.Clef == model.Percussion {
+			instrument = drumKitName
+		}
 		out.Parts = append(out.Parts, partInfo{
-			Name: name, Instrument: p.Instrument.String(),
+			Name: name, Instrument: instrument,
 			Clef: p.Clef.String(), Key: keyText(p.Key),
 			Time: p.Time.String(), Measures: len(p.Measures), Notes: notes,
 			TransposeSemitones: p.Transpose.Semitones(),

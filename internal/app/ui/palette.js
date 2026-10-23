@@ -193,12 +193,48 @@ const PALETTE = [
     ],
   },
   {
+    id: "drums",
+    name: "Drum kit",
+    size: 17,
+    columns: 2,
+    // Filled from the kit when the score has a drum staff. A drum staff's
+    // lines name instruments rather than pitches, so the only way to know
+    // that the top space is a hi-hat is to be shown — which is what a
+    // printed drum key does for a player.
+    items: [],
+    custom: true,
+  },
+  {
     id: "symbols",
     name: "Your symbols",
     items: [], // filled from the symbol registry
     custom: true,
   },
 ];
+
+// A notehead shape as the font draws it, for showing a drum in the palette.
+const HEAD_GLYPH = {
+  normal: "\uE0A4",
+  x: "\uE0A9",
+  "circle-x": "\uE0B3",
+  triangle: "\uE0BE",
+  diamond: "\uE0DB",
+  slash: "\uE100",
+};
+
+// fillPaletteSection puts items into a section that is built at run time
+// rather than written out above — the drum kit, and the symbols somebody has
+// drawn. The section hides itself when there is nothing in it.
+function fillPaletteSection(id, items, onAction, size) {
+  const grid = document.getElementById("pal-" + id);
+  if (!grid) return;
+  const wrap = grid.closest(".pal");
+  if (wrap) wrap.hidden = items.length === 0;
+  grid.innerHTML = "";
+  for (const item of items) {
+    grid.appendChild(paletteButton(item, onAction, size));
+  }
+}
 
 // buildPalette renders the sections into the sidebar.
 function buildPalette(onAction) {

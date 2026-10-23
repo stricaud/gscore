@@ -1306,3 +1306,155 @@ func TestTieOneNoteheadOfAChord(t *testing.T) {
 		t.Error("tying a notehead that does not exist was allowed")
 	}
 }
+
+// A drum is written by name, at the place that drum belongs — not wherever
+// the click happened to land.
+func TestWritingADrumByName(t *testing.T) {
+	h := newHarness(t)
+	h.post("/api/staff?part=0&clef=percussion")
+
+	snare, ok := model.PercussionByKey(38)
+	if !ok {
+		t.Fatal("the kit has no snare drum")
+	}
+	// Ask for the snare while clicking at the top of the staff, where the
+	// hi-hat lives. The snare must still come out, in the snare's place.
+	h.post("/api/insert?part=0&measure=0&at=-1&step=10&dur=quarter&kind=note&drum=38")
+
+	n := h.app.score.Parts[0].Measures[0].Voices[0].Elements[0].(*model.Note)
+	if n.Percussion != 38 {
+		t.Errorf("wrote drum %d, want the snare at 38", n.Percussion)
+	}
+	if got := engrave.StaffStep(model.Percussion, n.Pitch); got != snare.Step {
+		t.Errorf("the snare was drawn at step %d, want %d", got, snare.Step)
+	}
+	if n.Head != snare.Head {
+		t.Errorf("the snare was drawn with the %v notehead, want %v", n.Head, snare.Head)
+	}
+
+	// It plays as a snare.
+	ev := buildPlayback(h.app.score).Events
+	if len(ev) != 1 || ev[0].DrumName != "Snare drum" {
+		t.Errorf("it sounded as %+v", ev)
+	}
+
+	// A key nothing in the kit uses is refused rather than guessed at.
+	if msg := h.postFails(
+		"/api/insert?part=0&measure=0&at=-1&step=5&dur=quarter&kind=note&drum=99"); msg == "" {
+		t.Error("an unknown drum was accepted")
+	}
+
+	// Without a drum named, the position still decides, as before.
+	h.post("/api/insert?part=0&measure=0&at=-1&step=10&dur=quarter&kind=note")
+	last := h.app.score.Parts[0].Measures[0].Voices[0].Elements[1].(*model.Note)
+	if last.Percussion != 42 {
+		t.Errorf("clicking the top space wrote drum %d, want the hi-hat at 42",
+			last.Percussion)
+	}
+}
+
+// The kit is listed so the editor can offer it by name.
+func TestKitIsListed(t *testing.T) {
+	h := newHarness(t)
+	var kit []struct {
+		Name     string `json:"name"`
+		Key      int    `json:"key"`
+		Step     int    `json:"step"`
+		Notehead string `json:"notehead"`
+	}
+	if err := json.Unmarshal([]byte(h.get("/api/percussion")), &kit); err != nil {
+		t.Fatal(err)
+	}
+	if len(kit) < 10 {
+		t.Fatalf("the kit has %d pieces", len(kit))
+	}
+	seen := map[string]bool{}
+	for _, d := range kit {
+		if d.Name == "" || d.Key == 0 {
+			t.Errorf("a kit entry is incomplete: %+v", d)
+		}
+		if d.Notehead == "" {
+			t.Errorf("%s has no notehead shape", d.Name)
+		}
+		seen[d.Name] = true
+	}
+	for _, want := range []string{"Snare drum", "Bass drum", "Hi-hat closed", "Ride cymbal"} {
+		if !seen[want] {
+			t.Errorf("the kit has no %s", want)
+		}
+	}
+}
+
+// The drum kit is one of the instruments a staff can be, chosen the same way
+// as any other — not a command of its own.
+func TestDrumKitIsAnInstrumentChoice(t *testing.T) {
+	h := newHarness(t)
+
+	// It is in the list people choose from.
+	var list []struct {
+		Program    int    `json:"program"`
+		Name       string `json:"name"`
+		Family     string `json:"family"`
+		Percussion bool   `json:"percussion"`
+	}
+	if err := json.Unmarshal([]byte(h.get("/api/instruments")), &list); err != nil {
+		t.Fatal(err)
+	}
+	var kit *struct {
+		Program    int    `json:"program"`
+		Name       string `json:"name"`
+		Family     string `json:"family"`
+		Percussion bool   `json:"percussion"`
+	}
+	for i := range list {
+		if list[i].Percussion {
+			kit = &list[i]
+		}
+	}
+	if kit == nil {
+		t.Fatal("the instrument list has no drum kit")
+	}
+	if kit.Name != "drum kit" || kit.Family != "percussion" {
+		t.Errorf("the kit is listed as %+v", *kit)
+	}
+	// It is not a General MIDI program, and must not pretend to be.
+	if kit.Program >= 0 {
+		t.Errorf("the kit claims program %d; drums have none", kit.Program)
+	}
+
+	// Choosing it gives a staff whose lines name drums.
+	h.post("/api/addstaff?instrument=drum%20kit")
+	p := h.app.score.Parts[1]
+	if p.Clef != model.Percussion {
+		t.Errorf("the staff is in %v, want the percussion clef", p.Clef)
+	}
+	if p.Key.Fifths != 0 {
+		t.Errorf("a drum staff is in %d sharps; it should be in no key", p.Key.Fifths)
+	}
+
+	// And it reports itself as a kit rather than as whatever the unused
+	// program field happens to hold.
+	var info struct {
+		Parts []struct {
+			Instrument string `json:"instrument"`
+			Clef       string `json:"clef"`
+		} `json:"parts"`
+	}
+	if err := json.Unmarshal([]byte(h.get("/api/info")), &info); err != nil {
+		t.Fatal(err)
+	}
+	if got := info.Parts[1].Instrument; got != "drum kit" {
+		t.Errorf("the drum staff says it is a %q", got)
+	}
+
+	// An existing staff can be turned into one, and it writes drums.
+	h.post("/api/staff?part=0&instrument=drum%20kit")
+	if h.app.score.Parts[0].Clef != model.Percussion {
+		t.Error("changing a staff to the kit did not change its clef")
+	}
+	h.post("/api/insert?part=0&measure=0&at=-1&step=5&dur=quarter&kind=note")
+	n := h.app.score.Parts[0].Measures[0].Voices[0].Elements[0].(*model.Note)
+	if n.Percussion == 0 {
+		t.Error("writing on the converted staff gave a pitch, not a drum")
+	}
+}

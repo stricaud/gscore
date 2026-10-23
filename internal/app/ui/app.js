@@ -43,7 +43,9 @@ const state = {
   selection: null,
 
   hits: [],
-  tool: { duration: "quarter", accidental: "none", rest: false },
+  tool: { duration: "quarter", accidental: "none", rest: false, drum: null },
+  // The kit, once fetched. A score without a drum staff never asks for it.
+  kit: null,
   // A file may hold many scores; showAll puts the whole book on screen at
   // once rather than one tune at a time. It is decided when a file is opened:
   // opening a book should show the book.
@@ -104,6 +106,14 @@ async function paletteAction(item) {
   }
   // An ending is a bracket over whole bars, so it acts on the measure the
   // cursor is in rather than on the note.
+  // A drum is a tool, like a note value: it says what the next click writes.
+  if (item.drum !== undefined) {
+    state.tool.drum = item.drum;
+    state.tool.rest = false;
+    markPaletteTool((label) => label === item.label);
+    status(item.label + " — click the drum staff to write it");
+    return;
+  }
   if (item.ending !== undefined) {
     await setEnding(item.ending);
     return;
@@ -635,6 +645,7 @@ async function loadInfo() {
   $("#empty-hint").hidden = !i.parts.every((p) => p.notes === 0);
   markFingeringMenu();
   markViewTicks();
+  await loadKit();
   markHistory(!!i.canUndo, !!i.canRedo);
 
   // An importer that only understood part of a file says so here, rather than
@@ -1144,6 +1155,12 @@ async function insertAtSelection(rest, keepSelection) {
   if (!rest && state.tool.accidental !== "none") {
     p.set("accidental", state.tool.accidental);
   }
+  // On a drum staff, which drum rather than where the click landed. A
+  // drummer picks the snare and then says where in the bar; making them
+  // remember which line it is on and hit it is the wrong way round.
+  if (!rest && state.tool.drum !== null && isDrumStaff(sel.part)) {
+    p.set("drum", String(state.tool.drum));
+  }
   const res = await fetch("/api/insert?" + p.toString(), { method: "POST" });
   if (!res.ok) {
     status("Could not insert: " + (await res.text()).trim());
@@ -1170,7 +1187,13 @@ async function insertAtSelection(rest, keepSelection) {
   const el = hit && (hit.elements || [])[sel.at - 1];
   if (el) sel.ref = el.ref;
   markSelection();
-  const what = rest ? "Rest" : state.tool.duration + " note";
+  let what = rest ? "Rest" : state.tool.duration + " note";
+  // On a drum staff, say which drum. "quarter note" tells a drummer nothing
+  // about what they just wrote.
+  if (!rest && isDrumStaff(sel.part)) {
+    const name = drumName(state.tool.drum, sel.step);
+    if (name) what = name + ", " + state.tool.duration;
+  }
   status(moved ? `${what} — measure ${sel.measure + 1}` : what + " inserted");
   void keepSelection;
 }
@@ -2441,6 +2464,55 @@ function markHistory(canUndo, canRedo) {
   if (r) r.disabled = !canRedo;
 }
 
+// drumName is what was written: the drum that was chosen, or failing that
+// the one nearest the position that was clicked, which is what the engraver
+// will have put there.
+function drumName(key, step) {
+  if (!state.kit) return "";
+  if (key !== null && key !== undefined) {
+    return state.kit.find((d) => d.key === key)?.name || "";
+  }
+  let best = null;
+  for (const d of state.kit) {
+    if (best === null || Math.abs(d.step - step) < Math.abs(best.step - step)) {
+      best = d;
+    }
+  }
+  return best ? best.name : "";
+}
+
+// isDrumStaff says whether a staff's lines name instruments rather than
+// pitches.
+function isDrumStaff(part) {
+  return state.info?.parts?.[part]?.clef === "percussion";
+}
+
+// loadKit fetches the drum kit and puts it in the palette, once, and only for
+// a score that has a drum staff.
+async function loadKit() {
+  const wanted = (state.info?.parts || []).some((p) => p.clef === "percussion");
+  if (!wanted) {
+    fillPaletteSection("drums", [], paletteAction);
+    return;
+  }
+  if (!state.kit) {
+    const res = await fetch("/api/percussion");
+    if (!res.ok) return;
+    state.kit = await res.json();
+  }
+  // Highest first, so the list reads down the staff the way the kit sits on
+  // it: cymbals at the top, the bass drum at the bottom.
+  const items = state.kit
+    .slice()
+    .sort((a, b) => b.step - a.step)
+    .map((d) => ({
+      g: HEAD_GLYPH[d.notehead] || HEAD_GLYPH.normal,
+      label: d.name,
+      drum: d.key,
+    }));
+  fillPaletteSection("drums", items, paletteAction, 15);
+}
+
 /* ---------- staves ---------- */
 
 // addStaffDialog adds a staff, asking what it is for.
@@ -2454,7 +2526,8 @@ async function addStaffDialog() {
     title: "Add a staff",
     label: "What plays it",
     value: "flute",
-    note: "The clef and the transposition follow from the instrument. Type to search.",
+    note: "The clef and the transposition follow from the instrument. " +
+          "Choose the drum kit for a staff whose lines name drums. Type to search.",
     search: true,
     options: list.map((x) => ({ value: x.name, label: `${x.name} — ${x.family}` })),
   });
@@ -2478,7 +2551,7 @@ async function addStaffDialog() {
 // program that a double bass reads bass clef.
 function clefFor(name) {
   const n = (name || "").toLowerCase();
-  if (/drum|percussion|timpani/.test(n)) return "percussion";
+  if (/drum|percussion/.test(n)) return "percussion";
   if (/bass|cello|bassoon|trombone|tuba|contrabass|baritone/.test(n)) return "bass";
   if (/viola/.test(n)) return "alto";
   return "treble";

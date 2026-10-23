@@ -125,7 +125,27 @@ func (a *App) handleInsert(w http.ResponseWriter, r *http.Request) {
 		// instrument. The note still has a pitch, because everything else —
 		// stems, beams, spacing — works from staff positions, but what
 		// sounds comes from the kit and not from the pitch.
-		drum, ok := model.PercussionFor(step)
+		//
+		// Naming the drum beats guessing it from where the click landed. A
+		// drummer picks the snare and then says where in the bar; asking
+		// them to remember which line the snare is on, and to hit it, is the
+		// wrong way round.
+		var drum model.PercussionNote
+		var ok bool
+		if v := q.Get("drum"); v != "" {
+			key, err := strconv.Atoi(v)
+			if err != nil {
+				http.Error(w, "a drum is named by its MIDI key", http.StatusBadRequest)
+				return
+			}
+			drum, ok = model.PercussionByKey(key)
+			if !ok {
+				http.Error(w, "no drum has that key", http.StatusBadRequest)
+				return
+			}
+		} else {
+			drum, ok = model.PercussionFor(step)
+		}
 		if !ok {
 			http.Error(w, "nothing is written at that position", http.StatusBadRequest)
 			return
@@ -886,7 +906,13 @@ func (a *App) handleStaff(w http.ResponseWriter, r *http.Request) {
 			changed = append(changed, "time")
 		}
 	}
-	if v := q.Get("instrument"); v != "" {
+	if v := q.Get("instrument"); isDrumKit(v) {
+		p.Clef = model.Percussion
+		// A staff of drums is in no key: its lines carry no pitches.
+		p.Key = model.KeySignature{}
+		p.Transpose = model.Transposition{}
+		changed = append(changed, "drum kit")
+	} else if v != "" {
 		inst, ok := model.InstrumentFromName(v)
 		if !ok {
 			n, err := strconv.Atoi(v)
@@ -1036,8 +1062,17 @@ func (a *App) handleInstruments(w http.ResponseWriter, r *http.Request) {
 		Program int    `json:"program"`
 		Name    string `json:"name"`
 		Family  string `json:"family"`
+		// Percussion marks the one entry that is not a General MIDI program
+		// at all. Choosing it gives a staff whose lines name drums.
+		Percussion bool `json:"percussion,omitempty"`
 	}
-	out := []entry{}
+	// A drum kit belongs in the list people choose an instrument from,
+	// because that is where somebody looks for it. It is not a program
+	// number: General MIDI puts drums on their own channel rather than
+	// giving them one, so nothing of the sort is written into the model —
+	// what makes a staff a drum staff is its clef, and choosing this sets
+	// that.
+	out := []entry{{Program: -1, Name: drumKitName, Family: "percussion", Percussion: true}}
 	for p := 0; p < 128; p++ {
 		i := model.Instrument(p)
 		n := i.String()
@@ -1980,7 +2015,10 @@ func (a *App) handleAddStaff(w http.ResponseWriter, r *http.Request) {
 		clef = c
 	}
 	inst := model.AcousticGrandPiano
-	if v := q.Get("instrument"); v != "" {
+	if v := q.Get("instrument"); isDrumKit(v) {
+		// A drum kit is a staff whose lines name drums, which is the clef.
+		clef = model.Percussion
+	} else if v != "" {
 		switch i, ok := model.InstrumentFromName(v); {
 		case ok:
 			inst = i
@@ -2023,6 +2061,10 @@ func (a *App) handleAddStaff(w http.ResponseWriter, r *http.Request) {
 	}
 	if part.Name == "" {
 		part.Name = inst.String()
+		// A drum staff has no program, so the unused one must not name it.
+		if clef == model.Percussion {
+			part.Name = "Drum Kit"
+		}
 	}
 	for i := 0; i < bars; i++ {
 		part.Measures = append(part.Measures, &model.Measure{
@@ -2410,4 +2452,37 @@ func clearTie(t tieTarget, step int, hasStep bool) {
 	if m := marksOfElement(t.el); m != nil {
 		m.TieStart, m.TieStop = false, false
 	}
+}
+
+// handlePercussion lists the drum kit: what is in it, where each piece is
+// written and how it is drawn.
+//
+// The editor needs this to offer the kit by name. A drum staff's lines carry
+// instruments rather than pitches, and the only way to know that the top
+// space is a hi-hat is to be told — which is what a printed drum key does for
+// a player, and what this does for the palette.
+func (a *App) handlePercussion(w http.ResponseWriter, r *http.Request) {
+	type entry struct {
+		Name     string `json:"name"`
+		Key      int    `json:"key"`
+		Step     int    `json:"step"`
+		Notehead string `json:"notehead"`
+	}
+	out := make([]entry, 0, len(model.DrumSet))
+	for _, n := range model.DrumSet {
+		out = append(out, entry{
+			Name: n.Name, Key: n.Key, Step: n.Step, Notehead: n.Head.String(),
+		})
+	}
+	writeJSON(w, out)
+}
+
+
+// drumKitName is what the kit is called in the list of instruments.
+const drumKitName = "drum kit"
+
+// isDrumKit reports whether a chosen instrument is the kit rather than a
+// General MIDI program.
+func isDrumKit(name string) bool {
+	return strings.EqualFold(strings.TrimSpace(name), drumKitName)
 }

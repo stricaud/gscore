@@ -378,6 +378,8 @@ type partInfo struct {
 	// so the editor can get back from a sounding note to the printed one.
 	// A fingering chart needs the printed one: fingers follow the page.
 	TransposeSemitones int `json:"transposeSemitones"`
+	// Hidden says the staff is out of the drawing but still in the score.
+	Hidden bool `json:"hidden,omitempty"`
 }
 
 func (a *App) handleInfo(w http.ResponseWriter, r *http.Request) {
@@ -428,6 +430,7 @@ func (a *App) handleInfo(w http.ResponseWriter, r *http.Request) {
 			Clef: p.Clef.String(), Key: keyText(p.Key),
 			Time: p.Time.String(), Measures: len(p.Measures), Notes: notes,
 			TransposeSemitones: p.Transpose.Semitones(),
+			Hidden:             p.Hidden,
 		})
 	}
 	writeJSON(w, out)

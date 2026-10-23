@@ -173,7 +173,10 @@ function setupMenus() {
     });
     // Moving back up to the plain items closes the submenu, so the panel
     // does not sit over the item being reached for.
-    menu.querySelectorAll(".menu-items > button").forEach((b) => {
+    // The menu's own items, not the ones inside its submenus: those are
+    // matched by the same selector, so hovering "Crescendo" would have
+    // closed the submenu it is in.
+    menu.querySelectorAll(":scope > .menu-items > button").forEach((b) => {
       b.addEventListener("mouseenter", () => {
         $$(".submenu").forEach((s) => s.classList.remove("open", "flip"));
       });
@@ -396,6 +399,8 @@ async function action(name) {
     case "add-staff": await addStaffDialog(); break;
     case "add-grand-staff": await addGrandStaff(); break;
     case "remove-staff": await removeStaff(); break;
+    case "hide-staff": await toggleStaffShown(); break;
+    case "show-all-staves": await showAllStaves(); break;
     case "staff-up": await moveStaff(-1); break;
     case "staff-down": await moveStaff(1); break;
 
@@ -554,16 +559,39 @@ async function loadInfo() {
 
   $("#part-info").innerHTML = i.parts
     .map(
-      (p, idx) => `<div class="part-card">
-        <div class="name">${escapeHTML(p.name)}</div>
+      (p, idx) => `<div class="part-card${p.hidden ? " hidden-staff" : ""}">
+        <div class="name">
+          <button class="eye" data-show-part="${idx}"
+                  title="${p.hidden ? "Show this staff" : "Hide this staff"}"
+                  aria-pressed="${p.hidden ? "true" : "false"}">${p.hidden ? "◌" : "●"}</button>
+          <span>${escapeHTML(p.name)}</span>
+        </div>
         <div><span>Clef</span><b>${p.clef}</b></div>
         <div><span>Key</span><button class="linklike" data-key-part="${idx}">${p.key}</button></div>
         <div><span>Time</span><button class="linklike" data-time-part="${idx}">${p.time}</button></div>
         <div><span>Sounds as</span><button class="linklike" data-inst-part="${idx}">${escapeHTML(p.instrument || "piano")}</button></div>
         <div><span>Measures</span><b>${p.measures}</b></div>
+        ${p.hidden
+          ? `<button class="show-again" data-show-part="${idx}">Hidden — show it again</button>`
+          : ""}
       </div>`
     )
     .join("");
+  $$("[data-show-part]").forEach((b) =>
+    b.addEventListener("click", async (ev) => {
+      ev.stopPropagation();
+      const idx = Number(b.dataset.showPart);
+      const now = !!state.info?.parts?.[idx]?.hidden;
+      const res = await fetch(`/api/staff?part=${idx}&hidden=${now ? 0 : 1}`,
+                              { method: "POST" });
+      if (!res.ok) {
+        status("Could not change it: " + (await res.text()).trim());
+        return;
+      }
+      await reload();
+      status(now ? "Staff shown" : "Staff hidden — it still plays");
+    })
+  );
   $$("[data-key-part]").forEach((b) =>
     b.addEventListener("click", () => openKeyPicker(Number(b.dataset.keyPart)))
   );
@@ -2282,6 +2310,37 @@ async function addGrandStaff() {
   await fetch("/api/group?" + g.toString(), { method: "POST" });
   await reload();
   status("Added a grand staff");
+}
+
+// toggleStaffShown takes the staff the cursor is on out of the drawing, or
+// puts it back. The music stays either way, and so does the sound.
+async function toggleStaffShown() {
+  const part = state.selection?.part ?? 0;
+  const now = !!state.info?.parts?.[part]?.hidden;
+  const res = await fetch(`/api/staff?part=${part}&hidden=${now ? 0 : 1}`,
+                          { method: "POST" });
+  if (!res.ok) {
+    status("Could not change it: " + (await res.text()).trim());
+    return;
+  }
+  await reload();
+  status(now ? "Staff shown" : "Staff hidden — it still plays");
+}
+
+async function showAllStaves() {
+  const parts = state.info?.parts || [];
+  let n = 0;
+  for (let i = 0; i < parts.length; i++) {
+    if (!parts[i].hidden) continue;
+    await fetch(`/api/staff?part=${i}&hidden=0`, { method: "POST" });
+    n++;
+  }
+  if (n === 0) {
+    status("Every staff is already shown");
+    return;
+  }
+  await reload();
+  status(`Showing ${n} staff${n === 1 ? "" : "s"} again`);
 }
 
 async function removeStaff() {

@@ -870,6 +870,17 @@ func (a *App) handleStaff(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+	if v := q.Get("hidden"); v != "" {
+		// A decision about the page, not about the music: a hidden staff
+		// still sounds, so a conductor can take the rest of the orchestra
+		// off the screen and keep hearing it.
+		p.Hidden = v == "1"
+		changed = append(changed, "hidden")
+	}
+	if v := q.Get("name"); v != "" {
+		p.Name = strings.TrimSpace(v)
+		changed = append(changed, "name")
+	}
 	if len(changed) == 0 {
 		http.Error(w, "nothing to change", http.StatusBadRequest)
 		return
@@ -1925,9 +1936,18 @@ func (a *App) handleAddStaff(w http.ResponseWriter, r *http.Request) {
 	}
 	inst := model.AcousticGrandPiano
 	if v := q.Get("instrument"); v != "" {
-		if i, ok := model.InstrumentFromName(v); ok {
+		switch i, ok := model.InstrumentFromName(v); {
+		case ok:
 			inst = i
-		} else if n, err := strconv.Atoi(v); err == nil && n >= 0 && n < 128 {
+		default:
+			n, err := strconv.Atoi(v)
+			if err != nil || n < 0 || n > 127 {
+				// Not silently a piano. A name nobody recognises is a
+				// mistake worth hearing about, and a staff that quietly
+				// came out as the wrong instrument is found much later.
+				http.Error(w, "unknown instrument "+v, http.StatusBadRequest)
+				return
+			}
 			inst = model.Instrument(n)
 		}
 	}

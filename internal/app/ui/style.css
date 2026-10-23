@@ -139,7 +139,12 @@ body {
   padding: 4px;
   z-index: 50;
 }
-.menu.open .menu-items { display: block; }
+/* The menu's OWN panel, not every panel inside it.
+   As a descendant selector this matched each submenu's panel too, and at a
+   higher specificity than the rule that hides them — so opening a menu forced
+   all five of its submenus open at once, stacked on top of each other, and no
+   amount of scripting could close them. */
+.menu.open > .menu-items { display: block; }
 
 .menu-items button {
   display: flex;
@@ -234,13 +239,17 @@ kbd {
 
 #main {
   display: grid;
-  grid-template-columns: 164px 1fr 210px;
+  grid-template-columns: 164px 1fr 232px;
   min-height: 0;
 }
 
 #toolbox, #inspector {
   background: var(--panel);
   overflow-y: auto;
+  /* Nothing is allowed to reach past the panel's edge: a value too long for
+     the column wraps inside it instead of being cut off by the window. */
+  overflow-x: hidden;
+  min-width: 0;
   padding: 10px 8px;
 }
 #toolbox { border-right: 1px solid var(--line); }
@@ -314,7 +323,11 @@ kbd {
 
 /* ---- inspector ---- */
 
-#score-info div, #part-info div {
+/* The rows of the panel: a label on the left, its value on the right.
+   Scoped to the rows themselves, because a staff's card is also a div inside
+   #part-info — it was picking this up and laying its rows out sideways, which
+   is what pushed every value off the right edge of the panel. */
+#score-info > div, #part-info .part-card > div {
   display: flex;
   justify-content: space-between;
   align-items: baseline;
@@ -323,18 +336,23 @@ kbd {
   border-bottom: 1px dotted var(--line);
 }
 #score-info b, #part-info b { font-weight: 600; }
+#part-info .part-card { display: block; }
 /* The label stays put and the value takes what is left, aligned right and
    wrapping within itself. "1♭ major" used to break after the sign and leave
    "major" alone on the next line, looking like a word that had come adrift. */
-#score-info div > span:first-child, #part-info div > span:first-child {
+#score-info > div > span:first-child,
+#part-info .part-card > div > span:first-child {
   flex: 0 0 auto;
   color: var(--muted);
 }
-#score-info div > b, #score-info div > button,
-#part-info div > b, #part-info div > button {
+#score-info > div > b, #score-info > div > button,
+#part-info .part-card > div > b, #part-info .part-card > div > button {
   flex: 1 1 auto;
   min-width: 0;
   text-align: right;
+  /* A long value wraps inside its own column rather than widening the row
+     and pushing itself out of the panel. */
+  overflow-wrap: anywhere;
 }
 .part-card {
   background: var(--panel-dark);
@@ -922,3 +940,43 @@ body.player.bare { grid-template-rows: 1fr; }
 .fing-hole.on { background: var(--ink); border-color: var(--ink); }
 .fing-hole.lever { width: 9px; height: 15px; border-radius: 5px; }
 .fing-hole.small { width: 9px; height: 9px; }
+
+/* A hidden staff stays in the list, greyed, with the dot that shows it
+   hollow — it is out of the drawing, not out of the score, and the list is
+   where you put it back. */
+.part-card .name { display: flex; align-items: center; gap: 6px; }
+.part-card .eye {
+  flex: 0 0 auto;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  color: var(--muted);
+  cursor: pointer;
+  font: inherit;
+  font-size: 11px;
+  line-height: 1;
+  padding: 1px 4px;
+}
+.part-card .eye:hover { color: var(--accent); border-color: var(--accent); }
+.part-card .name { min-width: 0; }
+.part-card .name > span { overflow-wrap: anywhere; }
+
+/* A hidden staff is dimmed but not disabled-looking, and says in words that
+   it is hidden and what to do about it — a greyed card with a small symbol on
+   it left no way of telling how to get the staff back. */
+.part-card.hidden-staff { opacity: .72; border: 1px dashed var(--line); }
+.part-card.hidden-staff .name { font-style: italic; }
+.part-card .show-again {
+  display: block;
+  width: 100%;
+  margin-top: 6px;
+  padding: 3px 6px;
+  font: inherit;
+  font-size: 11px;
+  background: var(--panel);
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  color: var(--accent);
+  cursor: pointer;
+}
+.part-card .show-again:hover { background: var(--accent); color: #fff; }

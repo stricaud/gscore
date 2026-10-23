@@ -13,6 +13,7 @@
 package app
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"io"
@@ -307,6 +308,48 @@ func (a *App) renderTo(w io.Writer, r *http.Request) error {
 		}
 	}
 	return svg.Render(w, engrave.Engrave(score, eopt), ropt)
+}
+
+// handlePDF hands a PDF straight back, for a browser to download.
+//
+// Running as a page there is no filesystem to write to and no save panel to
+// ask with, so the file comes back in the response and the browser does what
+// it does with a file. It is the same PDF either way.
+func (a *App) handlePDF(w http.ResponseWriter, r *http.Request) {
+	var buf bytes.Buffer
+	if err := a.renderPDF(&buf, r); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	a.mu.RLock()
+	name := a.suggestedBase()
+	a.mu.RUnlock()
+
+	w.Header().Set("Content-Type", "application/pdf")
+	w.Header().Set("Content-Disposition", `attachment; filename="`+name+`.pdf"`)
+	_, _ = w.Write(buf.Bytes())
+}
+
+// suggestedBase is the file's name without its extension, for naming what
+// comes out of it. The caller holds the lock.
+func (a *App) suggestedBase() string {
+	if a.filename != "" {
+		base := filepath.Base(a.filename)
+		return strings.TrimSuffix(base, filepath.Ext(base))
+	}
+	if t := a.score.Identity.Title; t != "" {
+		var b strings.Builder
+		for _, r := range t {
+			switch {
+			case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '-':
+				b.WriteRune(r)
+			default:
+				b.WriteByte('-')
+			}
+		}
+		return b.String()
+	}
+	return "score"
 }
 
 // renderPDF writes the score as a PDF, in whichever shape was asked for.

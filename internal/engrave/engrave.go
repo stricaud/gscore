@@ -416,7 +416,16 @@ func (e *engraver) headroom() float64 {
 			for _, v := range m.Voices {
 				for _, el := range v.Elements {
 					mk := marksOf(el)
-					if mk == nil || mk.Octave == nil || mk.Octave.Amount <= 0 {
+					if mk == nil {
+						continue
+					}
+					// A chord symbol, and the fingering diagram above it,
+					// stack up over the staff and need the room measured
+					// rather than assumed.
+					if h := chordHeight(mk.Chord); h > need {
+						need = h
+					}
+					if mk.Octave == nil || mk.Octave.Amount <= 0 {
 						continue
 					}
 					if need < octaveRise+1 {
@@ -888,6 +897,12 @@ func (e *engraver) drawSystem(parts []*model.Part, boxes [][]measureBox,
 	wordRoom := 0.0
 	if n := e.verses(); n > 0 {
 		wordRoom = lyricDrop + float64(n-1)*lyricLine
+	}
+	// Chord symbols are written above a staff, so they push the staff above
+	// them up rather than overlapping it.
+	chordRoom := e.headroom()
+	if chordRoom > sp.StaffGap {
+		wordRoom += chordRoom - sp.StaffGap
 	}
 
 	// Where each staff of this system was put, for the things drawn across

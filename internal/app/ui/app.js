@@ -218,6 +218,9 @@ async function action(name) {
     case "open":
       await openScore();
       break;
+    case "save-pdf":
+      await exportPDF();
+      break;
     case "save-svg":
       await exportSVG();
       break;
@@ -594,6 +597,64 @@ function setZoom(z) {
 // a web view has no download machinery behind it, which is why this appeared
 // to do nothing at all. Running as an application, the file is written by the
 // server through a real save panel; served to a browser, the link still works.
+// exportPDF writes the score as a PDF, which is what a finished score is for.
+//
+// It is made here rather than by a browser's print dialog: gscore's own
+// engraver lays out the pages and embeds the music font, so the file is the
+// same on every machine and can be made by a script with no screen attached.
+async function exportPDF() {
+  const many = (state.info?.tunes?.length ?? 0) > 1;
+  const parts = (state.info?.parts?.length ?? 0) > 1;
+  const what = await askPrint(many, parts, "Export PDF", "Export");
+  if (!what) return;
+
+  const q = new URLSearchParams({ as: "pdf", what });
+
+  if (state.info?.local) {
+    let res = await fetch("/api/save?" + q.toString(), { method: "POST" });
+    if (!res.ok) {
+      status("Could not export: " + (await res.text()).trim());
+      return;
+    }
+    let d = await res.json();
+    if (d.needPath) {
+      const where = await ask({
+        title: "Export PDF", label: "Save to",
+        value: (d.suggested || "score.pdf").replace(/\.gscore$/, ".pdf"),
+        note: "The system's save panel would not open here, so type the path.",
+      });
+      if (where === null || where.trim() === "") {
+        status("Ready");
+        return;
+      }
+      q.set("path", where.trim());
+      res = await fetch("/api/save?" + q.toString(), { method: "POST" });
+      if (!res.ok) {
+        status("Could not export: " + (await res.text()).trim());
+        return;
+      }
+      d = await res.json();
+    }
+    status(d.cancelled ? "Export cancelled" : "Wrote " + d.path);
+    return;
+  }
+
+  // Served rather than run: the browser downloads it.
+  status("Making the PDF…");
+  const res = await fetch("/api/pdf?" + q.toString());
+  if (!res.ok) {
+    status("Could not export: " + (await res.text()).trim());
+    return;
+  }
+  const blob = await res.blob();
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = (state.info?.title || "score").replace(/[^\w-]+/g, "-") + ".pdf";
+  a.click();
+  URL.revokeObjectURL(a.href);
+  status("PDF downloaded");
+}
+
 async function exportSVG() {
   if (state.info?.local) {
     const p = new URLSearchParams({ as: "svg", mode: state.mode, space: String(state.zoom) });
@@ -2093,7 +2154,7 @@ async function openKeyPicker(partIndex) {
 async function printScore() {
   const many = (state.info?.tunes?.length ?? 0) > 1;
   const parts = (state.info?.parts?.length ?? 0) > 1;
-  const what = await askPrint(many, parts);
+  const what = await askPrint(many, parts, "Print", "Print");
   if (!what) return;
 
   const path = "/print?what=" + encodeURIComponent(what);
@@ -2132,8 +2193,10 @@ async function printScore() {
 }
 
 // askPrint shows the choices that apply to this file and nothing else.
-function askPrint(many, parts) {
+function askPrint(many, parts, title, verb) {
   const dlg = $("#print");
+  dlg.querySelector("h2").textContent = title || "Print";
+  dlg.querySelector(".primary").textContent = verb || "Print";
   $("#print-book-row").hidden = !many;
   $("#print-parts-row").hidden = !parts;
   // A book is almost always wanted whole; a single tune has nothing else to
@@ -3120,6 +3183,7 @@ function setupKeys() {
       case "n": action("new"); break;
       case "o": action("open"); break;
       case "e": action("save-svg"); break;
+      case "P": action("save-pdf"); break;
       case "p": action("print"); break;
       case "s": action("save"); break;
       case "f": action("fullscreen"); break;

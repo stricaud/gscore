@@ -264,6 +264,7 @@ func (a *App) APIRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/header", a.handleHeader)
 	mux.HandleFunc("/api/instruments", a.handleInstruments)
 	mux.HandleFunc("/print", a.handlePrint)
+	mux.HandleFunc("/api/pdf", a.handlePDF)
 	mux.HandleFunc("/api/openbrowser", a.handleOpenBrowser)
 	mux.HandleFunc("/api/importsymbols", a.handleImportSymbols)
 	mux.HandleFunc("/api/exportsymbols", a.handleExportSymbols)

@@ -351,11 +351,75 @@ type Marks struct {
 	// Lyrics are the syllables sung on this note, one per verse.
 	Lyrics []Lyric
 
+	// Chord is the chord symbol written over this note — "Em6", "B7", "N.C."
+	// — with, optionally, the fingering diagram that goes above it.
+	//
+	// It hangs off a note rather than off a measure because that is where it
+	// is read: a bar can change chord twice and the player needs to know
+	// where the second one starts, which is a note and not a bar.
+	Chord *ChordSymbol
+
 	// Texts are words written near this note: "rit.", "solo", a fingering, a
 	// note to the player. They hang off a note rather than off a point on the
 	// page, so that they stay where they belong when the music is re-engraved
 	// at another size — which is the same reason symbols do.
 	Texts []TextMark
+}
+
+// ChordSymbol is the name of a chord, written above the staff.
+//
+// It is kept as the pieces a chord name is made of rather than as one string,
+// because the pieces are set differently: the root is full size, the quality
+// is smaller and raised, and the bass note after a slash is full size again.
+// "Cmaj7/G" set as plain text in one size is the mark of a program that did
+// not look at a lead sheet before writing its chord symbols.
+type ChordSymbol struct {
+	// Root is the letter and any accidental: "C", "Eb", "F#".
+	Root string
+	// Quality is everything after it: "m7", "maj9", "sus4", "13(b9)".
+	Quality string
+	// Bass is what follows a slash, for an inversion: the G of "C/G".
+	Bass string
+	// Text replaces all of it when the symbol is not a chord at all — "N.C."
+	// for no chord, or a direction somebody wants set like one.
+	Text string
+	// Frame is the fingering diagram drawn above the symbol, for guitar.
+	Frame *ChordFrame
+}
+
+// String spells the symbol out, for anything that wants it as one piece.
+func (c *ChordSymbol) String() string {
+	if c == nil {
+		return ""
+	}
+	if c.Text != "" {
+		return c.Text
+	}
+	s := c.Root + c.Quality
+	if c.Bass != "" {
+		s += "/" + c.Bass
+	}
+	return s
+}
+
+// ChordFrame is a guitar chord diagram: which fret each string is stopped at.
+//
+// The strings run low to high, as they are drawn left to right. A fret of 0 is
+// an open string, -1 is one that is not played, and anything else is the fret
+// counted from FirstFret.
+type ChordFrame struct {
+	Frets []int
+	// Fingers, when given, are the left-hand fingers for each string, 0 for
+	// none. A beginner needs these more than they need the dots.
+	Fingers []int
+	// FirstFret is the fret the diagram starts at, 1 for the nut. A chord up
+	// the neck is drawn with the fret number beside it rather than with
+	// twelve empty frets above it.
+	FirstFret int
+	// Barre, when more than zero, is the fret a finger lies across, and
+	// BarreFrom and BarreTo the strings it covers.
+	Barre              int
+	BarreFrom, BarreTo int
 }
 
 // TextMark is a piece of writing attached to a note.

@@ -37,6 +37,9 @@ const (
 	bracketThickness = 0.5
 	// measureNumberSize is the type a bar number is set in.
 	measureNumberSize = 1.5
+	// stripHeight is how tall the band over a bar is: enough to hit without
+	// aiming, and no taller than the bar numbers that sit in it.
+	stripHeight = 2.4
 	// markerRoom is how much room a boxed rehearsal mark takes, so that
 	// anything else written over the same bar goes above it.
 	markerRoom = 3.0

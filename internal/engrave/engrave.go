@@ -112,6 +112,15 @@ type Layout struct {
 	// into "change the key" without being told.
 	Headers []HeaderPos `json:"headers"`
 
+	// Strips are the band above each bar of a system: the place a bar is
+	// picked up by, rather than a note in it.
+	//
+	// Selecting a bar is a thing you need to do — "key change from here" is
+	// said about a bar — and until this there was nowhere to click for it. A
+	// bar full of notes has no empty space in it, so clicking inside one
+	// always found a note instead.
+	Strips []StripPos `json:"strips"`
+
 	// Barlines are where each measure ends, so one can be clicked and
 	// changed. A barline is drawn between two bars and belongs to neither as
 	// far as the eye is concerned, which is why it needs saying where it is
@@ -147,6 +156,15 @@ type Hit struct {
 }
 
 // ElementPos is one element's place on the page.
+// StripPos is the clickable band over one bar of one system.
+type StripPos struct {
+	Measure int     `json:"measure"`
+	X0      float64 `json:"x0"`
+	X1      float64 `json:"x1"`
+	Top     float64 `json:"top"`
+	Bottom  float64 `json:"bottom"`
+}
+
 // SystemPos is one system's vertical extent and which measures it holds.
 type SystemPos struct {
 	Top    float64 `json:"top"`
@@ -1006,8 +1024,9 @@ func (e *engraver) measureBox(p *model.Part, m *model.Measure) measureBox {
 	// The gap and the barline are part of what a measure occupies, so they
 	// belong in its width. Leaving them out was the other half of the
 	// overflow bug.
-	box.ideal += sp.BetweenMeasures + sp.AfterBarline
-	box.minimum += sp.BetweenMeasures + sp.AfterBarline
+	left, right := e.barlineRoom(m.RightBarline)
+	box.ideal += sp.BetweenMeasures + sp.AfterBarline + left + right
+	box.minimum += sp.BetweenMeasures + sp.AfterBarline + left + right
 	return box
 }
 
@@ -1189,6 +1208,34 @@ func (e *engraver) drawSystem(parts []*model.Part, boxes [][]measureBox,
 	e.drawVoltas(parts, columns, start, end, above)
 	e.drawMeasureNumbers(columns, start, end, above)
 	e.drawMarkers(parts, columns, start, end, above)
+
+	// The band the bar numbers sit in is also where a bar is picked up. One
+	// band per bar, reaching to where the next begins, so there is no dead
+	// gap over a barline.
+	for mi := start; mi < end && mi-start+1 < len(columns); mi++ {
+		// Not the empty bar drawn past the end of the music: it is not a bar
+		// of the piece yet, so there is nothing there to select.
+		real := false
+		for _, p := range parts {
+			if mi < len(p.Measures) {
+				real = true
+				break
+			}
+		}
+		if !real {
+			continue
+		}
+		e.lay.Strips = append(e.lay.Strips, StripPos{
+			Measure: mi,
+			X0:      columns[mi-start],
+			X1:      columns[mi-start+1],
+			// Stopping at the top staff line, not over it: a band that
+			// reached onto the staff would take clicks meant for the notes
+			// on its top line.
+			Top:    above - stripHeight,
+			Bottom: above,
+		})
+	}
 	// A note's own words go above the chord symbols and above the rehearsal
 	// marks: three things written over the same bar, in three layers rather
 	// than in one place.
@@ -1490,6 +1537,34 @@ func (e *engraver) drawBarline(style model.BarlineStyle, x float64) {
 	default:
 		thin(x)
 	}
+}
+
+// barlineRoom is how much space a barline needs on each side of the point it
+// is drawn at.
+//
+// A barline is not always a line. A repeat opens with a thick stroke, a thin
+// one and two dots, and the dots sit over a space of their own — so leaving
+// the same gap after every barline puts the dots of an opening repeat on top
+// of the first note of the bar it opens, which is what it did.
+func (e *engraver) barlineRoom(style model.BarlineStyle) (left, right float64) {
+	d := e.opt.Defaults
+	heavy := d.BarlineSeparation + d.ThickBarlineThickness
+	dots := 1.1 + smufl.Advance("augmentationDot")
+
+	switch style {
+	case model.BarDouble:
+		return 0, d.BarlineSeparation
+	case model.BarFinal:
+		return 0, heavy
+	case model.BarRepeatEnd:
+		// The dots come before the line, so the room is on the left.
+		return 0.7 + smufl.Advance("augmentationDot"), heavy
+	case model.BarRepeatStart:
+		return 0, dots
+	case model.BarRepeatBoth:
+		return 0.7 + smufl.Advance("augmentationDot"), dots
+	}
+	return 0, 0
 }
 
 func (e *engraver) repeatDots(x float64) {

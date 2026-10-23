@@ -1050,3 +1050,61 @@ func TestBarsReportTheirChanges(t *testing.T) {
 		t.Errorf("meter changes reported at %v, want only bar 3", meter)
 	}
 }
+
+// Every bar has a band over it to pick it up by, and the bands cover the
+// whole system without gaps — a dead patch over a barline would be a bar you
+// could not select by aiming at it.
+func TestEveryBarHasAClickStrip(t *testing.T) {
+	h := newHarness(t)
+	h.post("/api/addstaff?instrument=flute&clef=treble")
+	for bar := 0; bar < 6; bar++ {
+		if bar > 0 {
+			h.post("/api/addmeasure")
+		}
+		for i := 0; i < 4; i++ {
+			h.note(0, bar, 2+i, "quarter") // a full bar: no empty space to click
+		}
+	}
+
+	opt := engrave.DefaultOptions()
+	opt.Mode = engrave.Strip
+	lay := engrave.Engrave(h.app.score, opt)
+
+	strips := map[int]engrave.StripPos{}
+	for _, st := range lay.Strips {
+		strips[st.Measure] = st
+	}
+	for i := 0; i < 6; i++ {
+		st, ok := strips[i]
+		if !ok {
+			t.Errorf("bar %d has no band to click", i+1)
+			continue
+		}
+		if st.X1 <= st.X0 {
+			t.Errorf("bar %d's band has no width", i+1)
+		}
+		if st.Bottom <= st.Top {
+			t.Errorf("bar %d's band has no height", i+1)
+		}
+	}
+
+	// One band ends where the next begins.
+	for i := 1; i < 6; i++ {
+		if gap := strips[i].X0 - strips[i-1].X1; gap > 0.01 || gap < -0.01 {
+			t.Errorf("a %.2f-space gap between the bands of bars %d and %d",
+				gap, i, i+1)
+		}
+	}
+
+	// The band sits above the music, not over it.
+	for _, hit := range lay.Hits {
+		st, ok := strips[hit.Measure]
+		if !ok {
+			continue
+		}
+		if st.Bottom > hit.StaffTop {
+			t.Errorf("bar %d's band reaches down to %.2f, onto the staff at %.2f",
+				hit.Measure+1, st.Bottom, hit.StaffTop)
+		}
+	}
+}

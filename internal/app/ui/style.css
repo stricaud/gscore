@@ -633,6 +633,10 @@ body.native #menubar { padding-left: 12px; }
 #canvas text.g[data-ref],
 #canvas image[data-symbol] { cursor: crosshair; }
 
+body.over-strip #canvas svg,
+body.over-strip #canvas .tune,
+body.over-strip #canvas text.g[data-ref] { cursor: pointer; }
+
 body.shift-select #canvas .tune,
 body.shift-select #canvas svg,
 body.shift-select #canvas text.g[data-ref],
@@ -641,6 +645,18 @@ body.shift-select #canvas image[data-symbol] { cursor: grab; }
 body.player #canvas .tune,
 body.player #canvas svg,
 body.player #canvas text.g[data-ref] { cursor: default; }
+/* The band over a bar: how a whole bar is picked up. Drawn only under the
+   pointer, because a permanent stripe over every bar would be louder than
+   the music it is over. */
+#canvas rect.strip {
+  fill: var(--accent);
+  fill-opacity: .16;
+  stroke: var(--accent);
+  stroke-opacity: .5;
+  stroke-width: 1;
+  pointer-events: none;
+}
+
 #canvas rect.marquee {
   fill: var(--accent);
   fill-opacity: .14;

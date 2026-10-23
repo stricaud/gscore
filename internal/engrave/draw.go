@@ -115,7 +115,8 @@ func (e *engraver) drawMeasure(part *model.Part, b measureBox, x float64, stretc
 	// the sign away, which is why they are not thrown out instead.
 	if b.m.Repeat > 0 {
 		e.drawMeasureRepeat(b, start, x)
-		x += sp.BetweenMeasures * stretch
+		left, right := e.barlineRoom(b.m.RightBarline)
+		x += (sp.BetweenMeasures + left) * stretch
 		e.drawBarline(b.m.RightBarline, x)
 		e.lay.Barlines = append(e.lay.Barlines, BarlinePos{
 			Part: e.partIndex, Measure: b.index, X: x,
@@ -126,7 +127,7 @@ func (e *engraver) drawMeasure(part *model.Part, b measureBox, x float64, stretc
 			Part: e.partIndex, Measure: b.index,
 			XMin: start, XMax: x, StaffTop: e.y, Clef: part.Clef.String(),
 		})
-		return x + sp.AfterBarline*stretch
+		return x + (sp.AfterBarline+right)*stretch
 	}
 
 	// Noteheads first, then stems and beams, which need the whole group.
@@ -195,7 +196,11 @@ func (e *engraver) drawMeasure(part *model.Part, b measureBox, x float64, stretc
 	}
 	e.lay.Hits = append(e.lay.Hits, hit)
 
-	x += sp.BetweenMeasures * stretch
+	// A barline takes as much room as it actually draws: a repeat is a thick
+	// stroke, a thin one and two dots, and the dots want a space of their
+	// own on the side the music is.
+	left, right := e.barlineRoom(b.m.RightBarline)
+	x += (sp.BetweenMeasures + left) * stretch
 	// The bar drawn past the end of the music has no barline: it is not a
 	// bar of the piece until something is written in it.
 	if !b.ahead {
@@ -206,7 +211,7 @@ func (e *engraver) drawMeasure(part *model.Part, b measureBox, x float64, stretc
 			Style: b.m.RightBarline.String(),
 		})
 	}
-	return x + sp.AfterBarline*stretch
+	return x + (sp.AfterBarline+right)*stretch
 }
 
 // drawSignatureChange writes a new key or meter in the middle of the music.

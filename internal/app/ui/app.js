@@ -62,6 +62,8 @@ const state = {
   barlines: [],
   // The clef, key and meter at the head of each system, likewise.
   headers: [],
+  // The band over each bar, which is how a whole bar is picked up.
+  strips: [],
 };
 
 /* ---------- toolbox ---------- */
@@ -758,12 +760,26 @@ async function loadHits() {
   state.hits = d.hits || [];
   state.barlines = d.barlines || [];
   state.headers = d.headers || [];
+  state.strips = d.strips || [];
 }
 
 // headerAt finds the clef, key signature or meter a click landed on.
 function headerAt(x, y) {
   for (const h of state.headers) {
     if (x >= h.x0 && x <= h.x1 && y >= h.top && y <= h.bottom) return h;
+  }
+  return null;
+}
+
+// stripAt finds the bar whose band a point is in.
+//
+// The band sits over the music, where the bar numbers are. It is how a whole
+// bar is selected: "key change from here" is something said about a bar, and
+// clicking inside one finds a note instead — a full bar has no empty space to
+// click in at all.
+function stripAt(x, y) {
+  for (const st of state.strips) {
+    if (x >= st.x0 && x <= st.x1 && y >= st.top && y <= st.bottom) return st;
   }
   return null;
 }
@@ -847,6 +863,60 @@ function elementAt(hit, x, y) {
   return best;
 }
 
+// setupStripHover shows the band under the pointer.
+//
+// An invisible click target that nobody discovers is the same as no click
+// target. It appears on approach and goes when the pointer leaves, so it
+// costs nothing to look at and explains itself the first time the pointer
+// crosses it.
+function setupStripHover() {
+  const wrap = $("#canvas-wrap");
+  let shown = null;
+
+  const clear = () => {
+    currentSVG()?.querySelectorAll("rect.strip").forEach((r) => r.remove());
+    document.body.classList.remove("over-strip");
+    shown = null;
+  };
+
+  wrap.addEventListener("mousemove", (e) => {
+    if (state.readOnly || state.playing) {
+      if (shown !== null) clear();
+      return;
+    }
+    const svg = currentSVG();
+    if (!svg) return;
+    const r = svg.getBoundingClientRect();
+    const x = (e.clientX - r.left) / state.zoom;
+    const y = (e.clientY - r.top) / state.zoom;
+
+    const strip = stripAt(x, y);
+    if (!strip) {
+      if (shown !== null) clear();
+      return;
+    }
+    if (shown === strip.measure) return;
+    clear();
+    shown = strip.measure;
+
+    const z = state.zoom;
+    const band = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+    band.setAttribute("class", "strip");
+    band.setAttribute("x", String(strip.x0 * z));
+    band.setAttribute("y", String(strip.top * z));
+    band.setAttribute("width", String((strip.x1 - strip.x0) * z));
+    band.setAttribute("height", String((strip.bottom - strip.top) * z));
+    band.setAttribute("rx", String(0.3 * z));
+    svg.insertBefore(band, svg.firstChild);
+    document.body.classList.add("over-strip");
+  });
+
+  wrap.addEventListener("mouseleave", () => {
+    clear();
+    document.body.classList.remove("over-strip");
+  });
+}
+
 function setupCanvasClicks() {
   $("#canvas").addEventListener("click", async (e) => {
     // A modified click is a pan gesture, and the click that ends a drag is
@@ -874,6 +944,13 @@ function setupCanvasClicks() {
     const r = svg.getBoundingClientRect();
     const x = (e.clientX - r.left) / state.zoom;
     const y = (e.clientY - r.top) / state.zoom;
+
+    // The band over a bar picks up the whole bar.
+    const strip = stripAt(x, y);
+    if (strip) {
+      selectMeasure(state.selection?.part ?? 0, strip.measure);
+      return;
+    }
 
     // A barline is its own thing to click: the line between two bars, which
     // belongs to neither of them. Plain, it asks what kind of barline to
@@ -3036,7 +3113,7 @@ async function play() {
   const at0 = cursorAt(pb.measures, 0);
   if (at0) {
     moveCursor(at0);
-    scrollToPoint(at0);
+    followCursor(at0);
   }
   follow(pb);
 }
@@ -3155,10 +3232,8 @@ function follow(pb) {
     const pt = cursorAt(pb.measures, shown);
     if (pt) {
       moveCursor(pt);
-      if (pt.measure !== lastMeasure) {
-        scrollToPoint(pt);
-        lastMeasure = pt.measure;
-      }
+      followCursor(pt);
+      lastMeasure = pt.measure;
     }
 
     // And which notes are sounding, which is not the same question: a note
@@ -3232,21 +3307,45 @@ function moveCursor(pt) {
   cursorEl.setAttribute("height", String((pt.bottom - pt.top + 3) * z));
 }
 
-function scrollToPoint(pt) {
-  if (!pt) return;
+// cursorLead is how far across the view the cursor is held, as a fraction of
+// its width. A third leaves most of a screen of music ahead of it.
+const cursorLead = 0.32;
+
+// followCursor keeps the music ahead of the cursor on screen.
+//
+// The view is locked to the cursor and moves with it, every frame, the way a
+// side-scrolling game's camera is locked to the player. What it replaces
+// waited until the cursor had nearly left the screen and then jumped the view
+// forward, which meant the notes about to be played were the ones you could
+// not see — exactly backwards for reading along.
+//
+// Going back at a repeat needs nothing special. The cursor itself goes back
+// to the bar the repeat opens at, because playback follows the written
+// repeats, and the view follows the cursor.
+function followCursor(pt) {
   const wrap = $("#canvas-wrap");
+  if (!wrap || !pt) return;
   const z = state.zoom;
-  const x = pt.x * z;
-  const y = pt.top * z;
-  // In the strip the music runs off to the right, so the view chases the
-  // cursor rather than the other way round.
-  if (x < wrap.scrollLeft + 40 || x > wrap.scrollLeft + wrap.clientWidth - 80) {
-    wrap.scrollTo({ left: Math.max(0, x - wrap.clientWidth * 0.35), behavior: "smooth" });
-  }
-  if (y < wrap.scrollTop || y > wrap.scrollTop + wrap.clientHeight - 80) {
-    wrap.scrollTo({ top: Math.max(0, y - wrap.clientHeight * 0.4), behavior: "smooth" });
+
+  const max = Math.max(0, wrap.scrollWidth - wrap.clientWidth);
+  const want = Math.min(max, Math.max(0, pt.x * z - wrap.clientWidth * cursorLead));
+  // Set rather than animated: it is already a frame at a time, and asking
+  // for a smooth scroll sixty times a second makes each one fight the last.
+  wrap.scrollLeft = want;
+
+  // Down the page the music does not move continuously — it steps from one
+  // system to the next — so this moves only when the cursor has left the
+  // one in view.
+  const top = pt.top * z;
+  const bottom = pt.bottom * z;
+  if (top < wrap.scrollTop || bottom > wrap.scrollTop + wrap.clientHeight) {
+    wrap.scrollTo({
+      top: Math.max(0, top - wrap.clientHeight * 0.3),
+      behavior: "smooth",
+    });
   }
 }
+
 
 function stop() {
   if (rafID) cancelAnimationFrame(rafID);
@@ -3910,6 +4009,7 @@ async function main() {
   setupShiftHint();
   setupFullscreen();
   setupCanvasClicks();
+  setupStripHover();
   setupDrawing();
   markMode();
 

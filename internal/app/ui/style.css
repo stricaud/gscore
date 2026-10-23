@@ -170,7 +170,10 @@ body {
   margin-left: 2px;
   min-width: 190px;
 }
-.submenu:hover > .menu-items,
+/* Hover opens a submenu only while no other has been clicked open, so the
+   pointer crossing the menu on its way somewhere does not leave a trail of
+   panels behind it. */
+.menu-items:not(:has(.submenu.open)) > .submenu:hover > .menu-items,
 .submenu.open > .menu-items { display: block; }
 .submenu-title {
   display: flex;
@@ -401,6 +404,36 @@ dialog button {
 .linklike:hover { text-decoration: underline; }
 
 #keysig { max-width: 620px; }
+#timesig { max-width: 460px; }
+
+#timesig-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 6px;
+  margin: 12px 0;
+}
+.timesig-option {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  padding: 6px 4px;
+  cursor: pointer;
+  color: var(--ink);
+  font: inherit;
+  font-size: 11px;
+}
+.timesig-option:hover { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
+.timesig-option[aria-current="true"] {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent);
+}
+.timesig-art { display: block; line-height: 0; }
+.timesig-art svg { display: block; height: 52px; width: auto; max-width: 100%; }
+.timesig-option span { color: var(--muted); }
 
 #keysig-grid {
   display: grid;

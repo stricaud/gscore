@@ -95,6 +95,40 @@ func (a Articulation) String() string {
 	return articulationNames[a]
 }
 
+// Beam says how a note joins the beam over it.
+type Beam int
+
+// How a note is beamed. Auto leaves it to the engraver, which groups by beat.
+const (
+	BeamAuto Beam = iota
+	// BeamStart opens a beam at this note, BeamContinue carries it on and
+	// BeamStop closes it. Together they spell out a group by hand.
+	BeamStart
+	BeamContinue
+	BeamStop
+	// BeamNone keeps the note off any beam: it gets a flag of its own.
+	BeamNone
+)
+
+var beamNames = [...]string{"auto", "start", "continue", "stop", "none"}
+
+func (b Beam) String() string {
+	if b < BeamAuto || int(b) >= len(beamNames) {
+		return "auto"
+	}
+	return beamNames[b]
+}
+
+// BeamFromName is the inverse, for files and query strings.
+func BeamFromName(s string) (Beam, bool) {
+	for i, n := range beamNames {
+		if n == s {
+			return Beam(i), true
+		}
+	}
+	return BeamAuto, false
+}
+
 // Placement says which side of the staff something sits on. It is a musical
 // decision, not a coordinate: the engraver turns it into a position.
 type Placement int
@@ -295,6 +329,12 @@ type Marks struct {
 	// Stem overrides the direction the engraver would otherwise choose.
 	Stem Stem
 
+	// Beam overrides how this note is beamed to the ones around it. The
+	// engraver groups by beat, which is right nearly always and wrong
+	// whenever the music is phrased against the beat — which is a decision
+	// only the person writing it can make.
+	Beam Beam
+
 	// Dynamic is a volume marking written at this point in the music.
 	Dynamic Dynamic
 
@@ -447,6 +487,16 @@ type Note struct {
 
 	// Accidental is what to print, which Pitch.Alter does not determine.
 	Accidental Accidental
+
+	// Head overrides the shape the notehead is drawn with. On a drum staff
+	// this is how a cymbal is told from a drum; elsewhere it is how a
+	// harmonic or an improvised bar is written.
+	Head NoteheadKind
+
+	// Percussion is the General MIDI drum this note plays, when it is on a
+	// percussion staff. A drum staff's positions name instruments rather than
+	// pitches, so the pitch alone cannot say what sounds.
+	Percussion int
 
 	Marks
 }

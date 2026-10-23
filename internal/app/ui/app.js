@@ -173,7 +173,13 @@ function setupMenus() {
       if (!wasOpen) sub.classList.add("open");
       placeSubmenu(sub);
     });
-    sub.addEventListener("mouseenter", () => placeSubmenu(sub));
+    sub.addEventListener("mouseenter", () => {
+      // Only one submenu at a time. Clicking one opens it and leaves it
+      // open; sliding onto another then showed both, stacked on top of each
+      // other, which is what made the menu unreadable.
+      $$(".submenu").forEach((s) => { if (s !== sub) s.classList.remove("open", "flip"); });
+      placeSubmenu(sub);
+    });
   });
 
   document.addEventListener("click", closeMenus);
@@ -274,6 +280,10 @@ async function action(name) {
     case "copy": await copySelection(); break;
     case "cut": await cutSelection(); break;
     case "paste": await pasteClipboard(); break;
+
+    case "beam-join": await mark("beam", { beam: "join" }, "Beamed together"); break;
+    case "beam-break": await mark("beam", { beam: "break" }, "Beam broken"); break;
+    case "beam-auto": await mark("beam", { beam: "auto" }, "Beaming left to the engraver"); break;
 
     case "pitch-up": await nudge(1); break;
     case "pitch-down": await nudge(-1); break;
@@ -1606,15 +1616,83 @@ async function setHeaderDialog() {
   status("Title and composer set");
 }
 
+// The meters worth a button. Everything else is typed, which is what the
+// escape hatch at the bottom of the picker is for.
+const METERS = [
+  { v: "C",    label: "Common" },
+  { v: "C|",   label: "Cut" },
+  { v: "2/4",  label: "2/4" },
+  { v: "3/4",  label: "3/4" },
+  { v: "4/4",  label: "4/4" },
+  { v: "5/4",  label: "5/4" },
+  { v: "3/8",  label: "3/8" },
+  { v: "6/8",  label: "6/8" },
+  { v: "9/8",  label: "9/8" },
+  { v: "12/8", label: "12/8" },
+  { v: "2/2",  label: "2/2" },
+  { v: "7/8",  label: "7/8" },
+];
+
+// setTimeDialog shows the meters rather than asking for one to be typed.
+//
+// You recognise the shape of 6/8 faster than you decide what to type, and the
+// two with glyphs of their own have no obvious spelling at all — typing "C"
+// for common time and being told it does not look like 4/4 was the box being
+// wrong, not the person using it.
 async function setTimeDialog() {
   const part = state.selection?.part ?? 0;
   const now = state.info?.parts?.[part]?.time || "4/4";
-  const v = await ask({
-    title: "Time signature", label: "Meter", value: now,
-    note: "Written as 4/4 or 6/8. Add a c for the common and cut symbols.",
+
+  // Drawn by the engraver and put into the page, rather than loaded as
+  // images: an SVG inside an <img> is an isolated document and cannot reach
+  // the music font, so every glyph in it would come out as a missing
+  // character box.
+  const drawings = await Promise.all(
+    METERS.map((m) =>
+      fetch("/timesig.svg?space=9&meter=" + encodeURIComponent(m.v))
+        .then((r) => (r.ok ? r.text() : ""))
+        .catch(() => ""))
+  );
+
+  $("#timesig-grid").innerHTML = METERS.map((m, i) =>
+    `<button class="timesig-option" data-meter="${escapeHTML(m.v)}"
+             ${m.v === now || (m.v === "C" && now === "4/4") ? 'aria-current="true"' : ""}>
+       <span class="timesig-art">${drawings[i]}</span>
+       <span>${escapeHTML(m.label)}</span>
+     </button>`).join("");
+
+  const dlg = $("#timesig");
+  let typed = false;
+
+  const pick = (v) => { dlg.returnValue = "picked:" + v; dlg.close(); };
+  $$("#timesig-grid .timesig-option").forEach((b) =>
+    b.addEventListener("click", () => pick(b.dataset.meter)));
+  $("#timesig-other").onclick = () => { typed = true; dlg.close(); };
+
+  const result = await new Promise((resolve) => {
+    const done = () => {
+      dlg.removeEventListener("close", done);
+      resolve(dlg.returnValue);
+    };
+    dlg.addEventListener("close", done);
+    dlg.returnValue = "";
+    dlg.showModal();
   });
-  if (v === null || v === "") return;
-  await setStaffProperty("time", v);
+  $("#timesig-other").onclick = null;
+
+  let meter = null;
+  if (typed) {
+    meter = await ask({
+      title: "Time signature", label: "Meter", value: now,
+      note: "Written as 7/8. C is common time and C| is cut time.",
+    });
+    if (meter === null || meter === "") return;
+  } else if (result.startsWith("picked:")) {
+    meter = result.slice(7);
+  }
+  if (!meter) return;
+
+  await setStaffProperty("time", meter);
 }
 
 async function setInstrumentDialog() {
@@ -2193,9 +2271,114 @@ const VOICES = {
   },
 };
 
+// The kit.
+//
+// A drum is not a note. It has no pitch to speak of, it does not sustain, and
+// what tells a snare from a kick is mostly how fast it dies away and how much
+// of it is noise rather than tone. So these are built from the two things a
+// drum is made of — a band of noise and a short falling tone — in the
+// proportions that make each one recognisable.
+//
+// The keys are General MIDI percussion numbers, the same ones the server
+// sends, so a drum part read out of a NoteWorthy or MusicXML file plays
+// without anything in between.
+const DRUMS = {
+  35: { noise: 0.15, tone: 70, drop: 36, decay: 0.26, type: "lowpass", cut: 220 },  // acoustic kick
+  36: { noise: 0.18, tone: 80, drop: 42, decay: 0.22, type: "lowpass", cut: 260 },  // kick
+  37: { noise: 0.7,  tone: 420, drop: 300, decay: 0.07, type: "bandpass", cut: 1800 }, // side stick
+  38: { noise: 0.85, tone: 190, drop: 90, decay: 0.17, type: "highpass", cut: 400 }, // snare
+  40: { noise: 0.9,  tone: 210, drop: 100, decay: 0.13, type: "highpass", cut: 500 }, // electric snare
+  41: { noise: 0.25, tone: 110, drop: 55, decay: 0.34, type: "lowpass", cut: 500 },  // low floor tom
+  43: { noise: 0.25, tone: 135, drop: 65, decay: 0.32, type: "lowpass", cut: 600 },  // high floor tom
+  45: { noise: 0.25, tone: 165, drop: 80, decay: 0.30, type: "lowpass", cut: 700 },  // low tom
+  47: { noise: 0.25, tone: 200, drop: 95, decay: 0.28, type: "lowpass", cut: 800 },  // low-mid tom
+  48: { noise: 0.25, tone: 240, drop: 110, decay: 0.26, type: "lowpass", cut: 900 }, // high-mid tom
+  50: { noise: 0.25, tone: 290, drop: 130, decay: 0.24, type: "lowpass", cut: 1000 },// high tom
+  42: { noise: 1,    tone: 0,   drop: 0,  decay: 0.055, type: "highpass", cut: 7000 }, // hi-hat closed
+  44: { noise: 1,    tone: 0,   drop: 0,  decay: 0.07, type: "highpass", cut: 6500 }, // hi-hat pedal
+  46: { noise: 1,    tone: 0,   drop: 0,  decay: 0.42, type: "highpass", cut: 6000 }, // hi-hat open
+  49: { noise: 1,    tone: 0,   drop: 0,  decay: 1.5,  type: "highpass", cut: 4000 }, // crash
+  51: { noise: 1,    tone: 0,   drop: 0,  decay: 0.65, type: "highpass", cut: 6500 }, // ride
+  52: { noise: 1,    tone: 0,   drop: 0,  decay: 1.1,  type: "highpass", cut: 3500 }, // chinese
+  53: { noise: 0.75, tone: 1200, drop: 0, decay: 0.5,  type: "highpass", cut: 5000 }, // ride bell
+  55: { noise: 1,    tone: 0,   drop: 0,  decay: 0.55, type: "highpass", cut: 7000 }, // splash
+  56: { noise: 0.3,  tone: 835, drop: 0,  decay: 0.28, type: "bandpass", cut: 2500 }, // cowbell
+};
+
+// noiseBuffer is the white noise every drum is partly made of. One buffer is
+// made and shared: generating two seconds of random numbers for every hi-hat
+// in a four-minute piece is thousands of times more work than reusing it.
+let noise = null;
+function noiseSource() {
+  if (!noise) {
+    const n = audio.sampleRate * 2;
+    noise = audio.createBuffer(1, n, audio.sampleRate);
+    const d = noise.getChannelData(0);
+    for (let i = 0; i < n; i++) d[i] = Math.random() * 2 - 1;
+  }
+  const src = audio.createBufferSource();
+  src.buffer = noise;
+  src.loop = true;
+  return src;
+}
+
+// hit plays one drum.
+function hit(ev, start, master) {
+  const k = DRUMS[ev.drum] || DRUMS[38];
+  const gain = audio.createGain();
+  const filter = audio.createBiquadFilter();
+  filter.type = k.type;
+  filter.frequency.value = k.cut;
+  filter.Q.value = k.type === "bandpass" ? 2.5 : 0.8;
+
+  const peak = (0.35 + 0.65 * ((ev.velocity ?? 90) / 127));
+  const g = gain.gain;
+  g.setValueAtTime(0, start);
+  g.linearRampToValueAtTime(peak, start + 0.001);
+  // A drum is decay and nothing else: no sustain to hold and no release to
+  // taper, which is exactly what makes it read as a hit.
+  g.exponentialRampToValueAtTime(0.0008, start + k.decay);
+
+  if (k.noise > 0) {
+    const src = noiseSource();
+    const ng = audio.createGain();
+    ng.gain.value = k.noise;
+    src.connect(ng);
+    ng.connect(filter);
+    src.start(start);
+    src.stop(start + k.decay + 0.05);
+    voices.push(src);
+  }
+  if (k.tone > 0) {
+    const osc = audio.createOscillator();
+    osc.type = "sine";
+    osc.frequency.setValueAtTime(k.tone, start);
+    if (k.drop > 0) {
+      // The pitch falling away is what makes a kick a kick rather than a
+      // thump: the head tightens and lets go.
+      osc.frequency.exponentialRampToValueAtTime(
+        Math.max(20, k.tone - k.drop), start + k.decay * 0.7);
+    }
+    const tg = audio.createGain();
+    tg.gain.value = 1 - k.noise * 0.6;
+    osc.connect(tg);
+    tg.connect(filter);
+    osc.start(start);
+    osc.stop(start + k.decay + 0.05);
+    voices.push(osc);
+  }
+
+  filter.connect(gain);
+  gain.connect(master);
+}
+
 // sound plays one event. Everything it makes stops by itself and is collected
 // in `voices` so that pressing stop can cut it short.
 function sound(ev, start, master) {
+  if (ev.drum) {
+    hit(ev, start, master);
+    return;
+  }
   const v = VOICES[ev.family] || VOICES.sustained;
   const hz = midiToHz(ev.midi);
 
@@ -2312,7 +2495,10 @@ async function play() {
   // hand before it can be shown.
   await loadHits();
 
-  audio = audio || new (window.AudioContext || window.webkitAudioContext)();
+  if (!audio) {
+    audio = new (window.AudioContext || window.webkitAudioContext)();
+    noise = null;
+  }
   await audio.resume();
 
   const master = audio.createGain();
@@ -2924,6 +3110,7 @@ function setupKeys() {
       case "l": action("set-lyrics"); break;
       case "F2": e.preventDefault(); toggleFingering(); break;
       case "t": action("insert-text"); break;
+      case "b": action("beam-join"); break;
       case "N": case "i":
         selectTool(!state.tool.select);
         break;

@@ -244,6 +244,43 @@ func NoteheadGlyph(v model.NoteValue) string {
 	return "noteheadBlack"
 }
 
+// NoteheadGlyphOf returns the notehead for a value drawn in a given shape.
+//
+// Only the ordinary shape has a different glyph for each duration: an X is an
+// X whether it is a crotchet or a minim, and the two that exist — filled and
+// open — are what say the difference.
+func NoteheadGlyphOf(v model.NoteValue, kind model.NoteheadKind) string {
+	if kind == model.HeadNormal {
+		return NoteheadGlyph(v)
+	}
+	open := v <= model.Half
+	switch kind {
+	case model.HeadX:
+		if open {
+			return "noteheadXHalf"
+		}
+		return "noteheadXBlack"
+	case model.HeadCircleX:
+		return "noteheadCircleX"
+	case model.HeadTriangle:
+		if open {
+			return "noteheadTriangleUpHalf"
+		}
+		return "noteheadTriangleUpBlack"
+	case model.HeadDiamond:
+		if open {
+			return "noteheadDiamondHalf"
+		}
+		return "noteheadDiamondBlack"
+	case model.HeadSlash:
+		if open {
+			return "noteheadSlashHorizontalEnds"
+		}
+		return "noteheadSlashVerticalEnds"
+	}
+	return NoteheadGlyph(v)
+}
+
 // RestGlyph returns the rest for a written note value.
 func RestGlyph(v model.NoteValue) string {
 	switch v {

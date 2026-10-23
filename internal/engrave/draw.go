@@ -340,7 +340,7 @@ func (e *engraver) drawNoteHead(p *placed) {
 			Y:    e.y + stepY(float64(p.step)),
 		})
 	}
-	head := smufl.NoteheadGlyph(p.value)
+	head := smufl.NoteheadGlyphOf(p.value, n.Head)
 	e.lay.Glyphs = append(e.lay.Glyphs, Glyph{
 		Name: head, X: p.x, Y: e.y + stepY(float64(p.step)), Ref: p.index,
 	})
@@ -352,6 +352,9 @@ func (e *engraver) drawNoteHead(p *placed) {
 func (e *engraver) drawChordHeads(p *placed) {
 	ch := p.chord
 	head := smufl.NoteheadGlyph(p.value)
+	if len(ch.Notes) > 0 {
+		head = smufl.NoteheadGlyphOf(p.value, ch.Notes[0].Head)
+	}
 	up := e.stemUp(p)
 
 	steps := make([]int, len(ch.Notes))
@@ -382,7 +385,10 @@ func (e *engraver) drawChordHeads(p *placed) {
 		// A chord is one element: selecting it must light all of it up, and
 		// clicking any of its heads must find it.
 		e.lay.Glyphs = append(e.lay.Glyphs, Glyph{
-			Name: head, X: p.x + offset, Y: e.y + stepY(float64(step)), Ref: p.index,
+			Name:  smufl.NoteheadGlyphOf(p.value, n.Head),
+			X:     p.x + offset,
+			Y:     e.y + stepY(float64(step)),
+			Ref:   p.index,
 		})
 		if i == 0 {
 			e.lay.Refs[p.index] = RefPos{X: p.x, Y: e.y + stepY(float64(step)), Staff: e.y}
@@ -440,8 +446,34 @@ func beamGroups(items []*placed, t model.TimeSignature) [][]*placed {
 			flush()
 			continue
 		}
-		if len(cur) > 0 && beatOf(p.start) != beatOf(cur[0].start) {
+		// A beam written by hand overrides the grouping by beat. Music is
+		// phrased against the beat often enough that the engraver's guess has
+		// to be arguable with.
+		beam := model.BeamAuto
+		if m := p.marks(); m != nil {
+			beam = m.Beam
+		}
+		switch beam {
+		case model.BeamNone:
 			flush()
+			continue
+		case model.BeamStart:
+			flush()
+			cur = append(cur, p)
+			continue
+		case model.BeamContinue:
+			cur = append(cur, p)
+			continue
+		case model.BeamStop:
+			cur = append(cur, p)
+			flush()
+			continue
+		}
+		if len(cur) > 0 && beatOf(p.start) != beatOf(cur[0].start) {
+			// A group opened by hand is not broken by the beat.
+			if m := cur[0].marks(); m == nil || m.Beam != model.BeamStart {
+				flush()
+			}
 		}
 		cur = append(cur, p)
 	}

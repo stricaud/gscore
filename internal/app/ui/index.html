@@ -88,7 +88,14 @@
       </div>
 
       <hr>
-      <button data-action="beam" disabled><span>Beam</span></button>
+      <div class="submenu">
+        <button class="submenu-title"><span>Beam</span><kbd>▸</kbd></button>
+        <div class="menu-items">
+          <button data-action="beam-join"><span>Beam together</span><kbd>B</kbd></button>
+          <button data-action="beam-break"><span>Break the beam</span></button>
+          <button data-action="beam-auto"><span>Automatic</span></button>
+        </div>
+      </div>
       <button data-action="tie-slur" disabled><span>Tie / Slur</span></button>
     </div>
   </div>
@@ -395,6 +402,20 @@
       <button value="ok" type="submit" class="primary" id="ask-ok">OK</button>
     </div>
   </form>
+</dialog>
+
+<dialog id="timesig">
+  <h2>Time signature</h2>
+  <p class="small">Pick the one you want to see on the staff.</p>
+  <div id="timesig-grid"></div>
+  <form method="dialog" class="ask-buttons">
+    <button value="cancel" type="submit">Cancel</button>
+  </form>
+  <p class="small">
+    Something else? Type it as <b>7/8</b>, or <b>C</b> for common time and
+    <b>C|</b> for cut.
+    <button type="button" class="linklike" id="timesig-other">Type a meter…</button>
+  </p>
 </dialog>
 
 <dialog id="lyrics">

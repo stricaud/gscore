@@ -16,6 +16,7 @@ package app
 import (
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/stricaud/gscore/internal/engrave"
 	"github.com/stricaud/gscore/internal/model"
@@ -175,4 +176,75 @@ func (a *App) handleSetKey(w http.ResponseWriter, r *http.Request) {
 		p.Measures[at].Key = &k
 	}
 	writeJSON(w, map[string]any{"status": "ok", "where": "measure", "measure": at})
+}
+
+// handleTimeSigSVG draws one time signature on a fragment of staff.
+//
+// A picker that shows the meters is better than a box to type one in, for the
+// same reason the key signature picker is: you recognise the shape of 6/8
+// faster than you decide what to type, and the two with glyphs of their own —
+// common time and cut time — have no obvious spelling at all. Somebody typing
+// "C" for common time and being told it does not look like 4/4 is the box
+// being wrong, not them.
+func (a *App) handleTimeSigSVG(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+
+	t, err := parseMeter(q.Get("meter"))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	space := 9.0
+	if v, err := strconv.ParseFloat(q.Get("space"), 64); err == nil && v >= 3 && v <= 30 {
+		space = v
+	}
+
+	s := &model.Score{Parts: []*model.Part{{
+		Clef: model.Treble, Time: t, Measures: nil,
+	}}}
+
+	opt := engrave.DefaultOptions()
+	opt.Mode = engrave.Strip
+	opt.ShowTitle = false
+	// No clef: the picture is about the meter, and a treble clef beside every
+	// one of them would be the loudest thing in the picker.
+	opt.Spacings.Margin = 0.5
+	opt.Spacings.MarginY = 1.2
+	opt.Spacings.ClefBefore = 0
+	opt.Spacings.ClefAfter = 0
+	opt.LineWidth = 0
+	lay := engrave.Engrave(s, opt)
+	// The clef is drawn by the layout, so it is lifted back out: there is no
+	// option for a staff without one and inventing one would be a flag for a
+	// picture nothing else asks for.
+	lay.Glyphs = dropClefs(lay.Glyphs)
+
+	ropt := svg.DefaultOptions()
+	ropt.StaffSpace = space
+	ropt.EmbedFont = false
+
+	w.Header().Set("Content-Type", "image/svg+xml")
+	w.Header().Set("Cache-Control", "max-age=3600")
+	if err := svg.Render(w, lay, ropt); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
+}
+
+// dropClefs removes the clef glyphs from a drawing, and shifts what is left
+// back to where the clef would have been.
+func dropClefs(in []engrave.Glyph) []engrave.Glyph {
+	shift := 0.0
+	out := in[:0]
+	for _, g := range in {
+		if strings.HasPrefix(g.Name, "gClef") || strings.HasPrefix(g.Name, "fClef") ||
+			strings.HasPrefix(g.Name, "cClef") || strings.HasPrefix(g.Name, "unpitchedPercussionClef") {
+			if shift == 0 {
+				shift = g.X
+			}
+			continue
+		}
+		g.X -= shift
+		out = append(out, g)
+	}
+	return out
 }

@@ -41,6 +41,13 @@ type Event struct {
 	// there so it can be more specific later.
 	Program int    `json:"program"`
 	Family  string `json:"family"`
+	// Drum is the General MIDI percussion key when this event is a drum
+	// rather than a pitch, and 0 otherwise. A drum staff's positions name
+	// instruments, so what sounds cannot be worked out from the pitch.
+	Drum int `json:"drum,omitempty"`
+	// DrumName is what that instrument is called, for anything that wants to
+	// say what is playing.
+	DrumName string `json:"drumName,omitempty"`
 	// Ref is the element this note came from, numbered exactly as the
 	// engraver numbers its glyphs. That shared numbering is what lets the
 	// editor light up the notehead that is sounding.
@@ -135,7 +142,7 @@ func buildPlayback(s *model.Score) Playback {
 						swell = nil // a written dynamic settles the question
 					}
 					addNote(&out, open, &n.Marks, sounding(p, n.Pitch, shift),
-						vt, d, pi, ref, p.Instrument, loud)
+						vt, d, pi, ref, p.Instrument, loud, n.Percussion)
 				case *model.Chord:
 					if n.Dynamic != model.DynamicNone {
 						loud = n.Dynamic
@@ -143,7 +150,7 @@ func buildPlayback(s *model.Score) Playback {
 					}
 					for _, cn := range n.Notes {
 						addNote(&out, open, &n.Marks, sounding(p, cn.Pitch, shift),
-							vt, d, pi, ref, p.Instrument, loud)
+							vt, d, pi, ref, p.Instrument, loud, cn.Percussion)
 					}
 				}
 				if mk != nil {
@@ -220,8 +227,25 @@ func maxF(a, b float64) float64 {
 }
 
 func addNote(out *Playback, open map[int]int, m *model.Marks, p model.Pitch,
-	start, dur float64, part, ref int, inst model.Instrument, loud model.Dynamic) {
+	start, dur float64, part, ref int, inst model.Instrument, loud model.Dynamic,
+	drum int) {
 	midi := p.MIDI()
+
+	// A drum is a hit, not a note: it does not sustain, it is not tied, and
+	// what sounds is named by the staff position rather than by the pitch.
+	if drum > 0 {
+		name := ""
+		if pn, ok := model.PercussionByKey(drum); ok {
+			name = pn.Name
+		}
+		out.Events = append(out.Events, Event{
+			MIDI: drum, Start: start, Dur: dur, Part: part, Ref: ref,
+			Family: "percussion", Drum: drum, DrumName: name,
+			Velocity: loud.Velocity(),
+		})
+		return
+	}
+
 	if m.TieStop {
 		if idx, ok := open[midi]; ok {
 			// A tie is one sound, not two, so extend what is already running.

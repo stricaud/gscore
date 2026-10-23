@@ -115,9 +115,26 @@ func (a *App) handleInsert(w http.ResponseWriter, r *http.Request) {
 	v := m.Voices[0]
 
 	var el model.Element
-	if q.Get("kind") == "rest" {
+	switch {
+	case q.Get("kind") == "rest":
 		el = &model.Rest{Dur: dur}
-	} else {
+	case p.Clef == model.Percussion:
+		// A drum staff's lines carry no pitches: a position names an
+		// instrument. The note still has a pitch, because everything else —
+		// stems, beams, spacing — works from staff positions, but what
+		// sounds comes from the kit and not from the pitch.
+		drum, ok := model.PercussionFor(step)
+		if !ok {
+			http.Error(w, "nothing is written at that position", http.StatusBadRequest)
+			return
+		}
+		el = &model.Note{
+			Pitch:      pitchForStep(p.Clef, drum.Step),
+			Dur:        dur,
+			Head:       drum.Head,
+			Percussion: drum.Key,
+		}
+	default:
 		// The staff step is what was clicked; the clef turns it into a pitch,
 		// and the key signature decides what it sounds like when no accidental
 		// is written on it.
@@ -874,9 +891,21 @@ func (a *App) handleStaff(w http.ResponseWriter, r *http.Request) {
 // parseMeter reads "4/4", or "4/4c" and "2/2c" for the two that have a symbol
 // of their own.
 func parseMeter(v string) (model.TimeSignature, error) {
+	v = strings.TrimSpace(v)
+
+	// The two meters with glyphs of their own are usually written as those
+	// glyphs: somebody asked for common time by typing "C", which is what it
+	// is called and what is printed, and got told it did not look like 4/4.
+	switch strings.ToLower(v) {
+	case "c", "common":
+		return model.TimeSignature{Beats: 4, BeatValue: 4, Symbol: model.TimeCommon}, nil
+	case "¢", "c|", "cut", "alla breve":
+		return model.TimeSignature{Beats: 2, BeatValue: 2, Symbol: model.TimeCut}, nil
+	}
+
 	sym := model.TimeNumeric
-	if strings.HasSuffix(v, "c") {
-		v = strings.TrimSuffix(v, "c")
+	if strings.HasSuffix(strings.ToLower(v), "c") {
+		v = v[:len(v)-1]
 		sym = model.TimeCommon
 		if v == "2/2" {
 			sym = model.TimeCut
@@ -884,12 +913,14 @@ func parseMeter(v string) (model.TimeSignature, error) {
 	}
 	n, d, ok := strings.Cut(v, "/")
 	if !ok {
-		return model.TimeSignature{}, editError("a meter looks like 4/4")
+		return model.TimeSignature{}, editError(
+			`a meter looks like 4/4, or C for common time and C| for cut`)
 	}
 	beats, err1 := strconv.Atoi(n)
 	value, err2 := strconv.Atoi(d)
 	if err1 != nil || err2 != nil || beats <= 0 || value <= 0 {
-		return model.TimeSignature{}, editError("a meter looks like 4/4")
+		return model.TimeSignature{}, editError(
+			`a meter looks like 4/4, or C for common time and C| for cut`)
 	}
 	return model.TimeSignature{Beats: beats, BeatValue: value, Symbol: sym}, nil
 }
@@ -1707,4 +1738,53 @@ func (a *App) handleGroup(w http.ResponseWriter, r *http.Request) {
 		Name:     q.Get("name"),
 	})
 	writeJSON(w, map[string]any{"status": "ok", "groups": len(a.score.Groups)})
+}
+
+// handleBeam beams the selection as one group, or breaks it apart.
+//
+// The engraver groups by beat, which is right nearly always. "Nearly" is the
+// problem: music phrased against the beat needs the beams drawn against it
+// too, and that is a decision only the person writing it can make.
+func (a *App) handleBeam(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST required", http.StatusMethodNotAllowed)
+		return
+	}
+	q := r.URL.Query()
+	marks, err := a.marksOf(q)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	switch q.Get("beam") {
+	case "join", "":
+		if len(marks) < 2 {
+			http.Error(w, "select two notes or more to beam them together",
+				http.StatusBadRequest)
+			return
+		}
+		for i, m := range marks {
+			switch {
+			case i == 0:
+				m.Beam = model.BeamStart
+			case i == len(marks)-1:
+				m.Beam = model.BeamStop
+			default:
+				m.Beam = model.BeamContinue
+			}
+		}
+	case "break", "none":
+		for _, m := range marks {
+			m.Beam = model.BeamNone
+		}
+	case "auto":
+		for _, m := range marks {
+			m.Beam = model.BeamAuto
+		}
+	default:
+		http.Error(w, "beam is join, break or auto", http.StatusBadRequest)
+		return
+	}
+	writeJSON(w, map[string]int{"changed": len(marks)})
 }

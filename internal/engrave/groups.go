@@ -135,11 +135,16 @@ func (e *engraver) drawGroups(parts []*model.Part, left float64, tops []float64,
 	}
 
 	for _, g := range e.score.Groups {
-		if g.First < 0 || g.Last >= len(tops) || g.Last <= g.First {
-			continue // a group of one staff needs no bracket
+		// A group names staves by their number in the score, and the ones
+		// drawn are only those not hidden. Hiding the lower half of a piano
+		// should not leave its brace reaching into the staff below.
+		fi, ok1 := e.drawnAt(g.First)
+		li, ok2 := e.drawnAt(g.Last)
+		if !ok1 || !ok2 || li <= fi || li >= len(tops) {
+			continue
 		}
-		top := tops[g.First]
-		bottom := tops[g.Last] + staffHeight
+		top := tops[fi]
+		bottom := tops[li] + staffHeight
 		x := left - groupGap
 
 		switch g.Symbol {
@@ -187,7 +192,12 @@ func (e *engraver) drawGroups(parts []*model.Part, left float64, tops []float64,
 		if g.Name == "" {
 			continue
 		}
-		for i := g.First; i <= g.Last && i < len(tops); i++ {
+		fi, ok1 := e.drawnAt(g.First)
+		li, ok2 := e.drawnAt(g.Last)
+		if !ok1 || !ok2 {
+			continue
+		}
+		for i := fi; i <= li && i < len(tops); i++ {
 			named[i] = true
 		}
 	}
@@ -214,10 +224,15 @@ func (e *engraver) drawGroups(parts []*model.Part, left float64, tops []float64,
 func (e *engraver) drawGroupBarlines(x float64, tops []float64) {
 	d := e.opt.Defaults
 	for _, g := range e.score.Groups {
-		if !g.Barlines || g.First < 0 || g.Last >= len(tops) || g.Last <= g.First {
+		if !g.Barlines {
 			continue
 		}
-		for i := g.First; i < g.Last; i++ {
+		fi, ok1 := e.drawnAt(g.First)
+		li, ok2 := e.drawnAt(g.Last)
+		if !ok1 || !ok2 || li <= fi || li >= len(tops) {
+			continue
+		}
+		for i := fi; i < li; i++ {
 			e.lay.Lines = append(e.lay.Lines, Line{
 				X1: x, Y1: tops[i] + staffHeight, X2: x, Y2: tops[i+1],
 				Thickness: d.ThinBarlineThickness,
@@ -294,3 +309,14 @@ func itoa(n int) string {
 
 // unused keeps the smufl import honest if the brace glyph is ever dropped.
 var _ = smufl.Advance
+
+// drawnAt turns a staff's number in the score into its position among the
+// ones being drawn, or says it is not being drawn at all.
+func (e *engraver) drawnAt(staff int) (int, bool) {
+	for i, n := range e.origin {
+		if n == staff {
+			return i, true
+		}
+	}
+	return 0, false
+}

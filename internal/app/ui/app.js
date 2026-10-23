@@ -107,7 +107,22 @@ async function paletteAction(item) {
     status("Dotted notes are written by choosing the duration; the dot tool is not wired yet");
     return;
   }
+  // An ending is a bracket over whole bars, so it acts on the measure the
+  // cursor is in rather than on the note.
+  if (item.ending !== undefined) {
+    await setEnding(item.ending);
+    return;
+  }
   if (item.apply) {
+    // A mark that covers a stretch of music needs a stretch selected. Without
+    // this it was sent for a single note, where a hairpin opens and closes in
+    // the same place and so draws nothing at all — the button appeared to do
+    // nothing, which is worse than refusing.
+    if (item.needsRange && state.multi.length < 2) {
+      status(item.label +
+        " covers a passage \u2014 click a note, then shift-click a later one");
+      return;
+    }
     await mark(item.apply, { [item.apply]: item.value }, item.label);
     return;
   }
@@ -156,6 +171,13 @@ function setupMenus() {
       closeMenus();
       if (!wasOpen) menu.classList.add("open");
     });
+    // Moving back up to the plain items closes the submenu, so the panel
+    // does not sit over the item being reached for.
+    menu.querySelectorAll(".menu-items > button").forEach((b) => {
+      b.addEventListener("mouseenter", () => {
+        $$(".submenu").forEach((s) => s.classList.remove("open", "flip"));
+      });
+    });
     menu.addEventListener("mouseenter", () => {
       // Once one menu is open, sliding along the bar opens the others, the
       // way a menu bar is expected to behave.
@@ -170,17 +192,17 @@ function setupMenus() {
   $$(".submenu").forEach((sub) => {
     sub.querySelector(".submenu-title").addEventListener("click", (e) => {
       e.stopPropagation();
-      const wasOpen = sub.classList.contains("open");
-      $$(".submenu").forEach((s) => s.classList.remove("open"));
-      if (!wasOpen) sub.classList.add("open");
-      placeSubmenu(sub);
+      if (sub.classList.contains("open")) {
+        sub.classList.remove("open", "flip");
+        return;
+      }
+      openSubmenu(sub);
     });
-    sub.addEventListener("mouseenter", () => {
-      // Only one submenu at a time. Clicking one opens it and leaves it
-      // open; sliding onto another then showed both, stacked on top of each
-      // other, which is what made the menu unreadable.
-      $$(".submenu").forEach((s) => { if (s !== sub) s.classList.remove("open", "flip"); });
-      placeSubmenu(sub);
+    // Hovering the title opens it and closes every other, which is how a
+    // menu bar behaves. Hovering the open panel itself must not close it, so
+    // the listener is on the title and not on the submenu as a whole.
+    sub.querySelector(".submenu-title").addEventListener("mouseenter", () => {
+      openSubmenu(sub);
     });
   });
 
@@ -198,6 +220,17 @@ function setupMenus() {
 function closeMenus() {
   $$(".menu").forEach((m) => m.classList.remove("open"));
   $$(".submenu").forEach((m) => m.classList.remove("open", "flip"));
+}
+
+// openSubmenu shows one submenu and closes the rest.
+//
+// Exactly one is open at a time, and this is the only thing that decides it.
+function openSubmenu(sub) {
+  $$(".submenu").forEach((s) => {
+    if (s !== sub) s.classList.remove("open", "flip");
+  });
+  sub.classList.add("open");
+  placeSubmenu(sub);
 }
 
 // placeSubmenu opens a submenu to the left instead of the right when there is

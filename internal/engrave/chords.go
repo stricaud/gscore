@@ -59,6 +59,21 @@ const (
 func (e *engraver) systemChordRoom(parts []*model.Part, start, end int) float64 {
 	room := 0.0
 	for _, p := range parts {
+		if r := e.partChordRoom(p, start, end); r > room {
+			room = r
+		}
+	}
+	return room
+}
+
+// partChordRoom is how much room one staff's chord symbols need above it.
+//
+// Per staff, not per system. A chart has the chords over the piano and
+// nothing over the drums, and widening every gap in the score by the height
+// of a guitar diagram pushes a pianist's two staves half a page apart.
+func (e *engraver) partChordRoom(p *model.Part, start, end int) float64 {
+	room := 0.0
+	{
 		for mi := start; mi < end && mi < len(p.Measures); mi++ {
 			for _, v := range p.Measures[mi].Voices {
 				for _, el := range v.Elements {
@@ -74,6 +89,35 @@ func (e *engraver) systemChordRoom(parts []*model.Part, start, end int) float64 
 		}
 	}
 	return room
+}
+
+// partVerses is how many lines of words are written under one staff.
+func partVerses(p *model.Part) int {
+	most := 0
+	for _, m := range p.Measures {
+		for _, v := range m.Voices {
+			for _, el := range v.Elements {
+				mk := marksOf(el)
+				if mk == nil {
+					continue
+				}
+				for _, ly := range mk.Lyrics {
+					if ly.Verse > most {
+						most = ly.Verse
+					}
+				}
+			}
+		}
+	}
+	return most
+}
+
+// roomBelow is the space one staff needs under it for its own words.
+func roomBelow(p *model.Part) float64 {
+	if n := partVerses(p); n > 0 {
+		return lyricDrop + float64(n-1)*lyricLine
+	}
+	return 0
 }
 
 // chordHeight is how much room a chord symbol and its diagram need above the

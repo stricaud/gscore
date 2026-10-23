@@ -170,10 +170,10 @@ body {
   margin-left: 2px;
   min-width: 190px;
 }
-/* Hover opens a submenu only while no other has been clicked open, so the
-   pointer crossing the menu on its way somewhere does not leave a trail of
-   panels behind it. */
-.menu-items:not(:has(.submenu.open)) > .submenu:hover > .menu-items,
+/* Which submenu is open is decided in script and nowhere else.
+   Opening on :hover as well left a panel behind for every submenu the
+   pointer crossed on its way down the menu — five of them stacked on top of
+   one another. Two rules deciding the same thing is one rule too many. */
 .submenu.open > .menu-items { display: block; }
 .submenu-title {
   display: flex;
@@ -190,10 +190,9 @@ body {
   border-radius: 4px;
   cursor: pointer;
 }
-.submenu:hover > .submenu-title,
 .submenu.open > .submenu-title { background: var(--accent); color: #fff; }
-.submenu:hover > .submenu-title kbd,
 .submenu.open > .submenu-title kbd { color: #fff; background: rgba(255,255,255,.2); }
+.submenu > .submenu-title:hover { background: var(--accent); color: #fff; }
 /* A submenu that would run off the right edge opens to the left instead. */
 .submenu.flip > .menu-items { left: auto; right: 100%; margin: 0 2px 0 0; }
 

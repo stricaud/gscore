@@ -101,6 +101,13 @@ func buildDemo() *model.Score {
 		Key:  model.KeySignature{Fifths: 1, Mode: model.Minor},
 		Time: model.TimeSignature{Beats: 4, BeatValue: 4},
 	}
+	// The pianist's left hand: the other half of a grand staff.
+	left := &model.Part{
+		Name: "Piano", Instrument: model.AcousticGrandPiano,
+		Clef: model.Bass,
+		Key:  model.KeySignature{Fifths: 1, Mode: model.Minor},
+		Time: model.TimeSignature{Beats: 4, BeatValue: 4},
+	}
 	bass := &model.Part{
 		Name: "Bass", Instrument: model.AcousticBass,
 		Clef: model.Bass,
@@ -175,6 +182,20 @@ func buildDemo() *model.Score {
 		}
 		piano.Measures = append(piano.Measures, m)
 
+		// The left hand: a root and a fifth held under the phrase.
+		lm := &model.Measure{Voices: []*model.Voice{{Elements: []model.Element{
+			&model.Chord{
+				Notes: []*model.Note{
+					note(model.StepE, 2, model.Duration{Num: 1, Den: 2}),
+					note(model.StepB, 2, model.Duration{Num: 1, Den: 2}),
+				},
+				Dur: model.Duration{Num: 1, Den: 2},
+			},
+			&model.Rest{Dur: model.Duration{Num: 1, Den: 2}},
+		}}}}
+		lm.RightBarline = m.RightBarline
+		left.Measures = append(left.Measures, lm)
+
 		// Bass: roots, with the words of a line underneath to prove lyrics
 		// sit where they should.
 		b1 := note(model.StepE, 2, q)
@@ -207,25 +228,33 @@ func buildDemo() *model.Score {
 			},
 		}}}
 		dm.RightBarline = piano.Measures[bar].RightBarline
+		// A drummer does not read the same bar written out eight times: after
+		// the first, the sign says to play it again.
+		if bar > 0 && bar != 4 {
+			dm.Repeat = 1
+		}
 		drums.Measures = append(drums.Measures, dm)
 	}
 
-	// The style direction over the first bar.
-	first := piano.Measures[0].Voices[0].Elements[0].(*model.Note)
-	first.Texts = append(first.Texts, model.TextMark{Text: "Moderately", Bold: true})
 
 	s := &model.Score{
 		Identity: model.Identity{
 			Title:    "Walking the Line",
 			Subtitle: "a trio chart",
-			Composer: "music by nobody in particular",
+			// Several lines, the way a credit usually runs.
+			Composer: "Music by A. Composer\nArranged by B. Arranger",
 		},
-		Tempo: model.Tempo{BPM: 120, Unit: q},
-		Parts: []*model.Part{piano, bass, drums},
+		Tempo: model.Tempo{BPM: 120, Unit: q, Text: "Moderately"},
+		Parts: []*model.Part{piano, left, bass, drums},
 		Groups: []model.StaffGroup{
-			{First: 0, Last: 1, Symbol: model.GroupBracket, Name: ""},
+			// The pianist's two staves are one instrument: a brace, with the
+			// barlines running through the gap.
+			{First: 0, Last: 1, Symbol: model.GroupBrace, Barlines: true, Name: "Piano"},
+			// The rhythm section below it, gathered by a bracket.
+			{First: 2, Last: 3, Symbol: model.GroupBracket},
 		},
 	}
+	s.Normalise()
 	return s
 }
 

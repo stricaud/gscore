@@ -1103,6 +1103,14 @@ func (a *App) handleHairpin(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	if len(marks) < 2 {
+		// A hairpin that opens and closes on the same note has no width, so
+		// it draws nothing. Saying so is better than appearing to work.
+		http.Error(w,
+			"a hairpin goes from one note to another — select a passage",
+			http.StatusBadRequest)
+		return
+	}
 	for i, m := range marks {
 		m.Hairpin = &model.Hairpin{
 			Kind:  kind,

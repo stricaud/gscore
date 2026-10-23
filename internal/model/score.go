@@ -275,6 +275,13 @@ type Part struct {
 	// Transpose is the interval between this staff's written pitches and what
 	// is heard. Everything stored in Measures is written pitch.
 	Transpose Transposition
+
+	// Hidden leaves the staff out of the drawing without taking it out of
+	// the score. A conductor working on the strings does not want the rest of
+	// the orchestra in the way, and a part still has to sound while it is out
+	// of sight — so this is a decision about the page and not about the
+	// music, and playback ignores it.
+	Hidden bool
 	Measures  []*Measure
 }
 

@@ -318,6 +318,14 @@ func StaffStep(c model.Clef, p model.Pitch) int {
 }
 
 // stepY converts a staff step into a y offset from the staff's top line.
+// staffNumber turns a drawn staff's position into its number in the score.
+func (e *engraver) staffNumber(drawn int) int {
+	if drawn >= 0 && drawn < len(e.origin) {
+		return e.origin[drawn]
+	}
+	return drawn
+}
+
 func stepY(step float64) float64 { return staffHeight - step/2 }
 
 // PitchForStep is the inverse of StaffStep: which pitch is written at a staff
@@ -350,6 +358,10 @@ type engraver struct {
 	nextRef int
 	// partIndex is whose staff is being drawn, for the hit regions.
 	partIndex int
+
+	// origin maps a drawn staff back to its number in the score, which
+	// differs from its position as soon as a staff is hidden.
+	origin []int
 
 	// textRise is how far the words written over a staff have to be lifted
 	// to clear the chord symbols already there.
@@ -517,16 +529,41 @@ func marksOf(el model.Element) *model.Marks {
 }
 
 func (e *engraver) layout() {
-	parts := e.score.Parts
-	if len(parts) == 0 {
+	all := e.score.Parts
+	if len(all) == 0 {
 		return
 	}
 
+	// A hidden staff is left out of the drawing but not out of the score, so
+	// it still claims its element numbers below. Skipping it entirely would
+	// renumber everything after it, and playback numbers the same way — the
+	// highlight would land on the wrong note on every staff under a hidden
+	// one.
+	var parts []*model.Part
+	// Which staff of the score each drawn one is. The editor addresses a note
+	// by the staff it is on, so a drawn staff has to carry its real number
+	// and not its position among the ones that happen to be shown.
+	var origin []int
+	for i, p := range all {
+		if !p.Hidden {
+			parts = append(parts, p)
+			origin = append(origin, i)
+		}
+	}
+	if len(parts) == 0 {
+		// Everything hidden is still a page, and showing nothing at all
+		// would look like a program that had crashed.
+		parts, origin = all[:1], []int{0}
+	}
+	e.origin = origin
+
 	// Refs are claimed here, walking parts then measures, which is the order
 	// playback walks in too.
-	boxes := make([][]measureBox, len(parts))
-	maxMeasures := 0
-	for pi, p := range parts {
+	// Refs are claimed over every part in score order, hidden ones included,
+	// so the numbering matches what playback walks.
+	byPart := make(map[*model.Part][]measureBox, len(all))
+	for _, p := range all {
+		var rows []measureBox
 		for mi, m := range p.Measures {
 			e.clef = p.Clef
 			ch, w := e.signatureAt(p, mi)
@@ -535,8 +572,15 @@ func (e *engraver) layout() {
 			b.change, b.prefix = ch, w
 			b.ideal += w
 			b.minimum += w
-			boxes[pi] = append(boxes[pi], b)
+			rows = append(rows, b)
 		}
+		byPart[p] = rows
+	}
+
+	boxes := make([][]measureBox, len(parts))
+	maxMeasures := 0
+	for pi, p := range parts {
+		boxes[pi] = byPart[p]
 		if n := len(boxes[pi]); n > maxMeasures {
 			maxMeasures = n
 		}
@@ -1044,15 +1088,20 @@ func (e *engraver) drawSystem(parts []*model.Part, boxes [][]measureBox,
 	e.textRise = top - above + markerRoom
 
 	// Words written under a staff need the staff below to move out of the way.
-	wordRoom := 0.0
-	if n := e.verses(); n > 0 {
-		wordRoom = lyricDrop + float64(n-1)*lyricLine
-	}
-	// Chord symbols are written above a staff, so they push the staff above
-	// them up rather than overlapping it.
-	chordRoom := e.headroom()
-	if chordRoom > sp.StaffGap {
-		wordRoom += chordRoom - sp.StaffGap
+	// How much room each staff needs for what is written around it.
+	//
+	// Per staff, not one figure for the whole system. A chart has the chords
+	// over the piano, the words under the voice and nothing around the drums;
+	// widening every gap by the worst case pushes a pianist's two staves half
+	// a page apart for the sake of a guitar diagram three staves away.
+	gapAfter := func(i int) float64 {
+		gap := sp.StaffGap + roomBelow(parts[i])
+		if i+1 < len(parts) {
+			if above := e.partChordRoom(parts[i+1], start, end); above > 0 {
+				gap += above
+			}
+		}
+		return gap
 	}
 
 	// Where each staff of this system was put, for the things drawn across
@@ -1070,7 +1119,7 @@ func (e *engraver) drawSystem(parts []*model.Part, boxes [][]measureBox,
 		e.clef = p.Clef
 		// A hairpin or an octave line cut off at the end of the last system
 		// starts again here, at this system's left edge.
-		e.resumeSpans(pi, sp.Margin+prefix)
+		e.resumeSpans(e.staffNumber(pi), sp.Margin+prefix)
 
 		staffTops = append(staffTops, e.y)
 		// Each staff's clef starts after the names and the bracket, and far
@@ -1104,7 +1153,7 @@ func (e *engraver) drawSystem(parts []*model.Part, boxes [][]measureBox,
 				continue // this part has run out of music before the others
 			}
 			b := boxes[pi][mi]
-			e.partIndex = pi
+			e.partIndex = e.staffNumber(pi)
 			// A change in the measure that opens a system is already written
 			// in the system's head: a new key is announced once, not twice.
 			ideal := b.ideal
@@ -1130,7 +1179,7 @@ func (e *engraver) drawSystem(parts []*model.Part, boxes [][]measureBox,
 		e.breakSpans(pi, right-sp.Margin)
 
 		if pi < len(parts)-1 {
-			e.y += staffHeight + sp.StaffGap + wordRoom
+			e.y += staffHeight + gapAfter(pi)
 		}
 	}
 
@@ -1141,8 +1190,12 @@ func (e *engraver) drawSystem(parts []*model.Part, boxes [][]measureBox,
 		e.drawGroupBarlines(columns[i], staffTops)
 	}
 
-	e.y = top + float64(len(parts)-1)*(staffHeight+sp.StaffGap+wordRoom)
-	e.y += staffHeight + wordRoom
+	// Back to the top of the system, then down past all of it.
+	e.y = top
+	for i := 0; i < len(parts)-1; i++ {
+		e.y += staffHeight + gapAfter(i)
+	}
+	e.y += staffHeight + roomBelow(parts[len(parts)-1])
 	e.lay.Systems = append(e.lay.Systems, SystemPos{
 		// The top reaches above the staff for everything written there: the
 		// chord symbols and their diagrams, and above those the brackets of

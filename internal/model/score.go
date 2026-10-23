@@ -20,7 +20,10 @@
 // geometry separately, which is what makes both halves testable.
 package model
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
 
 // Clef fixes which pitch each staff line carries.
 type Clef int
@@ -202,6 +205,47 @@ type Measure struct {
 	// RightBarline closes the measure. The opening barline of a measure is the
 	// closing barline of the one before it, so only one is stored.
 	RightBarline BarlineStyle
+
+	// Key and Time, when set, change the signature from this measure on. Music
+	// changes key and meter in the middle of a piece, and a signature that
+	// lived only on the part could not say so. Both are pointers because the
+	// absence of a change is not the same as a change to C major.
+	Key  *KeySignature
+	Time *TimeSignature
+
+	// Ending is a volta bracket: the first-time and second-time bars of a
+	// repeat. It is stored per measure of each part, as MusicXML stores it,
+	// and drawn once above the system.
+	Ending *Ending
+}
+
+// Ending is one bracket of a repeated passage — the "1." and "2." written over
+// the bars that differ between times through.
+type Ending struct {
+	// Numbers are the times through that this bracket is played, so a bracket
+	// marked "1., 2." holds both.
+	Numbers []int
+	// Start opens the bracket at this measure and Stop closes it at the end of
+	// this one. A bracket one bar long has both.
+	Start, Stop bool
+	// Open leaves the bracket without its closing hook, which is how a last
+	// ending is written: there is nothing to go back for.
+	Open bool
+}
+
+// Label spells the bracket the way it is printed: "1." or "1., 2.".
+func (e *Ending) Label() string {
+	if e == nil || len(e.Numbers) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	for i, n := range e.Numbers {
+		if i > 0 {
+			b.WriteString(", ")
+		}
+		fmt.Fprintf(&b, "%d.", n)
+	}
+	return b.String()
 }
 
 // Part is one instrumental line, drawn on its own staff.
@@ -214,7 +258,34 @@ type Part struct {
 	Clef       Clef
 	Key        KeySignature
 	Time       TimeSignature
-	Measures   []*Measure
+	// Transpose is the interval between this staff's written pitches and what
+	// is heard. Everything stored in Measures is written pitch.
+	Transpose Transposition
+	Measures  []*Measure
+}
+
+// KeyAt is the key signature in force at a measure, following any change
+// written in an earlier one.
+func (p *Part) KeyAt(index int) KeySignature {
+	k := p.Key
+	for i := 0; i <= index && i < len(p.Measures); i++ {
+		if p.Measures[i].Key != nil {
+			k = *p.Measures[i].Key
+		}
+	}
+	return k
+}
+
+// TimeAt is the meter in force at a measure, following any change written in
+// an earlier one.
+func (p *Part) TimeAt(index int) TimeSignature {
+	t := p.Time
+	for i := 0; i <= index && i < len(p.Measures); i++ {
+		if p.Measures[i].Time != nil {
+			t = *p.Measures[i].Time
+		}
+	}
+	return t
 }
 
 // Score is a complete piece of music.
@@ -256,4 +327,111 @@ func (p *Part) AppendMeasure() *Measure {
 	m := NewMeasure()
 	p.Measures = append(p.Measures, m)
 	return m
+}
+
+/*
+ * Transposing instruments
+ */
+
+// Transposition is the interval between what a player reads and what sounds.
+//
+// An alto saxophone reading a written C sounds the E-flat a major sixth below
+// it, which is Diatonic -5 and Chromatic -9. The two numbers are both needed
+// and for the same reason Pitch.Transpose needs both: the semitones say what
+// is heard and the steps say how it is spelled, and an interval is not fully
+// described by either alone.
+//
+// The direction is written-to-sounding, as MusicXML's <transpose> is, so a
+// score read from one program and written back to another keeps its meaning.
+// gscore stores the written pitches — what is actually printed on that staff —
+// so clicking the staff puts a note exactly where it was clicked, whatever
+// instrument the staff is for. Playback is where the transposition is applied.
+type Transposition struct {
+	Diatonic     int
+	Chromatic    int
+	OctaveChange int
+}
+
+// IsZero reports whether the part sounds as written, which most do.
+func (t Transposition) IsZero() bool {
+	return t.Diatonic == 0 && t.Chromatic == 0 && t.OctaveChange == 0
+}
+
+// Steps and Semitones are the whole interval, octave change included.
+func (t Transposition) Steps() int     { return t.Diatonic + 7*t.OctaveChange }
+func (t Transposition) Semitones() int { return t.Chromatic + 12*t.OctaveChange }
+
+// Apply turns a written pitch into the one that sounds.
+func (t Transposition) Apply(p Pitch) Pitch {
+	if t.IsZero() {
+		return p
+	}
+	return p.Transpose(t.Steps(), t.Semitones())
+}
+
+// Fifths is how far around the circle the written key moves.
+//
+// A key signature is not transposed by moving its accidentals: it is a point
+// on the circle of fifths, and an interval moves it by a fixed number of
+// places. Seven semitones — a fifth — is one place sharpwards, and every other
+// interval follows from that, which is why this is arithmetic rather than a
+// table.
+func (t Transposition) Fifths() int {
+	// Each semitone of the interval is 7 places around the circle, modulo 12.
+	f := (t.Semitones() * 7) % 12
+	if f > 6 {
+		f -= 12
+	}
+	if f < -5 {
+		f += 12
+	}
+	return f
+}
+
+// Written returns the key signature as that instrument's player reads it.
+//
+// A concert-pitch score in C gives an alto saxophone three sharps, because the
+// part is written a major sixth above what it sounds.
+func (t Transposition) Written(k KeySignature) KeySignature {
+	if t.IsZero() {
+		return k
+	}
+	out := k
+	out.Fifths = k.Fifths - t.Fifths()
+	for out.Fifths > 7 {
+		out.Fifths -= 12
+	}
+	for out.Fifths < -7 {
+		out.Fifths += 12
+	}
+	return out
+}
+
+// TranspositionFor gives the usual transposition of an instrument, so that
+// choosing "alto sax" sets up a part that behaves like one without the player
+// having to know the interval by heart.
+//
+// Only the instruments that are not in C are listed; everything else sounds as
+// written and gets the zero value.
+func TranspositionFor(i Instrument) Transposition {
+	switch i {
+	case SopranoSax, Clarinet, Trumpet:
+		// In B-flat: sounds a major second below what is written.
+		return Transposition{Diatonic: -1, Chromatic: -2}
+	case AltoSax:
+		// In E-flat: a major sixth below.
+		return Transposition{Diatonic: -5, Chromatic: -9}
+	case TenorSax:
+		// In B-flat, a major ninth below.
+		return Transposition{Diatonic: -1, Chromatic: -2, OctaveChange: -1}
+	case FrenchHorn, EnglishHorn:
+		// In F: a perfect fifth below.
+		return Transposition{Diatonic: -4, Chromatic: -7}
+	case Piccolo:
+		return Transposition{OctaveChange: 1}
+	case Contrabass, AcousticGuitar, ElectricGuitar, AcousticBass:
+		// Written an octave above what they sound.
+		return Transposition{OctaveChange: -1}
+	}
+	return Transposition{}
 }

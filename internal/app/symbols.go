@@ -23,6 +23,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strconv"
 
 	gscorefmt "github.com/stricaud/gscore/internal/format/gscore"
@@ -442,9 +443,13 @@ func (a *App) handleExportSymbols(w http.ResponseWriter, r *http.Request) {
 	path := r.URL.Query().Get("path")
 	if path == "" && r.URL.Query().Get("dialog") == "1" && a.local {
 		var err error
-		path, err = saveDialog("symbols.gscore")
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusNotImplemented)
+		var shown bool
+		path, shown, err = saveDialog("symbols.gscore")
+		if err != nil || (!shown && path == "") {
+			writeJSON(w, map[string]any{
+				"needPath":  true,
+				"suggested": filepath.Join(a.saveDirectory(), "symbols.gscore"),
+			})
 			return
 		}
 		if path == "" {

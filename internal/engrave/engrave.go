@@ -46,6 +46,9 @@ type Glyph struct {
 type Line struct {
 	X1, Y1, X2, Y2 float64
 	Thickness      float64
+	// Dash is the length of the dashes, in staff spaces, for the broken lines
+	// that octave signs are drawn with. Zero is a solid line.
+	Dash float64
 }
 
 // Text is a word on the page, sized in staff spaces.
@@ -222,7 +225,8 @@ func stepY(step float64) float64 { return staffHeight - step/2 }
 // Engrave lays out a score.
 func Engrave(s *model.Score, opt Options) *Layout {
 	e := &engraver{opt: opt, score: s,
-		lay: &Layout{Refs: map[int]RefPos{}, defaults: opt.Defaults}}
+		spans: map[int]*openSpans{},
+		lay:   &Layout{Refs: map[int]RefPos{}, defaults: opt.Defaults}}
 	e.run()
 	return e.lay
 }
@@ -238,6 +242,27 @@ type engraver struct {
 	nextRef int
 	// partIndex is whose staff is being drawn, for the hit regions.
 	partIndex int
+
+	// spans holds the hairpins and octave lines that are open on each staff.
+	// A spanner reaches from one note to another, which may be in a later
+	// measure or on a later line, so it cannot be drawn where it starts: what
+	// is open is carried along and drawn when it closes, or broken at the end
+	// of the system and resumed on the next.
+	spans map[int]*openSpans
+}
+
+// openSpans are the spanners in progress on one staff.
+type openSpans struct {
+	hairpin *openSpan
+	octave  *openSpan
+}
+
+// openSpan is a spanner that has started and not yet finished.
+type openSpan struct {
+	x      float64 // where it began on this system
+	kind   model.HairpinKind
+	amount int    // octaves, for an octave line
+	label  string // what is written over an octave line
 }
 
 // slot is one element's horizontal allocation within a measure.
@@ -255,6 +280,22 @@ type measureBox struct {
 	slots   []slot
 	ideal   float64
 	minimum float64
+
+	// change is the key or meter change written at the head of this measure,
+	// and prefix how much room it takes. Music changes key in the middle of a
+	// piece far more often than it starts in one, so this is not an edge
+	// case to bolt on afterwards.
+	change signatureChange
+	prefix float64
+}
+
+// signatureChange is a new key or meter taking effect at a measure.
+type signatureChange struct {
+	key     *model.KeySignature
+	from    model.KeySignature
+	time    *model.TimeSignature
+	hasKey  bool
+	hasTime bool
 }
 
 func (e *engraver) run() {
@@ -269,6 +310,9 @@ func (e *engraver) run() {
 		// and these scales climb well above the staff.
 		e.y += e.overhang()
 	}
+	// Brackets and octave signs are drawn above the top staff, which on the
+	// first system means above the top of the page unless room is made.
+	e.y += e.headroom()
 	e.layout()
 
 	e.lay.Height = e.y + sp.marginY()
@@ -284,6 +328,46 @@ func (e *engraver) run() {
 // shows it: the eye runs down a column and finds the same moment in every
 // part. Engraving each part on its own, as the first version did, left the
 // barlines at different places on every staff and the columns meaningless.
+// headroom is how much space the marks written above the staff need.
+//
+// It is measured rather than reserved always: a score with no repeats and no
+// octave signs should not be pushed down the page for marks it does not have.
+func (e *engraver) headroom() float64 {
+	need := 0.0
+	for _, p := range e.score.Parts {
+		for _, m := range p.Measures {
+			if m.Ending != nil && need < voltaRise+1 {
+				need = voltaRise + 1
+			}
+			for _, v := range m.Voices {
+				for _, el := range v.Elements {
+					mk := marksOf(el)
+					if mk == nil || mk.Octave == nil || mk.Octave.Amount <= 0 {
+						continue
+					}
+					if need < octaveRise+1 {
+						need = octaveRise + 1
+					}
+				}
+			}
+		}
+	}
+	return need
+}
+
+// marksOf gets an element's marks, or nil for one that carries none.
+func marksOf(el model.Element) *model.Marks {
+	switch e := el.(type) {
+	case *model.Note:
+		return &e.Marks
+	case *model.Chord:
+		return &e.Marks
+	case *model.Rest:
+		return &e.Marks
+	}
+	return nil
+}
+
 func (e *engraver) layout() {
 	parts := e.score.Parts
 	if len(parts) == 0 {
@@ -296,8 +380,13 @@ func (e *engraver) layout() {
 	maxMeasures := 0
 	for pi, p := range parts {
 		for mi, m := range p.Measures {
+			e.clef = p.Clef
+			ch, w := e.signatureAt(p, mi)
 			b := e.measureBox(p, m)
 			b.index = mi
+			b.change, b.prefix = ch, w
+			b.ideal += w
+			b.minimum += w
 			boxes[pi] = append(boxes[pi], b)
 		}
 		if n := len(boxes[pi]); n > maxMeasures {
@@ -316,13 +405,19 @@ func (e *engraver) layout() {
 	}
 
 	// One prefix width for all parts, so the music starts in the same column
-	// however wide each part's own clef and key signature happen to be.
-	prefix := 0.0
-	for _, p := range parts {
-		if w := e.prefixWidth(p); w > prefix {
-			prefix = w
+	// however wide each part's own clef and key signature happen to be. It is
+	// measured where the system begins, because a key change earlier in the
+	// piece is restated at the head of every system after it.
+	prefixAt := func(at int) float64 {
+		w := 0.0
+		for _, p := range parts {
+			if v := e.prefixWidth(p, at); v > w {
+				w = v
+			}
 		}
+		return w
 	}
+	prefix := prefixAt(0)
 
 	if maxMeasures == 0 {
 		// A part with no measures still has a clef and a key signature, and
@@ -334,6 +429,7 @@ func (e *engraver) layout() {
 		return
 	}
 	for start := 0; start < maxMeasures; {
+		prefix = prefixAt(start)
 		n := e.breakAt(widths[start:], prefix)
 		end := start + n
 		last := end >= maxMeasures
@@ -463,15 +559,15 @@ func (e *engraver) titleBlock() {
 	e.y += 2
 }
 
-func (e *engraver) prefixWidth(p *model.Part) float64 {
+func (e *engraver) prefixWidth(p *model.Part, at int) float64 {
 	sp := e.opt.Spacings
 	clef, _ := smufl.ClefGlyph(p.Clef)
 	w := sp.ClefBefore + smufl.Advance(clef) + sp.ClefAfter
-	w += e.keySignatureWidth(p)
+	w += e.keySignatureWidth(p.KeyAt(at))
 	if e.opt.HideTimeSignature {
 		return w
 	}
-	num, den, sym := smufl.TimeSignatureGlyphs(p.Time)
+	num, den, sym := smufl.TimeSignatureGlyphs(p.TimeAt(at))
 	if sym != "" {
 		w += smufl.Advance(sym)
 	} else {
@@ -488,9 +584,9 @@ func glyphRunWidth(names []string) float64 {
 	return w
 }
 
-func (e *engraver) keySignatureWidth(p *model.Part) float64 {
+func (e *engraver) keySignatureWidth(k model.KeySignature) float64 {
 	sp := e.opt.Spacings
-	n := p.Key.Fifths
+	n := k.Fifths
 	if n < 0 {
 		n = -n
 	}
@@ -498,7 +594,7 @@ func (e *engraver) keySignatureWidth(p *model.Part) float64 {
 		return 0
 	}
 	glyph := "accidentalSharp"
-	if p.Key.Fifths < 0 {
+	if k.Fifths < 0 {
 		glyph = "accidentalFlat"
 	}
 	return float64(n)*(smufl.Advance(glyph)+sp.BetweenKeyAccidentals) + sp.AfterKeySignature
@@ -518,9 +614,7 @@ func (e *engraver) measureBox(p *model.Part, m *model.Measure) measureBox {
 		s := slot{elem: el, index: e.nextRef}
 		e.nextRef++
 		s.width = e.elementWidth(el)
-		if n, ok := el.(*model.Note); ok && n.Accidental != model.NoAccidental {
-			s.lead = smufl.Advance(smufl.AccidentalGlyph(n.Accidental)) + sp.AccidentalToNote
-		}
+		s.lead = e.accidentalLead(el)
 		box.slots = append(box.slots, s)
 		box.ideal += s.lead + s.width
 		box.minimum += s.lead + sp.MinNote
@@ -536,6 +630,118 @@ func (e *engraver) measureBox(p *model.Part, m *model.Measure) measureBox {
 	box.ideal += sp.BetweenMeasures + sp.AfterBarline
 	box.minimum += sp.BetweenMeasures + sp.AfterBarline
 	return box
+}
+
+// signatureAt works out what, if anything, is written at the head of a
+// measure, and how wide it is.
+//
+// A key change is not only the new signature: the accidentals the old one had
+// and the new one does not are cancelled with naturals first, which is why
+// what came before has to be known here.
+func (e *engraver) signatureAt(p *model.Part, index int) (signatureChange, float64) {
+	var ch signatureChange
+	if index < 0 || index >= len(p.Measures) {
+		return ch, 0
+	}
+	m := p.Measures[index]
+	// The first measure's signature is drawn in the system prefix, not here.
+	if index == 0 {
+		return ch, 0
+	}
+	sp := e.opt.Spacings
+	w := 0.0
+
+	if m.Key != nil {
+		ch.key, ch.hasKey = m.Key, true
+		ch.from = p.KeyAt(index - 1)
+		naturals, accidentals := keyChangeSteps(p.Clef, ch.from, *m.Key)
+		for range naturals {
+			w += smufl.Advance("accidentalNatural") + sp.BetweenKeyAccidentals
+		}
+		glyph := "accidentalSharp"
+		if m.Key.Fifths < 0 {
+			glyph = "accidentalFlat"
+		}
+		for range accidentals {
+			w += smufl.Advance(glyph) + sp.BetweenKeyAccidentals
+		}
+		if w > 0 {
+			w += sp.AfterKeySignature
+		}
+	}
+	if m.Time != nil && !e.opt.HideTimeSignature {
+		ch.time, ch.hasTime = m.Time, true
+		num, den, sym := smufl.TimeSignatureGlyphs(*m.Time)
+		if sym != "" {
+			w += smufl.Advance(sym) + sp.AfterTimeSignature
+		} else {
+			w += math.Max(glyphRunWidth(num), glyphRunWidth(den)) + sp.AfterTimeSignature
+		}
+	}
+	if w > 0 {
+		// A signature change is announced, not squeezed in: a little air in
+		// front of it separates it from the bar it follows.
+		w += sp.ClefBefore
+	}
+	return ch, w
+}
+
+// keyChangeSteps gives the staff steps of the naturals that cancel the old key
+// and of the accidentals of the new one.
+//
+// Cancelling is not a matter of taste: going from three sharps to one flat,
+// the two sharps that go away are written out as naturals, or a player reads
+// them as still in force. Going from one sharp to three, nothing is cancelled
+// because nothing was taken away.
+func keyChangeSteps(c model.Clef, from, to model.KeySignature) (naturals, accidentals []int) {
+	accidentals = keyAccidentalSteps(c, to.Fifths)
+
+	// Same side of the circle and growing: nothing is lost, nothing cancels.
+	old := keyAccidentalSteps(c, from.Fifths)
+	sameSide := (from.Fifths >= 0) == (to.Fifths >= 0)
+	keep := 0
+	if sameSide {
+		keep = len(accidentals)
+	}
+	if keep > len(old) {
+		keep = len(old)
+	}
+	for _, step := range old[keep:] {
+		naturals = append(naturals, step)
+	}
+	return naturals, accidentals
+}
+
+// accidentalLead is how much room an element needs to the left of its
+// noteheads for the accidentals written on them.
+//
+// A chord needs this as much as a single note does, and for longer: three
+// noteheads a second apart carry their accidentals in a column, not one on top
+// of another. Taking the widest is enough for them not to collide with the
+// music in front.
+func (e *engraver) accidentalLead(el model.Element) float64 {
+	sp := e.opt.Spacings
+	widest := 0.0
+	consider := func(a model.Accidental) {
+		if a == model.NoAccidental {
+			return
+		}
+		if w := smufl.Advance(smufl.AccidentalGlyph(a)); w > widest {
+			widest = w
+		}
+	}
+	switch n := el.(type) {
+	case *model.Note:
+		consider(n.Accidental)
+	case *model.Chord:
+		for _, cn := range n.Notes {
+			consider(cn.Accidental)
+		}
+	}
+	if widest == 0 {
+		return 0
+	}
+	return sp.BeforeAccidental + widest + sp.AccidentalToNote
 }
 
 // elementWidth is the proportional spacing rule that replaces the fixed
@@ -586,13 +792,20 @@ func (e *engraver) drawSystem(parts []*model.Part, boxes [][]measureBox,
 	right := x
 
 	top := e.y
+	// The volta brackets belong to the system, not to a staff: they are drawn
+	// once above the top one before the staves move the cursor down.
+	e.drawVoltas(parts, columns, start, end, top)
+
 	for pi, p := range parts {
 		e.clef = p.Clef
+		// A hairpin or an octave line cut off at the end of the last system
+		// starts again here, at this system's left edge.
+		e.resumeSpans(pi, sp.Margin+prefix)
 
 		px := sp.Margin + sp.ClefBefore
 		px = e.drawClef(p, px)
-		px = e.drawKeySignature(p, px)
-		e.drawTimeSignature(p, px)
+		px = e.drawKeySignature(p, p.KeyAt(start), px)
+		e.drawTimeSignature(p, p.TimeAt(start), px)
 
 		for mi := start; mi < end; mi++ {
 			if mi >= len(boxes[pi]) {
@@ -600,12 +813,19 @@ func (e *engraver) drawSystem(parts []*model.Part, boxes [][]measureBox,
 			}
 			b := boxes[pi][mi]
 			e.partIndex = pi
+			// A change in the measure that opens a system is already written
+			// in the system's head: a new key is announced once, not twice.
+			ideal := b.ideal
+			if mi == start && b.prefix > 0 {
+				ideal -= b.prefix
+				b.prefix = 0
+			}
 			slotWidth := widths[mi] * stretch
 			// Each part fills its column at whatever rate its own content
 			// needs, so the columns stay aligned even when one staff is busier.
 			s := 1.0
-			if b.ideal > 0 {
-				s = slotWidth / b.ideal
+			if ideal > 0 {
+				s = slotWidth / ideal
 			}
 			e.drawMeasure(p, b, columns[mi-start], s)
 		}
@@ -613,6 +833,7 @@ func (e *engraver) drawSystem(parts []*model.Part, boxes [][]measureBox,
 		// The staff lines are drawn last, reaching exactly as far as the
 		// music. Nothing can hang off the end of them.
 		e.staffLines(sp.Margin, right-sp.Margin)
+		e.breakSpans(pi, right-sp.Margin)
 
 		if pi < len(parts)-1 {
 			e.y += staffHeight + sp.StaffGap
@@ -708,16 +929,16 @@ func keySignatureStart(c model.Clef, sharps bool) int {
 	return step
 }
 
-func (e *engraver) drawKeySignature(p *model.Part, x float64) float64 {
-	if p.Key.Fifths == 0 {
+func (e *engraver) drawKeySignature(p *model.Part, k model.KeySignature, x float64) float64 {
+	if k.Fifths == 0 {
 		return x
 	}
 	sp := e.opt.Spacings
 	glyph := "accidentalSharp"
-	if p.Key.Fifths < 0 {
+	if k.Fifths < 0 {
 		glyph = "accidentalFlat"
 	}
-	for _, step := range keyAccidentalSteps(p.Clef, p.Key.Fifths) {
+	for _, step := range keyAccidentalSteps(p.Clef, k.Fifths) {
 		e.lay.Glyphs = append(e.lay.Glyphs, Glyph{
 			Name: glyph, X: x, Y: e.y + stepY(float64(step)),
 		})
@@ -726,12 +947,18 @@ func (e *engraver) drawKeySignature(p *model.Part, x float64) float64 {
 	return x + sp.AfterKeySignature
 }
 
-func (e *engraver) drawTimeSignature(p *model.Part, x float64) float64 {
+func (e *engraver) drawTimeSignature(p *model.Part, t model.TimeSignature, x float64) float64 {
 	if e.opt.HideTimeSignature {
 		return x
 	}
+	return e.placeTimeSignature(t, x)
+}
+
+// placeTimeSignature draws one meter at x, wherever it is called for: at the
+// head of a system or in the middle of a line where the meter changes.
+func (e *engraver) placeTimeSignature(t model.TimeSignature, x float64) float64 {
 	sp := e.opt.Spacings
-	num, den, sym := smufl.TimeSignatureGlyphs(p.Time)
+	num, den, sym := smufl.TimeSignatureGlyphs(t)
 	if sym != "" {
 		e.lay.Glyphs = append(e.lay.Glyphs, Glyph{Name: sym, X: x, Y: e.y + stepY(4)})
 		return x + smufl.Advance(sym) + sp.AfterTimeSignature

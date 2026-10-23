@@ -297,6 +297,67 @@ type Marks struct {
 
 	// Dynamic is a volume marking written at this point in the music.
 	Dynamic Dynamic
+
+	// Hairpin is a crescendo or diminuendo opening or closing here. Unlike a
+	// Dynamic, which is an instant, this covers the stretch between the note
+	// it starts on and the one it stops on.
+	Hairpin *Hairpin
+
+	// Octave is an 8va or 8vb line opening or closing here. The notes under
+	// it are written where they are drawn and sound where the line says, so
+	// the model keeps the written pitch and playback does the shifting.
+	Octave *OctaveShift
+}
+
+// HairpinKind is which way a hairpin opens.
+type HairpinKind int
+
+// The two hairpins. A crescendo opens to the right, a diminuendo closes.
+const (
+	Crescendo HairpinKind = iota
+	Diminuendo
+)
+
+func (h HairpinKind) String() string {
+	if h == Diminuendo {
+		return "diminuendo"
+	}
+	return "crescendo"
+}
+
+// Hairpin is a gradual change of volume drawn as a wedge under the staff.
+type Hairpin struct {
+	Kind HairpinKind
+	// Start opens the wedge at this element, Stop closes it at this one. A
+	// hairpin over a single note has both, which is how it is removed from
+	// one note without disturbing its neighbours.
+	Start, Stop bool
+}
+
+// OctaveShift is an 8va, 8vb, 15ma or 15mb line.
+//
+// Amount is in octaves and signed: 1 for 8va above the staff, -1 for 8vb
+// below, 2 and -2 for the fifteenths.
+type OctaveShift struct {
+	Amount      int
+	Start, Stop bool
+}
+
+// Label spells the line the way it is printed over the music.
+func (o *OctaveShift) Label() string {
+	switch {
+	case o == nil:
+		return ""
+	case o.Amount >= 2:
+		return "15ma"
+	case o.Amount == 1:
+		return "8va"
+	case o.Amount == -1:
+		return "8vb"
+	case o.Amount <= -2:
+		return "15mb"
+	}
+	return ""
 }
 
 // WrittenDuration is the duration the notehead shows, which differs from the

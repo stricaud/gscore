@@ -808,8 +808,25 @@ func (a *App) handleStaff(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		p.Time = t
-		changed = append(changed, "time")
+		// The meter belongs to the music, not to one staff of it: everybody
+		// is counting the same bars. A score with 4/4 on one staff and 2/4 on
+		// the next does not mean anything, so this goes on every part.
+		at, hasAt := strconv.Atoi(q.Get("at"))
+		for _, part := range a.score.Parts {
+			if hasAt == nil && at > 0 {
+				measureAt(part, at).Time = &t
+			} else {
+				part.Time = t
+				if len(part.Measures) > 0 {
+					part.Measures[0].Time = nil
+				}
+			}
+		}
+		if hasAt == nil && at > 0 {
+			changed = append(changed, "time change")
+		} else {
+			changed = append(changed, "time")
+		}
 	}
 	if v := q.Get("instrument"); v != "" {
 		inst, ok := model.InstrumentFromName(v)
@@ -823,6 +840,22 @@ func (a *App) handleStaff(w http.ResponseWriter, r *http.Request) {
 		}
 		p.Instrument = inst
 		changed = append(changed, "instrument")
+
+		// An instrument brings its transposition with it, and changing it has
+		// to leave the music sounding as it did: what is printed moves, so
+		// that what is heard does not. Choosing "alto sax" on a part in C
+		// rewrites it in A, three sharps, a major sixth higher — which is
+		// what the player needs to read to produce the same notes.
+		if q.Get("transpose") != "0" {
+			want := model.TranspositionFor(inst)
+			if want != p.Transpose {
+				retranspose(p, p.Transpose, want)
+				p.Transpose = want
+				if !want.IsZero() {
+					changed = append(changed, "transposition")
+				}
+			}
+		}
 	}
 	if len(changed) == 0 {
 		http.Error(w, "nothing to change", http.StatusBadRequest)
@@ -933,4 +966,224 @@ func (a *App) handleInstruments(w http.ResponseWriter, r *http.Request) {
 		out = append(out, entry{Program: p, Name: n, Family: i.Family().String()})
 	}
 	writeJSON(w, out)
+}
+
+// retranspose rewrites a part from one transposition to another, keeping what
+// it sounds like.
+//
+// The written pitches move by the difference between the two intervals, and so
+// does every key signature on the staff — including the changes written in the
+// middle of it, which are just as much part of what the player reads.
+func retranspose(p *model.Part, from, to model.Transposition) {
+	steps := from.Steps() - to.Steps()
+	semis := from.Semitones() - to.Semitones()
+	if steps == 0 && semis == 0 {
+		return
+	}
+
+	shiftKey := func(k model.KeySignature) model.KeySignature {
+		out := k
+		out.Fifths = k.Fifths + to.Fifths() - from.Fifths()
+		for out.Fifths > 7 {
+			out.Fifths -= 12
+		}
+		for out.Fifths < -7 {
+			out.Fifths += 12
+		}
+		return out
+	}
+	p.Key = shiftKey(p.Key)
+
+	for _, m := range p.Measures {
+		if m.Key != nil {
+			k := shiftKey(*m.Key)
+			m.Key = &k
+		}
+		for _, v := range m.Voices {
+			for _, el := range v.Elements {
+				switch n := el.(type) {
+				case *model.Note:
+					movePitch(n, steps, semis)
+				case *model.Chord:
+					for _, cn := range n.Notes {
+						movePitch(cn, steps, semis)
+					}
+				}
+			}
+		}
+	}
+}
+
+// movePitch transposes one note, keeping an accidental it was written with.
+func movePitch(n *model.Note, steps, semis int) {
+	before := n.Accidental
+	n.Pitch = n.Pitch.Transpose(steps, semis)
+	if before == model.NoAccidental {
+		return
+	}
+	// The note was spelled with an accidental, so the transposed one is too,
+	// whatever it turns out to be.
+	switch n.Pitch.Alter {
+	case 2:
+		n.Accidental = model.DoubleSharp
+	case 1:
+		n.Accidental = model.Sharp
+	case 0:
+		n.Accidental = model.Natural
+	case -1:
+		n.Accidental = model.Flat
+	case -2:
+		n.Accidental = model.DoubleFlat
+	}
+}
+
+// handleHairpin writes a crescendo or diminuendo over the selection.
+//
+// A hairpin is not a property of a note, it is a stretch of music: it needs a
+// beginning and an end, which is exactly what a range selection is. One note
+// selected gets a hairpin that opens and closes on it, which is how it is
+// taken off again.
+func (a *App) handleHairpin(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST required", http.StatusMethodNotAllowed)
+		return
+	}
+	q := r.URL.Query()
+
+	kind := model.Crescendo
+	switch q.Get("hairpin") {
+	case "crescendo", "cresc", "<":
+	case "diminuendo", "dim", "decrescendo", ">":
+		kind = model.Diminuendo
+	case "none", "":
+		marks, err := a.marksOf(q)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		for _, m := range marks {
+			m.Hairpin = nil
+		}
+		writeJSON(w, map[string]int{"changed": len(marks)})
+		return
+	default:
+		http.Error(w, "a hairpin is a crescendo or a diminuendo", http.StatusBadRequest)
+		return
+	}
+
+	marks, err := a.marksOf(q)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	for i, m := range marks {
+		m.Hairpin = &model.Hairpin{
+			Kind:  kind,
+			Start: i == 0,
+			Stop:  i == len(marks)-1,
+		}
+	}
+	writeJSON(w, map[string]int{"changed": len(marks)})
+}
+
+// handleOctave writes an 8va or 8vb line over the selection.
+func (a *App) handleOctave(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST required", http.StatusMethodNotAllowed)
+		return
+	}
+	q := r.URL.Query()
+	marks, err := a.marksOf(q)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	amount := 0
+	switch q.Get("octave") {
+	case "8va", "up", "1":
+		amount = 1
+	case "8vb", "down", "-1":
+		amount = -1
+	case "15ma", "2":
+		amount = 2
+	case "15mb", "-2":
+		amount = -2
+	case "none", "":
+		for _, m := range marks {
+			m.Octave = nil
+		}
+		writeJSON(w, map[string]int{"changed": len(marks)})
+		return
+	default:
+		http.Error(w, "an octave line is 8va, 8vb, 15ma or 15mb", http.StatusBadRequest)
+		return
+	}
+
+	for i, m := range marks {
+		m.Octave = &model.OctaveShift{
+			Amount: amount,
+			Start:  i == 0,
+			Stop:   i == len(marks)-1,
+		}
+	}
+	writeJSON(w, map[string]int{"changed": len(marks)})
+}
+
+// handleEnding puts a volta bracket over a measure, on every staff.
+//
+// A repeat belongs to the piece: all the players go back at the same bar and
+// all of them take the second ending the second time. So this is set on every
+// part at once, whichever staff the selection happened to be on.
+func (a *App) handleEnding(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST required", http.StatusMethodNotAllowed)
+		return
+	}
+	q := r.URL.Query()
+	first, _ := strconv.Atoi(q.Get("measure"))
+	last := first
+	if v, err := strconv.Atoi(q.Get("to")); err == nil && v > first {
+		last = v
+	}
+
+	var numbers []int
+	for _, f := range strings.Split(q.Get("numbers"), ",") {
+		if n, err := strconv.Atoi(strings.TrimSpace(f)); err == nil {
+			numbers = append(numbers, n)
+		}
+	}
+	remove := q.Get("ending") == "none"
+	if !remove && len(numbers) == 0 {
+		numbers = []int{1}
+	}
+	open := q.Get("open") == "1"
+
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	changed := 0
+	for _, p := range a.score.Parts {
+		for mi := first; mi <= last; mi++ {
+			if mi < 0 || mi >= len(p.Measures) {
+				continue
+			}
+			if remove {
+				p.Measures[mi].Ending = nil
+			} else {
+				p.Measures[mi].Ending = &model.Ending{
+					Numbers: numbers,
+					Start:   mi == first,
+					Stop:    mi == last,
+					Open:    open,
+				}
+			}
+			changed++
+		}
+	}
+	if changed == 0 {
+		http.Error(w, "there is no such measure", http.StatusBadRequest)
+		return
+	}
+	writeJSON(w, map[string]int{"changed": changed})
 }

@@ -21,9 +21,9 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
-	"strings"
-
 	"strconv"
+	"strings"
+	"time"
 
 	"github.com/stricaud/gscore/internal/engrave"
 	"github.com/stricaud/gscore/internal/format"
@@ -203,9 +203,15 @@ func (a *App) handleSave(w http.ResponseWriter, r *http.Request) {
 		if ext := r.URL.Query().Get("as"); ext != "" {
 			suggested = strings.TrimSuffix(suggested, filepath.Ext(suggested)) + "." + ext
 		}
-		path, err = saveDialog(suggested)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusNotImplemented)
+		var shown bool
+		path, shown, err = saveDialog(suggested)
+		if err != nil || (!shown && path == "") {
+			// No panel: gscore asks for the name itself. Saving is not
+			// something to be defeated by a missing system dialog.
+			writeJSON(w, map[string]any{
+				"needPath":  true,
+				"suggested": filepath.Join(a.saveDirectory(), suggested),
+			})
 			return
 		}
 		if path == "" {
@@ -318,11 +324,29 @@ func (a *App) suggestedName() string {
 }
 
 // saveDialog shows the system's save panel.
-func saveDialog(suggested string) (string, error) {
+// saveDialog shows the system's save panel.
+//
+// It reports whether the panel was actually shown, which matters because every
+// way of failing looks the same from here: AppleScript answers "User canceled"
+// (-128) both when somebody presses Cancel and when the panel could not be put
+// on screen at all. Treating the second as the first is what made File ▸ Save
+// do nothing at all, with no error and no dialog — the worst possible answer.
+//
+// A person takes some time to find a folder and press Cancel. A panel that was
+// never shown comes back at once. That is the difference used here, and when
+// the panel does not appear gscore asks for the name itself rather than
+// quietly giving up.
+func saveDialog(suggested string) (path string, shown bool, err error) {
 	switch runtime.GOOS {
 	case "darwin":
-		script := `POSIX path of (choose file name with prompt "Save score" default name "` +
+		// Bringing the process forward first, or the panel opens behind the
+		// window and looks like nothing happened.
+		script := `tell application "System Events" to set frontmost of ` +
+			`(first process whose unix id is ` + strconv.Itoa(os.Getpid()) + `) to true
+POSIX path of (choose file name with prompt "Save score" default name "` +
 			strings.ReplaceAll(suggested, `"`, "") + `")`
+
+		started := time.Now()
 		cmd := exec.Command("osascript", "-e", script)
 		var stderr strings.Builder
 		cmd.Stderr = &stderr
@@ -330,32 +354,33 @@ func saveDialog(suggested string) (string, error) {
 		if err != nil {
 			if strings.Contains(stderr.String(), "-128") ||
 				strings.Contains(stderr.String(), "User canceled") {
-				return "", nil
+				return "", time.Since(started) > panelShownAfter, nil
 			}
-			return "", fmt.Errorf("save dialog failed: %s", strings.TrimSpace(stderr.String()))
+			return "", false, fmt.Errorf("save dialog failed: %s", strings.TrimSpace(stderr.String()))
 		}
-		return strings.TrimSpace(string(out)), nil
+		return strings.TrimSpace(string(out)), true, nil
 
 	case "linux":
 		for _, tool := range []string{"zenity", "kdialog"} {
-			path, err := exec.LookPath(tool)
+			toolPath, err := exec.LookPath(tool)
 			if err != nil {
 				continue
 			}
 			var cmd *exec.Cmd
 			if tool == "zenity" {
-				cmd = exec.Command(path, "--file-selection", "--save",
+				cmd = exec.Command(toolPath, "--file-selection", "--save",
 					"--confirm-overwrite", "--filename="+suggested)
 			} else {
-				cmd = exec.Command(path, "--getsavefilename", suggested)
+				cmd = exec.Command(toolPath, "--getsavefilename", suggested)
 			}
+			started := time.Now()
 			out, err := cmd.Output()
 			if err != nil {
-				return "", nil
+				return "", time.Since(started) > panelShownAfter, nil
 			}
-			return strings.TrimSpace(string(out)), nil
+			return strings.TrimSpace(string(out)), true, nil
 		}
-		return "", errNoDialog
+		return "", false, errNoDialog
 
 	case "windows":
 		script := `Add-Type -AssemblyName System.Windows.Forms;` +
@@ -363,11 +388,36 @@ func saveDialog(suggested string) (string, error) {
 			`$d.FileName = '` + suggested + `';` +
 			`$d.Filter = 'gscore|*.gscore|MusicXML|*.musicxml|All files|*.*';` +
 			`if ($d.ShowDialog() -eq 'OK') { $d.FileName }`
+		started := time.Now()
 		out, err := exec.Command("powershell", "-NoProfile", "-Command", script).Output()
 		if err != nil {
-			return "", nil
+			return "", time.Since(started) > panelShownAfter, nil
 		}
-		return strings.TrimSpace(string(out)), nil
+		return strings.TrimSpace(string(out)), true, nil
 	}
-	return "", errNoDialog
+	return "", false, errNoDialog
+}
+
+// panelShownAfter is how long a system panel has to have been up for somebody
+// to have had a chance to cancel it. Anything faster never appeared.
+const panelShownAfter = 400 * time.Millisecond
+
+// saveDirectory is where a file typed by name rather than chosen in a panel
+// should land: beside the score it came from, or in the home directory.
+func (a *App) saveDirectory() string {
+	a.mu.RLock()
+	name := a.filename
+	a.mu.RUnlock()
+	if name != "" {
+		if dir := filepath.Dir(name); dir != "" && dir != "." {
+			if abs, err := filepath.Abs(dir); err == nil {
+				return abs
+			}
+			return dir
+		}
+	}
+	if home, err := os.UserHomeDir(); err == nil {
+		return home
+	}
+	return "."
 }

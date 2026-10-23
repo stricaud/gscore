@@ -114,13 +114,19 @@ const (
 )
 
 // nwc1Accidentals maps the low bits of the accidental byte.
+//
+// The order is NoteWorthy's own, which puts "no accidental" last rather than
+// first: the five accidentals are numbered in the order they appear in the
+// program's own palette and the absence of one comes after them. Reading 0 as
+// "none" is the obvious guess and it is wrong — it turns the Requiem into 653
+// double flats, which is how this was found.
 var nwc1Accidentals = map[byte]model.Accidental{
-	0x00: model.NoAccidental,
-	0x01: model.Sharp,
+	0x00: model.Sharp,
+	0x01: model.Flat,
 	0x02: model.Natural,
-	0x03: model.Flat,
-	0x04: model.DoubleSharp,
-	0x05: model.DoubleFlat,
+	0x03: model.DoubleSharp,
+	0x04: model.DoubleFlat,
+	0x05: model.NoAccidental,
 }
 
 // noteValue is the eight-byte record a note or rest carries.

@@ -850,8 +850,12 @@ function markSelection() {
   }
 
   for (const m of picked) {
-    const el = svg.querySelector(`[data-ref="${m.ref}"]`);
-    if (el) el.classList.add("selected");
+    // All of them: a chord is drawn as several noteheads that share one ref,
+    // and a note may carry a hand-drawn symbol with the same ref again.
+    // Lighting up only the first is what made a selected chord look like a
+    // selected note.
+    svg.querySelectorAll(`[data-ref="${m.ref}"]`).forEach((el) =>
+      el.classList.add("selected"));
   }
 
   if (picked.length) {
@@ -867,14 +871,23 @@ function markSelection() {
       if (!el) continue;
       const key = hit.staffTop;
       const b = byStaff.get(key) || {
-        x0: Infinity, x1: -Infinity, top: hit.staffTop,
+        x0: Infinity, x1: -Infinity,
+        top: hit.staffTop - 1.6, bottom: hit.staffTop + STAFF_HEIGHT + 1.6,
       };
       b.x0 = Math.min(b.x0, el.x - 0.5);
       b.x1 = Math.max(b.x1, el.x + el.width + 0.5);
+      // The box has to reach whatever is selected, not just the staff: a
+      // note on a ledger line, the top of a chord, or a symbol drawn well
+      // above the music all belong inside it.
+      const top = Math.min(el.y, el.y2 ?? el.y, el.top ?? Infinity);
+      const bottom = Math.max(el.y, el.y2 ?? el.y, el.bottom ?? -Infinity);
+      b.top = Math.min(b.top, top - 1.4);
+      b.bottom = Math.max(b.bottom, bottom + 1.4);
       byStaff.set(key, b);
     }
     for (const b of byStaff.values()) {
-      svg.insertBefore(selectionRect(b.x0, b.top - 1.6, b.x1 - b.x0, 7.2, z), svg.firstChild);
+      svg.insertBefore(
+        selectionRect(b.x0, b.top, b.x1 - b.x0, b.bottom - b.top, z), svg.firstChild);
     }
     return;
   }
@@ -1182,10 +1195,28 @@ async function afterPackImport(d) {
 
 async function exportSymbolPack() {
   if (state.info?.local) {
-    const res = await fetch("/api/exportsymbols?dialog=1", { method: "POST" });
+    let res = await fetch("/api/exportsymbols?dialog=1", { method: "POST" });
     if (res.ok) {
-      const d = await res.json();
-      status(d.cancelled ? "Ready" : `Shared ${d.symbols} symbols`);
+      let d = await res.json();
+      if (d.needPath) {
+        const where = await ask({
+          title: "Share symbols", label: "Save to",
+          value: d.suggested || "symbols.gscore",
+          note: "The system's save panel would not open here, so type the path.",
+        });
+        if (where === null || where.trim() === "") {
+          status("Ready");
+          return;
+        }
+        res = await fetch("/api/exportsymbols?path=" + encodeURIComponent(where.trim()),
+                          { method: "POST" });
+        if (!res.ok) {
+          status("Could not share: " + (await res.text()).trim());
+          return;
+        }
+        d = await res.json();
+      }
+      status(d.cancelled ? "Save cancelled" : `Shared ${d.symbols} symbols`);
       return;
     }
     status("Could not share: " + (await res.text()).trim());
@@ -1207,14 +1238,38 @@ async function exportSymbolPack() {
 }
 
 async function saveScore() {
-  const res = await fetch("/api/save", { method: "POST" });
+  let res = await fetch("/api/save", { method: "POST" });
   if (!res.ok) {
     status("Could not save: " + (await res.text()).trim());
     return;
   }
-  const d = await res.json();
+  let d = await res.json();
+
+  // The system's save panel could not be shown. That is not a reason for the
+  // menu entry to do nothing, which is what it did before: gscore asks for
+  // the name itself and writes the file.
+  if (d.needPath) {
+    const where = await ask({
+      title: "Save as .gscore",
+      label: "Save to",
+      value: d.suggested || "untitled.gscore",
+      note: "The system's save panel would not open here, so type the path.",
+    });
+    if (where === null || where.trim() === "") {
+      status("Ready");
+      return;
+    }
+    res = await fetch("/api/save?path=" + encodeURIComponent(where.trim()),
+                      { method: "POST" });
+    if (!res.ok) {
+      status("Could not save: " + (await res.text()).trim());
+      return;
+    }
+    d = await res.json();
+  }
+
   if (d.cancelled) {
-    status("Ready");
+    status("Save cancelled");
     return;
   }
   await loadInfo();

@@ -70,6 +70,12 @@ func (e *engraver) drawMeasure(part *model.Part, b measureBox, x float64, stretc
 	sp := e.opt.Spacings
 	start := x
 
+	// A key or meter change is written at the head of the bar it takes effect
+	// in, before any of its music.
+	if b.prefix > 0 {
+		x = e.drawSignatureChange(part, b, x)
+	}
+
 	items := make([]*placed, 0, len(b.slots))
 	at := model.Duration{Num: 0, Den: 1}
 	for i := range b.slots {
@@ -110,8 +116,9 @@ func (e *engraver) drawMeasure(part *model.Part, b measureBox, x float64, stretc
 	e.drawStemsAndBeams(items, part.Time)
 	for _, p := range items {
 		if m := p.marks(); m != nil {
-			e.drawArticulations(m, p.x+noteheadWidth(p.value)/2, p.step, e.stemUp(p))
+			e.drawArticulations(m, p.x+noteheadWidth(p.value)/2, p.step, e.stemUp(p), p.index)
 			e.drawDynamic(m, p)
+			e.spanAt(m, p)
 		}
 	}
 
@@ -155,6 +162,40 @@ func (e *engraver) drawMeasure(part *model.Part, b measureBox, x float64, stretc
 	x += sp.BetweenMeasures * stretch
 	e.drawBarline(b.m.RightBarline, x)
 	return x + sp.AfterBarline*stretch
+}
+
+// drawSignatureChange writes a new key or meter in the middle of the music.
+func (e *engraver) drawSignatureChange(part *model.Part, b measureBox, x float64) float64 {
+	sp := e.opt.Spacings
+	x += sp.ClefBefore
+
+	if b.change.hasKey {
+		naturals, accidentals := keyChangeSteps(part.Clef, b.change.from, *b.change.key)
+		for _, step := range naturals {
+			e.lay.Glyphs = append(e.lay.Glyphs, Glyph{
+				Name: "accidentalNatural", X: x, Y: e.y + stepY(float64(step)),
+			})
+			x += smufl.Advance("accidentalNatural") + sp.BetweenKeyAccidentals
+		}
+		glyph := "accidentalSharp"
+		if b.change.key.Fifths < 0 {
+			glyph = "accidentalFlat"
+		}
+		for _, step := range accidentals {
+			e.lay.Glyphs = append(e.lay.Glyphs, Glyph{
+				Name: glyph, X: x, Y: e.y + stepY(float64(step)),
+			})
+			x += smufl.Advance(glyph) + sp.BetweenKeyAccidentals
+		}
+		if len(naturals)+len(accidentals) > 0 {
+			x += sp.AfterKeySignature
+		}
+	}
+
+	if b.change.hasTime {
+		x = e.placeTimeSignature(*b.change.time, x)
+	}
+	return x
 }
 
 // written picks the notehead for a duration. Callers pass the duration the
@@ -658,7 +699,7 @@ func (e *engraver) drawDynamic(m *model.Marks, p *placed) {
 	e.lay.Glyphs = append(e.lay.Glyphs, Glyph{Name: name, X: x, Y: y})
 }
 
-func (e *engraver) drawArticulations(m *model.Marks, x float64, step int, stemUp bool) {
+func (e *engraver) drawArticulations(m *model.Marks, x float64, step int, stemUp bool, ref int) {
 	if len(m.Articulations) == 0 && len(m.Symbols) == 0 {
 		return
 	}
@@ -695,9 +736,11 @@ func (e *engraver) drawArticulations(m *model.Marks, x float64, step int, stemUp
 		emit(smufl.ArticulationGlyph(a, above))
 	}
 	for _, sm := range m.Symbols {
-		// A nudge moves the symbol from where it would otherwise land.
+		// A nudge moves the symbol from where it would otherwise land. It
+		// carries the ref of the note it belongs to so that it can be
+		// selected, highlighted and dragged like anything else drawn.
 		e.lay.Glyphs = append(e.lay.Glyphs, Glyph{
-			Name: sm.Name, X: x + sm.OffsetX, Y: y + sm.OffsetY,
+			Name: sm.Name, X: x + sm.OffsetX, Y: y + sm.OffsetY, Ref: ref,
 		})
 		if above {
 			y -= gap

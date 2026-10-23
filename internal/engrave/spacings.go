@@ -40,6 +40,11 @@ type Spacings struct {
 	// MinNote is the floor under any element's width.
 	MinNote float64
 
+	// BeforeAccidental is the air left in front of an accidental, separating
+	// it from whatever was written before. Without it the accidental is
+	// pushed up against the previous notehead or its stem and reads as
+	// belonging to that note instead of this one.
+	BeforeAccidental   float64
 	AccidentalToNote   float64 // Accidentals.sbaan
 	BetweenAccidentals float64 // Accidentals.sbaon
 	DotToNote          float64 // AugmentationDots.sbdan
@@ -89,6 +94,7 @@ func DefaultSpacings() Spacings {
 		NoteExponent: 0.6,
 		MinNote:      1.6,
 
+		BeforeAccidental:   0.4,
 		AccidentalToNote:   0.25,
 		BetweenAccidentals: 0.15,
 		DotToNote:          0.35,

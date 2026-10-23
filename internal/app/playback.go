@@ -104,6 +104,13 @@ func buildPlayback(s *model.Score) Playback {
 		open := map[int]int{} // midi -> index in out.Events
 		// A dynamic holds until another replaces it.
 		loud := model.MF
+		// An octave line shifts everything under it; it opens at one note and
+		// closes at another, possibly bars later.
+		shift := 0
+		// A hairpin is a change of volume over a stretch of music, so what it
+		// does cannot be known at the note it starts on. The notes it covers
+		// are collected and scaled once it closes.
+		var swell *swelling
 		for mi, m := range p.Measures {
 			// Voices within a measure sound together, so each starts at the
 			// measure's time and the measure lasts as long as the longest.
@@ -116,18 +123,44 @@ func buildPlayback(s *model.Score) Playback {
 			vt := t
 			for _, el := range v.Elements {
 				d := el.Duration().Float() * secondsPerWhole
+				mk := marksOf(el)
+				if mk != nil && mk.Octave != nil && mk.Octave.Start {
+					shift = mk.Octave.Amount
+				}
+				first := len(out.Events)
 				switch n := el.(type) {
 				case *model.Note:
 					if n.Dynamic != model.DynamicNone {
 						loud = n.Dynamic
+						swell = nil // a written dynamic settles the question
 					}
-					addNote(&out, open, &n.Marks, n.Pitch, vt, d, pi, ref, p.Instrument, loud)
+					addNote(&out, open, &n.Marks, sounding(p, n.Pitch, shift),
+						vt, d, pi, ref, p.Instrument, loud)
 				case *model.Chord:
 					if n.Dynamic != model.DynamicNone {
 						loud = n.Dynamic
+						swell = nil
 					}
 					for _, cn := range n.Notes {
-						addNote(&out, open, &n.Marks, cn.Pitch, vt, d, pi, ref, p.Instrument, loud)
+						addNote(&out, open, &n.Marks, sounding(p, cn.Pitch, shift),
+							vt, d, pi, ref, p.Instrument, loud)
+					}
+				}
+				if mk != nil {
+					if h := mk.Hairpin; h != nil {
+						if h.Start && swell == nil {
+							swell = &swelling{kind: h.Kind, from: first}
+						}
+						if h.Stop && swell != nil {
+							swell.apply(&out, len(out.Events), loud)
+							swell = nil
+						}
+					}
+					if swell != nil {
+						swell.to = len(out.Events)
+					}
+					if mk.Octave != nil && mk.Octave.Stop {
+						shift = 0
 					}
 				}
 				ref++
@@ -229,3 +262,72 @@ func bytesReader(b []byte) io.Reader { return bytes.NewReader(b) }
 
 // fs strips the embedded directory prefix so the UI is served from the root.
 func fsSub(f fs.FS, dir string) (fs.FS, error) { return fs.Sub(f, dir) }
+
+// sounding turns a written pitch into the one that is heard: the staff's
+// transposition, and any octave line over it.
+//
+// An alto saxophone's part is written a major sixth above what comes out of
+// the instrument, and an 8va line means "play this an octave higher than it is
+// written" precisely so that the notes can stay on the staff. Both are
+// differences between the page and the sound, and both belong here rather than
+// in the model, which holds what is printed.
+func sounding(p *model.Part, pitch model.Pitch, octaves int) model.Pitch {
+	out := p.Transpose.Apply(pitch)
+	out.Octave += octaves
+	return out
+}
+
+// marksOf gets an element's marks, or nil for one that carries none.
+func marksOf(el model.Element) *model.Marks {
+	switch e := el.(type) {
+	case *model.Note:
+		return &e.Marks
+	case *model.Chord:
+		return &e.Marks
+	case *model.Rest:
+		return &e.Marks
+	}
+	return nil
+}
+
+// swelling is a hairpin being collected: the events it covers, and which way
+// it goes.
+type swelling struct {
+	kind     model.HairpinKind
+	from, to int
+}
+
+// apply ramps the velocity of everything under the hairpin.
+//
+// A crescendo is not a volume, it is a journey between two: it starts where
+// the music already is and arrives one step louder, unless a written dynamic
+// says otherwise, in which case the dynamic has already replaced this.
+func (s *swelling) apply(out *Playback, end int, loud model.Dynamic) {
+	if s.to > end {
+		s.to = end
+	}
+	n := s.to - s.from
+	if n <= 0 {
+		return
+	}
+	base := out.Events[s.from].Velocity
+	span := 28
+	if s.kind == model.Diminuendo {
+		span = -28
+	}
+	// Clamp so a crescendo from fff does not run off the top.
+	if base+span > 124 {
+		span = 124 - base
+	}
+	if base+span < 16 {
+		span = 16 - base
+	}
+	for i := s.from; i < s.to; i++ {
+		f := float64(i-s.from) / float64(n-1)
+		if n == 1 {
+			f = 1
+		}
+		out.Events[i].Velocity = base + int(float64(span)*f)
+	}
+	_ = loud
+}

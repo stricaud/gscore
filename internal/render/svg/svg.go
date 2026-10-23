@@ -83,8 +83,12 @@ func Render(w io.Writer, lay *engrave.Layout, opt Options) error {
 	b.WriteString("</style>\n")
 
 	for _, ln := range lay.Lines {
-		fmt.Fprintf(&b, `<line x1="%.2f" y1="%.2f" x2="%.2f" y2="%.2f" stroke-width="%.2f"/>`+"\n",
-			ln.X1*s, ln.Y1*s, ln.X2*s, ln.Y2*s, ln.Thickness*s)
+		dash := ""
+		if ln.Dash > 0 {
+			dash = fmt.Sprintf(` stroke-dasharray="%.2f %.2f"`, ln.Dash*s, ln.Dash*s*0.8)
+		}
+		fmt.Fprintf(&b, `<line x1="%.2f" y1="%.2f" x2="%.2f" y2="%.2f" stroke-width="%.2f"%s/>`+"\n",
+			ln.X1*s, ln.Y1*s, ln.X2*s, ln.Y2*s, ln.Thickness*s, dash)
 	}
 
 	for _, c := range lay.Curves {
@@ -96,7 +100,7 @@ func Render(w io.Writer, lay *engrave.Layout, opt Options) error {
 		r, ok := smufl.Glyph(g.Name)
 		if !ok {
 			// Not in the font, so it is one of the user's own symbols.
-			if err := drawSymbol(&b, opt, g); err != nil {
+			if err := drawSymbol(&b, opt, g, opt.Interactive); err != nil {
 				return err
 			}
 			continue
@@ -136,7 +140,7 @@ func Render(w io.Writer, lay *engrave.Layout, opt Options) error {
 // so that it keeps its musical proportions however far the score is zoomed,
 // and rendered without smoothing so the pixels stay the pixels that were
 // drawn.
-func drawSymbol(b *strings.Builder, opt Options, g engrave.Glyph) error {
+func drawSymbol(b *strings.Builder, opt Options, g engrave.Glyph, interactive bool) error {
 	if opt.Symbols == nil {
 		return nil
 	}
@@ -156,8 +160,17 @@ func drawSymbol(b *strings.Builder, opt Options, g engrave.Glyph) error {
 	x := g.X*s - px.OriginX*px.PixelSize*s
 	y := g.Y*s - px.OriginY*px.PixelSize*s
 
+	// The editor needs to be able to point at it: which element it belongs to,
+	// and which symbol it is, so that dragging it knows what to move.
+	attr := ""
+	if interactive {
+		attr = fmt.Sprintf(` data-symbol="%s"`, html.EscapeString(g.Name))
+		if g.Ref != 0 {
+			attr += fmt.Sprintf(` data-ref="%d"`, g.Ref)
+		}
+	}
 	fmt.Fprintf(b, `<image x="%.2f" y="%.2f" width="%.2f" height="%.2f" `+
-		`image-rendering="pixelated" href="data:image/png;base64,%s"/>`+"\n",
-		x, y, w, h, base64.StdEncoding.EncodeToString(png.Bytes()))
+		`image-rendering="pixelated"%s href="data:image/png;base64,%s"/>`+"\n",
+		x, y, w, h, attr, base64.StdEncoding.EncodeToString(png.Bytes()))
 	return nil
 }

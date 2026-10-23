@@ -135,7 +135,44 @@ func (a *App) handleSetKey(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "no such part", http.StatusBadRequest)
 		return
 	}
-	p := a.score.Parts[part]
-	p.Key = model.KeySignature{Fifths: fifths, Mode: p.Key.Mode}
-	writeJSON(w, map[string]string{"status": "ok"})
+	// The key belongs to the piece, so it is set on every staff — but not as
+	// the same number of sharps on each. A part for an instrument in E-flat
+	// is written a major sixth up, and its signature with it, so each staff
+	// gets the signature its own player reads for the key that was asked for.
+	// That is the whole point of knowing a part's transposition.
+	asked := model.KeySignature{Fifths: fifths}
+
+	// A key given for a measure past the first changes key there and leaves
+	// what came before alone, which is how a piece modulates. Given for the
+	// first measure, it is simply what the piece is in.
+	at, atErr := strconv.Atoi(q.Get("at"))
+	if atErr != nil || at <= 0 {
+		for _, p := range a.score.Parts {
+			p.Key = model.KeySignature{Fifths: p.Transpose.Written(asked).Fifths, Mode: p.Key.Mode}
+			// A change written at the very start would be drawn twice.
+			if len(p.Measures) > 0 {
+				p.Measures[0].Key = nil
+			}
+		}
+		writeJSON(w, map[string]string{"status": "ok", "where": "staff"})
+		return
+	}
+	if at >= len(a.score.Parts[part].Measures) {
+		http.Error(w, "there is no such measure", http.StatusBadRequest)
+		return
+	}
+	for _, p := range a.score.Parts {
+		if at >= len(p.Measures) {
+			continue
+		}
+		want := p.Transpose.Written(asked).Fifths
+		// Changing to what is already in force is how a change is taken away.
+		if p.KeyAt(at-1).Fifths == want {
+			p.Measures[at].Key = nil
+			continue
+		}
+		k := model.KeySignature{Fifths: want, Mode: p.KeyAt(at).Mode}
+		p.Measures[at].Key = &k
+	}
+	writeJSON(w, map[string]any{"status": "ok", "where": "measure", "measure": at})
 }

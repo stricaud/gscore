@@ -36,6 +36,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strconv"
+	"strings"
 	"sync"
 
 	"github.com/stricaud/gscore/internal/desktop"

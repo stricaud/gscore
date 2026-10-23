@@ -465,7 +465,22 @@ function setZoom(z) {
   drawScore().then(markSelection);
 }
 
+// A native window cannot download. Clicking a blob link does nothing there:
+// a web view has no download machinery behind it, which is why this appeared
+// to do nothing at all. Running as an application, the file is written by the
+// server through a real save panel; served to a browser, the link still works.
 async function exportSVG() {
+  if (state.info?.local) {
+    const p = new URLSearchParams({ as: "svg", mode: state.mode, space: String(state.zoom) });
+    const res = await fetch("/api/save?" + p.toString(), { method: "POST" });
+    if (!res.ok) {
+      status("Could not export: " + (await res.text()).trim());
+      return;
+    }
+    const d = await res.json();
+    status(d.cancelled ? "Ready" : "Exported " + d.path);
+    return;
+  }
   const res = await fetch(scoreURL());
   const blob = new Blob([await res.text()], { type: "image/svg+xml" });
   const a = document.createElement("a");
@@ -1274,6 +1289,15 @@ async function openKeyPicker(partIndex) {
 // strip has no page breaks to print at. The width is chosen so a system fits
 // the usable part of a portrait page.
 async function printScore() {
+  // A native window has no print machinery and window.open returns nothing
+  // without a UI delegate, so printing is handed to the real browser, which
+  // has both. The page it opens prints itself.
+  if (state.info?.local && state.info?.native) {
+    const res = await fetch("/api/openbrowser?path=/print", { method: "POST" });
+    status(res.ok ? "Opened the print view in your browser"
+                  : "Could not open the print view");
+    return;
+  }
   status("Preparing to print…");
   const res = await fetch(scoreURL({ mode: "page", space: 6, width: 150 }));
   const svgText = await res.text();

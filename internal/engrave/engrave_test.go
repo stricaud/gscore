@@ -576,14 +576,13 @@ func TestBeamedGroupFollowsAnOverride(t *testing.T) {
 			break
 		}
 	}
-	for _, ln := range lay.Lines {
-		if ln.Thickness == lay.Defaults().BeamThickness {
-			if ln.Y1 >= noteY {
-				t.Errorf("the beam sits at y=%.2f, below the noteheads at %.2f, "+
-					"so the override was ignored", ln.Y1, noteY)
-			}
-			return
+	for _, b := range lay.Beams() {
+		_, y := b.Left()
+		if y >= noteY {
+			t.Errorf("the beam sits at y=%.2f, below the noteheads at %.2f, "+
+				"so the override was ignored", y, noteY)
 		}
+		return
 	}
 	t.Error("no beam was drawn")
 }

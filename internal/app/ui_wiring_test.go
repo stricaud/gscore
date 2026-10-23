@@ -294,3 +294,53 @@ func TestDrumLettersAreTestedBeforeTheEditingLetters(t *testing.T) {
 		t.Error("the pad letters are not scoped to a drum staff: they would take over the whole score")
 	}
 }
+
+// TestTheCursorIsPlacedAgainstItsOwnTune guards the arithmetic that decides
+// where the view scrolls to during playback.
+//
+// A book is engraved one tune at a time and the drawings are stacked, so a
+// position out of the engraver is measured from the top of its own tune and
+// not from the top of the page. Scrolling to it without adding the tune's own
+// offset took the view to the top of the book whichever tune was playing,
+// which looks like playback having lost its place rather than like a missing
+// addition.
+func TestTheCursorIsPlacedAgainstItsOwnTune(t *testing.T) {
+	js := readUI(t, "app.js")
+
+	body := functionBody(js, "function followCursor")
+	if body == "" {
+		t.Fatal("could not find followCursor in app.js")
+	}
+	if !strings.Contains(body, "tuneOffsetY") {
+		t.Error("followCursor scrolls to a position without adding the tune's own offset")
+	}
+	if !strings.Contains(js, "function tuneOffsetY") {
+		t.Error("tuneOffsetY is used and not defined")
+	}
+}
+
+// TestPlayFollowsTheTuneOnScreen guards the other half of the same bug.
+//
+// With a whole book on screen the keyboard has no way of knowing which tune
+// somebody means, so it has to mean the one they are looking at. Without
+// this, scrolling to a tune and pressing space played the first one.
+func TestPlayFollowsTheTuneOnScreen(t *testing.T) {
+	js := readUI(t, "app.js")
+
+	body := functionBody(js, "async function play(opts)")
+	if body == "" {
+		t.Fatal("could not find play in app.js")
+	}
+	if !strings.Contains(body, "visibleTune") {
+		t.Error("play does not look at which tune is on screen: in a book it would play the first")
+	}
+	if !strings.Contains(js, "function visibleTune") {
+		t.Error("visibleTune is used and not defined")
+	}
+	// A selection says which tune more precisely than the scroll position
+	// does, so it has to win: clicking a note in one tune and scrolling to
+	// another should still play the note that was clicked.
+	if !strings.Contains(body, "hasSelection()") {
+		t.Error("play does not let a selection override the tune on screen")
+	}
+}

@@ -128,13 +128,73 @@ func DrumKitByID(id string) DrumKit {
 // nobody chose.
 const PadShortcuts = "asdfghjklqwertyuiopzxcvbnm"
 
-// Pads lists a kit's instruments in the order they are shown and typed:
-// highest on the staff first, so the grid reads down the staff the way the
-// kit sits on it — cymbals at the top, the bass drum at the bottom.
-func (k DrumKit) Pads() []PercussionNote {
-	out := append([]PercussionNote(nil), k.Notes...)
-	// A stable sort by position, so two instruments sharing a line stay in
-	// the order the kit wrote them: the first is the ordinary one.
+// shortcutOrder is the order the letters are handed out in: the drums a part
+// is mostly made of, first.
+//
+// A groove is bass drum, snare and hi-hat, so those get the keys under the
+// fingers. Handing the letters out by staff position instead gave "a" to the
+// cowbell and "s" to the Chinese cymbal, and left the snare drum on "j".
+var shortcutOrder = []int{
+	36, 38, 42, 46, // bass drum, snare, hi-hat closed and open
+	49, 51, // crash, ride
+	43, 45, 47, 50, // the toms, low to high
+	35, 37, 53, // the second bass drum, side stick, ride bell
+	41, 44, 52, 55, 56, // low floor tom, foot hi-hat, chinese, splash, cowbell
+}
+
+// shortcutRank is where a drum comes in that order. Anything not named comes
+// after everything named, in the order its kit declares it.
+func shortcutRank(key int) int {
+	for i, k := range shortcutOrder {
+		if k == key {
+			return i
+		}
+	}
+	return len(shortcutOrder)
+}
+
+// Pad is one key of the grid: an instrument, and the letter that types it.
+type Pad struct {
+	PercussionNote
+	Shortcut string
+}
+
+// Pads lists a kit's instruments, ready to be shown and typed.
+//
+// Two different orders are at work here, and running them together was a
+// mistake worth naming. The grid is ordered by staff position, so it reads
+// down the staff the way the kit sits on it — cymbals at the top, the bass
+// drum at the bottom. The letters are handed out by how much a drum is used,
+// so the common ones are under the fingers. Ordering the letters by position
+// as well is what put the cowbell on "a".
+func (k DrumKit) Pads() []Pad {
+	out := make([]Pad, len(k.Notes))
+	for i, n := range k.Notes {
+		out[i] = Pad{PercussionNote: n}
+	}
+
+	// Who gets which letter: by rank, ties broken by the kit's own order, so
+	// the assignment is the same every time the kit is asked for.
+	byRank := make([]int, len(out))
+	for i := range byRank {
+		byRank[i] = i
+	}
+	for i := 1; i < len(byRank); i++ {
+		for j := i; j > 0; j-- {
+			a, b := out[byRank[j]], out[byRank[j-1]]
+			if shortcutRank(a.Key) >= shortcutRank(b.Key) {
+				break
+			}
+			byRank[j], byRank[j-1] = byRank[j-1], byRank[j]
+		}
+	}
+	for letter, i := range byRank {
+		out[i].Shortcut = Shortcut(letter)
+	}
+
+	// How they are shown: highest on the staff first. A stable insertion sort,
+	// so two instruments sharing a line stay in the order the kit wrote them
+	// — the first of them is the ordinary one.
 	for i := 1; i < len(out); i++ {
 		for j := i; j > 0 && out[j].Step > out[j-1].Step; j-- {
 			out[j], out[j-1] = out[j-1], out[j]

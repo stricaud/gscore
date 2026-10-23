@@ -456,10 +456,10 @@ func (e *engraver) drawChordHeads(p *placed) {
 		// A chord is one element: selecting it must light all of it up, and
 		// clicking any of its heads must find it.
 		e.lay.Glyphs = append(e.lay.Glyphs, Glyph{
-			Name:  smufl.NoteheadGlyphOf(p.value, n.Head),
-			X:     p.x + offset,
-			Y:     e.y + stepY(float64(step)),
-			Ref:   p.index,
+			Name: smufl.NoteheadGlyphOf(p.value, n.Head),
+			X:    p.x + offset,
+			Y:    e.y + stepY(float64(step)),
+			Ref:  p.index,
 		})
 		if i == 0 {
 			e.lay.Refs[p.index] = RefPos{X: p.x, Y: e.y + stepY(float64(step)), Staff: e.y}
@@ -743,12 +743,15 @@ func (e *engraver) drawBeamGroup(g []*placed) {
 // beamQuad draws a beam as a filled parallelogram, which is what gives it an
 // even thickness along a slope.
 func (e *engraver) beamQuad(x0, y0, x1, y1, thickness, dir float64) {
-	// A thick line with butt caps is indistinguishable from the real shape at
-	// these sizes and keeps the layout to primitives a renderer already has.
-	e.lay.Lines = append(e.lay.Lines, Line{
-		X1: x0, Y1: y0 + dir*thickness/2,
-		X2: x1, Y2: y1 + dir*thickness/2,
-		Thickness: thickness,
+	// Vertical ends, flush with the stems. This was a thick stroked line,
+	// on the grounds that the difference did not show at these sizes — and
+	// it does: a line's caps are square to the line, so a beam sloping by a
+	// third of a space per space came out with a point at each end hanging
+	// past the outer stem. dir says which side of the join the beam's body
+	// lies on, so the near edge runs exactly where the stems stop.
+	e.lay.Quads = append(e.lay.Quads, Quad{
+		X: [4]float64{x0, x1, x1, x0},
+		Y: [4]float64{y0, y1, y1 + dir*thickness, y0 + dir*thickness},
 	})
 }
 

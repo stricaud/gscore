@@ -46,6 +46,21 @@ func (h *harness) post(path string) map[string]any {
 	return out
 }
 
+// postBody calls a handler with a body, which is how a file arrives: the
+// browser sends its bytes rather than a path it has no business knowing.
+func (h *harness) postBody(path, body string) map[string]any {
+	h.t.Helper()
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
+	h.mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		h.t.Fatalf("POST %s: %d %s", path, rec.Code, strings.TrimSpace(rec.Body.String()))
+	}
+	var out map[string]any
+	_ = json.Unmarshal(rec.Body.Bytes(), &out)
+	return out
+}
+
 // postFails expects a refusal, with a reason.
 func (h *harness) postFails(path string) string {
 	h.t.Helper()

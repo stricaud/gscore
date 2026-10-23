@@ -3351,6 +3351,21 @@ function scrollToTop() {
 async function play(opts) {
   if (state.playing) stop();
 
+  // In a book, play the tune being looked at. Scrolling down to a tune and
+  // pressing space is how somebody asks to hear it; without this the first
+  // tune played instead, and since the cursor went with it the view jumped
+  // back to the top of the book.
+  //
+  // A selection says which tune more precisely than the scroll position does,
+  // so it wins — clicking a note in one tune and scrolling to another should
+  // still play the note that was clicked.
+  if (!(opts && opts.fromStart) && !hasSelection()) {
+    const seen = visibleTune();
+    if (seen !== null && seen !== state.info?.current) {
+      await selectTune(seen);
+    }
+  }
+
   const pb = await (await fetch("/api/playback")).json();
   if (!pb.events || pb.events.length === 0) {
     status("Nothing to play");
@@ -3613,6 +3628,52 @@ function moveCursor(pt) {
 // its width. A third leaves most of a screen of music ahead of it.
 const cursorLead = 0.32;
 
+// tuneOffsetY is how far down the canvas the current tune's drawing starts.
+//
+// In a book every tune is engraved on its own and the drawings are stacked,
+// so a position out of the engraver is measured from the top of its own tune
+// and not from the top of the page. Scrolling to it without adding this took
+// the view to the top of the first tune whichever one was playing — which
+// looks exactly like playback having lost its place.
+function tuneOffsetY() {
+  if (!state.showAll) return 0;
+  const svg = currentSVG();
+  const wrap = $("#canvas-wrap");
+  if (!svg || !wrap) return 0;
+  return svg.getBoundingClientRect().top - wrap.getBoundingClientRect().top + wrap.scrollTop;
+}
+
+// visibleTune is the tune the canvas is showing, or null outside a book.
+//
+// With the whole book on screen the keyboard has no way of knowing which tune
+// somebody means, so it means the one they are looking at. Scrolling down to
+// the last tune and pressing space used to play the first one.
+function visibleTune() {
+  if (!state.showAll) return null;
+  const wrap = $("#canvas-wrap");
+  if (!wrap) return null;
+  const view = wrap.getBoundingClientRect();
+  const mid = view.top + view.height / 2;
+
+  let best = null;
+  let bestGap = Infinity;
+  for (const block of $$("#canvas .tune")) {
+    const r = block.getBoundingClientRect();
+    // A tune across the middle of the view wins outright; otherwise the one
+    // whose edge is nearest to it, so a tune taller or shorter than the
+    // window is still chosen the way it looks.
+    const gap =
+      r.top <= mid && r.bottom >= mid
+        ? 0
+        : Math.min(Math.abs(r.top - mid), Math.abs(r.bottom - mid));
+    if (gap < bestGap) {
+      best = Number(block.dataset.tune);
+      bestGap = gap;
+    }
+  }
+  return best;
+}
+
 // followCursor keeps the music ahead of the cursor on screen.
 //
 // The view is locked to the cursor and moves with it, every frame, the way a
@@ -3628,6 +3689,7 @@ function followCursor(pt) {
   const wrap = $("#canvas-wrap");
   if (!wrap || !pt) return;
   const z = state.zoom;
+  const off = tuneOffsetY();
 
   const max = Math.max(0, wrap.scrollWidth - wrap.clientWidth);
   const want = Math.min(max, Math.max(0, pt.x * z - wrap.clientWidth * cursorLead));
@@ -3638,8 +3700,8 @@ function followCursor(pt) {
   // Down the page the music does not move continuously — it steps from one
   // system to the next — so this moves only when the cursor has left the
   // one in view.
-  const top = pt.top * z;
-  const bottom = pt.bottom * z;
+  const top = pt.top * z + off;
+  const bottom = pt.bottom * z + off;
   if (top < wrap.scrollTop || bottom > wrap.scrollTop + wrap.clientHeight) {
     wrap.scrollTo({
       top: Math.max(0, top - wrap.clientHeight * 0.3),

@@ -91,6 +91,17 @@ func Render(w io.Writer, lay *engrave.Layout, opt Options) error {
 			ln.X1*s, ln.Y1*s, ln.X2*s, ln.Y2*s, ln.Thickness*s, dash)
 	}
 
+	for _, q := range lay.Quads {
+		b.WriteString(`<polygon fill="#000" points="`)
+		for i := range q.X {
+			if i > 0 {
+				b.WriteByte(' ')
+			}
+			fmt.Fprintf(&b, "%.2f,%.2f", q.X[i]*s, q.Y[i]*s)
+		}
+		b.WriteString("\"/>\n")
+	}
+
 	for _, c := range lay.Circles {
 		if c.Filled {
 			fmt.Fprintf(&b, `<circle cx="%.2f" cy="%.2f" r="%.2f" fill="#000"/>`+"\n",
@@ -121,7 +132,12 @@ func Render(w io.Writer, lay *engrave.Layout, opt Options) error {
 			attr = fmt.Sprintf(` data-ref="%d"`, g.Ref)
 		}
 		if g.Size > 0 {
-			attr += fmt.Sprintf(` font-size="%.2f"`, g.Size*s)
+			// An inline style, not a font-size attribute. A presentation
+			// attribute is author-level styling of the lowest priority, so
+			// the .g rule in the stylesheet above beat it and every glyph
+			// asking to be drawn smaller — a grace note, the accidental in a
+			// chord symbol — came out full size.
+			attr += fmt.Sprintf(` style="font-size:%.2fpx"`, g.Size*s)
 		}
 		fmt.Fprintf(&b, `<text class="g" x="%.2f" y="%.2f"%s>%s</text>`+"\n",
 			g.X*s, g.Y*s, attr, html.EscapeString(string(r)))

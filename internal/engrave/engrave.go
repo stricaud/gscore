@@ -46,6 +46,37 @@ type Glyph struct {
 	Ref int
 }
 
+// Beams returns the beams of a drawing.
+//
+// Every quad in a layout is a beam; the type is named for its shape and this
+// is named for what it is, so that anything asking "where are the beams" does
+// not have to know they are quads.
+func (l *Layout) Beams() []Quad { return l.Quads }
+
+// Left and Right are the beam's ends: its near edge, the one the stems stop
+// at, from the first stem to the last.
+func (q Quad) Left() (x, y float64)  { return q.X[0], q.Y[0] }
+func (q Quad) Right() (x, y float64) { return q.X[1], q.Y[1] }
+
+// Thickness is how deep the beam is, measured at its ends, which are vertical.
+func (q Quad) Thickness() float64 {
+	t := q.Y[3] - q.Y[0]
+	if t < 0 {
+		return -t
+	}
+	return t
+}
+
+// Quad is a filled four-sided shape, its corners given in order round it.
+//
+// It exists for beams. A beam is a parallelogram whose ends are vertical, so
+// that they finish flush with the stems they join; drawn as a thick stroked
+// line it gets caps square to its own direction instead, which on anything
+// but a level beam shows as a point sticking out past the outer stems.
+type Quad struct {
+	X, Y [4]float64
+}
+
 // Line is a straight stroke: staff lines, stems, ledger lines, barlines, beams.
 type Line struct {
 	X1, Y1, X2, Y2 float64
@@ -94,6 +125,11 @@ type Layout struct {
 	Texts         []Text
 	Curves        []Curve
 	Circles       []Circle
+	// Quads are filled four-sided shapes. Beams are what need them: a beam's
+	// ends are cut vertically, flush with its stems, and a stroked line
+	// cannot do that — its caps are square to the line, so a sloping beam
+	// came out pointed at both ends and overhanging the first and last stem.
+	Quads []Quad
 	// Refs maps an element's Ref to where its notehead landed, so the editor
 	// can put a playback cursor on it without re-deriving the layout.
 	Refs map[int]RefPos
@@ -293,8 +329,8 @@ type Options struct {
 // DefaultOptions returns a sensible engraving setup.
 func DefaultOptions() Options {
 	return Options{
-		Spacings:  DefaultSpacings(),
-		Defaults:  smufl.DefaultEngraving(),
+		Spacings:      DefaultSpacings(),
+		Defaults:      smufl.DefaultEngraving(),
 		Mode:          Paginated,
 		LineWidth:     120,
 		ShowTitle:     true,
@@ -533,6 +569,11 @@ func (e *engraver) lowestInk() float64 {
 	}
 	for _, c := range e.lay.Circles {
 		at(c.Y + c.Radius + c.Thickness)
+	}
+	for _, q := range e.lay.Quads {
+		for _, y := range q.Y {
+			at(y)
+		}
 	}
 	return low
 }

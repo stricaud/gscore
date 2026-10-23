@@ -47,9 +47,9 @@ type Options struct {
 	StaffSpace float64
 
 	// Page size and margins, in points.
-	PageWidth, PageHeight          float64
-	MarginLeft, MarginRight        float64
-	MarginTop, MarginBottom        float64
+	PageWidth, PageHeight   float64
+	MarginLeft, MarginRight float64
+	MarginTop, MarginBottom float64
 
 	// Symbols resolves the names the music font does not carry.
 	Symbols *symbol.Registry
@@ -238,6 +238,7 @@ func visible(v, top, bottom float64) bool {
 
 func (r *renderer) draw(top, bottom float64) {
 	r.drawLines(top, bottom)
+	r.drawQuads(top, bottom)
 	r.drawCircles(top, bottom)
 	r.drawCurves(top, bottom)
 	r.drawGlyphs(top, bottom)
@@ -281,6 +282,29 @@ func (r *renderer) drawLines(top, bottom float64) {
 		}
 		r.page.SetLineWidth(float64(pdf.Point(ln.Thickness) * r.s))
 		r.page.Line(r.x(ln.X1), r.y(ln.Y1), r.x(ln.X2), r.y(ln.Y2))
+	}
+}
+
+// drawQuads fills the beams.
+//
+// A beam is a parallelogram with vertical ends, so that it finishes flush
+// with the stems it joins. It used to be a thick stroked line, whose caps are
+// square to the line rather than vertical — which left a point sticking out
+// past the outer stem of every beam that was not level.
+func (r *renderer) drawQuads(top, bottom float64) {
+	for _, q := range r.lay.Quads {
+		shown := false
+		for _, y := range q.Y {
+			shown = shown || visible(y, top, bottom)
+		}
+		if !shown {
+			continue
+		}
+		pts := make([]pdf.Point, 0, 8)
+		for i := range q.X {
+			pts = append(pts, r.x(q.X[i]), r.y(q.Y[i]))
+		}
+		r.page.Polygon(pts...)
 	}
 }
 

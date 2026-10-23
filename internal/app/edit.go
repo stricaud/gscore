@@ -2493,10 +2493,10 @@ func (a *App) handlePercussion(w http.ResponseWriter, r *http.Request) {
 			ID: k.ID, Name: k.Name, Description: k.Description, Pads: len(k.Pads()),
 		})
 	}
-	for i, n := range kit.Pads() {
+	for _, n := range kit.Pads() {
 		out.Pads = append(out.Pads, entry{
 			Name: n.Name, Key: n.Key, Step: n.Step, Notehead: n.Head.String(),
-			Shortcut: model.Shortcut(i),
+			Shortcut: n.Shortcut,
 		})
 	}
 	writeJSON(w, out)

@@ -185,6 +185,9 @@ async function action(name) {
     case "zoom-reset":
       setZoom(8);
       break;
+    case "fullscreen":
+      await toggleFullscreen();
+      break;
     case "show-all-tunes":
       state.showAll = !state.showAll;
       state.showAllDecided = true;
@@ -1667,6 +1670,52 @@ function clock(sec) {
   return m + ":" + String(s).padStart(2, "0");
 }
 
+/* ---------- full screen ---------- */
+
+// Giving the whole display to the score.
+//
+// This is a browser's own full screen, not a window the program manages, so
+// it works wherever gscore is opened as a page — including the one published
+// from the repository. A page can only ask for it from a real click, which is
+// why there is no way to start up in it.
+function fullscreenElement() {
+  return document.fullscreenElement || document.webkitFullscreenElement || null;
+}
+
+async function toggleFullscreen() {
+  try {
+    if (fullscreenElement()) {
+      const exit = document.exitFullscreen || document.webkitExitFullscreen;
+      await exit.call(document);
+      return;
+    }
+    const el = document.documentElement;
+    const enter = el.requestFullscreen || el.webkitRequestFullscreen;
+    if (!enter) {
+      status("This window cannot go full screen");
+      return;
+    }
+    await enter.call(el);
+  } catch (err) {
+    // A native window may refuse; the window's own controls still work.
+    status("Could not go full screen: " + (err && err.message ? err.message : err));
+  }
+}
+
+function setupFullscreen() {
+  const sync = () => {
+    const on = !!fullscreenElement();
+    document.body.classList.toggle("fullscreen", on);
+    $("#fs-label").textContent = on ? "Leave full screen" : "Full screen";
+    $("#fs-btn").textContent = on ? "⤡" : "⤢";
+    $("#fs-btn").title = (on ? "Leave full screen" : "Full screen") + " (F)";
+  };
+  document.addEventListener("fullscreenchange", sync);
+  document.addEventListener("webkitfullscreenchange", sync);
+  $("#fs-btn").addEventListener("click", toggleFullscreen);
+  sync();
+}
+
 /* ---------- misc ---------- */
 
 function status(msg) {
@@ -1889,6 +1938,11 @@ function setupKeys() {
       case "e": action("save-svg"); break;
       case "p": action("print"); break;
       case "s": action("save"); break;
+      case "f": action("fullscreen"); break;
+      case "F11":
+        e.preventDefault();
+        action("fullscreen");
+        break;
       case "+": case "=": setZoom(state.zoom + 1); break;
       case "-": setZoom(state.zoom - 1); break;
       case "0": setZoom(8); break;
@@ -1906,6 +1960,7 @@ async function main() {
   setupPanning();
   setupMarquee();
   setupShiftHint();
+  setupFullscreen();
   setupCanvasClicks();
   setupDrawing();
   markMode();

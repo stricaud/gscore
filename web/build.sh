@@ -36,10 +36,15 @@ if [ ! -f "$out/wasm_exec.js" ]; then
 fi
 
 echo "copying the interface…"
-cp "$root/internal/app/ui/style.css" "$out/"
-cp "$root/internal/app/ui/app.js" "$out/"
-cp "$root/internal/app/ui/icon.png" "$out/"
-cp "$root/internal/app/ui/gilbert.png" "$out/"
+# Everything the interface is made of, rather than a list of names. A list
+# goes stale the moment a file is added, and the page then loads an index
+# that refers to something which is not there — which nothing would notice
+# until the site was open in front of someone.
+for f in "$root"/internal/app/ui/*; do
+    name=$(basename "$f")
+    [ "$name" = "index.html" ] && continue   # patched below, not copied
+    cp "$f" "$out/"
+done
 cp "$root/web/boot.js" "$out/"
 
 # The font is served by the Go handler in the application; as a page it is a

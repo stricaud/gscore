@@ -701,3 +701,8 @@ body:not(.tool-select) #canvas svg { cursor: crosshair; }
   border-color: var(--accent);
   color: #fff;
 }
+
+/* Full screen: the score gets the room the chrome was using. */
+body.fullscreen #menubar { height: 30px; }
+body.fullscreen #statusbar { height: 20px; }
+body.fullscreen #canvas-wrap { padding: 10px; }

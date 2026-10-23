@@ -53,12 +53,30 @@ jobs:
       - name: Check what was built
         run: |
           set -eu
-          for f in index.html gscore.wasm wasm_exec.js boot.js app.js style.css font.otf; do
+          for f in index.html gscore.wasm wasm_exec.js boot.js font.otf; do
             test -s "web/dist/$f" || { echo "missing or empty: $f" >&2; exit 1; }
           done
+          # Every file the page asks for has to be beside it. A page that
+          # loads a script which is not there fails in the browser and
+          # nowhere else, so it is checked here instead.
+          missing=0
+          for ref in $(grep -oE '(src|href)="[^"/][^":]*"' web/dist/index.html \
+                       | sed -E 's/.*="([^"]*)"/\1/' | sort -u); do
+            if [ ! -e "web/dist/$ref" ]; then
+              echo "index.html refers to $ref, which was not built" >&2
+              missing=1
+            fi
+          done
+          [ "$missing" -eq 0 ] || exit 1
           echo "wasm: $(du -h web/dist/gscore.wasm | cut -f1)"
 
       - uses: actions/configure-pages@v5
+        with:
+          # Turn Pages on if it is not already. Choosing "GitHub Actions" as
+          # the source in Settings does not create the site itself, and the
+          # site is not created until something deploys to it — so without
+          # this the first run has nowhere to go and fails here.
+          enablement: true
 
       - uses: actions/upload-pages-artifact@v3
         with:

@@ -104,6 +104,18 @@ func New(s *model.Score, filename string) *App {
 	return NewBook([]*model.Score{s}, filename)
 }
 
+// Opened records what the importer could not read in the file the app was
+// started on.
+//
+// That file is opened before the window exists, so its partial read has
+// nowhere to go until now. Without this the log window was empty for exactly
+// the case it was written for: a tune book opened from the command line.
+func (a *App) Opened(err error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.warning, a.importLog = readProblems(err)
+}
+
 // NewBook returns an app showing a file that may hold several scores.
 func NewBook(scores []*model.Score, filename string) *App {
 	if len(scores) == 0 {

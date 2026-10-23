@@ -228,3 +228,69 @@ func TestOnePlaceDecidesThePointer(t *testing.T) {
 		t.Error("body.note-input is left over from the writing/selecting mode")
 	}
 }
+
+// TestDrumPadsAreWired checks the pad grid end to end through the markup.
+//
+// The pads are the only key a drum part has: a drum staff's lines name
+// instruments and nothing on the page says which, so a grid that silently
+// fails to appear leaves somebody guessing which line is the snare. Every
+// element the renderer writes into has to be in the page.
+func TestDrumPadsAreWired(t *testing.T) {
+	html := readUI(t, "index.html")
+	js := readUI(t, "app.js")
+	css := readUI(t, "style.css")
+
+	for _, id := range []string{"drumpad", "drumpad-grid", "drumpad-kit", "drumpad-note"} {
+		if !strings.Contains(html, `id="`+id+`"`) {
+			t.Errorf("app.js writes into #%s, which is not in the page", id)
+		}
+		if !strings.Contains(js, `"#`+id+`"`) {
+			t.Errorf("#%s is in the page and nothing in app.js uses it", id)
+		}
+	}
+
+	// The pad's own classes have to be styled, or the grid renders as a
+	// column of unreadable buttons — which is how it looked before the rules
+	// below existed.
+	for _, cls := range []string{".pad", ".pad.on", ".pad-head", ".pad-name", ".pad-key", ".pad-midi"} {
+		if !strings.Contains(css, cls+" ") && !strings.Contains(css, cls+",") &&
+			!strings.Contains(css, cls+"{") && !strings.Contains(css, cls+" {") {
+			t.Errorf("the pads use %s and the stylesheet does not mention it", cls)
+		}
+	}
+
+	if !strings.Contains(js, "changeDrumKit") {
+		t.Error("the kit picker has no handler: the sizes could not be chosen between")
+	}
+}
+
+// TestDrumLettersAreTestedBeforeTheEditingLetters guards the one thing that
+// makes two sets of single-letter keys possible at once.
+//
+// The pad letters and the editing commands deliberately overlap — both want
+// the keys under the left hand — and they are told apart by where the cursor
+// is. That only works if the drum test runs first: put it after the switch
+// that handles "d" for stem-down and the pads under the left hand never fire,
+// which looks like the shortcuts on the pads being decoration.
+func TestDrumLettersAreTestedBeforeTheEditingLetters(t *testing.T) {
+	js := readUI(t, "app.js")
+
+	drum := strings.Index(js, "drumPadForKey(e.key)")
+	if drum < 0 {
+		t.Fatal("nothing routes a key press to a drum pad")
+	}
+	stem := strings.Index(js, `case "d": action("stem-down")`)
+	if stem < 0 {
+		t.Fatal(`the "d" shortcut has moved; this guard needs updating`)
+	}
+	if drum > stem {
+		t.Error("the editing letters are handled first, so a pad's letter never reaches the kit")
+	}
+
+	// And the test has to be scoped, or the pad letters would swallow the
+	// editing commands everywhere in the score.
+	window := js[drum-400 : drum]
+	if !strings.Contains(window, "isDrumStaff") {
+		t.Error("the pad letters are not scoped to a drum staff: they would take over the whole score")
+	}
+}

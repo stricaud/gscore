@@ -738,7 +738,7 @@ func TestEveryKindOfEditIsUndoable(t *testing.T) {
 			do: func(h *harness) { h.post("/api/removestaff?part=1") },
 		},
 		{
-			name: "nudge",
+			name:  "nudge",
 			setup: func(h *harness) { h.note(0, 0, 2, "quarter") },
 			do:    func(h *harness) { h.post("/api/nudge?part=0&measure=0&at=1&steps=2") },
 		},
@@ -1353,23 +1353,43 @@ func TestWritingADrumByName(t *testing.T) {
 	}
 }
 
-// The kit is listed so the editor can offer it by name.
-func TestKitIsListed(t *testing.T) {
-	h := newHarness(t)
-	var kit []struct {
+// kitReply is the shape of /api/percussion: the kit being offered, the sizes
+// to choose from, and the pads of the one in force.
+type kitReply struct {
+	Kit  string `json:"kit"`
+	Kits []struct {
+		ID          string `json:"id"`
+		Name        string `json:"name"`
+		Description string `json:"description"`
+		Pads        int    `json:"pads"`
+	} `json:"kits"`
+	Pads []struct {
 		Name     string `json:"name"`
 		Key      int    `json:"key"`
 		Step     int    `json:"step"`
 		Notehead string `json:"notehead"`
-	}
-	if err := json.Unmarshal([]byte(h.get("/api/percussion")), &kit); err != nil {
+		Shortcut string `json:"shortcut"`
+	} `json:"pads"`
+}
+
+func (h *harness) kit(t *testing.T, query string) kitReply {
+	t.Helper()
+	var out kitReply
+	if err := json.Unmarshal([]byte(h.get("/api/percussion"+query)), &out); err != nil {
 		t.Fatal(err)
 	}
-	if len(kit) < 10 {
-		t.Fatalf("the kit has %d pieces", len(kit))
+	return out
+}
+
+// The kit is listed so the editor can offer it by name.
+func TestKitIsListed(t *testing.T) {
+	h := newHarness(t)
+	kit := h.kit(t, "")
+	if len(kit.Pads) < 10 {
+		t.Fatalf("the kit has %d pieces", len(kit.Pads))
 	}
 	seen := map[string]bool{}
-	for _, d := range kit {
+	for _, d := range kit.Pads {
 		if d.Name == "" || d.Key == 0 {
 			t.Errorf("a kit entry is incomplete: %+v", d)
 		}
@@ -1381,6 +1401,94 @@ func TestKitIsListed(t *testing.T) {
 	for _, want := range []string{"Snare drum", "Bass drum", "Hi-hat closed", "Ride cymbal"} {
 		if !seen[want] {
 			t.Errorf("the kit has no %s", want)
+		}
+	}
+}
+
+// A kit comes in sizes, because a rock groove wants six pads in front of it
+// and a Latin chart wants forty.
+func TestDrumKitSizes(t *testing.T) {
+	h := newHarness(t)
+	kit := h.kit(t, "")
+	if len(kit.Kits) < 3 {
+		t.Fatalf("got %d kit sizes, want at least three", len(kit.Kits))
+	}
+	for _, k := range kit.Kits {
+		if k.ID == "" || k.Name == "" || k.Description == "" {
+			t.Errorf("a kit size is not described: %+v", k)
+		}
+		if k.Pads == 0 {
+			t.Errorf("%s has no pads", k.ID)
+		}
+	}
+
+	// Smallest first, and they really are different sizes: a picker whose
+	// entries all offer the same thing is a picker with nothing to pick.
+	for i := 1; i < len(kit.Kits); i++ {
+		if kit.Kits[i].Pads <= kit.Kits[i-1].Pads {
+			t.Errorf("%s has %d pads and %s has %d: the sizes must grow",
+				kit.Kits[i-1].ID, kit.Kits[i-1].Pads,
+				kit.Kits[i].ID, kit.Kits[i].Pads)
+		}
+	}
+
+	basic := h.kit(t, "?kit=basic")
+	if basic.Kit != "basic" {
+		t.Fatalf("asked for the basic kit, got %q", basic.Kit)
+	}
+	large := h.kit(t, "?kit=large")
+	if len(large.Pads) <= len(basic.Pads) {
+		t.Errorf("the large kit has %d pads and the basic one %d",
+			len(large.Pads), len(basic.Pads))
+	}
+
+	// Every kit can write the groove everybody writes.
+	for _, want := range []string{"Bass drum", "Snare drum", "Hi-hat closed"} {
+		found := false
+		for _, p := range basic.Pads {
+			found = found || p.Name == want
+		}
+		if !found {
+			t.Errorf("the basic kit cannot write a %s", want)
+		}
+	}
+
+	// An unknown size opens something usable rather than nothing.
+	if fallback := h.kit(t, "?kit=nonesuch"); len(fallback.Pads) == 0 {
+		t.Error("an unknown kit name left the editor with no pads at all")
+	}
+}
+
+// Each pad is typed with a letter, and no two pads share one.
+func TestDrumPadShortcutsAreUnique(t *testing.T) {
+	h := newHarness(t)
+	for _, size := range []string{"basic", "standard", "large"} {
+		kit := h.kit(t, "?kit="+size)
+		seen := map[string]string{}
+		for _, p := range kit.Pads {
+			if p.Shortcut == "" {
+				continue // a kit larger than the alphabet: mouse only
+			}
+			if other, dup := seen[p.Shortcut]; dup {
+				t.Errorf("%s: %q types both %s and %s", size, p.Shortcut, other, p.Name)
+			}
+			seen[p.Shortcut] = p.Name
+		}
+		if len(seen) == 0 {
+			t.Errorf("%s: no pad can be typed", size)
+		}
+	}
+}
+
+// The pads read down the staff the way the kit sits on it.
+func TestDrumPadsAreOrderedByPosition(t *testing.T) {
+	h := newHarness(t)
+	kit := h.kit(t, "?kit=large")
+	for i := 1; i < len(kit.Pads); i++ {
+		if kit.Pads[i].Step > kit.Pads[i-1].Step {
+			t.Fatalf("pad %d (%s, step %d) sits above pad %d (%s, step %d)",
+				i, kit.Pads[i].Name, kit.Pads[i].Step,
+				i-1, kit.Pads[i-1].Name, kit.Pads[i-1].Step)
 		}
 	}
 }

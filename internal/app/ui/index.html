@@ -339,6 +339,23 @@
 
 </div>
 
+<!-- The drum input pads. A drum staff's lines name instruments rather than
+     pitches, so there is nothing on the page to tell you that the top space
+     is a hi-hat: the pads are that key, and they are how the part is typed.
+     Shown only while a drum staff is selected. -->
+<div id="drumpad" hidden>
+  <div id="drumpad-head">
+    <span class="drumpad-title">Drum pads</span>
+    <label class="small">Kit
+      <select id="drumpad-kit" title="How much of the kit to offer"></select>
+    </label>
+    <span class="small" id="drumpad-note"></span>
+    <span class="small drumpad-hint">Click a pad, or press its letter while the
+      cursor is on a drum staff, to write it</span>
+  </div>
+  <div id="drumpad-grid"></div>
+</div>
+
 <div id="statusbar">
   <span id="status">Ready</span>
   <span id="filename"></span>

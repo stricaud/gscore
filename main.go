@@ -132,7 +132,11 @@ func main() {
 			addr = *serve
 			mode = app.Headless
 		}
-		if err := app.NewBook(scores, path).Run(addr, mode); err != nil {
+		ap := app.NewBook(scores, path)
+		// Whatever the importer could not read goes with the score, so the
+		// log window has it for a file opened from the command line too.
+		ap.Opened(err)
+		if err := ap.Run(addr, mode); err != nil {
 			fmt.Fprintf(os.Stderr, "gscore: %v\n", err)
 			os.Exit(1)
 		}

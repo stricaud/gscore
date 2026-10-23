@@ -1836,8 +1836,27 @@ func (p *parser) chord(sc *scanner) error {
 	ch := &model.Chord{}
 	tied := 0
 	for !sc.eof() && sc.peek() != ']' {
-		if c := sc.peek(); c == ' ' || c == '\t' {
+		c := sc.peek()
+		switch {
+		case c == ' ' || c == '\t':
 			sc.next()
+			continue
+		case c == '!':
+			// A decoration on one notehead of the chord.
+			if err := p.decoration(sc); err != nil {
+				return err
+			}
+			continue
+		case c == '.':
+			sc.next()
+			p.pending.AddArticulation(model.Staccato)
+			continue
+		case legacyDecorationNames[c] != "":
+			// "[F.d]" and "[B.g]" out of Anon2.abc: the mark goes in front of
+			// the notehead it belongs to, inside the brackets. Read as a note
+			// letter it asked for a note called full stop, and failed the bar.
+			sc.next()
+			p.applyDecoration(legacyDecorationNames[c])
 			continue
 		}
 		n, err := p.parseNote(sc)

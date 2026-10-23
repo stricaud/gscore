@@ -279,7 +279,6 @@ func baseRefs(s *model.Score) [][]int {
 	return out
 }
 
-
 // addGrace sounds the small notes in front of a note and returns how much of
 // that note's time they took.
 //
@@ -443,4 +442,3 @@ func (s *swelling) apply(out *Playback, end int, loud model.Dynamic) {
 	}
 	_ = loud
 }
-

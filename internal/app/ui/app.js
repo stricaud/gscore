@@ -2521,30 +2521,154 @@ function isDrumStaff(part) {
   return state.info?.parts?.[part]?.clef === "percussion";
 }
 
-// loadKit fetches the drum kit and puts it in the palette, once, and only for
-// a score that has a drum staff.
+// loadKit fetches the drum kit and shows the pads, for a score that has a
+// drum staff and not otherwise.
 async function loadKit() {
   const wanted = (state.info?.parts || []).some((p) => p.clef === "percussion");
   if (!wanted) {
     fillPaletteSection("drums", [], paletteAction);
+    $("#drumpad").hidden = true;
     return;
   }
   if (!state.kit) {
-    const res = await fetch("/api/percussion");
-    if (!res.ok) return;
-    state.kit = await res.json();
+    await fetchKit(savedKitID());
+    if (!state.kit) return;
   }
-  // Highest first, so the list reads down the staff the way the kit sits on
-  // it: cymbals at the top, the bass drum at the bottom.
-  const items = state.kit
-    .slice()
-    .sort((a, b) => b.step - a.step)
-    .map((d) => ({
-      g: HEAD_GLYPH[d.notehead] || HEAD_GLYPH.normal,
-      label: d.name,
-      drum: d.key,
-    }));
+  // The palette keeps a list of the kit as well. It is the long way round —
+  // scroll, read, click — but it is where every other mark in the score is
+  // chosen from, and somebody who has learnt the palette should not have to
+  // learn somewhere else for drums.
+  const items = state.kit.pads.map((d) => ({
+    g: HEAD_GLYPH[d.notehead] || HEAD_GLYPH.normal,
+    label: d.name,
+    drum: d.key,
+  }));
   fillPaletteSection("drums", items, paletteAction, 15);
+  renderDrumPads();
+}
+
+// fetchKit asks for one of the kit sizes and remembers which was chosen.
+async function fetchKit(id) {
+  const res = await fetch("/api/percussion" + (id ? "?kit=" + encodeURIComponent(id) : ""));
+  if (!res.ok) return;
+  state.kit = await res.json();
+  try {
+    localStorage.setItem("drumkit", state.kit.kit);
+  } catch (_) {
+    /* a private window may refuse; the kit still works for this session */
+  }
+}
+
+// savedKitID is the size last chosen, so a drummer who works on the large kit
+// does not pick it again every time they open a chart.
+function savedKitID() {
+  try {
+    return localStorage.getItem("drumkit") || "";
+  } catch (_) {
+    return "";
+  }
+}
+
+// renderDrumPads draws the grid.
+//
+// Each pad shows the notehead it writes, what the instrument is called, the
+// letter that types it and the General MIDI key it sounds on. The letter is
+// on the pad rather than in a help page because that is the only place it
+// will be read, and the MIDI key is there because a part that has to line up
+// with a sampler is lined up by number.
+function renderDrumPads() {
+  const grid = $("#drumpad-grid");
+  if (!state.kit) return;
+  grid.textContent = "";
+
+  // A pad is chosen already, or the snare is: starting with nothing chosen
+  // means the first click on the staff writes whatever the position happens
+  // to name, which is the guessing the pads exist to replace.
+  if (!state.kit.pads.some((d) => d.key === state.tool.drum)) {
+    const snare = state.kit.pads.find((d) => /snare/i.test(d.name));
+    state.tool.drum = (snare || state.kit.pads[0] || {}).key ?? null;
+  }
+
+  for (const d of state.kit.pads) {
+    const pad = document.createElement("button");
+    pad.className = "pad" + (d.key === state.tool.drum ? " on" : "");
+    pad.dataset.drum = String(d.key);
+    pad.title = `${d.name} — MIDI key ${d.key}`;
+
+    const head = document.createElement("span");
+    head.className = "pad-head";
+    head.textContent = HEAD_GLYPH[d.notehead] || HEAD_GLYPH.normal;
+
+    const name = document.createElement("span");
+    name.className = "pad-name";
+    name.textContent = d.name;
+
+    const keys = document.createElement("span");
+    keys.className = "pad-key";
+    if (d.shortcut) {
+      const kbd = document.createElement("kbd");
+      kbd.textContent = d.shortcut;
+      keys.append(kbd);
+    }
+    const midi = document.createElement("span");
+    midi.className = "pad-midi";
+    midi.textContent = d.key;
+    keys.append(midi);
+
+    pad.append(head, name, keys);
+    pad.addEventListener("click", () => pickDrum(d.key, true));
+    grid.append(pad);
+  }
+
+  const sel = $("#drumpad-kit");
+  sel.textContent = "";
+  for (const k of state.kit.kits) {
+    const opt = document.createElement("option");
+    opt.value = k.id;
+    opt.textContent = `${k.name} (${k.pads})`;
+    opt.title = k.description;
+    opt.selected = k.id === state.kit.kit;
+    sel.append(opt);
+  }
+  const chosen = state.kit.kits.find((k) => k.id === state.kit.kit);
+  $("#drumpad-note").textContent = chosen ? chosen.description : "";
+  $("#drumpad").hidden = false;
+}
+
+// pickDrum chooses what the next note written on a drum staff will be.
+function pickDrum(key, say) {
+  state.tool.drum = key;
+  state.tool.rest = false;
+  for (const pad of $$("#drumpad .pad")) {
+    pad.classList.toggle("on", Number(pad.dataset.drum) === key);
+  }
+  if (say) {
+    const d = (state.kit?.pads || []).find((p) => p.key === key);
+    status((d ? d.name : "Drum") + " — click the drum staff to write it");
+  }
+}
+
+// drumPadForKey finds the pad a letter types, or nothing if the letter is not
+// one of them.
+function drumPadForKey(letter) {
+  return (state.kit?.pads || []).find((d) => d.shortcut === letter);
+}
+
+// typeDrum writes a pad's drum at the cursor, which is what a pad's letter is
+// for: a groove is typed, not clicked thirty-two times.
+async function typeDrum(letter) {
+  const pad = drumPadForKey(letter);
+  if (!pad) return false;
+  pickDrum(pad.key, false);
+  await insertAtSelection(false);
+  return true;
+}
+
+// changeDrumKit switches how much of the kit is offered.
+async function changeDrumKit(id) {
+  await fetchKit(id);
+  renderDrumPads();
+  await loadKit();
 }
 
 /* ---------- staves ---------- */
@@ -3926,6 +4050,19 @@ function setupKeys() {
         return;
     }
 
+    // On a drum staff the letters type the kit. A groove is typed, not
+    // clicked thirty-two times, and each pad shows the letter that writes it.
+    // The rule is the cursor: while it is on a drum staff those letters mean
+    // drums, and everywhere else they mean what they mean everywhere else.
+    // Scoping it to the staff is what lets both sets of letters be the easy
+    // ones to reach.
+    if (!e.shiftKey && !e.altKey && state.selection &&
+        isDrumStaff(state.selection.part) && drumPadForKey(e.key)) {
+      e.preventDefault();
+      void typeDrum(e.key);
+      return;
+    }
+
     switch (e.key) {
       case " ":
         e.preventDefault();
@@ -4199,6 +4336,7 @@ async function main() {
     await drawScore();
   });
   $("#zoom").addEventListener("input", (e) => setZoom(Number(e.target.value)));
+  $("#drumpad-kit").addEventListener("change", (e) => void changeDrumKit(e.target.value));
   $("#play-btn").addEventListener("click", () => (state.playing ? stop() : play()));
   $("#stop-btn").addEventListener("click", stop);
 

@@ -591,7 +591,6 @@ func (a *App) notesOf(q url.Values) ([]keyedNote, error) {
 		return out, nil
 	}
 
-
 	partIdx, _ := strconv.Atoi(q.Get("part"))
 	measIdx, _ := strconv.Atoi(q.Get("measure"))
 	at, err := strconv.Atoi(q.Get("at"))
@@ -2467,16 +2466,41 @@ func (a *App) handlePercussion(w http.ResponseWriter, r *http.Request) {
 		Key      int    `json:"key"`
 		Step     int    `json:"step"`
 		Notehead string `json:"notehead"`
+		// Shortcut is the letter that types this pad. It follows the pad's
+		// place in the kit rather than the instrument, so a small kit gets
+		// the easy keys.
+		Shortcut string `json:"shortcut,omitempty"`
 	}
-	out := make([]entry, 0, len(model.DrumSet))
-	for _, n := range model.DrumSet {
-		out = append(out, entry{
+	type kitInfo struct {
+		ID          string `json:"id"`
+		Name        string `json:"name"`
+		Description string `json:"description"`
+		Pads        int    `json:"pads"`
+	}
+	type reply struct {
+		// Kit is the one being offered, and Kits are the sizes to choose
+		// from: a rock groove wants six pads in front of it and a Latin
+		// chart wants forty, and only the person writing it knows which.
+		Kit  string    `json:"kit"`
+		Kits []kitInfo `json:"kits"`
+		Pads []entry   `json:"pads"`
+	}
+
+	kit := model.DrumKitByID(r.URL.Query().Get("kit"))
+	out := reply{Kit: kit.ID}
+	for _, k := range model.DrumKits {
+		out.Kits = append(out.Kits, kitInfo{
+			ID: k.ID, Name: k.Name, Description: k.Description, Pads: len(k.Pads()),
+		})
+	}
+	for i, n := range kit.Pads() {
+		out.Pads = append(out.Pads, entry{
 			Name: n.Name, Key: n.Key, Step: n.Step, Notehead: n.Head.String(),
+			Shortcut: model.Shortcut(i),
 		})
 	}
 	writeJSON(w, out)
 }
-
 
 // drumKitName is what the kit is called in the list of instruments.
 const drumKitName = "drum kit"

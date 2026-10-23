@@ -1,0 +1,16 @@
+Gscore - http://www.gscore.org
+by Sebastien Tricaud <toady@gscore.org>
+
+
+Gscore is a non-page-oriented notation program, entirely written from scratch.
+
+It's designed to be easy to use and tune.
+
+This release provided in this packages features:
+- Interface a la gimp,
+- ABC support,
+- Plugins API for import/export scores. 
+
+
+Gscore is GPL powered, please see the file COPYING provided.
+

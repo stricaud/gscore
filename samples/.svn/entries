@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<wc-entries
+   xmlns="svn:">
+<entry
+   committed-rev="66"
+   name=""
+   committed-date="2005-02-01T00:10:45.187380Z"
+   url="svn+ssh://svn.berlios.de/svnroot/repos/gscore/trunk/samples"
+   last-author="cheyenne"
+   kind="dir"
+   uuid="4fd5081c-5feb-0310-ae58-96eeab14693c"
+   revision="72"/>
+<entry
+   name="abc"
+   kind="dir"/>
+</wc-entries>

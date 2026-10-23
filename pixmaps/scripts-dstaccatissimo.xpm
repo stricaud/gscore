@@ -1,0 +1,12 @@
+/* XPM */
+static char * scripts_dstaccatissimo_xpm[] = {
+"4 7 2 1",
+" 	c None",
+".	c #000000",
+" .. ",
+" .. ",
+" .. ",
+" .. ",
+" .. ",
+"....",
+" .. "};

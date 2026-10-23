@@ -1,0 +1,450 @@
+2005-04-04 Toady <toady@gscore.org>
+
+	* plugins/abc/import-abc.c, src/score.c: abc plugin can import scores correctly
+
+	Release 0.0.9: "harder, better, stronger, faster"	
+	
+2005-04-03 Toady <toady@gscore.org>
+
+	* src/edit.c: improved measure jumping
+	
+2005-04-02 Toady <toady@gscore.org>
+
+	* src/score.c: Replace "set header" glade widget with custom to make the release in 2005 and stop fighting with glade for MDI stuff
+	* src/edit.c: Jump to measure working
+	
+2005-04-01 Toady <toady@gscore.org>
+
+	* src/key_event.c: Make chord only with notes
+	
+2005-03-30 Toady <toady@gscore.org>
+
+	* src/beam.c: Fixed bug when the last note selected you want to beam is the last in the list
+	
+2005-03-27 Toady <toady@gscore.org>
+
+	* plugins/abc/export-abc.c: Improved chords support
+	* src/mouse_event.c: Improved objects on staff selection
+	* src/objects.c: Improved movements within score to avoid issues with chords
+	
+2005-03-25 Toady <toady@gscore.org>
+
+	* src/objects_callbacks.c: Sets/Uset stuff on objects selected
+	* src/staff.c, src/score.c: Make dialog boxes work using gobjects
+	* plugins/abc/export-abc.c: Chords support
+	
+2005-03-24 Toady <toady@gscore.org>
+
+	* src/objects.c, src/key_event.c: Full insertiong working
+	
+2005-02-08 Toady <toady@gscore.org>
+
+	* src/objects.c, src/key_event.c: Basic object insertion working
+
+2005-02-08 Toady <toady@gscore.org>
+
+	* src/score.c: fixed bug that would not initialize the id given to object value
+	* src/key_event.c: improved object insertion
+
+2005-02-06 Cheyenne <j.marrec@10pouces.org>
+
+	*  src/score.[ch]: new  functions  to retrieve  data  from the  active
+	widget
+	* src/*.c: suppressed global variables to enable multiple document interface
+	(see http://www.gscore.org/pipermail/gscore-devel/2005-February/000019.html)
+
+2005-01-20 toady <toady@gscore.org>
+
+	* src/draw.c: don't render notes which are not displayed on screen (yadh)
+	* src/key_event.c, src/realize_area.c: basic chords support
+	
+2005-01-13 toady <toady@gscore.org>
+
+	* src/realize_area.c: Fixed bug #2870
+	
+2005-01-11 toady <toady@gscore.org>
+
+	* src/file.c: Fixed bug #3025, reported by Jerome Marrec
+	
+2005-01-05 toady <toady@gscore.org>
+
+	* src/mouse_event.c: Fixed bug pointed by Raymond Ostertag. Notes selected even if the cursor is not selected.
+	
+2004-12-17 toady <toady@gscore.org>
+     
+	* SConstruct: Applied patch from Julien Salort for better prefixing <julien.salort ens-lyon fr>
+	
+2004-12-15 toady <toady@gscore.org>
+
+	Release 0.0.8: laetmotive.
+	We must add few elements, but now, the most important are the plugins.
+	
+2004-12-14 toady <toady@gscore.org>
+
+	* src/realize_area.c: fixed bug for beams (needs more work though, see far above ;)
+	* src/objects.c, src/object_callbacks.c: you can now change the note type from the selection
+	
+2004-12-07 toady <toady@gscore.org>
+
+	* src/key_event.c: fixed bug #2868 reported by krix, making the horizontal adjustment moving as the keycursor does
+	* src/selection.c: fixed the dirty selection... a dirty way
+	
+2004-12-02 toady <toady@gscore.org>
+
+	* src/plugin.c: fixed a bug which made gscore unable to load more than one plugin :) (a stupid return NULL)
+	
+2004-11-30 toady <toady@gscore.org>
+
+	Release of 0.0.7: bond.
+	Right, we still have bugs, but gscore is usable enough to work with abc music.
+	
+2004-11-23 toady <toady@gscore.org>
+
+	* glade/gscore.glade, src/spacings.c, src/realize_area.c: applied patch from Alastair Porter <alastair linuxexperience com>
+	
+2004-11-18 toady <toady@gscore.org>
+
+	* src/draw_barline.[ch]: improve bar spacings, thickness etc.
+	
+2004-11-12 toady <toady@gscore.org>
+
+	* well, hum -> *.[ch]: I did a lot of things I forgot to write here in the ChangeLog :,( it's almost the release...
+	
+2004-10-01 toady <toady@gscore.org>
+
+	* src/file.c, src/plugin.[ch]:
+	* plugins/abc/export_abc.[ch]: dropped the plugin structure to avoid problems I don't have time to solve for the conference
+	
+2004-06-07 toady <toady@gscore.org>
+
+	* oops: I forgot about the ChangeLog ;)
+	* src/* new datastructure (ahah, again, but now I'm proud of it!)
+
+2004-03-19 toady <toady@gscore.org>
+
+	* src/realize_area.c: fixed a bug which didn't called draw_note at some random time
+	
+2004-02-17 toady <toady@gscore.org>
+
+	* src/*.[ch]: Improved selection and object spacing
+	
+2003-12-07 toady <toady@gscore.org>
+
+	* src/score.c: support of the tempo
+	
+2003-11-01 toady <toady@gscore.org>
+
+	* src/cursor.[ch]: added
+	* src/gscore.h,
+	  src/key_event.c,
+	  src/realize_area.c: support of keybindings
+	
+2003-10-27 toady <toady@gscore.org>
+
+	* src/realize_area.c,
+	  src/position.c: fixed a nasty bug
+	
+2003-09-19 toady <toady@gscore.org>
+
+	* src/tools-wrapper.c: applied a patch from Jeff Dubrule <igor pobox com> which fixes a segfault in create_rc()
+	
+2003-09-18 toady <toady@gscore.org>
+
+	* src/plugins.[ch]: export function callback into plugins works :o)
+	
+2003-09-13 toady <toady@gscore.org>
+
+	* src/articulation.[ch]: creation to handle articulations :)
+	* src/realize_area.c,
+	  src/objects.c,
+	  src/toolbars.c: support of staccato
+	
+2003-09-10 toady <toady@gscore.org>
+
+	* src/plugin-common.[ch],
+	  src/plugin-manager.[ch]: removed
+	* src/plugins.[ch]: creation, handle plugins
+	* plugins/*: creation of dummy plugins
+	
+2003-09-10 toady <toady@gscore.org>
+
+	* src/beam.c,
+	  src/realize_area.c: support of beams
+	
+2003-09-02 toady <toady@gscore.org>
+
+	* src/splash.[ch]: creation, to support a splash screen which loads the plugins
+	* src/plugin-manager.[ch]: creation, to support plugins
+	* src/beam.[ch]: creation, to support the beams
+	
+2003-09-01 toady <toady@gscore.org>
+	...a Labour day :)
+
+	* src/position.c,
+	  src/realize_area.c,
+	  src/draw.c: the selection of groups works
+	
+2003-08-17 toady <toady@gscore.org>
+
+	* src/position.c: some functions were experimental originaly, not anymore :)
+	* src/draw.c: use of gtk_image_from_pixbuf instead of pixmaps
+
+	Moving to Canada now!
+	
+2003-08-16 toady <toady@gscore.org>
+
+	* src/toolbars.[ch]: creation
+	* src/main.c: moving toolbars stuffs to toolbars.c,
+	              use of the stock icons for the standard toolbar
+		
+2003-08-03 toady <toady@gscore.org>
+
+	* src/[all]: removed miscellaneous warnings while the compilation ;)
+	
+2003-05-15 toady <toady@gscore.org>
+
+	* src/draw.c,
+	  src/common.[ch],
+	  main.c: Bug fixing
+	
+2003-05-12 toady <toady@gscore.org>
+
+	* src/staff.[ch]: support of multi key signature changes on many staffs
+	
+2003-05-12 toady <toady@gscore.org>
+
+	* src/staff.[ch],
+	  src/insert.c,
+	  src/realize_area.c: support of staff selection
+	
+2003-05-10 toady <toady@gscore.org>
+
+	* src/staff.c, 
+	  src/realize_area.c: support of key signature (a better way)
+
+2003-05-10 toady <toady@gscore.org>
+
+	* src/staff.[ch]: added
+	* src/menus.c: added a staff entry
+	* src/draw.[ch]: a new function to draw pixmaps
+	* src/realize_area.c: support of time signature
+	
+2003-05-08 toady <toady@gscore.org>
+
+	* src/score.c: you can change some properties of your score
+	
+2003-05-04 toady <toady@gscore.org>
+
+	Following the great work of Cheyenne, I improved some of the datastructure.
+	Also:
+	* src/main.c: added a few elements missing for import/export in abc
+	* src/importabc.c: fixed a few stuffs (not to much indeed, problems were on my side :/)
+	* src/realize_area.c: round I against selection : it starts to work.
+	* src/common.[ch]: added from the advice of Cheyenne a function to get the Score datastructure.
+	* src/draw.c: fixed a bug using gtk_drawing_area_size to resize the score.
+	
+2003-05-02 Cheyenne <j.marrec@10pouces.homelinux.net>
+
+	* src/abc.h,
+	  src/parseabc.[ch]: added from the abc2midi package.
+	* src/menus.c,
+	  src/exportabc.[ch],
+	  src/importabc.[ch]: support import/export of abc format.
+	
+2003-04-25 toady <toady@gscore.org>
+
+	* src/position.[ch]: added
+	* src/main.c,
+	  pixmaps/toolbar: added some tools
+	* src/realize_area.c,
+	  gscore.h: support of object placement
+	
+2003-04-18 toady <toady@gscore.org>
+
+	* src/realize_area.c,
+	  src/main.c,
+	  src/gscore.h,
+	  src/selection.c: the toolbar change, according to your selection.
+	
+2003-04-14 toady <toady@gscore.org>
+
+	* src/realize_area.c: support of selection
+	* src/selection.[ch]: added to support the selection of an object
+
+	Switched to the version 0.0.5
+	
+2003-04-13 toady <toady@gscore.org>
+
+	* src/realize_area.c: the score is resized if the staff grows
+	
+2003-04-10 toady <toady@gscore.org>
+
+	* src/main.c,
+	  src/score.c,
+	  src/realize_area.c: starting working on tab transpositions.
+
+	* src/tab_transposition.[ch]: added
+	
+2003-04-09 toady <toady@gscore.org>
+
+	* src/realize_area.c,
+	  src/score.c: bug fixes for the tab support.
+	
+2003-04-07 toady <toady@gscore.org>
+
+	* src/constants.h: added
+	* src/realize_area.c,
+	  src/score.c: support of tabs :)
+	
+2003-04-06 toady <toady@gscore.org>
+
+	* src/realize_area.c,
+	  src/draw.c,
+	  src/insert.c,
+	  src/menus.c: improved support of bar lines, dynamic alternative
+	
+2003-03-30 toady <toady@gscore.org>
+
+	* src/realize_area.c: sharps, naturals and flat are automaticaly ajusted according to the following note
+	
+2003-03-25 toady <toady@gscore.org>
+
+	* src/note_callbacks.c,
+	  src/main.c: added some cursors
+	* src/realize_area.c,
+	  src/gscore.h,
+	  src/menus.c: added the support of bar lines
+
+2003-03-24 toady <toady@gscore.org>
+
+	* src/realize_area.c: indexing the objects
+	
+2003-03-23 toady <toady@gscore.org>
+
+	* src/realize_area.c: added the function draw_score to draw the score :o)
+	* src/note_callbacks.c: added the support of lilypond xpm 
+	
+2003-03-22 toady <toady@gscore.org>
+	in the train....
+	* src/gscore.h: removed the old structure
+	* src/main.c,
+	  src/score.c,
+	  src/file.c,
+	  src/note_callback.c: code cleaning for the new structure
+	* src/realize_area.c: use of the new structure ;)
+	
+2003-03-07 toady <toady@gscore.org>
+
+	* src/gscore.h,
+	  src/realize_area.c:
+	   - a huge job has been done :
+	        - including the pixmaps from lilypond
+		- the new datastructure works, it couldn't be without
+		the help of jmax <jmreymond@free.fr> and yoann <yoann@prelude-ids.org>. 
+		Sorry jmax if you went into your bed late :/ this night when we looked together into the code, 
+		and thanks telling me where did the problem come from. 
+		Also, I've just been impressed how fast and gratefully yoann helped me to solve this problem (malloc stuff). 
+	   
+2003-01-29 toady <toady@gscore.org>
+
+	* pixmaps/cursors/cursor_quarter.xbm,
+	  pixmaps/cursors/cursor_quarter_mask.xbm: created
+	
+2003-01-28 toady <toady@gscore.org>
+
+	* src/main.c: code cleaning
+	* src/realize_area.c: code cleaning and now, notes are transparent with the staff.
+	* src/insert.c: code cleaning in order to kill warnings
+	
+2002-12-16 toady <toady@gscore.org>
+
+	* src/realize_area.c : 
+	     - fixed a seg fault
+	     - the key signature menu works proprely
+	* pixmap/flat.xpm : added
+	
+2002-09-01 toady <toady@gscore.org>
+
+	* src/gscore.h,
+	  src/main.c,
+	  src/realize_area.c : Objects are indexed.
+
+2002-07-13 toady <toady@gscore.org>
+
+	* src/main.c,
+	  src/realize_area.c : a note is drawed when you click on 
+	                       the score area.
+	
+2002-07-11 toady <toady@gscore.org>
+
+	* almost all : buxfixs due to gtk 2.0 improvements
+	* src/gscore.h : each note has a space (between an other note...)
+	
+2002-07-01 toady <toady@gscore.org>
+
+	* src/note_callbacks.c,
+	  src/note_callbacks.h,
+	  src/main.c: - the half can be used in the toolbar ;-)
+	
+2002-04-12 toady <toady@gscore.org>
+
+	* all: Using gtk-2.0, version number changed to 0.0.4 
+	
+2001-12-02 toady <toady@gscore.org>
+
+	* src/insert.c: - added the key dialog
+	
+2001-12-01 toady <toady@gscore.org>
+
+	* src/insert.c: - bugfix made on the key signature
+	                - improves of the window showing time signature
+
+2001-11-29 dindinx <dindinx@dindinx.org>
+
+	* src/main.c, 
+	  src/realize_area.[ch],
+	  src/note_callbacks.[ch]: some bugfixs, and not least!
+	
+2001-11-04 toady <toady@gscore.org>
+
+	* all : moved to gscore 0.0.3 after some other changes ;)
+	
+2001-11-02 toady <toady@gscore.org>
+
+	* src/main.c: - removes some functions to realize_area.c
+	              - when you click on a button, the cursor changes!
+	* src/realize_area.[ch]: add functions comming from main.c
+	* src/insert.c: in key_signature(), when you change the value,
+	                the button "OK" returns the value and draw in the
+		        pixmap flat/sharps.
+	* src/note_callbacks.[ch]: creation
+	
+2001-11-01 toady <toady@gscore.org>
+
+	* src/main.c: now, a pixmap is drawed!!!
+	              special thanks to dindinX <dindinx@dindinx.org>
+	* src/all: some code optimistation/reorganisation
+	* src/menus.c: added the call of the time_signature function
+	* src/gscore.h: added score_area as an external variable, to be used for
+	                realize_area.c
+	* src/insert.c: added time_signature, function which will be call in the
+	                insert menu to change.. guess what! the time signature.
+	* src/help.c: a new about_box ;) hmmm!
+	* pixmaps/onestaff.xpm: the picture which will be used for
+	                        the score at the beginning    
+	* src/realize_area.[ch]: added to wraps the modifications of 
+	                         score_area.
+	
+2001-08-29 toady <toady@gscore.org>
+
+	* src/main.c: added toolbars
+	
+2001-06-07 toady <toady@gscore.org>
+
+	* src/all: some code optimisation
+	* all: use of autoconf
+
+2001-06-03 toady <toady@gscore.org>
+
+	* src/main.c: You can exit the app using X-kill with a dialog asking
+	  	      you for the modifications you did (arf!).

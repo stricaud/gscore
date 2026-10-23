@@ -1,0 +1,38 @@
+# List of source files containing translatable strings.
+# Please keep this file sorted alphabetically.
+[encoding: UTF-8]
+glade/gscore.glade
+src/articulation.c
+src/beam.c
+src/common.c
+src/create_score.c
+src/debug.c
+src/display.c
+src/draw_barline.c
+src/draw.c
+src/edit.c
+src/error.c
+src/file.c
+src/help.c
+src/insert.c
+src/key_cursor.c
+src/key_event.c
+src/libglade-garbage.c
+src/main.c
+src/mode.c
+src/mouse_event.c
+src/objects.c
+src/objects_callbacks.c
+src/plugin.c
+src/plugin-conversions.c
+src/position.c
+src/realize_area.c
+src/score.c
+src/selection.c
+src/spacings.c
+src/splash.c
+src/staff.c
+src/tab_transposition.c
+src/text.c
+src/tie.c
+src/view.c

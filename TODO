@@ -1,0 +1,13 @@
+- libgscore: functions such as gscore_new(), add_note(), add_staff(), remove_staff() must be there.
+- libgscore-ui: widgets used in gscore (ruler, notes...)
+- use of cairo: 
+- ruler widget
+- tons of filters
+- printing support
+- windows port
+- tabs support
+- scripting language
+- NIFF
+- documentation
+- use ~/.recently-used to get lastest opened files formats managed by gscore's plugins
+

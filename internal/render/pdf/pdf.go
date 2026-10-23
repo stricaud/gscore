@@ -205,7 +205,11 @@ func (r *renderer) pages() []band {
 			// letting it overflow says so; dropping it would not.
 			continue
 		}
-		out = append(out, band{top, systems[i-1].Bottom})
+		// The page ends where the next system's own territory begins, not
+		// where the last one's staff lines stopped: the chord symbols and
+		// diagrams of the system overleaf sit above its staff and would
+		// otherwise be printed along the bottom of this page.
+		out = append(out, band{top, sys.Top - 0.5})
 		top = sys.Top
 	}
 	out = append(out, band{top, r.lay.Height})

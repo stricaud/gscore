@@ -245,6 +245,13 @@ func (p *Page) Quad(x1, y1, cx, cy, x2, y2 Point, thickness Point) {
 func (p *Page) Circle(cx, cy, radius Point, filled bool, thickness Point) {
 	const k = 0.5522847498
 	o := radius * k
+	// Before the path, not after it. Between a path's first operator and the
+	// one that paints it, nothing may change the graphics state — a width set
+	// in the middle leaves the path unfinished and the page fills with the
+	// wreckage, which is exactly what it did.
+	if !filled {
+		p.SetLineWidth(float64(thickness))
+	}
 	fmt.Fprintf(&p.buf, "%.2f %.2f m", cx+radius, cy)
 	fmt.Fprintf(&p.buf, " %.2f %.2f %.2f %.2f %.2f %.2f c",
 		cx+radius, cy+o, cx+o, cy+radius, cx, cy+radius)
@@ -258,7 +265,6 @@ func (p *Page) Circle(cx, cy, radius Point, filled bool, thickness Point) {
 		p.buf.WriteString(" h f\n")
 		return
 	}
-	p.SetLineWidth(float64(thickness))
 	p.buf.WriteString(" h S\n")
 }
 

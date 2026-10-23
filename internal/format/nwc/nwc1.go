@@ -297,6 +297,7 @@ func parseNWC1(raw []byte, minor int) (*model.Score, error) {
 			// staff. Keeping the staves already read is far better than
 			// throwing the whole score away, as long as the caller is told.
 			if len(score.Parts) > 0 {
+				nameInstruments(score)
 				return score, &PartialError{
 					Staves: len(score.Parts), Total: staffCount,
 					Cause: fmt.Errorf("staff %d: %w", i+1, err),
@@ -306,6 +307,9 @@ func parseNWC1(raw []byte, minor int) (*model.Score, error) {
 		}
 		score.Parts = append(score.Parts, part)
 	}
+	// Whatever the file did not say about what plays each staff, its own
+	// names usually do.
+	nameInstruments(score)
 	return score, nil
 }
 

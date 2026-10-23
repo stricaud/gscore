@@ -60,6 +60,8 @@ const state = {
   view: { names: false, numbers: false },
   // Where each measure's closing barline was drawn, so one can be clicked.
   barlines: [],
+  // The clef, key and meter at the head of each system, likewise.
+  headers: [],
 };
 
 /* ---------- toolbox ---------- */
@@ -688,6 +690,15 @@ async function loadHits() {
   const d = await res.json();
   state.hits = d.hits || [];
   state.barlines = d.barlines || [];
+  state.headers = d.headers || [];
+}
+
+// headerAt finds the clef, key signature or meter a click landed on.
+function headerAt(x, y) {
+  for (const h of state.headers) {
+    if (x >= h.x0 && x <= h.x1 && y >= h.top && y <= h.bottom) return h;
+  }
+  return null;
 }
 
 // barlineAt finds the barline a click landed on.
@@ -802,6 +813,15 @@ function setupCanvasClicks() {
     const bar = barlineAt(x, y);
     if (bar) {
       await openBarlinePicker(bar);
+      return;
+    }
+
+    // So are the clef, the key signature and the meter at the head of a
+    // system. Clicking the thing you want to change is the obvious way to
+    // change it, and far better than hunting through a menu for its name.
+    const head = headerAt(x, y);
+    if (head) {
+      await openHeaderPicker(head);
       return;
     }
 
@@ -1700,9 +1720,12 @@ const METERS = [
 // two with glyphs of their own have no obvious spelling at all — typing "C"
 // for common time and being told it does not look like 4/4 was the box being
 // wrong, not the person using it.
-async function setTimeDialog() {
+async function setTimeDialog(at) {
   const part = state.selection?.part ?? 0;
   const now = state.info?.parts?.[part]?.time || "4/4";
+  // Where it takes effect: the bar that was clicked, or the one the cursor
+  // is in. Zero means the piece starts in it.
+  const measure = at !== undefined ? at : (state.selection?.measure ?? 0);
 
   // Drawn by the engraver and put into the page, rather than loaded as
   // images: an SVG inside an <img> is an isolated document and cannot reach
@@ -1753,7 +1776,15 @@ async function setTimeDialog() {
   }
   if (!meter) return;
 
-  await setStaffProperty("time", meter);
+  const p = new URLSearchParams({ part: String(part), time: meter });
+  if (measure > 0) p.set("at", String(measure));
+  const res = await fetch("/api/staff?" + p.toString(), { method: "POST" });
+  if (!res.ok) {
+    status("Could not set the meter: " + (await res.text()).trim());
+    return;
+  }
+  await refreshScore();
+  status(measure > 0 ? `${meter} from measure ${measure + 1}` : meter);
 }
 
 async function setInstrumentDialog() {
@@ -2095,6 +2126,56 @@ function markFingeringMenu() {
   );
 }
 
+// openHeaderPicker changes whatever was clicked at the head of a staff.
+//
+// Where it takes effect is where it was clicked: the one at the very start of
+// the piece is the piece's, and the one restated at the head of a later system
+// changes things from that bar on. Either way it goes on every staff, because
+// a key and a meter belong to the music and not to one player — one staff in
+// 4/4 and the next in 2/4 does not mean anything.
+async function openHeaderPicker(head) {
+  state.selection = {
+    ...(state.selection || {}),
+    part: head.part, measure: head.measure, at: 0, step: 0, ref: null,
+  };
+  switch (head.kind) {
+    case "clef":
+      await setClefDialog(head.part);
+      return;
+    case "key":
+      await openKeyPicker(head.part, head.measure);
+      return;
+    case "time":
+      await setTimeDialog(head.measure);
+      return;
+  }
+}
+
+// setClefDialog changes one staff's clef, which unlike the key and the meter
+// really does belong to the staff alone.
+async function setClefDialog(part) {
+  const now = state.info?.parts?.[part]?.clef || "treble";
+  const v = await ask({
+    title: "Clef", label: "Draw this staff in", value: now,
+    options: [
+      { value: "treble", label: "Treble" },
+      { value: "bass", label: "Bass" },
+      { value: "alto", label: "Alto" },
+      { value: "tenor", label: "Tenor" },
+      { value: "percussion", label: "Percussion" },
+    ],
+  });
+  if (v === null || v === now) return;
+  const res = await fetch(`/api/staff?part=${part}&clef=${encodeURIComponent(v)}`,
+                          { method: "POST" });
+  if (!res.ok) {
+    status("Could not change the clef: " + (await res.text()).trim());
+    return;
+  }
+  await refreshScore();
+  status("Clef changed");
+}
+
 /* ---------- key signature picker ---------- */
 
 // The picker shows each signature engraved on a staff rather than named, which
@@ -2102,7 +2183,7 @@ function markFingeringMenu() {
 // does it. You recognise two sharps faster than you decode the words "D major".
 let keyOptions = null;
 
-async function openKeyPicker(partIndex) {
+async function openKeyPicker(partIndex, at) {
   keyOptions = keyOptions || (await (await fetch("/api/keysignatures")).json());
   const staff = state.info?.parts?.[partIndex];
   const clef = staff?.clef || "treble";
@@ -2134,7 +2215,10 @@ async function openKeyPicker(partIndex) {
   $$("#keysig-grid .keysig-option").forEach((b) =>
     b.addEventListener("click", async () => {
       const fifths = b.dataset.fifths;
-      await fetch(`/api/setkey?part=${partIndex}&fifths=${fifths}`, { method: "POST" });
+      const measure = at !== undefined ? at : (state.selection?.measure ?? 0);
+      const q = new URLSearchParams({ part: String(partIndex), fifths });
+      if (measure > 0) q.set("at", String(measure));
+      await fetch("/api/setkey?" + q.toString(), { method: "POST" });
       $("#keysig").close();
       await reload();
       status("Key signature changed");
@@ -2282,8 +2366,20 @@ let audio = null;
 let voices = [];
 let rafID = null;
 let playStart = 0;
-let current = null;
+// The refs lit up right now, which is a set because a chord is several
+// noteheads and a score is several staves.
+let current = new Set();
 let cursorEl = null;
+
+// sameSet avoids redrawing when nothing has changed, which at sixty frames a
+// second across five staves is most of the time.
+function sameSet(a, b) {
+  if (a.size !== b.size) return false;
+  for (const v of a) {
+    if (!b.has(v)) return false;
+  }
+  return true;
+}
 
 const midiToHz = (m) => 440 * Math.pow(2, (m - 69) / 12);
 
@@ -2681,27 +2777,33 @@ function follow(pb) {
       }
     }
 
-    // And which note is sounding, which is not the same question: a note
+    // And which notes are sounding, which is not the same question: a note
     // keeps ringing after the cursor has moved past its head.
-    let active = null;
+    //
+    // Notes, plural. A score has as many lines as it has players and they
+    // sound together — that is what a score is. Lighting up only the first
+    // one found showed a Requiem for five voices as a solo.
+    const sounding = new Set();
+    let lead = null;
     for (const ev of pb.events) {
       if (shown >= ev.start && shown < ev.start + ev.dur) {
-        active = ev;
-        break;
+        sounding.add(ev.ref);
+        if (lead === null || ev.part === fingering.staff) lead = ev;
       }
     }
-    const ref = active ? active.ref : null;
-    if (ref !== current) {
-      if (current !== null) {
-        svg?.querySelectorAll(`[data-ref="${current}"]`)
+    if (!sameSet(sounding, current)) {
+      for (const ref of current) {
+        if (sounding.has(ref)) continue;
+        svg?.querySelectorAll(`[data-ref="${ref}"]`)
            .forEach((n) => n.classList.remove("playing"));
       }
-      if (ref !== null) {
+      for (const ref of sounding) {
+        if (current.has(ref)) continue;
         svg?.querySelectorAll(`[data-ref="${ref}"]`)
            .forEach((n) => n.classList.add("playing"));
       }
-      current = ref;
-      if (active) updateFingering(active);
+      current = sounding;
+      if (lead) updateFingering(lead);
     }
 
     if (now >= total + 0.3) {
@@ -2774,10 +2876,9 @@ function stop() {
   }
   voices = [];
   const svg = currentSVG();
-  if (current !== null) {
-    svg?.querySelector(`[data-ref="${current}"]`)?.classList.remove("playing");
-    current = null;
-  }
+  // Clear every notehead that was lit, on every staff.
+  svg?.querySelectorAll(".playing").forEach((n) => n.classList.remove("playing"));
+  current = new Set();
   cursorEl?.remove();
   cursorEl = null;
   lastMeasure = null;

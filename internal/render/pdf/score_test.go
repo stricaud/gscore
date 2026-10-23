@@ -197,7 +197,7 @@ func buildDemo() *model.Score {
 		drumNote := func(step int, d model.Duration) *model.Note {
 			k, _ := model.PercussionFor(step)
 			return &model.Note{
-				Pitch: model.PitchFromDiatonicIndex(k.Step + 10),
+				Pitch: engrave.PitchForStep(model.Percussion, k.Step),
 				Dur:   d, Head: k.Head, Percussion: k.Key,
 			}
 		}

@@ -105,6 +105,12 @@ type Layout struct {
 	// never through one, and nothing but the engraver knows where they are.
 	Systems []SystemPos `json:"systems"`
 
+	// Headers are the clef, key signature and meter at the head of a system,
+	// as clickable boxes. They are drawn by the engraver and nothing else
+	// knows where they ended up, so the editor cannot turn a click on one
+	// into "change the key" without being told.
+	Headers []HeaderPos `json:"headers"`
+
 	// Barlines are where each measure ends, so one can be clicked and
 	// changed. A barline is drawn between two bars and belongs to neither as
 	// far as the eye is concerned, which is why it needs saying where it is
@@ -141,6 +147,19 @@ type SystemPos struct {
 	Bottom float64 `json:"bottom"`
 	First  int     `json:"first"`
 	Last   int     `json:"last"`
+}
+
+// HeaderPos is a clef, key signature or meter at the head of a system.
+type HeaderPos struct {
+	Part int `json:"part"`
+	// Measure is the bar this system starts at, which is where a change
+	// clicked here takes effect.
+	Measure int     `json:"measure"`
+	Kind    string  `json:"kind"` // "clef", "key" or "time"
+	X0      float64 `json:"x0"`
+	X1      float64 `json:"x1"`
+	Top     float64 `json:"top"`
+	Bottom  float64 `json:"bottom"`
 }
 
 // BarlinePos is one drawn barline: which measure it closes, and where.
@@ -284,6 +303,16 @@ func StaffStep(c model.Clef, p model.Pitch) int {
 
 // stepY converts a staff step into a y offset from the staff's top line.
 func stepY(step float64) float64 { return staffHeight - step/2 }
+
+// PitchForStep is the inverse of StaffStep: which pitch is written at a staff
+// position under a clef.
+//
+// It lives here, beside StaffStep, because the two have to agree exactly and
+// the surest way to make them agree is for there to be one table. The editor
+// used to keep a copy with a comment admitting as much.
+func PitchForStep(c model.Clef, step int) model.Pitch {
+	return model.PitchFromDiatonicIndex(step - clefPitchOffset[c])
+}
 
 // Engrave lays out a score.
 func Engrave(s *model.Score, opt Options) *Layout {
@@ -917,8 +946,10 @@ func (e *engraver) drawSystem(parts []*model.Part, boxes [][]measureBox,
 	e.drawVoltas(parts, columns, start, end, above)
 	e.drawMeasureNumber(start+1, sp.Margin+prefix, above)
 	e.drawMarkers(parts, columns, start, end, above)
-	// A note's own words go above its chord symbol too.
-	e.textRise = top - above
+	// A note's own words go above the chord symbols and above the rehearsal
+	// marks: three things written over the same bar, in three layers rather
+	// than in one place.
+	e.textRise = top - above + markerRoom
 
 	// Words written under a staff need the staff below to move out of the way.
 	wordRoom := 0.0
@@ -955,9 +986,26 @@ func (e *engraver) drawSystem(parts []*model.Part, boxes [][]measureBox,
 		// do. A staff in C major and one in five sharps still begin their
 		// music in the same column.
 		px := sp.Margin + prefix - e.prefixWidth(p, start) + lead + sp.ClefBefore
+		// Each of the three is recorded as it is drawn, so that clicking one
+		// changes the thing it is: the clef, the key or the meter.
+		header := func(kind string, x0, x1 float64) {
+			if x1 <= x0 {
+				return
+			}
+			e.lay.Headers = append(e.lay.Headers, HeaderPos{
+				Part: pi, Measure: start, Kind: kind,
+				X0: x0, X1: x1, Top: e.y - 1, Bottom: e.y + staffHeight + 1,
+			})
+		}
+		was := px
 		px = e.drawClef(p, px)
+		header("clef", was-sp.ClefBefore/2, px-sp.ClefAfter/2)
+		was = px
 		px = e.drawKeySignature(p, p.KeyAt(start), px)
-		e.drawTimeSignature(p, p.TimeAt(start), px)
+		header("key", was, px-sp.AfterKeySignature/2)
+		was = px
+		px = e.drawTimeSignature(p, p.TimeAt(start), px)
+		header("time", was, px-sp.AfterTimeSignature/2)
 
 		for mi := start; mi < end; mi++ {
 			if mi >= len(boxes[pi]) {
@@ -1004,9 +1052,13 @@ func (e *engraver) drawSystem(parts []*model.Part, boxes [][]measureBox,
 	e.y = top + float64(len(parts)-1)*(staffHeight+sp.StaffGap+wordRoom)
 	e.y += staffHeight + wordRoom
 	e.lay.Systems = append(e.lay.Systems, SystemPos{
-		// The top reaches above the staff for whatever is written there:
-		// the brackets of a repeat, an octave sign, a rehearsal mark.
-		Top: top - voltaRise - 1.5, Bottom: e.y, First: start, Last: end - 1,
+		// The top reaches above the staff for everything written there: the
+		// chord symbols and their diagrams, and above those the brackets of
+		// a repeat, the octave signs and the rehearsal marks. A system whose
+		// recorded top stopped at the staff had its chord diagrams drawn on
+		// the page before it.
+		Top:   above - voltaRise - 1.5,
+		Bottom: e.y, First: start, Last: end - 1,
 	})
 	e.y += sp.SystemGap
 

@@ -37,6 +37,9 @@ const (
 	bracketThickness = 0.5
 	// measureNumberSize is the type a bar number is set in.
 	measureNumberSize = 1.5
+	// markerRoom is how much room a boxed rehearsal mark takes, so that
+	// anything else written over the same bar goes above it.
+	markerRoom = 3.0
 )
 
 // partLabel is what a staff is called at the head of a system.

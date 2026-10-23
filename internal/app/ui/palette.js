@@ -119,6 +119,33 @@ const PALETTE = [
     ],
   },
   {
+    id: "lines",
+    name: "Lines and endings",
+    size: 18,
+    columns: 3,
+    items: [
+      // A hairpin and an octave line cover a stretch of music, so they need
+      // a stretch selected: click a note, then shift-click a later one.
+      { g: "\uE53E", label: "Crescendo", apply: "hairpin", value: "crescendo",
+        needsRange: true },
+      { g: "\uE53F", label: "Diminuendo", apply: "hairpin", value: "diminuendo",
+        needsRange: true },
+      { text: "—", label: "No hairpin", apply: "hairpin", value: "none" },
+
+      { g: "\uE511", label: "8va — an octave up", apply: "octave", value: "8va",
+        needsRange: true },
+      { g: "\uE51C", label: "8vb — an octave down", apply: "octave", value: "8vb",
+        needsRange: true },
+      { text: "—", label: "No octave line", apply: "octave", value: "none" },
+
+      // An ending is a bracket over whole bars, so it acts on the measure
+      // the cursor is in rather than on a note.
+      { text: "1.", label: "First time", ending: "1" },
+      { text: "2.", label: "Second time", ending: "2" },
+      { text: "—", label: "No ending", ending: "" },
+    ],
+  },
+  {
     id: "barlines",
     // Barlines are thin and tall; small enough and they all look alike.
     size: 22,

@@ -52,6 +52,7 @@ func (a *App) handleHits(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{
 		"hits":        lay.Hits,
 		"barlines":    lay.Barlines,
+		"headers":     lay.Headers,
 		"staffHeight": 4.0,
 	})
 }
@@ -307,24 +308,12 @@ func sortChord(c *model.Chord) {
 }
 
 // pitchForStep inverts the staff position back into a pitch.
+//
+// The engraver's own table, not a copy of it. A copy was kept here for a
+// while on the grounds that it was small; small is not the problem with a
+// second copy of a table that has to agree exactly with the first.
 func pitchForStep(c model.Clef, step int) model.Pitch {
-	return model.PitchFromDiatonicIndex(step - clefOffset(c))
-}
-
-// clefOffset mirrors the engraver's table. It is small enough to restate and
-// keeping it here avoids the editor depending on the engraver's internals.
-func clefOffset(c model.Clef) int {
-	switch c {
-	case model.Bass:
-		return 10
-	case model.Alto:
-		return 4
-	case model.Tenor:
-		return 6
-	case model.Percussion:
-		return 4
-	}
-	return -2
+	return engrave.PitchForStep(c, step)
 }
 
 var barlineByName = map[string]model.BarlineStyle{

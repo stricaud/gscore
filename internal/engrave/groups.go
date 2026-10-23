@@ -149,13 +149,7 @@ func (e *engraver) drawGroups(parts []*model.Part, left float64, tops []float64,
 
 		switch g.Symbol {
 		case model.GroupBrace:
-			// The brace is a glyph and has to stretch to the staves it joins,
-			// so it is drawn at whatever size makes it that tall. Bravura's
-			// brace is four staff spaces from tip to tip at its own size.
-			e.lay.Glyphs = append(e.lay.Glyphs, Glyph{
-				Name: "brace", X: x - 0.6, Y: (top + bottom) / 2,
-				Size: (bottom - top) / 4 * 1.0,
-			})
+			e.drawBrace(x-0.4, top, bottom)
 		case model.GroupLine:
 			e.lay.Lines = append(e.lay.Lines, Line{
 				X1: x, Y1: top, X2: x, Y2: bottom, Thickness: bracketThickness / 2,
@@ -319,4 +313,55 @@ func (e *engraver) drawnAt(staff int) (int, bool) {
 		}
 	}
 	return 0, false
+}
+
+// drawBrace draws the curly brace that joins the staves of one instrument.
+//
+// Drawn rather than set as a glyph. A brace has to stretch to however many
+// staves it joins, and a glyph can only be scaled in both directions at once:
+// stretched to a grand staff it comes out four times too wide, and sized to
+// look right it does not reach. Fonts solve this by shipping several braces of
+// different sizes, which still only fits the sizes they ship.
+//
+// A brace is two mirrored S-curves: a tip at each end curling towards the
+// staves, and a cusp in the middle pointing away from them. Four quadratics
+// draw it at any height.
+func (e *engraver) drawBrace(x, top, bottom float64) {
+	h := bottom - top
+	if h <= 0 {
+		return
+	}
+	mid := (top + bottom) / 2
+	half := h / 2
+	// How far the cusp stands out from the tips. A brace that joins more
+	// staves is drawn a little wider, within reason, the way a larger brace
+	// in a font is not simply a scaled-up small one.
+	w := 0.9 + h*0.02
+	if w > 1.6 {
+		w = 1.6
+	}
+	t := e.opt.Defaults.StaffLineThickness * 2.6
+
+	// Each half sweeps from the tip to the cusp in two curves, so the stroke
+	// leaves the tip almost vertically and arrives at the cusp almost
+	// horizontally — which is what makes it read as a brace rather than as a
+	// pair of brackets.
+	arm := func(tip float64, dir float64) {
+		q1 := tip + dir*half*0.5
+		e.lay.Curves = append(e.lay.Curves,
+			Curve{
+				X1: x, Y1: tip,
+				CX: x - w*0.2, CY: tip + dir*half*0.3,
+				X2: x - w*0.5, Y2: q1,
+				Thickness: t,
+			},
+			Curve{
+				X1: x - w*0.5, Y1: q1,
+				CX: x - w*0.85, CY: tip + dir*half*0.72,
+				X2: x - w, Y2: mid,
+				Thickness: t,
+			})
+	}
+	arm(top, 1)
+	arm(bottom, -1)
 }

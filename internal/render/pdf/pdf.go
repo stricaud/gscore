@@ -163,8 +163,11 @@ func (r *renderer) run() {
 		// system that starts the next page is drawn across the bottom of
 		// this one.
 		r.page.Save()
+		// Tight at the bottom. The band already ends where the next system's
+		// own territory begins, so any slack there is room for that system's
+		// rehearsal marks to print along the foot of this page.
 		top := r.y(band.top) + r.s*0.5
-		bottom := r.y(band.bottom) - r.s*2
+		bottom := r.y(band.bottom) - r.s*0.25
 		r.page.Clip(0, bottom, pdf.Point(r.opt.PageWidth), top-bottom)
 		r.draw(band.top, band.bottom)
 		r.page.Restore()

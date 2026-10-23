@@ -434,9 +434,6 @@ func (e *engraver) run() {
 		// and these scales climb well above the staff.
 		e.y += e.overhang()
 	}
-	// Brackets and octave signs are drawn above the top staff, which on the
-	// first system means above the top of the page unless room is made.
-	e.y += e.headroom()
 	e.layout()
 
 	e.lay.Height = e.y + sp.marginY()
@@ -480,15 +477,21 @@ func (e *engraver) verses() int {
 	return most
 }
 
-func (e *engraver) headroom() float64 {
+func (e *engraver) systemMarkRoom(parts []*model.Part, start, end int) float64 {
 	need := 0.0
-	for _, p := range e.score.Parts {
-		for _, m := range p.Measures {
-			if m.Ending != nil && need < voltaRise+1 {
-				need = voltaRise + 1
+	at := func(v float64) {
+		if v > need {
+			need = v
+		}
+	}
+	for _, p := range parts {
+		for mi := start; mi < end && mi < len(p.Measures); mi++ {
+			m := p.Measures[mi]
+			if m.Ending != nil {
+				at(voltaRise + 1)
 			}
-			if m.Marker != "" && need < 4.4 {
-				need = 4.4
+			if m.Marker != "" {
+				at(markerRoom + 1.6)
 			}
 			for _, v := range m.Voices {
 				for _, el := range v.Elements {
@@ -496,21 +499,20 @@ func (e *engraver) headroom() float64 {
 					if mk == nil {
 						continue
 					}
-					// A chord symbol, and the fingering diagram above it,
-					// stack up over the staff and need the room measured
-					// rather than assumed.
-					if h := chordHeight(mk.Chord); h > need {
-						need = h
+					if mk.Octave != nil && mk.Octave.Amount > 0 {
+						at(octaveRise + 1)
 					}
-					if mk.Octave == nil || mk.Octave.Amount <= 0 {
-						continue
-					}
-					if need < octaveRise+1 {
-						need = octaveRise + 1
+					// A direction written on a note stacks above the rest.
+					if len(mk.Texts) > 0 {
+						at(markerRoom + 2.8)
 					}
 				}
 			}
 		}
+	}
+	// The bar number over the start of a later system needs a little too.
+	if e.opt.ShowMeasureNumbers && start > 0 {
+		at(2.2)
 	}
 	return need
 }
@@ -814,7 +816,7 @@ func (e *engraver) drawTempoMark(x float64) {
 			at += smufl.Advance("metAugmentationDot") + 0.1
 		}
 		e.lay.Texts = append(e.lay.Texts, Text{
-			S: " = " + itoa(bpm), X: at, Y: e.y, Size: 2.0, Anchor: "start",
+			S: "= " + itoa(bpm), X: at + 0.45, Y: e.y, Size: 2.0, Anchor: "start",
 		})
 	}
 	e.y += 1.2
@@ -1071,11 +1073,19 @@ func (e *engraver) drawSystem(parts []*model.Part, boxes [][]measureBox,
 	columns[end-start] = x
 	right := x
 
+	// Room is reserved before the system is drawn, not claimed back over the
+	// one above it. Recording a system as reaching up into its predecessor
+	// made the two overlap, and a page cut between them then sliced the
+	// bottom staff off the page above.
+	chords := e.systemChordRoom(parts, start, end)
+	marks := e.systemMarkRoom(parts, start, end)
+	e.y += chords + marks
 	top := e.y
+
 	// Everything written over the system stacks above the chord symbols,
 	// which are themselves above the staff. Drawing them all at the same
 	// height is what put a rehearsal mark through a tempo direction.
-	above := top - e.systemChordRoom(parts, start, end)
+	above := top - chords
 
 	// The volta brackets belong to the system, not to a staff: they are drawn
 	// once above the top one before the staves move the cursor down.
@@ -1202,7 +1212,7 @@ func (e *engraver) drawSystem(parts []*model.Part, boxes [][]measureBox,
 		// a repeat, the octave signs and the rehearsal marks. A system whose
 		// recorded top stopped at the staff had its chord diagrams drawn on
 		// the page before it.
-		Top:   above - voltaRise - 1.5,
+		Top:    top - chords - marks,
 		Bottom: e.y, First: start, Last: end - 1,
 	})
 	e.y += sp.SystemGap

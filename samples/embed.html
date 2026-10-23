@@ -3,8 +3,17 @@
   Embedding gscore in a page.
   (C) Copyright 2026 Sebastien Tricaud. GPL v2 or later.
 
-  One file, nothing to install, no build step. Open it in a browser and the
-  scores below are engraved and played by gscore running inside an iframe.
+  Build the page first — `make web` — then open this file in a browser, and
+  the scores below are engraved and played by gscore running in an iframe.
+  WebAssembly will not start from a file:// URL, so serve the repository
+  rather than opening the file directly:
+
+      make web
+      python3 -m http.server --directory . 8000
+      open http://localhost:8000/samples/embed.html
+
+  Pointing the frames at https://stricaud.github.io/gscore/ instead needs no
+  build at all; `score=` then has to be an absolute URL.
 
   This is what to copy if you have a page about a piece of music — a method
   book, a set of exercises, a tune you have written — and you want readers to
@@ -85,12 +94,13 @@
   https://stricaud.github.io/gscore/ and nothing else changes.
 
   player=1   take away the menus, the palette and the inspector
-  score=…    the file to open, relative to the gscore page or an absolute URL
+  score=…    the file to open, resolved against the gscore page — which is
+             why this one reaches back out with ../../
   zoom=9     staff space in pixels
 -->
 <iframe class="score" id="first" height="200"
         title="Exercise in C major"
-        src="../web/dist/index.html?player=1&zoom=9&score=exercise.abc"></iframe>
+        src="../build/web/index.html?player=1&zoom=9&score=../../samples/exercise.abc"></iframe>
 
 <h2>Only the score</h2>
 <p>
@@ -99,7 +109,7 @@
 </p>
 <iframe class="score" id="second" height="180"
         title="The same exercise, with no controls"
-        src="../web/dist/index.html?player=bare&zoom=9&loop=1&score=exercise.abc"></iframe>
+        src="../build/web/index.html?player=bare&zoom=9&loop=1&score=../../samples/exercise.abc"></iframe>
 <p class="note"><code>loop=1</code> makes it go round again, which is what you
    want for something to practise along with.</p>
 

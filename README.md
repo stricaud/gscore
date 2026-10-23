@@ -71,6 +71,30 @@ release notes had to apologise for.
 default. Hand-drawn symbols remain fully supported for everything no font
 carries — see [`docs/symbols.md`](docs/symbols.md).
 
+## In a web page
+
+The whole program compiles to WebAssembly, so a page about a piece of music can
+show it and play it with nothing behind it but a file host:
+
+```html
+<iframe src="https://stricaud.github.io/gscore/?player=1&score=tune.abc"
+        width="100%" height="220" style="border:0"></iframe>
+```
+
+Player mode takes away the menus, the palette and the inspector and leaves the
+score and a play button. There is a working page in
+[`samples/embed.html`](samples/embed.html) and the settings are in
+[`docs/embedding.md`](docs/embedding.md).
+
+## Documents
+
+| | |
+|---|---|
+| [`docs/engraving.md`](docs/engraving.md) | how the layout is decided |
+| [`docs/symbols.md`](docs/symbols.md) | drawing marks no font carries |
+| [`docs/gscore-format.md`](docs/gscore-format.md) | what is inside a `.gscore` file |
+| [`docs/embedding.md`](docs/embedding.md) | putting gscore in a page |
+
 ## Layout
 
 ```
@@ -82,6 +106,7 @@ internal/symbol/     font glyphs, outlines and hand-drawn grids
 internal/version/
 assets/icon/         Gilbert, the application icon
 docs/                design decisions
+samples/             an embeddable page, and a score to put in it
 legacy/              gscore 0.0.9, unmodified
 testdata/reference/  output the C engine produced in 2004
 ```

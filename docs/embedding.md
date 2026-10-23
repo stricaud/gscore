@@ -6,8 +6,21 @@ served as static files. That means a page about a piece of music can show the
 music and play it, and the only thing it needs is somewhere to put an
 `<iframe>`.
 
-There is a working page in [`samples/embed.html`](../samples/embed.html). Open
-it in a browser; nothing has to be built or installed first.
+There is a working page in [`samples/embed.html`](../samples/embed.html):
+
+```sh
+make web
+python3 -m http.server --directory . 8000
+open http://localhost:8000/samples/embed.html
+```
+
+It has to be served rather than opened as a file, because WebAssembly will not
+start from a `file://` URL. Pointing the frames at a published copy such as
+`https://stricaud.github.io/gscore/` needs no build at all.
+
+One thing to watch: `score=` is resolved against the **gscore page**, not
+against your page. The sample reaches back out with `../../samples/…` for
+exactly that reason; an absolute URL avoids the question.
 
 ## The short version
 

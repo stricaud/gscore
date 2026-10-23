@@ -28,6 +28,7 @@
     /^\/api\//,
     /^\/score\.svg/,
     /^\/keysig\.svg/,
+    /^\/timesig\.svg/,
     /^\/symbol\.png/,
     /^\/font\.otf/,
     /^\/print/,

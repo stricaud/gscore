@@ -8,6 +8,10 @@
  */
 
 const $ = (sel) => document.querySelector(sel);
+
+// importLog holds the lines the importer could not read, for the log window.
+let importLog = [];
+
 const $$ = (sel) => Array.from(document.querySelectorAll(sel));
 
 // currentSVG is the drawing being worked on.
@@ -462,10 +466,35 @@ async function action(name) {
     case "report-bug":
       window.open("https://github.com/stricaud/gscore/issues", "_blank");
       break;
+    case "import-log":
+      showImportLog();
+      break;
     case "about":
       $("#about").showModal();
       break;
   }
+}
+
+// showImportLog lists the lines the importer had to pass over.
+//
+// Reading a hand-written tune book means reading past the mistakes in it, and
+// a reader that does that silently is a reader you cannot trust. This is where
+// it owns up: one line per line it could not read, so the file can be fixed
+// where it is wrong rather than the score being wrong where nobody looks.
+function showImportLog() {
+  const list = $("#import-log-list");
+  list.textContent = "";
+  if (!importLog.length) {
+    const li = document.createElement("li");
+    li.textContent = "Every line of this file was read.";
+    list.append(li);
+  }
+  for (const line of importLog) {
+    const li = document.createElement("li");
+    li.textContent = line;
+    list.append(li);
+  }
+  $("#import-log").showModal();
 }
 
 function markMode() {
@@ -649,8 +678,13 @@ async function loadInfo() {
   markHistory(!!i.canUndo, !!i.canRedo);
 
   // An importer that only understood part of a file says so here, rather than
-  // leaving half a score on screen with no explanation.
-  if (i.warning) status("Opened with warnings — " + i.warning);
+  // leaving half a score on screen with no explanation. The whole list is in
+  // Help ▸ Lines that could not be read; the status bar gets the count.
+  importLog = i.log || [];
+  if (i.warning) {
+    status("Opened with warnings — " + i.warning +
+           " — see Help ▸ Lines that could not be read");
+  }
 }
 
 // reload re-reads everything after the file itself has changed.

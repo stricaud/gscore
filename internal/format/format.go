@@ -175,3 +175,20 @@ func normaliseAll(scores []*model.Score) {
 		s.Normalise()
 	}
 }
+
+// Partial is implemented by an error reporting an incomplete read: the
+// importer understood some of the file and handed back what it got.
+//
+// A tune book is two thousand lines written by hand over several years, and
+// one mistyped character in it is not a reason to refuse the other nine
+// hundred tunes. Callers show a partial read as a warning and keep the music;
+// only a read that produced nothing at all is fatal.
+type Partial interface {
+	error
+	// Partial marks the error as an incomplete read rather than a failure.
+	Partial()
+	// Details lists what could not be read, one entry per line of the file,
+	// so that the person who wrote the file can be shown exactly which lines
+	// did not come through rather than a count of them.
+	Details() []string
+}

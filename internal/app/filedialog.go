@@ -174,12 +174,8 @@ func (a *App) openPath(path string) error {
 	if len(scores) == 0 {
 		return err
 	}
-	warning := ""
-	if err != nil {
-		warning = err.Error()
-	}
 	a.mu.Lock()
-	a.setBook(scores, path, warning)
+	a.setBook(scores, path, err)
 	a.mu.Unlock()
 	return nil
 }

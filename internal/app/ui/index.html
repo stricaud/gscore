@@ -282,6 +282,7 @@
     <button class="menu-title">Help</button>
     <div class="menu-items">
       <button data-action="report-bug"><span>Report a bug</span></button>
+      <button data-action="import-log"><span>Lines that could not be read</span></button>
       <hr>
       <button data-action="about"><span>About gscore</span></button>
     </div>
@@ -503,6 +504,16 @@
      last release being 0.0.9 “harder, better, stronger, faster” in April 2005.
      Rewritten in Go in 2026, engraved with SMuFL and Bravura.</p>
   <p class="small">GPL v2 or later.</p>
+  <form method="dialog"><button>Close</button></form>
+</dialog>
+
+<dialog id="import-log">
+  <h2>Lines that could not be read</h2>
+  <p class="small">A score file written by hand can hold a mistyped character,
+     a wrapped line or a construction gscore does not know. The music around it
+     was read; these are the lines that were passed over, so that the file can
+     be corrected at the source.</p>
+  <ul id="import-log-list"></ul>
   <form method="dialog"><button>Close</button></form>
 </dialog>
 

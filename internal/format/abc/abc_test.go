@@ -1,6 +1,7 @@
 package abc
 
 import (
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -474,15 +475,239 @@ func TestModesAndKeys(t *testing.T) {
 }
 
 func TestUnsupportedConstructsAreReportedNotIgnored(t *testing.T) {
+	// A construction the reader cannot represent is skipped and reported, not
+	// skipped in silence. The distinction is the whole point: a score that is
+	// quietly missing a voice is worse than one that says so.
 	cases := []string{
-		"K:C\n{ab}c\n",         // grace notes
-		"K:C\nabc&def\n",       // voice overlay
+		"K:C\nabc&def\n",       // voice overlay: the second voice is dropped
 		"K:C\n!unterminated\n", // decoration with no closing !
+		"K:C\nabZc\n",          // multi-measure rest
 	}
 	for _, src := range cases {
 		if _, err := Import(stringReader(src)); err == nil {
-			t.Errorf("%q parsed without error, but is not supported yet", src)
+			t.Errorf("%q parsed without a word about what was skipped", src)
 		}
+	}
+}
+
+func TestGraceNotesAreKept(t *testing.T) {
+	// Grace notes used to fail the file they were in, which cost fourteen of
+	// the forty-four tune books in the test corpus. They belong to the note
+	// they lean on, and take no time out of the bar.
+	s, err := Import(stringReader("K:C\nL:1/4\n{ab}c d\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	notes := notesOf(s)
+	if len(notes) != 2 {
+		t.Fatalf("got %d notes, want 2 — grace notes must not become elements", len(notes))
+	}
+	g := notes[0].Grace
+	if g == nil {
+		t.Fatal("the first note has no grace group")
+	}
+	if len(g.Notes) != 2 {
+		t.Fatalf("got %d grace notes, want 2", len(g.Notes))
+	}
+	if g.Slashed {
+		t.Error("{ab} is an appoggiatura; only {/ab} is slashed")
+	}
+	if notes[1].Grace != nil {
+		t.Error("the grace notes leaked onto the note after")
+	}
+
+	// The bar still adds up: a grace note that took time out of the measure
+	// would overflow every bar that had one.
+	var total model.Duration
+	for _, n := range notes {
+		total = total.Add(n.Dur)
+	}
+	if want := (model.Duration{Num: 1, Den: 2}); total.Cmp(want) != 0 {
+		t.Errorf("the bar is %v long, want %v", total, want)
+	}
+}
+
+func TestSlashedGraceNote(t *testing.T) {
+	s, err := Import(stringReader("K:C\n{/g}a\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	g := notesOf(s)[0].Grace
+	if g == nil || !g.Slashed {
+		t.Fatal("{/g} is an acciaccatura: the stroke through the stem is not decoration")
+	}
+}
+
+func TestLegacyDecorationsDoNotFailTheFile(t *testing.T) {
+	// ABC's one-letter decorations predate the !name! form and are all over
+	// the tune books: T for a trill, ~ for a roll, y for a spacer. Ten of the
+	// forty-four books in the corpus opened on this alone.
+	for _, src := range []string{
+		"K:C\nTa b\n", "K:C\n~a b\n", "K:C\nSa b\n",
+		"K:C\na y b\n", "K:C\nI:linebreak $\na $ b\n",
+		"K:C\ntrB>AB\n",
+	} {
+		if _, err := Import(stringReader(src)); err != nil {
+			t.Errorf("%q: %v", src, err)
+		}
+	}
+}
+
+func TestClassicMacLineEndings(t *testing.T) {
+	// Four of the forty-four books end their lines with a bare carriage
+	// return, which read as one enormous line: an X: field, no music after
+	// it, and a tune reported as empty.
+	s, err := Import(stringReader("X:1\rT:Mac\rK:C\rabc\r"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.Identity.Title != "Mac" {
+		t.Errorf("title = %q, want %q", s.Identity.Title, "Mac")
+	}
+	if n := len(notesOf(s)); n != 3 {
+		t.Errorf("got %d notes, want 3", n)
+	}
+}
+
+func TestEndingsFromBarlines(t *testing.T) {
+	// "|1 ... :|2 ... :|" is how a book written before volta brackets came
+	// into the language spells a first and second ending. Read as a chord,
+	// "[1" asked for a note called 1 and failed the file.
+	for _, src := range []string{
+		"K:C\nab |1 cd :|2 ef :|\n",
+		"K:C\nab |[1 cd :|[2 ef :|\n",
+	} {
+		s, err := Import(stringReader(src))
+		if err != nil {
+			t.Fatalf("%q: %v", src, err)
+		}
+		var got []string
+		for _, m := range s.Parts[0].Measures {
+			if m.Ending != nil {
+				got = append(got, m.Ending.Label())
+			}
+		}
+		if len(got) != 2 || got[0] != "1." || got[1] != "2." {
+			t.Errorf("%q: endings = %v, want [1. 2.]", src, got)
+		}
+	}
+}
+
+func TestBarlineSpellingsAreTakenWhole(t *testing.T) {
+	// Taking the characters two at a time read ":|]" as ":|" with a stray
+	// bracket after it, and the stray bracket failed the file.
+	cases := []struct {
+		src  string
+		want model.BarlineStyle
+	}{
+		{"K:C\nabc :|]\n", model.BarRepeatEnd},
+		{"K:C\nabc :]\n", model.BarRepeatEnd},
+		{"K:C\nabc |]\n", model.BarFinal},
+		{"K:C\nabc ||\n", model.BarDouble},
+		{"K:C\nabc :||:def\n", model.BarRepeatBoth},
+	}
+	for _, c := range cases {
+		s, err := Import(stringReader(c.src))
+		if err != nil {
+			t.Errorf("%q: %v", c.src, err)
+			continue
+		}
+		if got := s.Parts[0].Measures[0].RightBarline; got != c.want {
+			t.Errorf("%q: barline = %v, want %v", c.src, got, c.want)
+		}
+	}
+}
+
+func TestCommentsInStructuralFields(t *testing.T) {
+	// "M: C % Actually 2/4" is a real line out of Straights1783.abc. A meter
+	// field that refuses to be read because the transcriber explained himself
+	// in it is a bug in the reader.
+	s, err := Import(stringReader("X:1\nM: C % Actually 2/4\nK: Am % and C in the middle strain.\nabc\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := s.Parts[0].Time; got.Beats != 4 || got.Symbol != model.TimeCommon {
+		t.Errorf("meter = %v, want common time", got)
+	}
+	if got := s.Parts[0].Key; got.Fifths != 0 || got.Mode != model.Minor {
+		t.Errorf("key = %+v, want A minor", got)
+	}
+}
+
+func TestSeveralFieldsOnOneLine(t *testing.T) {
+	// "M: 2/4 L: 1/8 K: G |:" is how Prestons1798.abc writes every header.
+	s, err := Import(stringReader("X:1\nM: 2/4 L: 1/8 K: G |:\nGABc\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := s.Parts[0]
+	if p.Time.Beats != 2 || p.Time.BeatValue != 4 {
+		t.Errorf("meter = %v, want 2/4", p.Time)
+	}
+	if p.Key.Fifths != 1 {
+		t.Errorf("key fifths = %d, want 1 (G major)", p.Key.Fifths)
+	}
+	if n := len(notesOf(s)); n != 4 {
+		t.Errorf("got %d notes, want 4", n)
+	}
+}
+
+func TestPrefixOctaveMarks(t *testing.T) {
+	// "'d" and ",G" put the octave mark in front of the note. The language
+	// puts it after; both mean the same thing to a player, and two of the
+	// books write it in front.
+	s, err := Import(stringReader("K:C\n'd ,G\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	notes := notesOf(s)
+	if got := notes[0].Pitch.Octave; got != 6 {
+		t.Errorf("'d octave = %d, want 6", got)
+	}
+	if got := notes[1].Pitch.Octave; got != 3 {
+		t.Errorf(",G octave = %d, want 3", got)
+	}
+}
+
+func TestChordSymbolsAreKept(t *testing.T) {
+	// A lead sheet is mostly chord symbols, so a reader that drops them gets
+	// the notes and loses the piece.
+	s, err := Import(stringReader(`K:C` + "\n" + `"Gm7"a "C#"b "^sic"c "N.C."d` + "\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	notes := notesOf(s)
+	if c := notes[0].Chord; c == nil || c.Root != "G" || c.Quality != "m7" {
+		t.Errorf("first chord = %+v, want root G quality m7", c)
+	}
+	if c := notes[1].Chord; c == nil || c.Root != "C#" {
+		t.Errorf("second chord = %+v, want root C#", c)
+	}
+	// A leading ^ places an annotation; it is not a chord called sic.
+	if notes[2].Chord != nil {
+		t.Error(`"^sic" became a chord symbol; it is an annotation`)
+	}
+	if len(notes[2].Texts) != 1 || notes[2].Texts[0].Text != "sic" {
+		t.Errorf("annotation = %+v, want sic above", notes[2].Texts)
+	}
+	if c := notes[3].Chord; c == nil || c.Text != "N.C." {
+		t.Errorf("fourth chord = %+v, want the text N.C.", c)
+	}
+}
+
+func TestOneBadCharacterDoesNotLoseTheBar(t *testing.T) {
+	// Anon2.abc has a stray "i" in the middle of a bar. Abandoning the line
+	// would throw away the eight notes around it.
+	s, err := Import(stringReader("K:C\nabc idef\n"))
+	var partial *PartialError
+	if !errors.As(err, &partial) {
+		t.Fatalf("err = %v, want a partial read reporting the stray character", err)
+	}
+	if n := len(notesOf(s)); n != 6 {
+		t.Errorf("got %d notes, want 6 — the bar must survive the typo", n)
+	}
+	if len(partial.Details()) == 0 {
+		t.Error("the partial read says nothing about what it skipped")
 	}
 }
 

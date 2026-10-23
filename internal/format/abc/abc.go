@@ -47,10 +47,13 @@ func (importer) Import(r io.Reader) (*model.Score, error) { return Import(r) }
 // Import reads the first tune in an ABC file.
 func Import(r io.Reader) (*model.Score, error) {
 	scores, err := ImportAll(r)
-	if err != nil {
+	// A partial read hands back the music it got along with the account of
+	// what it could not read. Dropping the score here would have thrown that
+	// away and left the caller with nothing but the complaint.
+	if len(scores) == 0 {
 		return nil, err
 	}
-	return scores[0], nil
+	return scores[0], err
 }
 
 // ImportAll implements format.MultiImporter.
@@ -66,12 +69,13 @@ func ImportAll(r io.Reader) ([]*model.Score, error) {
 	if err != nil {
 		return nil, fmt.Errorf("abc: %w", err)
 	}
-	header, tunes := splitTunes(decodeText(data))
+	header, tunes := splitTunes(normaliseLines(decodeText(data)))
 	if len(tunes) == 0 {
 		return nil, errors.New("abc: no tune found; a tune starts with an X: field")
 	}
 
 	out := make([]*model.Score, 0, len(tunes))
+	var skipped []string
 	for _, t := range tunes {
 		p := newParser()
 		// Anything before the first X: is a file header and applies to every
@@ -83,14 +87,50 @@ func ImportAll(r io.Reader) ([]*model.Score, error) {
 		if err := p.run(t.text); err != nil {
 			return nil, err
 		}
+		skipped = append(skipped, p.skipped...)
 		s, err := p.finish()
 		if err != nil {
-			return nil, err
+			// An X: block with nothing in it but fields — a title somebody
+			// meant to come back to, or a tune whose every line was skipped.
+			// It is not a tune, and it is not a reason to stop reading the
+			// book it sits in.
+			skipped = append(skipped, fmt.Sprintf("tune at line %d has no music", t.line))
+			continue
 		}
 		out = append(out, s)
 	}
+	if len(out) == 0 {
+		return nil, errors.New("abc: no music found in any tune")
+	}
+	if len(skipped) > 0 {
+		return out, &PartialError{Skipped: skipped}
+	}
 	return out, nil
 }
+
+// PartialError reports the lines of a tune book that could not be read.
+//
+// The music that was read is returned with it. One mistyped character in a
+// book of nine hundred tunes used to mean none of them opened, which is the
+// wrong trade by any measure.
+type PartialError struct {
+	Skipped []string
+}
+
+func (e *PartialError) Error() string {
+	n := len(e.Skipped)
+	first := e.Skipped[0]
+	if n == 1 {
+		return "abc: skipped one line: " + first
+	}
+	return fmt.Sprintf("abc: skipped %d lines, the first being: %s", n, first)
+}
+
+// Partial implements format.Partial: what was read is worth keeping.
+func (e *PartialError) Partial() {}
+
+// Details implements format.Partial.
+func (e *PartialError) Details() []string { return e.Skipped }
 
 type tuneText struct {
 	text string
@@ -130,6 +170,22 @@ func splitTunes(src string) (header string, tunes []tuneText) {
 		return "", []tuneText{{text: src, line: 1}}
 	}
 	return strings.Join(headerLines, "\n"), tunes
+}
+
+// normaliseLines turns every line ending into a newline.
+//
+// Tune books are not all written on the same machine. Four of the forty-four
+// in the Village Music Project's collection end their lines with a bare
+// carriage return, the classic Mac ending, and read as one enormous line: the
+// parser found the X: field, no music after it, and reported an empty tune.
+// Normalising here rather than in each reader lets the rest of the parser go
+// on assuming that a line is a line.
+func normaliseLines(s string) string {
+	if !strings.ContainsRune(s, '\r') {
+		return s
+	}
+	s = strings.ReplaceAll(s, "\r\n", "\n")
+	return strings.ReplaceAll(s, "\r", "\n")
 }
 
 // decodeText returns the input as UTF-8.
@@ -202,8 +258,21 @@ type parser struct {
 	// next element: positive for >, negative for <.
 	pendingBroken int
 
+	// pendingOctave counts the ' and , marks written before a note rather
+	// than after it. The language puts them after, and several of the tune
+	// books put them before; both mean the same thing to a player.
+	pendingOctave int
+
 	// stemDir is the direction [I:stemdir ...] has put in force.
 	stemDir model.Stem
+
+	// pendingEnding is a volta number read off a barline. It belongs to the
+	// measure after that barline rather than the one it closed, which is why
+	// it waits here.
+	pendingEnding *model.Ending
+	// endingOpen is the volta bracket now open, so the barline that ends it
+	// can close it instead of the bracket being guessed at a bar later.
+	endingOpen *model.Ending
 
 	// An open (n:... tuplet: how many elements are still inside it.
 	tupletLeft           int
@@ -214,6 +283,15 @@ type parser struct {
 	// lineOffset keeps error messages pointing at the line in the whole file
 	// rather than the line within one tune of a book.
 	lineOffset int
+
+	// elements counts everything added to the score, which is how a line
+	// that produced no music at all is told from one that produced some.
+	elements int
+
+	// skipped holds the lines that could not be read. A tune book is written
+	// by hand over years and has typing mistakes in it; the reader keeps
+	// going and says what it dropped, rather than refusing the book.
+	skipped []string
 }
 
 func newParser() *parser {
@@ -271,16 +349,111 @@ func (p *parser) run(src string) error {
 			continue
 		}
 		if name, value, ok := fieldLine(line); ok {
+			value = stripFieldComment(name, value)
+			// Several fields written on one line: "M: 2/4 L: 1/8 K: G" is
+			// three of them, which is how Prestons1798.abc writes every
+			// tune's header.
+			value, more := splitFieldRun(name, value)
+			// A key field with music after it on the same line. "K: Em |:"
+			// opens a repeat the moment the key is given; it is not what the
+			// spec describes, but it is what Thompson1765.abc writes, and the
+			// music after it is music.
+			trailing := ""
+			if name == 'K' {
+				if i := strings.IndexByte(value, '|'); i >= 0 {
+					trailing, value = value[i:], strings.TrimSpace(value[:i])
+				}
+			}
 			if err := p.field(name, value); err != nil {
-				return err
+				p.skip(line, err)
+				continue
+			}
+			for _, f := range more {
+				n2, v2, ok := fieldLine(f)
+				if !ok {
+					continue
+				}
+				v2 = stripFieldComment(n2, v2)
+				if n2 == 'K' {
+					if i := strings.IndexByte(v2, '|'); i >= 0 {
+						trailing, v2 = v2[i:], strings.TrimSpace(v2[:i])
+					}
+				}
+				if err := p.field(n2, v2); err != nil {
+					p.skip(f, err)
+				}
+			}
+			if trailing != "" {
+				if err := p.music(trailing); err != nil {
+					p.skip(trailing, err)
+				}
 			}
 			continue
 		}
 		if err := p.music(line); err != nil {
-			return err
+			p.skip(line, err)
 		}
 	}
 	return nil
+}
+
+// skip records a line the reader could not make sense of.
+//
+// Dropping music silently would be the worst of the options, so every skipped
+// line is kept and reported as a partial read: the book opens, and the person
+// reading it is told which lines did not come through.
+func (p *parser) skip(line string, cause error) {
+	if len(line) > 48 {
+		line = line[:48] + "…"
+	}
+	p.note(fmt.Sprintf("%v, in %q", cause, line))
+}
+
+// structuralFields are the fields whose value the parser acts on, and the only
+// ones a run of fields on a single line is split at. Splitting a title or a
+// note would cut it in half at the first colon in it.
+var structuralFields = map[byte]bool{
+	'I': true, 'K': true, 'L': true, 'M': true, 'P': true, 'Q': true, 'V': true,
+}
+
+// splitFieldRun cuts a field value at the next field written on the same line.
+//
+// It returns the value up to that point and the fields that followed. Only a
+// structural field starts a new one: "F: http://..." holds a colon that is not
+// a field, and so does "Z: 2014 John Chambers <jc:trillian.mit.edu>".
+func splitFieldRun(name byte, value string) (string, []string) {
+	if !structuralFields[name] {
+		return value, nil
+	}
+	i := nextFieldStart(value)
+	if i < 0 {
+		return value, nil
+	}
+	head, rest := strings.TrimSpace(value[:i]), value[i:]
+	var more []string
+	for {
+		j := nextFieldStart(rest)
+		if j < 0 {
+			return head, append(more, strings.TrimSpace(rest))
+		}
+		more = append(more, strings.TrimSpace(rest[:j]))
+		rest = rest[j:]
+	}
+}
+
+// nextFieldStart finds a "X:" that begins a field inside a field's value: a
+// single structural letter, preceded by whitespace and followed by a colon.
+func nextFieldStart(value string) int {
+	for i := 1; i+1 < len(value); i++ {
+		if value[i+1] != ':' || !structuralFields[value[i]] {
+			continue
+		}
+		if c := value[i-1]; c != ' ' && c != '\t' {
+			continue
+		}
+		return i
+	}
+	return -1
 }
 
 // fieldLine recognises ABC's "X:value" information fields, which are only
@@ -312,6 +485,30 @@ func fieldLine(line string) (byte, string, bool) {
 	return c, strings.TrimSpace(line[2:]), true
 }
 
+// textFields are the fields whose value is prose, where a per cent sign is a
+// per cent sign rather than the start of a comment.
+var textFields = map[byte]bool{
+	'A': true, 'B': true, 'C': true, 'D': true, 'F': true, 'G': true,
+	'H': true, 'N': true, 'O': true, 'R': true, 'S': true, 'T': true,
+	'W': true, 'w': true, 'X': true, 'Z': true,
+}
+
+// stripFieldComment cuts a trailing % comment off a field the parser has to
+// understand.
+//
+// "M: C % Actually 2/4" is a real line out of Straights1783.abc, and a meter
+// field that refuses to be read because the transcriber explained himself in
+// it is a bug in the reader, not in the book.
+func stripFieldComment(name byte, value string) string {
+	if textFields[name] {
+		return value
+	}
+	if i := strings.IndexByte(value, '%'); i >= 0 {
+		value = value[:i]
+	}
+	return strings.TrimSpace(value)
+}
+
 func isLetter(c byte) bool { return c >= 'A' && c <= 'Z' || c >= 'a' && c <= 'z' }
 func isDigit(c byte) bool  { return c >= '0' && c <= '9' }
 
@@ -324,6 +521,12 @@ func isNoteLetter(c byte) bool {
  */
 
 func (p *parser) field(name byte, value string) error {
+	// A field with nothing after the colon says nothing. "M:" on its own,
+	// which Malchair.abc writes seventeen times, leaves the meter as it was
+	// rather than being a meter the reader cannot parse.
+	if value == "" && structuralFields[name] {
+		return nil
+	}
 	switch name {
 	case 'X':
 		// Reference number. Nothing in the model corresponds to it.
@@ -568,6 +771,12 @@ func (p *parser) fieldKey(value string) error {
 }
 
 func parseKeySpec(spec string) (model.KeySignature, error) {
+	// An explicit accidental list in place of a tonic. "K:=f=c=g" cancels
+	// three accidentals rather than naming a key, which is how a tune book
+	// writes a change of mode in the middle of a strain.
+	if spec[0] == '=' || spec[0] == '^' || spec[0] == '_' {
+		return parseAccidentalKey(spec)
+	}
 	step, ok := model.StepFromLetter(spec[0])
 	if !ok {
 		return model.KeySignature{}, fmt.Errorf("bad tonic %q", spec)
@@ -592,9 +801,42 @@ func parseKeySpec(spec string) (model.KeySignature, error) {
 		info, ok = modeOffsets[modeStr[:3]]
 	}
 	if !ok {
-		return model.KeySignature{}, fmt.Errorf("unknown mode %q", modeStr)
+		// A mode nobody recognises is a typo or a stray word, not a reason to
+		// refuse the three hundred other tunes in the book. The tonic was
+		// readable, so the signature is right even when the word after it is
+		// not; major is what an unqualified key means.
+		info = modeOffsets[""]
 	}
 	return model.KeySignature{Fifths: fifths + info.offset, Mode: info.mode}, nil
+}
+
+// parseAccidentalKey reads a key given as the accidentals themselves.
+//
+// The model holds a signature as a number of fifths, so the list is reduced to
+// the sharps and flats it asks for. A list of naturals, which is what
+// Thompson1778.abc writes, is the open key — and that is exactly what it
+// means.
+func parseAccidentalKey(spec string) (model.KeySignature, error) {
+	fifths := 0
+	for i := 0; i < len(spec); i++ {
+		switch c := spec[i]; {
+		case c == '^':
+			fifths++
+		case c == '_':
+			fifths--
+		case c == '=' || c == ' ' || c == '\t' || c == ',' || c == '\'':
+		case isNoteLetter(c):
+		default:
+			return model.KeySignature{}, fmt.Errorf("bad accidental list %q", spec)
+		}
+	}
+	if fifths > 7 {
+		fifths = 7
+	}
+	if fifths < -7 {
+		fifths = -7
+	}
+	return model.KeySignature{Fifths: fifths, Mode: model.Major}, nil
 }
 
 // fieldVoice selects or creates a part. ABC voices become parts, each on its
@@ -650,6 +892,11 @@ func (p *parser) ensureMeasure() {
 	if p.meas == nil {
 		p.voice = &model.Voice{}
 		p.meas = &model.Measure{Voices: []*model.Voice{p.voice}}
+		if p.pendingEnding != nil {
+			p.meas.Ending = p.pendingEnding
+			p.endingOpen = p.pendingEnding
+			p.pendingEnding = nil
+		}
 	}
 }
 
@@ -660,15 +907,28 @@ func (p *parser) closeMeasure(style model.BarlineStyle) {
 		return
 	}
 	p.meas.RightBarline = style
+	// A volta bracket ends where the repeat it belongs to ends. Closing it
+	// here rather than on the next number means a "1." bracket over a bar
+	// that is never repeated still gets its hook.
+	if p.endingOpen != nil && closesEnding(style) {
+		if p.meas.Ending == nil {
+			p.meas.Ending = &model.Ending{Numbers: p.endingOpen.Numbers}
+		}
+		p.meas.Ending.Stop = true
+		p.endingOpen = nil
+	}
 	p.cur.Measures = append(p.cur.Measures, p.meas)
 	p.meas, p.voice = nil, nil
 	p.accidentals = map[accKey]int{}
 	// Broken rhythm pairs two adjacent notes and does not reach across a
 	// barline, so an unresolved sign is dropped rather than carried over.
+	// Nor does an octave mark waiting for a note that never came.
 	p.pendingBroken = 0
+	p.pendingOctave = 0
 }
 
 func (p *parser) add(e model.Element) {
+	p.elements++
 	p.ensureMeasure()
 	p.applyBroken(e)
 	p.voice.Elements = append(p.voice.Elements, e)
@@ -733,6 +993,13 @@ func (p *parser) applyPending(m *model.Marks) {
 		m.AddArticulation(a)
 	}
 	m.Symbols = append(m.Symbols, p.pending.Symbols...)
+	m.Texts = append(m.Texts, p.pending.Texts...)
+	if p.pending.Chord != nil {
+		m.Chord = p.pending.Chord
+	}
+	if p.pending.Grace != nil {
+		m.Grace = p.pending.Grace
+	}
 	if p.pending.Dynamic != model.DynamicNone {
 		m.Dynamic = p.pending.Dynamic
 	}
@@ -804,6 +1071,13 @@ func (sc *scanner) digits() (int, bool) {
 }
 
 func (p *parser) music(line string) error {
+	// A line that is not music at all — an English sentence continuing the
+	// note above it, which several of the books write without the +: the
+	// language provides for it — would otherwise be reported one character at
+	// a time, forty entries for one line. Watch for a line that yielded
+	// nothing but complaints and collapse it into one.
+	marked, elements := len(p.skipped), p.elements
+
 	sc := &scanner{s: line}
 	for !sc.eof() {
 		c := sc.peek()
@@ -817,7 +1091,8 @@ func (p *parser) music(line string) error {
 			sc.next()
 		case c == '|' || c == ':':
 			if err := p.barline(sc); err != nil {
-				return err
+				// Not a barline after all, and not worth losing the bar over.
+				p.ignore(sc)
 			}
 		case c == '[':
 			if isLetter(sc.peekAt(1)) && sc.peekAt(2) == ':' {
@@ -829,6 +1104,17 @@ func (p *parser) music(line string) error {
 			if sc.peekAt(1) == '|' {
 				if err := p.barline(sc); err != nil {
 					return err
+				}
+				continue
+			}
+			if isDigit(sc.peekAt(1)) {
+				// "[1" opens a volta bracket in the middle of a line, which
+				// is how Prestons1798.abc writes its endings. Read as a chord
+				// it asked for a note called 1.
+				sc.next()
+				if nums := endingNumbers(sc); nums != nil {
+					p.pendingEnding = &model.Ending{Numbers: nums, Start: true}
+					p.ensureMeasure()
 				}
 				continue
 			}
@@ -874,14 +1160,8 @@ func (p *parser) music(line string) error {
 			sc.next()
 			p.pending.AddArticulation(model.Marcato)
 		case c == '"':
-			// A chord symbol or annotation. Nothing in the model holds text
-			// attached to a note yet, so it is skipped rather than guessed at.
-			sc.next()
-			for !sc.eof() && sc.peek() != '"' {
-				sc.next()
-			}
-			if !sc.eof() {
-				sc.next()
+			if err := p.quoted(sc); err != nil {
+				return err
 			}
 		case c == 'z' || c == 'x':
 			hidden := c == 'x'
@@ -912,18 +1192,92 @@ func (p *parser) music(line string) error {
 				}
 			}
 		case c == '{':
-			return p.errf("grace notes are not supported yet")
+			if err := p.graceGroup(sc); err != nil {
+				return err
+			}
 		case c == '!':
 			if err := p.decoration(sc); err != nil {
 				return err
 			}
+		case legacyDecorationNames[c] != "":
+			// ABC's one-letter decorations, the shorthand that predates the
+			// !name! form: T is a trill, ~ a roll, S a segno. The letters are
+			// reserved by the language and none of them is a note letter, so
+			// there is nothing to disambiguate.
+			sc.next()
+			p.applyDecoration(legacyDecorationNames[c])
+		case c == 'y':
+			// A spacer. It widens the engraving and makes no sound, so
+			// reading it as nothing is exactly right.
+			sc.next()
+			p.length(sc)
+		case c == '$':
+			// A typesetting-only line-break marker, from "I:linebreak $".
+			sc.next()
+		case c == ']':
+			// A bracket left over from something the reader did not take
+			// whole. It carries no music; failing a tune book over it would
+			// be absurd.
+			sc.next()
 		case c == '&':
-			return p.errf("voice overlay (&) is not supported yet")
+			// A voice overlay: what follows sounds over the bar just written,
+			// as a second voice. gscore has no second voice inside a measure
+			// yet, so the overlay is skipped up to the next barline — the one
+			// voice that is read is better than the whole book refused.
+			sc.next()
+			skipped := 0
+			for !sc.eof() && sc.peek() != '|' {
+				sc.next()
+				skipped++
+			}
+			p.pending = model.Marks{}
+			p.note(fmt.Sprintf("dropped an overlaid second voice of %d characters", skipped))
+		case c == '\'' || c == ',':
+			// An octave mark written before its note instead of after it.
+			// "'dd/d/" is how John Moore's second book raises an octave, and
+			// "G,,2,G,," is how Rutherford's lowers one.
+			sc.next()
+			if c == '\'' {
+				p.pendingOctave++
+			} else {
+				p.pendingOctave--
+			}
+		case c == 't' && sc.peekAt(1) == 'r':
+			// "tr" written out in front of the note, which is what a book
+			// writes when it does not know about T.
+			sc.advance(2)
+			p.applyDecoration("trill")
+		case isDigit(c):
+			// A length that got separated from its note by a space: "BA 2"
+			// in SBG_PC_VOL_1.abc means the A is twice as long. Attaching it
+			// to the note before is both what was meant and what keeps the
+			// bar's arithmetic right.
+			n, _ := sc.digits()
+			if p.lastElem != nil && n > 0 {
+				setElementDuration(p.lastElem, p.unitLen.Scale(n, 1))
+			} else {
+				p.note(fmt.Sprintf("a length %d with no note before it", n))
+			}
+		case isLetter(c) && sc.peekAt(1) == ':':
+			// A field written after the music on the same line, which is how
+			// several of the books add a W: of words or a K: for the next
+			// tune. Note letters are matched above, so A to G never land here.
+			name := sc.next()
+			sc.next() // ':'
+			value := stripFieldComment(name, strings.TrimSpace(sc.rest()))
+			sc.advance(len(sc.rest()))
+			if err := p.field(name, value); err != nil {
+				p.note(err.Error())
+			}
 		case c == 'Z':
 			return p.errf("multi-measure rests are not supported yet")
 		default:
-			return p.errf("unexpected %q", string(c))
+			p.ignore(sc)
 		}
+	}
+	if p.elements == elements && len(p.skipped)-marked >= 3 {
+		p.skipped = p.skipped[:marked]
+		p.skip(line, errors.New("not music"))
 	}
 	return nil
 }
@@ -1020,6 +1374,178 @@ func (p *parser) decoration(sc *scanner) error {
 	return nil
 }
 
+// ignore steps over a character the reader does not understand and says so.
+//
+// A tune book has typing mistakes in it — a stray i in Anon2.abc, a ":}" for
+// a repeat in Thompson1779.abc. Abandoning the line would throw away the bar
+// those mistakes sit in; reading past the character keeps the music and the
+// report says what was passed over, so nothing is dropped in silence.
+func (p *parser) ignore(sc *scanner) {
+	c := sc.next()
+	p.note(fmt.Sprintf("ignored %q", string(c)))
+}
+
+// note records something the reader had to let pass, for the partial read.
+//
+// The list is capped: a file in the wrong format altogether would otherwise
+// produce a note per character, and a report nobody can read is no report.
+func (p *parser) note(what string) {
+	const most = 40
+	if len(p.skipped) >= most {
+		return
+	}
+	p.skipped = append(p.skipped, fmt.Sprintf("line %d: %s", p.lineNo+p.lineOffset, what))
+}
+
+// legacyDecorationNames maps ABC's one-letter decorations onto the names the
+// !...! form uses, so that both spellings take the same path through the
+// parser. H, L, M, u and v have cases of their own further up because they
+// were there first.
+var legacyDecorationNames = map[byte]string{
+	'~': "roll",
+	'T': "trill",
+	'S': "segno",
+	'O': "coda",
+	'P': "uppermordent",
+	'J': "slide",
+	'R': "roll",
+}
+
+// applyDecoration attaches a decoration, named as the !...! form names it, to
+// the next element.
+func (p *parser) applyDecoration(name string) {
+	if a, ok := decorationArticulations[name]; ok {
+		p.pending.AddArticulation(a)
+		return
+	}
+	if d, ok := decorationDynamics[name]; ok {
+		p.pending.Dynamic = d
+		return
+	}
+	if st, ok := decorationStems[name]; ok {
+		p.pending.Stem = st
+		return
+	}
+	symbol := name
+	if sym, ok := decorationSymbols[name]; ok {
+		symbol = sym
+	}
+	p.pending.Symbols = append(p.pending.Symbols, model.SymbolMark{Name: symbol})
+}
+
+// quoted reads a "..." string: a chord symbol over the note, or an annotation
+// placed by the character it starts with.
+//
+// These used to be read and thrown away. A lead sheet is mostly chord
+// symbols, so a reader that drops them gets the notes and loses the piece.
+func (p *parser) quoted(sc *scanner) error {
+	sc.next() // '"'
+	var b strings.Builder
+	for !sc.eof() && sc.peek() != '"' {
+		b.WriteByte(sc.next())
+	}
+	if sc.eof() {
+		return p.errf("unterminated \"...\" text")
+	}
+	sc.next() // '"'
+	s := strings.TrimSpace(b.String())
+	if s == "" {
+		return nil
+	}
+
+	// A leading ^ _ < > @ places an annotation rather than naming a chord:
+	// "^No key sig in ms", out of WG1.abc, is a note to the reader and not a
+	// chord called No.
+	switch s[0] {
+	case '^', '_', '<', '>', '@':
+		place := model.PlacementAbove
+		if s[0] == '_' {
+			place = model.PlacementBelow
+		}
+		p.pending.Texts = append(p.pending.Texts, model.TextMark{
+			Text: strings.TrimSpace(s[1:]), Placement: place,
+		})
+		return nil
+	}
+	p.pending.Chord = parseChordName(s)
+	return nil
+}
+
+// parseChordName splits a chord symbol into the pieces it is set in: the root
+// full size, the quality smaller and raised, the bass note after a slash.
+//
+// Anything that does not begin like a chord — a word, a direction, "N.C." —
+// becomes the symbol's Text instead, which is how the model says "set this
+// like a chord symbol but do not pretend it is one".
+func parseChordName(s string) *model.ChordSymbol {
+	step := s[0]
+	if step < 'A' || step > 'G' {
+		return &model.ChordSymbol{Text: s}
+	}
+	i := 1
+	for i < len(s) && (s[i] == '#' || s[i] == 'b') {
+		i++
+	}
+	root := s[:i]
+	rest := s[i:]
+
+	// A root followed by a letter that cannot start a quality is a word that
+	// happens to begin with a note letter: "Chorus", "Bars 1-6", "Ab ovo".
+	if rest != "" && isLetter(rest[0]) && !strings.ContainsAny(rest[:1], "mMdaosjAD+-") {
+		return &model.ChordSymbol{Text: s}
+	}
+
+	c := &model.ChordSymbol{Root: root}
+	if i := strings.IndexByte(rest, '/'); i >= 0 {
+		c.Quality, c.Bass = rest[:i], rest[i+1:]
+	} else {
+		c.Quality = rest
+	}
+	return c
+}
+
+// graceGroup reads {ge} or {/g} — the little notes crushed in before the next
+// one.
+//
+// They go into the following note's marks rather than into the voice, because
+// they take no time out of the bar. The parser used to refuse any file that
+// held one, which loses music: the {B} in Thompson1767.abc is an ornament the
+// player is meant to play.
+func (p *parser) graceGroup(sc *scanner) error {
+	sc.next() // '{'
+	g := &model.GraceGroup{}
+	if sc.peek() == '/' {
+		// An acciaccatura: stolen from before the beat rather than taken out
+		// of the note it leans on. The stroke through the stem is what says
+		// so, and a player does two different things with the two.
+		sc.next()
+		g.Slashed = true
+	}
+	for !sc.eof() && sc.peek() != '}' {
+		c := sc.peek()
+		switch {
+		case c == '^' || c == '_' || c == '=' || isNoteLetter(c):
+			n, err := p.parseNote(sc)
+			if err != nil {
+				return err
+			}
+			g.Notes = append(g.Notes, n)
+		default:
+			// Slurs, spacing and decorations inside the braces. None of them
+			// is worth failing a tune over.
+			sc.next()
+		}
+	}
+	if sc.eof() {
+		return p.errf("unterminated grace note group")
+	}
+	sc.next() // '}'
+	if len(g.Notes) > 0 {
+		p.pending.Grace = g
+	}
+	return nil
+}
+
 // tuplet reads ABC's (p:q:r form.
 //
 // (3 alone means three notes in the time of two; the full form gives the ratio
@@ -1101,34 +1627,92 @@ func (p *parser) inlineField(sc *scanner) error {
 		return p.errf("unterminated inline field")
 	}
 	sc.next() // ']'
-	return p.field(name, strings.TrimSpace(b.String()))
+	return p.field(name, stripFieldComment(name, strings.TrimSpace(b.String())))
+}
+
+// barlineTokens are the barline spellings, longest first.
+//
+// Order is the whole point: taking the characters two at a time read ":|]",
+// the way a repeated section at the end of a tune is written, as ":|" with a
+// stray bracket after it — and the stray bracket failed the file. Matching the
+// longest spelling that fits leaves nothing behind.
+var barlineTokens = []struct {
+	tok   string
+	style model.BarlineStyle
+}{
+	{":||:", model.BarRepeatBoth},
+	{":|]", model.BarRepeatEnd},
+	{":]", model.BarRepeatEnd},
+	{"[|]", model.BarFinal},
+	{":|:", model.BarRepeatBoth},
+	{"|:|", model.BarRepeatBoth},
+	{"||:", model.BarRepeatStart},
+	{":||", model.BarRepeatEnd},
+	{"::", model.BarRepeatBoth},
+	{":|", model.BarRepeatEnd},
+	{"|:", model.BarRepeatStart},
+	{"|]", model.BarFinal},
+	{"[|", model.BarFinal},
+	{"||", model.BarDouble},
+	{"|", model.BarSingle},
+}
+
+// closesEnding reports whether a barline of this kind ends a volta bracket.
+func closesEnding(style model.BarlineStyle) bool {
+	switch style {
+	case model.BarRepeatEnd, model.BarRepeatBoth, model.BarFinal, model.BarDouble:
+		return true
+	}
+	return false
 }
 
 func (p *parser) barline(sc *scanner) error {
-	var style model.BarlineStyle
-	var width int
-	switch r := sc.rest(); {
-	case strings.HasPrefix(r, "|]"), strings.HasPrefix(r, "[|"):
-		style, width = model.BarFinal, 2
-	case strings.HasPrefix(r, "||"):
-		style, width = model.BarDouble, 2
-	case strings.HasPrefix(r, "|:"):
-		style, width = model.BarRepeatStart, 2
-	case strings.HasPrefix(r, "::"):
-		style, width = model.BarRepeatBoth, 2
-	case strings.HasPrefix(r, ":|"):
-		style, width = model.BarRepeatEnd, 2
-	case strings.HasPrefix(r, "|"):
-		style, width = model.BarSingle, 1
-	default:
-		return p.errf("unexpected %q", string(sc.peek()))
+	r := sc.rest()
+	for _, b := range barlineTokens {
+		if !strings.HasPrefix(r, b.tok) {
+			continue
+		}
+		sc.advance(len(b.tok))
+		p.closeMeasure(b.style)
+		// The times-through follow the barline: "|1" and ":|2" are how a
+		// tune book written before brackets came into the language spells a
+		// first and second ending.
+		if nums := endingNumbers(sc); nums != nil {
+			p.pendingEnding = &model.Ending{Numbers: nums, Start: true}
+		}
+		return nil
 	}
-	sc.advance(width)
-	p.closeMeasure(style)
-	// A repeat ending number such as |1 follows the barline; nothing in the
-	// model records it yet.
-	sc.digits()
-	return nil
+	return p.errf("unexpected %q", string(sc.peek()))
+}
+
+// endingNumbers reads the times-through written after a barline or an opening
+// bracket: "1", "1,2", "1-3". It returns nil when there is no number there.
+func endingNumbers(sc *scanner) []int {
+	if sc.eof() || !isDigit(sc.peek()) {
+		return nil
+	}
+	var out []int
+	for {
+		n, ok := sc.digits()
+		if !ok {
+			break
+		}
+		out = append(out, n)
+		if sc.peek() == '-' && isDigit(sc.peekAt(1)) {
+			sc.next()
+			if to, ok := sc.digits(); ok {
+				for v := n + 1; v <= to; v++ {
+					out = append(out, v)
+				}
+			}
+		}
+		if sc.peek() == ',' && isDigit(sc.peekAt(1)) {
+			sc.next()
+			continue
+		}
+		break
+	}
+	return out
 }
 
 // length reads ABC's note length suffix and returns the resulting duration.
@@ -1215,6 +1799,10 @@ octaveMarks:
 			break octaveMarks
 		}
 	}
+	// A ' or , written in front of the note rather than after it means the
+	// same thing, so it is added here where both spellings meet.
+	octave += p.pendingOctave
+	p.pendingOctave = 0
 
 	dur, _ := p.length(sc)
 

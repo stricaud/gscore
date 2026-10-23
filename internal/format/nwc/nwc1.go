@@ -343,6 +343,12 @@ func (e *PartialError) Error() string {
 
 func (e *PartialError) Unwrap() error { return e.Cause }
 
+// Partial implements format.Partial: what was read is worth keeping.
+func (e *PartialError) Partial() {}
+
+// Details implements format.Partial.
+func (e *PartialError) Details() []string { return []string{e.Error()} }
+
 func (w *walker) staff(minor int) (*model.Part, error) {
 	name, err := w.cstring()
 	if err != nil {

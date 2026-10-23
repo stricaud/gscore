@@ -193,16 +193,18 @@ func buildPlayback(s *model.Score) Playback {
 						loud = n.Dynamic
 						swell = nil // a written dynamic settles the question
 					}
+					gd := addGrace(&out, n.Grace, p, shift, vt, d, secondsPerWhole, pi, loud)
 					addNote(&out, open, &n.Marks, sounding(p, n.Pitch, shift),
-						vt, d, pi, ref, p.Instrument, loud, n.Percussion)
+						vt+gd, d-gd, pi, ref, p.Instrument, loud, n.Percussion)
 				case *model.Chord:
 					if n.Dynamic != model.DynamicNone {
 						loud = n.Dynamic
 						swell = nil
 					}
+					gd := addGrace(&out, n.Grace, p, shift, vt, d, secondsPerWhole, pi, loud)
 					for _, cn := range n.Notes {
 						addNote(&out, open, &n.Marks, sounding(p, cn.Pitch, shift),
-							vt, d, pi, ref, p.Instrument, loud, cn.Percussion)
+							vt+gd, d-gd, pi, ref, p.Instrument, loud, cn.Percussion)
 					}
 				}
 				if mk != nil {
@@ -277,6 +279,40 @@ func baseRefs(s *model.Score) [][]int {
 	return out
 }
 
+
+// addGrace sounds the small notes in front of a note and returns how much of
+// that note's time they took.
+//
+// They take it from the note they lean on rather than from the note before,
+// so that the bar still lasts exactly as long as it says it does. Stealing
+// from the note before would be truer to how an acciaccatura is actually
+// played and would put every bar after it out of step with the cursor, which
+// follows the written durations — a trade the other way round is not worth
+// making for an ornament a few milliseconds long.
+func addGrace(out *Playback, g *model.GraceGroup, part *model.Part, shift int,
+	start, dur, secondsPerWhole float64, pi int, loud model.Dynamic) float64 {
+
+	if g == nil || len(g.Notes) == 0 {
+		return 0
+	}
+	n := float64(len(g.Notes))
+	// A sixteenth each, or a third of the note they precede shared between
+	// them, whichever is less: grace notes in front of a short note have to
+	// be shorter still, or they swallow it.
+	each := secondsPerWhole / 16
+	if each*n > dur/3 {
+		each = dur / 3 / n
+	}
+	at := start
+	for _, gn := range g.Notes {
+		// Ref 0: a grace note is drawn but not numbered, so there is no
+		// notehead for the editor to light up. Zero says so.
+		addNote(out, map[int]int{}, &model.Marks{}, sounding(part, gn.Pitch, shift),
+			at, each, pi, 0, part.Instrument, loud, gn.Percussion)
+		at += each
+	}
+	return each * n
+}
 
 func addNote(out *Playback, open map[int]int, m *model.Marks, p model.Pitch,
 	start, dur float64, part, ref int, inst model.Instrument, loud model.Dynamic,

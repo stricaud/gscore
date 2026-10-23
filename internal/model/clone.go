@@ -170,5 +170,15 @@ func CloneMarks(m Marks) Marks {
 		}
 		out.Chord = &c
 	}
+	if m.Grace != nil {
+		g := *m.Grace
+		g.Notes = make([]*Note, len(m.Grace.Notes))
+		for i, n := range m.Grace.Notes {
+			cn := *n
+			cn.Marks = CloneMarks(n.Marks)
+			g.Notes[i] = &cn
+		}
+		out.Grace = &g
+	}
 	return out
 }

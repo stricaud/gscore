@@ -40,7 +40,7 @@ import (
 	_ "github.com/stricaud/gscore/internal/format/abc"
 	_ "github.com/stricaud/gscore/internal/format/gscore"
 	_ "github.com/stricaud/gscore/internal/format/musicxml"
-	"github.com/stricaud/gscore/internal/format/nwc"
+	_ "github.com/stricaud/gscore/internal/format/nwc"
 )
 
 func init() {
@@ -90,7 +90,7 @@ func main() {
 	if err != nil {
 		// A format may understand part of a file and say so; that is worth
 		// showing rather than refusing to open anything.
-		var partial *nwc.PartialError
+		var partial format.Partial
 		if errors.As(err, &partial) && score != nil {
 			fmt.Fprintf(os.Stderr, "gscore: warning: %v\n", err)
 		} else {

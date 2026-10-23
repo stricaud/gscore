@@ -26,6 +26,7 @@ package app
 import (
 	"embed"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html"
 	"io"
@@ -72,6 +73,11 @@ type App struct {
 	// warning holds what an importer could not fully read, so the interface
 	// can say so instead of quietly showing half a score.
 	warning string
+	// importLog holds every line the importer could not read, one entry each.
+	// A tune book is written by hand over years and has mistakes in it; the
+	// person who wrote it is the one who can fix them, so they get the whole
+	// list rather than a count.
+	importLog []string
 
 	// symbols holds the user's own drawings, which the renderer needs in
 	// order to draw anything the music font does not carry.
@@ -380,12 +386,14 @@ type tuneInfo struct {
 }
 
 type info struct {
-	Warning  string     `json:"warning,omitempty"`
-	Tunes    []tuneInfo `json:"tunes,omitempty"`
+	Warning string `json:"warning,omitempty"`
+	// Log lists the lines the importer could not read, for the log window.
+	Log   []string   `json:"log,omitempty"`
+	Tunes []tuneInfo `json:"tunes,omitempty"`
 	// CanUndo and CanRedo grey the Edit menu entries, so the menu says what
 	// it will do rather than looking the same whether it will do it or not.
-	CanUndo bool `json:"canUndo"`
-	CanRedo bool `json:"canRedo"`
+	CanUndo  bool       `json:"canUndo"`
+	CanRedo  bool       `json:"canRedo"`
 	Current  int        `json:"current"`
 	Native   bool       `json:"native"`
 	Local    bool       `json:"local"`
@@ -421,6 +429,7 @@ func (a *App) handleInfo(w http.ResponseWriter, r *http.Request) {
 
 	out := info{
 		Warning:  a.warning,
+		Log:      a.importLog,
 		Current:  a.current,
 		Native:   a.native,
 		Local:    a.local,
@@ -495,13 +504,31 @@ func keyText(k model.KeySignature) string {
 // else's music back over the file just opened. Clearing it here, where the
 // document is replaced, is why opening a file by any of the three routes
 // cannot forget to.
-func (a *App) setBook(scores []*model.Score, filename, warning string) {
+func (a *App) setBook(scores []*model.Score, filename string, err error) {
 	a.book = scores
 	a.current = 0
 	a.score = scores[0]
 	a.filename = filename
-	a.warning = warning
+	a.warning, a.importLog = readProblems(err)
 	a.forgetHistory()
+}
+
+// readProblems splits an importer's error into the one line the status bar
+// shows and the whole list the log window shows.
+//
+// An importer that read most of a file reports a partial read, which carries
+// the lines it had to pass over. Those lines used to be reduced to the first
+// one before anybody saw them, and the other thirty-nine were lost — which
+// left the person who could have corrected the file with nothing to go on.
+func readProblems(err error) (string, []string) {
+	if err == nil {
+		return "", nil
+	}
+	var partial format.Partial
+	if errors.As(err, &partial) {
+		return partial.Error(), partial.Details()
+	}
+	return err.Error(), []string{err.Error()}
 }
 
 // handleTune switches to another score in the same file.
@@ -524,7 +551,7 @@ func (a *App) handleTune(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) handleNew(w http.ResponseWriter, r *http.Request) {
 	a.mu.Lock()
-	a.setBook([]*model.Score{model.NewScore()}, "", "")
+	a.setBook([]*model.Score{model.NewScore()}, "", nil)
 	a.mu.Unlock()
 	writeJSON(w, map[string]string{"status": "ok"})
 }
@@ -555,12 +582,8 @@ func (a *App) handleOpen(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	warning := ""
-	if err != nil {
-		warning = err.Error()
-	}
 	a.mu.Lock()
-	a.setBook(scores, name, warning)
+	a.setBook(scores, name, err)
 	a.mu.Unlock()
 	writeJSON(w, map[string]any{"status": "ok", "filename": name, "tunes": len(scores)})
 }

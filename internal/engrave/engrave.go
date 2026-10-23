@@ -1022,7 +1022,7 @@ func (e *engraver) measureBox(p *model.Part, m *model.Measure) measureBox {
 		s := slot{elem: el, index: e.nextRef}
 		e.nextRef++
 		s.width = e.elementWidth(el)
-		s.lead = e.accidentalLead(el)
+		s.lead = e.accidentalLead(el) + graceLead(el)
 		box.slots = append(box.slots, s)
 		box.ideal += s.lead + s.width
 		box.minimum += s.lead + sp.MinNote

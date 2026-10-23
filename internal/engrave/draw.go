@@ -133,6 +133,7 @@ func (e *engraver) drawMeasure(part *model.Part, b measureBox, x float64, stretc
 	// Noteheads first, then stems and beams, which need the whole group.
 	for _, p := range items {
 		e.drawHeads(part, p)
+		e.drawGrace(part, p)
 	}
 	e.drawStemsAndBeams(items, part.Time)
 	for _, p := range items {

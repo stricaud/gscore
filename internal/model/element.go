@@ -364,6 +364,40 @@ type Marks struct {
 	// page, so that they stay where they belong when the music is re-engraved
 	// at another size — which is the same reason symbols do.
 	Texts []TextMark
+
+	// Grace holds the little notes crushed in before this one.
+	//
+	// They hang off the note they lean on rather than standing beside it as
+	// elements of their own, because they take no time out of the measure: a
+	// bar of four quarters with a grace note before the third beat is still a
+	// bar of four quarters. Putting them in the voice would make every bar
+	// that has one overflow.
+	Grace *GraceGroup
+}
+
+// GraceGroup is the small notes played before the note they belong to.
+//
+// Slashed is the difference between an acciaccatura and an appoggiatura, and
+// it is not decoration: a stroke through the stem means "as quickly as
+// possible, stolen from before the beat", and no stroke means the grace notes
+// take their written value out of the note they precede. A player does two
+// different things with the two.
+type GraceGroup struct {
+	Notes   []*Note
+	Slashed bool
+}
+
+// Duration is how long the whole group is written as, which is what decides
+// how much room it needs rather than how long it sounds.
+func (g *GraceGroup) Duration() Duration {
+	if g == nil {
+		return Duration{}
+	}
+	total := Duration{Num: 0, Den: 1}
+	for _, n := range g.Notes {
+		total = total.Add(n.Dur)
+	}
+	return total
 }
 
 // ChordSymbol is the name of a chord, written above the staff.

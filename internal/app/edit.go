@@ -173,6 +173,30 @@ func (a *App) handleInsert(w http.ResponseWriter, r *http.Request) {
 		at = len(v.Elements)
 	}
 
+	// Writing over what is picked up rather than in front of it.
+	//
+	// Clicking a note and typing is correcting it, not adding to it: the bar
+	// already has the right number of beats in it and pushing the rest along
+	// — into the next bar, and the one after that, making bars as it goes —
+	// is the opposite of what was asked for. Only a note somebody pointed at
+	// is replaced; writing at the cursor still writes.
+	if q.Get("replace") == "1" && at < len(v.Elements) {
+		old := v.Elements[at]
+		v.Elements[at] = el
+		// A longer note than the one it replaced still has to go somewhere,
+		// so the bar is settled the same way as after an insert. A shorter
+		// one simply leaves the bar short, which is the writer's business.
+		if el.Duration().Cmp(old.Duration()) > 0 {
+			spill(p, measIdx)
+		}
+		part, idx := findElement(p, measIdx, el)
+		writeJSON(w, map[string]any{
+			"status": "ok", "measure": part, "at": idx, "index": idx,
+			"replaced": true,
+		})
+		return
+	}
+
 	// Writing at the end of a bar that is already full means the next bar.
 	// Without this the music piles up behind the barline and there is no way
 	// to reach the measure after it, which is the one you are looking at.

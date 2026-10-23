@@ -1164,9 +1164,12 @@ function select(hit, el, step) {
     // The marking commands act on the element before the cursor, so the
     // cursor sits just after what is selected.
     at: el.index + 1,
-    step: 0,
+    step: (el.steps && el.steps.length) ? el.steps[0] : 0,
     head,
     ref: el.ref,
+    // Pointed at, so typing changes it rather than adding to it. Writing at
+    // the cursor still writes; this is only ever set by picking something up.
+    replace: true,
   };
   markSelection();
   updateFingering();
@@ -1187,14 +1190,19 @@ async function insertAtSelection(rest, keepSelection) {
     status("Click a measure first");
     return;
   }
+  // What was picked up is written over; what the cursor is pointing between
+  // is written into. A range of notes is neither: it is not one thing to
+  // replace, so it falls back to writing.
+  const replacing = !!sel.replace && state.multi.length <= 1 && sel.at > 0;
   const p = new URLSearchParams({
     part: String(sel.part),
     measure: String(sel.measure),
-    at: String(sel.at),
+    at: String(replacing ? sel.at - 1 : sel.at),
     step: String(sel.step),
     dur: state.tool.duration,
     kind: rest ? "rest" : "note",
   });
+  if (replacing) p.set("replace", "1");
   if (!rest && state.tool.accidental !== "none") {
     p.set("accidental", state.tool.accidental);
   }
@@ -1216,11 +1224,17 @@ async function insertAtSelection(rest, keepSelection) {
   const where = await res.json().catch(() => null);
   const moved = where && where.measure !== undefined && where.measure !== sel.measure;
   if (where && where.measure !== undefined) {
+    // where.at is already the place after the element, whether it was
+    // written in or written over.
     sel.measure = where.measure;
     sel.at = where.at;
   } else {
     sel.at += 1;
   }
+  // One correction at a time: having written over what was picked up, the
+  // cursor is past it and the next thing typed is written, not another
+  // replacement.
+  sel.replace = false;
   sel.ref = null;
   await refreshScore();
   // Select what was just written, so a dynamic or a stem change lands on it.
@@ -1231,6 +1245,9 @@ async function insertAtSelection(rest, keepSelection) {
   if (el) sel.ref = el.ref;
   markSelection();
   let what = rest ? "Rest" : state.tool.duration + " note";
+  if (replacing) {
+    what = "Replaced with a " + (rest ? "rest" : state.tool.duration + " note");
+  }
   // On a drum staff, say which drum. "quarter note" tells a drummer nothing
   // about what they just wrote.
   if (!rest && isDrumStaff(sel.part)) {
@@ -4554,6 +4571,9 @@ function moveCursorBy(delta) {
   state.selection = {
     part: sel.part, measure: p.measure, at: p.index + 1,
     step: p.step ?? sel.step ?? 0, ref: p.ref,
+    // Moving along the music is going somewhere to write, so what is written
+    // goes in at the cursor. Replacing is for what you pointed at.
+    replace: false,
   };
   markSelection();
   scrollSelectionIntoView();

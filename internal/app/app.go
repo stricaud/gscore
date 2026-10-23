@@ -64,6 +64,11 @@ type App struct {
 
 	// clip is what was last copied, kept here because the music is here.
 	clip clipboard
+	// undoStack and redoStack hold the score as it was before and after the
+	// edits that have been taken back. See undo.go for why they are whole
+	// copies rather than a list of changes.
+	undoStack []snapshot
+	redoStack []snapshot
 	// warning holds what an importer could not fully read, so the interface
 	// can say so instead of quietly showing half a score.
 	warning string
@@ -237,64 +242,85 @@ func (a *App) routes(mux *http.ServeMux) {
 // runs this same set of handlers inside WebAssembly, so a score behaves
 // identically whether gscore is an application or a page.
 func (a *App) APIRoutes(mux *http.ServeMux) {
+	// Reading: drawings, descriptions, and the pickers. Nothing here changes
+	// the music, so nothing here needs to be undoable.
 	mux.HandleFunc("/score.svg", a.handleSVG)
 	mux.HandleFunc("/font.otf", a.handleFont)
-	mux.HandleFunc("/api/info", a.handleInfo)
-	mux.HandleFunc("/api/new", a.handleNew)
-	mux.HandleFunc("/api/open", a.handleOpen)
-	mux.HandleFunc("/api/layout", a.handleLayout)
-	mux.HandleFunc("/api/playback", a.handlePlayback)
-	mux.HandleFunc("/api/keysignatures", a.handleKeySignatures)
-	mux.HandleFunc("/api/setkey", a.handleSetKey)
+	mux.HandleFunc("/symbol.png", a.handleSymbolPNG)
 	mux.HandleFunc("/keysig.svg", a.handleKeySigSVG)
 	mux.HandleFunc("/timesig.svg", a.handleTimeSigSVG)
-	mux.HandleFunc("/api/hits", a.handleHits)
-	mux.HandleFunc("/api/insert", a.handleInsert)
-	mux.HandleFunc("/api/addpitch", a.handleAddPitch)
-	mux.HandleFunc("/api/barline", a.handleBarline)
-	mux.HandleFunc("/api/delete", a.handleDelete)
-	mux.HandleFunc("/api/addmeasure", a.handleAddMeasure)
-	mux.HandleFunc("/api/pickfile", a.handlePickFile)
-	mux.HandleFunc("/api/openpath", a.handleOpenPath)
-	mux.HandleFunc("/api/tune", a.handleTune)
-	mux.HandleFunc("/api/save", a.handleSave)
-	mux.HandleFunc("/api/movesymbol", a.handleMoveSymbol)
-	mux.HandleFunc("/api/staff", a.handleStaff)
-	mux.HandleFunc("/api/tempo", a.handleTempo)
-	mux.HandleFunc("/api/header", a.handleHeader)
-	mux.HandleFunc("/api/instruments", a.handleInstruments)
 	mux.HandleFunc("/print", a.handlePrint)
 	mux.HandleFunc("/api/pdf", a.handlePDF)
-	mux.HandleFunc("/api/openbrowser", a.handleOpenBrowser)
-	mux.HandleFunc("/api/importsymbols", a.handleImportSymbols)
-	mux.HandleFunc("/api/exportsymbols", a.handleExportSymbols)
-	mux.HandleFunc("/api/symbols", a.handleSymbols)
-	mux.HandleFunc("/api/insertsymbol", a.handleInsertSymbol)
-	mux.HandleFunc("/symbol.png", a.handleSymbolPNG)
-	mux.HandleFunc("/api/symbolimport", a.handleSymbolImport)
-	mux.HandleFunc("/api/stem", a.handleStem)
-	mux.HandleFunc("/api/accidental", a.handleAccidental)
-	mux.HandleFunc("/api/hairpin", a.handleHairpin)
-	mux.HandleFunc("/api/octave", a.handleOctave)
-	mux.HandleFunc("/api/ending", a.handleEnding)
-	mux.HandleFunc("/api/nudge", a.handleNudge)
-	mux.HandleFunc("/api/copy", a.handleCopy)
-	mux.HandleFunc("/api/paste", a.handlePaste)
-	mux.HandleFunc("/api/lyrics", a.handleLyrics)
+	mux.HandleFunc("/api/info", a.handleInfo)
+	mux.HandleFunc("/api/layout", a.handleLayout)
+	mux.HandleFunc("/api/hits", a.handleHits)
+	mux.HandleFunc("/api/playback", a.handlePlayback)
+	mux.HandleFunc("/api/keysignatures", a.handleKeySignatures)
+	mux.HandleFunc("/api/instruments", a.handleInstruments)
 	mux.HandleFunc("/api/getlyrics", a.handleGetLyrics)
-	mux.HandleFunc("/api/text", a.handleText)
-	mux.HandleFunc("/api/marker", a.handleMarker)
+	mux.HandleFunc("/api/symbols", a.handleSymbols)
+	mux.HandleFunc("/api/copy", a.handleCopy)
+	mux.HandleFunc("/api/pickfile", a.handlePickFile)
+	mux.HandleFunc("/api/save", a.handleSave)
+	mux.HandleFunc("/api/exportsymbols", a.handleExportSymbols)
+	mux.HandleFunc("/api/openbrowser", a.handleOpenBrowser)
+
+	// How the score is drawn rather than what it says, and which of a book's
+	// tunes is in front of you. Taking these back with undo would be
+	// surprising: nobody thinks of turning staff names on as an edit.
 	mux.HandleFunc("/api/view", a.handleView)
-	mux.HandleFunc("/api/group", a.handleGroup)
-	mux.HandleFunc("/api/beam", a.handleBeam)
-	mux.HandleFunc("/api/chordsymbol", a.handleChordSymbol)
-	mux.HandleFunc("/api/addstaff", a.handleAddStaff)
-	mux.HandleFunc("/api/removestaff", a.handleRemoveStaff)
-	mux.HandleFunc("/api/movestaff", a.handleMoveStaff)
-	mux.HandleFunc("/api/measurerepeat", a.handleMeasureRepeat)
-	mux.HandleFunc("/api/dynamic", a.handleDynamic)
-	mux.HandleFunc("/api/articulation", a.handleArticulation)
-	mux.HandleFunc("/api/deleteselection", a.handleDeleteSelection)
+	mux.HandleFunc("/api/tune", a.handleTune)
+
+	// Opening something else. The edits before it belong to a score that is
+	// no longer here, so the history goes with it.
+	mux.HandleFunc("/api/new", a.handleNew)
+	mux.HandleFunc("/api/open", a.handleOpen)
+	mux.HandleFunc("/api/openpath", a.handleOpenPath)
+	mux.HandleFunc("/api/importsymbols", a.handleImportSymbols)
+	mux.HandleFunc("/api/symbolimport", a.handleSymbolImport)
+
+	mux.HandleFunc("/api/undo", a.handleUndo)
+	mux.HandleFunc("/api/redo", a.handleRedo)
+
+	// Everything that changes the music. Each is wrapped so that it can be
+	// taken back, which is why they are listed together: a route that is not
+	// in this block is a route whose edits cannot be undone, and that is
+	// visible here rather than hidden in the handler.
+	for path, h := range map[string]http.HandlerFunc{
+		"/api/insert":          a.handleInsert,
+		"/api/addpitch":        a.handleAddPitch,
+		"/api/delete":          a.handleDelete,
+		"/api/deleteselection": a.handleDeleteSelection,
+		"/api/paste":           a.handlePaste,
+		"/api/nudge":           a.handleNudge,
+		"/api/addmeasure":      a.handleAddMeasure,
+		"/api/measurerepeat":   a.handleMeasureRepeat,
+		"/api/barline":         a.handleBarline,
+		"/api/beam":            a.handleBeam,
+		"/api/stem":            a.handleStem,
+		"/api/accidental":      a.handleAccidental,
+		"/api/articulation":    a.handleArticulation,
+		"/api/dynamic":         a.handleDynamic,
+		"/api/hairpin":         a.handleHairpin,
+		"/api/octave":          a.handleOctave,
+		"/api/ending":          a.handleEnding,
+		"/api/marker":          a.handleMarker,
+		"/api/text":            a.handleText,
+		"/api/lyrics":          a.handleLyrics,
+		"/api/chordsymbol":     a.handleChordSymbol,
+		"/api/setkey":          a.handleSetKey,
+		"/api/tempo":           a.handleTempo,
+		"/api/header":          a.handleHeader,
+		"/api/staff":           a.handleStaff,
+		"/api/addstaff":        a.handleAddStaff,
+		"/api/removestaff":     a.handleRemoveStaff,
+		"/api/movestaff":       a.handleMoveStaff,
+		"/api/group":           a.handleGroup,
+		"/api/insertsymbol":    a.handleInsertSymbol,
+		"/api/movesymbol":      a.handleMoveSymbol,
+	} {
+		mux.HandleFunc(path, a.undoable(h))
+	}
 }
 
 func (a *App) handleSVG(w http.ResponseWriter, r *http.Request) {
@@ -353,6 +379,10 @@ type tuneInfo struct {
 type info struct {
 	Warning  string     `json:"warning,omitempty"`
 	Tunes    []tuneInfo `json:"tunes,omitempty"`
+	// CanUndo and CanRedo grey the Edit menu entries, so the menu says what
+	// it will do rather than looking the same whether it will do it or not.
+	CanUndo bool `json:"canUndo"`
+	CanRedo bool `json:"canRedo"`
 	Current  int        `json:"current"`
 	Native   bool       `json:"native"`
 	Local    bool       `json:"local"`
@@ -393,6 +423,8 @@ func (a *App) handleInfo(w http.ResponseWriter, r *http.Request) {
 		Local:    a.local,
 		Version:  version.Version,
 		Filename: a.filename,
+		CanUndo:  len(a.undoStack) > 0,
+		CanRedo:  len(a.redoStack) > 0,
 		Title:    a.score.Identity.Title,
 		Subtitle: a.score.Identity.Subtitle,
 		Composer: a.score.Identity.Composer,
@@ -447,12 +479,19 @@ func keyText(k model.KeySignature) string {
 }
 
 // setBook replaces what is open. The caller holds the lock.
+//
+// The undo history goes with it. The edits before this point belong to a
+// score that is no longer here, and undoing one of them would put somebody
+// else's music back over the file just opened. Clearing it here, where the
+// document is replaced, is why opening a file by any of the three routes
+// cannot forget to.
 func (a *App) setBook(scores []*model.Score, filename, warning string) {
 	a.book = scores
 	a.current = 0
 	a.score = scores[0]
 	a.filename = filename
 	a.warning = warning
+	a.forgetHistory()
 }
 
 // handleTune switches to another score in the same file.

@@ -269,14 +269,38 @@ func (e *engraver) drawMarkers(parts []*model.Part, columns []float64, start, en
 	}
 }
 
-// drawMeasureNumber writes the bar number over the start of a system.
-func (e *engraver) drawMeasureNumber(n int, x, top float64) {
-	if !e.opt.ShowMeasureNumbers || n <= 1 {
+// drawMeasureNumbers writes the bar numbers over a system.
+//
+// Where they go depends on how the music is being looked at, because the
+// question they answer is different in each case.
+//
+// On a page, the number belongs over the first bar of each system: that is
+// where a player looks when someone says "from bar forty-one", and a number
+// over every bar is clutter between the staves.
+//
+// A continuous strip has only ever one system, so numbering its first bar
+// prints a single "1" and nothing else — which is what made the menu entry
+// look like it did nothing at all. Editing is also when you most want to find
+// a bar by its number, so there every bar is numbered.
+func (e *engraver) drawMeasureNumbers(columns []float64, start, end int, top float64) {
+	if !e.opt.ShowMeasureNumbers {
 		return
 	}
-	e.lay.Texts = append(e.lay.Texts, Text{
-		S: itoa(n), X: x, Y: top - 1.4, Size: measureNumberSize, Anchor: "start",
-	})
+	write := func(n int, x float64) {
+		if n <= 1 {
+			return // bar one needs no telling
+		}
+		e.lay.Texts = append(e.lay.Texts, Text{
+			S: itoa(n), X: x, Y: top - 1.4, Size: measureNumberSize, Anchor: "start",
+		})
+	}
+	if e.opt.Mode != Strip {
+		write(start+1, columns[0])
+		return
+	}
+	for mi := start; mi < end && mi-start < len(columns); mi++ {
+		write(mi+1, columns[mi-start])
+	}
 }
 
 func itoa(n int) string {

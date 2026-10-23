@@ -437,9 +437,52 @@ func (e *engraver) run() {
 	e.layout()
 
 	e.lay.Height = e.y + sp.marginY()
+	// Whatever hangs below the last staff belongs on the page too. The
+	// cursor moves down by staves and gaps, which does not know about a
+	// dynamic three spaces under the bottom line or a hairpin under that —
+	// so the drawing was taller than the layout said and the last staff's
+	// dynamics were cut off by the edge.
+	if low := e.lowestInk(); low+sp.marginY() > e.lay.Height {
+		e.lay.Height = low + sp.marginY()
+	}
 	if e.lay.Width == 0 {
 		e.lay.Width = e.opt.LineWidth + 2*sp.Margin
 	}
+}
+
+// lowestInk is how far down the drawing actually reaches.
+//
+// Measured from what was drawn rather than worked out from what might have
+// been: a renderer that has to know in advance about every kind of mark that
+// can sit below a staff is a renderer that will be wrong the next time one is
+// added.
+func (e *engraver) lowestInk() float64 {
+	low := 0.0
+	at := func(v float64) {
+		if v > low {
+			low = v
+		}
+	}
+	for _, g := range e.lay.Glyphs {
+		// A glyph is drawn from its baseline, so its ink reaches below it.
+		at(g.Y + 1)
+	}
+	for _, t := range e.lay.Texts {
+		at(t.Y + t.Size*0.3)
+	}
+	for _, l := range e.lay.Lines {
+		at(l.Y1 + l.Thickness)
+		at(l.Y2 + l.Thickness)
+	}
+	for _, c := range e.lay.Curves {
+		at(c.Y1 + c.Thickness)
+		at(c.Y2 + c.Thickness)
+		at(c.CY)
+	}
+	for _, c := range e.lay.Circles {
+		at(c.Y + c.Radius + c.Thickness)
+	}
+	return low
 }
 
 // layout lays every part out together, so that one system holds one staff per
@@ -1090,7 +1133,7 @@ func (e *engraver) drawSystem(parts []*model.Part, boxes [][]measureBox,
 	// The volta brackets belong to the system, not to a staff: they are drawn
 	// once above the top one before the staves move the cursor down.
 	e.drawVoltas(parts, columns, start, end, above)
-	e.drawMeasureNumber(start+1, sp.Margin+prefix, above)
+	e.drawMeasureNumbers(columns, start, end, above)
 	e.drawMarkers(parts, columns, start, end, above)
 	// A note's own words go above the chord symbols and above the rehearsal
 	// marks: three things written over the same bar, in three layers rather
@@ -1132,11 +1175,15 @@ func (e *engraver) drawSystem(parts []*model.Part, boxes [][]measureBox,
 		e.resumeSpans(e.staffNumber(pi), sp.Margin+prefix)
 
 		staffTops = append(staffTops, e.y)
-		// Each staff's clef starts after the names and the bracket, and far
-		// enough right that its own key and meter end where everybody else's
-		// do. A staff in C major and one in five sharps still begin their
-		// music in the same column.
-		px := sp.Margin + prefix - e.prefixWidth(p, start) + lead + sp.ClefBefore
+		// Each staff's clef starts far enough right that its own key and
+		// meter end where everybody else's do, so a staff in C major and one
+		// in five sharps begin their music in the same column.
+		//
+		// prefix already counts the names and the bracket. Adding lead here
+		// as well pushed every staff's clef, key and meter one name-width too
+		// far right — past the column the music starts in, so the first note
+		// was printed over them.
+		px := sp.Margin + prefix - e.prefixWidth(p, start) + sp.ClefBefore
 		// Each of the three is recorded as it is drawn, so that clicking one
 		// changes the thing it is: the clef, the key or the meter.
 		header := func(kind string, x0, x1 float64) {

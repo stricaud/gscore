@@ -77,7 +77,9 @@ func (w *walker) skip(n int) error {
 func (w *walker) cstring() (string, error) {
 	for j := w.i; j < len(w.b); j++ {
 		if w.b[j] == 0 {
-			s := string(w.b[w.i:j])
+			// Not simply string(bytes): these files were written before
+			// UTF-8, so a staff called "Flûte" holds one byte for the û.
+			s := decodeText(w.b[w.i:j])
 			w.i = j + 1
 			return s, nil
 		}
@@ -304,6 +306,20 @@ func parseNWC1(raw []byte, minor int) (*model.Score, error) {
 				}
 			}
 			return nil, fmt.Errorf("nwc: staff %d: %w", i+1, err)
+		}
+		// A staff whose name is made of control bytes is not a staff: it is
+		// what the walk produces once it has lost its place and is reading
+		// note data as text. Everything after that point is wreckage, and
+		// appending it puts staves on the page that are not in the file.
+		if !looksLikeText(part.Name) {
+			nameInstruments(score)
+			if len(score.Parts) > 0 {
+				return score, &PartialError{
+					Staves: len(score.Parts), Total: staffCount,
+					Cause: fmt.Errorf("staff %d: the file stops making sense here", i+1),
+				}
+			}
+			return nil, fmt.Errorf("nwc: staff %d: the file stops making sense here", i+1)
 		}
 		score.Parts = append(score.Parts, part)
 	}

@@ -612,3 +612,218 @@ func TestHeaderRegionsAreReported(t *testing.T) {
 		}
 	}
 }
+
+// Undo takes an edit back, and redo puts it on again.
+func TestUndoAndRedo(t *testing.T) {
+	h := newHarness(t)
+	h.note(0, 0, 2, "quarter")
+	h.note(0, 0, 4, "quarter")
+	if n := countNotes(h.app.score); n != 2 {
+		t.Fatalf("got %d notes", n)
+	}
+
+	h.post("/api/undo")
+	if n := countNotes(h.app.score); n != 1 {
+		t.Errorf("after one undo there are %d notes, want 1", n)
+	}
+	h.post("/api/undo")
+	if n := countNotes(h.app.score); n != 0 {
+		t.Errorf("after two undos there are %d notes, want 0", n)
+	}
+	if msg := h.postFails("/api/undo"); !strings.Contains(msg, "nothing to undo") {
+		t.Errorf("unhelpful refusal at the end of the history: %q", msg)
+	}
+
+	h.post("/api/redo")
+	h.post("/api/redo")
+	if n := countNotes(h.app.score); n != 2 {
+		t.Errorf("after redoing both there are %d notes, want 2", n)
+	}
+	if msg := h.postFails("/api/redo"); !strings.Contains(msg, "nothing to redo") {
+		t.Errorf("unhelpful refusal: %q", msg)
+	}
+}
+
+// A new edit after an undo is a new branch: the redo is gone.
+func TestEditingAfterUndoDropsTheRedo(t *testing.T) {
+	h := newHarness(t)
+	h.note(0, 0, 2, "quarter")
+	h.post("/api/undo")
+	h.note(0, 0, 6, "quarter")
+	if msg := h.postFails("/api/redo"); msg == "" {
+		t.Error("redo survived an edit made after the undo")
+	}
+}
+
+// A request that changes nothing must not cost a press of undo.
+func TestRefusedEditsAreNotUndoable(t *testing.T) {
+	h := newHarness(t)
+	h.note(0, 0, 2, "quarter")
+	// A hairpin on one note is refused.
+	h.postFails("/api/hairpin?hairpin=crescendo&part=0&measure=0&at=1")
+	h.post("/api/undo")
+	if n := countNotes(h.app.score); n != 0 {
+		t.Errorf("undo went back only as far as the refused request: %d notes left", n)
+	}
+}
+
+// Every edit that changes the music has to be undoable. Each of these was
+// written as a separate handler, and each had to be remembered.
+func TestEveryKindOfEditIsUndoable(t *testing.T) {
+	edits := []struct {
+		name string
+		// setup runs before the comparison starts, for edits that need
+		// something to act on. Without it, "insert a note then delete it"
+		// ends where it began and proves nothing.
+		setup func(h *harness)
+		do    func(h *harness)
+	}{
+		{name: "insert", do: func(h *harness) { h.note(0, 0, 2, "quarter") }},
+		{name: "addpitch", do: func(h *harness) {
+			h.note(0, 0, 2, "quarter")
+			h.post("/api/addpitch?part=0&measure=0&index=0&step=4")
+		}},
+		{name: "accidental", do: func(h *harness) {
+			h.note(0, 0, 2, "quarter")
+			h.post("/api/accidental?part=0&measure=0&at=1&accidental=sharp")
+		}},
+		{name: "dynamic", do: func(h *harness) {
+			h.note(0, 0, 2, "quarter")
+			h.post("/api/dynamic?part=0&measure=0&at=1&dynamic=ff")
+		}},
+		{name: "stem", do: func(h *harness) {
+			h.note(0, 0, 2, "quarter")
+			h.post("/api/stem?part=0&measure=0&at=1&stem=down")
+		}},
+		{name: "articulation", do: func(h *harness) {
+			h.note(0, 0, 2, "quarter")
+			h.post("/api/articulation?part=0&measure=0&at=1&articulation=staccato")
+		}},
+		{name: "chordsymbol", do: func(h *harness) {
+			h.note(0, 0, 2, "quarter")
+			h.post("/api/chordsymbol?part=0&measure=0&at=1&chord=Em")
+		}},
+		{name: "text", do: func(h *harness) {
+			h.note(0, 0, 2, "quarter")
+			h.post("/api/text?part=0&measure=0&at=1&text=rit.")
+		}},
+		{name: "lyrics", do: func(h *harness) {
+			h.note(0, 0, 2, "quarter")
+			h.post("/api/lyrics?part=0&verse=1&text=la")
+		}},
+		{name: "barline", do: func(h *harness) { h.post("/api/barline?part=0&measure=0&style=final") }},
+		{name: "marker", do: func(h *harness) { h.post("/api/marker?measure=0&text=A") }},
+		{name: "addmeasure", do: func(h *harness) { h.post("/api/addmeasure") }},
+		{name: "setkey", do: func(h *harness) { h.post("/api/setkey?part=0&fifths=3") }},
+		{name: "tempo", do: func(h *harness) { h.post("/api/tempo?bpm=84&unit=quarter") }},
+		{name: "header", do: func(h *harness) { h.post("/api/header?title=X&composer=Y") }},
+		{name: "staff", do: func(h *harness) { h.post("/api/staff?part=0&clef=bass") }},
+		{name: "addstaff", do: func(h *harness) { h.post("/api/addstaff?instrument=flute") }},
+		{name: "measurerepeat", do: func(h *harness) {
+			h.post("/api/addmeasure")
+			h.post("/api/measurerepeat?part=0&measure=1&bars=1")
+		}},
+		{
+			name:  "delete",
+			setup: func(h *harness) { h.note(0, 0, 2, "quarter") },
+			// Note: /api/delete counts from zero, unlike the marking
+			// handlers, which take the cursor position after the element.
+			do: func(h *harness) { h.post("/api/delete?part=0&measure=0&at=0") },
+		},
+		{
+			name: "removestaff",
+			setup: func(h *harness) {
+				h.post("/api/addstaff?instrument=flute&clef=treble")
+			},
+			do: func(h *harness) { h.post("/api/removestaff?part=1") },
+		},
+		{
+			name: "nudge",
+			setup: func(h *harness) { h.note(0, 0, 2, "quarter") },
+			do:    func(h *harness) { h.post("/api/nudge?part=0&measure=0&at=1&steps=2") },
+		},
+		{
+			name: "paste",
+			setup: func(h *harness) {
+				h.note(0, 0, 2, "quarter")
+				h.post("/api/copy?sel=0:0:0")
+			},
+			do: func(h *harness) { h.post("/api/paste?part=0&measure=0&at=1") },
+		},
+	}
+
+	for _, e := range edits {
+		t.Run(e.name, func(t *testing.T) {
+			h := newHarness(t)
+			if e.setup != nil {
+				e.setup(h)
+			}
+			// How deep the history is once the setup is done. Undoing has to
+			// stop here, not unwind the setup as well.
+			base := len(h.app.undoStack)
+			before := describe(h.app.score)
+
+			e.do(h)
+			if describe(h.app.score) == before {
+				t.Fatalf("%s changed nothing, so the test proves nothing", e.name)
+			}
+			if len(h.app.undoStack) <= base {
+				t.Fatalf("%s recorded nothing to undo: the route is not wrapped", e.name)
+			}
+
+			// However many steps it took, back to where the setup left off.
+			for len(h.app.undoStack) > base {
+				rec := httptest.NewRecorder()
+				h.mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/undo", nil))
+				if rec.Code != http.StatusOK {
+					t.Fatalf("%s: undo refused with %d left", e.name, len(h.app.undoStack))
+				}
+			}
+			if got := describe(h.app.score); got != before {
+				t.Errorf("%s could not be undone:\n before %s\n after  %s", e.name, before, got)
+			}
+		})
+	}
+}
+
+// describe renders a score to a string, for comparing one to another.
+func describe(s *model.Score) string {
+	var b strings.Builder
+	b.WriteString(s.Identity.Title + "|" + s.Identity.Composer + "|")
+	b.WriteString(itoa(s.Tempo.BPM) + "|")
+	for _, p := range s.Parts {
+		b.WriteString("[" + p.Name + " " + p.Clef.String() +
+			" " + itoa(p.Key.Fifths) + " " + p.Time.String())
+		for _, m := range p.Measures {
+			b.WriteString("{" + m.RightBarline.String() + m.Marker +
+				itoa(m.Repeat))
+			for _, v := range m.Voices {
+				for _, el := range v.Elements {
+					switch e := el.(type) {
+					case *model.Note:
+						b.WriteString(e.Pitch.String() + e.Accidental.String() +
+							e.Dur.String() + e.Dynamic.String() +
+							e.Stem.String() + e.Chord.String())
+						for _, a := range e.Articulations {
+							b.WriteString(a.String())
+						}
+						for _, l := range e.Lyrics {
+							b.WriteString(l.Text)
+						}
+						for _, x := range e.Texts {
+							b.WriteString(x.Text)
+						}
+					case *model.Chord:
+						b.WriteString("chord" + itoa(len(e.Notes)))
+					case *model.Rest:
+						b.WriteString("r" + e.Dur.String())
+					}
+					b.WriteString(",")
+				}
+			}
+			b.WriteString("}")
+		}
+		b.WriteString("]")
+	}
+	return b.String()
+}

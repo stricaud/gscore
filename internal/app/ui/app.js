@@ -318,6 +318,9 @@ async function action(name) {
     case "delete":
       await deleteSelected();
       break;
+    case "undo": await stepHistory("undo"); break;
+    case "redo": await stepHistory("redo"); break;
+
     case "copy": await copySelection(); break;
     case "cut": await cutSelection(); break;
     case "paste": await pasteClipboard(); break;
@@ -632,6 +635,7 @@ async function loadInfo() {
   $("#empty-hint").hidden = !i.parts.every((p) => p.notes === 0);
   markFingeringMenu();
   markViewTicks();
+  markHistory(!!i.canUndo, !!i.canRedo);
 
   // An importer that only understood part of a file says so here, rather than
   // leaving half a score on screen with no explanation.
@@ -2247,6 +2251,37 @@ async function setClefDialog(part) {
   status("Clef changed");
 }
 
+// stepHistory takes an edit back, or puts it on again.
+//
+// The score is redrawn from the server's copy rather than patched here: the
+// browser holds no music, so there is nothing on this side to roll back.
+async function stepHistory(which) {
+  const res = await fetch("/api/" + which, { method: "POST" });
+  if (!res.ok) {
+    status((await res.text()).trim());
+    return;
+  }
+  const d = await res.json();
+  // Undoing can land on a different tune of a book, if that is where the
+  // edit was made.
+  if (d.tune !== undefined && d.tune !== state.info?.current) {
+    await reload();
+  } else {
+    await reload();
+  }
+  markHistory(d.canUndo, d.canRedo);
+  status(which === "undo" ? "Undone" : "Redone");
+}
+
+// markHistory greys the entries when there is nothing to take back, so the
+// menu says what it will do rather than looking the same either way.
+function markHistory(canUndo, canRedo) {
+  const u = $('[data-action="undo"]');
+  const r = $('[data-action="redo"]');
+  if (u) u.disabled = !canUndo;
+  if (r) r.disabled = !canRedo;
+}
+
 /* ---------- staves ---------- */
 
 // addStaffDialog adds a staff, asking what it is for.
@@ -3503,6 +3538,14 @@ function setupKeys() {
           e.preventDefault(); void cutSelection(); return;
         case "v": case "V":
           e.preventDefault(); void pasteClipboard(); return;
+        case "z":
+          e.preventDefault(); void stepHistory("undo"); return;
+        case "Z":
+          // Shift with Z: the usual redo everywhere but Windows, which also
+          // has Ctrl+Y, handled below.
+          e.preventDefault(); void stepHistory("redo"); return;
+        case "y": case "Y":
+          e.preventDefault(); void stepHistory("redo"); return;
       }
       return;
     }

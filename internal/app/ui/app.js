@@ -1963,6 +1963,8 @@ function setupKeys() {
 }
 
 async function main() {
+  // The palette and the menus are built first: they need nothing from the
+  // core and showing them at once makes the window look alive.
   buildPalette(paletteAction);
   markPaletteTool((label) => label === currentToolLabel());
   setupMenus();

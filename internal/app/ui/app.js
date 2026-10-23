@@ -1340,6 +1340,10 @@ function markSelection() {
   if (!svg) return;
   svg.querySelectorAll("rect.selection").forEach((r) => r.remove());
   svg.querySelectorAll(".selected").forEach((n) => n.classList.remove("selected"));
+  // And the writing cursor, which is redrawn below. Appending a new one
+  // without taking the old one away left a trail of them down the bar: every
+  // place the cursor had been was still on the page.
+  svg.querySelectorAll(".write-cursor").forEach((n) => n.remove());
 
   const sel = state.selection;
   if (!sel) return;
@@ -1393,10 +1397,19 @@ function markSelection() {
       svg.insertBefore(
         selectionRect(b.x0, b.top, b.x1 - b.x0, b.bottom - b.top, z), svg.firstChild);
     }
+    // The cursor is drawn over the selection as well, not instead of it: a
+    // note has just been written and the next one goes after it, and typing
+    // a melody means watching the place the next note will land while the
+    // one before it is still picked up.
+    const on = state.hits.find(
+      (h) => h.part === sel.part && h.measure === sel.measure
+    );
+    if (on) drawInsertCursor(svg, on, sel, z);
     return;
   }
 
-  // Nothing picked, but a measure is current: outline the measure instead.
+  // Nothing picked, but a measure is current: outline the measure, and show
+  // where in it the next note would go and at what pitch.
   const hit = state.hits.find(
     (h) => h.part === sel.part && h.measure === sel.measure
   );
@@ -1405,6 +1418,66 @@ function markSelection() {
     selectionRect(hit.x0, hit.staffTop - 1.6, hit.x1 - hit.x0, 7.2, z),
     svg.firstChild
   );
+  drawInsertCursor(svg, hit, sel, z);
+}
+
+// CURSOR_W and CURSOR_H are the block, in staff spaces.
+//
+// They are the C program's, converted: key_cursor.c drew a rectangle ten
+// pixels by six on a staff whose spaces were eight, in a grey of 20000 out of
+// 65535. A block rather than a ghost notehead — it does not pretend to be
+// music, which is what stops you reading it as a note you have already
+// written.
+const CURSOR_W = 10 / 8;
+const CURSOR_H = 6 / 8;
+
+// drawInsertCursor shows the place the next note will be written and the
+// pitch it will be written at.
+//
+// Both halves matter. A mark that says where in the bar but not which line
+// means the first thing you do after pressing a key is look at what came out;
+// sitting the block on the line says it before you commit to it, which is
+// what makes typing a melody something you can do without stopping.
+function drawInsertCursor(svg, hit, sel, z) {
+  const els = hit.elements || [];
+  let x;
+  const next = els.find((e) => e.index === sel.at);
+  if (next) {
+    x = next.x - 0.9;
+  } else if (els.length) {
+    const last = els[els.length - 1];
+    x = last.x + last.width + 1.1;
+  } else {
+    x = hit.x0 + 1;
+  }
+  const step = sel.step ?? 0;
+  const y = hit.staffTop + STAFF_HEIGHT - step / 2;
+
+  // The ledger lines first, so the block sits on top of them the way a
+  // notehead does. Without them a cursor below the staff floats in space and
+  // says nothing about which note it is.
+  for (let s = 10; s <= step; s += 2) ledger(svg, x, hit.staffTop, s, z);
+  for (let s = -2; s >= step; s -= 2) ledger(svg, x, hit.staffTop, s, z);
+
+  const block = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+  block.setAttribute("class", "write-cursor write-block");
+  block.setAttribute("x", String((x - CURSOR_W / 2) * z));
+  block.setAttribute("y", String((y - CURSOR_H / 2) * z));
+  block.setAttribute("width", String(Math.max(2, CURSOR_W * z)));
+  block.setAttribute("height", String(Math.max(2, CURSOR_H * z)));
+  svg.appendChild(block);
+}
+
+function ledger(svg, x, staffTop, step, z) {
+  const line = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+  line.setAttribute("class", "write-cursor write-ledger");
+  // Shorter than the staff's own ledger lines, so that a cursor standing
+  // next to a note below the staff does not run its line into the note's.
+  line.setAttribute("x", String((x - 0.85) * z));
+  line.setAttribute("y", String((staffTop + STAFF_HEIGHT - step / 2 - 0.065) * z));
+  line.setAttribute("width", String(1.7 * z));
+  line.setAttribute("height", String(Math.max(1, 0.13 * z)));
+  svg.appendChild(line);
 }
 
 function selectionRect(x, y, w, h, z) {
@@ -4204,6 +4277,10 @@ let zoomAccum = 0;
 function setupKeys() {
   document.addEventListener("keydown", (e) => {
     if (e.target.matches("input, textarea")) return;
+    // A dialog has its own keys: enter means its OK button and space means
+    // whatever has focus. Writing a note behind an open dialog would be a
+    // keystroke landing in two places at once.
+    if (document.querySelector("dialog[open]")) return;
 
     // Ctrl/Cmd with plus, minus or zero zooms; with C and V it is the
     // clipboard, where every other program puts it.
@@ -4229,19 +4306,34 @@ function setupKeys() {
           e.preventDefault(); void stepHistory("redo"); return;
         case "y": case "Y":
           e.preventDefault(); void stepHistory("redo"); return;
+        case " ":
+          // Another notehead on the note just written, at the cursor's
+          // pitch: a chord is built one note at a time, from the bottom up,
+          // and this is the key that adds the next one.
+          e.preventDefault();
+          if (e.shiftKey) void playFromStart();
+          else void chordAtCursor();
+          return;
       }
       return;
     }
 
-    // The arrow keys move the selected notes and the cursor.
+    // The arrow keys drive the cursor: left and right along the music, up
+    // and down the staff, a whole octave with shift. They mean one thing
+    // and one only, because a key that moves the cursor sometimes and
+    // rewrites the music other times is a key nobody can press quickly.
+    //
+    // Moving notes that are already written is alt with the same arrows.
     switch (e.key) {
       case "ArrowUp":
         e.preventDefault();
-        void nudge(e.shiftKey ? 7 : 1);
+        if (e.altKey) void nudge(e.shiftKey ? 7 : 1);
+        else moveCursorPitch(e.shiftKey ? 7 : 1);
         return;
       case "ArrowDown":
         e.preventDefault();
-        void nudge(e.shiftKey ? -7 : -1);
+        if (e.altKey) void nudge(e.shiftKey ? -7 : -1);
+        else moveCursorPitch(e.shiftKey ? -7 : -1);
         return;
       case "ArrowLeft":
         e.preventDefault();
@@ -4268,12 +4360,20 @@ function setupKeys() {
 
     switch (e.key) {
       case " ":
+        // Space writes the note the palette is showing, at the cursor. It
+        // is the key under the thumb and writing notes is what the thumb
+        // should be doing; playback moved to shift with it.
         e.preventDefault();
         if (e.shiftKey) {
-          void playFromStart();
-        } else {
           state.playing ? stop() : play();
+        } else {
+          void insertAtSelection(false);
         }
+        break;
+      case "Enter":
+        // A rest is the same gesture for the same length of silence.
+        e.preventDefault();
+        void insertAtSelection(true);
         break;
       case "Escape":
         if (state.playing) stop();
@@ -4330,6 +4430,90 @@ async function nudge(steps) {
 
 // moveCursorBy steps the selection along the music, one element at a time,
 // over barlines and on to the next measure.
+// moveCursorPitch moves the cursor up or down the staff, which is where the
+// next note will be written.
+//
+// Steps, not semitones: the cursor is a place on the staff and a step up from
+// F is G whether or not either is sharpened. Seven of them is an octave,
+// which is why shift with the arrow is an octave and not twelve semitones of
+// something that does not land on a line.
+function moveCursorPitch(steps) {
+  const sel = state.selection;
+  if (!sel) {
+    status("Click a measure first");
+    return;
+  }
+  // Four ledger lines either way is as far as anybody writes without
+  // changing clef, and a cursor that can wander off the page is a cursor you
+  // have to hunt for.
+  const step = Math.max(-10, Math.min(18, (sel.step ?? 0) + steps));
+  if (step === sel.step) return;
+  sel.step = step;
+  // Moving the cursor is not selecting a note: what it is pointing at is a
+  // place to write, so nothing is picked up and a mark typed next would have
+  // nothing to land on.
+  sel.ref = null;
+  state.multi = [];
+  markSelection();
+  scrollSelectionIntoView();
+  status(pitchAtCursor());
+}
+
+// pitchAtCursor names the note the cursor is sitting on, so that moving it is
+// something you can do without looking.
+function pitchAtCursor() {
+  const sel = state.selection;
+  if (!sel) return "";
+  const p = state.info?.parts?.[sel.part];
+  const names = ["C", "D", "E", "F", "G", "A", "B"];
+  // Where the bottom line is, by clef, counted in diatonic steps from middle
+  // C: E4 for the treble, G2 for the bass, F3 for the alto, D3 for the
+  // tenor. A staff step is one diatonic degree — half a space — so the two
+  // add straight up.
+  const bottom = { treble: 2, bass: -10, alto: -4, tenor: -6 }[p?.clef] ?? 2;
+  const idx = bottom + (sel.step ?? 0);
+  const n = ((idx % 7) + 7) % 7;
+  const octave = 4 + Math.floor(idx / 7);
+  return names[n] + octave;
+}
+
+// chordAtCursor stacks another notehead on the note just written.
+//
+// A chord is built from the bottom up, a note at a time: write the lowest,
+// move the cursor, add the next. That is how it is played and how it reads
+// to type.
+async function chordAtCursor() {
+  const sel = state.selection;
+  if (!sel) {
+    status("Write a note first");
+    return;
+  }
+  const hit = state.hits.find(
+    (h) => h.part === sel.part && h.measure === sel.measure
+  );
+  if (!hit) {
+    status("Write a note first");
+    return;
+  }
+  // The element before the cursor is the one just written, because that is
+  // where the cursor is left.
+  const el = (hit.elements || []).find((x) => x.index === sel.at - 1);
+  if (!el || el.kind === "rest") {
+    status("There is no note to add to");
+    return;
+  }
+  // Two noteheads cannot share a line: there is one place on the staff for
+  // that note and something is already on it. The server refuses this too,
+  // but saying which note it is here is the difference between knowing what
+  // happened and being told no.
+  if ((el.steps || []).includes(sel.step ?? 0)) {
+    status(`There is already a ${pitchAtCursor()} in that chord — ` +
+           `move the cursor to another line first`);
+    return;
+  }
+  await addPitch(hit, el, sel.step ?? 0);
+}
+
 function moveCursorBy(delta) {
   const sel = state.selection;
   if (!sel) {
@@ -4346,7 +4530,10 @@ function moveCursorBy(delta) {
   const line = [];
   for (const h of staff) {
     for (const el of h.elements || []) {
-      line.push({ measure: h.measure, index: el.index, ref: el.ref });
+      line.push({
+        measure: h.measure, index: el.index, ref: el.ref,
+        step: el.steps && el.steps.length ? el.steps[0] : undefined,
+      });
     }
   }
   if (!line.length) return;
@@ -4361,8 +4548,12 @@ function moveCursorBy(delta) {
   const p = line[at];
   state.multi = [];
   state.anchor = { part: sel.part, measure: p.measure, index: p.index };
+  // The cursor takes the pitch of whatever it lands on, so that arrowing
+  // onto a note and then pressing up writes the next one a step above it
+  // rather than jumping back to the bottom line.
   state.selection = {
-    part: sel.part, measure: p.measure, at: p.index + 1, step: 0, ref: p.ref,
+    part: sel.part, measure: p.measure, at: p.index + 1,
+    step: p.step ?? sel.step ?? 0, ref: p.ref,
   };
   markSelection();
   scrollSelectionIntoView();

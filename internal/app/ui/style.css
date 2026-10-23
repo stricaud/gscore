@@ -25,6 +25,8 @@
   --muted: #6d6862;
   --line: #a9a49b;
   --accent: #2f6f9f;
+  /* The writing cursor, from key_cursor.c: 20000 of 65535 in all three. */
+  --cursor: #4e4e4e;
   --accent-soft: #cfe2f0;
   --paper: #ffffff;
 }
@@ -1183,3 +1185,15 @@ body.player.bare { grid-template-rows: 1fr; }
 }
 .tempo-bpm .eq { font-size: 18px; color: var(--muted); }
 .tempo-bpm input { width: 5.5em; }
+
+/* ---------- the writing cursor ---------- */
+
+/* Where the next note goes, and on which line.
+   A grey block, which is what gscore 0.0.9 drew: solid enough to find at a
+   glance, and not note-shaped, so it is never mistaken for music already
+   written. Its ledger lines are the ink of the staff, because that is what
+   they would be once the note is there. */
+.write-block  { fill: var(--cursor); }
+/* The same grey, not the page's ink: the score is drawn on light paper in
+   either theme, and --ink flips with the theme while the paper does not. */
+.write-ledger { fill: var(--cursor); }

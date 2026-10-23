@@ -439,6 +439,11 @@ type engraver struct {
 	// to clear the chord symbols already there.
 	textRise float64
 
+	// stretch is how far the system being drawn is pulled out to reach the
+	// margin. It belongs to the system rather than to any staff on it, which
+	// is exactly why the barlines are placed from it.
+	stretch float64
+
 	// spans holds the hairpins and octave lines that are open on each staff.
 	// A spanner reaches from one note to another, which may be in a later
 	// measure or on a later line, so it cannot be drawn where it starts: what
@@ -1279,6 +1284,10 @@ func (e *engraver) drawSystem(parts []*model.Part, boxes [][]measureBox,
 			stretch = avail / ideal
 		}
 	}
+	// Kept on the engraver so that a measure can place its barline against
+	// the column it closes, which is a decision about the system and not
+	// about the staff drawing it.
+	e.stretch = stretch
 
 	// The column each measure starts in, shared by every staff.
 	columns := make([]float64, end-start+1)
@@ -1427,7 +1436,7 @@ func (e *engraver) drawSystem(parts []*model.Part, boxes [][]measureBox,
 			if ideal > 0 {
 				s = slotWidth / ideal
 			}
-			e.drawMeasure(p, b, columns[mi-start], s)
+			e.drawMeasure(p, b, columns[mi-start], columns[mi-start+1], s)
 		}
 
 		// The staff lines are drawn last, reaching exactly as far as the

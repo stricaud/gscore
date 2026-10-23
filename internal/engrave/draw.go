@@ -89,8 +89,31 @@ func (p *placed) beamable() bool {
 
 func (p *placed) flags() int { return p.value.Flags() }
 
-// drawMeasure lays out and draws one measure, returning the x it ends at.
-func (e *engraver) drawMeasure(part *model.Part, b measureBox, x float64, stretch float64) float64 {
+// barlineAt is where a measure's closing barline goes: at the column the next
+// bar starts in, less the air that belongs after the line.
+//
+// Not where this staff's own music happened to reach. Every staff of a system
+// shares the columns, and barlines lining up is the whole point of a score —
+// it is how the eye reads down a system and finds the same beat on every
+// staff. Each staff drew its own line at the end of its own notes, so a
+// system came out with a ragged edge rather than a column: over a staff space
+// of disagreement in a band score, and worst at the end of the piece, where
+// nine staves finished the last bar at nine different places.
+// It is measured with the system's stretch and not the staff's own. Each
+// staff fills its column at whatever rate its content needs — a bar of four
+// eighths and a bar of one half note are stretched differently to end in the
+// same place — and scaling the gap after the barline by that rate is the same
+// mistake one step further on.
+func (e *engraver) barlineAt(end, right float64) float64 {
+	return end - (e.opt.Spacings.AfterBarline+right)*e.stretch
+}
+
+// drawMeasure lays out and draws one measure between two columns, returning
+// the x it ends at.
+//
+// x is where the bar's own music starts and end is where the next bar starts;
+// the barline goes between them, at the place every staff agrees on.
+func (e *engraver) drawMeasure(part *model.Part, b measureBox, x, end float64, stretch float64) float64 {
 	sp := e.opt.Spacings
 	start := x
 
@@ -144,8 +167,8 @@ func (e *engraver) drawMeasure(part *model.Part, b measureBox, x float64, stretc
 	// the sign away, which is why they are not thrown out instead.
 	if b.m.Repeat > 0 {
 		e.drawMeasureRepeat(b, start, x)
-		left, right := e.barlineRoom(b.m.RightBarline)
-		x += (sp.BetweenMeasures + left) * stretch
+		_, right := e.barlineRoom(b.m.RightBarline)
+		x = e.barlineAt(end, right)
 		e.drawBarline(b.m.RightBarline, x)
 		e.lay.Barlines = append(e.lay.Barlines, BarlinePos{
 			Part: e.partIndex, Measure: b.index, X: x,
@@ -156,7 +179,7 @@ func (e *engraver) drawMeasure(part *model.Part, b measureBox, x float64, stretc
 			Part: e.partIndex, Measure: b.index,
 			XMin: start, XMax: x, StaffTop: e.y, Clef: part.Clef.String(),
 		})
-		return x + (sp.AfterBarline+right)*stretch
+		return end
 	}
 
 	// Which way the stems point is settled before anything is drawn: the
@@ -235,9 +258,11 @@ func (e *engraver) drawMeasure(part *model.Part, b measureBox, x float64, stretc
 
 	// A barline takes as much room as it actually draws: a repeat is a thick
 	// stroke, a thin one and two dots, and the dots want a space of their
-	// own on the side the music is.
-	left, right := e.barlineRoom(b.m.RightBarline)
-	x += (sp.BetweenMeasures + left) * stretch
+	// own on the side the music is. That room was budgeted into the column
+	// when its width was worked out, which is why the line can be placed
+	// from the column rather than from the music.
+	_, right := e.barlineRoom(b.m.RightBarline)
+	x = e.barlineAt(end, right)
 	// The bar drawn past the end of the music has no barline: it is not a
 	// bar of the piece until something is written in it.
 	if !b.ahead {
@@ -248,7 +273,7 @@ func (e *engraver) drawMeasure(part *model.Part, b measureBox, x float64, stretc
 			Style: b.m.RightBarline.String(),
 		})
 	}
-	return x + (sp.AfterBarline+right)*stretch
+	return end
 }
 
 // drawSignatureChange writes a new key or meter in the middle of the music.

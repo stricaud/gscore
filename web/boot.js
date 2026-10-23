@@ -11,7 +11,15 @@
  */
 
 (function () {
-  const HANDLED = [/^\/api\//, /^\/score\.svg/, /^\/keysig\.svg/, /^\/font\.otf/];
+  // Every path the interface asks the core for. Anything missing here goes
+  // to the network instead, where there is nothing to answer it.
+  const HANDLED = [
+    /^\/api\//,
+    /^\/score\.svg/,
+    /^\/keysig\.svg/,
+    /^\/symbol\.png/,
+    /^\/font\.otf/,
+  ];
 
   function isOurs(url) {
     return HANDLED.some((re) => re.test(url));

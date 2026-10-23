@@ -27,6 +27,9 @@ concurrency:
 
 jobs:
   build:
+    # Only main is published. The push trigger already says so; this covers
+    # a run started by hand, which can be dispatched from any branch.
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -68,6 +71,16 @@ jobs:
             fi
           done
           [ "$missing" -eq 0 ] || exit 1
+
+          # The site is published under a path, not at the root of a domain,
+          # so an asset asked for as "/font.otf" is looked for on the domain
+          # root and is not there. Requests the WebAssembly core answers are
+          # fine absolute — the shim intercepts those before they go out —
+          # but a file the browser loads itself must be relative.
+          if grep -nE '(url\(|src=|href=)"?/[a-zA-Z]' web/dist/style.css web/dist/index.html; then
+            echo "absolute asset path above: it will 404 under /gscore/" >&2
+            exit 1
+          fi
           echo "wasm: $(du -h web/dist/gscore.wasm | cut -f1)"
 
       - uses: actions/configure-pages@v5
@@ -84,6 +97,7 @@ jobs:
 
   deploy:
     needs: build
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     environment:
       name: github-pages

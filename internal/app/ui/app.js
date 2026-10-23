@@ -1017,10 +1017,22 @@ function setupDrawing() {
 async function openPalette() {
   const list = await (await fetch("/api/symbols")).json();
   $("#palette-empty").hidden = list.length > 0;
+
+  // Fetched rather than given as an <img src>. Running as a page there is no
+  // server: requests are answered by the core compiled to WebAssembly, and
+  // that can only intercept fetch — an <img> goes straight to the network
+  // and finds nothing there.
+  const pics = await Promise.all(
+    list.map(async (s) => {
+      const r = await fetch("/symbol.png?name=" + encodeURIComponent(s.name));
+      return r.ok ? URL.createObjectURL(await r.blob()) : "";
+    })
+  );
+
   $("#palette-grid").innerHTML = list
     .map(
-      (s) => `<button class="palette-item" data-symbol="${escapeHTML(s.name)}">
-        <img src="/symbol.png?name=${encodeURIComponent(s.name)}&_=${Date.now()}" alt="">
+      (s, i) => `<button class="palette-item" data-symbol="${escapeHTML(s.name)}">
+        <img src="${pics[i]}" alt="">
         <span>${escapeHTML(s.name)}</span>
       </button>`
     )

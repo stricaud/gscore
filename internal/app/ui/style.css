@@ -9,7 +9,11 @@
 
 @font-face {
   font-family: "Bravura";
-  src: url("/font.otf") format("opentype");
+  /* Relative, not "/font.otf". Published under a path like /gscore/, an
+     absolute URL points at the domain root and the font never loads, which
+     turns every glyph in the palette and the score into a missing-character
+     box. Relative resolves against this stylesheet either way. */
+  src: url("font.otf") format("opentype");
   font-display: block;
 }
 

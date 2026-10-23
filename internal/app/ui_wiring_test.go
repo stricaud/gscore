@@ -382,3 +382,34 @@ func TestEveryElementTheScriptAsksForExists(t *testing.T) {
 			strings.Join(missing, ", "))
 	}
 }
+
+// The playback cursor is a rect inside the drawing, and several things
+// replace the drawing whole while the music is playing — zooming is the one
+// that gets done by accident. When that happens the script is left holding an
+// element that is no longer in the document, and the cursor disappears with
+// no error anywhere: the clock runs on, the notes sound, and the line is
+// simply gone.
+//
+// There is no way to check that from here other than structurally, which is
+// the same bargain the rest of this file makes: nothing compiles the
+// interface, so the checks are the ones a compiler would do.
+func TestTheCursorSurvivesARedraw(t *testing.T) {
+	js := readUI(t, "app.js")
+
+	body := functionBody(js, "function moveCursor(")
+	if body == "" {
+		t.Fatal("moveCursor is gone; this test needs rewriting against whatever replaced it")
+	}
+	if !strings.Contains(body, "isConnected") {
+		t.Error("moveCursor does not check that the cursor is still in the document, " +
+			"so a redraw during playback loses it")
+	}
+	if !strings.Contains(body, "makeCursor()") {
+		t.Error("moveCursor does not put the cursor back when it has gone")
+	}
+
+	// And the reason it can go: the drawing is replaced wholesale.
+	if !strings.Contains(js, `$("#canvas").innerHTML`) {
+		t.Skip("the canvas is no longer replaced wholesale; the hazard may be gone")
+	}
+}

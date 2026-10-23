@@ -3658,8 +3658,23 @@ function makeCursor() {
 }
 
 // moveCursor puts the bar at a point, spanning every staff of the system.
+//
+// It puts the cursor back first when it has gone. The cursor is a rect inside
+// the drawing, and a redraw replaces the drawing whole — so zooming while the
+// music was playing left this holding an element that was no longer in the
+// document, and the cursor vanished until playback was restarted. Checking
+// here rather than at each redraw covers every way the drawing can be
+// replaced, which is several and will be more.
 function moveCursor(pt) {
-  if (!cursorEl || !pt) return;
+  if (!pt) return;
+  if (!cursorEl || !cursorEl.isConnected) {
+    makeCursor();
+    // The lit noteheads went with the old drawing as well, and the next tick
+    // only repaints them when the chord changes — so forget which were lit
+    // and let it light them again.
+    current = new Set();
+    if (!cursorEl) return;
+  }
   const z = state.zoom;
   // A little above the top staff and below the bottom one, so it reads as one
   // line through the whole system.

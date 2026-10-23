@@ -56,12 +56,24 @@ type placed struct {
 	stemDir int
 }
 
+// marks are what this element carries: its articulations, its dynamic, and
+// the ends of anything reaching across it.
+//
+// A rest has them too, and saying it had none lost every one. A crescendo
+// that closes on a rest is ordinary writing — a player holds the swell to the
+// end of the phrase and the phrase ends in silence — and the engraver never
+// saw the mark that closed it, so the hairpin stayed open and was drawn to
+// the right margin of that system and of every system after it, for the rest
+// of the piece. The same went for a fermata over a rest, a dynamic written at
+// one, and a chord symbol over a bar's rest in a chart.
 func (p *placed) marks() *model.Marks {
 	switch {
 	case p.note != nil:
 		return &p.note.Marks
 	case p.chord != nil:
 		return &p.chord.Marks
+	case p.rest != nil:
+		return &p.rest.Marks
 	}
 	return nil
 }
@@ -109,6 +121,11 @@ func (e *engraver) drawMeasure(part *model.Part, b measureBox, x float64, stretc
 		case *model.Rest:
 			p.rest = el
 			p.value, p.dots = written(el.WrittenDuration(el.Dur))
+			// A rest is drawn on the middle line, and anything placed
+			// against it — a fermata over it, a hairpin closing on it —
+			// is placed from the same position rather than from the bottom
+			// line, which is where a step of zero would have put it.
+			p.step, p.lo, p.hi = middleStep, middleStep, middleStep
 		default:
 			p.value = model.Quarter
 		}

@@ -384,6 +384,63 @@ func TestChord(t *testing.T) {
 	}
 }
 
+func TestChordInnerTie(t *testing.T) {
+	// "[C-E-G-]" ties each notehead individually - note the tie after G too,
+	// since each note carries its own. The grammar allows it:
+	// stem ::= note / ( "[" 2*note "]" ) and note ::= pitch [note-length] [tie].
+	s, err := Import(stringReader("K:C\nL:1/4\n[C-E-G-]2[CEG]2|\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := firstVoice(t, s.Parts[0])
+	if len(first) != 2 {
+		t.Fatalf("got %d elements, want two chords", len(first))
+	}
+	ch, ok := first[0].(*model.Chord)
+	if !ok {
+		t.Fatalf("got %T, want a chord", first[0])
+	}
+	if len(ch.Notes) != 3 {
+		t.Fatalf("chord has %d notes, want 3", len(ch.Notes))
+	}
+	for i, n := range ch.Notes {
+		if !n.TieStart {
+			t.Errorf("chord note %d does not start a tie", i)
+		}
+	}
+	if !ch.TieStart {
+		t.Error("every note is tied, so the chord as a whole should be too")
+	}
+	next, ok := first[1].(*model.Chord)
+	if !ok {
+		t.Fatalf("got %T, want a chord", first[1])
+	}
+	if !next.TieStop {
+		t.Error("the chord after the tie should stop it")
+	}
+}
+
+func TestChordPartialInnerTie(t *testing.T) {
+	// Only one notehead is tied, so the chord as a whole is not.
+	s, err := Import(stringReader("K:C\nL:1/4\n[C-EG]2[CEG]2|\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ch, ok := firstVoice(t, s.Parts[0])[0].(*model.Chord)
+	if !ok {
+		t.Fatal("want a chord")
+	}
+	want := []bool{true, false, false}
+	for i, w := range want {
+		if ch.Notes[i].TieStart != w {
+			t.Errorf("chord note %d TieStart = %v, want %v", i, ch.Notes[i].TieStart, w)
+		}
+	}
+	if ch.TieStart {
+		t.Error("only one note is tied, so the chord should not be")
+	}
+}
+
 func TestModesAndKeys(t *testing.T) {
 	cases := []struct {
 		spec   string

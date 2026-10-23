@@ -37,6 +37,12 @@ jobs:
           cache: true
 
       - name: Check the core
+        # Without cgo. The desktop window wraps the platform's own web view,
+        # which on Linux means WebKitGTK headers the runner does not have —
+        # and the page build does not use it, since a browser is the window
+        # there. The !cgo build of internal/desktop stands in.
+        env:
+          CGO_ENABLED: "0"
         run: |
           go vet ./...
           go test ./...

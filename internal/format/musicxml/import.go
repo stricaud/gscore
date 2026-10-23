@@ -128,18 +128,24 @@ func convert(doc *scorePartwise) (*model.Score, error) {
 	}
 
 	names := map[string]string{}
+	programs := map[string]model.Instrument{}
 	for _, sp := range doc.PartList.ScoreParts {
 		names[sp.ID] = sp.Name
+		if sp.MidiInst != nil && sp.MidiInst.Program > 0 {
+			// Counted from one in the file, from zero in General MIDI.
+			programs[sp.ID] = model.Instrument(sp.MidiInst.Program - 1)
+		}
 	}
 
 	tempoSet := false
 	for _, xp := range doc.Parts {
 		p := &model.Part{
-			ID:   xp.ID,
-			Name: names[xp.ID],
-			Clef: model.Treble,
-			Key:  model.KeySignature{Fifths: 0, Mode: model.Major},
-			Time: model.TimeSignature{Beats: 4, BeatValue: 4, Symbol: model.TimeNumeric},
+			ID:         xp.ID,
+			Name:       names[xp.ID],
+			Instrument: programs[xp.ID],
+			Clef:       model.Treble,
+			Key:        model.KeySignature{Fifths: 0, Mode: model.Major},
+			Time:       model.TimeSignature{Beats: 4, BeatValue: 4, Symbol: model.TimeNumeric},
 		}
 
 		// Divisions carry over from measure to measure until restated.

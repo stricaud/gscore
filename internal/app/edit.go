@@ -516,3 +516,165 @@ func (a *App) handleArticulation(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, map[string]int{"changed": len(marks)})
 }
+
+// handleStaff changes a property of a staff itself: its clef, its meter, its
+// instrument. These belong to the staff rather than to any note on it, which
+// is why the palette applies them without needing a note selected.
+func (a *App) handleStaff(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST required", http.StatusMethodNotAllowed)
+		return
+	}
+	q := r.URL.Query()
+	partIdx, _ := strconv.Atoi(q.Get("part"))
+
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if partIdx < 0 || partIdx >= len(a.score.Parts) {
+		http.Error(w, "no such staff", http.StatusBadRequest)
+		return
+	}
+	p := a.score.Parts[partIdx]
+
+	changed := []string{}
+	if v := q.Get("clef"); v != "" {
+		c, ok := clefByStringName[v]
+		if !ok {
+			http.Error(w, "unknown clef "+v, http.StatusBadRequest)
+			return
+		}
+		p.Clef = c
+		changed = append(changed, "clef")
+	}
+	if v := q.Get("time"); v != "" {
+		t, err := parseMeter(v)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		p.Time = t
+		changed = append(changed, "time")
+	}
+	if v := q.Get("instrument"); v != "" {
+		inst, ok := model.InstrumentFromName(v)
+		if !ok {
+			n, err := strconv.Atoi(v)
+			if err != nil || n < 0 || n > 127 {
+				http.Error(w, "unknown instrument "+v, http.StatusBadRequest)
+				return
+			}
+			inst = model.Instrument(n)
+		}
+		p.Instrument = inst
+		changed = append(changed, "instrument")
+	}
+	if len(changed) == 0 {
+		http.Error(w, "nothing to change", http.StatusBadRequest)
+		return
+	}
+	writeJSON(w, map[string]any{"status": "ok", "changed": changed})
+}
+
+// parseMeter reads "4/4", or "4/4c" and "2/2c" for the two that have a symbol
+// of their own.
+func parseMeter(v string) (model.TimeSignature, error) {
+	sym := model.TimeNumeric
+	if strings.HasSuffix(v, "c") {
+		v = strings.TrimSuffix(v, "c")
+		sym = model.TimeCommon
+		if v == "2/2" {
+			sym = model.TimeCut
+		}
+	}
+	n, d, ok := strings.Cut(v, "/")
+	if !ok {
+		return model.TimeSignature{}, editError("a meter looks like 4/4")
+	}
+	beats, err1 := strconv.Atoi(n)
+	value, err2 := strconv.Atoi(d)
+	if err1 != nil || err2 != nil || beats <= 0 || value <= 0 {
+		return model.TimeSignature{}, editError("a meter looks like 4/4")
+	}
+	return model.TimeSignature{Beats: beats, BeatValue: value, Symbol: sym}, nil
+}
+
+// handleTempo sets the metronome mark.
+func (a *App) handleTempo(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST required", http.StatusMethodNotAllowed)
+		return
+	}
+	q := r.URL.Query()
+	bpm, err := strconv.Atoi(q.Get("bpm"))
+	if err != nil || bpm < 10 || bpm > 400 {
+		http.Error(w, "a tempo is between 10 and 400 beats a minute",
+			http.StatusBadRequest)
+		return
+	}
+
+	// The beat the number counts. A tempo of 120 means nothing without it.
+	unit := model.Duration{Num: 1, Den: 4}
+	if v := q.Get("unit"); v != "" {
+		d, ok := durationNames[v]
+		if !ok {
+			http.Error(w, "unknown beat unit "+v, http.StatusBadRequest)
+			return
+		}
+		unit = d
+	}
+	if q.Get("dotted") == "1" {
+		unit = unit.Scale(3, 2)
+	}
+
+	a.mu.Lock()
+	a.score.Tempo = model.Tempo{BPM: bpm, Unit: unit, Text: q.Get("text")}
+	a.mu.Unlock()
+	writeJSON(w, map[string]any{"status": "ok", "bpm": bpm})
+}
+
+// handleHeader sets the title block.
+func (a *App) handleHeader(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST required", http.StatusMethodNotAllowed)
+		return
+	}
+	q := r.URL.Query()
+
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	// Only what was sent is changed, so a dialog can set one field alone.
+	if q.Has("title") {
+		a.score.Identity.Title = q.Get("title")
+	}
+	if q.Has("subtitle") {
+		a.score.Identity.Subtitle = q.Get("subtitle")
+	}
+	if q.Has("composer") {
+		a.score.Identity.Composer = q.Get("composer")
+	}
+	if q.Has("copyright") {
+		a.score.Identity.Copyright = q.Get("copyright")
+	}
+	writeJSON(w, map[string]string{"status": "ok"})
+}
+
+// handleInstruments lists what a staff can be set to sound as.
+func (a *App) handleInstruments(w http.ResponseWriter, r *http.Request) {
+	type entry struct {
+		Program int    `json:"program"`
+		Name    string `json:"name"`
+		Family  string `json:"family"`
+	}
+	out := []entry{}
+	for p := 0; p < 128; p++ {
+		i := model.Instrument(p)
+		n := i.String()
+		// Only the ones with a name of their own; the rest are "program 57"
+		// and nobody is choosing those from a list.
+		if strings.HasPrefix(n, "program ") {
+			continue
+		}
+		out = append(out, entry{Program: p, Name: n, Family: i.Family().String()})
+	}
+	writeJSON(w, out)
+}

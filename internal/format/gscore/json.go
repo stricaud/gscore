@@ -41,15 +41,17 @@ type tempoDoc struct {
 }
 
 type partDoc struct {
-	ID       string       `json:"id,omitempty"`
-	Name     string       `json:"name,omitempty"`
-	Clef     string       `json:"clef"`
-	Fifths   int          `json:"fifths"`
-	Mode     string       `json:"mode"`
-	Beats    int          `json:"beats"`
-	Beat     int          `json:"beatValue"`
-	TimeSym  string       `json:"timeSymbol,omitempty"`
-	Measures []measureDoc `json:"measures"`
+	ID         string       `json:"id,omitempty"`
+	Name       string       `json:"name,omitempty"`
+	Instrument string       `json:"instrument,omitempty"`
+	Program    int          `json:"program,omitempty"`
+	Clef       string       `json:"clef"`
+	Fifths     int          `json:"fifths"`
+	Mode       string       `json:"mode"`
+	Beats      int          `json:"beats"`
+	Beat       int          `json:"beatValue"`
+	TimeSym    string       `json:"timeSymbol,omitempty"`
+	Measures   []measureDoc `json:"measures"`
 }
 
 type measureDoc struct {
@@ -77,8 +79,10 @@ type pitchDoc struct {
 }
 
 type symbolRef struct {
-	Name      string `json:"name"`
-	Placement string `json:"placement,omitempty"`
+	Name      string  `json:"name"`
+	Placement string  `json:"placement,omitempty"`
+	OffsetX   float64 `json:"offsetX,omitempty"`
+	OffsetY   float64 `json:"offsetY,omitempty"`
 }
 
 type marksDoc struct {
@@ -191,12 +195,14 @@ func encodeScore(s *model.Score) *scoreDoc {
 	for _, p := range s.Parts {
 		pd := partDoc{
 			ID: p.ID, Name: p.Name,
-			Clef:    clefNames[p.Clef],
-			Fifths:  p.Key.Fifths,
-			Mode:    modeNames[p.Key.Mode],
-			Beats:   p.Time.Beats,
-			Beat:    p.Time.BeatValue,
-			TimeSym: timeSymNames[p.Time.Symbol],
+			Instrument: p.Instrument.String(),
+			Program:    int(p.Instrument),
+			Clef:       clefNames[p.Clef],
+			Fifths:     p.Key.Fifths,
+			Mode:       modeNames[p.Key.Mode],
+			Beats:      p.Time.Beats,
+			Beat:       p.Time.BeatValue,
+			TimeSym:    timeSymNames[p.Time.Symbol],
 		}
 		for _, m := range p.Measures {
 			md := measureDoc{Barline: barNames[m.RightBarline]}
@@ -242,6 +248,7 @@ func encodeElement(el model.Element) elemDoc {
 	case *model.SymbolElement:
 		return elemDoc{Kind: "symbol", Symbol: &symbolRef{
 			Name: e.Symbol.Name, Placement: placementNames[e.Symbol.Placement],
+			OffsetX: e.Symbol.OffsetX, OffsetY: e.Symbol.OffsetY,
 		}}
 	}
 	return elemDoc{Kind: "rest", Dur: "0/1"}
@@ -265,6 +272,7 @@ func encodeMarks(m *model.Marks) *marksDoc {
 	for _, s := range m.Symbols {
 		out.Symbols = append(out.Symbols, symbolRef{
 			Name: s.Name, Placement: placementNames[s.Placement],
+			OffsetX: s.OffsetX, OffsetY: s.OffsetY,
 		})
 	}
 	if m.Tuplet != nil {
@@ -301,8 +309,9 @@ func decodeScore(doc *scoreDoc) (*model.Score, error) {
 	for _, pd := range doc.Parts {
 		p := &model.Part{
 			ID: pd.ID, Name: pd.Name,
-			Clef: clefValues[pd.Clef],
-			Key:  model.KeySignature{Fifths: pd.Fifths, Mode: modeValues[pd.Mode]},
+			Instrument: model.Instrument(pd.Program),
+			Clef:       clefValues[pd.Clef],
+			Key:        model.KeySignature{Fifths: pd.Fifths, Mode: modeValues[pd.Mode]},
 			Time: model.TimeSignature{
 				Beats: pd.Beats, BeatValue: pd.Beat, Symbol: timeSymValues[pd.TimeSym],
 			},
@@ -375,6 +384,7 @@ func decodeElement(ed elemDoc) (model.Element, error) {
 		}
 		return &model.SymbolElement{Symbol: model.SymbolMark{
 			Name: ed.Symbol.Name, Placement: placementValues[ed.Symbol.Placement],
+			OffsetX: ed.Symbol.OffsetX, OffsetY: ed.Symbol.OffsetY,
 		}}, nil
 	}
 	return nil, fmt.Errorf("gscore: unknown element kind %q", ed.Kind)
@@ -410,6 +420,7 @@ func decodeMarks(md *marksDoc, m *model.Marks) {
 	for _, s := range md.Symbols {
 		m.Symbols = append(m.Symbols, model.SymbolMark{
 			Name: s.Name, Placement: placementValues[s.Placement],
+			OffsetX: s.OffsetX, OffsetY: s.OffsetY,
 		})
 	}
 	if md.Tuplet != nil && md.Tuplet.Actual > 0 && md.Tuplet.Normal > 0 {

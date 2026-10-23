@@ -22,8 +22,10 @@ import (
 	_ "image/png"
 	"io"
 	"net/http"
+	"os"
 	"strconv"
 
+	gscorefmt "github.com/stricaud/gscore/internal/format/gscore"
 	"github.com/stricaud/gscore/internal/model"
 	"github.com/stricaud/gscore/internal/symbol"
 )
@@ -292,4 +294,187 @@ func min(a, b int) int {
 		return a
 	}
 	return b
+}
+
+// handleMoveSymbol nudges a symbol from where the engraver put it.
+func (a *App) handleMoveSymbol(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST required", http.StatusMethodNotAllowed)
+		return
+	}
+	q := r.URL.Query()
+	dx, _ := strconv.ParseFloat(q.Get("dx"), 64)
+	dy, _ := strconv.ParseFloat(q.Get("dy"), 64)
+	name := q.Get("name")
+
+	m, err := a.markAt(q)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	moved := 0
+	for i := range m.Symbols {
+		if name != "" && m.Symbols[i].Name != name {
+			continue
+		}
+		if q.Get("absolute") == "1" {
+			m.Symbols[i].OffsetX, m.Symbols[i].OffsetY = dx, dy
+		} else {
+			m.Symbols[i].OffsetX += dx
+			m.Symbols[i].OffsetY += dy
+		}
+		moved++
+	}
+	if moved == 0 {
+		http.Error(w, "no such symbol on that element", http.StatusBadRequest)
+		return
+	}
+	writeJSON(w, map[string]int{"moved": moved})
+}
+
+// handleImportSymbols takes the symbols out of a .gscore and adds them here.
+//
+// Any .gscore will do: one saved as a pack, or somebody's piece that happens
+// to use marks you want. The music in it is ignored.
+func (a *App) handleImportSymbols(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST required", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var src io.Reader
+	if path := r.URL.Query().Get("path"); path != "" {
+		if !a.local {
+			http.Error(w, "reading a path is only allowed on this machine",
+				http.StatusForbidden)
+			return
+		}
+		f, err := os.Open(path)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		defer f.Close()
+		src = f
+	} else {
+		src = http.MaxBytesReader(w, r.Body, 32<<20)
+	}
+
+	incoming, err := gscorefmt.ReadSymbols(src)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	a.mu.Lock()
+	added, replaced := 0, 0
+	for _, name := range incoming.Names() {
+		s, ok := incoming.Lookup(name)
+		if !ok {
+			continue
+		}
+		if _, exists := a.symbols.Lookup(name); exists {
+			replaced++
+		} else {
+			added++
+		}
+		_ = a.symbols.Add(s)
+	}
+	a.mu.Unlock()
+
+	writeJSON(w, map[string]any{
+		"status": "ok", "added": added, "replaced": replaced,
+	})
+}
+
+// importSymbolsFrom reads a pack chosen in the file dialog.
+func (a *App) importSymbolsFrom(w http.ResponseWriter, path string) {
+	f, err := os.Open(path)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	defer f.Close()
+
+	incoming, err := gscorefmt.ReadSymbols(f)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	a.mu.Lock()
+	added, replaced := 0, 0
+	for _, name := range incoming.Names() {
+		s, ok := incoming.Lookup(name)
+		if !ok {
+			continue
+		}
+		if _, exists := a.symbols.Lookup(name); exists {
+			replaced++
+		} else {
+			added++
+		}
+		_ = a.symbols.Add(s)
+	}
+	a.mu.Unlock()
+	writeJSON(w, map[string]any{"status": "ok", "added": added, "replaced": replaced})
+}
+
+// handleExportSymbols saves every drawing as a .gscore pack, for sharing.
+func (a *App) handleExportSymbols(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST required", http.StatusMethodNotAllowed)
+		return
+	}
+	a.mu.RLock()
+	symbols := a.symbols
+	n := symbols.Len()
+	a.mu.RUnlock()
+	if n == 0 {
+		http.Error(w, "there are no symbols to share yet", http.StatusBadRequest)
+		return
+	}
+
+	// Written to the response when no path is given, so a browser can
+	// download it; written to disk when one is.
+	path := r.URL.Query().Get("path")
+	if path == "" && r.URL.Query().Get("dialog") == "1" && a.local {
+		var err error
+		path, err = saveDialog("symbols.gscore")
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusNotImplemented)
+			return
+		}
+		if path == "" {
+			writeJSON(w, map[string]any{"cancelled": true})
+			return
+		}
+	}
+	if path != "" {
+		if !a.local {
+			http.Error(w, "saving to a path is only allowed on this machine",
+				http.StatusForbidden)
+			return
+		}
+		f, err := os.Create(path)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		defer f.Close()
+		if err := gscorefmt.WritePack(f, symbols); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, map[string]any{"status": "ok", "path": path, "symbols": n})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/zip")
+	w.Header().Set("Content-Disposition", `attachment; filename="symbols.gscore"`)
+	if err := gscorefmt.WritePack(w, symbols); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
 }

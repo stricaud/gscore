@@ -85,6 +85,26 @@ type formatInfo struct {
 // Only the symbols the score actually refers to are written, so a file does
 // not carry a whole library around for the sake of one mark.
 func Write(w io.Writer, s *model.Score, symbols *symbol.Registry) error {
+	return write(w, s, symbols, usedSymbols(s))
+}
+
+// WritePack saves a .gscore holding symbols and no music.
+//
+// A file like this is a symbol library: somebody draws a set of marks their
+// music needs and nobody else's font has, saves them, and anyone can load
+// them into their own scores. The container is the same one scores use, so a
+// pack opens as an empty score and a score opens as a pack — nothing new to
+// learn and nothing new to implement.
+func WritePack(w io.Writer, symbols *symbol.Registry) error {
+	if symbols == nil || symbols.Len() == 0 {
+		return errors.New("gscore: there are no symbols to save")
+	}
+	empty := model.NewScore()
+	empty.Identity.Title = "Symbol pack"
+	return write(w, empty, symbols, symbols.Names())
+}
+
+func write(w io.Writer, s *model.Score, symbols *symbol.Registry, names []string) error {
 	zw := zip.NewWriter(w)
 
 	put := func(name string, data []byte) error {
@@ -113,10 +133,9 @@ func Write(w io.Writer, s *model.Score, symbols *symbol.Registry) error {
 		return err
 	}
 
-	used := usedSymbols(s)
-	if symbols != nil && len(used) > 0 {
-		index := make([]symbolEntry, 0, len(used))
-		for _, name := range used {
+	if symbols != nil && len(names) > 0 {
+		index := make([]symbolEntry, 0, len(names))
+		for _, name := range names {
 			sym, ok := symbols.Lookup(name)
 			if !ok || sym.Kind != symbol.FromPixels || sym.Pixels == nil {
 				continue
@@ -257,36 +276,73 @@ func Read(r io.Reader) (*model.Score, *symbol.Registry, error) {
 	}
 
 	reg := symbol.NewRegistry()
-	if f, ok := files["symbols/index.json"]; ok {
-		if b, err := readAll(f); err == nil {
-			var index []symbolEntry
-			if json.Unmarshal(b, &index) == nil {
-				for _, e := range index {
-					sf, ok := files[e.File]
-					if !ok {
-						continue
-					}
-					raw, err := readAll(sf)
-					if err != nil {
-						continue
-					}
-					bm, err := symbol.DecodeXPM(bytes.NewReader(raw))
-					if err != nil {
-						continue
-					}
-					if e.PixelSize > 0 {
-						bm.PixelSize = e.PixelSize
-					}
-					bm.OriginX, bm.OriginY = e.OriginX, e.OriginY
-					_ = reg.Add(&symbol.Symbol{
-						Name: e.Name, Kind: symbol.FromPixels,
-						Pixels: bm, Advance: e.Advance,
-					})
-				}
-			}
-		}
-	}
+	loadSymbols(files, reg)
 	return s, reg, nil
+}
+
+// ReadSymbols loads only the symbols from a .gscore, ignoring its music.
+//
+// This is how one person's drawings reach another's score: point it at any
+// .gscore and take the marks out of it, whether the file was made as a pack
+// or is simply a piece that happens to use them.
+func ReadSymbols(r io.Reader) (*symbol.Registry, error) {
+	data, err := io.ReadAll(r)
+	if err != nil {
+		return nil, fmt.Errorf("gscore: %w", err)
+	}
+	zr, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
+	if err != nil {
+		return nil, fmt.Errorf("gscore: not a .gscore container: %w", err)
+	}
+
+	files := map[string]*zip.File{}
+	for _, f := range zr.File {
+		files[f.Name] = f
+	}
+	reg := symbol.NewRegistry()
+	loadSymbols(files, reg)
+	if reg.Len() == 0 {
+		return nil, errors.New("gscore: that file carries no symbols")
+	}
+	return reg, nil
+}
+
+// loadSymbols reads the symbol section of a container into a registry.
+func loadSymbols(files map[string]*zip.File, reg *symbol.Registry) {
+	f, ok := files["symbols/index.json"]
+	if !ok {
+		return
+	}
+	b, err := readAll(f)
+	if err != nil {
+		return
+	}
+	var index []symbolEntry
+	if json.Unmarshal(b, &index) != nil {
+		return
+	}
+	for _, e := range index {
+		sf, ok := files[e.File]
+		if !ok {
+			continue
+		}
+		raw, err := readAll(sf)
+		if err != nil {
+			continue
+		}
+		bm, err := symbol.DecodeXPM(bytes.NewReader(raw))
+		if err != nil {
+			continue
+		}
+		if e.PixelSize > 0 {
+			bm.PixelSize = e.PixelSize
+		}
+		bm.OriginX, bm.OriginY = e.OriginX, e.OriginY
+		_ = reg.Add(&symbol.Symbol{
+			Name: e.Name, Kind: symbol.FromPixels,
+			Pixels: bm, Advance: e.Advance,
+		})
+	}
 }
 
 func readAll(f *zip.File) ([]byte, error) {

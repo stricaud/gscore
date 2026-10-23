@@ -69,8 +69,12 @@ func build(s *model.Score) *scorePartwise {
 		if name == "" {
 			name = "Part " + strconv.Itoa(pi+1)
 		}
-		doc.PartList.ScoreParts = append(doc.PartList.ScoreParts,
-			scorePart{ID: id, Name: name})
+		sp := scorePart{ID: id, Name: name}
+		// MusicXML counts programs from one.
+		sp.MidiInst = &midiInstrument{
+			ID: id + "-I1", Program: int(p.Instrument) + 1, Channel: pi + 1,
+		}
+		doc.PartList.ScoreParts = append(doc.PartList.ScoreParts, sp)
 		doc.Parts = append(doc.Parts, buildPart(s, p, id, pi, divisions))
 	}
 	return doc

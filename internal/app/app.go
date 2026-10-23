@@ -27,6 +27,7 @@ import (
 	"embed"
 	"encoding/json"
 	"fmt"
+	"html"
 	"io"
 	"net"
 	"net/http"
@@ -250,6 +251,16 @@ func (a *App) APIRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/pickfile", a.handlePickFile)
 	mux.HandleFunc("/api/openpath", a.handleOpenPath)
 	mux.HandleFunc("/api/tune", a.handleTune)
+	mux.HandleFunc("/api/save", a.handleSave)
+	mux.HandleFunc("/api/movesymbol", a.handleMoveSymbol)
+	mux.HandleFunc("/api/staff", a.handleStaff)
+	mux.HandleFunc("/api/tempo", a.handleTempo)
+	mux.HandleFunc("/api/header", a.handleHeader)
+	mux.HandleFunc("/api/instruments", a.handleInstruments)
+	mux.HandleFunc("/print", a.handlePrint)
+	mux.HandleFunc("/api/openbrowser", a.handleOpenBrowser)
+	mux.HandleFunc("/api/importsymbols", a.handleImportSymbols)
+	mux.HandleFunc("/api/exportsymbols", a.handleExportSymbols)
 	mux.HandleFunc("/api/symbols", a.handleSymbols)
 	mux.HandleFunc("/api/insertsymbol", a.handleInsertSymbol)
 	mux.HandleFunc("/symbol.png", a.handleSymbolPNG)
@@ -330,12 +341,13 @@ type info struct {
 }
 
 type partInfo struct {
-	Name     string `json:"name"`
-	Clef     string `json:"clef"`
-	Key      string `json:"key"`
-	Time     string `json:"time"`
-	Measures int    `json:"measures"`
-	Notes    int    `json:"notes"`
+	Name       string `json:"name"`
+	Instrument string `json:"instrument"`
+	Clef       string `json:"clef"`
+	Key        string `json:"key"`
+	Time       string `json:"time"`
+	Measures   int    `json:"measures"`
+	Notes      int    `json:"notes"`
 }
 
 func (a *App) handleInfo(w http.ResponseWriter, r *http.Request) {
@@ -382,7 +394,8 @@ func (a *App) handleInfo(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		out.Parts = append(out.Parts, partInfo{
-			Name: name, Clef: p.Clef.String(), Key: keyText(p.Key),
+			Name: name, Instrument: p.Instrument.String(),
+			Clef: p.Clef.String(), Key: keyText(p.Key),
 			Time: p.Time.String(), Measures: len(p.Measures), Notes: notes,
 		})
 	}
@@ -475,6 +488,72 @@ func (a *App) handleLayout(w http.ResponseWriter, r *http.Request) {
 	lay := engrave.Engrave(a.score, a.engraveOpt)
 	a.mu.RUnlock()
 	writeJSON(w, map[string]float64{"width": lay.Width, "height": lay.Height})
+}
+
+// handlePrint serves the score as a page ready to print.
+//
+// The native window cannot print: a web view has no print machinery behind
+// it, and window.open returns nothing without a UI delegate. So printing
+// hands the job to the real browser, which has both.
+func (a *App) handlePrint(w http.ResponseWriter, r *http.Request) {
+	a.mu.RLock()
+	score := a.score
+	title := a.score.Identity.Title
+	symbols := a.symbols
+	a.mu.RUnlock()
+	if title == "" {
+		title = "Score"
+	}
+
+	// Printing always paginates, whatever the editor is showing: a
+	// continuous strip has no page breaks to print at.
+	eopt := engrave.DefaultOptions()
+	eopt.Mode = engrave.Paginated
+	eopt.LineWidth = 150
+
+	ropt := svg.DefaultOptions()
+	ropt.Symbols = symbols
+	ropt.EmbedFont = true
+	ropt.StaffSpace = 6
+
+	var drawing strings.Builder
+	if err := svg.Render(&drawing, engrave.Engrave(score, eopt), ropt); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	fmt.Fprintf(w, `<!doctype html>
+<html><head><meta charset="utf-8"><title>%s</title>
+<style>
+  @page { size: auto; margin: 12mm; }
+  html, body { margin: 0; padding: 0; background: #fff; }
+  svg { display: block; width: 100%%; height: auto; }
+  @media screen { body { padding: 16px; } }
+</style></head>
+<body>%s<script>
+  // Wait for the embedded font, or the first page prints blank.
+  if (document.fonts && document.fonts.ready) {
+    document.fonts.ready.then(function () { setTimeout(function () { window.print(); }, 150); });
+  } else {
+    setTimeout(function () { window.print(); }, 600);
+  }
+</script></body></html>`, html.EscapeString(title), drawing.String())
+}
+
+// handleOpenBrowser opens a page of gscore's own in the system browser.
+func (a *App) handleOpenBrowser(w http.ResponseWriter, r *http.Request) {
+	if !a.local {
+		http.Error(w, "only on this machine", http.StatusForbidden)
+		return
+	}
+	path := r.URL.Query().Get("path")
+	if !strings.HasPrefix(path, "/") {
+		http.Error(w, "bad path", http.StatusBadRequest)
+		return
+	}
+	launch("http://" + r.Host + path)
+	writeJSON(w, map[string]string{"status": "ok"})
 }
 
 func writeJSON(w http.ResponseWriter, v any) {

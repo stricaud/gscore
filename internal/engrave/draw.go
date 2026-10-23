@@ -689,7 +689,15 @@ func (e *engraver) drawArticulations(m *model.Marks, x float64, step int, stemUp
 	for _, a := range m.Articulations {
 		emit(smufl.ArticulationGlyph(a, above))
 	}
-	for _, s := range m.Symbols {
-		emit(s.Name)
+	for _, sm := range m.Symbols {
+		// A nudge moves the symbol from where it would otherwise land.
+		e.lay.Glyphs = append(e.lay.Glyphs, Glyph{
+			Name: sm.Name, X: x + sm.OffsetX, Y: y + sm.OffsetY,
+		})
+		if above {
+			y -= gap
+		} else {
+			y += gap
+		}
 	}
 }

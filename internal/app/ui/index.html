@@ -23,8 +23,7 @@
       <button data-action="new"><span>New score…</span><kbd>N</kbd></button>
       <button data-action="open"><span>Open score…</span><kbd>O</kbd></button>
       <hr>
-      <button data-action="save" disabled><span>Save</span><kbd>S</kbd></button>
-      <button data-action="save-as" disabled><span>Save As…</span></button>
+      <button data-action="save"><span>Save as .gscore…</span><kbd>S</kbd></button>
       <button data-action="save-svg"><span>Export SVG…</span><kbd>E</kbd></button>
       <hr>
       <button data-action="page-setup" disabled><span>Page Setup</span></button>
@@ -76,6 +75,9 @@
       <hr>
       <button data-action="draw-symbol"><span>Draw a symbol…</span></button>
       <button data-action="symbol-palette"><span>Insert symbol…</span></button>
+      <hr>
+      <button data-action="import-symbols"><span>Import symbols from a .gscore…</span></button>
+      <button data-action="export-symbols"><span>Share my symbols as a .gscore…</span></button>
       <div class="menu-section">Barline</div>
       <button data-action="bar-single"><span>Single</span></button>
       <button data-action="bar-double"><span>Double</span></button>
@@ -99,8 +101,11 @@
   <div class="menu" data-menu="score">
     <button class="menu-title">Score</button>
     <div class="menu-items">
-      <button data-action="set-tempo" disabled><span>Set tempo…</span></button>
-      <button data-action="set-header" disabled><span>Set header…</span></button>
+      <button data-action="set-tempo"><span>Set tempo…</span></button>
+      <button data-action="set-header"><span>Title and composer…</span></button>
+      <hr>
+      <button data-action="set-key"><span>Key signature…</span></button>
+      <button data-action="set-time"><span>Time signature…</span></button>
       <hr>
       <button data-action="score-options" disabled><span>Score options…</span></button>
       <button data-action="parameters" disabled><span>Parameters…</span></button>
@@ -110,7 +115,7 @@
   <div class="menu" data-menu="staff">
     <button class="menu-title">Staff</button>
     <div class="menu-items">
-      <button data-action="set-instrument" disabled><span>Set instrument…</span></button>
+      <button data-action="set-instrument"><span>Set instrument…</span></button>
       <button data-action="tab" disabled><span>Tab</span></button>
       <button data-action="chord-builder" disabled><span>Chord builder…</span></button>
       <button data-action="tab-transposition" disabled><span>Tab transposition…</span></button>
@@ -122,6 +127,8 @@
     <div class="menu-items">
       <button data-action="mode-strip"><span>Continuous strip</span><kbd>✓</kbd></button>
       <button data-action="mode-page"><span>Paginated</span></button>
+      <hr>
+      <button data-action="show-all-tunes"><span>Show every tune</span></button>
       <hr>
       <button data-action="zoom-in"><span>Zoom in</span><kbd>⌘+</kbd></button>
       <button data-action="zoom-out"><span>Zoom out</span><kbd>⌘-</kbd></button>
@@ -163,18 +170,7 @@
 <div id="main">
 
   <aside id="toolbox">
-    <div class="tool-group">
-      <div class="tool-label">Duration</div>
-      <div class="tool-grid" id="durations"></div>
-    </div>
-    <div class="tool-group">
-      <div class="tool-label">Accidental</div>
-      <div class="tool-grid" id="accidentals"></div>
-    </div>
-    <div class="tool-group">
-      <div class="tool-label">Articulation</div>
-      <div class="tool-grid" id="articulations"></div>
-    </div>
+    <div id="palette-panel"></div>
     <div class="tool-group">
       <div class="tool-label">Zoom</div>
       <input type="range" id="zoom" min="5" max="26" step="1" value="8">
@@ -266,6 +262,7 @@
     <form method="dialog"><button>Close</button></form>
   </div>
   <input type="file" id="sym-file" accept=".xpm,.png,.gif,.jpg,.jpeg" hidden>
+<input type="file" id="pack-file" accept=".gscore" hidden>
 </dialog>
 
 <dialog id="palette">
@@ -274,6 +271,27 @@
   <p class="small" id="palette-empty" hidden>Nothing drawn yet. Use
      Insert → Draw a symbol… first.</p>
   <form method="dialog"><button>Close</button></form>
+</dialog>
+
+<!--
+  Asking for one value.
+  A native window has no prompt(): WKWebView and WebView2 implement no
+  JavaScript dialog delegate, so prompt() returns null and the command it was
+  asking for silently does nothing. This is the replacement, and it is better
+  anyway — it can show a list, and it looks like the rest of the program.
+-->
+<dialog id="ask">
+  <h2 id="ask-title">gscore</h2>
+  <p class="small" id="ask-note" hidden></p>
+  <form method="dialog" id="ask-form">
+    <label id="ask-label" for="ask-input">Value</label>
+    <input type="text" id="ask-input" autocomplete="off">
+    <select id="ask-select" hidden></select>
+    <div class="ask-buttons">
+      <button value="cancel" type="submit">Cancel</button>
+      <button value="ok" type="submit" class="primary" id="ask-ok">OK</button>
+    </div>
+  </form>
 </dialog>
 
 <dialog id="about">
@@ -290,6 +308,7 @@
   <form method="dialog"><button>Close</button></form>
 </dialog>
 
+<script src="palette.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

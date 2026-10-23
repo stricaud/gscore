@@ -33,7 +33,14 @@ type Event struct {
 	MIDI  int     `json:"midi"`
 	Start float64 `json:"start"`
 	Dur   float64 `json:"dur"`
-	Part  int     `json:"part"`
+	// Velocity is how loud, 0 to 127, from the dynamic in force.
+	Velocity int `json:"velocity"`
+	Part     int `json:"part"`
+	// Program is the staff's General MIDI instrument, and Family is how it is
+	// sounded. The browser needs the second to pick a voice; the first is
+	// there so it can be more specific later.
+	Program int    `json:"program"`
+	Family  string `json:"family"`
 	// Ref is the element this note came from, numbered exactly as the
 	// engraver numbers its glyphs. That shared numbering is what lets the
 	// editor light up the notehead that is sounding.
@@ -95,6 +102,8 @@ func buildPlayback(s *model.Score) Playback {
 		// A tie means the two notes sound as one, so a tied-to note extends
 		// the event already running rather than starting another.
 		open := map[int]int{} // midi -> index in out.Events
+		// A dynamic holds until another replaces it.
+		loud := model.MF
 		for mi, m := range p.Measures {
 			// Voices within a measure sound together, so each starts at the
 			// measure's time and the measure lasts as long as the longest.
@@ -109,10 +118,16 @@ func buildPlayback(s *model.Score) Playback {
 				d := el.Duration().Float() * secondsPerWhole
 				switch n := el.(type) {
 				case *model.Note:
-					addNote(&out, open, &n.Marks, n.Pitch, vt, d, pi, ref)
+					if n.Dynamic != model.DynamicNone {
+						loud = n.Dynamic
+					}
+					addNote(&out, open, &n.Marks, n.Pitch, vt, d, pi, ref, p.Instrument, loud)
 				case *model.Chord:
+					if n.Dynamic != model.DynamicNone {
+						loud = n.Dynamic
+					}
 					for _, cn := range n.Notes {
-						addNote(&out, open, &n.Marks, cn.Pitch, vt, d, pi, ref)
+						addNote(&out, open, &n.Marks, cn.Pitch, vt, d, pi, ref, p.Instrument, loud)
 					}
 				}
 				ref++
@@ -171,7 +186,8 @@ func maxF(a, b float64) float64 {
 	return b
 }
 
-func addNote(out *Playback, open map[int]int, m *model.Marks, p model.Pitch, start, dur float64, part, ref int) {
+func addNote(out *Playback, open map[int]int, m *model.Marks, p model.Pitch,
+	start, dur float64, part, ref int, inst model.Instrument, loud model.Dynamic) {
 	midi := p.MIDI()
 	if m.TieStop {
 		if idx, ok := open[midi]; ok {
@@ -183,7 +199,11 @@ func addNote(out *Playback, open map[int]int, m *model.Marks, p model.Pitch, sta
 			return
 		}
 	}
-	out.Events = append(out.Events, Event{MIDI: midi, Start: start, Dur: dur, Part: part, Ref: ref})
+	out.Events = append(out.Events, Event{
+		MIDI: midi, Start: start, Dur: dur, Part: part, Ref: ref,
+		Program: int(inst), Family: inst.Family().String(),
+		Velocity: loud.Velocity(),
+	})
 	if m.TieStart {
 		open[midi] = len(out.Events) - 1
 	}

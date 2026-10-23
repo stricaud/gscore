@@ -259,6 +259,10 @@ func (e *engraver) run() {
 
 	if e.opt.ShowTitle {
 		e.titleBlock()
+		// Leave room for whatever reaches above the first staff. A title set
+		// at a fixed distance lands on the ledger lines of a high passage,
+		// and these scales climb well above the staff.
+		e.y += e.overhang()
 	}
 	e.layout()
 
@@ -319,12 +323,22 @@ func (e *engraver) layout() {
 		// A part with no measures still has a clef and a key signature, and
 		// drawing just those is what the key signature picker asks for.
 		e.drawSystem(parts, boxes, widths, 0, 0, prefix, true)
+		// There is no next system, so the gap that separates them is just
+		// empty space under the staff.
+		e.y -= e.opt.Spacings.SystemGap
 		return
 	}
 	for start := 0; start < maxMeasures; {
 		n := e.breakAt(widths[start:], prefix)
 		end := start + n
-		e.drawSystem(parts, boxes, widths, start, end, prefix, end >= maxMeasures)
+		last := end >= maxMeasures
+		e.drawSystem(parts, boxes, widths, start, end, prefix, last)
+		if last {
+			// The gap belongs between systems, not after the final one.
+			// Leaving it there pads every score with empty space, which is
+			// glaring when several are shown one under another.
+			e.y -= e.opt.Spacings.SystemGap
+		}
 		start = end
 	}
 }
@@ -347,6 +361,73 @@ func (e *engraver) breakAt(widths []float64, prefix float64) int {
 		n = 1 // a measure too wide for any line still has to go somewhere
 	}
 	return n
+}
+
+// overhang is how far the music rises above the top staff line, in staff
+// spaces, counting ledger lines and anything stemmed or marked upward.
+func (e *engraver) overhang() float64 {
+	highest := staffLines * 2 // the top line, in staff steps
+	stemUp := false
+
+	for _, p := range e.score.Parts {
+		for _, m := range p.Measures {
+			for _, v := range m.Voices {
+				for _, el := range v.Elements {
+					step, up, ok := topOf(p.Clef, el)
+					if !ok {
+						continue
+					}
+					if step > highest {
+						highest = step
+						stemUp = up
+					} else if step == highest && up {
+						stemUp = true
+					}
+				}
+			}
+		}
+	}
+
+	// Steps are half a space each, measured from the bottom line.
+	above := float64(highest-staffHeight*2) / 2
+	if above <= 0 {
+		return 0
+	}
+	// A ledger line and an articulation need room of their own, and a stem
+	// pointing up needs its whole length.
+	clearance := 1.0
+	if stemUp {
+		clearance += stemLength
+	}
+	return above + clearance
+}
+
+// topOf returns the highest staff step an element reaches and whether its stem
+// points that way.
+func topOf(c model.Clef, el model.Element) (step int, stemUp bool, ok bool) {
+	switch n := el.(type) {
+	case *model.Note:
+		s := StaffStep(c, n.Pitch)
+		return s, n.Stem == model.StemUp || (n.Stem == model.StemAuto && s < middleStep), true
+	case *model.Chord:
+		if len(n.Notes) == 0 {
+			return 0, false, false
+		}
+		hi, lo := StaffStep(c, n.Notes[0].Pitch), StaffStep(c, n.Notes[0].Pitch)
+		for _, x := range n.Notes {
+			v := StaffStep(c, x.Pitch)
+			if v > hi {
+				hi = v
+			}
+			if v < lo {
+				lo = v
+			}
+		}
+		up := n.Stem == model.StemUp ||
+			(n.Stem == model.StemAuto && (middleStep-lo) >= (hi-middleStep))
+		return hi, up, true
+	}
+	return 0, false, false
 }
 
 func (e *engraver) titleBlock() {

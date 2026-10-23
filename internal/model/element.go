@@ -126,6 +126,16 @@ func (p Placement) String() string {
 type SymbolMark struct {
 	Name      string
 	Placement Placement
+
+	// OffsetX and OffsetY move the symbol from where the engraver put it, in
+	// staff spaces.
+	//
+	// This is the one place geometry is allowed into the model, and it is
+	// deliberate: a nudge is not derived layout, it is a decision somebody
+	// made and wants kept. Staff spaces rather than pixels, so the nudge
+	// survives a change of size, and saved with the score because losing it
+	// would lose the decision.
+	OffsetX, OffsetY float64
 }
 
 // Tuplet records that an element is part of a group played in less (or more)

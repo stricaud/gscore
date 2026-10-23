@@ -141,6 +141,11 @@ func (p *parser) read(line string) error {
 		p.score.Identity.Copyright = attrs["Copyright1"]
 	case "AddStaff":
 		p.newStaff(attrs["Name"])
+	case "StaffInstrument":
+		if v, err := strconv.Atoi(attrs["Patch"]); err == nil && v >= 0 && v < 128 {
+			p.ensureStaff()
+			p.cur.Instrument = model.Instrument(v)
+		}
 	case "Clef":
 		p.setClef(attrs["Type"])
 	case "Key":

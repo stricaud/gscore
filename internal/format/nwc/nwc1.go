@@ -522,7 +522,19 @@ func (w *walker) object(st *staffState) error {
 		return w.skip(2)
 
 	case 4: // instrument patch
-		return w.skip(8)
+		// nwc1.posa leaves the eight bytes undescribed; the General MIDI
+		// program is the second of them.
+		raw := make([]byte, 8)
+		for i := range raw {
+			c, err := w.u8()
+			if err != nil {
+				return err
+			}
+			raw[i] = c
+		}
+		if p := raw[1]; p < 128 {
+			st.part.Instrument = model.Instrument(p)
+		}
 
 	case 5: // time signature
 		top, err := w.u16()

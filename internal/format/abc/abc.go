@@ -263,6 +263,10 @@ func (p *parser) run(src string) error {
 			inText = false
 			continue
 		}
+		if strings.HasPrefix(line, "%%MIDI") {
+			p.midiDirective(line)
+			continue
+		}
 		if inText || strings.HasPrefix(line, "%") {
 			continue
 		}
@@ -281,6 +285,22 @@ func (p *parser) run(src string) error {
 
 // fieldLine recognises ABC's "X:value" information fields, which are only
 // fields when they begin the line.
+// midiDirective reads the %%MIDI lines that ABC files use to say what a part
+// sounds as. There is no field for it in the language itself.
+func (p *parser) midiDirective(line string) {
+	f := strings.Fields(line)
+	if len(f) < 3 || !strings.EqualFold(f[1], "program") {
+		return
+	}
+	// The form is "%%MIDI program [channel] program".
+	v, err := strconv.Atoi(f[len(f)-1])
+	if err != nil || v < 0 || v > 127 {
+		return
+	}
+	p.ensurePart()
+	p.cur.Instrument = model.Instrument(v)
+}
+
 func fieldLine(line string) (byte, string, bool) {
 	if len(line) < 2 || line[1] != ':' {
 		return 0, "", false
@@ -1226,6 +1246,7 @@ octaveMarks:
 func (p *parser) chord(sc *scanner) error {
 	sc.next() // '['
 	ch := &model.Chord{}
+	tied := 0
 	for !sc.eof() && sc.peek() != ']' {
 		if c := sc.peek(); c == ' ' || c == '\t' {
 			sc.next()
@@ -1234,6 +1255,15 @@ func (p *parser) chord(sc *scanner) error {
 		n, err := p.parseNote(sc)
 		if err != nil {
 			return err
+		}
+		// A note inside a chord may carry a tie of its own: "[C-E-G]" ties
+		// those noteheads to the ones after it. The grammar has it as
+		// "[" 2*note "]" with note ::= pitch [note-length] [tie], so this is
+		// separate from "[CEG]-", which ties the chord as a whole.
+		if !sc.eof() && sc.peek() == '-' {
+			sc.next()
+			n.TieStart = true
+			tied++
 		}
 		ch.Notes = append(ch.Notes, n)
 	}
@@ -1262,6 +1292,15 @@ func (p *parser) chord(sc *scanner) error {
 		n.Dur = ch.Dur
 	}
 	p.add(ch)
+	if tied > 0 {
+		// Set after applyPending, or the chord would absorb the tie stop it
+		// is itself starting. Whatever comes next carries it, exactly as for
+		// a tie written after the closing bracket.
+		p.pendingTieStop = true
+		if tied == len(ch.Notes) {
+			ch.TieStart = true
+		}
+	}
 	return nil
 }
 

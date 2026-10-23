@@ -86,8 +86,18 @@ type partList struct {
 }
 
 type scorePart struct {
-	ID   string `xml:"id,attr"`
-	Name string `xml:"part-name"`
+	ID       string          `xml:"id,attr"`
+	Name     string          `xml:"part-name"`
+	MidiInst *midiInstrument `xml:"midi-instrument,omitempty"`
+}
+
+// midiInstrument is how MusicXML says what a staff sounds as. The program is
+// a General MIDI number, counted from one in the file and from zero
+// everywhere else, which is a classic way to be a semitone's worth of wrong.
+type midiInstrument struct {
+	ID      string `xml:"id,attr"`
+	Program int    `xml:"midi-program"`
+	Channel int    `xml:"midi-channel,omitempty"`
 }
 
 type xmlPart struct {

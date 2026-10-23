@@ -15,6 +15,7 @@ package app
 import (
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"os/exec"
@@ -22,7 +23,12 @@ import (
 	"runtime"
 	"strings"
 
+	"strconv"
+
+	"github.com/stricaud/gscore/internal/engrave"
 	"github.com/stricaud/gscore/internal/format"
+	gscorefmt "github.com/stricaud/gscore/internal/format/gscore"
+	"github.com/stricaud/gscore/internal/render/svg"
 )
 
 // Opening a file needs a real dialog.
@@ -117,6 +123,12 @@ func (a *App) handlePickFile(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]any{"cancelled": true})
 		return
 	}
+
+	// The same dialog serves opening a score and taking symbols out of one.
+	if r.URL.Query().Get("symbols") == "1" {
+		a.importSymbolsFrom(w, path)
+		return
+	}
 	if err := a.openPath(path); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -168,4 +180,194 @@ func (a *App) openPath(path string) error {
 	a.setBook(scores, path, warning)
 	a.mu.Unlock()
 	return nil
+}
+
+// handleSave writes the score to a file, with its symbols.
+//
+// Saving has to carry the drawings: a .gscore holding a score that refers to
+// symbols it does not contain is a score that opens wrong somewhere else, and
+// the whole reason for the format is that the artwork travels with the music.
+func (a *App) handleSave(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST required", http.StatusMethodNotAllowed)
+		return
+	}
+	path := r.URL.Query().Get("path")
+	if path == "" {
+		if !a.local && !a.native {
+			http.Error(w, "say where to save it", http.StatusBadRequest)
+			return
+		}
+		var err error
+		suggested := a.suggestedName()
+		if ext := r.URL.Query().Get("as"); ext != "" {
+			suggested = strings.TrimSuffix(suggested, filepath.Ext(suggested)) + "." + ext
+		}
+		path, err = saveDialog(suggested)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusNotImplemented)
+			return
+		}
+		if path == "" {
+			writeJSON(w, map[string]any{"cancelled": true})
+			return
+		}
+	}
+	if !a.local {
+		http.Error(w, "saving to a path is only allowed on this machine",
+			http.StatusForbidden)
+		return
+	}
+
+	a.mu.RLock()
+	score, symbols := a.score, a.symbols
+	a.mu.RUnlock()
+
+	f, err := os.Create(path)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	defer f.Close()
+
+	// A drawing is not a score format, so it is not in the registry; it is
+	// handled here because "save this as an SVG" is an obvious thing to ask.
+	if strings.EqualFold(filepath.Ext(path), ".svg") {
+		if err := a.renderTo(f, r); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, map[string]string{"status": "ok", "path": path})
+		return
+	}
+
+	if strings.EqualFold(filepath.Ext(path), ".gscore") {
+		// The one format that can carry the drawings gets handed them.
+		if err := gscorefmt.Write(f, score, symbols); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+	} else {
+		exp, err := format.ExporterFor(path)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if err := exp.Export(f, score); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+	}
+
+	a.mu.Lock()
+	a.filename = path
+	a.mu.Unlock()
+	writeJSON(w, map[string]string{"status": "ok", "path": path})
+}
+
+// renderTo draws the score as a standalone SVG, with the font inside it so
+// the file opens correctly anywhere rather than only where gscore is running.
+func (a *App) renderTo(w io.Writer, r *http.Request) error {
+	a.mu.RLock()
+	score := a.score
+	eopt := a.engraveOpt
+	symbols := a.symbols
+	a.mu.RUnlock()
+
+	q := r.URL.Query()
+	switch q.Get("mode") {
+	case "strip":
+		eopt.Mode = engrave.Strip
+	case "page":
+		eopt.Mode = engrave.Paginated
+	}
+
+	ropt := svg.DefaultOptions()
+	ropt.Symbols = symbols
+	ropt.EmbedFont = true
+	if v := q.Get("space"); v != "" {
+		if f, err := strconv.ParseFloat(v, 64); err == nil && f >= 3 && f <= 40 {
+			ropt.StaffSpace = f
+		}
+	}
+	return svg.Render(w, engrave.Engrave(score, eopt), ropt)
+}
+
+func (a *App) suggestedName() string {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	if a.filename != "" {
+		base := filepath.Base(a.filename)
+		return strings.TrimSuffix(base, filepath.Ext(base)) + ".gscore"
+	}
+	_ = a.score
+	name := a.score.Identity.Title
+	if name == "" {
+		name = "untitled"
+	}
+	var b strings.Builder
+	for _, r := range name {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '-', r == '_':
+			b.WriteRune(r)
+		default:
+			b.WriteByte('-')
+		}
+	}
+	return b.String() + ".gscore"
+}
+
+// saveDialog shows the system's save panel.
+func saveDialog(suggested string) (string, error) {
+	switch runtime.GOOS {
+	case "darwin":
+		script := `POSIX path of (choose file name with prompt "Save score" default name "` +
+			strings.ReplaceAll(suggested, `"`, "") + `")`
+		cmd := exec.Command("osascript", "-e", script)
+		var stderr strings.Builder
+		cmd.Stderr = &stderr
+		out, err := cmd.Output()
+		if err != nil {
+			if strings.Contains(stderr.String(), "-128") ||
+				strings.Contains(stderr.String(), "User canceled") {
+				return "", nil
+			}
+			return "", fmt.Errorf("save dialog failed: %s", strings.TrimSpace(stderr.String()))
+		}
+		return strings.TrimSpace(string(out)), nil
+
+	case "linux":
+		for _, tool := range []string{"zenity", "kdialog"} {
+			path, err := exec.LookPath(tool)
+			if err != nil {
+				continue
+			}
+			var cmd *exec.Cmd
+			if tool == "zenity" {
+				cmd = exec.Command(path, "--file-selection", "--save",
+					"--confirm-overwrite", "--filename="+suggested)
+			} else {
+				cmd = exec.Command(path, "--getsavefilename", suggested)
+			}
+			out, err := cmd.Output()
+			if err != nil {
+				return "", nil
+			}
+			return strings.TrimSpace(string(out)), nil
+		}
+		return "", errNoDialog
+
+	case "windows":
+		script := `Add-Type -AssemblyName System.Windows.Forms;` +
+			`$d = New-Object System.Windows.Forms.SaveFileDialog;` +
+			`$d.FileName = '` + suggested + `';` +
+			`$d.Filter = 'gscore|*.gscore|MusicXML|*.musicxml|All files|*.*';` +
+			`if ($d.ShowDialog() -eq 'OK') { $d.FileName }`
+		out, err := exec.Command("powershell", "-NoProfile", "-Command", script).Output()
+		if err != nil {
+			return "", nil
+		}
+		return strings.TrimSpace(string(out)), nil
+	}
+	return "", errNoDialog
 }

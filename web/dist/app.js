@@ -10,6 +10,20 @@
 const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => Array.from(document.querySelectorAll(sel));
 
+// currentSVG is the drawing being worked on.
+//
+// When a whole book is on screen the canvas holds one drawing per tune, and
+// asking for "#canvas svg" hands back the first of them whatever is selected.
+// Everything that places a cursor, highlights a note or measures a click has
+// to ask for the right one.
+function currentSVG() {
+  if (state.showAll) {
+    const d = $(`#canvas .tune[data-tune="${state.info?.current ?? 0}"] svg`);
+    if (d) return d;
+  }
+  return $("#canvas svg");
+}
+
 const state = {
   zoom: 8,
   // The continuous strip is gscore's own view and stays the default: the
@@ -31,58 +45,85 @@ const state = {
   hits: [],
   tool: { duration: "quarter", accidental: "none", rest: false, select: false },
   // A file may hold many scores; showAll puts the whole book on screen at
-  // once rather than one tune at a time.
+  // once rather than one tune at a time. It is decided when a file is opened:
+  // opening a book should show the book.
   showAll: false,
+  showAllDecided: false,
   // Everything a dragged selection picked up, as staff:measure:index.
   multi: [],
 };
 
 /* ---------- toolbox ---------- */
 
-const DURATIONS = [
-  ["", "whole"], ["", "half"], ["", "quarter"],
-  ["", "eighth"], ["", "sixteenth"], ["", "rest"],
-];
-const ACCIDENTALS = [
-  ["", "natural"], ["", "sharp"], ["", "flat"],
-  ["", "double sharp"], ["", "double flat"], ["", "none"],
-];
-const ARTICULATIONS = [
-  ["", "staccato"], ["", "accent"], ["", "tenuto"],
-  ["", "marcato"], ["", "fermata"], ["", "up bow"],
-];
-
-function buildTools(containerId, items, defaultIndex) {
-  const box = $("#" + containerId);
-  items.forEach(([glyph, name, icon], i) => {
-    const b = document.createElement("button");
-    b.className = "tool" + (glyph === "" && !icon ? " small" : "");
-    if (icon) {
-      const img = document.createElement("img");
-      img.src = icon;
-      img.alt = name;
-      b.appendChild(img);
-    } else {
-      b.textContent = glyph || "—";
+// The palette lives in palette.js, which holds what is in it. This is what
+// happens when one is clicked.
+async function paletteAction(item) {
+  if (item.tool) {
+    switch (item.tool) {
+      case "select":
+        state.tool.select = true;
+        state.tool.rest = false;
+        break;
+      case "rest":
+        state.tool.select = false;
+        state.tool.rest = true;
+        if (item.dur) state.tool.duration = item.dur;
+        break;
+      case "acc":
+        state.tool.accidental = item.acc;
+        break;
+      default:
+        state.tool.select = false;
+        state.tool.rest = false;
+        state.tool.duration = item.tool;
     }
-    b.title = name;
-    b.dataset.tool = name;
-    if (i === defaultIndex) b.classList.add("selected");
-    b.addEventListener("click", () => {
-      box.querySelectorAll(".tool").forEach((t) => t.classList.remove("selected"));
-      b.classList.add("selected");
-      if (containerId === "durations") {
-        state.tool.select = name === "select";
-        state.tool.rest = name === "rest";
-        if (!state.tool.select && !state.tool.rest) state.tool.duration = name;
-        document.body.classList.toggle("tool-select", state.tool.select);
-      } else if (containerId === "accidentals") {
-        state.tool.accidental = name;
-      }
-      status(name);
-    });
-    box.appendChild(b);
-  });
+    document.body.classList.toggle("tool-select", state.tool.select);
+    markPaletteTool((label) => label === currentToolLabel());
+    status(item.label);
+    return;
+  }
+
+  if (item.apply === "dot") {
+    status("Dotted notes are written by choosing the duration; the dot tool is not wired yet");
+    return;
+  }
+  if (item.apply) {
+    await mark(item.apply, { [item.apply]: item.value }, item.label);
+    return;
+  }
+  if (item.measure === "barline") {
+    await setBarline(item.value);
+    return;
+  }
+  if (item.staff) {
+    await setStaffProperty(item.staff, item.value);
+  }
+}
+
+// currentToolLabel names the tool held, so the palette can show it.
+function currentToolLabel() {
+  if (state.tool.select) return "Select";
+  if (state.tool.rest) {
+    return { whole: "Whole rest", half: "Half rest", quarter: "Quarter rest",
+             eighth: "Eighth rest", sixteenth: "16th rest", "32nd": "32nd rest" }[state.tool.duration];
+  }
+  return { whole: "Whole", half: "Half", quarter: "Quarter", eighth: "Eighth",
+           sixteenth: "16th", "32nd": "32nd", "64th": "64th" }[state.tool.duration];
+}
+
+// setStaffProperty changes something about the staff itself, rather than
+// about a note on it.
+async function setStaffProperty(what, value) {
+  const sel = state.selection;
+  const part = sel ? sel.part : 0;
+  const res = await fetch(`/api/staff?part=${part}&${what}=${encodeURIComponent(value)}`,
+                          { method: "POST" });
+  if (!res.ok) {
+    status("Could not change the staff: " + (await res.text()).trim());
+    return;
+  }
+  await refreshScore();
+  status(`${what}: ${value}`);
 }
 
 /* ---------- menus ---------- */
@@ -144,6 +185,13 @@ async function action(name) {
     case "zoom-reset":
       setZoom(8);
       break;
+    case "show-all-tunes":
+      state.showAll = !state.showAll;
+      state.showAllDecided = true;
+      $("#show-all").checked = state.showAll;
+      await drawScore();
+      status(state.showAll ? "Showing every tune" : "Showing one tune");
+      break;
     case "mode-page":
     case "mode-strip":
       state.mode = name === "mode-strip" ? "strip" : "page";
@@ -203,6 +251,30 @@ async function action(name) {
     case "artic-marcato-up": await setArticulation("marcato"); break;
     case "artic-marcato-down": await setArticulation("marcato down"); break;
 
+    case "set-tempo":
+      await setTempoDialog();
+      break;
+    case "set-header":
+      await setHeaderDialog();
+      break;
+    case "set-key":
+      await openKeyPicker(state.selection?.part ?? 0);
+      break;
+    case "set-time":
+      await setTimeDialog();
+      break;
+    case "set-instrument":
+      await setInstrumentDialog();
+      break;
+    case "save":
+      await saveScore();
+      break;
+    case "import-symbols":
+      await importSymbolPack();
+      break;
+    case "export-symbols":
+      await exportSymbolPack();
+      break;
     case "draw-symbol":
       drawInit(draw.size);
       $("#draw").showModal();
@@ -273,13 +345,6 @@ async function drawBook() {
     .map((svg, i) => `<div class="tune" data-tune="${tunes[i].index}">${svg}</div>`)
     .join("");
 
-  // Clicking a tune makes it the one being worked on.
-  $$("#canvas .tune").forEach((d) =>
-    d.addEventListener("click", () => {
-      const i = Number(d.dataset.tune);
-      if (i !== state.info.current) selectTune(i);
-    })
-  );
   markCurrentTune();
   status(`${tunes.length} tunes`);
 }
@@ -303,7 +368,8 @@ async function selectTune(i) {
   if (state.showAll) markCurrentTune();
   else await drawScore();
   await loadHits();
-  status(state.info.tunes?.[i]?.title || "Tune " + (i + 1));
+  const t = state.info.tunes?.[i]?.title || "Tune " + (i + 1);
+  status(`${t} — press space to play it`);
 }
 
 async function loadInfo() {
@@ -322,10 +388,10 @@ async function loadInfo() {
   if (i.title) rows.push(["Title", i.title]);
   if (i.subtitle) rows.push(["Subtitle", i.subtitle]);
   if (i.composer) rows.push(["Composer", i.composer]);
-  rows.push(["Tempo", i.tempo + " bpm"]);
-  $("#score-info").innerHTML = rows
-    .map(([k, v]) => `<div><span>${k}</span><b>${escapeHTML(v)}</b></div>`)
-    .join("");
+  $("#score-info").innerHTML =
+    rows.map(([k, v]) => `<div><span>${k}</span><b>${escapeHTML(v)}</b></div>`).join("") +
+    `<div><span>Tempo</span><button class="linklike" id="tempo-btn">${i.tempo} bpm</button></div>`;
+  $("#tempo-btn")?.addEventListener("click", setTempoDialog);
 
   $("#part-info").innerHTML = i.parts
     .map(
@@ -333,7 +399,8 @@ async function loadInfo() {
         <div class="name">${escapeHTML(p.name)}</div>
         <div><span>Clef</span><b>${p.clef}</b></div>
         <div><span>Key</span><button class="linklike" data-key-part="${idx}">${p.key}</button></div>
-        <div><span>Time</span><b>${p.time}</b></div>
+        <div><span>Time</span><button class="linklike" data-time-part="${idx}">${p.time}</button></div>
+        <div><span>Sounds as</span><button class="linklike" data-inst-part="${idx}">${escapeHTML(p.instrument || "piano")}</button></div>
         <div><span>Measures</span><b>${p.measures}</b></div>
       </div>`
     )
@@ -341,8 +408,29 @@ async function loadInfo() {
   $$("[data-key-part]").forEach((b) =>
     b.addEventListener("click", () => openKeyPicker(Number(b.dataset.keyPart)))
   );
+  $$("[data-time-part]").forEach((b) =>
+    b.addEventListener("click", () => {
+      state.selection = { ...(state.selection || {}), part: Number(b.dataset.timePart) };
+      setTimeDialog();
+    })
+  );
+  $$("[data-inst-part]").forEach((b) =>
+    b.addEventListener("click", () => {
+      state.selection = { ...(state.selection || {}), part: Number(b.dataset.instPart) };
+      setInstrumentDialog();
+    })
+  );
 
   const tunes = i.tunes || [];
+
+  // Opening a file that holds many scores shows all of them. Being handed
+  // one exercise out of forty-eight, with no sign the others exist, is not
+  // what anyone meant by opening the file.
+  if (!state.showAllDecided) {
+    state.showAll = tunes.length > 1;
+    state.showAllDecided = true;
+  }
+
   $("#tune-group").hidden = tunes.length < 2;
   if (tunes.length > 1) {
     $("#tune-count").textContent = `${tunes.length} tunes in this file`;
@@ -363,6 +451,7 @@ async function loadInfo() {
 
 async function reload() {
   stop();
+  state.showAllDecided = false;
   state.selection = null;
   await loadInfo();
   await drawScore();
@@ -453,9 +542,27 @@ function elementAt(hit, x, y) {
 
 function setupCanvasClicks() {
   $("#canvas").addEventListener("click", async (e) => {
-    // A modified click is a pan gesture, handled elsewhere.
+    // A modified click is a pan gesture, and the click that ends a drag is
+    // not a click at all.
     if (e.ctrlKey || e.metaKey || panned) return;
-    const svg = $("#canvas svg");
+    if (suppressClick) {
+      suppressClick = false;
+      return;
+    }
+
+    // In a book, a click on a tune that is not the current one switches to
+    // it. Playing, editing and the cursor all follow the current tune, so
+    // picking one is the first thing a click can mean.
+    const block = e.target.closest ? e.target.closest(".tune") : null;
+    if (block) {
+      const i = Number(block.dataset.tune);
+      if (i !== state.info?.current) {
+        await selectTune(i);
+        return;
+      }
+    }
+
+    const svg = currentSVG();
     if (!svg) return;
     const r = svg.getBoundingClientRect();
     const x = (e.clientX - r.left) / state.zoom;
@@ -483,7 +590,11 @@ function setupCanvasClicks() {
       at: insertIndex(hit, x), step: stepAt(hit, y), ref: null,
     };
 
-    if (state.tool.select) {
+    // The cursor tool selects and never writes — that is the whole point of
+    // it, and of gscore testing Selection.object_type == CURSOR before
+    // deciding what the mouse means. Shift asks for the same thing without
+    // putting the tool down.
+    if (state.tool.select || e.shiftKey) {
       markSelection();
       status(`Measure ${hit.measure + 1}`);
       return;
@@ -515,10 +626,11 @@ function clearSelection() {
 
 // selectTool switches the palette to the cursor, or back to writing.
 function selectTool(wantSelect) {
-  const box = $("#durations");
-  const want = wantSelect ? "select" : state.tool.duration;
-  const b = box.querySelector(`[data-tool="${want}"]`);
-  if (b) b.click();
+  state.tool.select = wantSelect;
+  document.body.classList.toggle("tool-select", wantSelect);
+  markPaletteTool((label) => label === currentToolLabel());
+  status(wantSelect ? "Select — click a note, or drag to select a range"
+                    : "Writing — click the staff to add a note");
 }
 
 async function insertAtSelection(rest, keepSelection) {
@@ -617,35 +729,81 @@ async function refreshScore() {
   markSelection();
 }
 
+// markSelection draws what is selected.
+//
+// A selection should look like one thing, not like a handful of recoloured
+// noteheads: a rounded rectangle drawn around exactly what is picked up, the
+// way every notation program worth using does it. The notes are tinted too,
+// but the rectangle is what the eye reads.
 function markSelection() {
-  const svg = $("#canvas svg");
+  const svg = currentSVG();
   if (!svg) return;
   svg.querySelectorAll("rect.selection").forEach((r) => r.remove());
   svg.querySelectorAll(".selected").forEach((n) => n.classList.remove("selected"));
 
   const sel = state.selection;
   if (!sel) return;
+  const z = state.zoom;
 
+  // What the rectangle has to enclose.
+  let picked = [];
   if (state.multi.length) {
-    for (const m of state.multi) {
-      const el = svg.querySelector(`[data-ref="${m.ref}"]`);
-      if (el) el.classList.add("selected");
-    }
+    picked = state.multi;
   } else if (sel.ref) {
-    const el = svg.querySelector(`[data-ref="${sel.ref}"]`);
+    picked = [{ part: sel.part, measure: sel.measure, ref: sel.ref }];
+  }
+
+  for (const m of picked) {
+    const el = svg.querySelector(`[data-ref="${m.ref}"]`);
     if (el) el.classList.add("selected");
   }
+
+  if (picked.length) {
+    // One rectangle per staff, since a selection may run across measures but
+    // a box spanning two staves would enclose music it did not select.
+    const byStaff = new Map();
+    for (const m of picked) {
+      const hit = state.hits.find(
+        (h) => h.part === m.part && h.measure === m.measure
+      );
+      if (!hit) continue;
+      const el = (hit.elements || []).find((e) => e.ref === m.ref);
+      if (!el) continue;
+      const key = hit.staffTop;
+      const b = byStaff.get(key) || {
+        x0: Infinity, x1: -Infinity, top: hit.staffTop,
+      };
+      b.x0 = Math.min(b.x0, el.x - 0.5);
+      b.x1 = Math.max(b.x1, el.x + el.width + 0.5);
+      byStaff.set(key, b);
+    }
+    for (const b of byStaff.values()) {
+      svg.insertBefore(selectionRect(b.x0, b.top - 1.6, b.x1 - b.x0, 7.2, z), svg.firstChild);
+    }
+    return;
+  }
+
+  // Nothing picked, but a measure is current: outline the measure instead.
   const hit = state.hits.find(
     (h) => h.part === sel.part && h.measure === sel.measure
   );
   if (!hit) return;
+  svg.insertBefore(
+    selectionRect(hit.x0, hit.staffTop - 1.6, hit.x1 - hit.x0, 7.2, z),
+    svg.firstChild
+  );
+}
+
+function selectionRect(x, y, w, h, z) {
   const r = document.createElementNS("http://www.w3.org/2000/svg", "rect");
   r.setAttribute("class", "selection");
-  r.setAttribute("x", String(hit.x0 * state.zoom));
-  r.setAttribute("y", String((hit.staffTop - 1) * state.zoom));
-  r.setAttribute("width", String((hit.x1 - hit.x0) * state.zoom));
-  r.setAttribute("height", String(6 * state.zoom));
-  svg.insertBefore(r, svg.firstChild);
+  r.setAttribute("x", String(x * z));
+  r.setAttribute("y", String(y * z));
+  r.setAttribute("width", String(Math.max(w * z, 2)));
+  r.setAttribute("height", String(h * z));
+  // Corners in proportion to the staff, so the shape holds at any zoom.
+  r.setAttribute("rx", String(0.45 * z));
+  return r;
 }
 
 // mark applies something to the element the cursor sits after — the note just
@@ -763,6 +921,20 @@ function setupDrawing() {
   $("#sym-clear").addEventListener("click", () => drawInit(draw.size));
   $("#sym-import").addEventListener("click", () => $("#sym-file").click());
 
+  $("#pack-file").addEventListener("change", async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const res = await fetch("/api/importsymbols", {
+      method: "POST", body: await file.arrayBuffer(),
+    });
+    if (!res.ok) {
+      status("Could not import: " + (await res.text()).trim());
+      return;
+    }
+    await afterPackImport(await res.json());
+    e.target.value = "";
+  });
+
   $("#sym-file").addEventListener("change", async (e) => {
     const file = e.target.files[0];
     if (!file) return;
@@ -864,6 +1036,189 @@ async function insertSymbol(name) {
   status("Inserted " + name);
 }
 
+// A .gscore carries its symbols, so one can be used as a library: somebody
+// draws a set of marks their music needs, saves it, and anyone can take them.
+async function importSymbolPack() {
+  if (state.info?.local) {
+    const res = await fetch("/api/pickfile?symbols=1", { method: "POST" });
+    if (res.ok) {
+      const d = await res.json();
+      if (!d.cancelled) {
+        await afterPackImport(d);
+        return;
+      }
+      status("Ready");
+      return;
+    }
+  }
+  $("#pack-file").click();
+}
+
+async function afterPackImport(d) {
+  await loadInfo();
+  await openPalette();
+  status(`Imported ${d.added} symbols` + (d.replaced ? `, replaced ${d.replaced}` : ""));
+}
+
+async function exportSymbolPack() {
+  if (state.info?.local) {
+    const res = await fetch("/api/exportsymbols?dialog=1", { method: "POST" });
+    if (res.ok) {
+      const d = await res.json();
+      status(d.cancelled ? "Ready" : `Shared ${d.symbols} symbols`);
+      return;
+    }
+    status("Could not share: " + (await res.text()).trim());
+    return;
+  }
+  // Served rather than run: hand the file to the browser.
+  const res = await fetch("/api/exportsymbols", { method: "POST" });
+  if (!res.ok) {
+    status("Could not share: " + (await res.text()).trim());
+    return;
+  }
+  const blob = await res.blob();
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = "symbols.gscore";
+  a.click();
+  URL.revokeObjectURL(a.href);
+  status("Symbols downloaded");
+}
+
+async function saveScore() {
+  const res = await fetch("/api/save", { method: "POST" });
+  if (!res.ok) {
+    status("Could not save: " + (await res.text()).trim());
+    return;
+  }
+  const d = await res.json();
+  if (d.cancelled) {
+    status("Ready");
+    return;
+  }
+  await loadInfo();
+  status("Saved " + d.path);
+}
+
+// ask puts one question and returns the answer, or null if it was dismissed.
+//
+// It replaces prompt(), which does not exist in a native window: the web
+// views used by the desktop builds implement no JavaScript dialog delegate,
+// so prompt() quietly returns null and whatever asked for the value does
+// nothing at all.
+function ask({ title, label, value = "", note = "", options = null }) {
+  const dlg = $("#ask");
+  const input = $("#ask-input");
+  const select = $("#ask-select");
+
+  $("#ask-title").textContent = title;
+  $("#ask-label").textContent = label;
+  $("#ask-note").textContent = note;
+  $("#ask-note").hidden = !note;
+
+  const useList = Array.isArray(options) && options.length > 0;
+  input.hidden = useList;
+  select.hidden = !useList;
+  if (useList) {
+    select.innerHTML = options
+      .map((o) => {
+        const v = typeof o === "string" ? o : o.value;
+        const t = typeof o === "string" ? o : o.label;
+        return `<option value="${escapeHTML(v)}">${escapeHTML(t)}</option>`;
+      })
+      .join("");
+    select.value = value;
+    $("#ask-label").setAttribute("for", "ask-select");
+  } else {
+    input.value = value;
+    $("#ask-label").setAttribute("for", "ask-input");
+  }
+
+  return new Promise((resolve) => {
+    const done = () => {
+      dlg.removeEventListener("close", done);
+      if (dlg.returnValue !== "ok") {
+        resolve(null);
+        return;
+      }
+      resolve((useList ? select.value : input.value).trim());
+    };
+    dlg.addEventListener("close", done);
+    dlg.showModal();
+    // Ready to type, which is the point of a one-question dialog.
+    setTimeout(() => (useList ? select : input).focus(), 0);
+  });
+}
+
+// The things that belong to the score or the staff rather than to a note.
+// Each asks for one value and sends it; nothing here is worth a panel.
+
+async function setTempoDialog() {
+  const now = state.info?.tempo || 120;
+  const v = await ask({
+    title: "Tempo", label: "Beats per minute", value: String(now),
+    note: "Counted in quarter notes.",
+  });
+  if (v === null) return;
+  const bpm = parseInt(v, 10);
+  if (!Number.isFinite(bpm)) {
+    status("That is not a tempo");
+    return;
+  }
+  const res = await fetch(`/api/tempo?bpm=${bpm}&unit=quarter`, { method: "POST" });
+  if (!res.ok) {
+    status("Could not set the tempo: " + (await res.text()).trim());
+    return;
+  }
+  await refreshScore();
+  status(bpm + " bpm");
+}
+
+async function setHeaderDialog() {
+  const i = state.info || {};
+  const title = await ask({ title: "Title", label: "Title", value: i.title || "" });
+  if (title === null) return;
+  const composer = await ask({
+    title: "Composer", label: "Composer", value: i.composer || "",
+  });
+  if (composer === null) return;
+  const p = new URLSearchParams({ title, composer });
+  const res = await fetch("/api/header?" + p.toString(), { method: "POST" });
+  if (!res.ok) {
+    status("Could not set it: " + (await res.text()).trim());
+    return;
+  }
+  await refreshScore();
+  status("Title and composer set");
+}
+
+async function setTimeDialog() {
+  const part = state.selection?.part ?? 0;
+  const now = state.info?.parts?.[part]?.time || "4/4";
+  const v = await ask({
+    title: "Time signature", label: "Meter", value: now,
+    note: "Written as 4/4 or 6/8. Add a c for the common and cut symbols.",
+  });
+  if (v === null || v === "") return;
+  await setStaffProperty("time", v);
+}
+
+async function setInstrumentDialog() {
+  const list = await (await fetch("/api/instruments")).json();
+  const part = state.selection?.part ?? 0;
+  const staff = state.info?.parts?.[part];
+  const v = await ask({
+    title: "Instrument",
+    label: staff ? `What ${staff.name} sounds as` : "Instrument",
+    value: staff?.instrument || "piano",
+    note: "Used for playback.",
+    options: list.map((x) => ({ value: x.name, label: `${x.name} — ${x.family}` })),
+  });
+  if (v === null) return;
+  await setStaffProperty("instrument", v);
+}
+
 /* ---------- key signature picker ---------- */
 
 // The picker shows each signature engraved on a staff rather than named, which
@@ -873,12 +1228,28 @@ let keyOptions = null;
 
 async function openKeyPicker(partIndex) {
   keyOptions = keyOptions || (await (await fetch("/api/keysignatures")).json());
-  const clef = state.info?.parts?.[partIndex]?.clef || "treble";
+  const staff = state.info?.parts?.[partIndex];
+  const clef = staff?.clef || "treble";
+  // Which one the staff is in now, so the picker opens showing the answer.
+  const current = keyOptions.find((k) => staff && staff.key.startsWith(
+    k.fifths === 0 ? "\u266e" : Math.abs(k.fifths) + (k.fifths > 0 ? "\u266f" : "\u266d")
+  ))?.fifths;
+
+  // The pictures are fetched and put straight into the page rather than
+  // loaded as images. An SVG in an <img> is an isolated document: it cannot
+  // reach /font.otf, so every glyph in it comes out as a missing-character
+  // box. Inline, it uses the page's own font.
+  const drawings = await Promise.all(
+    keyOptions.map((k) =>
+      fetch(`/keysig.svg?fifths=${k.fifths}&clef=${clef}&space=9`).then((r) => r.text())
+    )
+  );
 
   $("#keysig-grid").innerHTML = keyOptions
     .map(
-      (k) => `<button class="keysig-option" data-fifths="${k.fifths}">
-        <img src="/keysig.svg?fifths=${k.fifths}&clef=${clef}&space=7" alt="">
+      (k, i) => `<button class="keysig-option" data-fifths="${k.fifths}"
+                    ${k.fifths === current ? 'aria-current="true"' : ""}>
+        <span class="keysig-art">${drawings[i]}</span>
         <span>${k.major} / ${k.minor}</span>
       </button>`
     )
@@ -1151,7 +1522,7 @@ function systemSpan(measure) {
 // engraver and the playback builder number elements identically, so an
 // event's ref finds its glyph directly.
 function follow(pb) {
-  const svg = $("#canvas svg");
+  const svg = currentSVG();
   const total = pb.duration;
 
   const tick = () => {
@@ -1201,7 +1572,7 @@ function follow(pb) {
 let lastMeasure = null;
 
 function makeCursor() {
-  const svg = $("#canvas svg");
+  const svg = currentSVG();
   if (!svg) return;
   cursorEl = document.createElementNS("http://www.w3.org/2000/svg", "rect");
   cursorEl.setAttribute("class", "cursor");
@@ -1253,7 +1624,7 @@ function stop() {
     }
   }
   voices = [];
-  const svg = $("#canvas svg");
+  const svg = currentSVG();
   if (current !== null) {
     svg?.querySelector(`[data-ref="${current}"]`)?.classList.remove("playing");
     current = null;
@@ -1288,6 +1659,10 @@ function escapeHTML(s) {
 // In a long strip the music runs far off to the right, and reaching for a
 // scrollbar to follow it is the wrong gesture.
 let panned = false;
+// A drag ends by firing a click as well. Without this the click that ends a
+// rubber-band drag runs the ordinary click handler, which clears the very
+// selection the drag just made — and, with a note tool held, writes a note.
+let suppressClick = false;
 
 // The rubber band.
 //
@@ -1301,8 +1676,14 @@ function setupMarquee() {
   let startX = 0, startHit = null;
 
   wrap.addEventListener("mousedown", (e) => {
-    if (!state.tool.select || e.button !== 0 || e.ctrlKey || e.metaKey) return;
-    const svg = $("#canvas svg");
+    // The cursor tool selects, and so does Shift with any tool. Ctrl and
+    // Command are already panning and zooming, so Shift is the one left —
+    // and holding it to select is what every other editor does anyway.
+    if (!(state.tool.select || e.shiftKey)) return;
+    if (e.button !== 0 || e.ctrlKey || e.metaKey) return;
+    // Even with selection off, a drag can still begin one in some browsers.
+    e.preventDefault();
+    const svg = currentSVG();
     if (!svg) return;
     const r = svg.getBoundingClientRect();
     const x = (e.clientX - r.left) / state.zoom;
@@ -1315,15 +1696,16 @@ function setupMarquee() {
 
     band = document.createElementNS("http://www.w3.org/2000/svg", "rect");
     band.setAttribute("class", "marquee");
-    band.setAttribute("y", String((hit.staffTop - 1.5) * state.zoom));
-    band.setAttribute("height", String(7 * state.zoom));
+    band.setAttribute("y", String((hit.staffTop - 1.6) * state.zoom));
+    band.setAttribute("height", String(7.2 * state.zoom));
+    band.setAttribute("rx", String(0.45 * state.zoom));
     svg.appendChild(band);
     e.preventDefault();
   });
 
   window.addEventListener("mousemove", (e) => {
     if (!band) return;
-    const svg = $("#canvas svg");
+    const svg = currentSVG();
     const r = svg.getBoundingClientRect();
     const x = (e.clientX - r.left) / state.zoom;
     const lo = Math.min(startX, x), hi = Math.max(startX, x);
@@ -1333,14 +1715,17 @@ function setupMarquee() {
 
   window.addEventListener("mouseup", (e) => {
     if (!band) return;
-    const svg = $("#canvas svg");
+    const svg = currentSVG();
     const r = svg.getBoundingClientRect();
     const x = (e.clientX - r.left) / state.zoom;
+    // Clear anything the browser managed to select despite the above.
+    window.getSelection()?.removeAllRanges();
     band.remove();
     band = null;
 
     const lo = Math.min(startX, x), hi = Math.max(startX, x);
     if (hi - lo < 0.5) return; // a click, not a drag
+    suppressClick = true;
 
     // One staff, every element whose position falls in the range. The drag
     // may run past the measure it began in, so every measure of that staff is
@@ -1408,6 +1793,19 @@ function setupPanning() {
   });
 }
 
+// Holding Shift turns the pointer into the selecting one, so the gesture is
+// visible before it is used.
+function setupShiftHint() {
+  const apply = (on) => document.body.classList.toggle("shift-select", on);
+  window.addEventListener("keydown", (e) => {
+    if (e.key === "Shift") apply(true);
+  });
+  window.addEventListener("keyup", (e) => {
+    if (e.key === "Shift") apply(false);
+  });
+  window.addEventListener("blur", () => apply(false));
+}
+
 function setupZoomGestures() {
   // Ctrl or Command with the wheel zooms, which is what every other canvas
   // does; without the modifier the wheel scrolls as usual.
@@ -1466,6 +1864,7 @@ function setupKeys() {
       case "o": action("open"); break;
       case "e": action("save-svg"); break;
       case "p": action("print"); break;
+      case "s": action("save"); break;
       case "+": case "=": setZoom(state.zoom + 1); break;
       case "-": setZoom(state.zoom - 1); break;
       case "0": setZoom(8); break;
@@ -1474,15 +1873,15 @@ function setupKeys() {
 }
 
 async function main() {
-  buildTools("durations", DURATIONS, 2);
-  buildTools("accidentals", ACCIDENTALS, 5);
-  buildTools("articulations", ARTICULATIONS, 0);
+  buildPalette(paletteAction);
+  markPaletteTool((label) => label === currentToolLabel());
   setupMenus();
   setupFileInput();
   setupKeys();
   setupZoomGestures();
   setupPanning();
   setupMarquee();
+  setupShiftHint();
   setupCanvasClicks();
   setupDrawing();
   markMode();
@@ -1498,7 +1897,8 @@ async function main() {
   $("#input-btn").addEventListener("click", () => selectTool(!state.tool.select));
 
   await reload();
-  status("Ready");
+  const n = (state.info?.tunes || []).length;
+  status(n > 1 ? `${n} tunes in this file` : "Ready");
 }
 
 main();

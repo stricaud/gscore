@@ -206,12 +206,15 @@ type Measure struct {
 
 // Part is one instrumental line, drawn on its own staff.
 type Part struct {
-	ID       string
-	Name     string
-	Clef     Clef
-	Key      KeySignature
-	Time     TimeSignature
-	Measures []*Measure
+	ID   string
+	Name string
+	// Instrument is what this staff sounds as, carried over from
+	// Staff_t.midi_instrument.
+	Instrument Instrument
+	Clef       Clef
+	Key        KeySignature
+	Time       TimeSignature
+	Measures   []*Measure
 }
 
 // Score is a complete piece of music.

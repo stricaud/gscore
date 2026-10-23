@@ -621,3 +621,66 @@ func TestDynamicsAreDrawnBelowTheStaff(t *testing.T) {
 		t.Errorf("the dynamic is at y=%.2f, not below the staff at %.2f", found.Y, staffBottom)
 	}
 }
+
+func TestTitleClearsHighNotes(t *testing.T) {
+	// A title set at a fixed distance lands on the ledger lines of a high
+	// passage. The gap has to be measured from the music.
+	build := func(top model.Step, oct int) *model.Score {
+		n := &model.Note{Pitch: pitch(top, oct), Dur: model.Duration{Num: 1, Den: 4}}
+		return &model.Score{
+			Identity: model.Identity{Title: "A title"},
+			Tempo:    model.Tempo{BPM: 120, Unit: model.Duration{Num: 1, Den: 4}},
+			Parts: []*model.Part{{
+				Clef: model.Treble, Time: model.TimeSignature{Beats: 4, BeatValue: 4},
+				Measures: []*model.Measure{{
+					Voices:       []*model.Voice{{Elements: []model.Element{n}}},
+					RightBarline: model.BarSingle,
+				}},
+			}},
+		}
+	}
+
+	titleY := func(lay *Layout) float64 {
+		for _, tx := range lay.Texts {
+			if tx.S == "A title" {
+				return tx.Y
+			}
+		}
+		t.Fatal("no title drawn")
+		return 0
+	}
+	topOfMusic := func(lay *Layout) float64 {
+		top := math.Inf(1)
+		for _, g := range lay.Glyphs {
+			if g.Ref != 0 && g.Y < top {
+				top = g.Y
+			}
+		}
+		for _, ln := range lay.Lines {
+			if ln.Y1 < top {
+				top = ln.Y1
+			}
+			if ln.Y2 < top {
+				top = ln.Y2
+			}
+		}
+		return top
+	}
+
+	low := Engrave(build(model.StepB, 4), DefaultOptions())  // on the middle line
+	high := Engrave(build(model.StepC, 7), DefaultOptions()) // far above the staff
+
+	for name, lay := range map[string]*Layout{"low": low, "high": high} {
+		if gap := topOfMusic(lay) - titleY(lay); gap <= 0 {
+			t.Errorf("%s: the title at y=%.2f is not above the music at y=%.2f",
+				name, titleY(lay), topOfMusic(lay))
+		}
+	}
+
+	// And the high one has to have been pushed further down than the low one,
+	// or the clearance was not measured at all.
+	if high.Height <= low.Height {
+		t.Errorf("a high passage gave height %.1f, no more than the low one at %.1f",
+			high.Height, low.Height)
+	}
+}

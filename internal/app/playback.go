@@ -127,6 +127,16 @@ func buildPlayback(s *model.Score) Playback {
 			// Only the first voice, matching the engraver, so that refs line
 			// up. ABC import puts everything in one voice per measure.
 			v := m.Voices[0]
+
+			// A bar marked as a repeat sounds as the bar it stands for. The
+			// sign is an instruction to the player, so it has to be one to
+			// the playback too — a chart with eight repeat signs in it is
+			// otherwise eight bars of silence.
+			if m.Repeat > 0 {
+				if src := repeatSource(p, mi, m.Repeat); src != nil {
+					v = src
+				}
+			}
 			vt := t
 			for _, el := range v.Elements {
 				d := el.Duration().Float() * secondsPerWhole
@@ -354,4 +364,34 @@ func (s *swelling) apply(out *Playback, end int, loud model.Dynamic) {
 		out.Events[i].Velocity = base + int(float64(span)*f)
 	}
 	_ = loud
+}
+
+// repeatSource finds the bar a repeat sign stands for.
+//
+// One sign means the bar before. A two-bar sign stands for the two before it,
+// so the first of the pair repeats the bar two back and the second repeats the
+// one two back from it — which, walking forwards, is just "the bar `n` back"
+// in both cases. A sign pointing at another sign is followed through rather
+// than played as nothing.
+func repeatSource(p *model.Part, at, bars int) *model.Voice {
+	if bars < 1 {
+		bars = 1
+	}
+	// A chain of signs is followed, but not forever: a file that points a
+	// repeat at itself should come back silent rather than hang.
+	for hops := 0; hops < 64; hops++ {
+		at -= bars
+		if at < 0 || at >= len(p.Measures) {
+			return nil
+		}
+		m := p.Measures[at]
+		if len(m.Voices) == 0 {
+			return nil
+		}
+		if m.Repeat == 0 {
+			return m.Voices[0]
+		}
+		bars = m.Repeat
+	}
+	return nil
 }

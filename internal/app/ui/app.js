@@ -360,6 +360,16 @@ async function action(name) {
     case "set-instrument":
       await setInstrumentDialog();
       break;
+    case "add-staff": await addStaffDialog(); break;
+    case "add-grand-staff": await addGrandStaff(); break;
+    case "remove-staff": await removeStaff(); break;
+    case "staff-up": await moveStaff(-1); break;
+    case "staff-down": await moveStaff(1); break;
+
+    case "repeat-bar": await setMeasureRepeat(1); break;
+    case "repeat-2bars": await setMeasureRepeat(2); break;
+    case "repeat-none": await setMeasureRepeat(0); break;
+
     case "set-lyrics":
       await lyricsDialog();
       break;
@@ -2176,6 +2186,131 @@ async function setClefDialog(part) {
   status("Clef changed");
 }
 
+/* ---------- staves ---------- */
+
+// addStaffDialog adds a staff, asking what it is for.
+//
+// A score starts with one staff and a piece for three players needs three.
+// Without this the only way to a trio chart was to write it somewhere else
+// and import it, which is not a notation program.
+async function addStaffDialog() {
+  const list = await (await fetch("/api/instruments")).json();
+  const inst = await ask({
+    title: "Add a staff",
+    label: "What plays it",
+    value: "flute",
+    note: "The clef and the transposition follow from the instrument. Type to search.",
+    search: true,
+    options: list.map((x) => ({ value: x.name, label: `${x.name} — ${x.family}` })),
+  });
+  if (inst === null) return;
+
+  const p = new URLSearchParams({ instrument: inst, clef: clefFor(inst) });
+  // Below the staff the cursor is on, which is where somebody adding a
+  // staff while looking at one almost always means.
+  if (state.selection) p.set("at", String((state.selection.part ?? 0) + 1));
+
+  const res = await fetch("/api/addstaff?" + p.toString(), { method: "POST" });
+  if (!res.ok) {
+    status("Could not add it: " + (await res.text()).trim());
+    return;
+  }
+  await reload();
+  status("Added a staff for " + inst);
+}
+
+// clefFor is the clef an instrument is written in, so nobody has to tell a
+// program that a double bass reads bass clef.
+function clefFor(name) {
+  const n = (name || "").toLowerCase();
+  if (/drum|percussion|timpani/.test(n)) return "percussion";
+  if (/bass|cello|bassoon|trombone|tuba|contrabass|baritone/.test(n)) return "bass";
+  if (/viola/.test(n)) return "alto";
+  return "treble";
+}
+
+// addGrandStaff adds the two staves a pianist reads, joined by a brace with
+// the barlines running through — which is what makes them one instrument on
+// the page rather than two next to each other.
+async function addGrandStaff() {
+  const at = state.info?.parts?.length ?? 0;
+  for (const clef of ["treble", "bass"]) {
+    const p = new URLSearchParams({ instrument: "piano", clef, name: "Piano" });
+    const res = await fetch("/api/addstaff?" + p.toString(), { method: "POST" });
+    if (!res.ok) {
+      status("Could not add it: " + (await res.text()).trim());
+      return;
+    }
+  }
+  const g = new URLSearchParams({
+    first: String(at), last: String(at + 1),
+    symbol: "brace", barlines: "1", name: "Piano",
+  });
+  await fetch("/api/group?" + g.toString(), { method: "POST" });
+  await reload();
+  status("Added a grand staff");
+}
+
+async function removeStaff() {
+  const part = state.selection?.part ?? 0;
+  const name = state.info?.parts?.[part]?.name || "that staff";
+  const sure = await ask({
+    title: "Remove a staff", label: "Type the name to remove it",
+    note: `This takes away ${name} and the music on it.`,
+  });
+  if (sure === null) return;
+  if (sure.trim().toLowerCase() !== name.toLowerCase()) {
+    status("Left it alone — the name did not match");
+    return;
+  }
+  const res = await fetch("/api/removestaff?part=" + part, { method: "POST" });
+  if (!res.ok) {
+    status("Could not remove it: " + (await res.text()).trim());
+    return;
+  }
+  await reload();
+  status("Removed " + name);
+}
+
+async function moveStaff(delta) {
+  const from = state.selection?.part ?? 0;
+  const to = from + delta;
+  const n = state.info?.parts?.length ?? 0;
+  if (to < 0 || to >= n) {
+    status(delta < 0 ? "That staff is already at the top" : "Already at the bottom");
+    return;
+  }
+  const res = await fetch(`/api/movestaff?part=${from}&to=${to}`, { method: "POST" });
+  if (!res.ok) {
+    status("Could not move it: " + (await res.text()).trim());
+    return;
+  }
+  if (state.selection) state.selection.part = to;
+  await refreshScore();
+  status("Staff moved");
+}
+
+// setMeasureRepeat marks the bar as a repeat of the one before it.
+async function setMeasureRepeat(bars) {
+  const sel = state.selection;
+  if (!sel) {
+    status("Click the bar first");
+    return;
+  }
+  const p = new URLSearchParams({
+    part: String(sel.part), measure: String(sel.measure), bars: String(bars),
+  });
+  const res = await fetch("/api/measurerepeat?" + p.toString(), { method: "POST" });
+  if (!res.ok) {
+    status("Could not set it: " + (await res.text()).trim());
+    return;
+  }
+  await refreshScore();
+  status(bars === 0 ? "Bar written out"
+                    : bars === 1 ? "Repeats the bar before"
+                                 : `Repeats the ${bars} bars before`);
+}
+
 /* ---------- key signature picker ---------- */
 
 // The picker shows each signature engraved on a staff rather than named, which
@@ -3275,6 +3410,7 @@ function setupKeys() {
       case "F2": e.preventDefault(); toggleFingering(); break;
       case "t": action("insert-text"); break;
       case "b": action("beam-join"); break;
+      case "r": action("repeat-bar"); break;
       case "N": case "i":
         selectTool(!state.tool.select);
         break;

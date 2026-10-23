@@ -26,12 +26,21 @@ import (
 // old files still open.
 
 type scoreDoc struct {
+	Groups    []groupDoc `json:"groups,omitempty"`
 	Title     string    `json:"title,omitempty"`
 	Subtitle  string    `json:"subtitle,omitempty"`
 	Composer  string    `json:"composer,omitempty"`
 	Copyright string    `json:"copyright,omitempty"`
 	Tempo     tempoDoc  `json:"tempo"`
 	Parts     []partDoc `json:"parts"`
+}
+
+type groupDoc struct {
+	First    int    `json:"first"`
+	Last     int    `json:"last"`
+	Symbol   string `json:"symbol,omitempty"`
+	Barlines bool   `json:"barlines,omitempty"`
+	Name     string `json:"name,omitempty"`
 }
 
 type tempoDoc struct {
@@ -77,6 +86,10 @@ type measureDoc struct {
 
 	// Ending is a volta bracket over this bar.
 	Ending *endingDoc `json:"ending,omitempty"`
+	// Marker is a rehearsal mark, and Repeat the sign that says to play the
+	// bar before again.
+	Marker string `json:"marker,omitempty"`
+	Repeat int    `json:"repeat,omitempty"`
 }
 
 type endingDoc struct {
@@ -94,15 +107,21 @@ type elemDoc struct {
 	Notes  []pitchDoc `json:"notes,omitempty"`
 	Acc    string     `json:"accidental,omitempty"`
 	Hidden bool       `json:"hidden,omitempty"`
+	// Head is the notehead's shape and Percussion the drum it plays, both
+	// of which a drum staff needs and neither of which the pitch can say.
+	Head       string `json:"notehead,omitempty"`
+	Percussion int    `json:"percussion,omitempty"`
 	Marks  *marksDoc  `json:"marks,omitempty"`
 	Symbol *symbolRef `json:"symbol,omitempty"`
 }
 
 type pitchDoc struct {
-	Step   string `json:"step"`
-	Octave int    `json:"octave"`
-	Alter  int    `json:"alter,omitempty"`
-	Acc    string `json:"accidental,omitempty"`
+	Step       string `json:"step"`
+	Octave     int    `json:"octave"`
+	Alter      int    `json:"alter,omitempty"`
+	Acc        string `json:"accidental,omitempty"`
+	Head       string `json:"notehead,omitempty"`
+	Percussion int    `json:"percussion,omitempty"`
 }
 
 type symbolRef struct {
@@ -125,6 +144,35 @@ type marksDoc struct {
 	Hairpin       *hairpinDoc `json:"hairpin,omitempty"`
 	Octave        *octaveDoc  `json:"octave,omitempty"`
 	Lyrics        []lyricDoc  `json:"lyrics,omitempty"`
+	Beam          string      `json:"beam,omitempty"`
+	Chord         *chordDoc   `json:"chord,omitempty"`
+	Texts         []textDoc   `json:"texts,omitempty"`
+}
+
+type chordDoc struct {
+	Root    string    `json:"root,omitempty"`
+	Quality string    `json:"quality,omitempty"`
+	Bass    string    `json:"bass,omitempty"`
+	Text    string    `json:"text,omitempty"`
+	Frame   *frameDoc `json:"frame,omitempty"`
+}
+
+type frameDoc struct {
+	Frets     []int `json:"frets"`
+	Fingers   []int `json:"fingers,omitempty"`
+	FirstFret int   `json:"firstFret,omitempty"`
+	Barre     int   `json:"barre,omitempty"`
+	BarreFrom int   `json:"barreFrom,omitempty"`
+	BarreTo   int   `json:"barreTo,omitempty"`
+}
+
+type textDoc struct {
+	Text      string  `json:"text"`
+	Placement string  `json:"placement,omitempty"`
+	OffsetX   float64 `json:"offsetX,omitempty"`
+	OffsetY   float64 `json:"offsetY,omitempty"`
+	Italic    bool    `json:"italic,omitempty"`
+	Bold      bool    `json:"bold,omitempty"`
 }
 
 type hairpinDoc struct {

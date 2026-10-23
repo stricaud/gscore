@@ -218,6 +218,15 @@ type Measure struct {
 	// and drawn once above the system.
 	Ending *Ending
 
+	// Repeat marks the bar as "play the one before again", drawn as the
+	// slash with two dots that every chart uses. It is 1 for a one-bar
+	// repeat and 2 for the sign that stands for the two bars before it.
+	//
+	// It belongs to one staff, not to the score: a drummer repeating a bar
+	// while the horns play something new is the ordinary case, and in fact
+	// most of what the sign is for.
+	Repeat int
+
 	// Marker is a rehearsal mark — the boxed A, B, C that a conductor calls
 	// out. It belongs to the bar across the whole score, because "from B"
 	// has to mean the same bar to everybody in the room.

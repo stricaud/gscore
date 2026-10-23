@@ -1886,3 +1886,219 @@ func parseChordFrame(spec, firstFret, barre string) *model.ChordFrame {
 	}
 	return f
 }
+
+/*
+ * Staves
+ */
+
+// handleAddStaff adds a staff to the score.
+//
+// Without this a score is whatever one staff its file happened to have, and
+// composing anything for more than one player means starting somewhere else
+// and importing. A chart for piano, bass and drums begins by saying there are
+// three of them.
+//
+// The new staff is given as many measures as the longest one already there, so
+// the barlines line up from the first bar: a staff with no measures draws
+// nothing and a staff with too few stops in the middle of the system.
+func (a *App) handleAddStaff(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST required", http.StatusMethodNotAllowed)
+		return
+	}
+	q := r.URL.Query()
+
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	clef := model.Treble
+	if c, ok := clefByStringName[q.Get("clef")]; ok {
+		clef = c
+	}
+	inst := model.AcousticGrandPiano
+	if v := q.Get("instrument"); v != "" {
+		if i, ok := model.InstrumentFromName(v); ok {
+			inst = i
+		} else if n, err := strconv.Atoi(v); err == nil && n >= 0 && n < 128 {
+			inst = model.Instrument(n)
+		}
+	}
+
+	// The key and the meter come from the score, not from nothing: a new
+	// staff in C major under a piece in five flats would be wrong on sight.
+	key := model.KeySignature{}
+	time := model.TimeSignature{Beats: 4, BeatValue: 4}
+	bars := 1
+	if len(a.score.Parts) > 0 {
+		first := a.score.Parts[0]
+		key, time = first.Key, first.Time
+		for _, p := range a.score.Parts {
+			if len(p.Measures) > bars {
+				bars = len(p.Measures)
+			}
+		}
+	}
+	// A drum staff is not in any key: its lines carry no pitches.
+	if clef == model.Percussion {
+		key = model.KeySignature{}
+	}
+
+	part := &model.Part{
+		Name: strings.TrimSpace(q.Get("name")), Instrument: inst,
+		Clef: clef, Key: key, Time: time,
+		Transpose: model.TranspositionFor(inst),
+	}
+	if part.Name == "" {
+		part.Name = inst.String()
+	}
+	for i := 0; i < bars; i++ {
+		part.Measures = append(part.Measures, &model.Measure{
+			Voices: []*model.Voice{{}}, RightBarline: model.BarSingle,
+		})
+	}
+	// The barlines of the staves already there, so a repeat or a final bar
+	// runs down the whole system from the moment the staff appears.
+	if len(a.score.Parts) > 0 {
+		src := a.score.Parts[0]
+		for i := 0; i < bars && i < len(src.Measures); i++ {
+			part.Measures[i].RightBarline = src.Measures[i].RightBarline
+			if k := src.Measures[i].Key; k != nil && clef != model.Percussion {
+				c := *k
+				part.Measures[i].Key = &c
+			}
+			if t := src.Measures[i].Time; t != nil {
+				c := *t
+				part.Measures[i].Time = &c
+			}
+		}
+	}
+
+	at := len(a.score.Parts)
+	if v, err := strconv.Atoi(q.Get("at")); err == nil && v >= 0 && v <= len(a.score.Parts) {
+		at = v
+	}
+	a.score.Parts = append(a.score.Parts, nil)
+	copy(a.score.Parts[at+1:], a.score.Parts[at:])
+	a.score.Parts[at] = part
+	shiftGroups(a.score, at, 1)
+
+	writeJSON(w, map[string]any{
+		"status": "ok", "at": at, "staves": len(a.score.Parts),
+	})
+}
+
+// handleRemoveStaff takes a staff out.
+func (a *App) handleRemoveStaff(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST required", http.StatusMethodNotAllowed)
+		return
+	}
+	at, _ := strconv.Atoi(r.URL.Query().Get("part"))
+
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	if at < 0 || at >= len(a.score.Parts) {
+		http.Error(w, "no such staff", http.StatusBadRequest)
+		return
+	}
+	if len(a.score.Parts) == 1 {
+		http.Error(w, "a score has to have a staff", http.StatusBadRequest)
+		return
+	}
+	a.score.Parts = append(a.score.Parts[:at], a.score.Parts[at+1:]...)
+	shiftGroups(a.score, at, -1)
+	writeJSON(w, map[string]any{"status": "ok", "staves": len(a.score.Parts)})
+}
+
+// handleMoveStaff changes the order the staves are drawn in.
+//
+// Score order is a real decision — woodwind at the top, strings at the
+// bottom, the rhythm section together — and getting it wrong is not something
+// to be fixed by starting again.
+func (a *App) handleMoveStaff(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST required", http.StatusMethodNotAllowed)
+		return
+	}
+	q := r.URL.Query()
+	from, _ := strconv.Atoi(q.Get("part"))
+	to, err := strconv.Atoi(q.Get("to"))
+	if err != nil {
+		to = from + 1
+	}
+
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	n := len(a.score.Parts)
+	if from < 0 || from >= n || to < 0 || to >= n || from == to {
+		http.Error(w, "no such staff to move", http.StatusBadRequest)
+		return
+	}
+	p := a.score.Parts[from]
+	a.score.Parts = append(a.score.Parts[:from], a.score.Parts[from+1:]...)
+	a.score.Parts = append(a.score.Parts, nil)
+	copy(a.score.Parts[to+1:], a.score.Parts[to:])
+	a.score.Parts[to] = p
+
+	// A group names staves by position, and the positions have just changed.
+	// Rather than guess what was meant, the groups that spanned the moved
+	// staff are dropped and the rest are left alone.
+	var kept []model.StaffGroup
+	for _, g := range a.score.Groups {
+		if from >= g.First && from <= g.Last {
+			continue
+		}
+		kept = append(kept, g)
+	}
+	a.score.Groups = kept
+
+	writeJSON(w, map[string]any{"status": "ok", "at": to})
+}
+
+// shiftGroups moves the staff numbers a group refers to when a staff is added
+// or removed before it, and drops a group that no longer spans anything.
+func shiftGroups(s *model.Score, at, delta int) {
+	var kept []model.StaffGroup
+	for _, g := range s.Groups {
+		if g.First >= at {
+			g.First += delta
+		}
+		if g.Last >= at {
+			g.Last += delta
+		}
+		if g.First < 0 || g.Last >= len(s.Parts) || g.Last <= g.First {
+			continue
+		}
+		kept = append(kept, g)
+	}
+	s.Groups = kept
+}
+
+// handleMeasureRepeat marks a bar as a repeat of the one before it.
+func (a *App) handleMeasureRepeat(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST required", http.StatusMethodNotAllowed)
+		return
+	}
+	q := r.URL.Query()
+	partIdx, _ := strconv.Atoi(q.Get("part"))
+	measIdx, _ := strconv.Atoi(q.Get("measure"))
+	bars, _ := strconv.Atoi(q.Get("bars"))
+
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	_, m, err := a.locate(partIdx, measIdx)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if bars > 0 && measIdx < bars {
+		http.Error(w, "there is no earlier bar to repeat", http.StatusBadRequest)
+		return
+	}
+	m.Repeat = bars
+	writeJSON(w, map[string]any{"status": "ok", "bars": bars})
+}

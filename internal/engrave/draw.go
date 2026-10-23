@@ -109,6 +109,26 @@ func (e *engraver) drawMeasure(part *model.Part, b measureBox, x float64, stretc
 		x += sp.NoteBase * 2 * stretch
 	}
 
+	// A bar marked as a repeat of the one before it is drawn as the sign and
+	// nothing else. Whatever is in it is not printed, because the sign is
+	// what is read; keeping the notes means they can be put back by taking
+	// the sign away, which is why they are not thrown out instead.
+	if b.m.Repeat > 0 {
+		e.drawMeasureRepeat(b, start, x)
+		x += sp.BetweenMeasures * stretch
+		e.drawBarline(b.m.RightBarline, x)
+		e.lay.Barlines = append(e.lay.Barlines, BarlinePos{
+			Part: e.partIndex, Measure: b.index, X: x,
+			Top: e.y, Bottom: e.y + staffHeight,
+			Style: b.m.RightBarline.String(),
+		})
+		e.lay.Hits = append(e.lay.Hits, Hit{
+			Part: e.partIndex, Measure: b.index,
+			XMin: start, XMax: x, StaffTop: e.y, Clef: part.Clef.String(),
+		})
+		return x + sp.AfterBarline*stretch
+	}
+
 	// Noteheads first, then stems and beams, which need the whole group.
 	for _, p := range items {
 		e.drawHeads(part, p)
@@ -204,6 +224,31 @@ func (e *engraver) drawSignatureChange(part *model.Part, b measureBox, x float64
 		x = e.placeTimeSignature(*b.change.time, x)
 	}
 	return x
+}
+
+// drawMeasureRepeat draws the sign that stands for the bar before.
+func (e *engraver) drawMeasureRepeat(b measureBox, left, right float64) {
+	name := "repeat1Bar"
+	switch {
+	case b.m.Repeat >= 4:
+		name = "repeat4Bars"
+	case b.m.Repeat >= 2:
+		name = "repeat2Bars"
+	}
+	// Centred on the bar and on the middle line, which is where it is read
+	// from and why it is as legible at a glance as it is.
+	w := smufl.Advance(name)
+	e.lay.Glyphs = append(e.lay.Glyphs, Glyph{
+		Name: name, X: (left+right)/2 - w/2, Y: e.y + stepY(4),
+	})
+	if b.m.Repeat >= 2 {
+		// The two- and four-bar signs carry the count under them, because
+		// the sign alone does not say how far back to go.
+		e.lay.Texts = append(e.lay.Texts, Text{
+			S: itoa(b.m.Repeat), X: (left + right) / 2, Y: e.y - 0.8,
+			Size: 1.6, Anchor: "middle", Bold: true,
+		})
+	}
 }
 
 // written picks the notehead for a duration. Callers pass the duration the

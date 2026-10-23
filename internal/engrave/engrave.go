@@ -27,6 +27,7 @@ package engrave
 
 import (
 	"math"
+	"strings"
 
 	"github.com/stricaud/gscore/internal/model"
 	"github.com/stricaud/gscore/internal/smufl"
@@ -238,6 +239,9 @@ type Options struct {
 	// ShowMeasureNumbers writes the bar number over the first measure of each
 	// system. Rehearsing without them means counting from the beginning.
 	ShowMeasureNumbers bool
+	// ShowTempoMark writes the metronome mark and the word that goes with it
+	// above the first staff.
+	ShowTempoMark bool
 }
 
 // DefaultOptions returns a sensible engraving setup.
@@ -245,9 +249,10 @@ func DefaultOptions() Options {
 	return Options{
 		Spacings:  DefaultSpacings(),
 		Defaults:  smufl.DefaultEngraving(),
-		Mode:      Paginated,
-		LineWidth: 120,
-		ShowTitle: true,
+		Mode:          Paginated,
+		LineWidth:     120,
+		ShowTitle:     true,
+		ShowTempoMark: true,
 	}
 }
 
@@ -694,13 +699,89 @@ func (e *engraver) titleBlock() {
 		e.y += 1.6
 	}
 	if e.score.Identity.Composer != "" {
-		e.lay.Texts = append(e.lay.Texts, Text{
-			S: e.score.Identity.Composer, X: sp.Margin + e.opt.LineWidth, Y: e.y,
-			Size: 1.5, Anchor: "end", Italic: true,
-		})
-		e.y += 2
+		// A credit runs to several lines as often as not — words by one
+		// person, music by another, arranged by a third — and they stack at
+		// the right rather than running off the edge as one long line.
+		for _, line := range strings.Split(e.score.Identity.Composer, "\n") {
+			line = strings.TrimSpace(line)
+			if line == "" {
+				continue
+			}
+			e.lay.Texts = append(e.lay.Texts, Text{
+				S: line, X: sp.Margin + e.opt.LineWidth, Y: e.y,
+				Size: 1.5, Anchor: "end", Italic: true,
+			})
+			e.y += 1.7
+		}
+		e.y += 0.3
 	}
+	e.drawTempoMark(sp.Margin)
 	e.y += 2
+}
+
+// drawTempoMark writes the metronome mark and whatever word goes with it.
+//
+// "Moderately" and a quarter note equal to 140 are two different things and a
+// chart often has both: the word says how it should feel and the number says
+// how fast, and a player uses the first and a drummer with a click uses the
+// second. They are written together at the left, above the first staff, which
+// is where every printed score puts them.
+func (e *engraver) drawTempoMark(x float64) {
+	if !e.opt.ShowTempoMark {
+		return
+	}
+	text := strings.TrimSpace(e.score.Tempo.Text)
+	bpm := e.score.Tempo.BPM
+	if text == "" && bpm <= 0 {
+		return
+	}
+
+	e.y += 1.4
+	at := x
+	if text != "" {
+		e.lay.Texts = append(e.lay.Texts, Text{
+			S: text, X: at, Y: e.y, Size: 2.0, Anchor: "start", Bold: true,
+		})
+		at += textWidth(text, 2.0) + 1.2
+	}
+	if bpm > 0 {
+		// The note is the real glyph, not the letter it looks like: a
+		// metronome mark written as "J = 140" is a program that gave up.
+		glyph, dots := metronomeGlyph(e.score.Tempo.Unit)
+		e.lay.Glyphs = append(e.lay.Glyphs, Glyph{
+			Name: glyph, X: at, Y: e.y, Size: 4,
+		})
+		at += smufl.Advance(glyph)
+		for i := 0; i < dots; i++ {
+			e.lay.Glyphs = append(e.lay.Glyphs, Glyph{
+				Name: "metAugmentationDot", X: at, Y: e.y, Size: 4,
+			})
+			at += smufl.Advance("metAugmentationDot") + 0.1
+		}
+		e.lay.Texts = append(e.lay.Texts, Text{
+			S: " = " + itoa(bpm), X: at, Y: e.y, Size: 2.0, Anchor: "start",
+		})
+	}
+	e.y += 1.2
+}
+
+// metronomeGlyph picks the note a metronome mark is counted in.
+func metronomeGlyph(d model.Duration) (string, int) {
+	v, dots, ok := d.Written()
+	if !ok {
+		return "metNoteQuarterUp", 0
+	}
+	switch v {
+	case model.Whole:
+		return "metNoteWhole", dots
+	case model.Half:
+		return "metNoteHalfUp", dots
+	case model.Eighth:
+		return "metNote8thUp", dots
+	case model.Sixteenth:
+		return "metNote16thUp", dots
+	}
+	return "metNoteQuarterUp", dots
 }
 
 func (e *engraver) prefixWidth(p *model.Part, at int) float64 {

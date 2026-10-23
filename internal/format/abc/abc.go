@@ -327,7 +327,11 @@ func (p *parser) run(src string) error {
 	inText := false
 	for i, raw := range strings.Split(src, "\n") {
 		p.lineNo = i + 1
-		line := strings.TrimRight(raw, "\r \t")
+		// Trimmed at both ends: a field indented by a space is still a field,
+		// and " F: http://..." read as music is a bar of nonsense. ABC says
+		// a field starts in the first column; refusing to read a source note
+		// because somebody lined it up is not worth the fidelity.
+		line := strings.TrimSpace(strings.TrimRight(raw, "\r"))
 		if line == "" {
 			continue
 		}
@@ -1078,6 +1082,11 @@ func (p *parser) music(line string) error {
 	// nothing but complaints and collapse it into one.
 	marked, elements := len(p.skipped), p.elements
 
+	if looksLikeProse(line) {
+		p.skip(line, errors.New("not music"))
+		return nil
+	}
+
 	sc := &scanner{s: line}
 	for !sc.eof() {
 		c := sc.peek()
@@ -1374,6 +1383,65 @@ func (p *parser) decoration(sc *scanner) error {
 	return nil
 }
 
+// looksLikeProse reports whether a line is a sentence rather than music.
+//
+// Several of the tune books continue a note to the player onto the line after
+// the N: field it started in, without the +: the language provides for that.
+// Read as music, "There should be a quaver rest after the last note" is not
+// an error at all: a, e, d, c, b, f and g are note letters, so it quietly
+// writes a bar of nonsense into the tune — which is worse than failing, since
+// nothing says it happened.
+//
+// The test is the proportion of letters that cannot be notes. Music is nearly
+// all note letters and barlines; a sentence is nearly all the other letters.
+// A line with a barline in it is music whatever else it holds, which is what
+// keeps a bar full of trills and bowing marks out of this.
+func looksLikeProse(line string) bool {
+	if strings.ContainsRune(line, '|') {
+		return false
+	}
+	line = withoutNames(line)
+	letters, notNotes := 0, 0
+	for i := 0; i < len(line); i++ {
+		switch c := line[i]; {
+		case isNoteLetter(c), c == 'x', c == 'y', c == 'z', c == 'X', c == 'Z':
+			letters++
+		case c >= 'A' && c <= 'Z', c >= 'a' && c <= 'z', c >= 0x80:
+			letters++
+			notNotes++
+		}
+	}
+	return letters >= 10 && notNotes*100 >= letters*35
+}
+
+// withoutNames removes the parts of a music line that are words by design:
+// the name inside a !...! decoration, the text inside a "..." chord symbol or
+// annotation, and anything after a % comment.
+//
+// They are spelt out in letters and none of those letters are notes, so
+// counting them made "!fermata!c !nosuchmark!e" look more like a sentence
+// than like the music it is.
+func withoutNames(line string) string {
+	var b strings.Builder
+	for i := 0; i < len(line); i++ {
+		switch c := line[i]; c {
+		case '%':
+			return b.String()
+		case '!', '"':
+			if j := strings.IndexByte(line[i+1:], c); j >= 0 {
+				i += j + 1
+				continue
+			}
+			// Unterminated: the rest of the line is that name, whatever it
+			// was meant to be.
+			return b.String()
+		default:
+			b.WriteByte(c)
+		}
+	}
+	return b.String()
+}
+
 // ignore steps over a character the reader does not understand and says so.
 //
 // A tune book has typing mistakes in it — a stray i in Anon2.abc, a ":}" for
@@ -1381,8 +1449,17 @@ func (p *parser) decoration(sc *scanner) error {
 // those mistakes sit in; reading past the character keeps the music and the
 // report says what was passed over, so nothing is dropped in silence.
 func (p *parser) ignore(sc *scanner) {
-	c := sc.next()
-	p.note(fmt.Sprintf("ignored %q", string(c)))
+	// A whole character, not a byte. The scanner works in bytes because ABC's
+	// own syntax is all ASCII, but a curly apostrophe or a degree sign in the
+	// middle of a bar is one character to the person who typed it — and
+	// stepping over it a byte at a time reported it three times, each time as
+	// a piece of mojibake that appears nowhere in their file.
+	r, n := utf8.DecodeRuneInString(sc.rest())
+	if n <= 0 {
+		n = 1
+	}
+	sc.advance(n)
+	p.note(fmt.Sprintf("ignored %q", string(r)))
 }
 
 // note records something the reader had to let pass, for the partial read.

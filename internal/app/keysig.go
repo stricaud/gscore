@@ -88,17 +88,53 @@ func (a *App) handleKeySigSVG(w http.ResponseWriter, r *http.Request) {
 
 	// A one-measure score with nothing in it draws the clef and the signature
 	// and stops, which is exactly the picture wanted.
-	s := &model.Score{Parts: []*model.Part{{
+	part := &model.Part{
 		Clef:     clef,
 		Key:      model.KeySignature{Fifths: fifths, Mode: model.Major},
 		Time:     model.TimeSignature{Beats: 4, BeatValue: 4, Symbol: model.TimeNumeric},
 		Measures: nil,
-	}}}
+	}
+
+	// Coming from another key, the picture is of the change rather than of
+	// the signature: the naturals that cancel what is no longer sharp or
+	// flat, and then the accidentals of the new key. That is what will be
+	// printed at that bar, and a picker that showed only the new signature
+	// was not showing the naturals at all — which are the whole difference
+	// between "the key is now F" and "the key changes to F here".
+	change := false
+	if v := q.Get("from"); v != "" {
+		if from, err := strconv.Atoi(v); err == nil && from >= -7 && from <= 7 && from != fifths {
+			part.Key = model.KeySignature{Fifths: from, Mode: model.Major}
+			to := model.KeySignature{Fifths: fifths, Mode: model.Major}
+			// The change goes in the second bar, because a signature on the
+			// first one is the head of the system and is drawn there instead
+			// — which is the one place a key change is never drawn as a
+			// change. The bar in front of it is empty and squeezed to
+			// nothing by the spacing below.
+			part.Measures = []*model.Measure{
+				{Voices: []*model.Voice{{}}, RightBarline: model.BarNone},
+				{Voices: []*model.Voice{{}}, Key: &to, RightBarline: model.BarNone},
+			}
+			change = true
+		}
+	}
+	s := &model.Score{Parts: []*model.Part{part}}
 
 	opt := engrave.DefaultOptions()
 	opt.Mode = engrave.Strip
 	opt.ShowTitle = false
 	opt.HideTimeSignature = true
+	// The key the change comes from is not drawn again beside it; the bar
+	// before it on the real page is where that belongs.
+	opt.HideKeySignature = change
+	if change {
+		// An empty bar is given room for the note somebody might write in
+		// it. There is nobody, and the room would be a gap between the clef
+		// and the change it is illustrating.
+		opt.Spacings.NoteBase = 0.1
+		opt.Spacings.BetweenMeasures = 0.1
+		opt.Spacings.AfterBarline = 0.1
+	}
 	// A clef is not confined to the staff: a treble clef curls about two and a
 	// half spaces above the top line and the same below the bottom one. A
 	// margin tight to the staff lines cuts both ends off, which is what the

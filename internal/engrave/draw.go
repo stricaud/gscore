@@ -178,6 +178,8 @@ func (e *engraver) drawMeasure(part *model.Part, b measureBox, x, end float64, s
 		e.lay.Hits = append(e.lay.Hits, Hit{
 			Part: e.partIndex, Measure: b.index,
 			XMin: start, XMax: x, StaffTop: e.y, Clef: part.Clef.String(),
+			Fifths: part.KeyAt(b.index).Fifths,
+			Full:   barIsFull(part, b),
 		})
 		return end
 	}
@@ -214,6 +216,8 @@ func (e *engraver) drawMeasure(part *model.Part, b measureBox, x, end float64, s
 		Clef:       part.Clef.String(),
 		KeyChange:  b.m.Key != nil,
 		TimeChange: b.m.Time != nil,
+		Fifths:     part.KeyAt(b.index).Fifths,
+		Full:       barIsFull(part, b),
 	}
 	for i, p := range items {
 		kind := "rest"
@@ -274,6 +278,20 @@ func (e *engraver) drawMeasure(part *model.Part, b measureBox, x, end float64, s
 		})
 	}
 	return end
+}
+
+// barIsFull reports whether a bar already holds as much time as its meter
+// allows, which is a different question from whether it looks busy: a bar of
+// rest is drawn as one small glyph and is as full as a bar can be.
+func barIsFull(part *model.Part, b measureBox) bool {
+	if b.ahead || len(b.m.Voices) == 0 {
+		return false
+	}
+	bar := part.TimeAt(b.index).BarDuration()
+	if bar.IsZero() {
+		return false
+	}
+	return b.m.Voices[0].Duration().Cmp(bar) >= 0
 }
 
 // drawSignatureChange writes a new key or meter in the middle of the music.

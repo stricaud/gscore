@@ -185,6 +185,21 @@ type Hit struct {
 	// than offering always and failing when there is not.
 	KeyChange  bool `json:"keyChange,omitempty"`
 	TimeChange bool `json:"timeChange,omitempty"`
+	// Fifths is the signature in force on this staff at this bar, counting
+	// sharps positive and flats negative. It is this staff's written
+	// signature and not the concert key, which on a transposing part is a
+	// different number — and the written one is what the player in front of
+	// you is reading, so it is what a picker should open showing.
+	Fifths int `json:"fifths"`
+	// Full says the bar already holds as much time as its meter allows.
+	//
+	// A click in the empty part of a full bar is not a click at the end of
+	// the music — it is a click over something that is already sounding
+	// there, because the drawn width of a whole-bar rest says nothing about
+	// the four beats it lasts. Writing there appended, found the bar full
+	// and sent the note into the next bar, which is how clicking one bar
+	// wrote in the one beside it.
+	Full bool `json:"full,omitempty"`
 	// Elements is what the measure already holds, with where each one landed.
 	// A click needs this to tell "select that note" from "put a note here",
 	// which is the difference between reading a score and writing one.
@@ -298,6 +313,13 @@ type Options struct {
 	LineWidth float64
 	// ShowTitle draws the score's title block above the first system.
 	ShowTitle bool
+	// HideKeySignature leaves the signature off the head of the system,
+	// for a picture of a key *change*: the naturals that cancel the old key
+	// and the accidentals of the new one, without the old one printed again
+	// beside them. The key picker is what wants it — it is showing what will
+	// be written at that bar, not what the bar before it looks like.
+	HideKeySignature bool
+
 	// HideTimeSignature leaves the meter off, for a picture that is only
 	// meant to show a clef and a key signature.
 	HideTimeSignature bool
@@ -1566,7 +1588,7 @@ func keySignatureStart(c model.Clef, sharps bool) int {
 }
 
 func (e *engraver) drawKeySignature(p *model.Part, k model.KeySignature, x float64) float64 {
-	if k.Fifths == 0 {
+	if k.Fifths == 0 || e.opt.HideKeySignature {
 		return x
 	}
 	sp := e.opt.Spacings

@@ -370,12 +370,22 @@
   are engraved on demand instead, so they work for any clef and any size.
 -->
 <dialog id="keysig">
-  <h2>Key signature</h2>
+  <h2>Set key signature</h2>
   <p class="small" id="keysig-where">Pick the signature you want to see on the staff.</p>
-  <div id="keysig-grid"></div>
+  <!-- One picture and a bar to slide along it, which is what gscore 0.0.9
+       did: the flats are to the left of C and the sharps to the right,
+       because that is the circle of fifths and that is the order a musician
+       already knows them in. Fifteen buttons made you read fifteen labels
+       to find the one you wanted. -->
+  <p id="keysig-name">C major or A minor</p>
+  <div id="keysig-art"></div>
+  <input type="range" id="keysig-slider" min="-7" max="7" step="1" value="0"
+         aria-label="Key signature, flats to the left and sharps to the right">
+  <div id="keysig-scale"><span>7♭</span><span>♮</span><span>7♯</span></div>
   <form method="dialog" class="ask-buttons">
     <button value="remove" type="submit" id="keysig-remove" hidden>Remove this change</button>
     <button value="cancel" type="submit">Cancel</button>
+    <button value="ok" type="submit" class="primary">OK</button>
   </form>
 </dialog>
 

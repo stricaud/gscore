@@ -1076,9 +1076,23 @@ function setupCanvasClicks() {
     }
 
     state.multi = [];
+    // Where in the bar the click fell, and whether there is already
+    // something sounding there.
+    //
+    // A bar that is full has no empty part: the white space to the right of
+    // a whole-bar rest is the four beats that rest lasts, and clicking it
+    // means "write over that", not "add after it". Appending there found the
+    // bar full and put the note in the next bar instead, which is how
+    // clicking one bar wrote in the one beside it.
+    const idx = insertIndex(hit, x);
+    const over = hit.full && (hit.elements || []).length > 0;
     state.selection = {
       part: hit.part, measure: hit.measure,
-      at: insertIndex(hit, x), step: step, ref: null,
+      // A click left of everything in a full bar is still a click on the
+      // first thing in it, so there is always something to write over.
+      at: over ? Math.max(1, idx) : idx,
+      step: step, ref: null,
+      replace: over,
     };
 
     // Shift selects and never writes. gscore 0.0.9 made this a mode, with a
@@ -3042,40 +3056,48 @@ async function openKeyPicker(partIndex, at) {
   keyOptions = keyOptions || (await (await fetch("/api/keysignatures")).json());
   const staff = state.info?.parts?.[partIndex];
   const clef = staff?.clef || "treble";
-  // Which one the staff is in now, so the picker opens showing the answer.
-  const current = keyOptions.find((k) => staff && staff.key.startsWith(
-    k.fifths === 0 ? "\u266e" : Math.abs(k.fifths) + (k.fifths > 0 ? "\u266f" : "\u266d")
-  ))?.fifths;
+
+  // Where it takes effect. A key set from bar nine looks exactly like a key
+  // that did nothing, unless something says which bar it was.
+  const measure = at !== undefined ? at : (state.selection?.measure ?? 0);
+  $("#keysig-where").textContent = measure > 0
+    ? `From measure ${measure + 1} to the end, on every staff.`
+    : "For the whole piece, on every staff.";
+
+  // What the staff is in now: where the slider starts, and what a change at
+  // this bar would be a change *from*, which is what decides the naturals.
+  const from = keyFifthsOf(staff, measure);
 
   // The pictures are fetched and put straight into the page rather than
   // loaded as images. An SVG in an <img> is an isolated document: it cannot
   // reach /font.otf, so every glyph in it comes out as a missing-character
   // box. Inline, it uses the page's own font.
+  //
+  // All fifteen at once, because sliding along them has to be instant: a
+  // picture that arrives after the slider has moved on is a flicker.
   const drawings = await Promise.all(
-    keyOptions.map((k) =>
-      fetch(`/keysig.svg?fifths=${k.fifths}&clef=${clef}&space=9`).then((r) => r.text())
-    )
+    keyOptions.map((k) => {
+      const q = new URLSearchParams({
+        fifths: String(k.fifths), clef, space: "11",
+      });
+      // At a bar partway through, the picture is of the change: the naturals
+      // that cancel what is no longer sharp or flat, then the new key.
+      if (measure > 0 && from !== null) q.set("from", String(from));
+      return fetch("/keysig.svg?" + q.toString()).then((r) => r.text());
+    })
   );
 
-  $("#keysig-grid").innerHTML = keyOptions
-    .map(
-      (k, i) => `<button class="keysig-option" data-fifths="${k.fifths}"
-                    ${k.fifths === current ? 'aria-current="true"' : ""}>
-        <span class="keysig-art">${drawings[i]}</span>
-        <span>${k.major} / ${k.minor}</span>
-      </button>`
-    )
-    .join("");
-
-  // Where it takes effect. A key set from bar nine looks exactly like a key
-  // that did nothing, unless something says which bar it was.
-  const measure = at !== undefined ? at : (state.selection?.measure ?? 0);
-  const where = $("#keysig-where");
-  if (where) {
-    where.textContent = measure > 0
-      ? `From measure ${measure + 1} to the end, on every staff.`
-      : "For the whole piece, on every staff.";
-  }
+  const slider = $("#keysig-slider");
+  const show = (fifths) => {
+    const i = keyOptions.findIndex((k) => k.fifths === fifths);
+    if (i < 0) return;
+    $("#keysig-art").innerHTML = drawings[i];
+    const k = keyOptions[i];
+    $("#keysig-name").textContent = `${k.major} major or ${k.minor.replace("m", "")} minor`;
+  };
+  slider.value = String(from ?? 0);
+  show(Number(slider.value));
+  slider.oninput = () => show(Number(slider.value));
 
   // Offer to take a change away only where there is one.
   const hit = state.hits.find(
@@ -3084,13 +3106,6 @@ async function openKeyPicker(partIndex, at) {
   if (remove) remove.hidden = !(measure > 0 && hit?.keyChange);
 
   const dlg = $("#keysig");
-  $$("#keysig-grid .keysig-option").forEach((b) =>
-    b.addEventListener("click", () => {
-      dlg.returnValue = "picked:" + b.dataset.fifths;
-      dlg.close();
-    })
-  );
-
   const result = await new Promise((resolve) => {
     const done = () => {
       dlg.removeEventListener("close", done);
@@ -3099,6 +3114,7 @@ async function openKeyPicker(partIndex, at) {
     dlg.addEventListener("close", done);
     dlg.returnValue = "";
     dlg.showModal();
+    slider.focus();
   });
 
   if (result === "remove") {
@@ -3114,10 +3130,11 @@ async function openKeyPicker(partIndex, at) {
     status(`The key change at measure ${measure + 1} is gone`);
     return;
   }
-  if (!result.startsWith("picked:")) return;
+  if (result !== "ok") return;
 
+  const fifths = Number(slider.value);
   const q = new URLSearchParams({
-    part: String(partIndex), fifths: result.slice(7),
+    part: String(partIndex), fifths: String(fifths),
   });
   if (measure > 0) q.set("at", String(measure));
   const res = await fetch("/api/setkey?" + q.toString(), { method: "POST" });
@@ -3126,9 +3143,28 @@ async function openKeyPicker(partIndex, at) {
     return;
   }
   await reload();
+  const named = keyOptions.find((k) => k.fifths === fifths);
   status(measure > 0
-    ? `Key signature from measure ${measure + 1}, on every staff`
-    : "Key signature changed, on every staff");
+    ? `${named ? named.major + " major" : "Key"} from measure ${measure + 1}, on every staff`
+    : `${named ? named.major + " major" : "Key"}, on every staff`);
+}
+
+// keyFifthsOf reads how many sharps or flats a staff has at a bar, out of the
+// signature the info endpoint spells for it — "3\u266f", "2\u266d", "\u266e" for none.
+//
+// It is the written signature of that staff, not the concert key. For the
+// picker that is the right one to open on: it is what the player in front of
+// you is reading.
+function keyFifthsOf(staff, measure) {
+  const text = staff?.key;
+  if (!text) return 0;
+  if (text.startsWith("\u266e")) return 0;
+  const n = parseInt(text, 10);
+  if (!Number.isFinite(n)) return 0;
+  if (text.includes("\u266d")) return -n;
+  if (text.includes("\u266f")) return n;
+  void measure;
+  return 0;
 }
 
 /* ---------- printing ---------- */

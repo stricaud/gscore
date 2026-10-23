@@ -941,22 +941,47 @@ func (r *reader) clef(st *msStaff) error {
 	return nil
 }
 
+// keySig reads a key signature, written as the key that sounds and — on a
+// staff that transposes — the key that is printed.
+//
+// Both are needed and they are different numbers. A score in concert D has
+// <concertKey>2</concertKey> on every staff, and the alto saxophone's part
+// carries <actualKey>5</actualKey> beside it because that player reads B
+// major. gscore stores what is printed, so the second is the one to take;
+// reading only the first put every transposing part in the wrong key, which
+// is wrong on the page and wrong under the fingers.
 func (r *reader) keySig(m *model.Measure) error {
-	fifths, have := 0, false
+	concert, written := 0, 0
+	haveConcert, haveWritten := false, false
 	err := r.children(func(c xml.StartElement) error {
 		switch c.Name.Local {
-		case "concertKey", "accidental":
+		case "concertKey":
 			n, err := r.number()
-			if !have {
-				fifths, have = n, true
-			}
+			concert, haveConcert = n, true
+			return err
+		case "actualKey":
+			n, err := r.number()
+			written, haveWritten = n, true
+			return err
+		case "accidental":
+			// MuseScore 2 and 3 wrote the printed signature here and said
+			// nothing about the concert key.
+			n, err := r.number()
+			written, haveWritten = n, true
 			return err
 		default:
 			return r.dec.Skip()
 		}
 	})
-	if err != nil || !have {
+	if err != nil {
 		return err
+	}
+	fifths, have := written, haveWritten
+	if !have {
+		fifths, have = concert, haveConcert
+	}
+	if !have {
+		return nil
 	}
 	if fifths < -7 || fifths > 7 {
 		r.report("a key signature of %d accidentals is out of range", fifths)

@@ -137,3 +137,48 @@ func TestTheFinalBarlineIsOneColumn(t *testing.T) {
 		}
 	}
 }
+
+// A bar that is full has no empty part, however empty it looks.
+//
+// A whole-bar rest is one small glyph with four beats of white space after
+// it, and a click in that space is a click over the rest — not a click at the
+// end of the music. The editor could not tell the two apart, so writing there
+// appended, found the bar full and put the note in the next bar instead:
+// clicking one bar wrote in the one beside it.
+func TestABarOfRestIsReportedAsFull(t *testing.T) {
+	whole := model.Duration{Num: 1, Den: 1}
+	quarter := model.Duration{Num: 1, Den: 4}
+
+	p := &model.Part{Clef: model.Treble, Time: model.TimeSignature{Beats: 4, BeatValue: 4}}
+	p.Measures = []*model.Measure{
+		// A bar of rest: drawn as nothing much, and as full as a bar gets.
+		{Voices: []*model.Voice{{Elements: []model.Element{&model.Rest{Dur: whole}}}},
+			RightBarline: model.BarSingle},
+		// One quarter and three beats to spare.
+		{Voices: []*model.Voice{{Elements: []model.Element{&model.Note{
+			Pitch: model.Pitch{Step: model.StepG, Octave: 4}, Dur: quarter,
+		}}}}, RightBarline: model.BarSingle},
+		// Four quarters, full of notes this time.
+		{Voices: []*model.Voice{{Elements: []model.Element{
+			&model.Note{Pitch: model.Pitch{Step: model.StepG, Octave: 4}, Dur: quarter},
+			&model.Note{Pitch: model.Pitch{Step: model.StepA, Octave: 4}, Dur: quarter},
+			&model.Note{Pitch: model.Pitch{Step: model.StepB, Octave: 4}, Dur: quarter},
+			&model.Note{Pitch: model.Pitch{Step: model.StepC, Octave: 5}, Dur: quarter},
+		}}}, RightBarline: model.BarFinal},
+	}
+	s := &model.Score{
+		Tempo: model.Tempo{BPM: 120, Unit: quarter},
+		Parts: []*model.Part{p},
+	}
+	lay := Engrave(s, DefaultOptions())
+
+	full := map[int]bool{}
+	for _, h := range lay.Hits {
+		full[h.Measure] = h.Full
+	}
+	for bar, want := range map[int]bool{0: true, 1: false, 2: true} {
+		if full[bar] != want {
+			t.Errorf("bar %d reports full=%v, want %v", bar+1, full[bar], want)
+		}
+	}
+}

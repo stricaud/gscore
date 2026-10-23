@@ -68,7 +68,7 @@ const sample = `<?xml version="1.0" encoding="UTF-8"?>
       </VBox>
       <Measure>
         <voice>
-          <KeySig><concertKey>-2</concertKey></KeySig>
+          <KeySig><concertKey>-2</concertKey><actualKey>1</actualKey></KeySig>
           <TimeSig><sigN>3</sigN><sigD>4</sigD></TimeSig>
           <Tempo>
             <tempo>1.6</tempo>
@@ -233,8 +233,10 @@ func TestEachStaffBecomesAPart(t *testing.T) {
 	if s.Parts[0].Instrument != model.AltoSax {
 		t.Errorf("the saxophone sounds as program %d", s.Parts[0].Instrument)
 	}
-	if k := s.Parts[0].Key; k.Fifths != -2 {
-		t.Errorf("the key is %d flats, want two", -k.Fifths)
+	// Concert B flat on an alto saxophone is written in G: the file says
+	// both and the written one is what goes on the staff.
+	if k := s.Parts[0].Key; k.Fifths != 1 {
+		t.Errorf("the saxophone's key is %d, want one sharp", k.Fifths)
 	}
 	if ts := s.Parts[0].Time; ts.Beats != 3 || ts.BeatValue != 4 {
 		t.Errorf("the meter is %v", ts)
@@ -567,6 +569,24 @@ func TestARepeatReadFromOneStaffReachesThemAll(t *testing.T) {
 		}
 		if got := p.Measures[1].RightBarline; got != model.BarRepeatEnd {
 			t.Errorf("part %d closes the repeat as %v", i, got)
+		}
+	}
+}
+
+// MuseScore writes a key signature twice over on a transposing staff: the key
+// that sounds and, beside it, the key that is printed. Reading only the first
+// put every transposing part in the wrong key — wrong on the page and wrong
+// under the fingers.
+func TestATransposingStaffKeepsItsWrittenKey(t *testing.T) {
+	s := read(t, sample)
+	if got := s.Parts[0].Key.Fifths; got != 1 {
+		t.Errorf("the saxophone reads %d, want the one sharp its part is in", got)
+	}
+	// The piano is not a transposing instrument, so the file gives it no
+	// written key of its own and the concert key is the one it reads.
+	for i := 1; i < len(s.Parts); i++ {
+		if got := s.Parts[i].Key.Fifths; got != 0 {
+			t.Errorf("part %d reads %d; it was given no key of its own", i, got)
 		}
 	}
 }

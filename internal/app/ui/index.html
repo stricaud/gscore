@@ -1,0 +1,295 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>gscore</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<!--
+  The menu tree is gscore 0.0.9's own, read back out of legacy/glade/gscore.glade.
+  The C program split it across a main window and a score window; a single
+  window merges them. Items not implemented yet are present but disabled, so
+  what exists and what does not is visible at a glance.
+-->
+<div id="menubar">
+  <div class="brand"><img src="icon.png" alt="" width="20" height="22"><span>gscore</span></div>
+
+  <div class="menu" data-menu="file">
+    <button class="menu-title">File</button>
+    <div class="menu-items">
+      <button data-action="new"><span>New score…</span><kbd>N</kbd></button>
+      <button data-action="open"><span>Open score…</span><kbd>O</kbd></button>
+      <hr>
+      <button data-action="save" disabled><span>Save</span><kbd>S</kbd></button>
+      <button data-action="save-as" disabled><span>Save As…</span></button>
+      <button data-action="save-svg"><span>Export SVG…</span><kbd>E</kbd></button>
+      <hr>
+      <button data-action="page-setup" disabled><span>Page Setup</span></button>
+      <button data-action="print-preview" disabled><span>Print Preview…</span></button>
+      <button data-action="print"><span>Print…</span><kbd>P</kbd></button>
+      <hr>
+      <button data-action="close" disabled><span>Close</span></button>
+    </div>
+  </div>
+
+  <div class="menu" data-menu="edit">
+    <button class="menu-title">Edit</button>
+    <div class="menu-items">
+      <button data-action="undo" disabled><span>Undo</span><kbd>⌘Z</kbd></button>
+      <hr>
+      <button data-action="cut" disabled><span>Cut</span><kbd>⌘X</kbd></button>
+      <button data-action="copy" disabled><span>Copy</span><kbd>⌘C</kbd></button>
+      <button data-action="paste" disabled><span>Paste</span><kbd>⌘V</kbd></button>
+      <button data-action="delete"><span>Delete</span><kbd>⌫</kbd></button>
+      <hr>
+      <button data-action="jump" disabled><span>Jump to measure…</span><kbd>J</kbd></button>
+      <div class="menu-section">Selection</div>
+      <button data-action="beam" disabled><span>Beam</span></button>
+      <button data-action="tie-slur" disabled><span>Tie / Slur</span></button>
+      <button data-action="stem-up"><span>Stem up</span></button>
+      <button data-action="stem-down"><span>Stem down</span></button>
+      <button data-action="stem-auto"><span>Stem automatic</span></button>
+      <button data-action="add-duration" disabled><span>Add duration</span></button>
+      <div class="menu-section">Articulation</div>
+      <button data-action="artic-none"><span>No articulation</span></button>
+      <button data-action="artic-staccato"><span>Staccato</span></button>
+      <button data-action="artic-staccatissimo"><span>Staccatissimo</span></button>
+      <button data-action="artic-tenuto"><span>Tenuto</span></button>
+      <button data-action="artic-accent"><span>Accent</span></button>
+      <button data-action="artic-marcato-up"><span>Marcato up</span></button>
+      <button data-action="artic-marcato-down"><span>Marcato down</span></button>
+    </div>
+  </div>
+
+  <div class="menu" data-menu="insert">
+    <button class="menu-title">Insert</button>
+    <div class="menu-items">
+      <button data-action="note-input"><span>Writing mode</span><kbd>N</kbd></button>
+      <hr>
+      <button data-action="insert-note"><span>Note</span></button>
+      <button data-action="insert-rest"><span>Rest</span></button>
+      <hr>
+      <button data-action="add-measure"><span>Add measure</span><kbd>M</kbd></button>
+      <hr>
+      <button data-action="draw-symbol"><span>Draw a symbol…</span></button>
+      <button data-action="symbol-palette"><span>Insert symbol…</span></button>
+      <div class="menu-section">Barline</div>
+      <button data-action="bar-single"><span>Single</span></button>
+      <button data-action="bar-double"><span>Double</span></button>
+      <button data-action="bar-open"><span>Open repeat</span></button>
+      <button data-action="bar-final"><span>Final</span></button>
+      <button data-action="bar-close"><span>Close repeat</span></button>
+      <div class="menu-section">Dynamic</div>
+      <button data-action="dyn-pppp"><span>Pianissississimo</span></button>
+      <button data-action="dyn-ppp"><span>Pianississimo</span></button>
+      <button data-action="dyn-pp"><span>Pianissimo</span></button>
+      <button data-action="dyn-p"><span>Piano</span></button>
+      <button data-action="dyn-mp"><span>Mezzo-piano</span></button>
+      <button data-action="dyn-mf"><span>Mezzo-forte</span></button>
+      <button data-action="dyn-f"><span>Forte</span></button>
+      <button data-action="dyn-ff"><span>Fortissimo</span></button>
+      <button data-action="dyn-fff"><span>Fortississimo</span></button>
+      <button data-action="dyn-none"><span>No dynamic</span></button>
+    </div>
+  </div>
+
+  <div class="menu" data-menu="score">
+    <button class="menu-title">Score</button>
+    <div class="menu-items">
+      <button data-action="set-tempo" disabled><span>Set tempo…</span></button>
+      <button data-action="set-header" disabled><span>Set header…</span></button>
+      <hr>
+      <button data-action="score-options" disabled><span>Score options…</span></button>
+      <button data-action="parameters" disabled><span>Parameters…</span></button>
+    </div>
+  </div>
+
+  <div class="menu" data-menu="staff">
+    <button class="menu-title">Staff</button>
+    <div class="menu-items">
+      <button data-action="set-instrument" disabled><span>Set instrument…</span></button>
+      <button data-action="tab" disabled><span>Tab</span></button>
+      <button data-action="chord-builder" disabled><span>Chord builder…</span></button>
+      <button data-action="tab-transposition" disabled><span>Tab transposition…</span></button>
+    </div>
+  </div>
+
+  <div class="menu" data-menu="view">
+    <button class="menu-title">View</button>
+    <div class="menu-items">
+      <button data-action="mode-strip"><span>Continuous strip</span><kbd>✓</kbd></button>
+      <button data-action="mode-page"><span>Paginated</span></button>
+      <hr>
+      <button data-action="zoom-in"><span>Zoom in</span><kbd>⌘+</kbd></button>
+      <button data-action="zoom-out"><span>Zoom out</span><kbd>⌘-</kbd></button>
+      <button data-action="zoom-reset"><span>Actual size</span><kbd>⌘0</kbd></button>
+      <hr>
+      <button data-action="view-tempo" disabled><span>Tempo</span></button>
+      <button data-action="view-barlines" disabled><span>Barlines</span></button>
+      <button data-action="view-ending-bar" disabled><span>Ending bar</span></button>
+      <button data-action="view-key-signature" disabled><span>Key signature</span></button>
+    </div>
+  </div>
+
+  <div class="menu" data-menu="play">
+    <button class="menu-title">Play</button>
+    <div class="menu-items">
+      <button data-action="play"><span>Play</span><kbd>Space</kbd></button>
+      <button data-action="stop"><span>Stop</span><kbd>Esc</kbd></button>
+    </div>
+  </div>
+
+  <div class="menu" data-menu="help">
+    <button class="menu-title">Help</button>
+    <div class="menu-items">
+      <button data-action="contents" disabled><span>Contents</span></button>
+      <button data-action="report-bug"><span>Report a bug</span></button>
+      <hr>
+      <button data-action="about"><span>About gscore</span></button>
+    </div>
+  </div>
+
+  <div class="transport">
+    <button id="input-btn" title="Writing (N) — click the staff to add notes; click a note to select it">✎</button>
+    <button id="play-btn" title="Play (Space)">▶</button>
+    <button id="stop-btn" title="Stop (Esc)">■</button>
+    <span id="clock">0:00</span>
+  </div>
+</div>
+
+<div id="main">
+
+  <aside id="toolbox">
+    <div class="tool-group">
+      <div class="tool-label">Duration</div>
+      <div class="tool-grid" id="durations"></div>
+    </div>
+    <div class="tool-group">
+      <div class="tool-label">Accidental</div>
+      <div class="tool-grid" id="accidentals"></div>
+    </div>
+    <div class="tool-group">
+      <div class="tool-label">Articulation</div>
+      <div class="tool-grid" id="articulations"></div>
+    </div>
+    <div class="tool-group">
+      <div class="tool-label">Zoom</div>
+      <input type="range" id="zoom" min="5" max="26" step="1" value="8">
+      <div class="small" id="zoom-readout">8 px/space</div>
+    </div>
+  </aside>
+
+  <main id="canvas-wrap">
+    <div id="canvas"></div>
+    <div id="empty-hint" hidden>
+      <p>A new score.</p>
+      <p class="small">Open an ABC file from the File menu, press <kbd>O</kbd>,
+         or drop one here.</p>
+    </div>
+  </main>
+
+  <aside id="inspector">
+    <div class="insp-group">
+      <div class="insp-label">Score</div>
+      <div id="score-info"></div>
+    </div>
+    <div class="insp-group" id="tune-group" hidden>
+      <div class="insp-label">Tunes</div>
+      <div class="small" id="tune-count"></div>
+      <select id="tune-select"></select>
+      <label class="small"><input type="checkbox" id="show-all"> Show all at once</label>
+    </div>
+    <div class="insp-group">
+      <div class="insp-label">Staves</div>
+      <div id="part-info"></div>
+    </div>
+  </aside>
+
+</div>
+
+<div id="statusbar">
+  <span id="status">Ready</span>
+  <span id="filename"></span>
+  <span id="version"></span>
+</div>
+
+<input type="file" id="file-input" accept=".abc" hidden>
+
+<!--
+  Key signatures are picked by sight, not by name. gscore 0.0.9 did this with
+  hand-drawn pictures in legacy/pixmaps (treble_G_sharp.xpm and friends); these
+  are engraved on demand instead, so they work for any clef and any size.
+-->
+<dialog id="keysig">
+  <h2>Key signature</h2>
+  <p class="small">Pick the signature you want to see on the staff.</p>
+  <div id="keysig-grid"></div>
+  <form method="dialog"><button>Cancel</button></form>
+</dialog>
+
+<!--
+  Drawing a symbol the music font does not have. This is gscore's oldest idea:
+  every one of its 287 symbols was an XPM file, a grid of characters anyone
+  could edit. The grid is the same; only the editor is new.
+-->
+<dialog id="draw">
+  <h2>Draw a symbol</h2>
+  <div class="draw-row">
+    <label>Name <input type="text" id="sym-name" placeholder="myMark" size="14"></label>
+    <label>Grid
+      <select id="sym-size">
+        <option value="12">12 x 12</option>
+        <option value="16" selected>16 x 16</option>
+        <option value="24">24 x 24</option>
+        <option value="32">32 x 32</option>
+        <option value="48">48 x 48</option>
+      </select>
+    </label>
+    <label>Pixels per space
+      <select id="sym-scale">
+        <option value="0.125" selected>8 (as the originals)</option>
+        <option value="0.0625">16</option>
+        <option value="0.25">4</option>
+      </select>
+    </label>
+  </div>
+  <canvas id="sym-canvas" width="384" height="384"></canvas>
+  <p class="small">Click or drag to draw; hold Alt to erase. The dotted line is
+     the staff line the symbol sits on.</p>
+  <div class="draw-row">
+    <button id="sym-import">Import a picture…</button>
+    <button id="sym-clear">Clear</button>
+    <button id="sym-save" class="primary">Save symbol</button>
+    <form method="dialog"><button>Close</button></form>
+  </div>
+  <input type="file" id="sym-file" accept=".xpm,.png,.gif,.jpg,.jpeg" hidden>
+</dialog>
+
+<dialog id="palette">
+  <h2>Insert a symbol</h2>
+  <div id="palette-grid"></div>
+  <p class="small" id="palette-empty" hidden>Nothing drawn yet. Use
+     Insert → Draw a symbol… first.</p>
+  <form method="dialog"><button>Close</button></form>
+</dialog>
+
+<dialog id="about">
+  <!-- Gilbert, who was the splash screen in 2005: splash.c loaded him as
+       LOGO_GILBERT from pixmaps/gilbert.xpm. Same drawing. -->
+  <img id="about-logo" src="gilbert.png" alt="Gilbert, the gscore mascot" width="160" height="158">
+  <h2>gscore</h2>
+  <p id="about-version"></p>
+  <p>A musical score editor by Sébastien Tricaud.</p>
+  <p class="small">Originally written in C and GTK+ between 2001 and 2005, the
+     last release being 0.0.9 “harder, better, stronger, faster” in April 2005.
+     Rewritten in Go in 2026, engraved with SMuFL and Bravura.</p>
+  <p class="small">GPL v2 or later.</p>
+  <form method="dialog"><button>Close</button></form>
+</dialog>
+
+<script src="app.js"></script>
+</body>
+</html>

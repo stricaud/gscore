@@ -1,0 +1,510 @@
+/*
+ * gscore - a musical score editor
+ * (C) Copyright 2026 Sebastien Tricaud
+ *
+ * The 0.0.9 README called the interface "a la gimp" and the program "designed
+ * to be easy to use". So: a toolbox you click, a score you click on, nothing
+ * between you and writing a note.
+ */
+
+@font-face {
+  font-family: "Bravura";
+  src: url("/font.otf") format("opentype");
+  font-display: block;
+}
+
+:root {
+  --bg: #d9d6d0;
+  --panel: #e8e6e1;
+  --panel-dark: #c9c5bd;
+  --ink: #1c1a18;
+  --muted: #6d6862;
+  --line: #a9a49b;
+  --accent: #2f6f9f;
+  --accent-soft: #cfe2f0;
+  --paper: #ffffff;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #23211f;
+    --panel: #2c2a27;
+    --panel-dark: #1b1a18;
+    --ink: #eceae6;
+    --muted: #9a948c;
+    --line: #45413c;
+    --accent: #6ba7d6;
+    --accent-soft: #2a4357;
+    --paper: #f7f6f3;
+  }
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--ink);
+  font: 13px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  overflow: hidden;
+}
+
+body {
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  height: 100vh;
+}
+
+/* ---- menu bar ---- */
+
+#menubar {
+  display: flex;
+  align-items: stretch;
+  gap: 2px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
+  padding: 0 8px;
+  height: 34px;
+  user-select: none;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding-right: 12px;
+  font-weight: 600;
+  letter-spacing: .2px;
+}
+.brand img { display: block; image-rendering: auto; }
+
+.menu { position: relative; display: flex; }
+
+.menu-title {
+  background: none;
+  border: 0;
+  color: inherit;
+  font: inherit;
+  padding: 0 11px;
+  cursor: pointer;
+  border-radius: 4px;
+}
+.menu-title:hover { background: var(--panel-dark); }
+.menu.open .menu-title { background: var(--accent); color: #fff; }
+
+.menu-items {
+  display: none;
+  position: absolute;
+  top: 33px;
+  left: 0;
+  min-width: 210px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  box-shadow: 0 8px 24px rgba(0,0,0,.22);
+  padding: 4px;
+  z-index: 50;
+}
+.menu.open .menu-items { display: block; }
+
+.menu-items button {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 24px;
+  width: 100%;
+  background: none;
+  border: 0;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  padding: 6px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.menu-items button:hover { background: var(--accent); color: #fff; }
+.menu-items hr { border: 0; border-top: 1px solid var(--line); margin: 4px 2px; }
+
+kbd {
+  font: 11px ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--muted);
+  background: var(--panel-dark);
+  border-radius: 3px;
+  padding: 1px 5px;
+}
+.menu-items button:hover kbd { color: #fff; background: rgba(255,255,255,.2); }
+
+.transport {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.transport button {
+  width: 30px; height: 24px;
+  background: var(--panel-dark);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  color: inherit;
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 1;
+}
+.transport button:hover { background: var(--accent); color: #fff; border-color: var(--accent); }
+.transport button.active { background: var(--accent); color: #fff; }
+#clock {
+  font: 12px ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--muted);
+  min-width: 42px;
+  text-align: right;
+}
+
+/* ---- layout ---- */
+
+#main {
+  display: grid;
+  grid-template-columns: 112px 1fr 210px;
+  min-height: 0;
+}
+
+#toolbox, #inspector {
+  background: var(--panel);
+  overflow-y: auto;
+  padding: 10px 8px;
+}
+#toolbox { border-right: 1px solid var(--line); }
+#inspector { border-left: 1px solid var(--line); }
+
+.tool-group, .insp-group { margin-bottom: 16px; }
+
+.tool-label, .insp-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: .07em;
+  color: var(--muted);
+  margin-bottom: 6px;
+}
+
+.tool-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 3px;
+}
+
+.tool {
+  aspect-ratio: 1;
+  display: grid;
+  place-items: center;
+  background: var(--panel-dark);
+  border: 1px solid transparent;
+  border-radius: 4px;
+  cursor: pointer;
+  color: var(--ink);
+  font-family: Bravura, serif;
+  font-size: 19px;
+  line-height: 1;
+  padding: 0;
+}
+.tool:hover { border-color: var(--accent); }
+.tool.selected { background: var(--accent); color: #fff; }
+.tool.small { font-size: 15px; }
+
+#zoom { width: 100%; }
+
+/* ---- canvas ---- */
+
+#canvas-wrap {
+  overflow: auto;
+  background: var(--bg);
+  padding: 18px;
+  display: block;
+  min-width: 0;
+}
+
+#canvas {
+  background: var(--paper);
+  box-shadow: 0 2px 14px rgba(0,0,0,.18);
+  border-radius: 2px;
+  display: inline-block;
+  min-width: 100%;
+}
+#canvas svg { display: block; }
+
+/* A note currently sounding is highlighted as the score plays. */
+#canvas text.playing { fill: var(--accent); }
+
+#empty-hint {
+  color: var(--muted);
+  padding: 40px;
+  text-align: center;
+}
+
+.small { font-size: 11px; color: var(--muted); }
+
+/* ---- inspector ---- */
+
+#score-info div, #part-info div {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 3px 0;
+  border-bottom: 1px dotted var(--line);
+}
+#score-info b, #part-info b { font-weight: 600; }
+.part-card {
+  background: var(--panel-dark);
+  border-radius: 5px;
+  padding: 7px 8px;
+  margin-bottom: 7px;
+}
+.part-card .name { font-weight: 600; margin-bottom: 4px; }
+
+/* ---- status bar ---- */
+
+#statusbar {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+  background: var(--panel);
+  border-top: 1px solid var(--line);
+  padding: 0 12px;
+  height: 24px;
+  font-size: 11px;
+  color: var(--muted);
+}
+#filename { margin-left: auto; }
+
+/* ---- about ---- */
+
+dialog {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--ink);
+  max-width: 400px;
+  padding: 20px 24px;
+}
+dialog::backdrop { background: rgba(0,0,0,.4); }
+dialog h2 { margin: 0 0 4px; }
+dialog p { margin: 6px 0; }
+dialog button {
+  margin-top: 12px;
+  padding: 5px 16px;
+  border-radius: 5px;
+  border: 1px solid var(--line);
+  background: var(--panel-dark);
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+}
+
+@media (max-width: 820px) {
+  #main { grid-template-columns: 92px 1fr; }
+  #inspector { display: none; }
+}
+
+/* ---- key signature picker ---- */
+
+.linklike {
+  background: none;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  font-weight: 600;
+  color: var(--accent);
+  cursor: pointer;
+  text-decoration: underline dotted;
+}
+.linklike:hover { text-decoration: underline; }
+
+#keysig { max-width: 560px; }
+
+#keysig-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+  margin: 12px 0;
+  max-height: 60vh;
+  overflow-y: auto;
+}
+
+.keysig-option {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  padding: 6px 4px;
+  cursor: pointer;
+  color: var(--ink);
+  font: inherit;
+  font-size: 11px;
+}
+.keysig-option:hover { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
+.keysig-option img { display: block; height: 42px; width: auto; }
+.keysig-option span { color: var(--muted); }
+
+#canvas text.playing { fill: var(--accent); }
+#canvas rect.cursor {
+  fill: var(--accent);
+  opacity: .45;
+  pointer-events: none;
+}
+
+/* In a native window the title bar carries the application name already. */
+body.native .brand { display: none; }
+body.native #menubar { padding-left: 12px; }
+
+/* A menu item that does nothing yet must look like it. */
+.menu-items button:disabled {
+  opacity: .38;
+  cursor: default;
+}
+.menu-items button:disabled:hover { background: none; color: inherit; }
+.menu-items button:disabled kbd { opacity: .5; }
+
+.menu-section {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: .07em;
+  color: var(--muted);
+  padding: 6px 10px 2px;
+}
+
+/* The measure the next edit will go into. */
+#canvas rect.selection {
+  fill: var(--accent);
+  opacity: .10;
+  pointer-events: none;
+}
+#canvas svg { cursor: crosshair; }
+
+/* Ctrl or Command with a drag pans the score. */
+#canvas-wrap.panning { cursor: grabbing; }
+#canvas-wrap.panning svg { cursor: grabbing; }
+
+/* Gilbert, from the 2005 splash screen. */
+#about { text-align: center; }
+#about h2 { margin-top: 6px; }
+#about-logo {
+  display: block;
+  margin: 0 auto 4px;
+  width: 160px;
+  height: auto;
+}
+#about p { text-align: center; }
+
+/* ---- the symbol editor ---- */
+
+#draw { max-width: 440px; }
+#draw h2, #palette h2 { margin: 0 0 10px; }
+
+.draw-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin: 8px 0;
+}
+.draw-row label { font-size: 11px; color: var(--muted); }
+.draw-row input[type="text"], .draw-row select {
+  font: inherit;
+  padding: 3px 5px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--paper);
+  color: #111;
+}
+.draw-row button {
+  font: inherit;
+  padding: 5px 12px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: var(--panel-dark);
+  color: inherit;
+  cursor: pointer;
+}
+.draw-row button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+.draw-row form { margin-left: auto; }
+
+#sym-canvas {
+  display: block;
+  margin: 0 auto;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  cursor: crosshair;
+  touch-action: none;
+}
+
+#palette-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 6px;
+  margin: 10px 0;
+  max-height: 60vh;
+  overflow-y: auto;
+}
+.palette-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 4px;
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  cursor: pointer;
+  font: inherit;
+  font-size: 10px;
+  color: var(--ink);
+}
+.palette-item:hover { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
+.palette-item img {
+  height: 40px;
+  width: auto;
+  image-rendering: pixelated;
+}
+
+/* The selected element, and the mode that decides what a click does. */
+#canvas .selected { fill: var(--accent); }
+#canvas svg { cursor: default; }
+body.note-input #canvas svg { cursor: crosshair; }
+/* A notehead is always clickable to select, whichever mode is on. */
+#canvas text.g[data-ref] { cursor: pointer; }
+
+/* The cursor tool, from the original toolbar. */
+.tool img { width: 18px; height: 18px; image-rendering: pixelated; }
+body.tool-select #canvas svg { cursor: default; }
+body:not(.tool-select) #canvas svg { cursor: crosshair; }
+#canvas rect.marquee {
+  fill: var(--accent);
+  opacity: .18;
+  stroke: var(--accent);
+  stroke-width: 1;
+  pointer-events: none;
+}
+
+/* A file holding many scores. */
+#tune-select {
+  width: 100%;
+  font: inherit;
+  font-size: 11px;
+  padding: 3px;
+  margin: 4px 0;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--paper);
+  color: #111;
+}
+#tune-group label { display: flex; align-items: center; gap: 5px; }
+
+#canvas .tune {
+  border-bottom: 1px solid var(--line);
+  cursor: pointer;
+}
+#canvas .tune:last-child { border-bottom: 0; }
+#canvas .tune.current { background: var(--accent-soft); }

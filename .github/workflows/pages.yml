@@ -1,0 +1,69 @@
+# Build gscore as a static page and publish it to GitHub Pages.
+#
+# The whole program compiles to WebAssembly, so what lands at
+# https://stricaud.github.io/gscore/ is the same editor as the desktop build,
+# running entirely in the browser with no server behind it.
+#
+# Pages must be set to "GitHub Actions" as its source, once, in the
+# repository's Settings → Pages.
+
+name: Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# One deployment at a time; a run already under way is left to finish rather
+# than cancelled, so a half-published site is never served.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Check the core
+        run: |
+          go vet ./...
+          go test ./...
+
+      - name: Build the page
+        run: sh web/build.sh web/dist
+
+      - name: Check what was built
+        run: |
+          set -eu
+          for f in index.html gscore.wasm wasm_exec.js boot.js app.js style.css font.otf; do
+            test -s "web/dist/$f" || { echo "missing or empty: $f" >&2; exit 1; }
+          done
+          echo "wasm: $(du -h web/dist/gscore.wasm | cut -f1)"
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: web/dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

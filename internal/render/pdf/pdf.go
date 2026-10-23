@@ -157,9 +157,15 @@ func (r *renderer) run() {
 		r.page = r.doc.NewPage(pdf.Point(r.opt.PageWidth), pdf.Point(r.opt.PageHeight))
 		r.page.SetGray(0)
 
-		// Nothing from the next page's systems may bleed into this one.
+		// Nothing from the next page's systems may bleed into this one. The
+		// clip is the band, not the page: a stem or a slur is allowed to
+		// reach a little past what it belongs to, and without this the
+		// system that starts the next page is drawn across the bottom of
+		// this one.
 		r.page.Save()
-		r.page.Clip(0, 0, pdf.Point(r.opt.PageWidth), pdf.Point(r.opt.PageHeight))
+		top := r.y(band.top) + r.s*0.5
+		bottom := r.y(band.bottom) - r.s*2
+		r.page.Clip(0, bottom, pdf.Point(r.opt.PageWidth), top-bottom)
 		r.draw(band.top, band.bottom)
 		r.page.Restore()
 		r.page.Close()
@@ -225,6 +231,7 @@ func visible(v, top, bottom float64) bool {
 
 func (r *renderer) draw(top, bottom float64) {
 	r.drawLines(top, bottom)
+	r.drawCircles(top, bottom)
 	r.drawCurves(top, bottom)
 	r.drawGlyphs(top, bottom)
 	r.drawTexts(top, bottom)
@@ -267,6 +274,16 @@ func (r *renderer) drawLines(top, bottom float64) {
 		}
 		r.page.SetLineWidth(float64(pdf.Point(ln.Thickness) * r.s))
 		r.page.Line(r.x(ln.X1), r.y(ln.Y1), r.x(ln.X2), r.y(ln.Y2))
+	}
+}
+
+func (r *renderer) drawCircles(top, bottom float64) {
+	for _, c := range r.lay.Circles {
+		if !visible(c.Y, top, bottom) {
+			continue
+		}
+		r.page.Circle(r.x(c.X), r.y(c.Y), pdf.Point(c.Radius)*r.s,
+			c.Filled, pdf.Point(c.Thickness)*r.s)
 	}
 }
 

@@ -64,6 +64,21 @@ type Text struct {
 	Bold   bool
 }
 
+// Circle is a round mark: the dot on a chord diagram, the ring over a string
+// played open.
+//
+// It exists because these are the one thing on a score that is neither a
+// glyph, a line nor a word. Drawing the ring as the character "○" seemed
+// easier and was wrong: it is not in the standard PDF text encodings, so it
+// printed as a question mark over every open string.
+type Circle struct {
+	X, Y   float64
+	Radius float64
+	// Filled is a dot; otherwise it is a ring of Thickness.
+	Filled    bool
+	Thickness float64
+}
+
 // Curve is a slur or a tie, drawn as a quadratic arc.
 type Curve struct {
 	X1, Y1, CX, CY, X2, Y2 float64
@@ -77,6 +92,7 @@ type Layout struct {
 	Lines         []Line
 	Texts         []Text
 	Curves        []Curve
+	Circles       []Circle
 	// Refs maps an element's Ref to where its notehead landed, so the editor
 	// can put a playback cursor on it without re-deriving the layout.
 	Refs map[int]RefPos
@@ -289,6 +305,10 @@ type engraver struct {
 	nextRef int
 	// partIndex is whose staff is being drawn, for the hit regions.
 	partIndex int
+
+	// textRise is how far the words written over a staff have to be lifted
+	// to clear the chord symbols already there.
+	textRise float64
 
 	// spans holds the hairpins and octave lines that are open on each staff.
 	// A spanner reaches from one note to another, which may be in a later
@@ -887,11 +907,18 @@ func (e *engraver) drawSystem(parts []*model.Part, boxes [][]measureBox,
 	right := x
 
 	top := e.y
+	// Everything written over the system stacks above the chord symbols,
+	// which are themselves above the staff. Drawing them all at the same
+	// height is what put a rehearsal mark through a tempo direction.
+	above := top - e.systemChordRoom(parts, start, end)
+
 	// The volta brackets belong to the system, not to a staff: they are drawn
 	// once above the top one before the staves move the cursor down.
-	e.drawVoltas(parts, columns, start, end, top)
-	e.drawMeasureNumber(start+1, sp.Margin+prefix, top)
-	e.drawMarkers(parts, columns, start, end, top)
+	e.drawVoltas(parts, columns, start, end, above)
+	e.drawMeasureNumber(start+1, sp.Margin+prefix, above)
+	e.drawMarkers(parts, columns, start, end, above)
+	// A note's own words go above its chord symbol too.
+	e.textRise = top - above
 
 	// Words written under a staff need the staff below to move out of the way.
 	wordRoom := 0.0

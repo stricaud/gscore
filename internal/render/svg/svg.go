@@ -91,6 +91,17 @@ func Render(w io.Writer, lay *engrave.Layout, opt Options) error {
 			ln.X1*s, ln.Y1*s, ln.X2*s, ln.Y2*s, ln.Thickness*s, dash)
 	}
 
+	for _, c := range lay.Circles {
+		if c.Filled {
+			fmt.Fprintf(&b, `<circle cx="%.2f" cy="%.2f" r="%.2f" fill="#000"/>`+"\n",
+				c.X*s, c.Y*s, c.Radius*s)
+			continue
+		}
+		fmt.Fprintf(&b, `<circle cx="%.2f" cy="%.2f" r="%.2f" fill="none" `+
+			`stroke="#000" stroke-width="%.2f"/>`+"\n",
+			c.X*s, c.Y*s, c.Radius*s, c.Thickness*s)
+	}
+
 	for _, c := range lay.Curves {
 		fmt.Fprintf(&b, `<path class="curve" d="M %.2f %.2f Q %.2f %.2f %.2f %.2f" stroke-width="%.2f"/>`+"\n",
 			c.X1*s, c.Y1*s, c.CX*s, c.CY*s, c.X2*s, c.Y2*s, c.Thickness*s)

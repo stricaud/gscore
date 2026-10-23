@@ -49,6 +49,33 @@ const (
 	frameDot = 0.38
 )
 
+// systemChordRoom is how much room the chord symbols of one system need above
+// the top staff line.
+//
+// Everything written over a staff has to be stacked rather than piled in the
+// same place: a rehearsal mark, a direction to the player and a chord symbol
+// all want to be just above the music, and all three in one spot is what made
+// "Moderately" print through the letter A.
+func (e *engraver) systemChordRoom(parts []*model.Part, start, end int) float64 {
+	room := 0.0
+	for _, p := range parts {
+		for mi := start; mi < end && mi < len(p.Measures); mi++ {
+			for _, v := range p.Measures[mi].Voices {
+				for _, el := range v.Elements {
+					mk := marksOf(el)
+					if mk == nil {
+						continue
+					}
+					if h := chordHeight(mk.Chord); h > room {
+						room = h
+					}
+				}
+			}
+		}
+	}
+	return room
+}
+
 // chordHeight is how much room a chord symbol and its diagram need above the
 // staff, so the system above can be moved out of the way.
 func chordHeight(c *model.ChordSymbol) float64 {
@@ -213,14 +240,19 @@ func (e *engraver) drawChordFrame(f *model.ChordFrame, x, bottom float64) {
 		sx := x + float64(i)*stepX
 		switch {
 		case fret < 0:
-			// Not played: an x above the nut.
-			e.lay.Texts = append(e.lay.Texts, Text{
-				S: "×", X: sx, Y: top - 0.35, Size: 1.5, Anchor: "middle",
-			})
+			// Not played: a cross above the nut, drawn rather than typed.
+			// The character for it is not in the encodings a PDF's built-in
+			// fonts use, so a typed one prints as a question mark over the
+			// string — which is what it did.
+			const d = 0.3
+			cy := top - 0.62
+			e.lay.Lines = append(e.lay.Lines,
+				Line{X1: sx - d, Y1: cy - d, X2: sx + d, Y2: cy + d, Thickness: t * 1.6},
+				Line{X1: sx - d, Y1: cy + d, X2: sx + d, Y2: cy - d, Thickness: t * 1.6})
 		case fret == 0:
-			// Open: a circle above the nut.
-			e.lay.Texts = append(e.lay.Texts, Text{
-				S: "○", X: sx, Y: top - 0.35, Size: 1.3, Anchor: "middle",
+			// Open: a ring above the nut.
+			e.lay.Circles = append(e.lay.Circles, Circle{
+				X: sx, Y: top - 0.62, Radius: 0.3, Thickness: t * 1.6,
 			})
 		default:
 			row := fret - maxInt(f.FirstFret, 1)
@@ -231,10 +263,8 @@ func (e *engraver) drawChordFrame(f *model.ChordFrame, x, bottom float64) {
 				continue // already drawn as part of the barre
 			}
 			y := top + (float64(row)+0.5)*stepY
-			// A dot, drawn as a very short very thick line, which is a
-			// filled circle once the ends are rounded.
-			e.lay.Lines = append(e.lay.Lines, Line{
-				X1: sx, Y1: y, X2: sx, Y2: y, Thickness: frameDot * 2,
+			e.lay.Circles = append(e.lay.Circles, Circle{
+				X: sx, Y: y, Radius: frameDot, Filled: true,
 			})
 		}
 	}

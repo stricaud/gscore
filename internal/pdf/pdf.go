@@ -237,6 +237,31 @@ func (p *Page) Quad(x1, y1, cx, cy, x2, y2 Point, thickness Point) {
 		x1, y1, c1x, c1y, c2x, c2y, x2, y2)
 }
 
+// Circle draws a round mark, filled or as a ring.
+//
+// PDF has no circle operator, so it is four Bézier curves. The magic number
+// is the one that makes a cubic curve pass closest to a quarter circle, which
+// everything that draws circles in PostScript has used since 1988.
+func (p *Page) Circle(cx, cy, radius Point, filled bool, thickness Point) {
+	const k = 0.5522847498
+	o := radius * k
+	fmt.Fprintf(&p.buf, "%.2f %.2f m", cx+radius, cy)
+	fmt.Fprintf(&p.buf, " %.2f %.2f %.2f %.2f %.2f %.2f c",
+		cx+radius, cy+o, cx+o, cy+radius, cx, cy+radius)
+	fmt.Fprintf(&p.buf, " %.2f %.2f %.2f %.2f %.2f %.2f c",
+		cx-o, cy+radius, cx-radius, cy+o, cx-radius, cy)
+	fmt.Fprintf(&p.buf, " %.2f %.2f %.2f %.2f %.2f %.2f c",
+		cx-radius, cy-o, cx-o, cy-radius, cx, cy-radius)
+	fmt.Fprintf(&p.buf, " %.2f %.2f %.2f %.2f %.2f %.2f c",
+		cx+o, cy-radius, cx+radius, cy-o, cx+radius, cy)
+	if filled {
+		p.buf.WriteString(" h f\n")
+		return
+	}
+	p.SetLineWidth(float64(thickness))
+	p.buf.WriteString(" h S\n")
+}
+
 // Polygon fills a closed shape, for the wedges and hooks that are neither
 // lines nor glyphs.
 func (p *Page) Polygon(pts ...Point) {

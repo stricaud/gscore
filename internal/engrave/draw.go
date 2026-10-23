@@ -749,10 +749,10 @@ func (e *engraver) drawTexts(m *model.Marks, p *placed) {
 		if t.Text == "" {
 			continue
 		}
-		y := e.y - 2.2
+		y := e.y - 2.2 - e.textRise
 		if t.Placement == model.PlacementBelow {
 			y = e.y + staffHeight + 3.4
-		} else if p.hi > 10 {
+		} else if p.hi > 10 && e.textRise == 0 {
 			// Clear of a passage that climbs above the staff.
 			y = e.y + stepY(float64(p.hi)) - 1.8
 		}

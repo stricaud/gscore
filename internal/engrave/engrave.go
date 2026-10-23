@@ -135,6 +135,11 @@ type Hit struct {
 	// gives the staff step, and the clef turns that into a pitch.
 	StaffTop float64 `json:"staffTop"`
 	Clef     string  `json:"clef"`
+	// KeyChange and TimeChange say this bar carries a change of key or meter.
+	// The editor offers to take one away only where there is one, rather
+	// than offering always and failing when there is not.
+	KeyChange  bool `json:"keyChange,omitempty"`
+	TimeChange bool `json:"timeChange,omitempty"`
 	// Elements is what the measure already holds, with where each one landed.
 	// A click needs this to tell "select that note" from "put a note here",
 	// which is the difference between reading a score and writing one.
@@ -253,6 +258,18 @@ type Options struct {
 	// ShowTempoMark writes the metronome mark and the word that goes with it
 	// above the first staff.
 	ShowTempoMark bool
+
+	// WriteAhead draws one empty bar past the end of the music, so there is
+	// somewhere to click to carry on writing.
+	//
+	// Without it the only way to add a bar is to fill the last one and let
+	// the overflow make a new one, which means the place to click is a place
+	// that is not there yet. The bar is drawn, not stored: it becomes real
+	// when something is written in it, so a score does not pick up an empty
+	// bar at the end just for having been looked at.
+	//
+	// Not after a final barline. The piece is over.
+	WriteAhead bool
 }
 
 // DefaultOptions returns a sensible engraving setup.
@@ -264,6 +281,7 @@ func DefaultOptions() Options {
 		LineWidth:     120,
 		ShowTitle:     true,
 		ShowTempoMark: true,
+		WriteAhead:    true,
 	}
 }
 
@@ -404,6 +422,11 @@ type measureBox struct {
 	slots   []slot
 	ideal   float64
 	minimum float64
+
+	// ahead marks the empty bar drawn past the end of the music: somewhere
+	// to click to carry on writing. It has no barline of its own and is not
+	// numbered, because it is not a bar of the piece yet.
+	ahead bool
 
 	// change is the key or meter change written at the head of this measure,
 	// and prefix how much room it takes. Music changes key in the middle of a
@@ -573,6 +596,26 @@ func marksOf(el model.Element) *model.Marks {
 	return nil
 }
 
+// writesAhead reports whether to draw the extra bar.
+//
+// Only while editing, which is what the continuous strip is for, and only
+// while the music is unfinished: a final barline says the piece is over, and
+// offering somewhere to write past it invites a bar nobody wants.
+func (e *engraver) writesAhead(parts []*model.Part, count int) bool {
+	if !e.opt.WriteAhead || e.opt.Mode != Strip || count == 0 {
+		return false
+	}
+	for _, p := range parts {
+		if count-1 < len(p.Measures) {
+			switch p.Measures[count-1].RightBarline {
+			case model.BarFinal, model.BarRepeatEnd, model.BarRepeatBoth:
+				return false
+			}
+		}
+	}
+	return true
+}
+
 func (e *engraver) layout() {
 	all := e.score.Parts
 	if len(all) == 0 {
@@ -629,6 +672,17 @@ func (e *engraver) layout() {
 		if n := len(boxes[pi]); n > maxMeasures {
 			maxMeasures = n
 		}
+	}
+
+	// Room to carry on writing, when the piece has not been declared over.
+	if e.writesAhead(parts, maxMeasures) {
+		for pi, p := range parts {
+			b := e.measureBox(p, &model.Measure{Voices: []*model.Voice{{}}})
+			b.index = maxMeasures
+			b.ahead = true
+			boxes[pi] = append(boxes[pi], b)
+		}
+		maxMeasures++
 	}
 
 	// A measure is as wide as the part that needs the most room for it.

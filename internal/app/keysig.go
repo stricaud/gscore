@@ -147,6 +147,33 @@ func (a *App) handleSetKey(w http.ResponseWriter, r *http.Request) {
 	// what came before alone, which is how a piece modulates. Given for the
 	// first measure, it is simply what the piece is in.
 	at, atErr := strconv.Atoi(q.Get("at"))
+
+	// Taking a change away again. A key written in the middle of a piece is
+	// as easy to change your mind about as to write, and without this the
+	// only way back was to set it to whatever was in force before it and
+	// hope the reader noticed they cancelled out.
+	if q.Get("remove") == "1" {
+		if atErr != nil || at <= 0 {
+			http.Error(w, "there is no key change at the start to remove",
+				http.StatusBadRequest)
+			return
+		}
+		removed := 0
+		for _, p := range a.score.Parts {
+			if at < len(p.Measures) && p.Measures[at].Key != nil {
+				p.Measures[at].Key = nil
+				removed++
+			}
+		}
+		if removed == 0 {
+			http.Error(w, "there is no key change at that measure",
+				http.StatusBadRequest)
+			return
+		}
+		writeJSON(w, map[string]any{"status": "ok", "removed": removed})
+		return
+	}
+
 	if atErr != nil || at <= 0 {
 		for _, p := range a.score.Parts {
 			p.Key = model.KeySignature{Fifths: p.Transpose.Written(asked).Fifths, Mode: p.Key.Mode}

@@ -33,7 +33,6 @@ const PALETTE = [
     name: "Tools",
     open: true,
     items: [
-      { icon: "tool-select.png", label: "Select", tool: "select" },
       { g: "", label: "Whole", tool: "whole" },
       { g: "", label: "Half", tool: "half" },
       { g: "", label: "Quarter", tool: "quarter" },

@@ -150,7 +150,9 @@ func (e *engraver) drawMeasure(part *model.Part, b measureBox, x float64, stretc
 	hit := Hit{
 		Part: e.partIndex, Measure: b.index,
 		XMin: start, XMax: x, StaffTop: e.y,
-		Clef: part.Clef.String(),
+		Clef:       part.Clef.String(),
+		KeyChange:  b.m.Key != nil,
+		TimeChange: b.m.Time != nil,
 	}
 	for i, p := range items {
 		kind := "rest"
@@ -194,12 +196,16 @@ func (e *engraver) drawMeasure(part *model.Part, b measureBox, x float64, stretc
 	e.lay.Hits = append(e.lay.Hits, hit)
 
 	x += sp.BetweenMeasures * stretch
-	e.drawBarline(b.m.RightBarline, x)
-	e.lay.Barlines = append(e.lay.Barlines, BarlinePos{
-		Part: e.partIndex, Measure: b.index, X: x,
-		Top: e.y, Bottom: e.y + staffHeight,
-		Style: b.m.RightBarline.String(),
-	})
+	// The bar drawn past the end of the music has no barline: it is not a
+	// bar of the piece until something is written in it.
+	if !b.ahead {
+		e.drawBarline(b.m.RightBarline, x)
+		e.lay.Barlines = append(e.lay.Barlines, BarlinePos{
+			Part: e.partIndex, Measure: b.index, X: x,
+			Top: e.y, Bottom: e.y + staffHeight,
+			Style: b.m.RightBarline.String(),
+		})
+	}
 	return x + sp.AfterBarline*stretch
 }
 

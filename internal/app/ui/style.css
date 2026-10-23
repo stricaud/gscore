@@ -526,7 +526,6 @@ body.native #menubar { padding-left: 12px; }
   stroke-width: 1.25;
   pointer-events: none;
 }
-#canvas svg { cursor: crosshair; }
 
 /* Ctrl or Command with a drag pans the score. */
 #canvas-wrap.panning { cursor: grabbing; }
@@ -615,19 +614,33 @@ body.native #menubar { padding-left: 12px; }
   image-rendering: pixelated;
 }
 
-/* The selected element, and the mode that decides what a click does. */
 #canvas .selected { fill: var(--accent); }
-#canvas svg { cursor: default; }
-body.note-input #canvas svg { cursor: crosshair; }
-/* Shift means "select", whatever tool is held. */
-body.shift-select #canvas svg { cursor: default; }
-/* A notehead is always clickable to select, whichever mode is on. */
-#canvas text.g[data-ref] { cursor: pointer; }
-
-/* The cursor tool, from the original toolbar. */
 .tool img { width: 18px; height: 18px; image-rendering: pixelated; }
-body.tool-select #canvas svg { cursor: default; }
-body:not(.tool-select) #canvas svg { cursor: crosshair; }
+
+/* What the pointer says a click will do.
+ *
+ * Two shapes and two meanings. Writing is the crosshair, because you are
+ * placing something at a point. Selecting is the hand, because you are
+ * picking something up. Nothing else over the score shows a hand.
+ *
+ * Everything that decides this is here. Three generations of these rules had
+ * accumulated — one for a mode that no longer exists, one that set the hand
+ * on every notehead at a specificity that beat the rest — and between them
+ * the score showed a hand while you were writing in it.
+ */
+#canvas .tune,
+#canvas svg,
+#canvas text.g[data-ref],
+#canvas image[data-symbol] { cursor: crosshair; }
+
+body.shift-select #canvas .tune,
+body.shift-select #canvas svg,
+body.shift-select #canvas text.g[data-ref],
+body.shift-select #canvas image[data-symbol] { cursor: grab; }
+
+body.player #canvas .tune,
+body.player #canvas svg,
+body.player #canvas text.g[data-ref] { cursor: default; }
 #canvas rect.marquee {
   fill: var(--accent);
   fill-opacity: .14;
@@ -654,7 +667,9 @@ body:not(.tool-select) #canvas svg { cursor: crosshair; }
 
 #canvas .tune {
   border-bottom: 1px solid var(--line);
-  cursor: pointer;
+  /* The pointer shape is decided in one place; see "What the pointer says".
+     A hand here put one over the margins around every score in a book,
+     while you were writing in it. */
 }
 #canvas .tune:last-child { border-bottom: 0; }
 #canvas .tune.current { background: var(--accent-soft); }
@@ -838,8 +853,9 @@ body.fullscreen #canvas-wrap { padding: 10px; }
 .choices b { font-weight: 600; }
 .choices em { font-style: normal; font-size: 11px; color: var(--muted); }
 
-/* A hand-drawn symbol can be picked up and moved, so it says so. */
-#canvas image[data-symbol] { cursor: grab; }
+/* A hand-drawn symbol can be picked up and moved. It shows the hand only
+   while shift is held, with everything else that is picked up rather than
+   placed — a hand over the score while writing says the wrong thing. */
 #canvas image[data-symbol].dragging { cursor: grabbing; opacity: .75; }
 
 /* The lyric editor: one box for the whole verse, the way a singer's copy has

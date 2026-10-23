@@ -43,7 +43,7 @@ const state = {
   selection: null,
 
   hits: [],
-  tool: { duration: "quarter", accidental: "none", rest: false, select: false },
+  tool: { duration: "quarter", accidental: "none", rest: false },
   // A file may hold many scores; showAll puts the whole book on screen at
   // once rather than one tune at a time. It is decided when a file is opened:
   // opening a book should show the book.
@@ -71,12 +71,7 @@ const state = {
 async function paletteAction(item) {
   if (item.tool) {
     switch (item.tool) {
-      case "select":
-        state.tool.select = true;
-        state.tool.rest = false;
-        break;
       case "rest":
-        state.tool.select = false;
         state.tool.rest = true;
         if (item.dur) state.tool.duration = item.dur;
         break;
@@ -93,11 +88,9 @@ async function paletteAction(item) {
         }
         break;
       default:
-        state.tool.select = false;
         state.tool.rest = false;
         state.tool.duration = item.tool;
     }
-    document.body.classList.toggle("tool-select", state.tool.select);
     markPaletteTool((label) => label === currentToolLabel());
     status(item.label);
     return;
@@ -137,7 +130,6 @@ async function paletteAction(item) {
 
 // currentToolLabel names the tool held, so the palette can show it.
 function currentToolLabel() {
-  if (state.tool.select) return "Select";
   if (state.tool.rest) {
     return { whole: "Whole rest", half: "Half rest", quarter: "Quarter rest",
              eighth: "Eighth rest", sixteenth: "16th rest", "32nd": "32nd rest" }[state.tool.duration];
@@ -302,7 +294,7 @@ async function action(name) {
       stop();
       break;
     case "note-input":
-      selectTool(!state.tool.select);
+      status("Click the staff to write. Hold shift to select instead.");
       break;
     case "insert-note":
       await insertAtSelection(false);
@@ -884,10 +876,18 @@ function setupCanvasClicks() {
     const y = (e.clientY - r.top) / state.zoom;
 
     // A barline is its own thing to click: the line between two bars, which
-    // belongs to neither of them.
+    // belongs to neither of them. Plain, it asks what kind of barline to
+    // draw. With shift it picks up the bar it closes, which is how you say
+    // "from here" to a key or a meter — and taking the click for the dialog
+    // whatever was held meant the bar beside a barline could not be chosen
+    // at all.
     const bar = barlineAt(x, y);
     if (bar) {
-      await openBarlinePicker(bar);
+      if (e.shiftKey) {
+        selectMeasure(bar.part, bar.measure);
+      } else {
+        await openBarlinePicker(bar);
+      }
       return;
     }
 
@@ -908,7 +908,9 @@ function setupCanvasClicks() {
     }
 
     const step = stepAt(hit, y);
-    const picking = state.tool.select || e.shiftKey;
+    // Writing is what a click does. Holding shift is what selects — which
+    // is a thing you do while you hold it, not a mode you are left in.
+    const picking = e.shiftKey;
     const el = picking ? elementAt(hit, x, y) : columnAt(hit, x);
 
     // A click landing on something already there picks it up — writing a note
@@ -942,10 +944,10 @@ function setupCanvasClicks() {
       at: insertIndex(hit, x), step: step, ref: null,
     };
 
-    // The cursor tool selects and never writes — that is the whole point of
-    // it, and of gscore testing Selection.object_type == CURSOR before
-    // deciding what the mouse means. Shift asks for the same thing without
-    // putting the tool down.
+    // Shift selects and never writes. gscore 0.0.9 made this a mode, with a
+    // cursor tool to put down and pick up, and it was confusing for the
+    // reason modes usually are: what a click does depended on something you
+    // had to remember rather than on something you were doing.
     if (picking || state.readOnly) {
       markSelection();
       status(`Measure ${hit.measure + 1}`);
@@ -990,6 +992,25 @@ function selectRange(from, to) {
     : `${state.multi.length} selected \u2014 measures ${a.measure + 1}\u2013${b.measure + 1}`);
 }
 
+// selectMeasure picks up a whole bar rather than a note in it.
+//
+// This is what a key or a meter needs: "from this bar on" is a thing you say
+// about a bar, and there was no way to say it except by finding a note in the
+// bar and selecting that instead.
+function selectMeasure(part, measure) {
+  state.multi = [];
+  state.anchor = null;
+  state.selection = { part, measure, at: 0, step: 0, ref: null };
+  markSelection();
+  const hit = state.hits.find((h) => h.part === part && h.measure === measure);
+  const has = [];
+  if (hit?.keyChange) has.push("a key change");
+  if (hit?.timeChange) has.push("a meter change");
+  status(`Measure ${measure + 1}` +
+    (has.length ? ` — ${has.join(" and ")} here` : "") +
+    " · Score ▸ Key or Time applies from here");
+}
+
 // select picks up an existing element, so the next command acts on it.
 function select(hit, el) {
   state.anchor = { part: hit.part, measure: hit.measure, index: el.index };
@@ -1015,14 +1036,6 @@ function clearSelection() {
   markSelection();
 }
 
-// selectTool switches the palette to the cursor, or back to writing.
-function selectTool(wantSelect) {
-  state.tool.select = wantSelect;
-  document.body.classList.toggle("tool-select", wantSelect);
-  markPaletteTool((label) => label === currentToolLabel());
-  status(wantSelect ? "Select — click a note, or drag to select a range"
-                    : "Writing — click the staff to add a note");
-}
 
 async function insertAtSelection(rest, keepSelection) {
   const sel = state.selection;
@@ -1820,6 +1833,19 @@ async function setTimeDialog(at) {
        <span>${escapeHTML(m.label)}</span>
      </button>`).join("");
 
+  // Say where it takes effect. A meter changed from bar nine looks exactly
+  // like a meter that did nothing, if nothing says which bar it was.
+  const where = $("#timesig-where");
+  if (where) {
+    where.textContent = measure > 0
+      ? `From measure ${measure + 1} to the end, on every staff.`
+      : "For the whole piece, on every staff.";
+  }
+  const hitHere = state.hits.find(
+    (h) => h.part === part && h.measure === measure);
+  const removeBtn = $("#timesig-remove");
+  if (removeBtn) removeBtn.hidden = !(measure > 0 && hitHere?.timeChange);
+
   const dlg = $("#timesig");
   let typed = false;
 
@@ -1838,6 +1864,20 @@ async function setTimeDialog(at) {
     dlg.showModal();
   });
   $("#timesig-other").onclick = null;
+
+  if (result === "remove") {
+    const q = new URLSearchParams({
+      part: String(part), at: String(measure), time: "none",
+    });
+    const res = await fetch("/api/staff?" + q.toString(), { method: "POST" });
+    if (!res.ok) {
+      status((await res.text()).trim());
+      return;
+    }
+    await refreshScore();
+    status(`The meter change at measure ${measure + 1} is gone`);
+    return;
+  }
 
   let meter = null;
   if (typed) {
@@ -1859,7 +1899,9 @@ async function setTimeDialog(at) {
     return;
   }
   await refreshScore();
-  status(measure > 0 ? `${meter} from measure ${measure + 1}` : meter);
+  status(measure > 0
+    ? `${meter} from measure ${measure + 1}, on every staff`
+    : `${meter}, on every staff`);
 }
 
 async function setInstrumentDialog() {
@@ -2211,17 +2253,17 @@ function markFingeringMenu() {
 async function openHeaderPicker(head) {
   state.selection = {
     ...(state.selection || {}),
-    part: head.part, measure: head.measure, at: 0, step: 0, ref: null,
+    part: head.part, measure: 0, at: 0, step: 0, ref: null,
   };
   switch (head.kind) {
     case "clef":
       await setClefDialog(head.part);
       return;
     case "key":
-      await openKeyPicker(head.part, head.measure);
+      await openKeyPicker(head.part, 0);
       return;
     case "time":
-      await setTimeDialog(head.measure);
+      await setTimeDialog(0);
       return;
   }
 }
@@ -2474,20 +2516,68 @@ async function openKeyPicker(partIndex, at) {
     )
     .join("");
 
+  // Where it takes effect. A key set from bar nine looks exactly like a key
+  // that did nothing, unless something says which bar it was.
+  const measure = at !== undefined ? at : (state.selection?.measure ?? 0);
+  const where = $("#keysig-where");
+  if (where) {
+    where.textContent = measure > 0
+      ? `From measure ${measure + 1} to the end, on every staff.`
+      : "For the whole piece, on every staff.";
+  }
+
+  // Offer to take a change away only where there is one.
+  const hit = state.hits.find(
+    (h) => h.part === partIndex && h.measure === measure);
+  const remove = $("#keysig-remove");
+  if (remove) remove.hidden = !(measure > 0 && hit?.keyChange);
+
+  const dlg = $("#keysig");
   $$("#keysig-grid .keysig-option").forEach((b) =>
-    b.addEventListener("click", async () => {
-      const fifths = b.dataset.fifths;
-      const measure = at !== undefined ? at : (state.selection?.measure ?? 0);
-      const q = new URLSearchParams({ part: String(partIndex), fifths });
-      if (measure > 0) q.set("at", String(measure));
-      await fetch("/api/setkey?" + q.toString(), { method: "POST" });
-      $("#keysig").close();
-      await reload();
-      status("Key signature changed");
+    b.addEventListener("click", () => {
+      dlg.returnValue = "picked:" + b.dataset.fifths;
+      dlg.close();
     })
   );
 
-  $("#keysig").showModal();
+  const result = await new Promise((resolve) => {
+    const done = () => {
+      dlg.removeEventListener("close", done);
+      resolve(dlg.returnValue);
+    };
+    dlg.addEventListener("close", done);
+    dlg.returnValue = "";
+    dlg.showModal();
+  });
+
+  if (result === "remove") {
+    const q = new URLSearchParams({
+      part: String(partIndex), at: String(measure), remove: "1",
+    });
+    const res = await fetch("/api/setkey?" + q.toString(), { method: "POST" });
+    if (!res.ok) {
+      status((await res.text()).trim());
+      return;
+    }
+    await reload();
+    status(`The key change at measure ${measure + 1} is gone`);
+    return;
+  }
+  if (!result.startsWith("picked:")) return;
+
+  const q = new URLSearchParams({
+    part: String(partIndex), fifths: result.slice(7),
+  });
+  if (measure > 0) q.set("at", String(measure));
+  const res = await fetch("/api/setkey?" + q.toString(), { method: "POST" });
+  if (!res.ok) {
+    status("Could not set the key: " + (await res.text()).trim());
+    return;
+  }
+  await reload();
+  status(measure > 0
+    ? `Key signature from measure ${measure + 1}, on every staff`
+    : "Key signature changed, on every staff");
 }
 
 /* ---------- printing ---------- */
@@ -3266,10 +3356,10 @@ function setupMarquee() {
   let startX = 0, startHit = null;
 
   wrap.addEventListener("mousedown", (e) => {
-    // The cursor tool selects, and so does Shift with any tool. Ctrl and
+    // Shift and the left button. Ctrl and
     // Command are already panning and zooming, so Shift is the one left —
     // and holding it to select is what every other editor does anyway.
-    if (!(state.tool.select || e.shiftKey)) return;
+    if (!e.shiftKey) return;
     if (e.button !== 0 || e.ctrlKey || e.metaKey) return;
     // Even with selection off, a drag can still begin one in some browsers.
     e.preventDefault();
@@ -3579,7 +3669,7 @@ function setupKeys() {
       case "b": action("beam-join"); break;
       case "r": action("repeat-bar"); break;
       case "N": case "i":
-        selectTool(!state.tool.select);
+        status("Click the staff to write. Hold shift to select instead.");
         break;
       case "u": action("stem-up"); break;
       case "d": action("stem-down"); break;
@@ -3779,7 +3869,6 @@ async function applyPlayerMode(opt) {
   if (opt.bare) document.body.classList.add("bare");
 
   // Nothing writes any more, so a click on the staff is not an edit.
-  state.tool.select = true;
   state.readOnly = true;
 
   if (opt.bare) {
@@ -3832,7 +3921,6 @@ async function main() {
   $("#zoom").addEventListener("input", (e) => setZoom(Number(e.target.value)));
   $("#play-btn").addEventListener("click", () => (state.playing ? stop() : play()));
   $("#stop-btn").addEventListener("click", stop);
-  $("#input-btn").addEventListener("click", () => selectTool(!state.tool.select));
 
   const opt = readOptions();
   if (opt.isPlayer) await applyPlayerMode(opt);

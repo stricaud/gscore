@@ -935,3 +935,118 @@ func TestPlaybackTakesTheRightEnding(t *testing.T) {
 		}
 	}
 }
+
+// Clicking in the empty bar the engraver draws past the end of the music
+// starts a real bar there, on every staff.
+func TestWritingIntoTheBarAhead(t *testing.T) {
+	h := newHarness(t)
+	h.post("/api/addstaff?instrument=flute&clef=treble")
+	for i := 0; i < 4; i++ {
+		h.note(0, 0, 2+i, "quarter")
+	}
+	if n := len(h.app.score.Parts[0].Measures); n != 1 {
+		t.Fatalf("got %d bars", n)
+	}
+
+	// The engraver offers a second bar to click in.
+	opt := engrave.DefaultOptions()
+	opt.Mode = engrave.Strip
+	lay := engrave.Engrave(h.app.score, opt)
+	bars := map[int]bool{}
+	for _, hit := range lay.Hits {
+		bars[hit.Measure] = true
+	}
+	if !bars[1] {
+		t.Fatal("no bar to write into past the end")
+	}
+
+	// Writing in it makes it real, on both staves.
+	h.note(0, 1, 4, "quarter")
+	for i, p := range h.app.score.Parts {
+		if len(p.Measures) != 2 {
+			t.Errorf("staff %d has %d bars, want 2", i, len(p.Measures))
+		}
+	}
+
+	// A final barline ends the offer.
+	h.post("/api/barline?part=0&measure=1&style=final")
+	lay = engrave.Engrave(h.app.score, opt)
+	bars = map[int]bool{}
+	for _, hit := range lay.Hits {
+		bars[hit.Measure] = true
+	}
+	if bars[2] {
+		t.Error("still offering a bar after the final barline")
+	}
+}
+
+// A key or meter change written in the middle of a piece can be taken away
+// again, on every staff at once.
+func TestRemovingASignatureChange(t *testing.T) {
+	h := newHarness(t)
+	h.post("/api/addstaff?instrument=flute&clef=treble")
+	for bar := 0; bar < 4; bar++ {
+		if bar > 0 {
+			h.post("/api/addmeasure")
+		}
+		h.note(0, bar, 2, "quarter")
+	}
+
+	h.post("/api/setkey?part=0&fifths=-3&at=2")
+	h.post("/api/staff?part=0&time=6/8&at=2")
+	for i, p := range h.app.score.Parts {
+		if p.Measures[2].Key == nil || p.Measures[2].Time == nil {
+			t.Fatalf("staff %d did not get the changes", i)
+		}
+	}
+
+	h.post("/api/setkey?part=0&at=2&remove=1")
+	h.post("/api/staff?part=0&time=none&at=2")
+	for i, p := range h.app.score.Parts {
+		if p.Measures[2].Key != nil {
+			t.Errorf("staff %d still has a key change", i)
+		}
+		if p.Measures[2].Time != nil {
+			t.Errorf("staff %d still has a meter change", i)
+		}
+	}
+
+	// Asking to remove one that is not there says so rather than pretending.
+	if msg := h.postFails("/api/setkey?part=0&at=3&remove=1"); msg == "" {
+		t.Error("removing a change that is not there was allowed")
+	}
+	if msg := h.postFails("/api/staff?part=0&time=none&at=0"); msg == "" {
+		t.Error("removing the opening meter was allowed")
+	}
+}
+
+// The editor is told which bars carry a signature change, so it can offer to
+// take one away only where there is one.
+func TestBarsReportTheirChanges(t *testing.T) {
+	h := newHarness(t)
+	for bar := 0; bar < 4; bar++ {
+		if bar > 0 {
+			h.post("/api/addmeasure")
+		}
+		h.note(0, bar, 2, "quarter")
+	}
+	h.post("/api/setkey?part=0&fifths=2&at=1")
+	h.post("/api/staff?part=0&time=3/4&at=2")
+
+	lay := engrave.Engrave(h.app.score, engrave.DefaultOptions())
+	key, meter := map[int]bool{}, map[int]bool{}
+	for _, hit := range lay.Hits {
+		if hit.KeyChange {
+			key[hit.Measure] = true
+		}
+		if hit.TimeChange {
+			meter[hit.Measure] = true
+		}
+	}
+	if !key[1] || len(key) != 1 {
+		t.Errorf("key changes reported at %v, want only bar 2", key)
+	}
+	if !meter[2] || len(meter) != 1 {
+		t.Errorf("meter changes reported at %v, want only bar 3", meter)
+	}
+}

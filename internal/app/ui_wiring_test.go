@@ -188,3 +188,43 @@ func TestEveryDialogExists(t *testing.T) {
 		}
 	}
 }
+
+// The pointer shape over the score is decided in one place.
+//
+// Three generations of these rules had piled up — one for a mode that no
+// longer exists, one setting a hand on every notehead at a specificity that
+// beat the rest — and between them the score showed a hand while you were
+// writing in it. The same shape of mistake as the submenus: more than one
+// rule deciding one thing.
+func TestOnePlaceDecidesThePointer(t *testing.T) {
+	css := readUI(t, "style.css")
+
+	// Rules that set a cursor on the score itself, ignoring the pan overlay
+	// and the drag-in-progress state, which are gestures rather than modes.
+	rule := regexp.MustCompile(`(?m)^([^{\n]*#canvas[^{\n]*)\{[^}]*cursor:`)
+	var selectors []string
+	for _, m := range rule.FindAllStringSubmatch(css, -1) {
+		sel := strings.TrimSpace(m[1])
+		if strings.Contains(sel, "panning") || strings.Contains(sel, "dragging") {
+			continue
+		}
+		selectors = append(selectors, sel)
+	}
+	if len(selectors) == 0 {
+		t.Fatal("no pointer rules found at all; the pattern is wrong")
+	}
+
+	// They must be consecutive: one block, not scattered through the file.
+	first := strings.Index(css, selectors[0])
+	last := strings.LastIndex(css, selectors[len(selectors)-1])
+	if last-first > 700 {
+		t.Errorf("the pointer rules are spread over %d characters of the file, "+
+			"so more than one place decides it:\n  %s",
+			last-first, strings.Join(selectors, "\n  "))
+	}
+
+	// And the class of a mode that no longer exists must not linger.
+	if strings.Contains(css, "body.note-input") {
+		t.Error("body.note-input is left over from the writing/selecting mode")
+	}
+}

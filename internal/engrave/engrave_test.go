@@ -324,6 +324,9 @@ func TestStavesAlignAcrossParts(t *testing.T) {
 
 	opt := DefaultOptions()
 	opt.Mode = Strip
+	// This is about the bars that are written, not about the empty one the
+	// editor offers past them.
+	opt.WriteAhead = false
 	lay := Engrave(s, opt)
 
 	byMeasure := map[int][]float64{}

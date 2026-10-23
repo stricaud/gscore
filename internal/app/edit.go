@@ -108,7 +108,7 @@ func (a *App) handleInsert(w http.ResponseWriter, r *http.Request) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
-	p, m, err := a.locate(partIdx, measIdx)
+	p, m, err := a.locateForWriting(partIdx, measIdx)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -176,6 +176,28 @@ func (a *App) handleInsert(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{
 		"status": "ok", "measure": part, "at": idx, "index": idx,
 	})
+}
+
+// locateForWriting finds a measure to write into, making it if the click
+// landed in the empty bar the engraver draws past the end of the music.
+//
+// That bar is drawn and not stored — there is somewhere to click before there
+// is anything to click on — so writing into it is what turns it into a bar.
+// Only the one directly after the last: anywhere further is a stale click
+// from before something else changed the score.
+func (a *App) locateForWriting(partIdx, measIdx int) (*model.Part, *model.Measure, error) {
+	if partIdx < 0 || partIdx >= len(a.score.Parts) {
+		return nil, nil, editError("no such staff")
+	}
+	p := a.score.Parts[partIdx]
+	if measIdx == len(p.Measures) && measIdx > 0 {
+		// Every staff gains the bar, so the barlines stay in a column.
+		for _, other := range a.score.Parts {
+			measureAt(other, measIdx)
+		}
+		return p, p.Measures[measIdx], nil
+	}
+	return a.locate(partIdx, measIdx)
 }
 
 // measureAt returns a part's nth measure, making it and any before it if the
@@ -815,7 +837,28 @@ func (a *App) handleStaff(w http.ResponseWriter, r *http.Request) {
 		p.Clef = c
 		changed = append(changed, "clef")
 	}
-	if v := q.Get("time"); v != "" {
+	if v := q.Get("time"); v == "none" {
+		// Taking a meter change away, the same way a key change can be.
+		at, err := strconv.Atoi(q.Get("at"))
+		if err != nil || at <= 0 {
+			http.Error(w, "there is no meter change at the start to remove",
+				http.StatusBadRequest)
+			return
+		}
+		removed := 0
+		for _, part := range a.score.Parts {
+			if at < len(part.Measures) && part.Measures[at].Time != nil {
+				part.Measures[at].Time = nil
+				removed++
+			}
+		}
+		if removed == 0 {
+			http.Error(w, "there is no meter change at that measure",
+				http.StatusBadRequest)
+			return
+		}
+		changed = append(changed, "time change removed")
+	} else if v := q.Get("time"); v != "" {
 		t, err := parseMeter(v)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)

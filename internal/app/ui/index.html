@@ -194,7 +194,7 @@
       <button data-action="set-header"><span>Title and composer…</span></button>
       <hr>
       <button data-action="set-key"><span>Key signature…</span></button>
-      <button data-action="set-time"><span>Time signature…</span></button>
+      <button data-action="set-time"><span>Time signature from here…</span></button>
       <hr>
       <button data-action="score-options" disabled><span>Score options…</span></button>
       <button data-action="parameters" disabled><span>Parameters…</span></button>
@@ -278,7 +278,6 @@
   </div>
 
   <div class="transport">
-    <button id="input-btn" title="Writing (N) — click the staff to add notes; click a note to select it">✎</button>
     <button id="fs-btn" title="Full screen (F)">⤢</button>
     <button id="play-btn" title="Play (Space)">▶</button>
     <button id="stop-btn" title="Stop (Esc)">■</button>
@@ -344,9 +343,12 @@
 -->
 <dialog id="keysig">
   <h2>Key signature</h2>
-  <p class="small">Pick the signature you want to see on the staff.</p>
+  <p class="small" id="keysig-where">Pick the signature you want to see on the staff.</p>
   <div id="keysig-grid"></div>
-  <form method="dialog"><button>Cancel</button></form>
+  <form method="dialog" class="ask-buttons">
+    <button value="remove" type="submit" id="keysig-remove" hidden>Remove this change</button>
+    <button value="cancel" type="submit">Cancel</button>
+  </form>
 </dialog>
 
 <!--
@@ -422,9 +424,10 @@
 
 <dialog id="timesig">
   <h2>Time signature</h2>
-  <p class="small">Pick the one you want to see on the staff.</p>
+  <p class="small" id="timesig-where">Pick the one you want to see on the staff.</p>
   <div id="timesig-grid"></div>
   <form method="dialog" class="ask-buttons">
+    <button value="remove" type="submit" id="timesig-remove" hidden>Remove this change</button>
     <button value="cancel" type="submit">Cancel</button>
   </form>
   <p class="small">

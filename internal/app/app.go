@@ -362,6 +362,10 @@ type partInfo struct {
 	Time       string `json:"time"`
 	Measures   int    `json:"measures"`
 	Notes      int    `json:"notes"`
+	// TransposeSemitones is how far below what is written this staff sounds,
+	// so the editor can get back from a sounding note to the printed one.
+	// A fingering chart needs the printed one: fingers follow the page.
+	TransposeSemitones int `json:"transposeSemitones"`
 }
 
 func (a *App) handleInfo(w http.ResponseWriter, r *http.Request) {
@@ -411,6 +415,7 @@ func (a *App) handleInfo(w http.ResponseWriter, r *http.Request) {
 			Name: name, Instrument: p.Instrument.String(),
 			Clef: p.Clef.String(), Key: keyText(p.Key),
 			Time: p.Time.String(), Measures: len(p.Measures), Notes: notes,
+			TransposeSemitones: p.Transpose.Semitones(),
 		})
 	}
 	writeJSON(w, out)

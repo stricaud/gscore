@@ -109,6 +109,9 @@ func Render(w io.Writer, lay *engrave.Layout, opt Options) error {
 		if opt.Interactive && g.Ref != 0 {
 			attr = fmt.Sprintf(` data-ref="%d"`, g.Ref)
 		}
+		if g.Size > 0 {
+			attr += fmt.Sprintf(` font-size="%.2f"`, g.Size*s)
+		}
 		fmt.Fprintf(&b, `<text class="g" x="%.2f" y="%.2f"%s>%s</text>`+"\n",
 			g.X*s, g.Y*s, attr, html.EscapeString(string(r)))
 	}

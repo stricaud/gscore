@@ -856,3 +856,37 @@ body.player .transport { margin: 0 0 0 auto; }
 /* Chrome off entirely: just the score, playing when it is clicked. */
 body.player.bare #menubar { display: none; }
 body.player.bare { grid-template-rows: 1fr; }
+
+/* ---- fingering charts ---- */
+
+/* A covered hole is filled and an open one is not, which is how every chart
+   ever printed shows it. The levers are drawn as rounded bars because that is
+   what they are, and because an eye picking out a shape reads the difference
+   faster than it reads a label. */
+#fingering { padding-top: 2px; }
+.fing-note {
+  font: 600 20px/1 Georgia, "Times New Roman", serif;
+  color: var(--ink);
+  margin-bottom: 8px;
+}
+.fing-none { color: var(--muted); font-size: 12px; line-height: 1.5; }
+.fing-chart { display: flex; flex-direction: column; gap: 6px; }
+.fing-row { display: flex; align-items: center; gap: 5px; }
+.fing-row.extra { margin-top: 2px; opacity: .85; }
+.fing-label {
+  width: 52px;
+  flex: 0 0 auto;
+  font-size: 10px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: .04em;
+}
+.fing-hole {
+  width: 14px; height: 14px;
+  border: 1.5px solid var(--muted);
+  border-radius: 50%;
+  background: transparent;
+}
+.fing-hole.on { background: var(--ink); border-color: var(--ink); }
+.fing-hole.lever { width: 9px; height: 15px; border-radius: 5px; }
+.fing-hole.small { width: 9px; height: 9px; }

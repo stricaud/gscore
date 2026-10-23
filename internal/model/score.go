@@ -293,6 +293,47 @@ type Score struct {
 	Identity Identity
 	Tempo    Tempo
 	Parts    []*Part
+
+	// Groups join staves that belong together: the two hands of a piano, the
+	// four staves of a string quartet. Without them a score is a stack of
+	// unrelated lines, and the eye has nothing to tell it where one
+	// instrument ends and the next begins.
+	Groups []StaffGroup
+}
+
+// GroupSymbol is what is drawn down the left of a group of staves.
+type GroupSymbol int
+
+// A brace joins the staves of one instrument — a piano, a harp. A bracket
+// joins different instruments of a family — the strings, the woodwind. A plain
+// line joins without saying which.
+const (
+	GroupBracket GroupSymbol = iota
+	GroupBrace
+	GroupLine
+)
+
+func (g GroupSymbol) String() string {
+	switch g {
+	case GroupBrace:
+		return "brace"
+	case GroupLine:
+		return "line"
+	}
+	return "bracket"
+}
+
+// StaffGroup is a run of staves drawn as belonging together.
+type StaffGroup struct {
+	// First and Last are indices into Score.Parts, inclusive.
+	First, Last int
+	Symbol      GroupSymbol
+	// Barlines draws the barlines through the gap between the staves, which
+	// is what says "play these together" rather than "these are next to each
+	// other". A piano has it; a choir usually does not.
+	Barlines bool
+	// Name labels the group rather than each staff — "Piano", "Violin".
+	Name string
 }
 
 // NewScore returns the score a new document starts from: one treble part in C

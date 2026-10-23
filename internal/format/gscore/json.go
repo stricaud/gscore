@@ -51,12 +51,39 @@ type partDoc struct {
 	Beats      int          `json:"beats"`
 	Beat       int          `json:"beatValue"`
 	TimeSym    string       `json:"timeSymbol,omitempty"`
-	Measures   []measureDoc `json:"measures"`
+	// Transpose is how far below what is printed this staff sounds, written
+	// the way MusicXML writes it so the two agree.
+	Transpose *transposeDoc `json:"transpose,omitempty"`
+	Measures  []measureDoc  `json:"measures"`
+}
+
+type transposeDoc struct {
+	Diatonic     int `json:"diatonic,omitempty"`
+	Chromatic    int `json:"chromatic,omitempty"`
+	OctaveChange int `json:"octaveChange,omitempty"`
 }
 
 type measureDoc struct {
 	Barline string      `json:"barline,omitempty"`
 	Voices  [][]elemDoc `json:"voices"`
+
+	// A key or meter written here changes it from this bar on; absent means
+	// no change, which is not the same as a change to C major.
+	Fifths  *int    `json:"fifths,omitempty"`
+	Mode    string  `json:"mode,omitempty"`
+	Beats   int     `json:"beats,omitempty"`
+	Beat    int     `json:"beatValue,omitempty"`
+	TimeSym string  `json:"timeSymbol,omitempty"`
+
+	// Ending is a volta bracket over this bar.
+	Ending *endingDoc `json:"ending,omitempty"`
+}
+
+type endingDoc struct {
+	Numbers []int `json:"numbers"`
+	Start   bool  `json:"start,omitempty"`
+	Stop    bool  `json:"stop,omitempty"`
+	Open    bool  `json:"open,omitempty"`
 }
 
 type elemDoc struct {
@@ -95,6 +122,28 @@ type marksDoc struct {
 	Tuplet        *tupletDoc  `json:"tuplet,omitempty"`
 	Stem          string      `json:"stem,omitempty"`
 	Dynamic       string      `json:"dynamic,omitempty"`
+	Hairpin       *hairpinDoc `json:"hairpin,omitempty"`
+	Octave        *octaveDoc  `json:"octave,omitempty"`
+	Lyrics        []lyricDoc  `json:"lyrics,omitempty"`
+}
+
+type hairpinDoc struct {
+	Kind  string `json:"kind"` // "crescendo" or "diminuendo"
+	Start bool   `json:"start,omitempty"`
+	Stop  bool   `json:"stop,omitempty"`
+}
+
+type octaveDoc struct {
+	Amount int  `json:"amount"` // octaves, signed: 1 is 8va, -1 is 8vb
+	Start  bool `json:"start,omitempty"`
+	Stop   bool `json:"stop,omitempty"`
+}
+
+type lyricDoc struct {
+	Text     string `json:"text"`
+	Verse    int    `json:"verse,omitempty"`
+	Syllabic string `json:"syllabic,omitempty"` // "", "begin", "middle", "end"
+	Extend   bool   `json:"extend,omitempty"`
 }
 
 type tupletDoc struct {
@@ -204,8 +253,28 @@ func encodeScore(s *model.Score) *scoreDoc {
 			Beat:       p.Time.BeatValue,
 			TimeSym:    timeSymNames[p.Time.Symbol],
 		}
+		if !p.Transpose.IsZero() {
+			pd.Transpose = &transposeDoc{
+				Diatonic: p.Transpose.Diatonic, Chromatic: p.Transpose.Chromatic,
+				OctaveChange: p.Transpose.OctaveChange,
+			}
+		}
 		for _, m := range p.Measures {
 			md := measureDoc{Barline: barNames[m.RightBarline]}
+			if m.Key != nil {
+				f := m.Key.Fifths
+				md.Fifths, md.Mode = &f, modeNames[m.Key.Mode]
+			}
+			if m.Time != nil {
+				md.Beats, md.Beat = m.Time.Beats, m.Time.BeatValue
+				md.TimeSym = timeSymNames[m.Time.Symbol]
+			}
+			if m.Ending != nil {
+				md.Ending = &endingDoc{
+					Numbers: m.Ending.Numbers, Start: m.Ending.Start,
+					Stop: m.Ending.Stop, Open: m.Ending.Open,
+				}
+			}
 			for _, v := range m.Voices {
 				var ed []elemDoc
 				for _, el := range v.Elements {
@@ -257,7 +326,8 @@ func encodeElement(el model.Element) elemDoc {
 func encodeMarks(m *model.Marks) *marksDoc {
 	if len(m.Articulations) == 0 && len(m.Symbols) == 0 && m.Tuplet == nil &&
 		!m.TieStart && !m.TieStop && !m.SlurStart && !m.SlurStop &&
-		m.Stem == model.StemAuto && m.Dynamic == model.DynamicNone {
+		m.Stem == model.StemAuto && m.Dynamic == model.DynamicNone &&
+		m.Hairpin == nil && m.Octave == nil && len(m.Lyrics) == 0 {
 		return nil
 	}
 	out := &marksDoc{
@@ -281,8 +351,31 @@ func encodeMarks(m *model.Marks) *marksDoc {
 			Start: m.Tuplet.Start, Stop: m.Tuplet.Stop,
 		}
 	}
+	if m.Hairpin != nil {
+		out.Hairpin = &hairpinDoc{
+			Kind: m.Hairpin.Kind.String(),
+			Start: m.Hairpin.Start, Stop: m.Hairpin.Stop,
+		}
+	}
+	if m.Octave != nil {
+		out.Octave = &octaveDoc{
+			Amount: m.Octave.Amount, Start: m.Octave.Start, Stop: m.Octave.Stop,
+		}
+	}
+	for _, ly := range m.Lyrics {
+		out.Lyrics = append(out.Lyrics, lyricDoc{
+			Text: ly.Text, Verse: ly.Verse,
+			Syllabic: syllabicNames[ly.Syllabic], Extend: ly.Extend,
+		})
+	}
 	return out
 }
+
+var syllabicNames = map[model.Syllabic]string{
+	model.SyllableSingle: "", model.SyllableBegin: "begin",
+	model.SyllableMiddle: "middle", model.SyllableEnd: "end",
+}
+var syllabicValues = invert(syllabicNames)
 
 /*
  * Decoding
@@ -319,8 +412,29 @@ func decodeScore(doc *scoreDoc) (*model.Score, error) {
 		if p.Time.BeatValue == 0 {
 			p.Time = model.TimeSignature{Beats: 4, BeatValue: 4}
 		}
+		if t := pd.Transpose; t != nil {
+			p.Transpose = model.Transposition{
+				Diatonic: t.Diatonic, Chromatic: t.Chromatic,
+				OctaveChange: t.OctaveChange,
+			}
+		}
 		for _, md := range pd.Measures {
 			m := &model.Measure{RightBarline: barValues[md.Barline]}
+			if md.Fifths != nil {
+				m.Key = &model.KeySignature{Fifths: *md.Fifths, Mode: modeValues[md.Mode]}
+			}
+			if md.Beat > 0 {
+				m.Time = &model.TimeSignature{
+					Beats: md.Beats, BeatValue: md.Beat,
+					Symbol: timeSymValues[md.TimeSym],
+				}
+			}
+			if md.Ending != nil {
+				m.Ending = &model.Ending{
+					Numbers: md.Ending.Numbers, Start: md.Ending.Start,
+					Stop: md.Ending.Stop, Open: md.Ending.Open,
+				}
+			}
 			for _, vd := range md.Voices {
 				v := &model.Voice{}
 				for _, ed := range vd {
@@ -428,5 +542,25 @@ func decodeMarks(md *marksDoc, m *model.Marks) {
 			Actual: md.Tuplet.Actual, Normal: md.Tuplet.Normal,
 			Start: md.Tuplet.Start, Stop: md.Tuplet.Stop,
 		}
+	}
+	if h := md.Hairpin; h != nil {
+		kind := model.Crescendo
+		if h.Kind == "diminuendo" {
+			kind = model.Diminuendo
+		}
+		m.Hairpin = &model.Hairpin{Kind: kind, Start: h.Start, Stop: h.Stop}
+	}
+	if o := md.Octave; o != nil && o.Amount != 0 {
+		m.Octave = &model.OctaveShift{Amount: o.Amount, Start: o.Start, Stop: o.Stop}
+	}
+	for _, ly := range md.Lyrics {
+		verse := ly.Verse
+		if verse < 1 {
+			verse = 1
+		}
+		m.Lyrics = append(m.Lyrics, model.Lyric{
+			Text: ly.Text, Verse: verse,
+			Syllabic: syllabicValues[ly.Syllabic], Extend: ly.Extend,
+		})
 	}
 }

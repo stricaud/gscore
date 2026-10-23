@@ -346,6 +346,9 @@ async function action(name) {
     case "set-lyrics":
       await lyricsDialog();
       break;
+    case "fingering":
+      toggleFingering();
+      break;
     case "save":
       await saveScore();
       break;
@@ -815,6 +818,7 @@ function select(hit, el) {
     ref: el.ref,
   };
   markSelection();
+  updateFingering();
   status(`Selected ${el.kind} ${el.index + 1} of measure ${hit.measure + 1}`);
 }
 
@@ -1700,6 +1704,76 @@ async function lyricsDialog() {
                    : `${d.set} syllable${d.set === 1 ? "" : "s"} written`);
 }
 
+// toggleFingering switches the fingering chart on and off.
+//
+// It is a plugin in the sense that matters: it watches what is playing and
+// what is selected, and draws beside them. Nothing else in the editor knows
+// it exists, so a chart for the clarinet is a chart, not a change to gscore.
+function toggleFingering() {
+  fingering.on = !fingering.on;
+  fingering.last = null;
+  $("#fingering-group").hidden = !fingering.on;
+  const item = $('[data-action="fingering"] span');
+  if (item) item.textContent = fingering.on ? "Hide fingering" : "Show fingering";
+  if (fingering.on) {
+    updateFingering();
+    status("Fingering shown — the note that sounds, as fingers");
+  } else {
+    status("Ready");
+  }
+}
+
+// updateFingering draws the chart for whatever is current: the note being
+// played, or failing that the one selected.
+//
+// It is the *written* pitch that is shown, because fingers follow the page. A
+// saxophone part written in A is fingered in A whatever note leaves the bell,
+// and showing the sounding pitch would teach the wrong thing.
+function updateFingering(ev) {
+  if (!fingering.on) return;
+  const parts = state.info?.parts || [];
+
+  if (ev) {
+    showFingering(writtenMidiOf(ev), parts[ev.part]?.instrument);
+    return;
+  }
+  const sel = state.selection;
+  const part = parts[sel?.part ?? 0];
+  if (!sel || sel.ref === null || sel.ref === undefined) {
+    fingering.last = null;
+    showFingering(null, part?.instrument);
+    return;
+  }
+  const hit = state.hits.find((h) => h.part === sel.part && h.measure === sel.measure);
+  const el = hit && (hit.elements || []).find((x) => x.ref === sel.ref);
+  if (!el || !el.steps || !el.steps.length) {
+    fingering.last = null;
+    showFingering(null, part?.instrument);
+    return;
+  }
+  // The staff step is what is on the page; the clef turns it into a pitch.
+  showFingering(midiForStep(part?.clef || "treble", el.steps[el.steps.length - 1]),
+                part?.instrument);
+}
+
+// writtenMidiOf undoes the transposition playback applied, to get back to
+// what is printed on the staff.
+function writtenMidiOf(ev) {
+  const t = state.info?.parts?.[ev.part]?.transposeSemitones || 0;
+  return ev.midi - t;
+}
+
+// midiForStep turns a staff position into a pitch, mirroring the engraver.
+function midiForStep(clef, step) {
+  const offsets = { treble: -2, bass: 10, alto: 4, tenor: 6, percussion: 4 };
+  const index = step - (offsets[clef] ?? -2);
+  // Diatonic index 0 is C0; seven steps to the octave.
+  const octave = Math.floor(index / 7);
+  const degree = ((index % 7) + 7) % 7;
+  const semis = [0, 2, 4, 5, 7, 9, 11][degree];
+  return (octave + 1) * 12 + semis;
+}
+
 /* ---------- key signature picker ---------- */
 
 // The picker shows each signature engraved on a staff rather than named, which
@@ -2196,6 +2270,7 @@ function follow(pb) {
            .forEach((n) => n.classList.add("playing"));
       }
       current = ref;
+      if (active) updateFingering(active);
     }
 
     if (now >= total + 0.3) {
@@ -2665,6 +2740,7 @@ function setupKeys() {
         break;
       case "m": action("add-measure"); break;
       case "l": action("set-lyrics"); break;
+      case "F2": e.preventDefault(); toggleFingering(); break;
       case "N": case "i":
         selectTool(!state.tool.select);
         break;

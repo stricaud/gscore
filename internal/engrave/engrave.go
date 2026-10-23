@@ -36,6 +36,9 @@ import (
 type Glyph struct {
 	Name string
 	X, Y float64
+	// Size overrides the staff-space size the glyph is drawn at. A brace has
+	// to stretch to however many staves it joins, which no fixed size can do.
+	Size float64
 	// Ref identifies the model element this came from, numbered in the order
 	// the score is read. Playback numbers its events the same way, which is
 	// what lets the editor highlight the note that is sounding.
@@ -179,6 +182,14 @@ type Options struct {
 	// HideTimeSignature leaves the meter off, for a picture that is only
 	// meant to show a clef and a key signature.
 	HideTimeSignature bool
+	// ShowPartNames writes each staff's name at the head of the system: the
+	// full name on the first, an abbreviation on the rest, which is how a
+	// conductor's score is laid out. On a single-staff piece it is noise, so
+	// it is off unless asked for.
+	ShowPartNames bool
+	// ShowMeasureNumbers writes the bar number over the first measure of each
+	// system. Rehearsing without them means counting from the beginning.
+	ShowMeasureNumbers bool
 }
 
 // DefaultOptions returns a sensible engraving setup.

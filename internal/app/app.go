@@ -287,6 +287,7 @@ func (a *App) APIRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/view", a.handleView)
 	mux.HandleFunc("/api/group", a.handleGroup)
 	mux.HandleFunc("/api/beam", a.handleBeam)
+	mux.HandleFunc("/api/chordsymbol", a.handleChordSymbol)
 	mux.HandleFunc("/api/dynamic", a.handleDynamic)
 	mux.HandleFunc("/api/articulation", a.handleArticulation)
 	mux.HandleFunc("/api/deleteselection", a.handleDeleteSelection)

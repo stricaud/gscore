@@ -1788,3 +1788,112 @@ func (a *App) handleBeam(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, map[string]int{"changed": len(marks)})
 }
+
+// handleChordSymbol writes a chord name over a note.
+//
+// The name is given the way a musician writes it — "Em6", "Bb7", "C/G",
+// "N.C." — and taken apart here rather than in the browser, so that every
+// reader of a .gscore gets the same symbol and the engraver can set the root,
+// the quality and the bass note each at its own size.
+func (a *App) handleChordSymbol(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST required", http.StatusMethodNotAllowed)
+		return
+	}
+	q := r.URL.Query()
+	marks, err := a.marksOf(q)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	text := strings.TrimSpace(q.Get("chord"))
+	if text == "" || text == "none" {
+		for _, m := range marks {
+			m.Chord = nil
+		}
+		writeJSON(w, map[string]any{"status": "ok", "chord": ""})
+		return
+	}
+
+	sym := parseChordSymbol(text)
+	if f := q.Get("frame"); f != "" {
+		sym.Frame = parseChordFrame(f, q.Get("firstfret"), q.Get("barre"))
+	}
+	// One note carries it, not every note of a selection: a chord symbol
+	// marks where the harmony changes, and repeating it on each note of the
+	// bar would say it changes on every one.
+	marks[0].Chord = sym
+	writeJSON(w, map[string]any{"status": "ok", "chord": sym.String()})
+}
+
+// parseChordSymbol takes a chord name apart.
+//
+// "N.C." and anything else that is not a chord is kept whole: a symbol that
+// is not a chord has no root to set large and no quality to set small.
+func parseChordSymbol(s string) *model.ChordSymbol {
+	root, rest := "", s
+	if len(s) > 0 && s[0] >= 'A' && s[0] <= 'G' {
+		root, rest = s[:1], s[1:]
+		// The accidental belongs to the root, however it was typed.
+		for len(rest) > 0 && (rest[0] == '#' || rest[0] == 'b') {
+			root += rest[:1]
+			rest = rest[1:]
+		}
+		for _, sign := range []string{"♯", "♭"} {
+			for strings.HasPrefix(rest, sign) {
+				root += rest[:len(sign)]
+				rest = rest[len(sign):]
+			}
+		}
+	}
+	if root == "" {
+		return &model.ChordSymbol{Text: s}
+	}
+
+	quality, bass := rest, ""
+	if i := strings.IndexByte(rest, '/'); i >= 0 {
+		quality, bass = rest[:i], rest[i+1:]
+	}
+	return &model.ChordSymbol{Root: root, Quality: quality, Bass: bass}
+}
+
+// parseChordFrame reads a fingering as it is usually written down: one number
+// per string, low to high, with x for a string that is not played.
+//
+//	"x02220"   an open shape
+//	"133211"   a barre
+func parseChordFrame(spec, firstFret, barre string) *model.ChordFrame {
+	f := &model.ChordFrame{FirstFret: 1}
+	if v, err := strconv.Atoi(firstFret); err == nil && v > 1 {
+		f.FirstFret = v
+	}
+	if v, err := strconv.Atoi(barre); err == nil && v > 0 {
+		f.Barre = v
+	}
+
+	fields := strings.Fields(spec)
+	if len(fields) <= 1 {
+		// Written as one run of characters, which only works up to fret 9 —
+		// past that the spaced form is the one to use.
+		for _, c := range spec {
+			switch {
+			case c == 'x' || c == 'X' || c == '-':
+				f.Frets = append(f.Frets, -1)
+			case c >= '0' && c <= '9':
+				f.Frets = append(f.Frets, int(c-'0'))
+			}
+		}
+		return f
+	}
+	for _, field := range fields {
+		if field == "x" || field == "X" || field == "-" {
+			f.Frets = append(f.Frets, -1)
+			continue
+		}
+		if v, err := strconv.Atoi(field); err == nil {
+			f.Frets = append(f.Frets, v)
+		}
+	}
+	return f
+}

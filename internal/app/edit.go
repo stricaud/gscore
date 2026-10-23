@@ -1571,3 +1571,140 @@ func (a *App) handleGetLyrics(w http.ResponseWriter, r *http.Request) {
 }
 
 func endsHyphenated(s string) bool { return strings.HasSuffix(s, "-") }
+
+// handleText writes words beside a note: "rit.", "solo", a reminder.
+func (a *App) handleText(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST required", http.StatusMethodNotAllowed)
+		return
+	}
+	q := r.URL.Query()
+	marks, err := a.marksOf(q)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	text := strings.TrimSpace(q.Get("text"))
+
+	place := model.PlacementAbove
+	if q.Get("placement") == "below" {
+		place = model.PlacementBelow
+	}
+	for _, m := range marks {
+		if text == "" {
+			m.Texts = nil
+			continue
+		}
+		m.Texts = append(m.Texts, model.TextMark{
+			Text: text, Placement: place,
+			Italic: q.Get("italic") == "1", Bold: q.Get("bold") == "1",
+		})
+		// Words go on one note, not on every note of a passage.
+		break
+	}
+	writeJSON(w, map[string]any{"status": "ok", "text": text})
+}
+
+// handleMarker puts a rehearsal mark on a bar, across the whole score.
+func (a *App) handleMarker(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST required", http.StatusMethodNotAllowed)
+		return
+	}
+	q := r.URL.Query()
+	measIdx, _ := strconv.Atoi(q.Get("measure"))
+	text := strings.TrimSpace(q.Get("text"))
+
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	found := false
+	for _, p := range a.score.Parts {
+		if measIdx < 0 || measIdx >= len(p.Measures) {
+			continue
+		}
+		// Every staff, because "from letter B" has to mean the same bar to
+		// everybody. A mark on one staff is a mark nobody else can find.
+		p.Measures[measIdx].Marker = text
+		found = true
+	}
+	if !found {
+		http.Error(w, "there is no such measure", http.StatusBadRequest)
+		return
+	}
+	writeJSON(w, map[string]any{"status": "ok", "measure": measIdx, "text": text})
+}
+
+// handleView changes how the score is drawn rather than what it says.
+func (a *App) handleView(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST required", http.StatusMethodNotAllowed)
+		return
+	}
+	q := r.URL.Query()
+
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	changed := []string{}
+	if v := q.Get("names"); v != "" {
+		a.engraveOpt.ShowPartNames = v == "1"
+		changed = append(changed, "names")
+	}
+	if v := q.Get("numbers"); v != "" {
+		a.engraveOpt.ShowMeasureNumbers = v == "1"
+		changed = append(changed, "numbers")
+	}
+	writeJSON(w, map[string]any{
+		"status":  "ok",
+		"changed": changed,
+		"names":   a.engraveOpt.ShowPartNames,
+		"numbers": a.engraveOpt.ShowMeasureNumbers,
+	})
+}
+
+// handleGroup joins staves with a brace or a bracket.
+func (a *App) handleGroup(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST required", http.StatusMethodNotAllowed)
+		return
+	}
+	q := r.URL.Query()
+	first, _ := strconv.Atoi(q.Get("first"))
+	last, _ := strconv.Atoi(q.Get("last"))
+
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	if q.Get("symbol") == "none" {
+		// Take away whatever group covers these staves.
+		var kept []model.StaffGroup
+		for _, g := range a.score.Groups {
+			if g.First == first && g.Last == last {
+				continue
+			}
+			kept = append(kept, g)
+		}
+		a.score.Groups = kept
+		writeJSON(w, map[string]any{"status": "ok", "groups": len(a.score.Groups)})
+		return
+	}
+
+	if first < 0 || last >= len(a.score.Parts) || last <= first {
+		http.Error(w, "a group joins two staves or more", http.StatusBadRequest)
+		return
+	}
+	symbol := model.GroupBracket
+	switch q.Get("symbol") {
+	case "brace":
+		symbol = model.GroupBrace
+	case "line":
+		symbol = model.GroupLine
+	}
+	a.score.Groups = append(a.score.Groups, model.StaffGroup{
+		First: first, Last: last, Symbol: symbol,
+		Barlines: q.Get("barlines") == "1" || symbol == model.GroupBrace,
+		Name:     q.Get("name"),
+	})
+	writeJSON(w, map[string]any{"status": "ok", "groups": len(a.score.Groups)})
+}

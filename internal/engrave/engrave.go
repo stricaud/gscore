@@ -397,6 +397,9 @@ func (e *engraver) headroom() float64 {
 			if m.Ending != nil && need < voltaRise+1 {
 				need = voltaRise + 1
 			}
+			if m.Marker != "" && need < 4.4 {
+				need = 4.4
+			}
 			for _, v := range m.Voices {
 				for _, el := range v.Elements {
 					mk := marksOf(el)
@@ -472,6 +475,12 @@ func (e *engraver) layout() {
 			if v := e.prefixWidth(p, at); v > w {
 				w = v
 			}
+		}
+		// The names and the bracket live in front of the clefs, and the music
+		// has to start to the right of all of it.
+		w += e.labelWidth(parts, at == 0)
+		if len(e.score.Groups) > 0 {
+			w += groupGap + bracketThickness
 		}
 		return w
 	}
@@ -853,6 +862,8 @@ func (e *engraver) drawSystem(parts []*model.Part, boxes [][]measureBox,
 	// The volta brackets belong to the system, not to a staff: they are drawn
 	// once above the top one before the staves move the cursor down.
 	e.drawVoltas(parts, columns, start, end, top)
+	e.drawMeasureNumber(start+1, sp.Margin+prefix, top)
+	e.drawMarkers(parts, columns, start, end, top)
 
 	// Words written under a staff need the staff below to move out of the way.
 	wordRoom := 0.0
@@ -860,13 +871,18 @@ func (e *engraver) drawSystem(parts []*model.Part, boxes [][]measureBox,
 		wordRoom = lyricDrop + float64(n-1)*lyricLine
 	}
 
+	// Where each staff of this system was put, for the things drawn across
+	// all of them: the brace, the bracket and the names.
+	staffTops := make([]float64, 0, len(parts))
+
 	for pi, p := range parts {
 		e.clef = p.Clef
 		// A hairpin or an octave line cut off at the end of the last system
 		// starts again here, at this system's left edge.
 		e.resumeSpans(pi, sp.Margin+prefix)
 
-		px := sp.Margin + sp.ClefBefore
+		staffTops = append(staffTops, e.y)
+		px := sp.Margin + prefix - e.prefixWidth(p, start) + sp.ClefBefore
 		px = e.drawClef(p, px)
 		px = e.drawKeySignature(p, p.KeyAt(start), px)
 		e.drawTimeSignature(p, p.TimeAt(start), px)
@@ -902,6 +918,13 @@ func (e *engraver) drawSystem(parts []*model.Part, boxes [][]measureBox,
 		if pi < len(parts)-1 {
 			e.y += staffHeight + sp.StaffGap + wordRoom
 		}
+	}
+
+	// The names and the brace reach across every staff of the system, so they
+	// are drawn once the staves' positions are all known.
+	e.drawGroups(parts, sp.Margin+prefix, staffTops, start == 0)
+	for i := range columns {
+		e.drawGroupBarlines(columns[i], staffTops)
 	}
 
 	e.y = top + float64(len(parts)-1)*(staffHeight+sp.StaffGap+wordRoom)

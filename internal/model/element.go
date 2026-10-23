@@ -310,6 +310,21 @@ type Marks struct {
 
 	// Lyrics are the syllables sung on this note, one per verse.
 	Lyrics []Lyric
+
+	// Texts are words written near this note: "rit.", "solo", a fingering, a
+	// note to the player. They hang off a note rather than off a point on the
+	// page, so that they stay where they belong when the music is re-engraved
+	// at another size — which is the same reason symbols do.
+	Texts []TextMark
+}
+
+// TextMark is a piece of writing attached to a note.
+type TextMark struct {
+	Text      string
+	Placement Placement
+	// Offsets are in staff spaces from where the engraver would put it.
+	OffsetX, OffsetY float64
+	Italic, Bold     bool
 }
 
 // Syllabic says where a syllable falls in its word, which is what decides

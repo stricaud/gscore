@@ -102,6 +102,9 @@
       <button data-action="insert-rest"><span>Rest</span></button>
       <button data-action="add-measure"><span>Measure</span><kbd>M</kbd></button>
       <hr>
+      <button data-action="insert-text"><span>Text…</span><kbd>T</kbd></button>
+      <button data-action="insert-marker"><span>Rehearsal mark…</span></button>
+      <hr>
 
       <div class="submenu">
         <button class="submenu-title"><span>Barline</span><kbd>▸</kbd></button>
@@ -192,6 +195,15 @@
       <button data-action="set-lyrics"><span>Lyrics…</span><kbd>L</kbd></button>
       <button data-action="fingering"><span>Show fingering</span><kbd>F2</kbd></button>
       <hr>
+      <div class="submenu">
+        <button class="submenu-title"><span>Join staves</span><kbd>▸</kbd></button>
+        <div class="menu-items">
+          <button data-action="group-brace"><span>Brace — one instrument</span></button>
+          <button data-action="group-bracket"><span>Bracket — a family</span></button>
+          <button data-action="group-none"><span>Nothing</span></button>
+        </div>
+      </div>
+      <hr>
       <button data-action="tab" disabled><span>Tab</span></button>
       <button data-action="chord-builder" disabled><span>Chord builder…</span></button>
       <button data-action="tab-transposition" disabled><span>Tab transposition…</span></button>
@@ -212,10 +224,15 @@
       <button data-action="zoom-out"><span>Zoom out</span><kbd>⌘-</kbd></button>
       <button data-action="zoom-reset"><span>Actual size</span><kbd>⌘0</kbd></button>
       <hr>
-      <button data-action="view-tempo" disabled><span>Tempo</span></button>
-      <button data-action="view-barlines" disabled><span>Barlines</span></button>
-      <button data-action="view-ending-bar" disabled><span>Ending bar</span></button>
-      <button data-action="view-key-signature" disabled><span>Key signature</span></button>
+      <button data-action="view-names"><span>Staff names</span><kbd id="names-tick"></kbd></button>
+      <button data-action="view-numbers"><span>Measure numbers</span><kbd id="numbers-tick"></kbd></button>
+      <hr>
+      <div class="submenu">
+        <button class="submenu-title"><span>Fingering</span><kbd>▸</kbd></button>
+        <div class="menu-items" id="fingering-menu">
+          <button data-action="fingering-off"><span>Off</span></button>
+        </div>
+      </div>
     </div>
   </div>
 

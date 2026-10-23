@@ -56,6 +56,8 @@ const state = {
   // Player mode: nothing edits, and playing may go round again at the end.
   readOnly: false,
   loop: false,
+  // Drawing options that belong to the view rather than to the file.
+  view: { names: false, numbers: false },
   // Where each measure's closing barline was drawn, so one can be clicked.
   barlines: [],
 };
@@ -349,6 +351,22 @@ async function action(name) {
     case "fingering":
       toggleFingering();
       break;
+    case "fingering-off":
+      fingering.on = false;
+      $("#fingering-group").hidden = true;
+      markFingeringMenu();
+      status("Ready");
+      break;
+
+    case "view-names": await setView("names", !state.view.names); break;
+    case "view-numbers": await setView("numbers", !state.view.numbers); break;
+
+    case "insert-text": await textDialog(); break;
+    case "insert-marker": await markerDialog(); break;
+
+    case "group-brace": await joinStaves("brace"); break;
+    case "group-bracket": await joinStaves("bracket"); break;
+    case "group-none": await joinStaves("none"); break;
     case "save":
       await saveScore();
       break;
@@ -526,6 +544,8 @@ async function loadInfo() {
   }
 
   $("#empty-hint").hidden = !i.parts.every((p) => p.notes === 0);
+  markFingeringMenu();
+  markViewTicks();
 
   // An importer that only understood part of a file says so here, rather than
   // leaving half a score on screen with no explanation.
@@ -1712,7 +1732,15 @@ async function lyricsDialog() {
 function toggleFingering() {
   fingering.on = !fingering.on;
   fingering.last = null;
+  // Default to the first staff that has a chart, so switching it on shows
+  // something rather than "no chart for this staff".
+  const parts = state.info?.parts || [];
+  if (fingering.on && !fingeringChartFor(parts[fingering.staff]?.instrument)) {
+    const i = parts.findIndex((p) => fingeringChartFor(p.instrument));
+    if (i >= 0) fingering.staff = i;
+  }
   $("#fingering-group").hidden = !fingering.on;
+  markFingeringMenu();
   const item = $('[data-action="fingering"] span');
   if (item) item.textContent = fingering.on ? "Hide fingering" : "Show fingering";
   if (fingering.on) {
@@ -1734,12 +1762,15 @@ function updateFingering(ev) {
   const parts = state.info?.parts || [];
 
   if (ev) {
+    // Only the staff being followed. A score has many, and a student is
+    // learning one instrument.
+    if (ev.part !== fingering.staff) return;
     showFingering(writtenMidiOf(ev), parts[ev.part]?.instrument);
     return;
   }
   const sel = state.selection;
-  const part = parts[sel?.part ?? 0];
-  if (!sel || sel.ref === null || sel.ref === undefined) {
+  const part = parts[fingering.staff] || parts[sel?.part ?? 0];
+  if (!sel || sel.part !== fingering.staff || sel.ref === null || sel.ref === undefined) {
     fingering.last = null;
     showFingering(null, part?.instrument);
     return;
@@ -1772,6 +1803,157 @@ function midiForStep(clef, step) {
   const degree = ((index % 7) + 7) % 7;
   const semis = [0, 2, 4, 5, 7, 9, 11][degree];
   return (octave + 1) * 12 + semis;
+}
+
+// setView turns one of the drawing options on or off. These change how the
+// score is drawn, not what it says, so they belong to the view and not to the
+// file.
+async function setView(what, on) {
+  const res = await fetch(`/api/view?${what}=${on ? 1 : 0}`, { method: "POST" });
+  if (!res.ok) {
+    status("Could not change the view");
+    return;
+  }
+  const d = await res.json();
+  state.view.names = !!d.names;
+  state.view.numbers = !!d.numbers;
+  markViewTicks();
+  await refreshScore();
+  status(what === "names"
+    ? (on ? "Staff names shown" : "Staff names hidden")
+    : (on ? "Measure numbers shown" : "Measure numbers hidden"));
+}
+
+function markViewTicks() {
+  const n = $("#names-tick"), m = $("#numbers-tick");
+  if (n) n.textContent = state.view.names ? "✓" : "";
+  if (m) m.textContent = state.view.numbers ? "✓" : "";
+}
+
+// textDialog writes words beside the selected note.
+async function textDialog() {
+  if (!hasSelection()) {
+    status("Click a note first — the words go beside it");
+    return;
+  }
+  const v = await ask({
+    title: "Text", label: "Words",
+    note: "Written above the staff beside the note that is selected. " +
+          "Drag it afterwards to move it.",
+  });
+  if (v === null) return;
+  const sel = state.selection;
+  const p = new URLSearchParams({
+    part: String(sel.part), measure: String(sel.measure), at: String(sel.at),
+    text: v,
+  });
+  const res = await fetch("/api/text?" + p.toString(), { method: "POST" });
+  if (!res.ok) {
+    status("Could not write it: " + (await res.text()).trim());
+    return;
+  }
+  await refreshScore();
+  status(v === "" ? "Text removed" : "Text written");
+}
+
+// markerDialog puts a rehearsal mark on the current bar, across every staff.
+async function markerDialog() {
+  const sel = state.selection;
+  if (!sel) {
+    status("Click a measure first");
+    return;
+  }
+  // The next letter, so marks run A, B, C without being typed each time.
+  const v = await ask({
+    title: `Rehearsal mark at measure ${sel.measure + 1}`,
+    label: "Mark",
+    value: nextMarkerLetter(),
+    note: "Written over every staff, because “from B” has to mean the same " +
+          "bar to everyone. Leave it empty to take it away.",
+  });
+  if (v === null) return;
+  const p = new URLSearchParams({ measure: String(sel.measure), text: v });
+  const res = await fetch("/api/marker?" + p.toString(), { method: "POST" });
+  if (!res.ok) {
+    status("Could not set it: " + (await res.text()).trim());
+    return;
+  }
+  await refreshScore();
+  status(v === "" ? "Mark removed" : "Mark " + v);
+}
+
+// nextMarkerLetter guesses what comes next by counting what is drawn.
+function nextMarkerLetter() {
+  const svg = currentSVG();
+  let n = 0;
+  svg?.querySelectorAll("text.t").forEach((t) => {
+    if (/^[A-Z]$/.test(t.textContent.trim())) n++;
+  });
+  return String.fromCharCode(65 + Math.min(25, n));
+}
+
+// joinStaves draws a brace or a bracket down the staves that are selected.
+async function joinStaves(symbol) {
+  const parts = state.info?.parts || [];
+  if (parts.length < 2) {
+    status("There is only one staff to join");
+    return;
+  }
+  // Which staves: the ones touched by the selection, or all of them.
+  let first = 0, last = parts.length - 1;
+  if (state.multi.length) {
+    first = Math.min(...state.multi.map((m) => m.part));
+    last = Math.max(...state.multi.map((m) => m.part));
+  }
+  if (last <= first) { first = 0; last = parts.length - 1; }
+
+  const p = new URLSearchParams({
+    first: String(first), last: String(last), symbol,
+  });
+  if (symbol === "brace") p.set("barlines", "1");
+  const res = await fetch("/api/group?" + p.toString(), { method: "POST" });
+  if (!res.ok) {
+    status("Could not join them: " + (await res.text()).trim());
+    return;
+  }
+  await refreshScore();
+  status(symbol === "none"
+    ? "Staves no longer joined"
+    : `Staves ${first + 1}–${last + 1} joined with a ${symbol}`);
+}
+
+// markFingeringMenu builds the list of staves to follow, since which staff is
+// worth watching depends on what is in the score.
+function markFingeringMenu() {
+  const box = $("#fingering-menu");
+  if (!box) return;
+  const parts = state.info?.parts || [];
+  box.innerHTML =
+    `<button data-action="fingering-off"><span>Off</span>` +
+    `<kbd>${fingering.on ? "" : "✓"}</kbd></button>` +
+    (parts.length ? "<hr>" : "") +
+    parts.map((p, i) => {
+      const has = !!fingeringChartFor(p.instrument);
+      const tick = fingering.on && fingering.staff === i ? "✓" : "";
+      return `<button data-fingering-staff="${i}"${has ? "" : " disabled"}>` +
+             `<span>${escapeHTML(p.name || "Staff " + (i + 1))}` +
+             ` — ${escapeHTML(p.instrument || "no instrument")}</span>` +
+             `<kbd>${tick}</kbd></button>`;
+    }).join("");
+
+  $$("[data-fingering-staff]").forEach((b) =>
+    b.addEventListener("click", () => {
+      if (b.disabled) return;
+      closeMenus();
+      fingering.on = true;
+      fingering.staff = Number(b.dataset.fingeringStaff);
+      fingering.last = null;
+      $("#fingering-group").hidden = false;
+      markFingeringMenu();
+      updateFingering();
+      status("Following " + (state.info?.parts?.[fingering.staff]?.instrument || "that staff"));
+    })
+  );
 }
 
 /* ---------- key signature picker ---------- */
@@ -2741,6 +2923,7 @@ function setupKeys() {
       case "m": action("add-measure"); break;
       case "l": action("set-lyrics"); break;
       case "F2": e.preventDefault(); toggleFingering(); break;
+      case "t": action("insert-text"); break;
       case "N": case "i":
         selectTool(!state.tool.select);
         break;

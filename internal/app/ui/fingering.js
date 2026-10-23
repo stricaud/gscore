@@ -134,6 +134,10 @@ const fingering = {
   on: false,
   chart: null,
   last: null,
+  // Which staff to follow. A score has many, and the student is learning one
+  // instrument: showing the trumpet's fingers while the flute part plays
+  // would be worse than showing none.
+  staff: 0,
 };
 
 // fingeringChartFor picks the chart for a staff's instrument.

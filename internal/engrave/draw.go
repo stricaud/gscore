@@ -120,6 +120,7 @@ func (e *engraver) drawMeasure(part *model.Part, b measureBox, x float64, stretc
 			e.drawDynamic(m, p)
 			e.spanAt(m, p)
 			e.drawLyrics(m, p)
+			e.drawTexts(m, p)
 		}
 	}
 
@@ -703,6 +704,30 @@ func (e *engraver) drawDynamic(m *model.Marks, p *placed) {
 	}
 	x := p.x + noteheadWidth(p.value)/2 - smufl.Advance(name)/2
 	e.lay.Glyphs = append(e.lay.Glyphs, Glyph{Name: name, X: x, Y: y})
+}
+
+// drawTexts writes the words attached to a note: "rit.", "solo", a reminder to
+// the player.
+//
+// Above the staff unless told otherwise, because that is where a direction to
+// the player goes and below is where the dynamics and the words already are.
+func (e *engraver) drawTexts(m *model.Marks, p *placed) {
+	for _, t := range m.Texts {
+		if t.Text == "" {
+			continue
+		}
+		y := e.y - 2.2
+		if t.Placement == model.PlacementBelow {
+			y = e.y + staffHeight + 3.4
+		} else if p.hi > 10 {
+			// Clear of a passage that climbs above the staff.
+			y = e.y + stepY(float64(p.hi)) - 1.8
+		}
+		e.lay.Texts = append(e.lay.Texts, Text{
+			S: t.Text, X: p.x + t.OffsetX, Y: y + t.OffsetY,
+			Size: 1.9, Anchor: "start", Italic: t.Italic, Bold: t.Bold,
+		})
+	}
 }
 
 // drawLyrics writes the words under the staff, one line per verse.

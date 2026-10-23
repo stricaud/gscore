@@ -217,6 +217,11 @@ type Measure struct {
 	// repeat. It is stored per measure of each part, as MusicXML stores it,
 	// and drawn once above the system.
 	Ending *Ending
+
+	// Marker is a rehearsal mark — the boxed A, B, C that a conductor calls
+	// out. It belongs to the bar across the whole score, because "from B"
+	// has to mean the same bar to everybody in the room.
+	Marker string
 }
 
 // Ending is one bracket of a repeated passage — the "1." and "2." written over

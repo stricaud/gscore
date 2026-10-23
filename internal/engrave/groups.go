@@ -223,6 +223,40 @@ func (e *engraver) drawGroupBarlines(x float64, tops []float64) {
 	}
 }
 
+// drawMarkers writes the rehearsal marks over a system.
+//
+// They are drawn once, above the top staff, and taken from whichever part has
+// them: "from letter B" has to mean the same bar to every player in the room,
+// so a mark that belonged to one staff would be worse than none.
+func (e *engraver) drawMarkers(parts []*model.Part, columns []float64, start, end int, top float64) {
+	for mi := start; mi < end; mi++ {
+		text := ""
+		for _, p := range parts {
+			if mi < len(p.Measures) && p.Measures[mi].Marker != "" {
+				text = p.Measures[mi].Marker
+				break
+			}
+		}
+		if text == "" {
+			continue
+		}
+		x := columns[mi-start]
+		e.lay.Texts = append(e.lay.Texts, Text{
+			S: text, X: x, Y: top - 2.0, Size: 2.4, Anchor: "start", Bold: true,
+		})
+		// The box around it, which is what makes a rehearsal mark findable
+		// when somebody says "from B" and everybody is looking for a letter.
+		w := textWidth(text, 2.4) + 0.8
+		t := e.opt.Defaults.StaffLineThickness * 1.3
+		y0, y1 := top-4.0, top-1.3
+		e.lay.Lines = append(e.lay.Lines,
+			Line{X1: x - 0.4, Y1: y0, X2: x - 0.4 + w, Y2: y0, Thickness: t},
+			Line{X1: x - 0.4, Y1: y1, X2: x - 0.4 + w, Y2: y1, Thickness: t},
+			Line{X1: x - 0.4, Y1: y0, X2: x - 0.4, Y2: y1, Thickness: t},
+			Line{X1: x - 0.4 + w, Y1: y0, X2: x - 0.4 + w, Y2: y1, Thickness: t})
+	}
+}
+
 // drawMeasureNumber writes the bar number over the start of a system.
 func (e *engraver) drawMeasureNumber(n int, x, top float64) {
 	if !e.opt.ShowMeasureNumbers || n <= 1 {

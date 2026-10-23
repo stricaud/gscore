@@ -981,3 +981,93 @@ func TestStemDirection(t *testing.T) {
 		t.Errorf("the second note is %v, want auto", notes[1].Stem)
 	}
 }
+
+func TestProseIsNotReadAsMusic(t *testing.T) {
+	// Read as music, a sentence is not an error: a, e, d, c, b, f and g are
+	// all note letters, so it quietly writes a bar of nonsense into the tune.
+	// That is worse than failing, because nothing says it happened.
+	src := "X:1\nK:C\nabc\nThere should be a quaver rest after the last note.\ndef\n"
+	s, err := Import(stringReader(src))
+	var partial *PartialError
+	if !errors.As(err, &partial) {
+		t.Fatalf("err = %v, want the sentence reported as skipped", err)
+	}
+	if n := len(notesOf(s)); n != 6 {
+		t.Errorf("got %d notes, want 6: the sentence became %d of them", n, n-6)
+	}
+}
+
+func TestDecorationNamesAreNotMistakenForProse(t *testing.T) {
+	// The name inside a !...! is spelt out in letters and none of them are
+	// notes, which once made a bar of ornaments look like a sentence.
+	s, err := Import(stringReader("K:C\n!fermata!c !nosuchmark!e !pralltriller!g\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := len(notesOf(s)); n != 3 {
+		t.Errorf("got %d notes, want 3", n)
+	}
+}
+
+func TestAnnotationsAreNotMistakenForProse(t *testing.T) {
+	// A line that is one annotation and a continuation mark is a real line
+	// out of two of the tune books, and it is not prose.
+	s, err := Import(stringReader("X:1\nK:C\n\"_Old notation. Duplicate at p.70.\"c4 c2\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := len(notesOf(s)); n != 2 {
+		t.Errorf("got %d notes, want 2", n)
+	}
+}
+
+func TestIndentedFieldsAreStillFields(t *testing.T) {
+	// " F: http://..." read as music is a bar of nonsense. The spec says a
+	// field starts in the first column; refusing to read a source note
+	// because somebody lined it up is not worth the fidelity.
+	s, err := Import(stringReader("X:1\n  T: Indented\n  K: G\n  abc\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.Identity.Title != "Indented" {
+		t.Errorf("title = %q, want %q", s.Identity.Title, "Indented")
+	}
+	if got := s.Parts[0].Key.Fifths; got != 1 {
+		t.Errorf("key fifths = %d, want 1", got)
+	}
+	if n := len(notesOf(s)); n != 3 {
+		t.Errorf("got %d notes, want 3", n)
+	}
+}
+
+func TestMixedEncodingDecodesPerCharacter(t *testing.T) {
+	// A file with one bad byte in it and UTF-8 everywhere else used to be
+	// decoded as if the whole thing were single-byte, which turned every é in
+	// it into Ã©: one mistyped character cost the reading of all the others.
+	data := []byte("La Bo\xc3\xaete \x92 musique") // UTF-8 î, then a stray CP1252 byte
+	got := decodeText(data)
+	if !strings.Contains(got, "Boîte") {
+		t.Errorf("decoded %q; the UTF-8 î did not survive the bad byte", got)
+	}
+	if !strings.Contains(got, "’") {
+		t.Errorf("decoded %q; byte 0x92 is a curly apostrophe in Windows-1252", got)
+	}
+}
+
+func TestIgnoredCharactersAreReportedWhole(t *testing.T) {
+	// The scanner works in bytes because ABC's syntax is all ASCII, but a
+	// degree sign in the middle of a bar is one character to the person who
+	// typed it. Stepping over it a byte at a time reported it twice, each
+	// time as a piece of mojibake that appears nowhere in their file.
+	_, err := Import(stringReader("X:1\nK:C\nabc°def\n"))
+	var partial *PartialError
+	if !errors.As(err, &partial) {
+		t.Fatal("the stray character was not reported at all")
+	}
+	if n := len(partial.Skipped); n != 1 {
+		t.Errorf("reported %d times, want once: %v", n, partial.Skipped)
+	}
+	if !strings.Contains(partial.Skipped[0], "°") {
+		t.Errorf("reported %q, which is not the character in the file", partial.Skipped[0])
+	}
+}

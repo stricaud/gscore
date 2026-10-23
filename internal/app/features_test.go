@@ -1566,3 +1566,65 @@ func TestDrumKitIsAnInstrumentChoice(t *testing.T) {
 		t.Error("writing on the converted staff gave a pitch, not a drum")
 	}
 }
+
+// A file the importer could only partly read reports every line it skipped,
+// not a count of them.
+//
+// The person who wrote the file is the one who can correct it, so they get
+// the list. Reducing it to the first line before anybody saw it left them
+// with nothing to go on.
+func TestImportLogListsEverySkippedLine(t *testing.T) {
+	h := newHarness(t)
+
+	// Two sentences in the middle of a tune: read as music they would each
+	// become a bar of nonsense.
+	src := "X:1\nT:Partly readable\nK:C\nabc\n" +
+		"There should be a quaver rest after the last note.\n" +
+		"def\n" +
+		"The second strain is in the minor throughout.\n" +
+		"gab\n"
+	h.postBody("/api/open?name=partial.abc", src)
+
+	var got struct {
+		Warning string   `json:"warning"`
+		Log     []string `json:"log"`
+	}
+	if err := json.Unmarshal([]byte(h.get("/api/info")), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Warning == "" {
+		t.Fatal("a partly read file reported no warning at all")
+	}
+	if len(got.Log) != 2 {
+		t.Fatalf("the log has %d entries, want 2: %v", len(got.Log), got.Log)
+	}
+	for _, line := range got.Log {
+		if !strings.Contains(line, "line ") {
+			t.Errorf("a log entry does not say which line: %q", line)
+		}
+	}
+
+	// And the music around them was kept: that is the whole point of reading
+	// past a mistake rather than refusing the file.
+	if !strings.Contains(h.get("/api/info"), "Partly readable") {
+		t.Error("the tune was not opened")
+	}
+}
+
+// A file that reads cleanly leaves the log empty, so that the log window
+// having anything in it means something.
+func TestACleanFileLeavesNoLog(t *testing.T) {
+	h := newHarness(t)
+	h.postBody("/api/open?name=clean.abc", "X:1\nT:Clean\nK:C\nabcd|efga|\n")
+
+	var got struct {
+		Warning string   `json:"warning"`
+		Log     []string `json:"log"`
+	}
+	if err := json.Unmarshal([]byte(h.get("/api/info")), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Warning != "" || len(got.Log) != 0 {
+		t.Errorf("a clean file reported %q and %v", got.Warning, got.Log)
+	}
+}

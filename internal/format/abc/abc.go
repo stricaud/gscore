@@ -199,12 +199,43 @@ func decodeText(data []byte) string {
 	if utf8.Valid(data) {
 		return string(data)
 	}
+	// Character by character, not all or nothing. A file with one bad byte in
+	// it and UTF-8 everywhere else used to be decoded as if the whole thing
+	// were single-byte, which turned every é in it into Ã©: one mistyped
+	// character cost the correct reading of all the others.
 	var b strings.Builder
 	b.Grow(len(data))
-	for _, c := range data {
-		b.WriteRune(rune(c))
+	for i := 0; i < len(data); {
+		if r, n := utf8.DecodeRune(data[i:]); r != utf8.RuneError || n > 1 {
+			b.WriteRune(r)
+			i += n
+			continue
+		}
+		b.WriteRune(cp1252(data[i]))
+		i++
 	}
 	return b.String()
+}
+
+// cp1252High maps the bytes 0x80 to 0x9F, the only range where Windows-1252
+// differs from Latin-1.
+//
+// Those bytes are where the punctuation a word processor inserts lives — the
+// curly quotes, the dash, the ellipsis — so a file typed on Windows and saved
+// as plain text has them in it. Read as Latin-1 they are control characters,
+// which is why a transcriber's apostrophe used to come out as U+0082.
+var cp1252High = [32]rune{
+	'\u20AC', '\u0081', '\u201A', '\u0192', '\u201E', '\u2026', '\u2020', '\u2021',
+	'\u02C6', '\u2030', '\u0160', '\u2039', '\u0152', '\u008D', '\u017D', '\u008F',
+	'\u0090', '\u2018', '\u2019', '\u201C', '\u201D', '\u2022', '\u2013', '\u2014',
+	'\u02DC', '\u2122', '\u0161', '\u203A', '\u0153', '\u009D', '\u017E', '\u0178',
+}
+
+func cp1252(c byte) rune {
+	if c >= 0x80 && c <= 0x9F {
+		return cp1252High[c-0x80]
+	}
+	return rune(c)
 }
 
 // accKey identifies a note for the purpose of remembering an accidental. An

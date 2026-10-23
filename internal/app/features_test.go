@@ -1108,3 +1108,201 @@ func TestEveryBarHasAClickStrip(t *testing.T) {
 		}
 	}
 }
+
+// A slur arcs over the selected passage, and is drawn.
+func TestSlurOverASelection(t *testing.T) {
+	h := newHarness(t)
+	for i := 0; i < 4; i++ {
+		h.note(0, 0, 2+i, "quarter")
+	}
+
+	// One note is not a passage.
+	if msg := h.postFails("/api/slur?part=0&measure=0&at=1"); !strings.Contains(msg, "select a passage") {
+		t.Errorf("unhelpful refusal: %q", msg)
+	}
+
+	before := len(engrave.Engrave(h.app.score, engrave.DefaultOptions()).Curves)
+	h.post("/api/slur?sel=0:0:0,0:0:1,0:0:2,0:0:3")
+
+	els := h.app.score.Parts[0].Measures[0].Voices[0].Elements
+	if !els[0].(*model.Note).SlurStart {
+		t.Error("the slur does not begin on the first note")
+	}
+	if !els[3].(*model.Note).SlurStop {
+		t.Error("the slur does not end on the last note")
+	}
+	for i := 1; i < 3; i++ {
+		n := els[i].(*model.Note)
+		if n.SlurStart || n.SlurStop {
+			t.Errorf("note %d is marked as an end of the slur", i)
+		}
+	}
+
+	lay := engrave.Engrave(h.app.score, engrave.DefaultOptions())
+	if len(lay.Curves) != before+1 {
+		t.Fatalf("got %d curves, want one more than %d", len(lay.Curves), before)
+	}
+	c := lay.Curves[len(lay.Curves)-1]
+	if c.X2 <= c.X1 {
+		t.Error("the slur does not run left to right")
+	}
+	// It arcs away from the notes rather than lying flat across them.
+	mid := (c.Y1 + c.Y2) / 2
+	if c.CY == mid {
+		t.Error("the slur has no arch")
+	}
+
+	// And it can be taken off again.
+	h.post("/api/slur?slur=none&sel=0:0:0,0:0:1,0:0:2,0:0:3")
+	if len(engrave.Engrave(h.app.score, engrave.DefaultOptions()).Curves) != before {
+		t.Error("the slur is still drawn after being removed")
+	}
+}
+
+// A tie joins each note to the next, so three selected notes are all joined
+// rather than the first arcing to the last.
+func TestTieJoinsNeighbours(t *testing.T) {
+	h := newHarness(t)
+	for i := 0; i < 3; i++ {
+		h.note(0, 0, 4, "quarter") // the same pitch, as a tie needs
+	}
+	h.post("/api/tie?sel=0:0:0,0:0:1,0:0:2")
+
+	els := h.app.score.Parts[0].Measures[0].Voices[0].Elements
+	want := []struct{ start, stop bool }{
+		{true, false}, {true, true}, {false, true},
+	}
+	for i, w := range want {
+		n := els[i].(*model.Note)
+		if n.TieStart != w.start || n.TieStop != w.stop {
+			t.Errorf("note %d: start=%v stop=%v, want start=%v stop=%v",
+				i, n.TieStart, n.TieStop, w.start, w.stop)
+		}
+	}
+
+	// Two ties are drawn: one between each pair.
+	lay := engrave.Engrave(h.app.score, engrave.DefaultOptions())
+	if len(lay.Curves) != 2 {
+		t.Errorf("got %d curves, want 2", len(lay.Curves))
+	}
+	// And the three notes sound as one.
+	if n := len(buildPlayback(h.app.score).Events); n != 1 {
+		t.Errorf("three tied notes gave %d sounds, want 1", n)
+	}
+}
+
+// A tied chord gets one tie per notehead, arcing outward so they do not
+// cross the noteheads between them.
+func TestTiedChordTiesEveryNotehead(t *testing.T) {
+	h := newHarness(t)
+	// Two bars, each holding the same two-note chord, tied across the bar.
+	for bar := 0; bar < 2; bar++ {
+		if bar > 0 {
+			h.post("/api/addmeasure")
+		}
+		h.note(0, bar, 2, "whole")
+		h.post("/api/addpitch?part=0&measure=" + itoa(bar) + "&index=0&step=6")
+	}
+	h.post("/api/tie?sel=0:0:0,0:1:0")
+
+	lay := engrave.Engrave(h.app.score, engrave.DefaultOptions())
+	if len(lay.Curves) != 2 {
+		t.Fatalf("a two-note chord tied across the bar drew %d curves, want 2",
+			len(lay.Curves))
+	}
+	// One arcs up and one down, away from each other.
+	a, b := lay.Curves[0], lay.Curves[1]
+	upA := a.CY < (a.Y1+a.Y2)/2
+	upB := b.CY < (b.Y1+b.Y2)/2
+	if upA == upB {
+		t.Error("both ties arc the same way; they should open away from each other")
+	}
+	// The one that arcs up belongs to the upper notehead.
+	hi, lo := a, b
+	if !upA {
+		hi, lo = b, a
+	}
+	if hi.Y1 >= lo.Y1 {
+		t.Error("the tie arcing up is not on the upper notehead")
+	}
+}
+
+// One note selected is enough to say "hold it into the next one", which is
+// what a tie means. The note it runs to is the one that follows, across the
+// barline if that is where it is.
+func TestTieFromOneNote(t *testing.T) {
+	h := newHarness(t)
+	h.note(0, 0, 4, "half")
+	h.note(0, 0, 4, "half")
+	h.post("/api/addmeasure")
+	h.note(0, 1, 4, "whole")
+
+	// Within the bar.
+	h.post("/api/tie?part=0&measure=0&at=1")
+	els := h.app.score.Parts[0].Measures[0].Voices[0].Elements
+	if !els[0].(*model.Note).TieStart {
+		t.Error("the first note does not start a tie")
+	}
+	if !els[1].(*model.Note).TieStop {
+		t.Error("the second note does not end it")
+	}
+
+	// And across the barline, from the last note of a bar.
+	h.post("/api/tie?part=0&measure=0&at=2")
+	if !els[1].(*model.Note).TieStart {
+		t.Error("the last note of the bar does not start a tie")
+	}
+	if !h.app.score.Parts[0].Measures[1].Voices[0].Elements[0].(*model.Note).TieStop {
+		t.Error("the first note of the next bar does not end it")
+	}
+
+	// All four halves sound as one note.
+	if n := len(buildPlayback(h.app.score).Events); n != 1 {
+		t.Errorf("the tied chain gave %d sounds, want 1", n)
+	}
+
+	// Nothing after the last note, so there is nothing to tie to.
+	if msg := h.postFails("/api/tie?part=0&measure=1&at=1"); msg == "" {
+		t.Error("tying the last note of the piece was allowed")
+	}
+}
+
+// A chord can be tied whole, or one notehead at a time.
+func TestTieOneNoteheadOfAChord(t *testing.T) {
+	h := newHarness(t)
+	for bar := 0; bar < 2; bar++ {
+		if bar > 0 {
+			h.post("/api/addmeasure")
+		}
+		h.note(0, bar, 2, "whole")
+		h.post("/api/addpitch?part=0&measure=" + itoa(bar) + "&index=0&step=6")
+	}
+
+	// Just the upper notehead, at step 6.
+	h.post("/api/tie?part=0&measure=0&at=1&step=6")
+
+	ch := h.app.score.Parts[0].Measures[0].Voices[0].Elements[0].(*model.Chord)
+	if ch.TieStart {
+		t.Error("the whole chord was tied, not one notehead")
+	}
+	tied := 0
+	for _, n := range ch.Notes {
+		if n.TieStart {
+			tied++
+		}
+	}
+	if tied != 1 {
+		t.Errorf("%d noteheads were tied, want 1", tied)
+	}
+
+	// One curve, not two.
+	lay := engrave.Engrave(h.app.score, engrave.DefaultOptions())
+	if len(lay.Curves) != 1 {
+		t.Errorf("got %d curves, want 1", len(lay.Curves))
+	}
+
+	// Asking for a notehead that is not there says so.
+	if msg := h.postFails("/api/tie?part=0&measure=0&at=1&step=99"); msg == "" {
+		t.Error("tying a notehead that does not exist was allowed")
+	}
+}

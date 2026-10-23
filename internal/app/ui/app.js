@@ -319,6 +319,12 @@ async function action(name) {
     case "cut": await cutSelection(); break;
     case "paste": await pasteClipboard(); break;
 
+    case "slur": await setSlur("on"); break;
+    case "slur-none": await setSlur("none"); break;
+    case "tie": await setTie("on", false); break;
+    case "tie-head": await setTie("on", true); break;
+    case "tie-none": await setTie("none", false); break;
+
     case "beam-join": await mark("beam", { beam: "join" }, "Beamed together"); break;
     case "beam-break": await mark("beam", { beam: "break" }, "Beam broken"); break;
     case "beam-auto": await mark("beam", { beam: "auto" }, "Beaming left to the engraver"); break;
@@ -1011,7 +1017,7 @@ function setupCanvasClicks() {
         await addPitch(hit, el, step);
         return;
       }
-      select(hit, el);
+      select(hit, el, step);
       return;
     }
 
@@ -1089,9 +1095,15 @@ function selectMeasure(part, measure) {
 }
 
 // select picks up an existing element, so the next command acts on it.
-function select(hit, el) {
+function select(hit, el, step) {
   state.anchor = { part: hit.part, measure: hit.measure, index: el.index };
   state.multi = [];
+  // Which notehead of a chord was clicked, so a tie can be put on that one
+  // rather than on all of them. Null means the element as a whole.
+  let head = null;
+  if (step !== undefined && (el.steps || []).includes(step)) {
+    head = step;
+  }
   state.selection = {
     part: hit.part,
     measure: hit.measure,
@@ -1099,6 +1111,7 @@ function select(hit, el) {
     // cursor sits just after what is selected.
     at: el.index + 1,
     step: 0,
+    head,
     ref: el.ref,
   };
   markSelection();
@@ -1419,6 +1432,33 @@ async function setEnding(numbers) {
                         : `Ending ${numbers.replace(",", " and ")} over ` +
                           (first === last ? `measure ${first + 1}`
                                           : `measures ${first + 1}–${last + 1}`));
+}
+
+// A slur arcs over a passage and a tie joins neighbours, so both want a range
+// selected: click a note, then shift-click a later one.
+async function setSlur(what) {
+  if (what !== "none" && state.multi.length < 2) {
+    status("A slur covers a passage — click a note, then shift-click a later one");
+    return;
+  }
+  await mark("slur", { slur: what },
+             what === "none" ? "Slur removed" : "Slurred");
+}
+
+// setTie joins the selected notes. "head" ties only the notehead that was
+// clicked, which is how one note of a chord is held while the others move.
+async function setTie(what, head) {
+  if (what !== "none" && state.multi.length < 2) {
+    status("A tie joins two notes — click one, then shift-click the next");
+    return;
+  }
+  const params = { tie: what };
+  if (head && state.selection?.head !== null && state.selection?.head !== undefined) {
+    params.step = String(state.selection.head);
+  }
+  await mark("tie", params,
+    what === "none" ? "Tie removed"
+      : params.step !== undefined ? "Tied that notehead" : "Tied");
 }
 
 const setStem = (dir) =>
@@ -3797,6 +3837,8 @@ function setupKeys() {
       case "F2": e.preventDefault(); toggleFingering(); break;
       case "t": action("insert-text"); break;
       case "b": action("beam-join"); break;
+      case "S": action("slur"); break;
+      case "=": action("tie"); break;
       case "r": action("repeat-bar"); break;
       case "N": case "i":
         status("Click the staff to write. Hold shift to select instead.");

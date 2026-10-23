@@ -571,6 +571,7 @@ func (a *App) notesOf(q url.Values) ([]keyedNote, error) {
 		return out, nil
 	}
 
+
 	partIdx, _ := strconv.Atoi(q.Get("part"))
 	measIdx, _ := strconv.Atoi(q.Get("measure"))
 	at, err := strconv.Atoi(q.Get("at"))
@@ -2173,4 +2174,240 @@ func (a *App) handleMeasureRepeat(w http.ResponseWriter, r *http.Request) {
 	}
 	m.Repeat = bars
 	writeJSON(w, map[string]any{"status": "ok", "bars": bars})
+}
+
+// handleSlur draws a slur over the selection.
+//
+// A slur covers a phrase, so it needs a beginning and an end — which is what
+// a range selection is. The same shape as a hairpin, and refused for the same
+// reason when there is only one note: a slur from a note to itself has
+// nothing to arc over.
+func (a *App) handleSlur(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST required", http.StatusMethodNotAllowed)
+		return
+	}
+	marks, err := a.marksOf(r.URL.Query())
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	if r.URL.Query().Get("slur") == "none" {
+		for _, m := range marks {
+			m.SlurStart, m.SlurStop = false, false
+		}
+		writeJSON(w, map[string]int{"changed": len(marks)})
+		return
+	}
+	if len(marks) < 2 {
+		http.Error(w, "a slur goes from one note to another — select a passage",
+			http.StatusBadRequest)
+		return
+	}
+	for i, m := range marks {
+		m.SlurStart = i == 0
+		m.SlurStop = i == len(marks)-1
+	}
+	writeJSON(w, map[string]int{"changed": len(marks)})
+}
+
+// handleTie joins notes of the same pitch so they sound as one.
+//
+// Unlike a slur, a tie is between neighbours: each note in the selection is
+// tied to the one after it, so selecting three notes ties all three together
+// rather than arcing from the first to the last.
+//
+// A chord is tied notehead by notehead. Holding the top note while the others
+// move is ordinary writing, so "tie this chord" cannot be the only thing that
+// can be said: a step names one notehead and ties only that, and no step at
+// all means the whole chord.
+func (a *App) handleTie(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST required", http.StatusMethodNotAllowed)
+		return
+	}
+	q := r.URL.Query()
+
+	targets, err := a.tieTargets(q)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	// A tie means "hold this note into the next one", so one note is enough
+	// to say it: the note it runs to is the one that follows, across the
+	// barline if that is where it is. Asking for both was asking the reader
+	// to say something the mark already says.
+	if len(targets) == 1 && q.Get("tie") != "none" {
+		a.mu.Lock()
+		if next, ok := a.noteAfter(targets[0]); ok {
+			targets = append(targets, next)
+		}
+		a.mu.Unlock()
+	}
+
+	step, hasStep := 0, false
+	if v := q.Get("step"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			step, hasStep = n, true
+		}
+	}
+
+	if q.Get("tie") == "none" {
+		for _, t := range targets {
+			clearTie(t, step, hasStep)
+		}
+		writeJSON(w, map[string]int{"changed": len(targets)})
+		return
+	}
+	if len(targets) < 2 {
+		http.Error(w, "a tie joins two notes — select both",
+			http.StatusBadRequest)
+		return
+	}
+
+	for i, t := range targets {
+		if !setTie(t, step, hasStep, i < len(targets)-1, i > 0) && hasStep {
+			http.Error(w, "there is no notehead there to tie",
+				http.StatusBadRequest)
+			return
+		}
+	}
+	writeJSON(w, map[string]int{"changed": len(targets)})
+}
+
+// tieTarget is one element of the selection, with the staff it is on so a
+// notehead's position can be worked out, and where it sits so the note after
+// it can be found.
+type tieTarget struct {
+	part    *model.Part
+	el      model.Element
+	measure int
+	index   int
+}
+
+// tieTargets resolves the selection to elements, in reading order.
+func (a *App) tieTargets(q url.Values) ([]tieTarget, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	var out []tieTarget
+	add := func(p *model.Part, el model.Element, measure, index int) {
+		switch el.(type) {
+		case *model.Note, *model.Chord:
+			out = append(out, tieTarget{
+				part: p, el: el, measure: measure, index: index,
+			})
+		}
+	}
+
+	if sel := q.Get("sel"); sel != "" {
+		targets, err := parseTargets(sel)
+		if err != nil {
+			return nil, err
+		}
+		for _, t := range targets {
+			p, m, err := a.locate(t.part, t.measure)
+			if err != nil {
+				continue
+			}
+			v := m.Voices[0]
+			if t.index < 0 || t.index >= len(v.Elements) {
+				continue
+			}
+			add(p, v.Elements[t.index], t.measure, t.index)
+		}
+		if len(out) == 0 {
+			return nil, editError("there is no note in the selection")
+		}
+		return out, nil
+	}
+
+	partIdx, _ := strconv.Atoi(q.Get("part"))
+	measIdx, _ := strconv.Atoi(q.Get("measure"))
+	at, err := strconv.Atoi(q.Get("at"))
+	if err != nil {
+		at = -1
+	}
+	p, m, lerr := a.locate(partIdx, measIdx)
+	if lerr != nil {
+		return nil, lerr
+	}
+	v := m.Voices[0]
+	if len(v.Elements) == 0 {
+		return nil, editError("the measure is empty")
+	}
+	if at <= 0 || at > len(v.Elements) {
+		at = len(v.Elements)
+	}
+	add(p, v.Elements[at-1], measIdx, at-1)
+	if len(out) == 0 {
+		return nil, editError("that is not a note")
+	}
+	return out, nil
+}
+
+// noteAfter finds the next note or chord on the same staff, carrying on into
+// the following bars when the selected note is the last of its own.
+func (a *App) noteAfter(t tieTarget) (tieTarget, bool) {
+	p := t.part
+	index := t.index + 1
+	for m := t.measure; m < len(p.Measures); m++ {
+		if len(p.Measures[m].Voices) == 0 {
+			index = 0
+			continue
+		}
+		els := p.Measures[m].Voices[0].Elements
+		for ; index < len(els); index++ {
+			switch els[index].(type) {
+			case *model.Note, *model.Chord:
+				return tieTarget{part: p, el: els[index], measure: m, index: index}, true
+			}
+		}
+		index = 0
+	}
+	return tieTarget{}, false
+}
+
+// setTie marks one element, or one notehead of it. It reports whether it
+// found anything to mark.
+func setTie(t tieTarget, step int, hasStep, start, stop bool) bool {
+	ch, isChord := t.el.(*model.Chord)
+	if !isChord || !hasStep {
+		m := marksOfElement(t.el)
+		if m == nil {
+			return false
+		}
+		m.TieStart = m.TieStart || start
+		m.TieStop = m.TieStop || stop
+		return true
+	}
+	for _, n := range ch.Notes {
+		if engrave.StaffStep(t.part.Clef, n.Pitch) != step {
+			continue
+		}
+		n.TieStart = n.TieStart || start
+		n.TieStop = n.TieStop || stop
+		return true
+	}
+	return false
+}
+
+// clearTie takes a tie off, from one notehead or from all of them.
+func clearTie(t tieTarget, step int, hasStep bool) {
+	if ch, ok := t.el.(*model.Chord); ok {
+		for _, n := range ch.Notes {
+			if hasStep && engrave.StaffStep(t.part.Clef, n.Pitch) != step {
+				continue
+			}
+			n.TieStart, n.TieStop = false, false
+		}
+		if !hasStep {
+			ch.TieStart, ch.TieStop = false, false
+		}
+		return
+	}
+	if m := marksOfElement(t.el); m != nil {
+		m.TieStart, m.TieStop = false, false
+	}
 }

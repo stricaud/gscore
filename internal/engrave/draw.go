@@ -140,6 +140,7 @@ func (e *engraver) drawMeasure(part *model.Part, b measureBox, x float64, stretc
 			e.drawArticulations(m, p.x+noteheadWidth(p.value)/2, p.step, e.stemUp(p), p.index)
 			e.drawDynamic(m, p)
 			e.spanAt(m, p)
+			e.slurAt(m, p)
 			e.drawLyrics(m, p)
 			e.drawTexts(m, p)
 			e.drawChordSymbol(m.Chord, p.x)

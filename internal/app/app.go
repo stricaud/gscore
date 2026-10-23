@@ -297,6 +297,8 @@ func (a *App) APIRoutes(mux *http.ServeMux) {
 		"/api/measurerepeat":   a.handleMeasureRepeat,
 		"/api/barline":         a.handleBarline,
 		"/api/beam":            a.handleBeam,
+		"/api/slur":            a.handleSlur,
+		"/api/tie":             a.handleTie,
 		"/api/stem":            a.handleStem,
 		"/api/accidental":      a.handleAccidental,
 		"/api/articulation":    a.handleArticulation,

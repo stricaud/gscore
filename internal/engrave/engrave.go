@@ -415,6 +415,12 @@ type engraver struct {
 type openSpans struct {
 	hairpin *openSpan
 	octave  *openSpan
+	slur    *openSpan
+	// ties are kept per notehead, keyed by the staff step they left. A
+	// chord is tied notehead by notehead — every voice in it carries on
+	// sounding — so one curve for the chord would be one curve short for
+	// every note but the first.
+	ties map[int]*openSpan
 }
 
 // openSpan is a spanner that has started and not yet finished.
@@ -423,6 +429,11 @@ type openSpan struct {
 	kind   model.HairpinKind
 	amount int    // octaves, for an octave line
 	label  string // what is written over an octave line
+
+	// y and above are where a slur or a tie left the note it started on,
+	// and which side of the music it arcs over.
+	y     float64
+	above bool
 }
 
 // slot is one element's horizontal allocation within a measure.

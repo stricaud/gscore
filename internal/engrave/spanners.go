@@ -99,6 +99,16 @@ func (e *engraver) breakSpans(part int, right float64) {
 		e.drawOctave(open.octave, right, false)
 		open.octave.x = -1
 	}
+	// A slur that runs over a line break is drawn to the margin and picked
+	// up again on the next line, which is how it is written on paper.
+	if open.slur != nil {
+		e.drawTieOrSlur(open.slur, right, open.slur.y, slurLift, true)
+		open.slur.x = -1
+	}
+	for _, t := range open.ties {
+		e.drawTieOrSlur(t, right, t.y, tieLift, false)
+		t.x = -1
+	}
 }
 
 // resumeSpans picks a broken spanner up again at the left of a new system.
@@ -115,6 +125,14 @@ func (e *engraver) resumeSpans(part int, left float64) {
 		// The "8va" is written once, where the line begins. A continuation
 		// carries the line alone, as it is written on paper.
 		open.octave.label = ""
+	}
+	if open.slur != nil && open.slur.x < 0 {
+		open.slur.x = left
+	}
+	for _, t := range open.ties {
+		if t.x < 0 {
+			t.x = left
+		}
 	}
 }
 
@@ -245,4 +263,162 @@ func (e *engraver) drawVoltas(parts []*model.Part, columns []float64, start, end
 	// A bracket still open at the end of the line is cut at the margin and
 	// has no closing hook; the next system opens one again.
 	closeAt(columns[end-start], false)
+}
+
+/*
+ * Slurs and ties
+ */
+
+// A slur arcs over the notes it covers; a tie joins two noteheads of the same
+// pitch. They are drawn the same way and mean different things, which is why
+// they are kept apart in the model and share their geometry here.
+//
+// Both arc away from the stems, as articulations sit away from them: a curve
+// on the stem side has to clear the whole stem and ends up somewhere no
+// reader expects. Where the stems disagree, the note the curve starts on
+// decides, because that is where the reader's eye picks it up.
+
+const (
+	// slurLift is how far a slur's ends stand off the noteheads.
+	slurLift = 0.9
+	// slurArch is how far the middle rises above a line drawn between the
+	// ends, before the span is taken into account.
+	slurArch = 1.0
+	// slurArchPerSpace is how much more it rises for each space it covers,
+	// so a long slur is not a flat smear.
+	slurArchPerSpace = 0.09
+	// slurArchMax keeps a very long slur from arching off the page.
+	slurArchMax = 3.2
+
+	// A tie is shorter and flatter: it joins two noteheads rather than
+	// covering a phrase, so it stays close to them.
+	tieLift = 0.55
+	tieArch = 0.7
+)
+
+// slurAt handles a slur or a tie opening or closing at one element.
+func (e *engraver) slurAt(m *model.Marks, p *placed) {
+	if m == nil {
+		return
+	}
+	open := e.staffSpans(e.partIndex)
+	x := p.x + noteheadWidth(p.value)/2
+
+	// The side the curve arcs over, and where it leaves the notehead.
+	above := !e.stemUp(p)
+	edge := p.hi
+	if !above {
+		edge = p.lo
+	}
+	y := e.y + stepY(float64(edge))
+
+	if m.SlurStart && open.slur == nil {
+		open.slur = &openSpan{x: x, y: y, above: above}
+	}
+	if m.SlurStop && open.slur != nil {
+		e.drawTieOrSlur(open.slur, x, y, slurLift, true)
+		open.slur = nil
+	}
+
+	// A tie is written on both notes: it stops on one and may start again on
+	// the same one, which is how a note held through several bars is
+	// spelled. Each notehead is tied separately, so a chord gets one curve
+	// per note rather than one for the whole chord.
+	for _, h := range e.tiedHeads(p, m) {
+		if h.stop {
+			if t, ok := open.ties[h.step]; ok {
+				e.drawTieOrSlur(t, x, e.y+stepY(float64(h.step)), tieLift, false)
+				delete(open.ties, h.step)
+			}
+		}
+		if h.start {
+			if open.ties == nil {
+				open.ties = map[int]*openSpan{}
+			}
+			if _, already := open.ties[h.step]; !already {
+				open.ties[h.step] = &openSpan{
+					x: x, y: e.y + stepY(float64(h.step)), above: h.above,
+				}
+			}
+		}
+	}
+}
+
+// tiedHead is one notehead of an element, which way its tie arcs, and
+// whether a tie begins or ends on it.
+type tiedHead struct {
+	step        int
+	above       bool
+	start, stop bool
+}
+
+// tiedHeads lists the noteheads of an element that carry a tie.
+//
+// Each notehead of a chord is tied on its own account. Holding the top note
+// of a chord while the others move is ordinary writing, so a tie on a chord
+// cannot mean "all of it" and nothing else — the notes keep their own marks
+// and a mark on the chord means all of them, which is the common case said
+// briefly.
+//
+// A single note's tie arcs away from its stem, as a slur does. A chord's ties
+// arc outward from the middle: the upper notes curve up and the lower ones
+// down, so the curves open away from each other instead of crossing the
+// noteheads between them.
+func (e *engraver) tiedHeads(p *placed, m *model.Marks) []tiedHead {
+	if p.note != nil {
+		return []tiedHead{{
+			step: p.step, above: !e.stemUp(p),
+			start: m.TieStart, stop: m.TieStop,
+		}}
+	}
+	if p.chord == nil {
+		return nil
+	}
+	middle := float64(p.lo+p.hi) / 2
+	out := make([]tiedHead, 0, len(p.chord.Notes))
+	for _, n := range p.chord.Notes {
+		step := StaffStep(e.clef, n.Pitch)
+		out = append(out, tiedHead{
+			step: step, above: float64(step) >= middle,
+			// The chord's own mark covers every notehead; a notehead's own
+			// mark covers just itself.
+			start: m.TieStart || n.TieStart,
+			stop:  m.TieStop || n.TieStop,
+		})
+	}
+	return out
+}
+
+// drawTieOrSlur draws the arc. A quadratic is enough: a slur is one curve,
+// and its shape is decided by where it starts, where it ends and how far it
+// reaches.
+func (e *engraver) drawTieOrSlur(from *openSpan, toX, toY, lift float64, slur bool) {
+	if toX <= from.x {
+		return
+	}
+	dir := -1.0 // y grows downward, so "above" is negative
+	if !from.above {
+		dir = 1
+	}
+
+	y1 := from.y + dir*lift
+	y2 := toY + dir*lift
+
+	arch := tieArch
+	if slur {
+		arch = slurArch + (toX-from.x)*slurArchPerSpace
+		if arch > slurArchMax {
+			arch = slurArchMax
+		}
+	}
+	// The control point of a quadratic pulls the curve about halfway
+	// towards it, so it is set twice as far out as the curve should go.
+	cy := (y1+y2)/2 + dir*arch*2
+
+	e.lay.Curves = append(e.lay.Curves, Curve{
+		X1: from.x, Y1: y1,
+		CX: (from.x + toX) / 2, CY: cy,
+		X2: toX, Y2: y2,
+		Thickness: e.opt.Defaults.StaffLineThickness * 1.6,
+	})
 }

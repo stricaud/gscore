@@ -131,6 +131,10 @@ const PALETTE = [
         needsRange: true },
       { text: "—", label: "No hairpin", apply: "hairpin", value: "none" },
 
+      { g: "\uE1FD", label: "Slur", apply: "slur", value: "on", needsRange: true },
+      { g: "\uE1FD", label: "Tie", apply: "tie", value: "on", needsRange: true },
+      { text: "—", label: "No slur", apply: "slur", value: "none" },
+
       { g: "\uE511", label: "8va — an octave up", apply: "octave", value: "8va",
         needsRange: true },
       { g: "\uE51C", label: "8vb — an octave down", apply: "octave", value: "8vb",

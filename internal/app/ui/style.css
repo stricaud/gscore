@@ -1119,3 +1119,67 @@ body.player.bare { grid-template-rows: 1fr; }
 }
 
 .pad.on .pad-midi { color: inherit; opacity: 0.8; }
+
+/* ---------- Set Tempo ---------- */
+
+/* The note the number counts, as the notes themselves. A metronome mark
+   written as "J = 140" is a program that gave up, and a dialog that offers
+   the beat as the word "quarter" is the same mistake one step earlier: a
+   musician picks the note by looking at it. */
+#tempo-notes {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 10px 12px 12px;
+  margin: 0 0 14px;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 4px 14px;
+  align-items: center;
+}
+#tempo-notes legend { padding: 0 4px; font-size: 12px; color: var(--muted); }
+
+.tempo-grid {
+  display: grid;
+  grid-template-columns: repeat(4, auto);
+  gap: 2px 10px;
+  justify-content: start;
+}
+.tempo-grid label {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 6px;
+  border-radius: 5px;
+  cursor: pointer;
+}
+.tempo-grid label:hover { background: var(--panel-dark); }
+.tempo-grid .music {
+  font-family: Bravura, serif;
+  font-size: 24px;
+  /* SMuFL glyphs hang well below their baseline; a flat line-height keeps
+     them sitting on the row rather than pushing it apart. */
+  line-height: 1;
+  min-width: 18px;
+}
+
+.tempo-dotted {
+  grid-column: 1;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--muted);
+  padding-left: 6px;
+  cursor: pointer;
+}
+.tempo-dotted .music { font-family: Bravura, serif; font-size: 18px; }
+
+.tempo-bpm {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.tempo-bpm .eq { font-size: 18px; color: var(--muted); }
+.tempo-bpm input { width: 5.5em; }

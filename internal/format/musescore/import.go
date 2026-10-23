@@ -217,6 +217,9 @@ type document struct {
 	// which is what is actually printed. The metaTags are the fallback: they
 	// are often left at "Untitled score" while the page says otherwise.
 	title, subtitle, composer string
+	// tempoSet says the speed the piece starts at has been read, so that a
+	// later marking is a change rather than the opening tempo again.
+	tempoSet bool
 }
 
 type msPart struct {
@@ -847,7 +850,7 @@ func (r *reader) voiceElement(doc *document, st *msStaff, vs *voiceState, e xml.
 	case "TimeSig":
 		return r.timeSig(vs.m)
 	case "Tempo":
-		return r.tempo(doc)
+		return r.tempo(doc, st, vs)
 	case "Dynamic":
 		return r.dynamic(vs)
 	case "Fermata":
@@ -999,7 +1002,7 @@ func (r *reader) timeSig(m *model.Measure) error {
 	return nil
 }
 
-func (r *reader) tempo(doc *document) error {
+func (r *reader) tempo(doc *document, st *msStaff, vs *voiceState) error {
 	var qps float64
 	words := ""
 	err := r.children(func(c xml.StartElement) error {
@@ -1023,17 +1026,24 @@ func (r *reader) tempo(doc *document) error {
 		return err
 	}
 	// MuseScore keeps a tempo as quarter notes per second, which is the
-	// metronome mark over sixty. Only the first is kept: gscore has one
-	// tempo for the piece, and a score that changes speed says so in words
-	// the reader cannot act on anyway.
-	if doc.tempo.BPM != 120 {
-		return nil
-	}
-	doc.tempo = model.Tempo{
+	// metronome mark over sixty.
+	t := model.Tempo{
 		BPM:  int(qps*60 + 0.5),
 		Unit: model.Duration{Num: 1, Den: 4},
 		Text: tempoWords(words),
 	}
+
+	// The one written over the first bar is the speed the piece starts at,
+	// which is the score's own; anywhere else is a change held from that bar
+	// on. The bar being read is the one about to be appended, so its index
+	// is how many this staff has so far.
+	if len(st.measures) == 0 {
+		if !doc.tempoSet {
+			doc.tempo, doc.tempoSet = t, true
+		}
+		return nil
+	}
+	vs.m.Tempo = &t
 	return nil
 }
 
@@ -1939,7 +1949,40 @@ func (doc *document) assemble(r *reader) (*model.Score, error) {
 	if len(s.Parts) == 0 {
 		return nil, errors.New("musescore: the file has no staves with music in them")
 	}
+	closeTheScore(s)
 	return s, nil
+}
+
+// closeTheScore writes the barline MuseScore draws at the end and does not
+// record.
+//
+// The last bar of a score ends with a final barline unless something else is
+// written there, so MuseScore has nothing to save: the file carries a
+// <BarLine> only where the barline is not what it would have been anyway.
+// Read literally, every score came out ending on a plain barline, which is
+// how a page says "turn over" rather than "that is the end".
+//
+// It goes on the longest part, which is where the piece actually ends; the
+// score's own rule about repeats and final barlines then gives it to the
+// staves that stop earlier, at the bar they stop being drawn at.
+func closeTheScore(s *model.Score) {
+	last := 0
+	for _, p := range s.Parts {
+		if n := len(p.Measures); n > last {
+			last = n
+		}
+	}
+	if last == 0 {
+		return
+	}
+	for _, p := range s.Parts {
+		if len(p.Measures) != last {
+			continue
+		}
+		if m := p.Measures[last-1]; m.RightBarline == model.BarSingle {
+			m.RightBarline = model.BarFinal
+		}
+	}
 }
 
 func toPart(p *msPart, st *msStaff, index int) *model.Part {

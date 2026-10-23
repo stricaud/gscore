@@ -418,6 +418,26 @@ type info struct {
 	Tempo    int        `json:"tempo"`
 	Parts    []partInfo `json:"parts"`
 	Formats  []string   `json:"formats"`
+
+	// The beat the tempo counts and the words beside it. A number on its own
+	// does not say anything: 120 in 6/8 is a different speed depending on
+	// whether it is counting quarters or dotted quarters.
+	TempoUnit   string `json:"tempoUnit"`
+	TempoDotted bool   `json:"tempoDotted,omitempty"`
+	TempoText   string `json:"tempoText,omitempty"`
+
+	// TempoChanges are the speeds written partway through, keyed by the bar
+	// they start at. Bar zero is the score's own, which is why it is not
+	// here: the mark in the title block is that marking written over bar one.
+	TempoChanges map[string]tempoInfo `json:"tempoChanges,omitempty"`
+}
+
+// tempoInfo is one metronome mark as the interface needs it.
+type tempoInfo struct {
+	BPM    int    `json:"bpm"`
+	Unit   string `json:"unit"`
+	Dotted bool   `json:"dotted,omitempty"`
+	Text   string `json:"text,omitempty"`
 }
 
 type partInfo struct {
@@ -454,6 +474,21 @@ func (a *App) handleInfo(w http.ResponseWriter, r *http.Request) {
 		Subtitle: a.score.Identity.Subtitle,
 		Composer: a.score.Identity.Composer,
 		Tempo:    a.score.Tempo.BPM,
+	}
+	out.TempoUnit, out.TempoDotted = beatName(a.score.Tempo.Unit)
+	out.TempoText = a.score.Tempo.Text
+	for i := 0; i < a.score.MeasureCount(); i++ {
+		t := a.score.TempoChangeAt(i)
+		if t == nil || i == 0 {
+			continue
+		}
+		unit, dotted := beatName(t.Unit)
+		if out.TempoChanges == nil {
+			out.TempoChanges = map[string]tempoInfo{}
+		}
+		out.TempoChanges[strconv.Itoa(i)] = tempoInfo{
+			BPM: t.BPM, Unit: unit, Dotted: dotted, Text: t.Text,
+		}
 	}
 	for _, i := range format.Importers() {
 		out.Formats = append(out.Formats, i.Name())

@@ -213,6 +213,21 @@ type Measure struct {
 	Key  *KeySignature
 	Time *TimeSignature
 
+	// Tempo, when set, is a new speed written over this bar and held until
+	// the next one says otherwise.
+	//
+	// A piece is not one speed. "Slower" at the bridge, a tempo at the last
+	// chorus, a metronome mark at every section of an exercise: all of it is
+	// ordinary writing, and a score that keeps a single number for the whole
+	// piece cannot say any of it — nor play it, which is what the number is
+	// mostly for.
+	//
+	// Like a repeat it belongs to the piece rather than to a staff;
+	// Score.TempoAt reads it from whichever part carries it, and the mark is
+	// drawn once above the system. The score's own Tempo is the one it
+	// starts in, which is the same thing written at bar one.
+	Tempo *Tempo
+
 	// Ending is a volta bracket: the first-time and second-time bars of a
 	// repeat. It is stored per measure of each part, as MusicXML stores it,
 	// and drawn once above the system.
@@ -307,6 +322,36 @@ func (p *Part) KeyAt(index int) KeySignature {
 		}
 	}
 	return k
+}
+
+// TempoAt is the speed in force at a bar, following any change written in an
+// earlier one.
+//
+// It is asked of the score rather than of a part because a tempo change is
+// written once, over the top staff, and means the same to everybody in the
+// room. Whichever part carries it, it is the piece's.
+func (s *Score) TempoAt(index int) Tempo {
+	t := s.Tempo
+	for i := 0; i <= index; i++ {
+		for _, p := range s.Parts {
+			if i < len(p.Measures) && p.Measures[i].Tempo != nil {
+				t = *p.Measures[i].Tempo
+				break
+			}
+		}
+	}
+	return t
+}
+
+// TempoChangeAt is the tempo written at exactly this bar, if any, and nothing
+// when the bar only carries on at the speed it was given earlier.
+func (s *Score) TempoChangeAt(index int) *Tempo {
+	for _, p := range s.Parts {
+		if index < len(p.Measures) && p.Measures[index].Tempo != nil {
+			return p.Measures[index].Tempo
+		}
+	}
+	return nil
 }
 
 // TimeAt is the meter in force at a measure, following any change written in
@@ -580,6 +625,66 @@ func (s *Score) Normalise() {
 				if len(p.Measures[i].Voices[0].Elements) == 0 && i < len(src.Measures) {
 					p.Measures[i].RightBarline = src.Measures[i].RightBarline
 				}
+			}
+		}
+	}
+	s.agreeOnRepeats(longest)
+}
+
+// agreeOnRepeats gives every staff the repeats and the final barline the
+// piece has, at the bars it has them.
+//
+// A repeat belongs to the piece and not to a staff: everybody goes back at
+// the same bar, and everybody stops at the same one. Drawn down one staff of
+// a system and not the rest, the sign is not a repeat — it is a mistake, and
+// a player reading any other part never sees it at all.
+//
+// It has to be done here rather than left to each reader, because the files
+// do not say it. MuseScore writes the repeat once, on the first staff, and
+// means it for the score; so does everything else that keeps a repeat as a
+// property of the bar. A reader that copied it onto every staff would be
+// guessing in one format and right in the next, and the fact is about music
+// either way.
+//
+// Only repeats and the final barline. A double barline is a section's end and
+// may well be written on one staff and not another — this is not a rule that
+// every barline down a column has to match.
+func (s *Score) agreeOnRepeats(bars int) {
+	for i := 0; i < bars; i++ {
+		start, end, final := false, false, false
+		for _, p := range s.Parts {
+			if i >= len(p.Measures) {
+				continue
+			}
+			switch p.Measures[i].RightBarline {
+			case BarRepeatStart:
+				start = true
+			case BarRepeatEnd:
+				end = true
+			case BarRepeatBoth:
+				start, end = true, true
+			case BarFinal:
+				final = true
+			}
+		}
+		if !start && !end && !final {
+			continue
+		}
+		// A repeat outranks the final barline where a bar carries both: the
+		// repeat sign is drawn heavy already, and losing the dots would lose
+		// the instruction.
+		style := BarFinal
+		switch {
+		case start && end:
+			style = BarRepeatBoth
+		case start:
+			style = BarRepeatStart
+		case end:
+			style = BarRepeatEnd
+		}
+		for _, p := range s.Parts {
+			if i < len(p.Measures) {
+				p.Measures[i].RightBarline = style
 			}
 		}
 	}

@@ -465,6 +465,48 @@
   </p>
 </dialog>
 
+<dialog id="tempo">
+  <h2>Set Tempo</h2>
+  <p class="small" id="tempo-where">The speed of the piece.</p>
+  <form method="dialog" id="tempo-form">
+    <fieldset id="tempo-notes">
+      <legend>Note</legend>
+      <div class="tempo-grid">
+        <label><input type="radio" name="tempo-unit" value="breve">
+          <span class="music">&#xECA0;</span></label>
+        <label><input type="radio" name="tempo-unit" value="whole">
+          <span class="music">&#xECA2;</span></label>
+        <label><input type="radio" name="tempo-unit" value="half">
+          <span class="music">&#xECA3;</span></label>
+        <label><input type="radio" name="tempo-unit" value="quarter" checked>
+          <span class="music">&#xECA5;</span></label>
+        <label><input type="radio" name="tempo-unit" value="eighth">
+          <span class="music">&#xECA7;</span></label>
+        <label><input type="radio" name="tempo-unit" value="sixteenth">
+          <span class="music">&#xECA9;</span></label>
+        <label><input type="radio" name="tempo-unit" value="32nd">
+          <span class="music">&#xECAB;</span></label>
+      </div>
+      <!-- A dotted beat is how compound time is counted: 6/8 goes at so many
+           dotted quarters a minute, not so many quarters. -->
+      <label class="tempo-dotted"><input type="checkbox" id="tempo-dotted">
+        <span>Dotted <span class="music">&#xECB7;</span></span></label>
+      <div class="tempo-bpm">
+        <span class="eq">=</span>
+        <input type="number" id="tempo-bpm" min="10" max="400" step="1" value="120">
+      </div>
+    </fieldset>
+    <label for="tempo-text">Optional text expression</label>
+    <input type="text" id="tempo-text" autocomplete="off"
+           placeholder="Moderately, Slow Swing, a tempo…">
+    <div class="ask-buttons">
+      <button value="remove" type="submit" id="tempo-remove" hidden>Remove this change</button>
+      <button value="cancel" type="submit">Cancel</button>
+      <button value="ok" type="submit" class="primary">OK</button>
+    </div>
+  </form>
+</dialog>
+
 <dialog id="lyrics">
   <h2>Lyrics</h2>
   <p class="small">

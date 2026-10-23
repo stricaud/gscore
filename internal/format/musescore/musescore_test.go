@@ -521,3 +521,52 @@ func firstNote(t *testing.T, p *model.Part) *model.Note {
 	t.Fatal("the part has no notes")
 	return nil
 }
+
+// MuseScore records a barline only where it is not the one that would have
+// been drawn anyway, and the last bar of a score is drawn with a final
+// barline. So the end of the piece is in the file by being absent from it,
+// and reading the file literally ended every score on a plain barline —
+// which on a page says "turn over" rather than "that is the end".
+func TestTheScoreEndsOnAFinalBarline(t *testing.T) {
+	// The sample's last bar closes a repeat, so that is how it ends: what
+	// the file does say outranks what it leaves out.
+	s := read(t, sample)
+	s.Normalise()
+	for i, p := range s.Parts {
+		if got := p.Measures[len(p.Measures)-1].RightBarline; got != model.BarRepeatEnd {
+			t.Errorf("part %d ends on %v, want the repeat the file wrote", i, got)
+		}
+	}
+
+	// Take the repeat away and there is nothing left to say how it ends, so
+	// it ends the way MuseScore draws it.
+	plain := strings.Replace(sample, "<endRepeat>2</endRepeat>", "", 1)
+	s = read(t, plain)
+	s.Normalise()
+	for i, p := range s.Parts {
+		if got := p.Measures[len(p.Measures)-1].RightBarline; got != model.BarFinal {
+			t.Errorf("part %d ends on %v, want a final barline", i, got)
+		}
+	}
+}
+
+// A repeat is written on the first staff and meant for the score. The model
+// spreads it, so this is really a check that nothing here gets in the way of
+// that — the importer must leave the repeat where the file put it rather than
+// inventing one somewhere else.
+func TestARepeatReadFromOneStaffReachesThemAll(t *testing.T) {
+	s := read(t, sample)
+	s.Normalise()
+
+	for i, p := range s.Parts {
+		if len(p.Measures) < 2 {
+			t.Fatalf("part %d has %d bars", i, len(p.Measures))
+		}
+		if got := p.Measures[0].RightBarline; got != model.BarRepeatStart {
+			t.Errorf("part %d opens the repeat as %v", i, got)
+		}
+		if got := p.Measures[1].RightBarline; got != model.BarRepeatEnd {
+			t.Errorf("part %d closes the repeat as %v", i, got)
+		}
+	}
+}

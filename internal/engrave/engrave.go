@@ -641,6 +641,12 @@ func (e *engraver) systemMarkRoom(parts []*model.Part, start, end int) float64 {
 			if m.Sign != model.NoSign || m.Jump != nil {
 				at(markerRoom + 1.6)
 			}
+			// A tempo change is written in that row too: "a tempo" at the
+			// last chorus sits over the bar it starts at, beside the letter
+			// if there is one.
+			if m.Tempo != nil {
+				at(markerRoom + 1.6)
+			}
 			for _, v := range m.Voices {
 				for _, el := range v.Elements {
 					mk := marksOf(el)
@@ -973,39 +979,57 @@ func (e *engraver) drawTempoMark(x float64) {
 	if !e.opt.ShowTempoMark {
 		return
 	}
-	text := strings.TrimSpace(e.score.Tempo.Text)
-	bpm := e.score.Tempo.BPM
-	if text == "" && bpm <= 0 {
+	if strings.TrimSpace(e.score.Tempo.Text) == "" && e.score.Tempo.BPM <= 0 {
 		return
 	}
-
 	e.y += 1.4
+	e.drawTempoAt(e.score.Tempo, x, e.y)
+	e.y += 1.2
+}
+
+// drawTempoAt writes one tempo marking at a place on the page and says how
+// wide it came out.
+//
+// Separated from the mark at the head of the score because the same marking
+// is written twice over: once above the first bar, where it is part of the
+// title block, and again over whichever bar changes speed. Drawing it in two
+// places from one piece of code is what keeps "a tempo" at the last chorus
+// looking like the mark at the top rather than like a different program.
+func (e *engraver) drawTempoAt(t model.Tempo, x, y float64) float64 {
+	text := strings.TrimSpace(t.Text)
+	bpm := t.BPM
+	if text == "" && bpm <= 0 {
+		return 0
+	}
+
 	at := x
 	if text != "" {
 		e.lay.Texts = append(e.lay.Texts, Text{
-			S: text, X: at, Y: e.y, Size: 2.0, Anchor: "start", Bold: true,
+			S: text, X: at, Y: y, Size: 2.0, Anchor: "start", Bold: true,
 		})
 		at += textWidth(text, 2.0) + 1.2
 	}
 	if bpm > 0 {
 		// The note is the real glyph, not the letter it looks like: a
 		// metronome mark written as "J = 140" is a program that gave up.
-		glyph, dots := metronomeGlyph(e.score.Tempo.Unit)
+		glyph, dots := metronomeGlyph(t.Unit)
 		e.lay.Glyphs = append(e.lay.Glyphs, Glyph{
-			Name: glyph, X: at, Y: e.y, Size: 4,
+			Name: glyph, X: at, Y: y, Size: 4,
 		})
 		at += smufl.Advance(glyph)
 		for i := 0; i < dots; i++ {
 			e.lay.Glyphs = append(e.lay.Glyphs, Glyph{
-				Name: "metAugmentationDot", X: at, Y: e.y, Size: 4,
+				Name: "metAugmentationDot", X: at, Y: y, Size: 4,
 			})
 			at += smufl.Advance("metAugmentationDot") + 0.1
 		}
+		label := "= " + itoa(bpm)
 		e.lay.Texts = append(e.lay.Texts, Text{
-			S: "= " + itoa(bpm), X: at + 0.45, Y: e.y, Size: 2.0, Anchor: "start",
+			S: label, X: at + 0.45, Y: y, Size: 2.0, Anchor: "start",
 		})
+		at += 0.45 + textWidth(label, 2.0)
 	}
-	e.y += 1.2
+	return at - x
 }
 
 // metronomeGlyph picks the note a metronome mark is counted in.

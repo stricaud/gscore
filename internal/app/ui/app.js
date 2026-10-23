@@ -1952,25 +1952,106 @@ function ask({ title, label, value = "", note = "", options = null, search = fal
 // The things that belong to the score or the staff rather than to a note.
 // Each asks for one value and sends it; nothing here is worth a panel.
 
+// setTempoDialog asks for a speed and the beat it is counted in.
+//
+// The beat matters as much as the number: 6/8 goes at so many dotted quarters
+// a minute and not at so many quarters, and a tempo of 120 with no note
+// beside it does not say anything. So the note is picked by looking at it,
+// which is the way a musician reads a metronome mark in the first place.
+//
+// Where it lands is the bar that is selected, and the piece itself when
+// nothing is — which is the same thing as the first bar, because the mark in
+// the title block is that marking written over bar one.
 async function setTempoDialog() {
-  const now = state.info?.tempo || 120;
-  const v = await ask({
-    title: "Tempo", label: "Beats per minute", value: String(now),
-    note: "Counted in quarter notes.",
+  const dlg = $("#tempo");
+  const bar = state.selection?.measure ?? 0;
+  const here = tempoAtBar(bar);
+
+  $("#tempo-where").textContent = bar === 0
+    ? "The speed the piece starts at."
+    : `A change of speed from bar ${bar + 1} on.`;
+  $("#tempo-bpm").value = String(here.bpm);
+  $("#tempo-text").value = here.text;
+  $("#tempo-dotted").checked = !!here.dotted;
+  $$('#tempo-notes input[name="tempo-unit"]').forEach(
+    (r) => (r.checked = r.value === here.unit)
+  );
+  // There is nothing to remove at bar one: the piece has a speed whether or
+  // not anybody chose it.
+  $("#tempo-remove").hidden = bar === 0 || !here.written;
+
+  const answer = await new Promise((resolve) => {
+    const done = () => {
+      dlg.removeEventListener("close", done);
+      resolve(dlg.returnValue);
+    };
+    dlg.addEventListener("close", done);
+    dlg.showModal();
+    $("#tempo-bpm").focus();
+    $("#tempo-bpm").select();
   });
-  if (v === null) return;
-  const bpm = parseInt(v, 10);
-  if (!Number.isFinite(bpm)) {
-    status("That is not a tempo");
-    return;
+  if (answer !== "ok" && answer !== "remove") return;
+
+  const q = new URLSearchParams();
+  if (bar > 0) q.set("measure", String(bar));
+
+  if (answer === "remove") {
+    q.set("remove", "1");
+  } else {
+    const bpm = parseInt($("#tempo-bpm").value, 10);
+    if (!Number.isFinite(bpm) || bpm < 10 || bpm > 400) {
+      status("A tempo is between 10 and 400 beats a minute");
+      return;
+    }
+    const unit = $$('#tempo-notes input[name="tempo-unit"]').find((r) => r.checked);
+    q.set("bpm", String(bpm));
+    q.set("unit", unit ? unit.value : "quarter");
+    if ($("#tempo-dotted").checked) q.set("dotted", "1");
+    q.set("text", $("#tempo-text").value.trim());
   }
-  const res = await fetch(`/api/tempo?bpm=${bpm}&unit=quarter`, { method: "POST" });
+
+  const res = await fetch("/api/tempo?" + q.toString(), { method: "POST" });
   if (!res.ok) {
     status("Could not set the tempo: " + (await res.text()).trim());
     return;
   }
   await refreshScore();
-  status(bpm + " bpm");
+  if (answer === "remove") {
+    status(`Bar ${bar + 1} carries on at the tempo before it`);
+    return;
+  }
+  const d = await res.json().catch(() => ({}));
+  status(bar === 0 ? `${d.bpm ?? ""} bpm` : `Bar ${bar + 1}: ${d.bpm ?? ""} bpm`);
+}
+
+// tempoAtBar is what the dialog should open showing: the marking written at
+// this bar if there is one, and otherwise the one in force there, so that
+// changing the number does not silently change the beat as well.
+function tempoAtBar(bar) {
+  const changes = state.info?.tempoChanges || {};
+  const written = changes[String(bar)];
+  if (written) return { ...written, written: true };
+  if (bar === 0) {
+    return {
+      bpm: state.info?.tempo || 120,
+      unit: state.info?.tempoUnit || "quarter",
+      dotted: !!state.info?.tempoDotted,
+      text: state.info?.tempoText || "",
+      written: true,
+    };
+  }
+  // Walk back to whatever is in force here.
+  let best = {
+    bpm: state.info?.tempo || 120,
+    unit: state.info?.tempoUnit || "quarter",
+    dotted: !!state.info?.tempoDotted,
+    text: state.info?.tempoText || "",
+  };
+  for (let i = 1; i <= bar; i++) {
+    const c = changes[String(i)];
+    if (c) best = c;
+  }
+  return { ...best, text: "", written: false };
 }
 
 async function setHeaderDialog() {

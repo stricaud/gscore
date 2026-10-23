@@ -1002,6 +1002,40 @@ func (a *App) handleTempo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	q := r.URL.Query()
+
+	// Which bar it starts at. Bar one is the score's own tempo — the mark in
+	// the title block is that same marking written over the first bar — so
+	// saying nothing, and saying the first bar, are the same thing. Anywhere
+	// else is a change written over that bar and held until the next one.
+	bar := 0
+	if v := q.Get("measure"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 0 {
+			http.Error(w, "which bar?", http.StatusBadRequest)
+			return
+		}
+		bar = n
+	}
+
+	// Taking a change away is not setting one: the bar goes back to carrying
+	// on at whatever speed it was given earlier.
+	if q.Get("remove") == "1" {
+		if bar == 0 {
+			http.Error(w, "the piece has a speed whether or not anybody chose it",
+				http.StatusBadRequest)
+			return
+		}
+		a.mu.Lock()
+		defer a.mu.Unlock()
+		for _, p := range a.score.Parts {
+			if bar < len(p.Measures) {
+				p.Measures[bar].Tempo = nil
+			}
+		}
+		writeJSON(w, map[string]any{"status": "ok", "measure": bar})
+		return
+	}
+
 	bpm, err := strconv.Atoi(q.Get("bpm"))
 	if err != nil || bpm < 10 || bpm > 400 {
 		http.Error(w, "a tempo is between 10 and 400 beats a minute",
@@ -1023,10 +1057,38 @@ func (a *App) handleTempo(w http.ResponseWriter, r *http.Request) {
 		unit = unit.Scale(3, 2)
 	}
 
+	t := model.Tempo{BPM: bpm, Unit: unit, Text: q.Get("text")}
+
 	a.mu.Lock()
-	a.score.Tempo = model.Tempo{BPM: bpm, Unit: unit, Text: q.Get("text")}
-	a.mu.Unlock()
-	writeJSON(w, map[string]any{"status": "ok", "bpm": bpm})
+	defer a.mu.Unlock()
+	if bar == 0 {
+		a.score.Tempo = t
+		// A change written over bar one would print the same marking twice.
+		for _, p := range a.score.Parts {
+			if len(p.Measures) > 0 {
+				p.Measures[0].Tempo = nil
+			}
+		}
+		writeJSON(w, map[string]any{"status": "ok", "bpm": bpm, "measure": 0})
+		return
+	}
+	if bar >= a.score.MeasureCount() {
+		http.Error(w, "there is no such bar", http.StatusBadRequest)
+		return
+	}
+	// On the first staff, because that is where a tempo is printed and who
+	// it belongs to: it is the piece's speed, not one player's.
+	for i, p := range a.score.Parts {
+		if bar >= len(p.Measures) {
+			continue
+		}
+		if i == 0 {
+			p.Measures[bar].Tempo = &t
+		} else {
+			p.Measures[bar].Tempo = nil
+		}
+	}
+	writeJSON(w, map[string]any{"status": "ok", "bpm": bpm, "measure": bar})
 }
 
 // handleHeader sets the title block.
@@ -2574,4 +2636,29 @@ const drumKitName = "drum kit"
 // General MIDI program.
 func isDrumKit(name string) bool {
 	return strings.EqualFold(strings.TrimSpace(name), drumKitName)
+}
+
+// beatName is the inverse of durationNames: the word for a beat, and whether
+// it is dotted.
+//
+// A dotted beat is half as long again, so it is not in the table of plain
+// values at all — it is one of them with a dot, and saying so is what lets a
+// dialog show the note and the dot separately the way they are written.
+func beatName(d model.Duration) (string, bool) {
+	for _, dotted := range []bool{false, true} {
+		want := d
+		if dotted {
+			if want.Num%3 != 0 {
+				continue
+			}
+			want = want.Scale(2, 3)
+		}
+		want = want.Reduced()
+		for name, v := range durationNames {
+			if v.Reduced() == want {
+				return name, dotted
+			}
+		}
+	}
+	return "quarter", false
 }

@@ -84,14 +84,6 @@ func buildPlayback(s *model.Score) Playback {
 	if bpm <= 0 {
 		bpm = 120
 	}
-	unit := s.Tempo.Unit
-	if unit.Den == 0 || unit.Num == 0 {
-		unit = model.Duration{Num: 1, Den: 4}
-	}
-	// One unit lasts 60/bpm seconds, so a whole note lasts that scaled by how
-	// many units fit in it.
-	secondsPerUnit := 60.0 / float64(bpm)
-	secondsPerWhole := secondsPerUnit / unit.Float()
 
 	out := Playback{Tempo: bpm}
 	// The order the bars are actually played in: a repeat sends you back, a
@@ -117,7 +109,7 @@ func buildPlayback(s *model.Score) Playback {
 	// the cursor and the note it was supposed to be pointing at were most of
 	// a page apart. Deciding the bar lines first and hanging every part off
 	// them makes that unrepresentable.
-	starts, total := measureTimeline(s, order, secondsPerWhole)
+	starts, total := measureTimeline(s, order)
 	for k, start := range starts {
 		d := total - start
 		if k+1 < len(starts) {
@@ -171,6 +163,13 @@ func buildPlayback(s *model.Score) Playback {
 			if step < len(starts) {
 				vt = starts[step]
 			}
+			// How long a whole note lasts in this bar. A piece is not one
+			// speed, so this is asked bar by bar rather than once for the
+			// score: a tempo change partway through has to reach the notes
+			// as well as the barlines, or the two drift apart from the bar
+			// it is written at onwards.
+			secondsPerWhole := wholeNoteSeconds(s, mi)
+
 			ref := refBase[pi][mi]
 			if m.Repeat > 0 {
 				// A bar showing a repeat sign has no noteheads of its own —
@@ -247,14 +246,32 @@ func buildPlayback(s *model.Score) Playback {
 // cursor and the note it pointed at came to be a bar apart.
 //
 // Returns the start of every bar and the time the last one ends.
-func measureTimeline(s *model.Score, order []int, secondsPerWhole float64) ([]float64, float64) {
+func measureTimeline(s *model.Score, order []int) ([]float64, float64) {
 	starts := make([]float64, len(order))
 	at := 0.0
 	for k, i := range order {
 		starts[k] = at
-		at += s.MeasureDuration(i).Float() * secondsPerWhole
+		at += s.MeasureDuration(i).Float() * wholeNoteSeconds(s, i)
 	}
 	return starts, at
+}
+
+// wholeNoteSeconds is how long a whole note lasts in the bar at this index.
+//
+// One beat lasts 60/bpm seconds, and a whole note is however many beats fit
+// in it — which is why the beat the number counts has to be carried beside
+// the number. A tempo of 120 means nothing on its own.
+func wholeNoteSeconds(s *model.Score, bar int) float64 {
+	t := s.TempoAt(bar)
+	bpm := t.BPM
+	if bpm <= 0 {
+		bpm = 120
+	}
+	unit := t.Unit
+	if unit.Den == 0 || unit.Num == 0 {
+		unit = model.Duration{Num: 1, Den: 4}
+	}
+	return (60.0 / float64(bpm)) / unit.Float()
 }
 
 // baseRefs gives the number the engraver assigned to the first element of

@@ -84,6 +84,10 @@ type measureDoc struct {
 	Beat    int     `json:"beatValue,omitempty"`
 	TimeSym string  `json:"timeSymbol,omitempty"`
 
+	// Tempo is a new speed written over this bar, held until another says
+	// otherwise. Absent means the bar carries on at whatever it was given.
+	Tempo *tempoDoc `json:"tempo,omitempty"`
+
 	// Ending is a volta bracket over this bar.
 	Ending *endingDoc `json:"ending,omitempty"`
 	// Marker is a rehearsal mark, and Repeat the sign that says to play the
@@ -330,6 +334,12 @@ func encodeScore(s *model.Score) *scoreDoc {
 				md.Beats, md.Beat = m.Time.Beats, m.Time.BeatValue
 				md.TimeSym = timeSymNames[m.Time.Symbol]
 			}
+			if m.Tempo != nil {
+				md.Tempo = &tempoDoc{
+					BPM: m.Tempo.BPM, Unit: durString(m.Tempo.Unit),
+					Text: m.Tempo.Text,
+				}
+			}
 			if m.Ending != nil {
 				md.Ending = &endingDoc{
 					Numbers: m.Ending.Numbers, Start: m.Ending.Start,
@@ -533,6 +543,15 @@ func decodeScore(doc *scoreDoc) (*model.Score, error) {
 					Beats: md.Beats, BeatValue: md.Beat,
 					Symbol: timeSymValues[md.TimeSym],
 				}
+			}
+			if td := md.Tempo; td != nil {
+				unit := model.Duration{Num: 1, Den: 4}
+				if td.Unit != "" {
+					if d, err := parseDur(td.Unit); err == nil {
+						unit = d
+					}
+				}
+				m.Tempo = &model.Tempo{BPM: td.BPM, Unit: unit, Text: td.Text}
 			}
 			if md.Ending != nil {
 				m.Ending = &model.Ending{

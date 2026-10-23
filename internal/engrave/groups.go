@@ -210,7 +210,7 @@ func (e *engraver) drawGroups(parts []*model.Part, left float64, tops []float64,
 			// Centred on the staff's middle line, which is where a name sits
 			// in every printed score.
 			S: label, X: left - groupGap - 0.4,
-			Y: tops[i] + staffHeight/2 + nameSize*0.35,
+			Y:    tops[i] + staffHeight/2 + nameSize*0.35,
 			Size: nameSize, Anchor: "end",
 		})
 	}
@@ -253,18 +253,19 @@ const (
 	afterMark = 0.8
 )
 
-// drawMarkers writes the rehearsal marks, signs and jump directions over a
-// system.
+// drawMarkers writes the rehearsal marks, the signs, the tempo changes and
+// the jump directions over a system.
 //
-// All three go in one row above the top staff, and all three are taken from
-// whichever part has them: "from letter B", the segno and "D.S. al Coda" each
-// have to mean the same bar to every player in the room, so a direction that
-// belonged to one staff would be worse than none.
+// All of them go in one row above the top staff, and all of them are taken
+// from whichever part has them: "from letter B", the segno, "slower" and
+// "D.S. al Coda" each have to mean the same bar to every player in the room,
+// so a direction that belonged to one staff would be worse than none.
 //
 // They share a row because they share a bar more often than not — a chart
-// puts the segno at letter A as a matter of course. Each is placed after the
-// last thing written over that bar rather than at the bar line, which is what
-// keeps the sign from being printed through the letter.
+// puts the segno at letter A and goes back to tempo there as a matter of
+// course. Each is placed after the last thing written over that bar rather
+// than at the bar line, which is what keeps the sign from being printed
+// through the letter.
 func (e *engraver) drawMarkers(parts []*model.Part, columns []float64, start, end int, top float64) {
 	at := func(mi int) *model.Measure {
 		for _, p := range parts {
@@ -277,34 +278,56 @@ func (e *engraver) drawMarkers(parts []*model.Part, columns []float64, start, en
 		}
 		return nil
 	}
+	tempoAt := func(mi int) *model.Tempo {
+		for _, p := range parts {
+			if mi < len(p.Measures) && p.Measures[mi].Tempo != nil {
+				return p.Measures[mi].Tempo
+			}
+		}
+		return nil
+	}
 
 	for mi := start; mi < end; mi++ {
 		m := at(mi)
-		if m == nil {
+		tempo := tempoAt(mi)
+		if m == nil && tempo == nil {
 			continue
 		}
-		x := columns[mi-start]
+		// After the bar number, which is written in this row too and at the
+		// same height. A tempo marking printed from the bar's own column
+		// came out with the number inside its first letter.
+		x := columns[mi-start] + e.numberWidth(mi, start)
 
-		if m.Marker != "" {
-			x = e.drawRehearsalMark(m.Marker, x, top) + afterMark
+		if m != nil {
+			if m.Marker != "" {
+				x = e.drawRehearsalMark(m.Marker, x, top) + afterMark
+			}
+			if g := m.Sign.Glyph(); g != "" {
+				e.lay.Glyphs = append(e.lay.Glyphs, Glyph{
+					Name: g, X: x, Y: top - 1.6, Size: signSize,
+				})
+				x += smufl.Advance(g)*signSize/4 + afterMark
+			}
+			if label := m.Sign.Label(); label != "" {
+				e.lay.Texts = append(e.lay.Texts, Text{
+					S: label, X: x, Y: top - 1.6, Size: jumpTextSize,
+					Anchor: "start", Bold: true, Italic: true,
+				})
+				x += textWidth(label, jumpTextSize) + afterMark
+			}
 		}
-		if g := m.Sign.Glyph(); g != "" {
-			e.lay.Glyphs = append(e.lay.Glyphs, Glyph{
-				Name: g, X: x, Y: top - 1.6, Size: signSize,
-			})
-			x += smufl.Advance(g)*signSize/4 + afterMark
-		}
-		if label := m.Sign.Label(); label != "" {
-			e.lay.Texts = append(e.lay.Texts, Text{
-				S: label, X: x, Y: top - 1.6, Size: jumpTextSize,
-				Anchor: "start", Bold: true, Italic: true,
-			})
+
+		// The new speed, after the letter rather than through it. The mark at
+		// the head of the score is the same thing written over bar one, so
+		// this is drawn the same way and looks like it.
+		if tempo != nil && e.opt.ShowTempoMark {
+			x += e.drawTempoAt(*tempo, x, top-1.6) + afterMark
 		}
 
 		// The direction is written at the end of the bar, because that is
 		// where the player reaches it: a D.C. printed at the head of its bar
 		// says to go back before playing the bar it is in.
-		if m.Jump != nil {
+		if m != nil && m.Jump != nil {
 			if mi-start+1 < len(columns) {
 				e.lay.Texts = append(e.lay.Texts, Text{
 					S: m.Jump.Label(), X: columns[mi-start+1] - 0.4, Y: top - 1.6,
@@ -347,6 +370,23 @@ func (e *engraver) drawRehearsalMark(text string, x, top float64) float64 {
 // prints a single "1" and nothing else — which is what made the menu entry
 // look like it did nothing at all. Editing is also when you most want to find
 // a bar by its number, so there every bar is numbered.
+// numberWidth is how much room the bar number at this bar takes, so that
+// whatever else is written over the bar starts after it rather than through
+// it. Zero where no number is written there.
+func (e *engraver) numberWidth(mi, start int) float64 {
+	if !e.opt.ShowMeasureNumbers {
+		return 0
+	}
+	// Paginated, only the bar that opens a system is numbered.
+	if e.opt.Mode != Strip && mi != start {
+		return 0
+	}
+	if mi+1 <= 1 {
+		return 0
+	}
+	return textWidth(itoa(mi+1), measureNumberSize) + 0.6
+}
+
 func (e *engraver) drawMeasureNumbers(columns []float64, start, end int, top float64) {
 	if !e.opt.ShowMeasureNumbers {
 		return

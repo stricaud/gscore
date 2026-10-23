@@ -39,6 +39,12 @@ func TestRoundTripKeepsEverything(t *testing.T) {
 		Voices: []*model.Voice{{}},
 		Key:    &key, Time: &meter,
 		Ending: &model.Ending{Numbers: []int{1, 2}, Start: true, Stop: true},
+		// A change of speed written over this bar, counted in a dotted
+		// quarter — which is how 6/8 is counted, and a beat that is not in
+		// the table of plain note values at all.
+		Tempo: &model.Tempo{
+			BPM: 72, Unit: model.Duration{Num: 3, Den: 8}, Text: "Slower",
+		},
 	})
 
 	var buf bytes.Buffer
@@ -82,5 +88,14 @@ func TestRoundTripKeepsEverything(t *testing.T) {
 	}
 	if m.Ending == nil || len(m.Ending.Numbers) != 2 || !m.Ending.Start {
 		t.Errorf("the ending did not survive: %+v", m.Ending)
+	}
+	if m.Tempo == nil {
+		t.Fatal("the tempo change did not survive")
+	}
+	if m.Tempo.BPM != 72 || m.Tempo.Text != "Slower" {
+		t.Errorf("the tempo change came back as %+v", m.Tempo)
+	}
+	if want := (model.Duration{Num: 3, Den: 8}); m.Tempo.Unit.Reduced() != want {
+		t.Errorf("the beat came back as %v, want %v", m.Tempo.Unit, want)
 	}
 }

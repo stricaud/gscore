@@ -72,6 +72,10 @@ func (m *Measure) Clone() *Measure {
 		t := *m.Time
 		out.Time = &t
 	}
+	if m.Tempo != nil {
+		t := *m.Tempo
+		out.Tempo = &t
+	}
 	if m.Ending != nil {
 		e := *m.Ending
 		if m.Ending.Numbers != nil {

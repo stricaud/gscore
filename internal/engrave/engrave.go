@@ -1153,7 +1153,10 @@ func (e *engraver) elementWidth(el model.Element) float64 {
 	quarter := model.Duration{Num: 1, Den: 4}
 	w := sp.NoteBase * math.Pow(d.Float()/quarter.Float(), sp.NoteExponent)
 	if _, dots, ok := d.Written(); ok && dots > 0 {
-		w += sp.DotToNote + float64(dots)*sp.BetweenDots
+		// The room the dots actually take: each one is as wide as the glyph,
+		// not as wide as the gap after it. Budgeting the gap alone left the
+		// dots crowding whatever came next.
+		w += sp.DotToNote + float64(dots)*dotStep(sp)
 	}
 	return math.Max(w, sp.MinNote)
 }

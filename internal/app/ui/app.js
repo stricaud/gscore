@@ -3063,7 +3063,7 @@ async function playFromStart() {
     await selectTune(0);
   }
   scrollToTop();
-  await play();
+  await play({ fromStart: true });
 }
 
 function scrollToTop() {
@@ -3071,13 +3071,28 @@ function scrollToTop() {
   if (wrap && wrap.scrollTo) wrap.scrollTo({ top: 0, left: 0, behavior: "smooth" });
 }
 
-async function play() {
+// play starts the music.
+//
+// From the note that is selected, if one is: having picked out the bar you
+// are working on, hearing the piece from the top again is rarely what you
+// wanted. Shift with the space bar still goes back to the beginning, and so
+// does playing with nothing selected.
+async function play(opts) {
   if (state.playing) stop();
 
   const pb = await (await fetch("/api/playback")).json();
   if (!pb.events || pb.events.length === 0) {
     status("Nothing to play");
     return;
+  }
+
+  // Where to begin. A note played more than once — anything inside a repeat
+  // — is started at the first time through, which is the one being looked at.
+  let from = 0;
+  if (!(opts && opts.fromStart) && hasSelection()) {
+    const ref = state.multi.length ? orderedSelection()[0].ref : state.selection.ref;
+    const ev = pb.events.find((x) => x.ref === ref);
+    if (ev) from = ev.start;
   }
   // The cursor is placed from the engraved positions, so they have to be in
   // hand before it can be shown.
@@ -3095,22 +3110,38 @@ async function play() {
 
   const lead = 0.1;
   const t0 = audio.currentTime + lead;
-  playStart = performance.now() + lead * 1000;
+  // The clock is kept in the score's own time, not in time since the button
+  // was pressed, so everything downstream — the cursor, the highlight, the
+  // end of the piece — needs no telling that it started in the middle.
+  playStart = performance.now() + lead * 1000 - from * 1000;
   voices = [];
 
+  let sounded = 0;
   for (const ev of pb.events) {
-    sound(ev, t0 + ev.start, master);
+    const end = ev.start + ev.dur;
+    if (end <= from) continue; // already over by the time we start
+    sounded++;
+    if (ev.start >= from) {
+      sound(ev, t0 + ev.start - from, master);
+      continue;
+    }
+    // A note already ringing when we come in: take it up part way, for what
+    // is left of it, rather than striking it again.
+    sound({ ...ev, dur: end - from }, t0, master);
   }
 
   state.playing = true;
   $("#play-btn").classList.add("active");
-  status(`Playing — ${pb.events.length} notes at ${pb.tempo} bpm`);
+  const where = from > 0
+    ? ` from measure ${(cursorAt(pb.measures, from)?.measure ?? 0) + 1}`
+    : "";
+  status(`Playing${where} — ${sounded} notes at ${pb.tempo} bpm`);
 
   // The cursor goes up before a note sounds, at the start of the music, so
   // pressing play is visibly answered even when the piece opens with rests —
   // Mozart's Introitus rests for nine bars before anyone sings.
   makeCursor();
-  const at0 = cursorAt(pb.measures, 0);
+  const at0 = cursorAt(pb.measures, from);
   if (at0) {
     moveCursor(at0);
     followCursor(at0);

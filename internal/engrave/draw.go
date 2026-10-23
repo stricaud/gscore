@@ -396,6 +396,7 @@ func (e *engraver) drawRestAt(p *placed) {
 		Name: name, X: p.x, Y: e.y + stepY(step), Ref: p.index,
 	})
 	e.lay.Refs[p.index] = RefPos{X: p.x, Y: e.y + stepY(step), Staff: e.y}
+	// A rest has no stem for the dots to clear.
 	e.drawDots(p.x+smufl.Advance(name)+e.opt.Spacings.DotToNote, step, p.dots)
 }
 
@@ -414,7 +415,7 @@ func (e *engraver) drawNoteHead(p *placed) {
 	})
 	e.lay.Refs[p.index] = RefPos{X: p.x, Y: e.y + stepY(float64(p.step)), Staff: e.y}
 	e.ledgerLines(p.x, smufl.Advance(head), p.step)
-	e.drawDots(p.x+smufl.Advance(head)+e.opt.Spacings.DotToNote, float64(p.step), p.dots)
+	e.drawDots(p.x+smufl.Advance(head)+e.dotGap(e.stemUp(p)), float64(p.step), p.dots)
 }
 
 func (e *engraver) drawChordHeads(p *placed) {
@@ -463,7 +464,7 @@ func (e *engraver) drawChordHeads(p *placed) {
 		}
 		e.ledgerLines(p.x, smufl.Advance(head), step)
 	}
-	e.drawDots(p.x+smufl.Advance(head)+e.opt.Spacings.DotToNote, float64(p.hi), p.dots)
+	e.drawDots(p.x+smufl.Advance(head)+e.dotGap(e.stemUp(p)), float64(p.hi), p.dots)
 }
 
 func abs(n int) int {
@@ -779,8 +780,31 @@ func (e *engraver) drawDots(x, step float64, dots int) {
 		e.lay.Glyphs = append(e.lay.Glyphs, Glyph{
 			Name: "augmentationDot", X: x, Y: e.y + stepY(ds),
 		})
-		x += e.opt.Spacings.BetweenDots
+		// Past the dot just drawn, then the gap. Advancing by the gap alone
+		// left each dot after the first sitting on top of the one before it,
+		// by the width of a dot less the gap — which a double-dotted note
+		// showed as a single fat blot.
+		x += dotStep(e.opt.Spacings)
 	}
+}
+
+// dotStep is the distance from one dot to the next: the dot itself, then the
+// air after it.
+func dotStep(sp Spacings) float64 {
+	return smufl.Advance("augmentationDot") + sp.BetweenDots
+}
+
+// dotGap is how far after a notehead its dots begin.
+//
+// Measured from whatever is furthest right, which for a note whose stem goes
+// up is the stem rather than the notehead: the stem rises from the notehead's
+// right edge, so a dot placed off the notehead alone is crowded against it.
+func (e *engraver) dotGap(stemUp bool) float64 {
+	gap := e.opt.Spacings.DotToNote
+	if stemUp {
+		gap += e.opt.Defaults.StemThickness + 0.12
+	}
+	return gap
 }
 
 // drawDynamic writes a volume marking under the staff.
@@ -872,21 +896,24 @@ func (e *engraver) drawArticulations(m *model.Marks, x float64, step int, stemUp
 	if len(m.Articulations) == 0 && len(m.Symbols) == 0 {
 		return
 	}
-	// Articulations sit on the side away from the stem, clear of the staff
-	// when the note is already outside it.
+	// Articulations sit on the side away from the stem, clear of both the
+	// note and the staff.
+	//
+	// Clear of *both*: whichever of the two is further out wins. A note
+	// inside the staff needs its mark pushed out past the lines, and a note
+	// above them needs it further out still. Forcing the mark to the staff's
+	// edge did the first and undid the second — for anything above the top
+	// line the edge of the staff is below the notehead, so the mark was
+	// dragged down onto the note it belonged to.
 	above := !stemUp
-	y := e.y + stepY(float64(step))
+	noteY := e.y + stepY(float64(step))
 	gap := 1.3
+	var y float64
 	if above {
-		y -= gap
-		if step > 9 {
-			y = e.y - 1.2
-		}
+		// y grows downward, so further out is smaller.
+		y = math.Min(noteY-gap, e.y-1.2)
 	} else {
-		y += gap
-		if step < -1 {
-			y = e.y + staffHeight + 1.2
-		}
+		y = math.Max(noteY+gap, e.y+staffHeight+1.2)
 	}
 	emit := func(name string) {
 		if name == "" {

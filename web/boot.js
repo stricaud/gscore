@@ -30,6 +30,7 @@
     /^\/keysig\.svg/,
     /^\/symbol\.png/,
     /^\/font\.otf/,
+    /^\/print/,
   ];
 
   function isOurs(url) {

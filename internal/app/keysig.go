@@ -98,7 +98,13 @@ func (a *App) handleKeySigSVG(w http.ResponseWriter, r *http.Request) {
 	opt.Mode = engrave.Strip
 	opt.ShowTitle = false
 	opt.HideTimeSignature = true
+	// A clef is not confined to the staff: a treble clef curls about two and a
+	// half spaces above the top line and the same below the bottom one. A
+	// margin tight to the staff lines cuts both ends off, which is what the
+	// picture is mostly made of. Sideways there is nothing to clear, so the
+	// border stays narrow there and the picture does not swim in white.
 	opt.Spacings.Margin = 0.6
+	opt.Spacings.MarginY = 2.9
 	opt.LineWidth = 0
 	lay := engrave.Engrave(s, opt)
 

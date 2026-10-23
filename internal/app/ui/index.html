@@ -147,6 +147,7 @@
     <button class="menu-title">Play</button>
     <div class="menu-items">
       <button data-action="play"><span>Play</span><kbd>Space</kbd></button>
+      <button data-action="play-from-start"><span>Play from the beginning</span><kbd>⇧Space</kbd></button>
       <button data-action="stop"><span>Stop</span><kbd>Esc</kbd></button>
     </div>
   </div>
@@ -154,7 +155,6 @@
   <div class="menu" data-menu="help">
     <button class="menu-title">Help</button>
     <div class="menu-items">
-      <button data-action="contents" disabled><span>Contents</span></button>
       <button data-action="report-bug"><span>Report a bug</span></button>
       <hr>
       <button data-action="about"><span>About gscore</span></button>
@@ -289,10 +289,33 @@
   <form method="dialog" id="ask-form">
     <label id="ask-label" for="ask-input">Value</label>
     <input type="text" id="ask-input" autocomplete="off">
+    <!-- A long list is faster to type at than to scroll: the filter narrows
+         the one below it as you type, and Enter takes the first match. -->
+    <input type="search" id="ask-filter" placeholder="Type to search…" autocomplete="off" hidden>
     <select id="ask-select" hidden></select>
     <div class="ask-buttons">
       <button value="cancel" type="submit">Cancel</button>
       <button value="ok" type="submit" class="primary" id="ask-ok">OK</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="print">
+  <h2>Print</h2>
+  <p class="small">Choose what to print. Paper size, margins and “Save as PDF”
+     are in your system’s print dialog, which opens next.</p>
+  <form method="dialog" id="print-form">
+    <div class="choices" id="print-what">
+      <label><input type="radio" name="what" value="tune" checked>
+        <span><b>This tune</b><em>What is on screen now.</em></span></label>
+      <label id="print-book-row" hidden><input type="radio" name="what" value="book">
+        <span><b>Every tune in the file</b><em>Each one starting on its own page.</em></span></label>
+      <label id="print-parts-row" hidden><input type="radio" name="what" value="parts">
+        <span><b>Score and parts</b><em>The full score, then each staff alone, for the players.</em></span></label>
+    </div>
+    <div class="ask-buttons">
+      <button value="cancel" type="submit">Cancel</button>
+      <button value="ok" type="submit" class="primary">Print</button>
     </div>
   </form>
 </dialog>

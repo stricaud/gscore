@@ -71,6 +71,15 @@ async function paletteAction(item) {
         break;
       case "acc":
         state.tool.accidental = item.acc;
+        // An accidental means two things depending on what is in front of
+        // you. With a note selected it belongs to that note and is written on
+        // it now; with nothing selected it is a decision about the next note,
+        // the way the palette's other tools are.
+        if (hasSelection()) {
+          await setAccidental(item.acc, item.label);
+          markPaletteTool((label) => label === currentToolLabel());
+          return;
+        }
         break;
       default:
         state.tool.select = false;
@@ -205,6 +214,9 @@ async function action(name) {
       break;
     case "play":
       play();
+      break;
+    case "play-from-start":
+      await playFromStart();
       break;
     case "stop":
       stop();
@@ -535,6 +547,19 @@ function insertIndex(hit, x) {
   return els.length;
 }
 
+// columnAt finds the element whose column a point falls in, whatever its
+// height.
+//
+// Height says which pitch, not which note: a click a sixth above a written
+// note is still a click on that note's column, and treating it as one is what
+// lets a chord be built by clicking above what is already there.
+function columnAt(hit, x) {
+  for (const el of hit.elements || []) {
+    if (x >= el.x - 0.4 && x <= el.x + el.width + 0.4) return el;
+  }
+  return null;
+}
+
 // elementAt finds the element under a point, if the click is near enough to
 // one to have meant it.
 function elementAt(hit, x, y) {
@@ -593,11 +618,24 @@ function setupCanvasClicks() {
       return;
     }
 
-    const el = elementAt(hit, x, y);
+    const step = stepAt(hit, y);
+    const picking = state.tool.select || e.shiftKey;
+    const el = picking ? elementAt(hit, x, y) : columnAt(hit, x);
 
-    // A click landing on something already there picks it up, whichever tool
-    // is held. Writing a note exactly on top of one is never what was meant.
+    // A click landing on something already there picks it up — writing a note
+    // exactly on top of one is never what was meant. But with a note tool
+    // held, a click in the same column at a height nothing occupies stacks a
+    // second pitch on what is there: that is how a chord is written. gscore
+    // asked for Ctrl to be held for this; the column does the asking now.
     if (el) {
+      const stackable =
+        !picking && !state.tool.rest &&
+        (el.kind === "note" || el.kind === "chord") &&
+        !(el.steps || []).includes(step);
+      if (stackable) {
+        await addPitch(hit, el, step);
+        return;
+      }
       select(hit, el);
       return;
     }
@@ -605,14 +643,14 @@ function setupCanvasClicks() {
     state.multi = [];
     state.selection = {
       part: hit.part, measure: hit.measure,
-      at: insertIndex(hit, x), step: stepAt(hit, y), ref: null,
+      at: insertIndex(hit, x), step: step, ref: null,
     };
 
     // The cursor tool selects and never writes — that is the whole point of
     // it, and of gscore testing Selection.object_type == CURSOR before
     // deciding what the mouse means. Shift asks for the same thing without
     // putting the tool down.
-    if (state.tool.select || e.shiftKey) {
+    if (picking) {
       markSelection();
       status(`Measure ${hit.measure + 1}`);
       return;
@@ -673,7 +711,18 @@ async function insertAtSelection(rest, keepSelection) {
     status("Could not insert: " + (await res.text()).trim());
     return;
   }
-  sel.at += 1;
+  // A bar that is already full sends what is written next into the bar after
+  // it, making one if there is none, so the answer says where the note ended
+  // up rather than where it was aimed. The cursor follows it there, which is
+  // what makes writing bar after bar a matter of carrying on clicking.
+  const where = await res.json().catch(() => null);
+  const moved = where && where.measure !== undefined && where.measure !== sel.measure;
+  if (where && where.measure !== undefined) {
+    sel.measure = where.measure;
+    sel.at = where.at;
+  } else {
+    sel.at += 1;
+  }
   sel.ref = null;
   await refreshScore();
   // Select what was just written, so a dynamic or a stem change lands on it.
@@ -683,8 +732,37 @@ async function insertAtSelection(rest, keepSelection) {
   const el = hit && (hit.elements || [])[sel.at - 1];
   if (el) sel.ref = el.ref;
   markSelection();
-  status(rest ? "Rest inserted" : state.tool.duration + " note inserted");
+  const what = rest ? "Rest" : state.tool.duration + " note";
+  status(moved ? `${what} — measure ${sel.measure + 1}` : what + " inserted");
   void keepSelection;
+}
+
+// addPitch stacks another notehead on a note or chord already written.
+async function addPitch(hit, el, step) {
+  const p = new URLSearchParams({
+    part: String(hit.part),
+    measure: String(hit.measure),
+    index: String(el.index),
+    step: String(step),
+  });
+  if (state.tool.accidental !== "none") {
+    p.set("accidental", state.tool.accidental);
+  }
+  const res = await fetch("/api/addpitch?" + p.toString(), { method: "POST" });
+  if (!res.ok) {
+    status((await res.text()).trim());
+    return;
+  }
+  state.multi = [];
+  state.selection = {
+    part: hit.part, measure: hit.measure, at: el.index + 1, step: step, ref: null,
+  };
+  await refreshScore();
+  const h = state.hits.find((x) => x.part === hit.part && x.measure === hit.measure);
+  const now = h && (h.elements || [])[el.index];
+  if (now) state.selection.ref = now.ref;
+  markSelection();
+  status("Added to the chord");
 }
 
 async function deleteSelected() {
@@ -847,6 +925,18 @@ async function mark(endpoint, params, said) {
   await refreshScore();
   status(said);
 }
+
+// hasSelection says whether a note is picked up, rather than merely a place
+// in a measure being remembered.
+function hasSelection() {
+  if (state.multi.length) return true;
+  const sel = state.selection;
+  return !!(sel && sel.ref !== null && sel.ref !== undefined);
+}
+
+const setAccidental = (acc, said) =>
+  mark("accidental", { accidental: acc },
+       acc === "none" ? "Accidental removed" : "Written as " + said.toLowerCase());
 
 const setStem = (dir) =>
   mark("stem", { stem: dir },
@@ -1137,10 +1227,11 @@ async function saveScore() {
 // views used by the desktop builds implement no JavaScript dialog delegate,
 // so prompt() quietly returns null and whatever asked for the value does
 // nothing at all.
-function ask({ title, label, value = "", note = "", options = null }) {
+function ask({ title, label, value = "", note = "", options = null, search = false }) {
   const dlg = $("#ask");
   const input = $("#ask-input");
   const select = $("#ask-select");
+  const filter = $("#ask-filter");
 
   $("#ask-title").textContent = title;
   $("#ask-label").textContent = label;
@@ -1148,18 +1239,40 @@ function ask({ title, label, value = "", note = "", options = null }) {
   $("#ask-note").hidden = !note;
 
   const useList = Array.isArray(options) && options.length > 0;
+  // A list long enough to scroll gets a search box. A hundred and twenty-eight
+  // instruments is not a list you read, it is one you look something up in.
+  const useFilter = useList && (search || options.length > 12);
   input.hidden = useList;
   select.hidden = !useList;
+  filter.hidden = !useFilter;
+
+  const asOption = (o) => ({
+    value: typeof o === "string" ? o : o.value,
+    label: typeof o === "string" ? o : o.label,
+  });
+  const all = useList ? options.map(asOption) : [];
+  let onFilter = null;
+
   if (useList) {
-    select.innerHTML = options
-      .map((o) => {
-        const v = typeof o === "string" ? o : o.value;
-        const t = typeof o === "string" ? o : o.label;
-        return `<option value="${escapeHTML(v)}">${escapeHTML(t)}</option>`;
-      })
-      .join("");
-    select.value = value;
-    $("#ask-label").setAttribute("for", "ask-select");
+    const render = (list, keep) => {
+      select.innerHTML = list
+        .map((o) => `<option value="${escapeHTML(o.value)}">${escapeHTML(o.label)}</option>`)
+        .join("");
+      if (keep && list.some((o) => o.value === keep)) select.value = keep;
+      else if (list.length) select.selectedIndex = 0;
+    };
+    render(all, value);
+    select.size = useFilter ? Math.min(10, all.length) : 0;
+    if (useFilter) {
+      filter.value = "";
+      onFilter = () => {
+        const q = filter.value.trim().toLowerCase();
+        const keep = select.value;
+        render(q ? all.filter((o) => o.label.toLowerCase().includes(q)) : all, keep);
+      };
+      filter.addEventListener("input", onFilter);
+    }
+    $("#ask-label").setAttribute("for", useFilter ? "ask-filter" : "ask-select");
   } else {
     input.value = value;
     $("#ask-label").setAttribute("for", "ask-input");
@@ -1168,6 +1281,7 @@ function ask({ title, label, value = "", note = "", options = null }) {
   return new Promise((resolve) => {
     const done = () => {
       dlg.removeEventListener("close", done);
+      if (onFilter) filter.removeEventListener("input", onFilter);
       if (dlg.returnValue !== "ok") {
         resolve(null);
         return;
@@ -1177,7 +1291,7 @@ function ask({ title, label, value = "", note = "", options = null }) {
     dlg.addEventListener("close", done);
     dlg.showModal();
     // Ready to type, which is the point of a one-question dialog.
-    setTimeout(() => (useList ? select : input).focus(), 0);
+    setTimeout(() => (useFilter ? filter : useList ? select : input).focus(), 0);
   });
 }
 
@@ -1242,7 +1356,8 @@ async function setInstrumentDialog() {
     title: "Instrument",
     label: staff ? `What ${staff.name} sounds as` : "Instrument",
     value: staff?.instrument || "piano",
-    note: "Used for playback.",
+    note: "Used for playback. Type to search.",
+    search: true,
     options: list.map((x) => ({ value: x.name, label: `${x.name} — ${x.family}` })),
   });
   if (v === null) return;
@@ -1303,50 +1418,72 @@ async function openKeyPicker(partIndex) {
 // Printing always paginates, whatever the editor is showing: a continuous
 // strip has no page breaks to print at. The width is chosen so a system fits
 // the usable part of a portrait page.
+// printScore asks what to print, then hands the page to the system's own
+// print dialog, where the paper, the margins and "Save as PDF" already live.
 async function printScore() {
+  const many = (state.info?.tunes?.length ?? 0) > 1;
+  const parts = (state.info?.parts?.length ?? 0) > 1;
+  const what = await askPrint(many, parts);
+  if (!what) return;
+
+  const path = "/print?what=" + encodeURIComponent(what);
+
   // A native window has no print machinery and window.open returns nothing
   // without a UI delegate, so printing is handed to the real browser, which
   // has both. The page it opens prints itself.
   if (state.info?.local && state.info?.native) {
-    const res = await fetch("/api/openbrowser?path=/print", { method: "POST" });
+    const res = await fetch("/api/openbrowser?path=" + encodeURIComponent(path),
+                            { method: "POST" });
     status(res.ok ? "Opened the print view in your browser"
                   : "Could not open the print view");
     return;
   }
+
   status("Preparing to print…");
-  const res = await fetch(scoreURL({ mode: "page", space: 6, width: 150 }));
-  const svgText = await res.text();
+  const res = await fetch(path);
+  if (!res.ok) {
+    status("Could not prepare the print view");
+    return;
+  }
+  const page = await res.text();
 
   const w = window.open("", "_blank");
   if (!w) {
     status("The browser blocked the print window");
     return;
   }
+  // The page prints itself once its font has loaded, which is a decision the
+  // server already made; writing it whole keeps that in one place.
   w.document.open();
-  w.document.write(`<!doctype html>
-<html><head><meta charset="utf-8">
-<title>${escapeHTML(state.info?.title || "Score")}</title>
-<style>
-  @page { size: auto; margin: 12mm; }
-  html, body { margin: 0; padding: 0; background: #fff; }
-  /* The SVG is one tall drawing; letting it set its own height and flow from
-     the top is what keeps it from being parked in the middle of page one. */
-  svg { display: block; width: 100%; height: auto; }
-</style></head>
-<body>${svgText}</body></html>`);
+  w.document.write(page);
   w.document.close();
-
-  // Give the embedded font a moment to load, or the first page prints blank.
-  const go = () => {
-    w.focus();
-    w.print();
-  };
-  if (w.document.fonts && w.document.fonts.ready) {
-    w.document.fonts.ready.then(() => setTimeout(go, 150));
-  } else {
-    setTimeout(go, 600);
-  }
+  w.focus();
   status("Ready");
+}
+
+// askPrint shows the choices that apply to this file and nothing else.
+function askPrint(many, parts) {
+  const dlg = $("#print");
+  $("#print-book-row").hidden = !many;
+  $("#print-parts-row").hidden = !parts;
+  // A book is almost always wanted whole; a single tune has nothing else to
+  // offer, so the default is whichever is the obvious answer.
+  const want = many ? "book" : "tune";
+  $$('#print-what input[name="what"]').forEach((r) => (r.checked = r.value === want));
+
+  return new Promise((resolve) => {
+    const done = () => {
+      dlg.removeEventListener("close", done);
+      if (dlg.returnValue !== "ok") {
+        resolve(null);
+        return;
+      }
+      const picked = $$('#print-what input[name="what"]').find((r) => r.checked);
+      resolve(picked ? picked.value : "tune");
+    };
+    dlg.addEventListener("close", done);
+    dlg.showModal();
+  });
 }
 
 /* ---------- opening a file ---------- */
@@ -1416,6 +1553,160 @@ let cursorEl = null;
 
 const midiToHz = (m) => 440 * Math.pow(2, (m - 69) / 12);
 
+/* ---------- the voices ---------- */
+
+// A staff says what it sounds as, and this is where that becomes a sound.
+//
+// These are not samples and do not pretend to be: each family is built from
+// the one or two things that actually tell it apart by ear — how fast the note
+// arrives, whether it holds or dies away, and how much is going on above the
+// fundamental. A flute is nearly a sine wave that fades in; a plucked string
+// is bright at the start and gone by the end; brass arrives late and loud with
+// the top opening up as it does. Those differences carry further than
+// waveform names do.
+//
+// The families come from the server, from General MIDI by way of
+// model.Instrument.Family, so adding an instrument needs nothing here.
+const VOICES = {
+  flute: {
+    wave: "sine", partial: { wave: "triangle", gain: 0.12, ratio: 2 },
+    attack: 0.06, decay: 0.05, sustain: 0.9, release: 0.08,
+    cutoff: 3000, vibrato: { hz: 5, cents: 9, delay: 0.18 },
+  },
+  reed: {
+    wave: "sawtooth", attack: 0.03, decay: 0.08, sustain: 0.72, release: 0.07,
+    cutoff: 2200, vibrato: { hz: 5.5, cents: 7, delay: 0.25 },
+  },
+  brass: {
+    wave: "sawtooth", attack: 0.05, decay: 0.09, sustain: 0.78, release: 0.06,
+    // The brightness swells with the note, which is most of what says brass.
+    cutoff: 1200, open: 3200,
+  },
+  bowed: {
+    wave: "sawtooth", attack: 0.08, decay: 0.1, sustain: 0.8, release: 0.12,
+    cutoff: 2600, vibrato: { hz: 5, cents: 12, delay: 0.3 },
+  },
+  plucked: {
+    wave: "triangle", partial: { wave: "sawtooth", gain: 0.25, ratio: 1 },
+    attack: 0.002, decay: 0.5, sustain: 0, release: 0.05, cutoff: 3500,
+  },
+  tuned: {
+    wave: "sine", partial: { wave: "sine", gain: 0.3, ratio: 3 },
+    attack: 0.001, decay: 0.35, sustain: 0.05, release: 0.06, cutoff: 5000,
+  },
+  sustained: {
+    wave: "triangle", attack: 0.02, decay: 0.06, sustain: 0.8, release: 0.06,
+    cutoff: 3000,
+  },
+};
+
+// sound plays one event. Everything it makes stops by itself and is collected
+// in `voices` so that pressing stop can cut it short.
+function sound(ev, start, master) {
+  const v = VOICES[ev.family] || VOICES.sustained;
+  const hz = midiToHz(ev.midi);
+
+  // Two notes of the same pitch in a row have to be heard as two. What
+  // separates them is not the silence between — a hair of it is enough — but
+  // the attack at the front of each: a soft ramp makes the second note sound
+  // like the first one still ringing. So every note gets a short gap and its
+  // family's own transient.
+  const gap = Math.min(0.09, Math.max(0.035, ev.dur * 0.12));
+  const dur = Math.max(0.06, ev.dur - gap);
+
+  const gain = audio.createGain();
+  const filter = audio.createBiquadFilter();
+  filter.type = "lowpass";
+  filter.Q.value = 0.7;
+  // Follow the pitch, so a high note is not duller than a low one.
+  const cutoff = Math.min(audio.sampleRate / 2.5, Math.max(v.cutoff, hz * 4));
+  filter.frequency.setValueAtTime(v.open ? Math.max(v.open * 0.4, hz * 3) : cutoff, start);
+  if (v.open) {
+    filter.frequency.linearRampToValueAtTime(
+      Math.min(audio.sampleRate / 2.5, Math.max(v.open, hz * 5)),
+      start + Math.min(0.12, dur * 0.4));
+  }
+
+  const made = [];
+  const osc = audio.createOscillator();
+  osc.type = v.wave;
+  osc.frequency.setValueAtTime(hz, start);
+  osc.connect(filter);
+  made.push(osc);
+
+  if (v.partial) {
+    const p = audio.createOscillator();
+    const pg = audio.createGain();
+    p.type = v.partial.wave;
+    p.frequency.setValueAtTime(hz * v.partial.ratio, start);
+    pg.gain.value = v.partial.gain;
+    p.connect(pg);
+    pg.connect(filter);
+    made.push(p);
+  }
+
+  // Vibrato starts a little after the note does, the way a player's does.
+  if (v.vibrato && dur > v.vibrato.delay + 0.1) {
+    const lfo = audio.createOscillator();
+    const depth = audio.createGain();
+    lfo.frequency.value = v.vibrato.hz;
+    // Cents to hertz at this pitch.
+    depth.gain.setValueAtTime(0, start);
+    depth.gain.setValueAtTime(0, start + v.vibrato.delay);
+    depth.gain.linearRampToValueAtTime(
+      hz * (Math.pow(2, v.vibrato.cents / 1200) - 1), start + v.vibrato.delay + 0.15);
+    lfo.connect(depth);
+    for (const o of made) depth.connect(o.frequency);
+    made.push(lfo);
+  }
+
+  // How loud, from the dynamic the server resolved.
+  const peak = 0.3 + 0.7 * ((ev.velocity ?? 80) / 127);
+  const attack = Math.min(v.attack, dur * 0.5);
+  const decay = Math.min(v.decay, Math.max(0.01, (dur - attack) * 0.5));
+  const release = Math.min(v.release, Math.max(0.01, dur * 0.35));
+  const sustain = peak * v.sustain;
+
+  const g = gain.gain;
+  g.setValueAtTime(0, start);
+  g.linearRampToValueAtTime(peak, start + attack);
+  if (v.sustain === 0) {
+    // Nothing holds it, so it rings down and the note ends when it is over.
+    g.exponentialRampToValueAtTime(0.0005, start + Math.min(dur, decay));
+  } else {
+    g.linearRampToValueAtTime(sustain, start + attack + decay);
+    g.setValueAtTime(sustain, Math.max(start + attack + decay, start + dur - release));
+    g.linearRampToValueAtTime(0, start + dur);
+  }
+
+  filter.connect(gain);
+  gain.connect(master);
+  for (const o of made) {
+    o.start(start);
+    o.stop(start + dur + 0.05);
+    voices.push(o);
+  }
+}
+
+// playFromStart goes back to the top of the book before playing.
+//
+// A file of exercises holds many tunes and playing follows the one being
+// looked at, so "play" means "play this one". Getting back to the first bar of
+// the first tune should not mean scrolling up to find it and clicking.
+async function playFromStart() {
+  stop();
+  if ((state.info?.tunes?.length ?? 0) > 1 && (state.info?.current ?? 0) !== 0) {
+    await selectTune(0);
+  }
+  scrollToTop();
+  await play();
+}
+
+function scrollToTop() {
+  const wrap = $("#canvas-wrap") || $("#canvas")?.parentElement;
+  if (wrap && wrap.scrollTo) wrap.scrollTo({ top: 0, left: 0, behavior: "smooth" });
+}
+
 async function play() {
   if (state.playing) stop();
 
@@ -1441,38 +1732,7 @@ async function play() {
   voices = [];
 
   for (const ev of pb.events) {
-    const osc = audio.createOscillator();
-    const gain = audio.createGain();
-    osc.type = "triangle";
-    osc.frequency.value = midiToHz(ev.midi);
-
-    const start = t0 + ev.start;
-
-    // Two notes of the same pitch in a row have to be heard as two. What
-    // separates them is not the silence between — a hair of it is enough —
-    // but the attack at the front of each: a soft ramp makes the second note
-    // sound like the first one still ringing. So every note gets a short
-    // gap and a sharp transient, then eases back to a sustain.
-    const gap = Math.min(0.09, Math.max(0.035, ev.dur * 0.12));
-    const dur = Math.max(0.06, ev.dur - gap);
-    const attack = 0.004;
-    const decay = Math.min(0.07, dur * 0.3);
-    const release = Math.min(0.05, dur * 0.35);
-    const peak = 0.95;
-    const sustain = 0.62;
-
-    const g = gain.gain;
-    g.setValueAtTime(0, start);
-    g.linearRampToValueAtTime(peak, start + attack);
-    g.linearRampToValueAtTime(sustain, start + attack + decay);
-    g.setValueAtTime(sustain, start + dur - release);
-    g.linearRampToValueAtTime(0, start + dur);
-
-    osc.connect(gain);
-    gain.connect(master);
-    osc.start(start);
-    osc.stop(start + dur + 0.02);
-    voices.push(osc);
+    sound(ev, t0 + ev.start, master);
   }
 
   state.playing = true;
@@ -1932,7 +2192,11 @@ function setupKeys() {
     switch (e.key) {
       case " ":
         e.preventDefault();
-        state.playing ? stop() : play();
+        if (e.shiftKey) {
+          void playFromStart();
+        } else {
+          state.playing ? stop() : play();
+        }
         break;
       case "Escape":
         if (state.playing) stop();

@@ -246,6 +246,7 @@ func (a *App) APIRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/keysig.svg", a.handleKeySigSVG)
 	mux.HandleFunc("/api/hits", a.handleHits)
 	mux.HandleFunc("/api/insert", a.handleInsert)
+	mux.HandleFunc("/api/addpitch", a.handleAddPitch)
 	mux.HandleFunc("/api/barline", a.handleBarline)
 	mux.HandleFunc("/api/delete", a.handleDelete)
 	mux.HandleFunc("/api/addmeasure", a.handleAddMeasure)
@@ -267,6 +268,7 @@ func (a *App) APIRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/symbol.png", a.handleSymbolPNG)
 	mux.HandleFunc("/api/symbolimport", a.handleSymbolImport)
 	mux.HandleFunc("/api/stem", a.handleStem)
+	mux.HandleFunc("/api/accidental", a.handleAccidental)
 	mux.HandleFunc("/api/dynamic", a.handleDynamic)
 	mux.HandleFunc("/api/articulation", a.handleArticulation)
 	mux.HandleFunc("/api/deleteselection", a.handleDeleteSelection)
@@ -496,12 +498,62 @@ func (a *App) handleLayout(w http.ResponseWriter, r *http.Request) {
 // The native window cannot print: a web view has no print machinery behind
 // it, and window.open returns nothing without a UI delegate. So printing
 // hands the job to the real browser, which has both.
+// handlePrint builds a page that prints itself.
+//
+// What goes on it is a choice, because one score is several documents. A tune
+// book is a book, and printing the exercise you happen to be looking at is
+// almost never what was wanted. A piece for several instruments is a conductor
+// score plus one part for each player, and a player reading off the full score
+// is reading nine staves to follow one.
+//
+//	what=tune   the tune on screen            (the default)
+//	what=book   every tune in the file, one after another
+//	what=parts  the full score, then each staff alone on its own page
+//
+// There is no PDF writer here and there does not need to be one: every system
+// this runs on prints to PDF from the print dialog, which is also where the
+// paper size, the margins and the page range already live. Writing a second,
+// worse version of that dialog would be the wrong half of the job.
 func (a *App) handlePrint(w http.ResponseWriter, r *http.Request) {
 	a.mu.RLock()
 	score := a.score
-	title := a.score.Identity.Title
+	book := a.book
 	symbols := a.symbols
 	a.mu.RUnlock()
+
+	what := r.URL.Query().Get("what")
+
+	type section struct {
+		heading string
+		score   *model.Score
+	}
+	var sections []section
+
+	switch what {
+	case "book":
+		for _, sc := range book {
+			sections = append(sections, section{score: sc})
+		}
+	case "parts":
+		sections = append(sections, section{score: score})
+		if len(score.Parts) > 1 {
+			for _, p := range score.Parts {
+				sections = append(sections, section{heading: partLabel(p), score: onePart(score, p)})
+			}
+		}
+	default:
+		sections = append(sections, section{score: score})
+	}
+	if len(sections) == 0 {
+		sections = append(sections, section{score: score})
+	}
+
+	title := score.Identity.Title
+	if what == "book" && len(book) > 1 {
+		a.mu.RLock()
+		title = a.filename
+		a.mu.RUnlock()
+	}
 	if title == "" {
 		title = "Score"
 	}
@@ -514,13 +566,28 @@ func (a *App) handlePrint(w http.ResponseWriter, r *http.Request) {
 
 	ropt := svg.DefaultOptions()
 	ropt.Symbols = symbols
+	// The font goes in once, on the first drawing. Embedding it in each of
+	// forty exercises would make a page of some megabytes that no browser
+	// will print quickly.
 	ropt.EmbedFont = true
 	ropt.StaffSpace = 6
 
-	var drawing strings.Builder
-	if err := svg.Render(&drawing, engrave.Engrave(score, eopt), ropt); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
+	var body strings.Builder
+	for i, sec := range sections {
+		if i == 1 {
+			ropt.EmbedFont = false
+		}
+		var drawing strings.Builder
+		if err := svg.Render(&drawing, engrave.Engrave(sec.score, eopt), ropt); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		body.WriteString(`<section>`)
+		if sec.heading != "" {
+			fmt.Fprintf(&body, `<h2>%s</h2>`, html.EscapeString(sec.heading))
+		}
+		body.WriteString(drawing.String())
+		body.WriteString(`</section>`)
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -530,7 +597,11 @@ func (a *App) handlePrint(w http.ResponseWriter, r *http.Request) {
   @page { size: auto; margin: 12mm; }
   html, body { margin: 0; padding: 0; background: #fff; }
   svg { display: block; width: 100%%; height: auto; }
-  @media screen { body { padding: 16px; } }
+  /* Each tune, and each extracted part, starts its own page. */
+  section { break-before: page; page-break-before: always; }
+  section:first-of-type { break-before: auto; page-break-before: auto; }
+  h2 { font: 600 14pt Georgia, "Times New Roman", serif; margin: 0 0 6mm; }
+  @media screen { body { padding: 16px; } section { margin-bottom: 24px; } }
 </style></head>
 <body>%s<script>
   // Wait for the embedded font, or the first page prints blank.
@@ -539,7 +610,32 @@ func (a *App) handlePrint(w http.ResponseWriter, r *http.Request) {
   } else {
     setTimeout(function () { window.print(); }, 600);
   }
-</script></body></html>`, html.EscapeString(title), drawing.String())
+</script></body></html>`, html.EscapeString(title), body.String())
+}
+
+// partLabel names a staff on its own page, so a player can tell which sheet
+// is theirs without reading the music.
+func partLabel(p *model.Part) string {
+	switch {
+	case p.Name != "":
+		return p.Name
+	case p.Instrument != 0:
+		return p.Instrument.String()
+	}
+	return "Part"
+}
+
+// onePart makes a score holding a single staff, which is what a player reads.
+//
+// Nothing is copied deeply: the measures are shared with the score they came
+// from, and the result is engraved and thrown away within the request.
+func onePart(s *model.Score, p *model.Part) *model.Score {
+	out := *s
+	out.Parts = []*model.Part{p}
+	if p.Name != "" {
+		out.Identity.Subtitle = p.Name
+	}
+	return &out
 }
 
 // handleOpenBrowser opens a page of gscore's own in the system browser.

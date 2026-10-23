@@ -351,15 +351,17 @@ dialog button {
 }
 .linklike:hover { text-decoration: underline; }
 
-#keysig { max-width: 560px; }
+#keysig { max-width: 620px; }
 
 #keysig-grid {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
   gap: 6px;
   margin: 12px 0;
-  max-height: 60vh;
+  max-height: 68vh;
   overflow-y: auto;
+  /* Room for the scrollbar, so it does not sit on top of the last column. */
+  padding-right: 4px;
 }
 
 .keysig-option {
@@ -381,8 +383,13 @@ dialog button {
   border-color: var(--accent);
   box-shadow: 0 0 0 2px var(--accent);
 }
-.keysig-option img { display: block; height: 42px; width: auto; }
+/* The drawing is an inline SVG, so it is sized here rather than by its own
+   width attribute: every signature then shows at the same height whether it
+   carries one accidental or seven. */
+.keysig-art { display: block; line-height: 0; }
+.keysig-art svg { display: block; height: 74px; width: auto; max-width: 100%; }
 .keysig-option span { color: var(--muted); }
+.keysig-option[aria-current="true"] span { color: var(--ink); font-weight: 600; }
 
 #canvas text.playing { fill: var(--accent); }
 #canvas rect.cursor {
@@ -672,7 +679,7 @@ body:not(.tool-select) #canvas svg { cursor: crosshair; }
   color: var(--muted);
   margin-bottom: 4px;
 }
-#ask input[type="text"], #ask select {
+#ask input[type="text"], #ask input[type="search"], #ask select {
   width: 100%;
   font: inherit;
   padding: 6px 8px;
@@ -681,7 +688,10 @@ body:not(.tool-select) #canvas svg { cursor: crosshair; }
   background: var(--paper);
   color: #111;
 }
-#ask input[type="text"]:focus, #ask select:focus {
+#ask input[type="search"] {
+  margin-bottom: 6px;
+}
+#ask input[type="text"]:focus, #ask input[type="search"]:focus, #ask select:focus {
   outline: 2px solid var(--accent);
   outline-offset: -1px;
 }
@@ -710,3 +720,21 @@ body:not(.tool-select) #canvas svg { cursor: crosshair; }
 body.fullscreen #menubar { height: 30px; }
 body.fullscreen #statusbar { height: 20px; }
 body.fullscreen #canvas-wrap { padding: 10px; }
+
+/* The print dialog's choices. One line each, the explanation under the name,
+   because the difference between them is the explanation. */
+#print { max-width: 440px; }
+.choices { display: flex; flex-direction: column; gap: 2px; margin: 14px 0 4px; }
+.choices label {
+  display: flex;
+  gap: 9px;
+  align-items: flex-start;
+  padding: 8px 9px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.choices label:hover { background: var(--accent-soft); }
+.choices input { margin-top: 2px; }
+.choices span { display: flex; flex-direction: column; gap: 1px; }
+.choices b { font-weight: 600; }
+.choices em { font-style: normal; font-size: 11px; color: var(--muted); }

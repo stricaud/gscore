@@ -131,11 +131,160 @@ func (a *App) handleInsert(w http.ResponseWriter, r *http.Request) {
 	if at < 0 || at > len(v.Elements) {
 		at = len(v.Elements)
 	}
+
+	// Writing at the end of a bar that is already full means the next bar.
+	// Without this the music piles up behind the barline and there is no way
+	// to reach the measure after it, which is the one you are looking at.
+	if at == len(v.Elements) && v.Duration().Cmp(p.Time.BarDuration()) >= 0 {
+		measIdx++
+		m = measureAt(p, measIdx)
+		v = m.Voices[0]
+		at = 0
+	}
+
 	v.Elements = append(v.Elements, nil)
 	copy(v.Elements[at+1:], v.Elements[at:])
 	v.Elements[at] = el
 
-	writeJSON(w, map[string]any{"status": "ok", "at": at})
+	// Inserting in the middle can push the bar past its time signature; what
+	// no longer fits moves on rather than being squeezed in.
+	spill(p, measIdx)
+
+	// The element may now be in a later measure than the one written to, so
+	// the answer says where it actually is and the cursor follows it there.
+	part, idx := findElement(p, measIdx, el)
+	writeJSON(w, map[string]any{
+		"status": "ok", "measure": part, "at": idx, "index": idx,
+	})
+}
+
+// measureAt returns a part's nth measure, making it and any before it if the
+// part does not reach that far yet.
+func measureAt(p *model.Part, n int) *model.Measure {
+	for len(p.Measures) <= n {
+		p.Measures = append(p.Measures, &model.Measure{
+			Voices: []*model.Voice{{}}, RightBarline: model.BarSingle,
+		})
+	}
+	m := p.Measures[n]
+	if len(m.Voices) == 0 {
+		m.Voices = []*model.Voice{{}}
+	}
+	return m
+}
+
+// spill moves whatever overflows a measure into the one after it, making new
+// measures as it goes.
+//
+// Notes are moved whole and never divided: splitting a note across a barline
+// means tying the halves together, and a tie the user did not ask for is a
+// change to the music rather than to its layout.
+func spill(p *model.Part, from int) {
+	bar := p.Time.BarDuration()
+	if bar.IsZero() {
+		return
+	}
+	for i := from; i < len(p.Measures); i++ {
+		v := p.Measures[i].Voices[0]
+		for len(v.Elements) > 1 && v.Duration().Cmp(bar) > 0 {
+			last := v.Elements[len(v.Elements)-1]
+			v.Elements = v.Elements[:len(v.Elements)-1]
+			next := measureAt(p, i+1).Voices[0]
+			next.Elements = append([]model.Element{last}, next.Elements...)
+		}
+	}
+}
+
+// findElement says where an element ended up after a spill: which measure
+// holds it, and the cursor position just after it.
+func findElement(p *model.Part, from int, el model.Element) (measure, at int) {
+	for i := from; i < len(p.Measures); i++ {
+		for j, e := range p.Measures[i].Voices[0].Elements {
+			if e == el {
+				return i, j + 1
+			}
+		}
+	}
+	return from, 0
+}
+
+// handleAddPitch adds a notehead to a note or a chord already written,
+// which is how a chord is built.
+//
+// gscore made chords with Ctrl held, and chords.c refused two noteheads of
+// the same pitch; both are kept, the modifier having become a click in the
+// same column at a different height.
+func (a *App) handleAddPitch(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST required", http.StatusMethodNotAllowed)
+		return
+	}
+	q := r.URL.Query()
+	partIdx, _ := strconv.Atoi(q.Get("part"))
+	measIdx, _ := strconv.Atoi(q.Get("measure"))
+	index, _ := strconv.Atoi(q.Get("index"))
+	step, _ := strconv.Atoi(q.Get("step"))
+	acc := accidentalByName[q.Get("accidental")]
+
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	p, m, err := a.locate(partIdx, measIdx)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	v := m.Voices[0]
+	if index < 0 || index >= len(v.Elements) {
+		http.Error(w, "there is no note there", http.StatusBadRequest)
+		return
+	}
+
+	pitch := pitchForStep(p.Clef, step)
+	if acc != model.NoAccidental {
+		pitch.Alter = acc.Semitones()
+	} else {
+		pitch.Alter = p.Key.AlterFor(pitch.Step)
+	}
+	add := &model.Note{Pitch: pitch, Dur: v.Elements[index].Duration(), Accidental: acc}
+
+	switch e := v.Elements[index].(type) {
+	case *model.Note:
+		if e.Pitch.Step == pitch.Step && e.Pitch.Octave == pitch.Octave {
+			http.Error(w, "a chord cannot hold the same pitch twice", http.StatusBadRequest)
+			return
+		}
+		// The marks belong to the sound, not to one of its noteheads, so
+		// they move to the chord: an accent on a note stays an accent when a
+		// second pitch joins it.
+		ch := &model.Chord{Notes: []*model.Note{{
+			Pitch: e.Pitch, Dur: e.Dur, Accidental: e.Accidental,
+		}, add}, Dur: e.Dur, Marks: e.Marks}
+		sortChord(ch)
+		v.Elements[index] = ch
+	case *model.Chord:
+		for _, n := range e.Notes {
+			if n.Pitch.Step == pitch.Step && n.Pitch.Octave == pitch.Octave {
+				http.Error(w, "a chord cannot hold the same pitch twice", http.StatusBadRequest)
+				return
+			}
+		}
+		e.Notes = append(e.Notes, add)
+		sortChord(e)
+	default:
+		http.Error(w, "only a note can be made into a chord", http.StatusBadRequest)
+		return
+	}
+
+	writeJSON(w, map[string]any{"status": "ok"})
+}
+
+// sortChord puts the noteheads in order from the bottom up, which is the
+// order the engraver's second-interval rule assumes.
+func sortChord(c *model.Chord) {
+	sort.SliceStable(c.Notes, func(i, j int) bool {
+		return c.Notes[i].Pitch.DiatonicIndex() < c.Notes[j].Pitch.DiatonicIndex()
+	})
 }
 
 // pitchForStep inverts the staff position back into a pitch.
@@ -303,6 +452,113 @@ var stemByName = map[string]model.Stem{
 }
 
 // handleStem sets, or clears, the stem direction of the element at the cursor.
+// handleAccidental writes an accidental on what is selected.
+//
+// Choosing a sharp from the palette says what the *next* note will be; a note
+// already on the staff has to be told separately, and clicking the accidental
+// while it is selected is how that is said.
+func (a *App) handleAccidental(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST required", http.StatusMethodNotAllowed)
+		return
+	}
+	q := r.URL.Query()
+	name := q.Get("accidental")
+	acc, ok := accidentalByName[name]
+	if !ok {
+		http.Error(w, "unknown accidental", http.StatusBadRequest)
+		return
+	}
+
+	notes, err := a.notesOf(q)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	for _, n := range notes {
+		n.Accidental = acc
+		// The written accidental decides how the note sounds. Taking one away
+		// hands that decision back to the key signature.
+		if acc == model.NoAccidental {
+			n.Pitch.Alter = n.key.AlterFor(n.Pitch.Step)
+		} else {
+			n.Pitch.Alter = acc.Semitones()
+		}
+	}
+	writeJSON(w, map[string]int{"changed": len(notes)})
+}
+
+// keyedNote is a note together with the key signature in force where it sits,
+// which is what an accidental has to be removed back to.
+type keyedNote struct {
+	*model.Note
+	key model.KeySignature
+}
+
+// notesOf resolves a selection to the notes in it, a chord counting as all of
+// its noteheads: an accidental put on a chord belongs to the whole chord.
+func (a *App) notesOf(q url.Values) ([]keyedNote, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	var out []keyedNote
+	collect := func(p *model.Part, el model.Element) {
+		switch e := el.(type) {
+		case *model.Note:
+			out = append(out, keyedNote{e, p.Key})
+		case *model.Chord:
+			for _, n := range e.Notes {
+				out = append(out, keyedNote{n, p.Key})
+			}
+		}
+	}
+
+	if sel := q.Get("sel"); sel != "" {
+		targets, err := parseTargets(sel)
+		if err != nil {
+			return nil, err
+		}
+		for _, t := range targets {
+			p, m, err := a.locate(t.part, t.measure)
+			if err != nil {
+				continue // a stale selection is not worth failing over
+			}
+			v := m.Voices[0]
+			if t.index < 0 || t.index >= len(v.Elements) {
+				continue
+			}
+			collect(p, v.Elements[t.index])
+		}
+		if len(out) == 0 {
+			return nil, editError("there is no note in the selection")
+		}
+		return out, nil
+	}
+
+	partIdx, _ := strconv.Atoi(q.Get("part"))
+	measIdx, _ := strconv.Atoi(q.Get("measure"))
+	at, err := strconv.Atoi(q.Get("at"))
+	if err != nil {
+		at = -1
+	}
+	p, m, err := a.locate(partIdx, measIdx)
+	if err != nil {
+		return nil, err
+	}
+	v := m.Voices[0]
+	if len(v.Elements) == 0 {
+		return nil, editError("the measure is empty")
+	}
+	if at <= 0 || at > len(v.Elements) {
+		at = len(v.Elements)
+	}
+	collect(p, v.Elements[at-1])
+	if len(out) == 0 {
+		return nil, editError("that is not a note")
+	}
+	return out, nil
+}
+
 func (a *App) handleStem(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "POST required", http.StatusMethodNotAllowed)

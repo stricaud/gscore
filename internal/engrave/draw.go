@@ -126,23 +126,28 @@ func (e *engraver) drawMeasure(part *model.Part, b measureBox, x float64, stretc
 		kind := "rest"
 		y := e.y + stepY(middleStep)
 		y2 := y
+		var steps []int
 		switch {
 		case p.note != nil:
 			kind = "note"
 			y = e.y + stepY(float64(p.step))
 			y2 = y
+			steps = []int{p.step}
 		case p.chord != nil:
 			// A chord reaches from its lowest notehead to its highest, and a
 			// click anywhere between them means the chord.
 			kind = "chord"
 			y = e.y + stepY(float64(p.hi))
 			y2 = e.y + stepY(float64(p.lo))
+			for _, n := range p.chord.Notes {
+				steps = append(steps, StaffStep(e.clef, n.Pitch))
+			}
 		case p.rest == nil:
 			kind = "symbol"
 		}
 		hit.Elements = append(hit.Elements, ElementPos{
 			Ref: p.index, Index: i, X: p.x, Y: y, Y2: y2,
-			Width: noteheadWidth(p.value), Kind: kind,
+			Width: noteheadWidth(p.value), Kind: kind, Steps: steps,
 		})
 	}
 	e.lay.Hits = append(e.lay.Hits, hit)

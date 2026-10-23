@@ -63,6 +63,23 @@ type Spacings struct {
 
 	// Margin is the blank border around the music.
 	Margin float64
+
+	// MarginY is the border above and below, when it should differ from the
+	// one at the sides. Zero means use Margin for both.
+	//
+	// The two are not the same thing. A clef is drawn well outside the staff
+	// it names — a treble clef reaches about two and a half spaces past the
+	// lines at each end — so a picture of one needs room vertically that the
+	// music never needs horizontally.
+	MarginY float64
+}
+
+// marginY is the vertical border actually in force.
+func (s Spacings) marginY() float64 {
+	if s.MarginY > 0 {
+		return s.MarginY
+	}
+	return s.Margin
 }
 
 // DefaultSpacings returns the starting table, in staff spaces.

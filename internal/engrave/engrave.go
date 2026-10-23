@@ -115,6 +115,11 @@ type ElementPos struct {
 	Y2 float64 `json:"y2"`
 	// Width is how much room the element occupies, for hit testing.
 	Width float64 `json:"width"`
+	// Steps are the staff steps of the element's noteheads, lowest first. A
+	// click at a step already here means that notehead; a click at any other
+	// step in the same column means a note is being added to the chord, and
+	// the editor cannot tell the two apart without knowing which are taken.
+	Steps []int `json:"steps,omitempty"`
 	// Kind is "note", "chord", "rest" or "symbol".
 	Kind string `json:"kind"`
 }
@@ -254,7 +259,7 @@ type measureBox struct {
 
 func (e *engraver) run() {
 	sp := e.opt.Spacings
-	e.y = sp.Margin
+	e.y = sp.marginY()
 	e.nextRef = 1
 
 	if e.opt.ShowTitle {
@@ -266,7 +271,7 @@ func (e *engraver) run() {
 	}
 	e.layout()
 
-	e.lay.Height = e.y + sp.Margin
+	e.lay.Height = e.y + sp.marginY()
 	if e.lay.Width == 0 {
 		e.lay.Width = e.opt.LineWidth + 2*sp.Margin
 	}

@@ -344,3 +344,41 @@ func TestPlayFollowsTheTuneOnScreen(t *testing.T) {
 		t.Error("play does not let a selection override the tune on screen")
 	}
 }
+
+// TestEveryElementTheScriptAsksForExists is the same class of bug one level
+// down from the menus: $("#thing") on an id the markup does not have returns
+// null, the listener is never attached and the control does nothing, silently.
+// A renamed id or a typo in one of the two files is enough.
+func TestEveryElementTheScriptAsksForExists(t *testing.T) {
+	html := readUI(t, "index.html")
+	js := readUI(t, "app.js")
+
+	// Some elements are built by the script itself and are not in the page
+	// until it runs, so its own markup counts as well as the document's.
+	declared := map[string]bool{}
+	for _, m := range regexp.MustCompile(`id="([A-Za-z0-9_-]+)"`).
+		FindAllStringSubmatch(html+js, -1) {
+		declared[m[1]] = true
+	}
+
+	asked := map[string]bool{}
+	for _, m := range regexp.MustCompile(`\$\("#([A-Za-z0-9_-]+)"\)`).
+		FindAllStringSubmatch(js, -1) {
+		asked[m[1]] = true
+	}
+	if len(asked) < 20 {
+		t.Fatalf("only found %d lookups in the script; the pattern is wrong", len(asked))
+	}
+
+	var missing []string
+	for id := range asked {
+		if !declared[id] {
+			missing = append(missing, id)
+		}
+	}
+	sort.Strings(missing)
+	if len(missing) > 0 {
+		t.Errorf("the script looks for elements nothing creates: %s",
+			strings.Join(missing, ", "))
+	}
+}

@@ -366,26 +366,31 @@ func (a *App) renderPDF(w io.Writer, r *http.Request) error {
 
 	q := r.URL.Query()
 
-	eopt := engrave.DefaultOptions()
-	eopt.Mode = engrave.Paginated
-	eopt.LineWidth = 76
-	eopt.ShowMeasureNumbers = q.Get("numbers") != "0"
-	eopt.ShowPartNames = len(score.Parts) > 1
-
 	popt := gpdf.DefaultOptions()
+	if q.Get("paper") == "letter" {
+		popt = gpdf.Letter()
+	}
 	popt.Symbols = symbols
 	popt.Title = score.Identity.Title
 	popt.Author = score.Identity.Composer
-	if q.Get("paper") == "letter" {
-		p := gpdf.Letter()
-		p.Symbols, p.Title, p.Author = popt.Symbols, popt.Title, popt.Author
-		popt = p
-	}
 	if v := q.Get("space"); v != "" {
 		if f, err := strconv.ParseFloat(v, 64); err == nil && f >= 3 && f <= 20 {
 			popt.StaffSpace = f
 		}
 	}
+	// A full score is wider than it is tall — twelve staves to a system — so
+	// the paper can be turned over to suit it.
+	if q.Get("orientation") == "landscape" {
+		popt = popt.Landscape()
+	}
+
+	eopt := engrave.DefaultOptions()
+	eopt.Mode = engrave.Paginated
+	eopt.ShowMeasureNumbers = q.Get("numbers") != "0"
+	eopt.ShowPartNames = len(score.Parts) > 1
+	// The paper says how long a line of music it holds; the engraver is told
+	// rather than left to assume one shape of page and one size of type.
+	eopt.LineWidth = popt.LineWidth(eopt.Spacings)
 
 	var layouts []*engrave.Layout
 	switch q.Get("what") {

@@ -81,6 +81,49 @@ func Letter() Options {
 	return o
 }
 
+// Landscape turns the paper on its side.
+//
+// A conductor's score is what it is for. Twelve staves to a system want a
+// page that is wide rather than tall: upright, a full score either runs at a
+// type size nobody can read across a pit or spills two systems onto three
+// pages. The same is true of a single long line of music, which on an upright
+// page spends half the sheet on margins.
+//
+// Turning the paper is all this does. How wide a system may be then follows
+// from the paper, because LineWidth is asked rather than assumed.
+func (o Options) Landscape() Options {
+	if o.PageWidth < o.PageHeight {
+		o.PageWidth, o.PageHeight = o.PageHeight, o.PageWidth
+	}
+	return o
+}
+
+// LineWidth is how much room a system has on this paper, in staff spaces,
+// which is what the engraver needs telling before it lays anything out.
+//
+// Only the page setup knows it. The same score is engraved differently on A4
+// upright, on A4 turned on its side and at a pocket score's type size, and a
+// constant could only ever be right for one of the three — asked for a staff
+// space of twelve, the engraver drew a system wider than the sheet and the
+// music ran off the edge.
+//
+// The engraver keeps its own blank border at each side of the music, inside
+// the page margins, so that is taken off here: what is left reaches the
+// margin and no further.
+func (o Options) LineWidth(sp engrave.Spacings) float64 {
+	space := o.StaffSpace
+	if space <= 0 {
+		space = DefaultOptions().StaffSpace
+	}
+	w := (o.PageWidth-o.MarginLeft-o.MarginRight)/space - 2*sp.Margin
+	// A system narrower than this is not a system. Rather than engrave
+	// something impossible, print it too wide and let the page say so.
+	if w < 12 {
+		w = 12
+	}
+	return w
+}
+
 // Render writes one layout as a PDF.
 func Render(w io.Writer, lay *engrave.Layout, opt Options) error {
 	doc := pdf.New()

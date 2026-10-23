@@ -42,6 +42,32 @@ const (
 	voltaHook = 1.1
 )
 
+// resumeRoom is the blank held back at the head of a system, after the meter
+// and before the first bar, for the ties and slurs carried over from the
+// system above, in staff spaces.
+//
+// Without it a continuation had nowhere to start but the column the music
+// starts in, which is where the note it joins already is: the curve came out
+// a notehead wide, and a curve that short reads as an accent over the note
+// rather than as something arriving from the line above.
+const resumeRoom = 1.6
+
+// carriedCurves says whether any staff is waiting to pick a slur or a tie up
+// again, which is what the room at the head of a system is reserved for.
+func (e *engraver) carriedCurves() bool {
+	for _, open := range e.spans {
+		if open.slur != nil && open.slur.x < 0 {
+			return true
+		}
+		for _, t := range open.ties {
+			if t.x < 0 {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // staffSpans returns what is open on a staff, making the record if this is the
 // first spanner it has seen.
 func (e *engraver) staffSpans(part int) *openSpans {
@@ -126,12 +152,16 @@ func (e *engraver) resumeSpans(part int, left float64) {
 		// carries the line alone, as it is written on paper.
 		open.octave.label = ""
 	}
+	// A slur or a tie comes back at the height it left, on this system's
+	// staff rather than on the one it started from.
 	if open.slur != nil && open.slur.x < 0 {
 		open.slur.x = left
+		open.slur.y = e.y + open.slur.rel
 	}
 	for _, t := range open.ties {
 		if t.x < 0 {
 			t.x = left
+			t.y = e.y + t.rel
 		}
 	}
 }
@@ -294,6 +324,11 @@ const (
 	// covering a phrase, so it stays close to them.
 	tieLift = 0.55
 	tieArch = 0.7
+
+	// archPerWidth is the most of its own width a curve may rise by, which
+	// is what keeps a very short one — the stub left at a line break — an
+	// arc rather than a spike.
+	archPerWidth = 0.35
 )
 
 // slurAt handles a slur or a tie opening or closing at one element.
@@ -313,7 +348,7 @@ func (e *engraver) slurAt(m *model.Marks, p *placed) {
 	y := e.y + stepY(float64(edge))
 
 	if m.SlurStart && open.slur == nil {
-		open.slur = &openSpan{x: x, y: y, above: above}
+		open.slur = &openSpan{x: x, y: y, rel: y - e.y, above: above}
 	}
 	if m.SlurStop && open.slur != nil {
 		e.drawTieOrSlur(open.slur, x, y, slurLift, true)
@@ -337,7 +372,8 @@ func (e *engraver) slurAt(m *model.Marks, p *placed) {
 			}
 			if _, already := open.ties[h.step]; !already {
 				open.ties[h.step] = &openSpan{
-					x: x, y: e.y + stepY(float64(h.step)), above: h.above,
+					x: x, y: e.y + stepY(float64(h.step)),
+					rel: stepY(float64(h.step)), above: h.above,
 				}
 			}
 		}
@@ -404,12 +440,20 @@ func (e *engraver) drawTieOrSlur(from *openSpan, toX, toY, lift float64, slur bo
 	y1 := from.y + dir*lift
 	y2 := toY + dir*lift
 
+	span := toX - from.x
 	arch := tieArch
 	if slur {
-		arch = slurArch + (toX-from.x)*slurArchPerSpace
+		arch = slurArch + span*slurArchPerSpace
 		if arch > slurArchMax {
 			arch = slurArchMax
 		}
+	}
+	// An arc is only an arc while it is wider than it is tall. The stub a
+	// tie leaves at a line break is barely wider than a notehead, and rising
+	// its full height over that reads as a caret stabbing the note rather
+	// than as a curve — which is what it was drawn as.
+	if lid := span * archPerWidth; arch > lid {
+		arch = lid
 	}
 	// The control point of a quadratic pulls the curve about halfway
 	// towards it, so it is set twice as far out as the curve should go.

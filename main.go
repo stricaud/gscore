@@ -62,6 +62,7 @@ func main() {
 		headless    = flag.Bool("headless", false, "serve the editor but open nothing")
 		strip       = flag.Bool("strip", false, "engrave as one continuous strip, as gscore 0.0.9 did")
 		space       = flag.Float64("space", 8, "staff space size in pixels, for -o")
+		landscape   = flag.Bool("landscape", false, "turn the paper on its side, for -o to a PDF")
 	)
 	flag.Usage = usage
 	flag.Parse()
@@ -107,7 +108,7 @@ func main() {
 		}
 		fmt.Printf("wrote %s\n", *convert)
 	case *out != "":
-		if err := renderFile(score, *out, *strip, *space); err != nil {
+		if err := renderFile(score, *out, *strip, *space, *landscape); err != nil {
 			fmt.Fprintf(os.Stderr, "gscore: %v\n", err)
 			os.Exit(1)
 		}
@@ -200,20 +201,31 @@ func convertTo(s *model.Score, path string) error {
 //
 // PDF is paginated whatever -strip says: a continuous strip has no page breaks
 // to print at, and a PDF is pages or it is nothing.
-func renderFile(s *model.Score, path string, strip bool, space float64) error {
+func renderFile(s *model.Score, path string, strip bool, space float64, landscape bool) error {
 	wantPDF := strings.EqualFold(filepath.Ext(path), ".pdf")
 
 	eopt := engrave.DefaultOptions()
 	if strip && !wantPDF {
 		eopt.Mode = engrave.Strip
 	}
+
+	popt := gpdf.DefaultOptions()
 	if wantPDF {
+		popt.Title = s.Identity.Title
+		popt.Author = s.Identity.Composer
+		if space > 0 && space != 8 {
+			popt.StaffSpace = space
+		}
+		if landscape {
+			popt = popt.Landscape()
+		}
+
 		eopt.Mode = engrave.Paginated
 		eopt.ShowPartNames = len(s.Parts) > 1
 		eopt.ShowMeasureNumbers = true
-		// A line of music that fits A4 with the margins a part is printed
-		// with, measured in staff spaces.
-		eopt.LineWidth = 76
+		// How long a line of music the paper holds. The page decides, not
+		// the engraver: on its side it holds half as much again.
+		eopt.LineWidth = popt.LineWidth(eopt.Spacings)
 	}
 	lay := engrave.Engrave(s, eopt)
 
@@ -224,12 +236,6 @@ func renderFile(s *model.Score, path string, strip bool, space float64) error {
 	defer f.Close()
 
 	if wantPDF {
-		popt := gpdf.DefaultOptions()
-		popt.Title = s.Identity.Title
-		popt.Author = s.Identity.Composer
-		if space > 0 && space != 8 {
-			popt.StaffSpace = space
-		}
 		return gpdf.Render(f, lay, popt)
 	}
 

@@ -470,6 +470,13 @@ type openSpan struct {
 	// and which side of the music it arcs over.
 	y     float64
 	above bool
+
+	// rel is that same height measured from the top of its staff rather than
+	// from the top of the whole drawing. A curve cut at a line break is
+	// picked up on the next system, whose staff is somewhere else entirely;
+	// without this the continuation was drawn from the height the curve left
+	// the previous system at, which is one stroke down the length of the page.
+	rel float64
 }
 
 // slot is one element's horizontal allocation within a measure.
@@ -800,7 +807,7 @@ func (e *engraver) layout() {
 	if maxMeasures == 0 {
 		// A part with no measures still has a clef and a key signature, and
 		// drawing just those is what the key signature picker asks for.
-		e.drawSystem(parts, boxes, widths, 0, 0, prefix, true)
+		e.drawSystem(parts, boxes, widths, 0, 0, prefix, 0, true)
 		// There is no next system, so the gap that separates them is just
 		// empty space under the staff.
 		e.y -= e.opt.Spacings.SystemGap
@@ -808,10 +815,17 @@ func (e *engraver) layout() {
 	}
 	for start := 0; start < maxMeasures; {
 		prefix = prefixAt(start)
-		n := e.breakAt(widths[start:], prefix)
+		// A tie or a slur carried over from the system above has to come in
+		// from somewhere, and the only room at the head of a system is room
+		// that was asked for.
+		carried := 0.0
+		if e.carriedCurves() {
+			carried = resumeRoom
+		}
+		n := e.breakAt(widths[start:], prefix+carried)
 		end := start + n
 		last := end >= maxMeasures
-		e.drawSystem(parts, boxes, widths, start, end, prefix, last)
+		e.drawSystem(parts, boxes, widths, start, end, prefix+carried, carried, last)
 		if last {
 			// The gap belongs between systems, not after the final one.
 			// Leaving it there pads every score with empty space, which is
@@ -1220,8 +1234,11 @@ func (e *engraver) elementWidth(el model.Element) float64 {
 
 // drawSystem draws one system: one staff per part, with measure start-x shared
 // between them so the barlines line up into columns.
+//
+// carried is how much of prefix is blank held back for the ties and slurs
+// coming in from the system above: it sits after the meter, before the music.
 func (e *engraver) drawSystem(parts []*model.Part, boxes [][]measureBox,
-	widths []float64, start, end int, prefix float64, last bool) {
+	widths []float64, start, end int, prefix, carried float64, last bool) {
 
 	sp := e.opt.Spacings
 
@@ -1333,7 +1350,7 @@ func (e *engraver) drawSystem(parts []*model.Part, boxes [][]measureBox,
 		e.clef = p.Clef
 		// A hairpin or an octave line cut off at the end of the last system
 		// starts again here, at this system's left edge.
-		e.resumeSpans(e.staffNumber(pi), sp.Margin+prefix)
+		e.resumeSpans(e.staffNumber(pi), sp.Margin+prefix-carried)
 
 		staffTops = append(staffTops, e.y)
 		// Each staff's clef starts far enough right that its own key and
@@ -1344,7 +1361,7 @@ func (e *engraver) drawSystem(parts []*model.Part, boxes [][]measureBox,
 		// as well pushed every staff's clef, key and meter one name-width too
 		// far right — past the column the music starts in, so the first note
 		// was printed over them.
-		px := sp.Margin + prefix - e.prefixWidth(p, start) + sp.ClefBefore
+		px := sp.Margin + prefix - carried - e.prefixWidth(p, start) + sp.ClefBefore
 		// Each of the three is recorded as it is drawn, so that clicking one
 		// changes the thing it is: the clef, the key or the meter.
 		header := func(kind string, x0, x1 float64) {
@@ -1394,7 +1411,11 @@ func (e *engraver) drawSystem(parts []*model.Part, boxes [][]measureBox,
 		// names and the bracket: a staff ruled through its own name is how
 		// a name looks crossed out.
 		e.staffLines(sp.Margin+lead, right-sp.Margin-lead)
-		e.breakSpans(pi, right-sp.Margin)
+		// To the end of the staff, which is where right is. staffLines takes
+		// a width and this takes a place, and passing it the width left every
+		// hairpin, octave line and tie stopping four spaces short of the end
+		// of the line it was supposed to run to.
+		e.breakSpans(e.staffNumber(pi), right)
 
 		if pi < len(parts)-1 {
 			e.y += staffHeight + gapAfter(pi)

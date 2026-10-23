@@ -735,10 +735,11 @@ function setZoom(z) {
 async function exportPDF() {
   const many = (state.info?.tunes?.length ?? 0) > 1;
   const parts = (state.info?.parts?.length ?? 0) > 1;
-  const what = await askPrint(many, parts, "Export PDF", "Export");
-  if (!what) return;
+  const choice = await askPrint(many, parts, "Export PDF", "Export", true);
+  if (!choice) return;
 
-  const q = new URLSearchParams({ as: "pdf", what });
+  const q = new URLSearchParams({ as: "pdf", what: choice.what });
+  if (choice.landscape) q.set("orientation", "landscape");
 
   if (state.info?.local) {
     let res = await fetch("/api/save?" + q.toString(), { method: "POST" });
@@ -2969,10 +2970,10 @@ async function openKeyPicker(partIndex, at) {
 async function printScore() {
   const many = (state.info?.tunes?.length ?? 0) > 1;
   const parts = (state.info?.parts?.length ?? 0) > 1;
-  const what = await askPrint(many, parts, "Print", "Print");
-  if (!what) return;
+  const choice = await askPrint(many, parts, "Print", "Print");
+  if (!choice) return;
 
-  const path = "/print?what=" + encodeURIComponent(what);
+  const path = "/print?what=" + encodeURIComponent(choice.what);
 
   // A native window has no print machinery and window.open returns nothing
   // without a UI delegate, so printing is handed to the real browser, which
@@ -3008,12 +3009,22 @@ async function printScore() {
 }
 
 // askPrint shows the choices that apply to this file and nothing else.
-function askPrint(many, parts, title, verb) {
+//
+// It answers with an object rather than a string because the paper is a
+// second question: gscore lays the PDF out itself, so turning the sheet on
+// its side is something it has to be told. Printing does not ask — the paper
+// there belongs to the system's own dialog, which opens next.
+function askPrint(many, parts, title, verb, paper) {
   const dlg = $("#print");
   dlg.querySelector("h2").textContent = title || "Print";
   dlg.querySelector(".primary").textContent = verb || "Print";
   $("#print-book-row").hidden = !many;
   $("#print-parts-row").hidden = !parts;
+  $("#print-paper").hidden = !paper;
+  $("#print-note").textContent = paper
+    ? "Choose what to export. gscore engraves the pages itself, so the paper is set here."
+    : "Choose what to print. Paper size, margins and “Save as PDF” are in your "
+      + "system’s print dialog, which opens next.";
   // A book is almost always wanted whole; a single tune has nothing else to
   // offer, so the default is whichever is the obvious answer.
   const want = many ? "book" : "tune";
@@ -3027,7 +3038,10 @@ function askPrint(many, parts, title, verb) {
         return;
       }
       const picked = $$('#print-what input[name="what"]').find((r) => r.checked);
-      resolve(picked ? picked.value : "tune");
+      resolve({
+        what: picked ? picked.value : "tune",
+        landscape: paper && $("#print-landscape").checked,
+      });
     };
     dlg.addEventListener("close", done);
     dlg.showModal();

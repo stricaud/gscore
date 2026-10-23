@@ -492,7 +492,7 @@
 
 <dialog id="print">
   <h2>Print</h2>
-  <p class="small">Choose what to print. Paper size, margins and “Save as PDF”
+  <p class="small" id="print-note">Choose what to print. Paper size, margins and “Save as PDF”
      are in your system’s print dialog, which opens next.</p>
   <form method="dialog" id="print-form">
     <div class="choices" id="print-what">
@@ -502,6 +502,11 @@
         <span><b>Every tune in the file</b><em>Each one starting on its own page.</em></span></label>
       <label id="print-parts-row" hidden><input type="radio" name="what" value="parts">
         <span><b>Score and parts</b><em>The full score, then each staff alone, for the players.</em></span></label>
+    </div>
+    <div class="choices" id="print-paper" hidden>
+      <label><input type="checkbox" id="print-landscape">
+        <span><b>Turn the paper on its side</b><em>A conductor's score is wider than
+          it is tall; landscape fits more staves across and reads at a useful size.</em></span></label>
     </div>
     <div class="ask-buttons">
       <button value="cancel" type="submit">Cancel</button>

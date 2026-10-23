@@ -289,6 +289,12 @@ func encodeScore(s *model.Score) *scoreDoc {
 			BPM: s.Tempo.BPM, Unit: durString(s.Tempo.Unit), Text: s.Tempo.Text,
 		},
 	}
+	for _, g := range s.Groups {
+		doc.Groups = append(doc.Groups, groupDoc{
+			First: g.First, Last: g.Last, Symbol: g.Symbol.String(),
+			Barlines: g.Barlines, Name: g.Name,
+		})
+	}
 	for _, p := range s.Parts {
 		pd := partDoc{
 			ID: p.ID, Name: p.Name,
@@ -323,6 +329,7 @@ func encodeScore(s *model.Score) *scoreDoc {
 					Stop: m.Ending.Stop, Open: m.Ending.Open,
 				}
 			}
+			md.Marker, md.Repeat = m.Marker, m.Repeat
 			for _, v := range m.Voices {
 				var ed []elemDoc
 				for _, el := range v.Elements {
@@ -345,8 +352,10 @@ func encodeElement(el model.Element) elemDoc {
 			Pitch: &pitchDoc{
 				Step: e.Pitch.Step.String(), Octave: e.Pitch.Octave, Alter: e.Pitch.Alter,
 			},
-			Acc:   accNames[e.Accidental],
-			Marks: encodeMarks(&e.Marks),
+			Acc:        accNames[e.Accidental],
+			Head:       headNames[e.Head],
+			Percussion: e.Percussion,
+			Marks:      encodeMarks(&e.Marks),
 		}
 	case *model.Rest:
 		return elemDoc{
@@ -359,6 +368,7 @@ func encodeElement(el model.Element) elemDoc {
 			d.Notes = append(d.Notes, pitchDoc{
 				Step: n.Pitch.Step.String(), Octave: n.Pitch.Octave,
 				Alter: n.Pitch.Alter, Acc: accNames[n.Accidental],
+				Head: headNames[n.Head], Percussion: n.Percussion,
 			})
 		}
 		return d
@@ -375,7 +385,8 @@ func encodeMarks(m *model.Marks) *marksDoc {
 	if len(m.Articulations) == 0 && len(m.Symbols) == 0 && m.Tuplet == nil &&
 		!m.TieStart && !m.TieStop && !m.SlurStart && !m.SlurStop &&
 		m.Stem == model.StemAuto && m.Dynamic == model.DynamicNone &&
-		m.Hairpin == nil && m.Octave == nil && len(m.Lyrics) == 0 {
+		m.Hairpin == nil && m.Octave == nil && len(m.Lyrics) == 0 &&
+		m.Beam == model.BeamAuto && m.Chord == nil && len(m.Texts) == 0 {
 		return nil
 	}
 	out := &marksDoc{
@@ -416,8 +427,41 @@ func encodeMarks(m *model.Marks) *marksDoc {
 			Syllabic: syllabicNames[ly.Syllabic], Extend: ly.Extend,
 		})
 	}
+	if m.Beam != model.BeamAuto {
+		out.Beam = m.Beam.String()
+	}
+	if c := m.Chord; c != nil {
+		cd := &chordDoc{Root: c.Root, Quality: c.Quality, Bass: c.Bass, Text: c.Text}
+		if f := c.Frame; f != nil {
+			cd.Frame = &frameDoc{
+				Frets: f.Frets, Fingers: f.Fingers, FirstFret: f.FirstFret,
+				Barre: f.Barre, BarreFrom: f.BarreFrom, BarreTo: f.BarreTo,
+			}
+		}
+		out.Chord = cd
+	}
+	for _, t := range m.Texts {
+		out.Texts = append(out.Texts, textDoc{
+			Text: t.Text, Placement: placementNames[t.Placement],
+			OffsetX: t.OffsetX, OffsetY: t.OffsetY,
+			Italic: t.Italic, Bold: t.Bold,
+		})
+	}
 	return out
 }
+
+var headNames = map[model.NoteheadKind]string{
+	model.HeadNormal: "", model.HeadX: "x", model.HeadCircleX: "circle-x",
+	model.HeadTriangle: "triangle", model.HeadDiamond: "diamond",
+	model.HeadSlash: "slash",
+}
+var headValues = invert(headNames)
+
+var groupSymbolNames = map[model.GroupSymbol]string{
+	model.GroupBracket: "bracket", model.GroupBrace: "brace",
+	model.GroupLine: "line",
+}
+var groupSymbolValues = invert(groupSymbolNames)
 
 var syllabicNames = map[model.Syllabic]string{
 	model.SyllableSingle: "", model.SyllableBegin: "begin",
@@ -483,6 +527,7 @@ func decodeScore(doc *scoreDoc) (*model.Score, error) {
 					Stop: md.Ending.Stop, Open: md.Ending.Open,
 				}
 			}
+			m.Marker, m.Repeat = md.Marker, md.Repeat
 			for _, vd := range md.Voices {
 				v := &model.Voice{}
 				for _, ed := range vd {
@@ -506,6 +551,16 @@ func decodeScore(doc *scoreDoc) (*model.Score, error) {
 	if len(s.Parts) == 0 {
 		return nil, fmt.Errorf("gscore: the score has no parts")
 	}
+	for _, gd := range doc.Groups {
+		if gd.First < 0 || gd.Last >= len(s.Parts) || gd.Last <= gd.First {
+			continue // a group naming staves that are not there is dropped
+		}
+		s.Groups = append(s.Groups, model.StaffGroup{
+			First: gd.First, Last: gd.Last,
+			Symbol: groupSymbolValues[gd.Symbol],
+			Barlines: gd.Barlines, Name: gd.Name,
+		})
+	}
 	return s, nil
 }
 
@@ -524,7 +579,11 @@ func decodeElement(ed elemDoc) (model.Element, error) {
 		if ed.Pitch == nil {
 			return nil, fmt.Errorf("gscore: a note with no pitch")
 		}
-		n := &model.Note{Dur: dur, Pitch: decodePitch(*ed.Pitch), Accidental: accValues[ed.Acc]}
+		n := &model.Note{
+			Dur: dur, Pitch: decodePitch(*ed.Pitch),
+			Accidental: accValues[ed.Acc],
+			Head:       headValues[ed.Head], Percussion: ed.Percussion,
+		}
 		decodeMarks(ed.Marks, &n.Marks)
 		return n, nil
 	case "rest":
@@ -536,6 +595,7 @@ func decodeElement(ed elemDoc) (model.Element, error) {
 		for _, pd := range ed.Notes {
 			c.Notes = append(c.Notes, &model.Note{
 				Pitch: decodePitch(pd), Dur: dur, Accidental: accValues[pd.Acc],
+				Head: headValues[pd.Head], Percussion: pd.Percussion,
 			})
 		}
 		decodeMarks(ed.Marks, &c.Marks)
@@ -600,6 +660,28 @@ func decodeMarks(md *marksDoc, m *model.Marks) {
 	}
 	if o := md.Octave; o != nil && o.Amount != 0 {
 		m.Octave = &model.OctaveShift{Amount: o.Amount, Start: o.Start, Stop: o.Stop}
+	}
+	if b, ok := model.BeamFromName(md.Beam); ok {
+		m.Beam = b
+	}
+	if cd := md.Chord; cd != nil {
+		c := &model.ChordSymbol{
+			Root: cd.Root, Quality: cd.Quality, Bass: cd.Bass, Text: cd.Text,
+		}
+		if f := cd.Frame; f != nil {
+			c.Frame = &model.ChordFrame{
+				Frets: f.Frets, Fingers: f.Fingers, FirstFret: f.FirstFret,
+				Barre: f.Barre, BarreFrom: f.BarreFrom, BarreTo: f.BarreTo,
+			}
+		}
+		m.Chord = c
+	}
+	for _, t := range md.Texts {
+		m.Texts = append(m.Texts, model.TextMark{
+			Text: t.Text, Placement: placementValues[t.Placement],
+			OffsetX: t.OffsetX, OffsetY: t.OffsetY,
+			Italic: t.Italic, Bold: t.Bold,
+		})
 	}
 	for _, ly := range md.Lyrics {
 		verse := ly.Verse

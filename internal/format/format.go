@@ -150,11 +150,28 @@ type MultiImporter interface {
 // reader when it has one and falling back to a single score when it does not.
 func ImportAll(imp Importer, r io.Reader) ([]*model.Score, error) {
 	if multi, ok := imp.(MultiImporter); ok {
-		return multi.ImportAll(r)
+		scores, err := multi.ImportAll(r)
+		normaliseAll(scores)
+		return scores, err
 	}
 	s, err := imp.Import(r)
 	if s == nil {
 		return nil, err
 	}
-	return []*model.Score{s}, err
+	scores := []*model.Score{s}
+	normaliseAll(scores)
+	return scores, err
+}
+
+// normaliseAll tidies what came out of a reader.
+//
+// Every format gets this, and it is done here rather than in each reader
+// because it is not about any format: a part that stops short of the others,
+// or that a failed read left with no measures at all, is a score that will
+// draw wrong whichever file it came out of. A reader's job is to say what is
+// in the file; this is what makes it a score.
+func normaliseAll(scores []*model.Score) {
+	for _, s := range scores {
+		s.Normalise()
+	}
 }

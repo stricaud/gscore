@@ -175,8 +175,15 @@ func (e *engraver) drawMeasure(part *model.Part, b measureBox, x float64, stretc
 		case p.rest == nil:
 			kind = "symbol"
 		}
+		at := 0.0
+		if bar := part.TimeAt(b.index).BarDuration(); !bar.IsZero() {
+			at = p.start.Float() / bar.Float()
+			if at > 1 {
+				at = 1
+			}
+		}
 		hit.Elements = append(hit.Elements, ElementPos{
-			Ref: p.index, Index: i, X: p.x, Y: y, Y2: y2,
+			Ref: p.index, Index: i, X: p.x, Y: y, Y2: y2, At: at,
 			Width: noteheadWidth(p.value), Kind: kind, Steps: steps,
 		})
 	}

@@ -186,6 +186,17 @@ type ElementPos struct {
 	Y2 float64 `json:"y2"`
 	// Width is how much room the element occupies, for hit testing.
 	Width float64 `json:"width"`
+	// At is where in its measure the element begins, as a fraction: 0 at the
+	// opening barline and 1 at the closing one.
+	//
+	// Time, not distance. Notes are spaced proportionally — a whole note is
+	// wider than a quarter but nowhere near four times as wide — so a
+	// playback cursor that slides across a bar at a constant speed drifts
+	// away from the notes it is supposed to be pointing at. Giving each
+	// element the moment it sounds lets the cursor be drawn between them
+	// instead, which is the only way it lands on the notes.
+	At float64 `json:"at"`
+
 	// Steps are the staff steps of the element's noteheads, lowest first. A
 	// click at a step already here means that notehead; a click at any other
 	// step in the same column means a note is being added to the chord, and

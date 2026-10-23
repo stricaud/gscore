@@ -490,3 +490,78 @@ func TranspositionFor(i Instrument) Transposition {
 	}
 	return Transposition{}
 }
+
+// Normalise tidies a score after it has been read.
+//
+// Two things go wrong when a file is read and nothing else notices.
+//
+// A part can arrive with fewer measures than the rest, because the reader
+// stopped early or because the file was written that way. The engraver draws
+// every staff to the same width whatever is on it, so a short staff is ruled
+// right across the system and then simply stops having music in it — which
+// looks exactly like a bar of notes printed after the final barline. Padding
+// them to the longest keeps the barlines in a column, which is the whole point
+// of a score.
+//
+// A part can also arrive with no measures at all, which happens when a reader
+// fails on a staff and keeps what it already had. That is not an empty staff
+// somebody wanted, it is wreckage, and drawing five ruled lines with nothing
+// on them says the file had an empty staff in it. It did not.
+func (s *Score) Normalise() {
+	if s == nil {
+		return
+	}
+
+	kept := s.Parts[:0]
+	dropped := 0
+	for i, p := range s.Parts {
+		if len(p.Measures) == 0 && i == len(s.Parts)-1 && len(s.Parts) > 1 {
+			// Only a trailing one: a staff in the middle with no measures
+			// was meant to be there, and padding will fill it.
+			dropped++
+			continue
+		}
+		kept = append(kept, p)
+	}
+	s.Parts = kept
+	if dropped > 0 {
+		var groups []StaffGroup
+		for _, g := range s.Groups {
+			if g.Last < len(s.Parts) && g.Last > g.First {
+				groups = append(groups, g)
+			}
+		}
+		s.Groups = groups
+	}
+
+	longest := 0
+	for _, p := range s.Parts {
+		if n := len(p.Measures); n > longest {
+			longest = n
+		}
+	}
+	for _, p := range s.Parts {
+		// The barlines of the part that reaches furthest, so a repeat or a
+		// final bar still runs down the whole system.
+		for len(p.Measures) < longest {
+			p.Measures = append(p.Measures, &Measure{
+				Voices: []*Voice{{}}, RightBarline: BarSingle,
+			})
+		}
+		for _, m := range p.Measures {
+			if len(m.Voices) == 0 {
+				m.Voices = []*Voice{{}}
+			}
+		}
+	}
+	if longest > 0 && len(s.Parts) > 0 {
+		src := s.Parts[0]
+		for _, p := range s.Parts {
+			for i := range p.Measures {
+				if len(p.Measures[i].Voices[0].Elements) == 0 && i < len(src.Measures) {
+					p.Measures[i].RightBarline = src.Measures[i].RightBarline
+				}
+			}
+		}
+	}
+}

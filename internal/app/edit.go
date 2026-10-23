@@ -50,6 +50,7 @@ func (a *App) handleHits(w http.ResponseWriter, r *http.Request) {
 
 	writeJSON(w, map[string]any{
 		"hits":        lay.Hits,
+		"barlines":    lay.Barlines,
 		"staffHeight": 4.0,
 	})
 }
@@ -332,12 +333,17 @@ func (a *App) handleBarline(w http.ResponseWriter, r *http.Request) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
-	_, m, err := a.locate(partIdx, measIdx)
-	if err != nil {
+	if _, _, err := a.locate(partIdx, measIdx); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	m.RightBarline = style
+	// A barline runs down the whole system. Changing it on one staff and not
+	// the others would draw a repeat that only one player is asked to take.
+	for _, p := range a.score.Parts {
+		if measIdx < len(p.Measures) {
+			p.Measures[measIdx].RightBarline = style
+		}
+	}
 	writeJSON(w, map[string]string{"status": "ok"})
 }
 
@@ -1186,4 +1192,189 @@ func (a *App) handleEnding(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, map[string]int{"changed": changed})
+}
+
+/*
+ * Moving, copying and pasting what is selected
+ */
+
+// handleNudge moves the selected notes up or down.
+//
+// This is the arrow keys: a note is picked and pushed to the right pitch
+// rather than deleted and written again. Moving by staff steps rather than by
+// semitones is what makes it follow the key — a step up from F in G major is
+// G, and a step up from F sharp is G as well.
+func (a *App) handleNudge(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST required", http.StatusMethodNotAllowed)
+		return
+	}
+	q := r.URL.Query()
+	steps, err := strconv.Atoi(q.Get("steps"))
+	if err != nil || steps == 0 {
+		http.Error(w, "steps says how far to move", http.StatusBadRequest)
+		return
+	}
+
+	notes, err := a.notesOf(q)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	for _, n := range notes {
+		n.Pitch = model.PitchFromDiatonicIndex(n.Pitch.DiatonicIndex() + steps)
+		if n.Accidental == model.NoAccidental {
+			// No accidental written, so the key decides how it sounds.
+			n.Pitch.Alter = n.key.AlterFor(n.Pitch.Step)
+		} else {
+			n.Pitch.Alter = n.Accidental.Semitones()
+		}
+	}
+	writeJSON(w, map[string]int{"changed": len(notes)})
+}
+
+// clipboard is what was last copied: whole elements, lifted out of the score.
+//
+// It is kept on the server because that is where the music is. Copying in the
+// browser would mean inventing a wire format for a Chord and keeping it in
+// step with the model, for no gain — nothing outside gscore reads it.
+type clipboard struct {
+	elements []model.Element
+}
+
+// handleCopy takes a copy of the selection.
+func (a *App) handleCopy(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST required", http.StatusMethodNotAllowed)
+		return
+	}
+	targets, err := parseTargets(r.URL.Query().Get("sel"))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	var out []model.Element
+	for _, t := range targets {
+		_, m, err := a.locate(t.part, t.measure)
+		if err != nil {
+			continue
+		}
+		v := m.Voices[0]
+		if t.index < 0 || t.index >= len(v.Elements) {
+			continue
+		}
+		out = append(out, cloneElement(v.Elements[t.index]))
+	}
+	if len(out) == 0 {
+		http.Error(w, "there is nothing there to copy", http.StatusBadRequest)
+		return
+	}
+	a.clip = clipboard{elements: out}
+	writeJSON(w, map[string]int{"copied": len(out)})
+}
+
+// handlePaste puts the copy back at the cursor.
+func (a *App) handlePaste(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST required", http.StatusMethodNotAllowed)
+		return
+	}
+	q := r.URL.Query()
+	partIdx, _ := strconv.Atoi(q.Get("part"))
+	measIdx, _ := strconv.Atoi(q.Get("measure"))
+	at, err := strconv.Atoi(q.Get("at"))
+	if err != nil {
+		at = -1
+	}
+
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	if len(a.clip.elements) == 0 {
+		http.Error(w, "nothing has been copied", http.StatusBadRequest)
+		return
+	}
+	p, m, err := a.locate(partIdx, measIdx)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	v := m.Voices[0]
+	if at < 0 || at > len(v.Elements) {
+		at = len(v.Elements)
+	}
+
+	// A fresh copy each time, so pasting twice does not give two references
+	// to the same notes — changing one would silently change the other.
+	add := make([]model.Element, len(a.clip.elements))
+	for i, el := range a.clip.elements {
+		add[i] = cloneElement(el)
+	}
+
+	v.Elements = append(v.Elements, make([]model.Element, len(add))...)
+	copy(v.Elements[at+len(add):], v.Elements[at:])
+	copy(v.Elements[at:], add)
+
+	// What no longer fits the bar moves into the next one, as when writing.
+	spill(p, measIdx)
+	measure, idx := findElement(p, measIdx, add[len(add)-1])
+	writeJSON(w, map[string]any{
+		"pasted": len(add), "measure": measure, "at": idx,
+	})
+}
+
+// cloneElement copies an element deeply enough that editing the copy cannot
+// reach the original: the marks, and a chord's noteheads.
+func cloneElement(el model.Element) model.Element {
+	switch e := el.(type) {
+	case *model.Note:
+		n := *e
+		n.Marks = cloneMarks(e.Marks)
+		return &n
+	case *model.Rest:
+		rst := *e
+		rst.Marks = cloneMarks(e.Marks)
+		return &rst
+	case *model.Chord:
+		c := *e
+		c.Marks = cloneMarks(e.Marks)
+		c.Notes = make([]*model.Note, len(e.Notes))
+		for i, n := range e.Notes {
+			cn := *n
+			cn.Marks = cloneMarks(n.Marks)
+			c.Notes[i] = &cn
+		}
+		return &c
+	case *model.SymbolElement:
+		sy := *e
+		return &sy
+	}
+	return el
+}
+
+func cloneMarks(m model.Marks) model.Marks {
+	out := m
+	if m.Articulations != nil {
+		out.Articulations = append([]model.Articulation(nil), m.Articulations...)
+	}
+	if m.Symbols != nil {
+		out.Symbols = append([]model.SymbolMark(nil), m.Symbols...)
+	}
+	if m.Tuplet != nil {
+		t := *m.Tuplet
+		out.Tuplet = &t
+	}
+	if m.Hairpin != nil {
+		h := *m.Hairpin
+		out.Hairpin = &h
+	}
+	if m.Octave != nil {
+		o := *m.Octave
+		out.Octave = &o
+	}
+	return out
 }

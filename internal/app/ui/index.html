@@ -39,27 +39,57 @@
     <div class="menu-items">
       <button data-action="undo" disabled><span>Undo</span><kbd>⌘Z</kbd></button>
       <hr>
-      <button data-action="cut" disabled><span>Cut</span><kbd>⌘X</kbd></button>
-      <button data-action="copy" disabled><span>Copy</span><kbd>⌘C</kbd></button>
-      <button data-action="paste" disabled><span>Paste</span><kbd>⌘V</kbd></button>
+      <button data-action="cut"><span>Cut</span><kbd>⌘X</kbd></button>
+      <button data-action="copy"><span>Copy</span><kbd>⌘C</kbd></button>
+      <button data-action="paste"><span>Paste</span><kbd>⌘V</kbd></button>
       <button data-action="delete"><span>Delete</span><kbd>⌫</kbd></button>
       <hr>
       <button data-action="jump" disabled><span>Jump to measure…</span><kbd>J</kbd></button>
-      <div class="menu-section">Selection</div>
+      <hr>
+      <button data-action="pitch-up"><span>Up a step</span><kbd>↑</kbd></button>
+      <button data-action="pitch-down"><span>Down a step</span><kbd>↓</kbd></button>
+      <button data-action="octave-up"><span>Up an octave</span><kbd>⇧↑</kbd></button>
+      <button data-action="octave-down"><span>Down an octave</span><kbd>⇧↓</kbd></button>
+
+      <div class="submenu">
+        <button class="submenu-title"><span>Stem</span><kbd>▸</kbd></button>
+        <div class="menu-items">
+          <button data-action="stem-up"><span>Up</span><kbd>U</kbd></button>
+          <button data-action="stem-down"><span>Down</span><kbd>D</kbd></button>
+          <button data-action="stem-auto"><span>Automatic</span></button>
+        </div>
+      </div>
+
+      <div class="submenu">
+        <button class="submenu-title"><span>Articulation</span><kbd>▸</kbd></button>
+        <div class="menu-items">
+          <button data-action="artic-staccato"><span>Staccato</span></button>
+          <button data-action="artic-staccatissimo"><span>Staccatissimo</span></button>
+          <button data-action="artic-tenuto"><span>Tenuto</span></button>
+          <button data-action="artic-accent"><span>Accent</span></button>
+          <button data-action="artic-marcato-up"><span>Marcato up</span></button>
+          <button data-action="artic-marcato-down"><span>Marcato down</span></button>
+          <hr>
+          <button data-action="artic-none"><span>None</span></button>
+        </div>
+      </div>
+
+      <div class="submenu">
+        <button class="submenu-title"><span>Accidental</span><kbd>▸</kbd></button>
+        <div class="menu-items">
+          <button data-action="acc-sharp"><span>Sharp</span></button>
+          <button data-action="acc-flat"><span>Flat</span></button>
+          <button data-action="acc-natural"><span>Natural</span></button>
+          <button data-action="acc-dsharp"><span>Double sharp</span></button>
+          <button data-action="acc-dflat"><span>Double flat</span></button>
+          <hr>
+          <button data-action="acc-none"><span>None</span></button>
+        </div>
+      </div>
+
+      <hr>
       <button data-action="beam" disabled><span>Beam</span></button>
       <button data-action="tie-slur" disabled><span>Tie / Slur</span></button>
-      <button data-action="stem-up"><span>Stem up</span></button>
-      <button data-action="stem-down"><span>Stem down</span></button>
-      <button data-action="stem-auto"><span>Stem automatic</span></button>
-      <button data-action="add-duration" disabled><span>Add duration</span></button>
-      <div class="menu-section">Articulation</div>
-      <button data-action="artic-none"><span>No articulation</span></button>
-      <button data-action="artic-staccato"><span>Staccato</span></button>
-      <button data-action="artic-staccatissimo"><span>Staccatissimo</span></button>
-      <button data-action="artic-tenuto"><span>Tenuto</span></button>
-      <button data-action="artic-accent"><span>Accent</span></button>
-      <button data-action="artic-marcato-up"><span>Marcato up</span></button>
-      <button data-action="artic-marcato-down"><span>Marcato down</span></button>
     </div>
   </div>
 
@@ -70,31 +100,74 @@
       <hr>
       <button data-action="insert-note"><span>Note</span></button>
       <button data-action="insert-rest"><span>Rest</span></button>
+      <button data-action="add-measure"><span>Measure</span><kbd>M</kbd></button>
       <hr>
-      <button data-action="add-measure"><span>Add measure</span><kbd>M</kbd></button>
-      <hr>
-      <button data-action="draw-symbol"><span>Draw a symbol…</span></button>
-      <button data-action="symbol-palette"><span>Insert symbol…</span></button>
-      <hr>
-      <button data-action="import-symbols"><span>Import symbols from a .gscore…</span></button>
-      <button data-action="export-symbols"><span>Share my symbols as a .gscore…</span></button>
-      <div class="menu-section">Barline</div>
-      <button data-action="bar-single"><span>Single</span></button>
-      <button data-action="bar-double"><span>Double</span></button>
-      <button data-action="bar-open"><span>Open repeat</span></button>
-      <button data-action="bar-final"><span>Final</span></button>
-      <button data-action="bar-close"><span>Close repeat</span></button>
-      <div class="menu-section">Dynamic</div>
-      <button data-action="dyn-pppp"><span>Pianissississimo</span></button>
-      <button data-action="dyn-ppp"><span>Pianississimo</span></button>
-      <button data-action="dyn-pp"><span>Pianissimo</span></button>
-      <button data-action="dyn-p"><span>Piano</span></button>
-      <button data-action="dyn-mp"><span>Mezzo-piano</span></button>
-      <button data-action="dyn-mf"><span>Mezzo-forte</span></button>
-      <button data-action="dyn-f"><span>Forte</span></button>
-      <button data-action="dyn-ff"><span>Fortissimo</span></button>
-      <button data-action="dyn-fff"><span>Fortississimo</span></button>
-      <button data-action="dyn-none"><span>No dynamic</span></button>
+
+      <div class="submenu">
+        <button class="submenu-title"><span>Barline</span><kbd>▸</kbd></button>
+        <div class="menu-items">
+          <button data-action="bar-single"><span>Single</span></button>
+          <button data-action="bar-double"><span>Double</span></button>
+          <button data-action="bar-final"><span>Final</span></button>
+          <hr>
+          <button data-action="bar-open"><span>Open repeat</span></button>
+          <button data-action="bar-close"><span>Close repeat</span></button>
+        </div>
+      </div>
+
+      <div class="submenu">
+        <button class="submenu-title"><span>Dynamic</span><kbd>▸</kbd></button>
+        <div class="menu-items">
+          <button data-action="dyn-pppp"><span>pppp</span><kbd>Pianissississimo</kbd></button>
+          <button data-action="dyn-ppp"><span>ppp</span><kbd>Pianississimo</kbd></button>
+          <button data-action="dyn-pp"><span>pp</span><kbd>Pianissimo</kbd></button>
+          <button data-action="dyn-p"><span>p</span><kbd>Piano</kbd></button>
+          <button data-action="dyn-mp"><span>mp</span><kbd>Mezzo-piano</kbd></button>
+          <button data-action="dyn-mf"><span>mf</span><kbd>Mezzo-forte</kbd></button>
+          <button data-action="dyn-f"><span>f</span><kbd>Forte</kbd></button>
+          <button data-action="dyn-ff"><span>ff</span><kbd>Fortissimo</kbd></button>
+          <button data-action="dyn-fff"><span>fff</span><kbd>Fortississimo</kbd></button>
+          <hr>
+          <button data-action="dyn-none"><span>No dynamic</span></button>
+        </div>
+      </div>
+
+      <div class="submenu">
+        <button class="submenu-title"><span>Line</span><kbd>▸</kbd></button>
+        <div class="menu-items">
+          <button data-action="hairpin-cresc"><span>Crescendo</span><kbd>&lt;</kbd></button>
+          <button data-action="hairpin-dim"><span>Diminuendo</span><kbd>&gt;</kbd></button>
+          <button data-action="hairpin-none"><span>No hairpin</span></button>
+          <hr>
+          <button data-action="octave-8va"><span>8va — an octave up</span></button>
+          <button data-action="octave-8vb"><span>8vb — an octave down</span></button>
+          <button data-action="octave-15ma"><span>15ma — two octaves up</span></button>
+          <button data-action="octave-15mb"><span>15mb — two octaves down</span></button>
+          <button data-action="octave-none"><span>No octave line</span></button>
+        </div>
+      </div>
+
+      <div class="submenu">
+        <button class="submenu-title"><span>Repeat ending</span><kbd>▸</kbd></button>
+        <div class="menu-items">
+          <button data-action="ending-1"><span>First time</span></button>
+          <button data-action="ending-2"><span>Second time</span></button>
+          <button data-action="ending-12"><span>First and second time</span></button>
+          <hr>
+          <button data-action="ending-none"><span>No ending</span></button>
+        </div>
+      </div>
+
+      <div class="submenu">
+        <button class="submenu-title"><span>Symbol</span><kbd>▸</kbd></button>
+        <div class="menu-items">
+          <button data-action="symbol-palette"><span>Insert a symbol…</span></button>
+          <button data-action="draw-symbol"><span>Draw a new one…</span></button>
+          <hr>
+          <button data-action="import-symbols"><span>Import from a .gscore…</span></button>
+          <button data-action="export-symbols"><span>Share mine as a .gscore…</span></button>
+        </div>
+      </div>
     </div>
   </div>
 

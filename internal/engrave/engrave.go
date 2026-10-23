@@ -81,6 +81,12 @@ type Layout struct {
 	// defaults is what the layout was drawn with.
 	defaults smufl.EngravingDefaults
 
+	// Barlines are where each measure ends, so one can be clicked and
+	// changed. A barline is drawn between two bars and belongs to neither as
+	// far as the eye is concerned, which is why it needs saying where it is
+	// rather than being worked out from a measure's extent.
+	Barlines []BarlinePos `json:"barlines"`
+
 	// Hits are the clickable regions, one per drawn measure. The editor needs
 	// to turn a point back into a place in the music, and the engraver is the
 	// only thing that knows where anything went.
@@ -105,6 +111,16 @@ type Hit struct {
 }
 
 // ElementPos is one element's place on the page.
+// BarlinePos is one drawn barline: which measure it closes, and where.
+type BarlinePos struct {
+	Part    int     `json:"part"`
+	Measure int     `json:"measure"`
+	X       float64 `json:"x"`
+	Top     float64 `json:"top"`
+	Bottom  float64 `json:"bottom"`
+	Style   string  `json:"style"`
+}
+
 type ElementPos struct {
 	// Ref is the element's number, shared with the drawn glyph and with
 	// playback, so selecting, highlighting and sounding all agree.

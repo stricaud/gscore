@@ -61,6 +61,9 @@ type App struct {
 	book     []*model.Score
 	current  int
 	filename string
+
+	// clip is what was last copied, kept here because the music is here.
+	clip clipboard
 	// warning holds what an importer could not fully read, so the interface
 	// can say so instead of quietly showing half a score.
 	warning string
@@ -272,6 +275,9 @@ func (a *App) APIRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/hairpin", a.handleHairpin)
 	mux.HandleFunc("/api/octave", a.handleOctave)
 	mux.HandleFunc("/api/ending", a.handleEnding)
+	mux.HandleFunc("/api/nudge", a.handleNudge)
+	mux.HandleFunc("/api/copy", a.handleCopy)
+	mux.HandleFunc("/api/paste", a.handlePaste)
 	mux.HandleFunc("/api/dynamic", a.handleDynamic)
 	mux.HandleFunc("/api/articulation", a.handleArticulation)
 	mux.HandleFunc("/api/deleteselection", a.handleDeleteSelection)

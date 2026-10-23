@@ -159,6 +159,41 @@ body {
 .menu-items button:hover { background: var(--accent); color: #fff; }
 .menu-items hr { border: 0; border-top: 1px solid var(--line); margin: 4px 2px; }
 
+/* Submenus. A menu with fifty entries in a column is a list to be read, not a
+   menu to be used; grouping the long tails behind a name gives back a menu
+   that fits on the screen and says what is in it. */
+.submenu { position: relative; }
+.submenu > .menu-items {
+  display: none;
+  top: -5px;
+  left: 100%;
+  margin-left: 2px;
+  min-width: 190px;
+}
+.submenu:hover > .menu-items,
+.submenu.open > .menu-items { display: block; }
+.submenu-title {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 24px;
+  width: 100%;
+  background: none;
+  border: 0;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  padding: 6px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.submenu:hover > .submenu-title,
+.submenu.open > .submenu-title { background: var(--accent); color: #fff; }
+.submenu:hover > .submenu-title kbd,
+.submenu.open > .submenu-title kbd { color: #fff; background: rgba(255,255,255,.2); }
+/* A submenu that would run off the right edge opens to the left instead. */
+.submenu.flip > .menu-items { left: auto; right: 100%; margin: 0 2px 0 0; }
+
 kbd {
   font: 11px ui-monospace, SFMono-Regular, Menlo, monospace;
   color: var(--muted);
@@ -280,11 +315,25 @@ kbd {
 #score-info div, #part-info div {
   display: flex;
   justify-content: space-between;
+  align-items: baseline;
   gap: 10px;
   padding: 3px 0;
   border-bottom: 1px dotted var(--line);
 }
 #score-info b, #part-info b { font-weight: 600; }
+/* The label stays put and the value takes what is left, aligned right and
+   wrapping within itself. "1♭ major" used to break after the sign and leave
+   "major" alone on the next line, looking like a word that had come adrift. */
+#score-info div > span:first-child, #part-info div > span:first-child {
+  flex: 0 0 auto;
+  color: var(--muted);
+}
+#score-info div > b, #score-info div > button,
+#part-info div > b, #part-info div > button {
+  flex: 1 1 auto;
+  min-width: 0;
+  text-align: right;
+}
 .part-card {
   background: var(--panel-dark);
   border-radius: 5px;
@@ -738,3 +787,7 @@ body.fullscreen #canvas-wrap { padding: 10px; }
 .choices span { display: flex; flex-direction: column; gap: 1px; }
 .choices b { font-weight: 600; }
 .choices em { font-style: normal; font-size: 11px; color: var(--muted); }
+
+/* A hand-drawn symbol can be picked up and moved, so it says so. */
+#canvas image[data-symbol] { cursor: grab; }
+#canvas image[data-symbol].dragging { cursor: grabbing; opacity: .75; }

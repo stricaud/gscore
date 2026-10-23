@@ -161,6 +161,11 @@ func (e *engraver) drawMeasure(part *model.Part, b measureBox, x float64, stretc
 
 	x += sp.BetweenMeasures * stretch
 	e.drawBarline(b.m.RightBarline, x)
+	e.lay.Barlines = append(e.lay.Barlines, BarlinePos{
+		Part: e.partIndex, Measure: b.index, X: x,
+		Top: e.y, Bottom: e.y + staffHeight,
+		Style: b.m.RightBarline.String(),
+	})
 	return x + sp.AfterBarline*stretch
 }
 

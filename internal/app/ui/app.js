@@ -51,6 +51,10 @@ const state = {
   showAllDecided: false,
   // Everything a dragged selection picked up, as staff:measure:index.
   multi: [],
+  // Where a shift-click measures from: the last note picked up on its own.
+  anchor: null,
+  // Where each measure's closing barline was drawn, so one can be clicked.
+  barlines: [],
 };
 
 /* ---------- toolbox ---------- */
@@ -154,6 +158,19 @@ function setupMenus() {
       }
     });
   });
+  // A submenu opens on hover, but a click has to work too: on a touch screen
+  // and with a keyboard there is no hover to open it with.
+  $$(".submenu").forEach((sub) => {
+    sub.querySelector(".submenu-title").addEventListener("click", (e) => {
+      e.stopPropagation();
+      const wasOpen = sub.classList.contains("open");
+      $$(".submenu").forEach((s) => s.classList.remove("open"));
+      if (!wasOpen) sub.classList.add("open");
+      placeSubmenu(sub);
+    });
+    sub.addEventListener("mouseenter", () => placeSubmenu(sub));
+  });
+
   document.addEventListener("click", closeMenus);
 
   $$("[data-action]").forEach((b) => {
@@ -167,13 +184,24 @@ function setupMenus() {
 
 function closeMenus() {
   $$(".menu").forEach((m) => m.classList.remove("open"));
+  $$(".submenu").forEach((m) => m.classList.remove("open", "flip"));
+}
+
+// placeSubmenu opens a submenu to the left instead of the right when there is
+// no room on the right, which there is not for a menu near the window edge.
+function placeSubmenu(sub) {
+  sub.classList.remove("flip");
+  const items = sub.querySelector(".menu-items");
+  if (!items) return;
+  const r = items.getBoundingClientRect();
+  if (r.right > window.innerWidth - 8) sub.classList.add("flip");
 }
 
 async function action(name) {
   switch (name) {
     case "new":
       await fetch("/api/new", { method: "POST" });
-      await reload();
+      await reopen();
       status("New score");
       break;
     case "open":
@@ -238,6 +266,37 @@ async function action(name) {
     case "delete":
       await deleteSelected();
       break;
+    case "copy": await copySelection(); break;
+    case "cut": await cutSelection(); break;
+    case "paste": await pasteClipboard(); break;
+
+    case "pitch-up": await nudge(1); break;
+    case "pitch-down": await nudge(-1); break;
+    case "octave-up": await nudge(7); break;
+    case "octave-down": await nudge(-7); break;
+
+    case "acc-sharp": await setAccidental("sharp", "Sharp"); break;
+    case "acc-flat": await setAccidental("flat", "Flat"); break;
+    case "acc-natural": await setAccidental("natural", "Natural"); break;
+    case "acc-dsharp": await setAccidental("double sharp", "Double sharp"); break;
+    case "acc-dflat": await setAccidental("double flat", "Double flat"); break;
+    case "acc-none": await setAccidental("none", "None"); break;
+
+    case "hairpin-cresc": await setHairpin("crescendo", "Crescendo"); break;
+    case "hairpin-dim": await setHairpin("diminuendo", "Diminuendo"); break;
+    case "hairpin-none": await setHairpin("none", "Hairpin removed"); break;
+
+    case "octave-8va": await setOctave("8va", "8va"); break;
+    case "octave-8vb": await setOctave("8vb", "8vb"); break;
+    case "octave-15ma": await setOctave("15ma", "15ma"); break;
+    case "octave-15mb": await setOctave("15mb", "15mb"); break;
+    case "octave-none": await setOctave("none", "Octave line removed"); break;
+
+    case "ending-1": await setEnding("1"); break;
+    case "ending-2": await setEnding("2"); break;
+    case "ending-12": await setEnding("1,2"); break;
+    case "ending-none": await setEnding(""); break;
+
     case "bar-single": await setBarline("single"); break;
     case "bar-double": await setBarline("double"); break;
     case "bar-final": await setBarline("final"); break;
@@ -464,13 +523,25 @@ async function loadInfo() {
   if (i.warning) status("Opened with warnings — " + i.warning);
 }
 
+// reload re-reads everything after the file itself has changed.
+//
+// It does not forget how the score is being looked at. Changing a key
+// signature used to put the view back to "every tune at once", which from the
+// outside looks like the score suddenly shrinking — the change was to one
+// exercise and the answer was the whole book.
 async function reload() {
   stop();
-  state.showAllDecided = false;
   state.selection = null;
+  state.multi = [];
   await loadInfo();
   await drawScore();
   await loadHits();
+}
+
+// reopen is for a different file: the view starts over with it.
+async function reopen() {
+  state.showAllDecided = false;
+  await reload();
 }
 
 function setZoom(z) {
@@ -516,6 +587,21 @@ async function loadHits() {
   const res = await fetch("/api/hits?mode=" + state.mode);
   const d = await res.json();
   state.hits = d.hits || [];
+  state.barlines = d.barlines || [];
+}
+
+// barlineAt finds the barline a click landed on.
+//
+// A barline is a thin line and nobody clicks a thin line exactly, so the
+// target is a band around it — narrow enough not to swallow clicks meant for
+// the notes on either side.
+function barlineAt(x, y) {
+  for (const b of state.barlines) {
+    if (Math.abs(x - b.x) > 0.7) continue;
+    if (y < b.top - 1 || y > b.bottom + 1) continue;
+    return b;
+  }
+  return null;
 }
 
 // hitAt finds the measure under a point given in staff spaces.
@@ -611,6 +697,14 @@ function setupCanvasClicks() {
     const x = (e.clientX - r.left) / state.zoom;
     const y = (e.clientY - r.top) / state.zoom;
 
+    // A barline is its own thing to click: the line between two bars, which
+    // belongs to neither of them.
+    const bar = barlineAt(x, y);
+    if (bar) {
+      await openBarlinePicker(bar);
+      return;
+    }
+
     const hit = hitAt(x, y);
     if (!hit) {
       clearSelection();
@@ -628,6 +722,13 @@ function setupCanvasClicks() {
     // second pitch on what is there: that is how a chord is written. gscore
     // asked for Ctrl to be held for this; the column does the asking now.
     if (el) {
+      // Shift with something already picked up means "and everything from
+      // there to here": the usual way of selecting a passage, and what makes
+      // it possible to put one crescendo over eight bars.
+      if (e.shiftKey && state.anchor) {
+        selectRange(state.anchor, { part: hit.part, measure: hit.measure, index: el.index });
+        return;
+      }
       const stackable =
         !picking && !state.tool.rest &&
         (el.kind === "note" || el.kind === "chord") &&
@@ -659,8 +760,45 @@ function setupCanvasClicks() {
   });
 }
 
+// selectRange picks up everything between two points, in reading order.
+//
+// A passage is a range, not a list of clicks: from this note to that one,
+// taking in the bars between. It stays on one staff, because a selection
+// across staves is a different thing and a crescendo over it would mean
+// something else again.
+function selectRange(from, to) {
+  const part = from.part;
+  let a = from, b = to;
+  if (b.measure < a.measure || (b.measure === a.measure && b.index < a.index)) {
+    [a, b] = [b, a];
+  }
+
+  state.multi = [];
+  for (const h of state.hits) {
+    if (h.part !== part || h.measure < a.measure || h.measure > b.measure) continue;
+    for (const el of h.elements || []) {
+      if (h.measure === a.measure && el.index < a.index) continue;
+      if (h.measure === b.measure && el.index > b.index) continue;
+      state.multi.push({ part, measure: h.measure, index: el.index, ref: el.ref });
+    }
+  }
+  state.multi = orderedSelection();
+  const first = state.multi[0];
+  if (first) {
+    state.selection = {
+      part, measure: first.measure, at: first.index + 1, step: 0, ref: first.ref,
+    };
+  }
+  markSelection();
+  status(state.multi.length === 1
+    ? "1 selected"
+    : `${state.multi.length} selected \u2014 measures ${a.measure + 1}\u2013${b.measure + 1}`);
+}
+
 // select picks up an existing element, so the next command acts on it.
 function select(hit, el) {
+  state.anchor = { part: hit.part, measure: hit.measure, index: el.index };
+  state.multi = [];
   state.selection = {
     part: hit.part,
     measure: hit.measure,
@@ -677,6 +815,7 @@ function select(hit, el) {
 function clearSelection() {
   state.selection = null;
   state.multi = [];
+  state.anchor = null;
   markSelection();
 }
 
@@ -917,6 +1056,12 @@ function selectionRect(x, y, w, h, z) {
 
 // mark applies something to the element the cursor sits after — the note just
 // placed or just clicked.
+// orderedSelection sorts what is selected into the order it is read in.
+function orderedSelection() {
+  return state.multi.slice().sort(
+    (a, b) => a.part - b.part || a.measure - b.measure || a.index - b.index);
+}
+
 async function mark(endpoint, params, said) {
   const sel = state.selection;
   if (!sel) {
@@ -928,7 +1073,9 @@ async function mark(endpoint, params, said) {
     ...params,
   });
   if (state.multi.length) {
-    p.set("sel", state.multi.map((m) => `${m.part}:${m.measure}:${m.index}`).join(","));
+    // In order. A hairpin opens on the first and closes on the last, so a
+    // selection handed over shuffled would draw a crescendo backwards.
+    p.set("sel", orderedSelection().map((m) => `${m.part}:${m.measure}:${m.index}`).join(","));
   }
   const res = await fetch(`/api/${endpoint}?` + p.toString(), { method: "POST" });
   if (!res.ok) {
@@ -950,6 +1097,43 @@ function hasSelection() {
 const setAccidental = (acc, said) =>
   mark("accidental", { accidental: acc },
        acc === "none" ? "Accidental removed" : "Written as " + said.toLowerCase());
+
+// A hairpin and an octave line both cover a stretch of music, so they act on
+// the range that is selected rather than on one note.
+const setHairpin = (kind, said) =>
+  mark("hairpin", { hairpin: kind }, said);
+
+const setOctave = (amount, said) =>
+  mark("octave", { octave: amount }, said);
+
+// setEnding puts a volta bracket over the selected measures, on every staff.
+async function setEnding(numbers) {
+  const sel = state.selection;
+  if (!sel) {
+    status("Click a measure first");
+    return;
+  }
+  // A range selection may cover several bars; the bracket spans all of them.
+  let first = sel.measure, last = sel.measure;
+  for (const m of state.multi) {
+    first = Math.min(first, m.measure);
+    last = Math.max(last, m.measure);
+  }
+  const p = new URLSearchParams({ measure: String(first), to: String(last) });
+  if (numbers === "") p.set("ending", "none");
+  else p.set("numbers", numbers);
+
+  const res = await fetch("/api/ending?" + p.toString(), { method: "POST" });
+  if (!res.ok) {
+    status("Could not set it: " + (await res.text()).trim());
+    return;
+  }
+  await refreshScore();
+  status(numbers === "" ? "Ending removed"
+                        : `Ending ${numbers.replace(",", " and ")} over ` +
+                          (first === last ? `measure ${first + 1}`
+                                          : `measures ${first + 1}–${last + 1}`));
+}
 
 const setStem = (dir) =>
   mark("stem", { stem: dir },
@@ -1419,6 +1603,37 @@ async function setInstrumentDialog() {
   await setStaffProperty("instrument", v);
 }
 
+// openBarlinePicker asks what the clicked barline should be.
+async function openBarlinePicker(bar) {
+  const v = await ask({
+    title: `Barline after measure ${bar.measure + 1}`,
+    label: "Draw it as",
+    value: bar.style,
+    note: "A repeat sends the player back to the matching open repeat.",
+    options: [
+      { value: "single", label: "Single" },
+      { value: "double", label: "Double" },
+      { value: "final", label: "Final" },
+      { value: "repeat-start", label: "Open repeat" },
+      { value: "repeat-end", label: "Close repeat" },
+      { value: "repeat-both", label: "Close then open" },
+      { value: "none", label: "Invisible" },
+    ],
+  });
+  if (v === null) return;
+
+  const p = new URLSearchParams({
+    part: String(bar.part), measure: String(bar.measure), style: v,
+  });
+  const res = await fetch("/api/barline?" + p.toString(), { method: "POST" });
+  if (!res.ok) {
+    status("Could not change it: " + (await res.text()).trim());
+    return;
+  }
+  await refreshScore();
+  status("Barline changed");
+}
+
 /* ---------- key signature picker ---------- */
 
 // The picker shows each signature engraved on a staff rather than named, which
@@ -1554,7 +1769,7 @@ async function openFile(file) {
     status("Could not open: " + (await res.text()).trim());
     return;
   }
-  await reload();
+  await reopen();
   status("Opened " + file.name);
 }
 
@@ -1573,7 +1788,7 @@ async function openScore() {
           status("Ready");
           return;
         }
-        await reload();
+        await reopen();
         status("Opened " + d.filename);
         return;
       }
@@ -2139,15 +2354,105 @@ function setupMarquee() {
         }
       }
     }
-    state.selection = state.multi.length
-      ? { part: state.multi[0].part, measure: state.multi[0].measure,
-          at: state.multi[0].index + 1, step: 0, ref: state.multi[0].ref }
-      : state.selection;
+    state.multi = orderedSelection();
+    if (state.multi.length) {
+      const f = state.multi[0];
+      state.selection = {
+        part: f.part, measure: f.measure, at: f.index + 1, step: 0, ref: f.ref,
+      };
+      state.anchor = { part: f.part, measure: f.measure, index: f.index };
+    }
     markSelection();
     status(state.multi.length
       ? `${state.multi.length} selected`
       : "Nothing in that range");
   });
+}
+
+// Dragging a symbol.
+//
+// A hand-drawn mark lands where the engraver puts it, which is above or below
+// the note it belongs to. That is a guess, and the person who drew it knows
+// better: a mark of their own invention may want to sit anywhere. So it can be
+// picked up and moved, and where it is moved to is saved with the score as an
+// offset from the note — not as a position on the page, which would be wrong
+// again the moment anything around it changed.
+function setupSymbolDragging() {
+  const wrap = $("#canvas-wrap");
+  let dragging = null;
+
+  wrap.addEventListener("pointerdown", (e) => {
+    const img = e.target.closest ? e.target.closest("image[data-symbol]") : null;
+    if (!img || e.button !== 0) return;
+    const ref = Number(img.dataset.ref || 0);
+    const where = elementByRef(ref);
+    if (!where) return;
+
+    e.preventDefault();
+    e.stopPropagation();
+    dragging = {
+      img, where, name: img.dataset.symbol,
+      startX: e.clientX, startY: e.clientY,
+      x: parseFloat(img.getAttribute("x")), y: parseFloat(img.getAttribute("y")),
+    };
+    img.setPointerCapture(e.pointerId);
+    img.classList.add("dragging");
+    status("Moving " + dragging.name);
+  });
+
+  wrap.addEventListener("pointermove", (e) => {
+    if (!dragging) return;
+    // Moved live, so it is clear what is happening; the score is redrawn
+    // from the model once the mark is let go.
+    dragging.img.setAttribute("x", String(dragging.x + (e.clientX - dragging.startX)));
+    dragging.img.setAttribute("y", String(dragging.y + (e.clientY - dragging.startY)));
+  });
+
+  const drop = async (e) => {
+    if (!dragging) return;
+    const d = dragging;
+    dragging = null;
+    d.img.classList.remove("dragging");
+    suppressClick = true;
+
+    // In staff spaces, which is what the model keeps: a nudge that still
+    // means the same thing at any zoom and on any paper.
+    const dx = (e.clientX - d.startX) / state.zoom;
+    const dy = (e.clientY - d.startY) / state.zoom;
+    if (Math.abs(dx) < 0.05 && Math.abs(dy) < 0.05) {
+      status("Ready");
+      return;
+    }
+
+    const p = new URLSearchParams({
+      part: String(d.where.part), measure: String(d.where.measure),
+      at: String(d.where.index + 1), name: d.name,
+      dx: dx.toFixed(3), dy: dy.toFixed(3),
+    });
+    const res = await fetch("/api/movesymbol?" + p.toString(), { method: "POST" });
+    if (!res.ok) {
+      status("Could not move it: " + (await res.text()).trim());
+      await refreshScore();
+      return;
+    }
+    await refreshScore();
+    status("Moved " + d.name);
+  };
+  wrap.addEventListener("pointerup", drop);
+  wrap.addEventListener("pointercancel", drop);
+}
+
+// elementByRef finds which measure and position an element's ref belongs to.
+function elementByRef(ref) {
+  if (!ref) return null;
+  for (const h of state.hits) {
+    for (const el of h.elements || []) {
+      if (el.ref === ref) {
+        return { part: h.part, measure: h.measure, index: el.index };
+      }
+    }
+  }
+  return null;
 }
 
 function setupPanning() {
@@ -2231,7 +2536,8 @@ function setupKeys() {
   document.addEventListener("keydown", (e) => {
     if (e.target.matches("input, textarea")) return;
 
-    // Ctrl/Cmd with plus, minus or zero zooms.
+    // Ctrl/Cmd with plus, minus or zero zooms; with C and V it is the
+    // clipboard, where every other program puts it.
     if (e.ctrlKey || e.metaKey) {
       switch (e.key) {
         case "+": case "=":
@@ -2240,8 +2546,34 @@ function setupKeys() {
           e.preventDefault(); setZoom(state.zoom - 1); return;
         case "0":
           e.preventDefault(); setZoom(8); return;
+        case "c": case "C":
+          e.preventDefault(); void copySelection(); return;
+        case "x": case "X":
+          e.preventDefault(); void cutSelection(); return;
+        case "v": case "V":
+          e.preventDefault(); void pasteClipboard(); return;
       }
       return;
+    }
+
+    // The arrow keys move the selected notes and the cursor.
+    switch (e.key) {
+      case "ArrowUp":
+        e.preventDefault();
+        void nudge(e.shiftKey ? 7 : 1);
+        return;
+      case "ArrowDown":
+        e.preventDefault();
+        void nudge(e.shiftKey ? -7 : -1);
+        return;
+      case "ArrowLeft":
+        e.preventDefault();
+        moveCursorBy(-1);
+        return;
+      case "ArrowRight":
+        e.preventDefault();
+        moveCursorBy(1);
+        return;
     }
 
     switch (e.key) {
@@ -2281,6 +2613,142 @@ function setupKeys() {
   });
 }
 
+/* ---------- moving, copying and pasting ---------- */
+
+// nudge moves what is selected up or down the staff.
+//
+// Steps, not semitones: a step up from F in G major is G, and from F sharp it
+// is still G. The arrow keys are for moving a note to the right place on the
+// staff, which is what a player reads.
+async function nudge(steps) {
+  if (!hasSelection()) {
+    status("Click a note first");
+    return;
+  }
+  await mark("nudge", { steps: String(steps) },
+             steps > 0 ? (steps === 7 ? "Up an octave" : "Up")
+                       : (steps === -7 ? "Down an octave" : "Down"));
+}
+
+// moveCursorBy steps the selection along the music, one element at a time,
+// over barlines and on to the next measure.
+function moveCursorBy(delta) {
+  const sel = state.selection;
+  if (!sel) {
+    status("Click a measure first");
+    return;
+  }
+  const staff = state.hits
+    .filter((h) => h.part === sel.part)
+    .sort((a, b) => a.measure - b.measure);
+  if (!staff.length) return;
+
+  // Everything on this staff, end to end, so moving off a bar simply lands
+  // on the first note of the next.
+  const line = [];
+  for (const h of staff) {
+    for (const el of h.elements || []) {
+      line.push({ measure: h.measure, index: el.index, ref: el.ref });
+    }
+  }
+  if (!line.length) return;
+
+  let at = line.findIndex((p) => p.measure === sel.measure && p.ref === sel.ref);
+  if (at < 0) {
+    at = line.findIndex((p) => p.measure === sel.measure && p.index === sel.at - 1);
+  }
+  at = at < 0 ? (delta > 0 ? 0 : line.length - 1) : at + delta;
+  at = Math.max(0, Math.min(line.length - 1, at));
+
+  const p = line[at];
+  state.multi = [];
+  state.anchor = { part: sel.part, measure: p.measure, index: p.index };
+  state.selection = {
+    part: sel.part, measure: p.measure, at: p.index + 1, step: 0, ref: p.ref,
+  };
+  markSelection();
+  scrollSelectionIntoView();
+  status(`Measure ${p.measure + 1}, note ${p.index + 1}`);
+}
+
+// scrollSelectionIntoView keeps the cursor on screen as it walks the music.
+function scrollSelectionIntoView() {
+  const svg = currentSVG();
+  if (!svg || !state.selection?.ref) return;
+  const el = svg.querySelector(`[data-ref="${state.selection.ref}"]`);
+  if (el && el.scrollIntoView) {
+    el.scrollIntoView({ block: "nearest", inline: "nearest", behavior: "smooth" });
+  }
+}
+
+async function copySelection() {
+  const sel = selectionTargets();
+  if (!sel) {
+    status("Select something to copy");
+    return;
+  }
+  const res = await fetch("/api/copy?sel=" + encodeURIComponent(sel), { method: "POST" });
+  if (!res.ok) {
+    status("Could not copy: " + (await res.text()).trim());
+    return;
+  }
+  const d = await res.json();
+  status(`Copied ${d.copied} ${d.copied === 1 ? "note" : "notes"}`);
+}
+
+async function cutSelection() {
+  const sel = selectionTargets();
+  if (!sel) {
+    status("Select something to cut");
+    return;
+  }
+  const res = await fetch("/api/copy?sel=" + encodeURIComponent(sel), { method: "POST" });
+  if (!res.ok) {
+    status("Could not cut: " + (await res.text()).trim());
+    return;
+  }
+  const d = await res.json();
+  await deleteSelected();
+  status(`Cut ${d.copied} ${d.copied === 1 ? "note" : "notes"}`);
+}
+
+async function pasteClipboard() {
+  const sel = state.selection;
+  if (!sel) {
+    status("Click where it should go");
+    return;
+  }
+  const p = new URLSearchParams({
+    part: String(sel.part), measure: String(sel.measure), at: String(sel.at),
+  });
+  const res = await fetch("/api/paste?" + p.toString(), { method: "POST" });
+  if (!res.ok) {
+    status("Could not paste: " + (await res.text()).trim());
+    return;
+  }
+  const d = await res.json();
+  if (d.measure !== undefined) {
+    sel.measure = d.measure;
+    sel.at = d.at;
+  }
+  sel.ref = null;
+  state.multi = [];
+  await refreshScore();
+  markSelection();
+  status(`Pasted ${d.pasted} ${d.pasted === 1 ? "note" : "notes"}`);
+}
+
+// selectionTargets spells what is selected the way the server wants it, or
+// returns null when nothing is.
+function selectionTargets() {
+  if (state.multi.length) {
+    return orderedSelection().map((m) => `${m.part}:${m.measure}:${m.index}`).join(",");
+  }
+  const sel = state.selection;
+  if (!sel || sel.ref === null || sel.ref === undefined) return null;
+  return `${sel.part}:${sel.measure}:${sel.at - 1}`;
+}
+
 async function main() {
   // The palette and the menus are built first: they need nothing from the
   // core and showing them at once makes the window look alive.
@@ -2292,6 +2760,7 @@ async function main() {
   setupZoomGestures();
   setupPanning();
   setupMarquee();
+  setupSymbolDragging();
   setupShiftHint();
   setupFullscreen();
   setupCanvasClicks();
@@ -2308,7 +2777,7 @@ async function main() {
   $("#stop-btn").addEventListener("click", stop);
   $("#input-btn").addEventListener("click", () => selectTool(!state.tool.select));
 
-  await reload();
+  await reopen();
   const n = (state.info?.tunes || []).length;
   status(n > 1 ? `${n} tunes in this file` : "Ready");
 }

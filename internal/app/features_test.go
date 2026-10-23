@@ -827,3 +827,111 @@ func describe(s *model.Score) string {
 	}
 	return b.String()
 }
+
+// Playback follows the repeats: a repeated section sounds twice, and the
+// cursor goes round with it.
+func TestPlaybackFollowsRepeats(t *testing.T) {
+	h := newHarness(t)
+	// Four bars, a quarter note in each, with a repeat closing bar 2.
+	for bar := 0; bar < 4; bar++ {
+		if bar > 0 {
+			h.post("/api/addmeasure")
+		}
+		h.note(0, bar, 2+bar, "quarter")
+	}
+	straight := buildPlayback(h.app.score)
+
+	h.post("/api/barline?part=0&measure=1&style=repeat-end")
+	withRepeat := buildPlayback(h.app.score)
+
+	if len(withRepeat.Events) != len(straight.Events)+2 {
+		t.Errorf("a repeat of two bars gave %d events, want %d",
+			len(withRepeat.Events), len(straight.Events)+2)
+	}
+	// Bars 1 and 2 appear twice in the cursor's path, in order.
+	var played []int
+	for _, m := range withRepeat.Measures {
+		played = append(played, m.Index)
+	}
+	want := []int{0, 1, 0, 1, 2, 3}
+	if len(played) != len(want) {
+		t.Fatalf("the cursor visits %v, want %v", played, want)
+	}
+	for i := range want {
+		if played[i] != want[i] {
+			t.Fatalf("the cursor visits %v, want %v", played, want)
+		}
+	}
+	// And the timeline runs forward throughout, even going back.
+	for i := 1; i < len(withRepeat.Measures); i++ {
+		if withRepeat.Measures[i].Start <= withRepeat.Measures[i-1].Start {
+			t.Errorf("time went backwards at step %d", i)
+		}
+	}
+}
+
+// A note played twice keeps the number its notehead was drawn with, so the
+// highlight finds it both times.
+func TestRepeatedNotesKeepTheirNumbers(t *testing.T) {
+	h := newHarness(t)
+	for bar := 0; bar < 2; bar++ {
+		if bar > 0 {
+			h.post("/api/addmeasure")
+		}
+		h.note(0, bar, 2+bar, "quarter")
+	}
+	h.post("/api/barline?part=0&measure=0&style=repeat-end")
+
+	pb := buildPlayback(h.app.score)
+	lay := engrave.Engrave(h.app.score, engrave.DefaultOptions())
+	drawn := map[int]bool{}
+	for _, hit := range lay.Hits {
+		for _, el := range hit.Elements {
+			drawn[el.Ref] = true
+		}
+	}
+	for _, ev := range pb.Events {
+		if ev.Ref != 0 && !drawn[ev.Ref] {
+			t.Errorf("a note sounds with number %d, which nothing on the page has", ev.Ref)
+		}
+	}
+	// The first bar sounds twice, with the same note both times.
+	first := 0
+	for _, ev := range pb.Events {
+		if ev.Ref == 1 {
+			first++
+		}
+	}
+	if first != 2 {
+		t.Errorf("the repeated note sounded %d times, want 2", first)
+	}
+}
+
+// 1st and 2nd time bars.
+func TestPlaybackTakesTheRightEnding(t *testing.T) {
+	h := newHarness(t)
+	for bar := 0; bar < 4; bar++ {
+		if bar > 0 {
+			h.post("/api/addmeasure")
+		}
+		h.note(0, bar, 2+bar, "quarter")
+	}
+	// |: 1 2 [1. 3 :][2. 4 ]
+	h.post("/api/ending?measure=2&numbers=1")
+	h.post("/api/barline?part=0&measure=2&style=repeat-end")
+	h.post("/api/ending?measure=3&numbers=2&open=1")
+
+	var played []int
+	for _, m := range buildPlayback(h.app.score).Measures {
+		played = append(played, m.Index)
+	}
+	want := []int{0, 1, 2, 0, 1, 3}
+	if len(played) != len(want) {
+		t.Fatalf("played %v, want %v", played, want)
+	}
+	for i := range want {
+		if played[i] != want[i] {
+			t.Fatalf("played %v, want %v", played, want)
+		}
+	}
+}

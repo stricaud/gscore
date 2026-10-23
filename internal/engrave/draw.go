@@ -175,8 +175,12 @@ func (e *engraver) drawMeasure(part *model.Part, b measureBox, x float64, stretc
 		case p.rest == nil:
 			kind = "symbol"
 		}
+		// Against the bar's real length, which is the model's one answer to
+		// that question — the same one playback uses to decide when the bar
+		// begins. Measuring against the meter instead left the cursor and
+		// the note it points at drifting apart inside the bar.
 		at := 0.0
-		if bar := part.TimeAt(b.index).BarDuration(); !bar.IsZero() {
+		if bar := e.score.MeasureDuration(b.index); !bar.IsZero() {
 			at = p.start.Float() / bar.Float()
 			if at > 1 {
 				at = 1

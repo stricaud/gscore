@@ -2988,7 +2988,7 @@ function cursorAt(measures, now) {
 
   const f = m.dur > 0 ? Math.max(0, Math.min(1, (now - m.start) / m.dur)) : 0;
   return {
-    x: cursorX(m.index, f, box),
+    x: cursorX(f, box, measureBox(m.index + 1)),
     top: box.top,
     bottom: box.bottom,
     measure: m.index,
@@ -2997,45 +2997,34 @@ function cursorAt(measures, now) {
 
 // cursorX turns a moment within a bar into a place along it.
 //
-// Not by sliding across the bar at a constant speed: notes are spaced
-// proportionally, so a whole note is wider than a quarter but nothing like
-// four times as wide, and a cursor moving at a constant speed drifts away from
-// the notes within the first bar. It ends up pointing between two notes on one
-// staff and at a third on another, which is the opposite of what a cursor
-// running down a score is for.
+// Linearly: the cursor crosses a bar at a steady rate, so it moves at the
+// pace of the music rather than hurrying and dawdling between noteheads.
 //
-// Instead the notes themselves are the anchors. Every element carries the
-// moment it sounds, so the cursor is drawn between them: at the instant a note
-// sounds it is exactly on that note, on every staff at once, and between two
-// notes it moves smoothly from one to the next.
-function cursorX(measure, f, box) {
-  // One set of anchors for the whole system: every staff agrees about time
-  // even when they disagree about how many notes are in the bar.
-  const anchors = [];
-  for (const h of state.hits) {
-    if (h.measure !== measure) continue;
-    for (const el of h.elements || []) {
-      anchors.push([el.at ?? 0, el.x]);
-    }
+// It was briefly anchored to the notes instead, on the theory that the cursor
+// should sit exactly on whatever is sounding. That cannot work while the
+// engraver stretches each staff's bar by its own content: a half note on one
+// staff and four eighths on another both fall halfway through the bar and are
+// drawn at different places, so a list of anchors gathered across the staves
+// and sorted by time has x values that do not increase. Interpolating through
+// it walked the cursor backwards — small, but a cursor that ever goes
+// backwards is worse than one that is a little ahead of a notehead.
+//
+// A steady rate is also the honest thing to draw. The cursor's job is to show
+// where in the music you are, and that is a fact about time.
+//
+// The bar is crossed from its own start to where the next one begins, not to
+// where its own music stops: a bar's region ends at its last notehead, and
+// the barline and the air after it lie beyond. Stopping at the music left the
+// cursor standing still at the end of every bar and then jumping the barline.
+function cursorX(f, box, next) {
+  let end = box.x1;
+  // Only when the next bar really is to the right on the same staff line.
+  // At the end of a system the next bar is back at the left margin, and the
+  // cursor should finish this line rather than fly backwards across it.
+  if (next && next.x0 > box.x0 && next.top === box.top) {
+    end = next.x0;
   }
-  if (!anchors.length) {
-    return box.x0 + (box.x1 - box.x0) * f;
-  }
-  anchors.sort((a, b) => a[0] - b[0]);
-  // The bar's own edges close the ends, so the cursor starts at the barline
-  // and reaches the next one.
-  anchors.unshift([0, Math.min(anchors[0][1], box.x0 + 0.4)]);
-  anchors.push([1, box.x1]);
-
-  for (let i = 1; i < anchors.length; i++) {
-    const [t1, x1] = anchors[i];
-    if (f > t1) continue;
-    const [t0, x0] = anchors[i - 1];
-    const span = t1 - t0;
-    const k = span > 0 ? (f - t0) / span : 0;
-    return x0 + (x1 - x0) * k;
-  }
-  return box.x1;
+  return box.x0 + (end - box.x0) * f;
 }
 
 // systemSpan gives the vertical extent of every staff showing a measure, so

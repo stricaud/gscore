@@ -94,18 +94,42 @@ func buildPlayback(s *model.Score) Playback {
 	secondsPerWhole := secondsPerUnit / unit.Float()
 
 	out := Playback{Tempo: bpm}
-	// ref counts elements in the same order the engraver does: parts, then
-	// measures, then the first voice's elements, rests included. Both sides
-	// must walk identically or the highlight lands on the wrong note.
-	ref := 1
+	// The order the bars are actually played in: a repeat sends you back, a
+	// first-time bar is skipped the second time through. Both the notes and
+	// the cursor walk this, so the line down the page goes round when the
+	// music does.
+	order := s.PlayOrder()
 
-	// Every part shares one timeline, so a measure's length is however long
-	// the part that fills it most takes. A staff resting through a bar must
-	// not shorten it.
-	measureDur := map[int]float64{}
+	// Which number the engraver gave the first element of each bar of each
+	// staff. A bar played twice sounds the same notes both times, so the
+	// numbering is worked out once from the written score and reused —
+	// counting along as we play would give a bar's notes new numbers on the
+	// second time through and the highlight would stop finding them.
+	refBase := baseRefs(s)
+
+	// When each bar begins, worked out before any note is placed.
+	//
+	// There is one timeline in a score and every part is on it. Letting each
+	// part keep its own clock — advancing it by whatever that part happens to
+	// have in the bar — means a part with a short bar falls behind the
+	// barline and stays behind: in Mozart's Offertorium the soloists' clock
+	// ran forty-nine seconds behind the measure timeline by the last bar, so
+	// the cursor and the note it was supposed to be pointing at were most of
+	// a page apart. Deciding the bar lines first and hanging every part off
+	// them makes that unrepresentable.
+	starts, total := measureTimeline(s, order, secondsPerWhole)
+	for k, start := range starts {
+		d := total - start
+		if k+1 < len(starts) {
+			d = starts[k+1] - start
+		}
+		out.Measures = append(out.Measures, MeasureTime{
+			Index: order[k], Start: start, Dur: d,
+		})
+	}
+	out.Duration = total
 
 	for pi, p := range s.Parts {
-		t := 0.0
 		// A tie means the two notes sound as one, so a tied-to note extends
 		// the event already running rather than starting another.
 		open := map[int]int{} // midi -> index in out.Events
@@ -118,7 +142,11 @@ func buildPlayback(s *model.Score) Playback {
 		// does cannot be known at the note it starts on. The notes it covers
 		// are collected and scaled once it closes.
 		var swell *swelling
-		for mi, m := range p.Measures {
+		for step, mi := range order {
+			if mi >= len(p.Measures) {
+				continue // this staff is shorter than the score
+			}
+			m := p.Measures[mi]
 			// Voices within a measure sound together, so each starts at the
 			// measure's time and the measure lasts as long as the longest.
 			if len(m.Voices) == 0 {
@@ -133,11 +161,25 @@ func buildPlayback(s *model.Score) Playback {
 			// the playback too — a chart with eight repeat signs in it is
 			// otherwise eight bars of silence.
 			if m.Repeat > 0 {
-				if src := repeatSource(p, mi, m.Repeat); src != nil {
+				if src := p.RepeatSource(mi, m.Repeat); src != nil {
 					v = src
 				}
 			}
-			vt := t
+			// Every part starts this bar where the bar starts, not where its
+			// own last bar happened to end.
+			vt := 0.0
+			if step < len(starts) {
+				vt = starts[step]
+			}
+			ref := refBase[pi][mi]
+			if m.Repeat > 0 {
+				// A bar showing a repeat sign has no noteheads of its own —
+				// the sign is all that is drawn. Its notes are borrowed from
+				// the bar it stands for, so numbering them after that bar's
+				// noteheads would light up a bar somewhere else on the page.
+				// Zero means "nothing to highlight", which is the truth.
+				ref = 0
+			}
 			for _, el := range v.Elements {
 				d := el.Duration().Float() * secondsPerWhole
 				mk := marksOf(el)
@@ -180,61 +222,61 @@ func buildPlayback(s *model.Score) Playback {
 						shift = 0
 					}
 				}
-				ref++
+				if ref != 0 {
+					ref++
+				}
 				vt += d
 			}
-			if d := vt - t; d > measureDur[mi] {
-				measureDur[mi] = d
+			// A note may ring past the last barline; the piece is not over
+			// until it has stopped.
+			if vt > out.Duration {
+				out.Duration = vt
 			}
-			t = maxF(t, vt)
 		}
-		if t > out.Duration {
-			out.Duration = t
-		}
-	}
-
-	// The measures end to end, which is the cursor's path.
-	count := 0
-	for _, p := range s.Parts {
-		if n := len(p.Measures); n > count {
-			count = n
-		}
-	}
-	at := 0.0
-	for i := 0; i < count; i++ {
-		d := measureDur[i]
-		if d <= 0 {
-			// An empty bar still takes its meter's worth of time, or the
-			// cursor would skip straight over it.
-			d = emptyMeasureDur(s, i, secondsPerWhole)
-		}
-		out.Measures = append(out.Measures, MeasureTime{Index: i, Start: at, Dur: d})
-		at += d
-	}
-	if at > out.Duration {
-		out.Duration = at
 	}
 	return out
 }
 
-// emptyMeasureDur is how long a bar lasts when nothing in it sounds.
-func emptyMeasureDur(s *model.Score, i int, secondsPerWhole float64) float64 {
-	for _, p := range s.Parts {
-		if i < len(p.Measures) {
-			if bar := p.Time.BarDuration(); !bar.IsZero() {
-				return bar.Float() * secondsPerWhole
+// measureTimeline decides when each bar begins.
+//
+// How long a bar lasts is model.Score.MeasureDuration, and it is asked there
+// rather than worked out again here: the engraver asks the same question to
+// place a note within its bar, and two answers to it is exactly how the
+// cursor and the note it pointed at came to be a bar apart.
+//
+// Returns the start of every bar and the time the last one ends.
+func measureTimeline(s *model.Score, order []int, secondsPerWhole float64) ([]float64, float64) {
+	starts := make([]float64, len(order))
+	at := 0.0
+	for k, i := range order {
+		starts[k] = at
+		at += s.MeasureDuration(i).Float() * secondsPerWhole
+	}
+	return starts, at
+}
+
+// baseRefs gives the number the engraver assigned to the first element of
+// each bar of each staff.
+//
+// The engraver numbers elements walking staves, then bars, then the first
+// voice. Playback has to agree exactly, because that number is the only thing
+// tying a sounding note to the notehead drawn for it — and once a bar can be
+// played more than once, counting along as we go no longer agrees.
+func baseRefs(s *model.Score) [][]int {
+	out := make([][]int, len(s.Parts))
+	ref := 1
+	for pi, p := range s.Parts {
+		out[pi] = make([]int, len(p.Measures))
+		for mi, m := range p.Measures {
+			out[pi][mi] = ref
+			if len(m.Voices) > 0 {
+				ref += len(m.Voices[0].Elements)
 			}
 		}
 	}
-	return 0
+	return out
 }
 
-func maxF(a, b float64) float64 {
-	if a > b {
-		return a
-	}
-	return b
-}
 
 func addNote(out *Playback, open map[int]int, m *model.Marks, p model.Pitch,
 	start, dur float64, part, ref int, inst model.Instrument, loud model.Dynamic,
@@ -366,32 +408,3 @@ func (s *swelling) apply(out *Playback, end int, loud model.Dynamic) {
 	_ = loud
 }
 
-// repeatSource finds the bar a repeat sign stands for.
-//
-// One sign means the bar before. A two-bar sign stands for the two before it,
-// so the first of the pair repeats the bar two back and the second repeats the
-// one two back from it — which, walking forwards, is just "the bar `n` back"
-// in both cases. A sign pointing at another sign is followed through rather
-// than played as nothing.
-func repeatSource(p *model.Part, at, bars int) *model.Voice {
-	if bars < 1 {
-		bars = 1
-	}
-	// A chain of signs is followed, but not forever: a file that points a
-	// repeat at itself should come back silent rather than hang.
-	for hops := 0; hops < 64; hops++ {
-		at -= bars
-		if at < 0 || at >= len(p.Measures) {
-			return nil
-		}
-		m := p.Measures[at]
-		if len(m.Voices) == 0 {
-			return nil
-		}
-		if m.Repeat == 0 {
-			return m.Voices[0]
-		}
-		bars = m.Repeat
-	}
-	return nil
-}

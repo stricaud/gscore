@@ -572,3 +572,99 @@ func (s *Score) Normalise() {
 		}
 	}
 }
+
+// How long a bar lasts.
+//
+// This is one question with one answer, and it is asked in two places: the
+// engraver needs it to say where in its bar a note falls, and playback needs
+// it to decide when each bar begins. Answering it twice is how the cursor and
+// the note it points at came to disagree — the engraver measured against the
+// meter while playback measured the music actually in the bar, and in a score
+// where those differ the two drift apart within the bar.
+
+// RepeatSource is the voice a repeat sign stands for.
+//
+// One sign means the bar before, a two-bar sign the two before it; walking
+// forwards that is "the bar n back" either way. A sign pointing at another
+// sign is followed through, but not forever: a file that points one at itself
+// comes back empty rather than hanging.
+func (p *Part) RepeatSource(at, bars int) *Voice {
+	if bars < 1 {
+		bars = 1
+	}
+	for hops := 0; hops < 64; hops++ {
+		at -= bars
+		if at < 0 || at >= len(p.Measures) {
+			return nil
+		}
+		m := p.Measures[at]
+		if len(m.Voices) == 0 {
+			return nil
+		}
+		if m.Repeat == 0 {
+			return m.Voices[0]
+		}
+		bars = m.Repeat
+	}
+	return nil
+}
+
+// MeasureContent is the music in one bar of one staff, following a repeat
+// sign to the bar it stands for.
+func (p *Part) MeasureContent(i int) *Voice {
+	if i < 0 || i >= len(p.Measures) {
+		return nil
+	}
+	m := p.Measures[i]
+	if len(m.Voices) == 0 {
+		return nil
+	}
+	if m.Repeat > 0 {
+		if src := p.RepeatSource(i, m.Repeat); src != nil {
+			return src
+		}
+	}
+	return m.Voices[0]
+}
+
+// MeasureDuration is how long a bar lasts, across the whole score.
+//
+// As long as the staff that fills it most: a staff resting through it must not
+// shorten it, and neither must a staff that stops early and is padded with an
+// empty bar so the barlines stay in a column. A bar nothing sounds in takes
+// its meter's worth, or a cursor would skip straight over it.
+func (s *Score) MeasureDuration(i int) Duration {
+	longest := Duration{Num: 0, Den: 1}
+	for _, p := range s.Parts {
+		v := p.MeasureContent(i)
+		if v == nil {
+			continue
+		}
+		if d := v.Duration(); d.Cmp(longest) > 0 {
+			longest = d
+		}
+	}
+	if !longest.IsZero() {
+		return longest
+	}
+	for _, p := range s.Parts {
+		if i < len(p.Measures) {
+			if bar := p.TimeAt(i).BarDuration(); !bar.IsZero() {
+				return bar
+			}
+		}
+	}
+	return Duration{Num: 0, Den: 1}
+}
+
+// MeasureCount is how many bars the score has, which is as many as its
+// longest staff.
+func (s *Score) MeasureCount() int {
+	n := 0
+	for _, p := range s.Parts {
+		if len(p.Measures) > n {
+			n = len(p.Measures)
+		}
+	}
+	return n
+}

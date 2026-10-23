@@ -84,6 +84,11 @@ type Layout struct {
 	// defaults is what the layout was drawn with.
 	defaults smufl.EngravingDefaults
 
+	// Systems are where each system begins and ends vertically, in staff
+	// spaces. Breaking a drawing into pages has to happen between systems and
+	// never through one, and nothing but the engraver knows where they are.
+	Systems []SystemPos `json:"systems"`
+
 	// Barlines are where each measure ends, so one can be clicked and
 	// changed. A barline is drawn between two bars and belongs to neither as
 	// far as the eye is concerned, which is why it needs saying where it is
@@ -114,6 +119,14 @@ type Hit struct {
 }
 
 // ElementPos is one element's place on the page.
+// SystemPos is one system's vertical extent and which measures it holds.
+type SystemPos struct {
+	Top    float64 `json:"top"`
+	Bottom float64 `json:"bottom"`
+	First  int     `json:"first"`
+	Last   int     `json:"last"`
+}
+
 // BarlinePos is one drawn barline: which measure it closes, and where.
 type BarlinePos struct {
 	Part    int     `json:"part"`
@@ -469,6 +482,18 @@ func (e *engraver) layout() {
 	// however wide each part's own clef and key signature happen to be. It is
 	// measured where the system begins, because a key change earlier in the
 	// piece is restated at the head of every system after it.
+	// leadAt is the room in front of the clefs: the staff names, and the
+	// brace or bracket that joins them.
+	leadAt := func(at int) float64 {
+		w := e.labelWidth(parts, at == 0)
+		if len(e.score.Groups) > 0 {
+			w += groupGap + bracketThickness
+		}
+		return w
+	}
+	// prefixAt is all of it: the names, the bracket, and the widest staff's
+	// clef, key and meter — so the music starts in the same column on every
+	// staff of the system.
 	prefixAt := func(at int) float64 {
 		w := 0.0
 		for _, p := range parts {
@@ -476,13 +501,7 @@ func (e *engraver) layout() {
 				w = v
 			}
 		}
-		// The names and the bracket live in front of the clefs, and the music
-		// has to start to the right of all of it.
-		w += e.labelWidth(parts, at == 0)
-		if len(e.score.Groups) > 0 {
-			w += groupGap + bracketThickness
-		}
-		return w
+		return w + leadAt(at)
 	}
 	prefix := prefixAt(0)
 
@@ -875,6 +894,13 @@ func (e *engraver) drawSystem(parts []*model.Part, boxes [][]measureBox,
 	// all of them: the brace, the bracket and the names.
 	staffTops := make([]float64, 0, len(parts))
 
+	// How much of the prefix belongs to the names and the bracket rather
+	// than to the clefs.
+	lead := e.labelWidth(parts, start == 0)
+	if len(e.score.Groups) > 0 {
+		lead += groupGap + bracketThickness
+	}
+
 	for pi, p := range parts {
 		e.clef = p.Clef
 		// A hairpin or an octave line cut off at the end of the last system
@@ -882,7 +908,11 @@ func (e *engraver) drawSystem(parts []*model.Part, boxes [][]measureBox,
 		e.resumeSpans(pi, sp.Margin+prefix)
 
 		staffTops = append(staffTops, e.y)
-		px := sp.Margin + prefix - e.prefixWidth(p, start) + sp.ClefBefore
+		// Each staff's clef starts after the names and the bracket, and far
+		// enough right that its own key and meter end where everybody else's
+		// do. A staff in C major and one in five sharps still begin their
+		// music in the same column.
+		px := sp.Margin + prefix - e.prefixWidth(p, start) + lead + sp.ClefBefore
 		px = e.drawClef(p, px)
 		px = e.drawKeySignature(p, p.KeyAt(start), px)
 		e.drawTimeSignature(p, p.TimeAt(start), px)
@@ -911,8 +941,10 @@ func (e *engraver) drawSystem(parts []*model.Part, boxes [][]measureBox,
 		}
 
 		// The staff lines are drawn last, reaching exactly as far as the
-		// music. Nothing can hang off the end of them.
-		e.staffLines(sp.Margin, right-sp.Margin)
+		// music. Nothing can hang off the end of them. They start after the
+		// names and the bracket: a staff ruled through its own name is how
+		// a name looks crossed out.
+		e.staffLines(sp.Margin+lead, right-sp.Margin-lead)
 		e.breakSpans(pi, right-sp.Margin)
 
 		if pi < len(parts)-1 {
@@ -922,13 +954,19 @@ func (e *engraver) drawSystem(parts []*model.Part, boxes [][]measureBox,
 
 	// The names and the brace reach across every staff of the system, so they
 	// are drawn once the staves' positions are all known.
-	e.drawGroups(parts, sp.Margin+prefix, staffTops, start == 0)
+	e.drawGroups(parts, sp.Margin+lead, staffTops, start == 0)
 	for i := range columns {
 		e.drawGroupBarlines(columns[i], staffTops)
 	}
 
 	e.y = top + float64(len(parts)-1)*(staffHeight+sp.StaffGap+wordRoom)
-	e.y += staffHeight + sp.SystemGap + wordRoom
+	e.y += staffHeight + wordRoom
+	e.lay.Systems = append(e.lay.Systems, SystemPos{
+		// The top reaches above the staff for whatever is written there:
+		// the brackets of a repeat, an octave sign, a rehearsal mark.
+		Top: top - voltaRise - 1.5, Bottom: e.y, First: start, Last: end - 1,
+	})
+	e.y += sp.SystemGap
 
 	if r := right + sp.Margin; r > e.lay.Width {
 		e.lay.Width = r

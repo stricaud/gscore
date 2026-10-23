@@ -28,6 +28,7 @@ import (
 	"github.com/stricaud/gscore/internal/engrave"
 	"github.com/stricaud/gscore/internal/format"
 	gscorefmt "github.com/stricaud/gscore/internal/format/gscore"
+	gpdf "github.com/stricaud/gscore/internal/render/pdf"
 	"github.com/stricaud/gscore/internal/render/svg"
 )
 
@@ -237,9 +238,18 @@ func (a *App) handleSave(w http.ResponseWriter, r *http.Request) {
 	defer f.Close()
 
 	// A drawing is not a score format, so it is not in the registry; it is
-	// handled here because "save this as an SVG" is an obvious thing to ask.
-	if strings.EqualFold(filepath.Ext(path), ".svg") {
+	// handled here because "save this as a PDF" is an obvious thing to ask,
+	// and the obvious thing to do with a finished score.
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".svg":
 		if err := a.renderTo(f, r); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, map[string]string{"status": "ok", "path": path})
+		return
+	case ".pdf":
+		if err := a.renderPDF(f, r); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -297,6 +307,77 @@ func (a *App) renderTo(w io.Writer, r *http.Request) error {
 		}
 	}
 	return svg.Render(w, engrave.Engrave(score, eopt), ropt)
+}
+
+// renderPDF writes the score as a PDF, in whichever shape was asked for.
+//
+//	what=tune   the tune on screen            (the default)
+//	what=book   every tune in the file, one after another
+//	what=parts  the full score, then each staff alone
+//
+// The same three choices the print view offers, because they are the same
+// question: a tune book is a book and a piece for several players is a score
+// plus the parts, and which of those you want is not something the program
+// can work out for you.
+func (a *App) renderPDF(w io.Writer, r *http.Request) error {
+	a.mu.RLock()
+	score, book, symbols := a.score, a.book, a.symbols
+	filename := a.filename
+	a.mu.RUnlock()
+
+	q := r.URL.Query()
+
+	eopt := engrave.DefaultOptions()
+	eopt.Mode = engrave.Paginated
+	eopt.LineWidth = 76
+	eopt.ShowMeasureNumbers = q.Get("numbers") != "0"
+	eopt.ShowPartNames = len(score.Parts) > 1
+
+	popt := gpdf.DefaultOptions()
+	popt.Symbols = symbols
+	popt.Title = score.Identity.Title
+	popt.Author = score.Identity.Composer
+	if q.Get("paper") == "letter" {
+		p := gpdf.Letter()
+		p.Symbols, p.Title, p.Author = popt.Symbols, popt.Title, popt.Author
+		popt = p
+	}
+	if v := q.Get("space"); v != "" {
+		if f, err := strconv.ParseFloat(v, 64); err == nil && f >= 3 && f <= 20 {
+			popt.StaffSpace = f
+		}
+	}
+
+	var layouts []*engrave.Layout
+	switch q.Get("what") {
+	case "book":
+		if popt.Title == "" {
+			popt.Title = filepath.Base(filename)
+		}
+		for _, sc := range book {
+			o := eopt
+			o.ShowPartNames = len(sc.Parts) > 1
+			layouts = append(layouts, engrave.Engrave(sc, o))
+		}
+	case "parts":
+		layouts = append(layouts, engrave.Engrave(score, eopt))
+		if len(score.Parts) > 1 {
+			for _, p := range score.Parts {
+				o := eopt
+				// One staff on its own needs no name beside it: the subtitle
+				// says whose part it is, and a label on every system of a
+				// single-staff part is only in the way.
+				o.ShowPartNames = false
+				layouts = append(layouts, engrave.Engrave(onePart(score, p), o))
+			}
+		}
+	default:
+		layouts = append(layouts, engrave.Engrave(score, eopt))
+	}
+	if len(layouts) == 0 {
+		layouts = append(layouts, engrave.Engrave(score, eopt))
+	}
+	return gpdf.RenderAll(w, layouts, popt)
 }
 
 func (a *App) suggestedName() string {

@@ -57,8 +57,12 @@ type Doc struct {
 	fonts    map[string]*Font
 	fontKeys []string
 
-	images   map[string]*Image
+	images    map[string]*Image
 	imageKeys []string
+
+	// pending are embedded fonts, finished at the end once the document
+	// knows which glyphs it actually draws.
+	pending []*Font
 
 	Title, Author, Subject, Creator string
 }
@@ -295,6 +299,12 @@ func (d *Doc) Write(w io.Writer) error {
 		// A PDF with no pages is not a PDF, so an empty one gets a blank.
 		d.NewPage(A4Width, A4Height).Close()
 	}
+
+	// The embedded fonts can only be written once every page is drawn.
+	for _, f := range d.pending {
+		d.finish(f)
+	}
+	d.pending = nil
 
 	kids := make([]string, len(d.pages))
 	for i, n := range d.pages {

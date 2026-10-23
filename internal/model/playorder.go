@@ -39,25 +39,7 @@ func (s *Score) PlayOrder() []int {
 	if n == 0 {
 		return nil
 	}
-
-	// The barlines and endings, taken from whichever staff has them: they
-	// belong to the piece, and the editor writes them on every staff.
-	closing := make([]BarlineStyle, n)
-	endings := make([]*Ending, n)
-	for i := 0; i < n; i++ {
-		for _, p := range s.Parts {
-			if i >= len(p.Measures) {
-				continue
-			}
-			m := p.Measures[i]
-			if m.RightBarline != BarSingle && closing[i] == BarSingle {
-				closing[i] = m.RightBarline
-			}
-			if m.Ending != nil && endings[i] == nil {
-				endings[i] = m.Ending
-			}
-		}
-	}
+	d := s.directions(n)
 
 	var out []int
 	// Where a repeat sends you back to, and how many times each closing
@@ -67,16 +49,27 @@ func (s *Score) PlayOrder() []int {
 	// Which time through the current repeated section this is, counted from
 	// one, which is what a volta's numbers mean.
 	pass := 1
+	// Each D.C. or D.S. is taken once. Taking it again is how a chart that
+	// ends "D.S. al Coda" would otherwise play for ever.
+	jumped := map[int]bool{}
+
+	// After a D.C. or D.S. the piece is read differently: the written
+	// repeats are not observed again, and Fine and To Coda, which meant
+	// nothing on the way down, become live. That second reading is what the
+	// directions are for.
+	afterJump := false
+	stopAtFine := false
+	leaveAtCoda := false
 
 	for i := 0; i < n && len(out) < maxPlayedBars; {
 		// A bar inside a volta that is not for this time through is skipped,
 		// along with the rest of its bracket.
-		if e := endings[i]; e != nil && !playsOn(e, pass) {
+		if e := d.endings[i]; e != nil && !playsOn(e, pass, d.lastEnding) {
 			j := i
-			for j < n && endings[j] != nil && !playsOn(endings[j], pass) {
+			for j < n && d.endings[j] != nil && !playsOn(d.endings[j], pass, d.lastEnding) {
 				// Past this bracket, and past any that follows it and is
 				// also not for this time through.
-				if endings[j].Stop {
+				if d.endings[j].Stop {
 					j++
 					break
 				}
@@ -91,7 +84,43 @@ func (s *Score) PlayOrder() []int {
 
 		out = append(out, i)
 
-		switch closing[i] {
+		if afterJump {
+			// Fine ends the piece. The last bar written is not the last bar
+			// played in a piece marked al Fine.
+			if stopAtFine && d.signs[i] == Fine {
+				break
+			}
+			// To Coda leaves the music here and goes on at the coda.
+			if leaveAtCoda && d.signs[i] == ToCoda && d.coda >= 0 {
+				i = d.coda
+				continue
+			}
+		}
+
+		if j := d.jumps[i]; j != nil && !jumped[i] {
+			jumped[i] = true
+			afterJump = true
+			stopAtFine = j.Until == UntilFine
+			leaveAtCoda = j.Until == UntilCoda
+
+			target := 0
+			if j.From == FromSegno && d.segno >= 0 {
+				target = d.segno
+			}
+			// On the way through again a repeated section is played once,
+			// through its last ending: a piece marked 1. and 2. and reached
+			// a third time goes through the second.
+			pass = d.lastEnding + 1
+			i = target
+			continue
+		}
+
+		if afterJump {
+			i++
+			continue
+		}
+
+		switch d.closing[i] {
 		case BarRepeatStart:
 			// The repeat opens at the next bar.
 			back = i + 1
@@ -101,7 +130,7 @@ func (s *Score) PlayOrder() []int {
 				taken[i] = 1
 				pass++
 				target := back
-				if closing[i] == BarRepeatBoth {
+				if d.closing[i] == BarRepeatBoth {
 					// Closes one section and opens another, so coming back
 					// to it later returns here.
 					back = i + 1
@@ -111,7 +140,7 @@ func (s *Score) PlayOrder() []int {
 			}
 			// Already been round; carry on, and a later repeat in the piece
 			// starts counting again from here.
-			if closing[i] == BarRepeatBoth {
+			if d.closing[i] == BarRepeatBoth {
 				back = i + 1
 			}
 			pass = 1
@@ -127,11 +156,82 @@ func (s *Score) PlayOrder() []int {
 	return out
 }
 
+// directions is everything about a bar that decides what is played next.
+//
+// It is gathered from whichever staff has it, because all of it belongs to
+// the piece rather than to one player: everybody goes back at the same bar,
+// and the editor writes these on every part.
+type directions struct {
+	closing []BarlineStyle
+	endings []*Ending
+	signs   []Sign
+	jumps   []*Jump
+	// segno and coda are where the signs are, or -1.
+	segno, coda int
+	// lastEnding is the highest volta number written anywhere, so that a
+	// section reached once more than it has brackets takes the last of them.
+	lastEnding int
+}
+
+func (s *Score) directions(n int) directions {
+	d := directions{
+		closing: make([]BarlineStyle, n),
+		endings: make([]*Ending, n),
+		signs:   make([]Sign, n),
+		jumps:   make([]*Jump, n),
+		segno:   -1,
+		coda:    -1,
+	}
+	for i := 0; i < n; i++ {
+		for _, p := range s.Parts {
+			if i >= len(p.Measures) {
+				continue
+			}
+			m := p.Measures[i]
+			if m.RightBarline != BarSingle && d.closing[i] == BarSingle {
+				d.closing[i] = m.RightBarline
+			}
+			if m.Ending != nil && d.endings[i] == nil {
+				d.endings[i] = m.Ending
+			}
+			if m.Sign != NoSign && d.signs[i] == NoSign {
+				d.signs[i] = m.Sign
+			}
+			if m.Jump != nil && d.jumps[i] == nil {
+				d.jumps[i] = m.Jump
+			}
+		}
+		switch d.signs[i] {
+		case Segno:
+			if d.segno < 0 {
+				d.segno = i
+			}
+		case Coda:
+			if d.coda < 0 {
+				d.coda = i
+			}
+		}
+		if e := d.endings[i]; e != nil {
+			for _, num := range e.Numbers {
+				if num > d.lastEnding {
+					d.lastEnding = num
+				}
+			}
+		}
+	}
+	return d
+}
+
 // playsOn reports whether a volta bracket is taken on a given time through.
 //
 // A bracket with no numbers is taken whenever it is reached, which is how a
 // last ending with nothing written on it behaves.
-func playsOn(e *Ending, pass int) bool {
+//
+// Past the highest number written anywhere in the piece, the bracket holding
+// that number is the one taken: a section marked 1. and 2. and reached a
+// third time — which is what a D.S. does — goes through the second ending and
+// not the first.
+func playsOn(e *Ending, pass, lastEnding int) bool {
 	if len(e.Numbers) == 0 {
 		return true
 	}
@@ -139,14 +239,9 @@ func playsOn(e *Ending, pass int) bool {
 		if n == pass {
 			return true
 		}
-	}
-	// Past the highest number written, the last bracket is the one taken:
-	// a piece marked 1. and 2. and played a third time takes the second.
-	highest := e.Numbers[0]
-	for _, n := range e.Numbers {
-		if n > highest {
-			highest = n
+		if pass > lastEnding && n == lastEnding {
+			return true
 		}
 	}
-	return pass > highest && e.Open
+	return false
 }

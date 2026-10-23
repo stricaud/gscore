@@ -1071,3 +1071,89 @@ func TestIgnoredCharactersAreReportedWhole(t *testing.T) {
 		t.Errorf("reported %q, which is not the character in the file", partial.Skipped[0])
 	}
 }
+
+func TestJumpDecorationsBecomeDirections(t *testing.T) {
+	// A tune marked !D.C.! used to draw the right picture and do nothing:
+	// the direction hung off the next notehead as a symbol, and playback,
+	// which reads the bars, never saw it.
+	s, err := Import(stringReader("X:1\nK:C\n!segno!abc | def | !D.S.alcoda!gab |\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ms := s.Parts[0].Measures
+	if len(ms) < 3 {
+		t.Fatalf("got %d bars, want 3", len(ms))
+	}
+	if ms[0].Sign != model.Segno {
+		t.Errorf("bar 1 sign = %v, want segno", ms[0].Sign)
+	}
+	if ms[2].Jump == nil || ms[2].Jump.Name() != "ds-coda" {
+		t.Errorf("bar 3 jump = %v, want ds-coda", ms[2].Jump)
+	}
+	// And it actually sends the player back.
+	if got := len(s.PlayOrder()); got <= len(ms) {
+		t.Errorf("the piece plays %d bars of %d written: the D.S. did nothing", got, len(ms))
+	}
+}
+
+func TestJumpNamesAreMatchedLoosely(t *testing.T) {
+	// A file writes "D.S. al Fine" and "dalsegnoalfine" and means the same.
+	for _, name := range []string{"D.S. al Fine", "dalsegnoalfine", "D.S.alfine"} {
+		s, err := Import(stringReader("X:1\nK:C\nabc | !" + name + "!def |\n"))
+		if err != nil {
+			t.Fatalf("%q: %v", name, err)
+		}
+		m := s.Parts[0].Measures
+		if j := m[len(m)-1].Jump; j == nil || j.Name() != "ds-fine" {
+			t.Errorf("%q became %v, want ds-fine", name, j)
+		}
+	}
+}
+
+func TestTheLegacySegnoLetterIsADirection(t *testing.T) {
+	// ABC's one-letter S is the segno, and O the coda.
+	s, err := Import(stringReader("X:1\nK:C\nSabc | Odef |\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ms := s.Parts[0].Measures
+	if ms[0].Sign != model.Segno {
+		t.Errorf("bar 1 sign = %v, want segno", ms[0].Sign)
+	}
+	if ms[1].Sign != model.Coda {
+		t.Errorf("bar 2 sign = %v, want coda", ms[1].Sign)
+	}
+}
+
+// TestBothDecorationSpellingsAgree guards the single place that decides what
+// a decoration means.
+//
+// The !name! form and the one-letter shorthand had a chain of lookups each,
+// and they drifted: !segno! became a symbol hung on a notehead while a bare S
+// became a direction on the bar. The same mark, read two ways, in one file.
+func TestBothDecorationSpellingsAgree(t *testing.T) {
+	cases := []struct{ long, short string }{
+		{"segno", "S"},
+		{"coda", "O"},
+		{"trill", "T"},
+	}
+	for _, c := range cases {
+		a, err := Import(stringReader("X:1\nK:C\n!" + c.long + "!abc\n"))
+		if err != nil {
+			t.Fatalf("!%s!: %v", c.long, err)
+		}
+		b, err := Import(stringReader("X:1\nK:C\n" + c.short + "abc\n"))
+		if err != nil {
+			t.Fatalf("%s: %v", c.short, err)
+		}
+		am, bm := a.Parts[0].Measures[0], b.Parts[0].Measures[0]
+		if am.Sign != bm.Sign {
+			t.Errorf("!%s! gives sign %v and %s gives %v", c.long, am.Sign, c.short, bm.Sign)
+		}
+		an, bn := notesOf(a)[0], notesOf(b)[0]
+		if len(an.Symbols) != len(bn.Symbols) {
+			t.Errorf("!%s! leaves %d symbols on the note and %s leaves %d",
+				c.long, len(an.Symbols), c.short, len(bn.Symbols))
+		}
+	}
+}

@@ -79,6 +79,10 @@ func (m *Measure) Clone() *Measure {
 		}
 		out.Ending = &e
 	}
+	if m.Jump != nil {
+		j := *m.Jump
+		out.Jump = &j
+	}
 	out.Voices = make([]*Voice, len(m.Voices))
 	for i, v := range m.Voices {
 		out.Voices[i] = v.Clone()

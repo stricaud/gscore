@@ -42,6 +42,18 @@ type placed struct {
 	dots   int
 	start  model.Duration // position from the start of the measure
 	width  float64
+
+	// stemDir is the direction this note's stem is really drawn in: 1 up,
+	// -1 down, 0 before it has been settled.
+	//
+	// It is not the same question as "which way would this note point on its
+	// own". A beam serves a whole group and can only point one way, so a low
+	// note inside a group of high ones has its stem turned down against its
+	// own inclination — and everything placed on the other side from the
+	// stem has to follow the stem that is there, not the one the note would
+	// have had alone. That was how a slur over a rising run came to be drawn
+	// underneath it, through the beam.
+	stemDir int
 }
 
 func (p *placed) marks() *model.Marks {
@@ -129,6 +141,12 @@ func (e *engraver) drawMeasure(part *model.Part, b measureBox, x float64, stretc
 		})
 		return x + (sp.AfterBarline+right)*stretch
 	}
+
+	// Which way the stems point is settled before anything is drawn: the
+	// dots, the articulations and the slurs all sit on the side away from
+	// the stem, and all of them used to work it out again from the note
+	// alone — which gave a different answer from the beam.
+	e.setStemDirections(items, part.Time)
 
 	// Noteheads first, then stems and beams, which need the whole group.
 	for _, p := range items {
@@ -361,6 +379,10 @@ func (e *engraver) stemUp(p *placed) bool {
 	if p.rest != nil {
 		return true
 	}
+	// Settled already, by the beam group this note belongs to.
+	if p.stemDir != 0 {
+		return p.stemDir > 0
+	}
 	if m := p.marks(); m != nil {
 		switch m.Stem {
 		case model.StemUp:
@@ -552,6 +574,61 @@ func beamGroups(items []*placed, t model.TimeSignature) [][]*placed {
 	return out
 }
 
+// setStemDirections settles which way every stem in a measure points.
+//
+// It runs before anything is drawn, because the answer is needed by more than
+// the stems: the dots after a notehead, the articulations, and the slurs and
+// ties all sit on the side away from the stem. Asking each of them to work it
+// out again from the note alone is how they came to disagree with the stem
+// actually on the page.
+func (e *engraver) setStemDirections(items []*placed, t model.TimeSignature) {
+	for _, g := range beamGroups(items, t) {
+		dir := -1
+		if beamGroupUp(g) {
+			dir = 1
+		}
+		for _, p := range g {
+			p.stemDir = dir
+		}
+	}
+	// Whatever is left stands alone and keeps its own inclination. Setting
+	// it here as well means nothing downstream has to know the difference.
+	for _, p := range items {
+		if p.stemDir == 0 && p.rest == nil {
+			if e.stemUp(p) {
+				p.stemDir = 1
+			} else {
+				p.stemDir = -1
+			}
+		}
+	}
+}
+
+// beamGroupUp is the one rule for which way a beamed group points.
+//
+// A beam cannot point two ways, so an explicit direction anywhere in the
+// group settles it; otherwise it goes with how far the notes run either side
+// of the middle line.
+func beamGroupUp(g []*placed) bool {
+	above, below := 0, 0
+	forced, forcedUp := false, false
+	for _, p := range g {
+		if m := p.marks(); m != nil && m.Stem != model.StemAuto && !forced {
+			forced, forcedUp = true, m.Stem == model.StemUp
+		}
+		if p.hi > middleStep {
+			above++
+		}
+		if p.lo < middleStep {
+			below++
+		}
+	}
+	if forced {
+		return forcedUp
+	}
+	return below >= above
+}
+
 func (e *engraver) drawStemsAndBeams(items []*placed, t model.TimeSignature) {
 	groups := beamGroups(items, t)
 	inGroup := map[*placed]bool{}
@@ -600,26 +677,10 @@ func (e *engraver) drawSingleStem(p *placed) {
 func (e *engraver) drawBeamGroup(g []*placed) {
 	d := e.opt.Defaults
 
-	// One direction serves the whole group. An explicit direction anywhere in
-	// it settles the matter, since a beam cannot point two ways; otherwise it
-	// goes with how far the notes run either side of the middle line.
-	above, below := 0, 0
-	forced, forcedUp := false, false
-	for _, p := range g {
-		if m := p.marks(); m != nil && m.Stem != model.StemAuto && !forced {
-			forced, forcedUp = true, m.Stem == model.StemUp
-		}
-		if p.hi > middleStep {
-			above++
-		}
-		if p.lo < middleStep {
-			below++
-		}
-	}
-	up := below >= above
-	if forced {
-		up = forcedUp
-	}
+	// One direction serves the whole group, decided in the one place that
+	// decides it, so that what is drawn here and what the slurs and dots
+	// were placed against cannot come apart.
+	up := beamGroupUp(g)
 
 	type end struct {
 		x, y float64

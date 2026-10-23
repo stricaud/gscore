@@ -90,6 +90,13 @@ type measureDoc struct {
 	// bar before again.
 	Marker string `json:"marker,omitempty"`
 	Repeat int    `json:"repeat,omitempty"`
+
+	// Sign is the segno, coda, Fine or To Coda written at this bar, and Jump
+	// the direction written at the end of it. Both are stored by name rather
+	// than by number, so that a file keeps its meaning if the order of the
+	// constants ever changes.
+	Sign string `json:"sign,omitempty"`
+	Jump string `json:"jump,omitempty"`
 }
 
 type endingDoc struct {
@@ -330,6 +337,12 @@ func encodeScore(s *model.Score) *scoreDoc {
 				}
 			}
 			md.Marker, md.Repeat = m.Marker, m.Repeat
+			if m.Sign != model.NoSign {
+				md.Sign = m.Sign.String()
+			}
+			if m.Jump != nil {
+				md.Jump = m.Jump.Name()
+			}
 			for _, v := range m.Voices {
 				var ed []elemDoc
 				for _, el := range v.Elements {
@@ -528,6 +541,12 @@ func decodeScore(doc *scoreDoc) (*model.Score, error) {
 				}
 			}
 			m.Marker, m.Repeat = md.Marker, md.Repeat
+			if sign, ok := model.SignFromName(md.Sign); ok {
+				m.Sign = sign
+			}
+			if jump, ok := model.JumpFromName(md.Jump); ok {
+				m.Jump = jump
+			}
 			for _, vd := range md.Voices {
 				v := &model.Voice{}
 				for _, ed := range vd {

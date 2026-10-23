@@ -1313,6 +1313,71 @@ func (a *App) handleEnding(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]int{"changed": changed})
 }
 
+// handleJump writes a sign or a direction at a bar, on every staff.
+//
+// Like a repeat, these belong to the piece and not to a player: everybody
+// goes back at the same bar, and everybody stops at the same Fine. Writing
+// them on one staff would mean a score where the flutes take the D.S. and
+// the horns do not.
+func (a *App) handleJump(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST required", http.StatusMethodNotAllowed)
+		return
+	}
+	q := r.URL.Query()
+	at, _ := strconv.Atoi(q.Get("measure"))
+
+	// A sign, a direction, or both: a bar can carry the coda sign and a
+	// D.S. al Coda at once, and asking for them in two calls would record
+	// two steps of undo for one thing done.
+	var sign model.Sign
+	setSign := false
+	if v := q.Get("sign"); v != "" {
+		s, ok := model.SignFromName(v)
+		if !ok {
+			http.Error(w, "no such sign: "+v, http.StatusBadRequest)
+			return
+		}
+		sign, setSign = s, true
+	}
+	var jump *model.Jump
+	setJump := false
+	if v := q.Get("jump"); v != "" {
+		j, ok := model.JumpFromName(v)
+		if !ok {
+			http.Error(w, "no such direction: "+v, http.StatusBadRequest)
+			return
+		}
+		jump, setJump = j, true
+	}
+	if !setSign && !setJump {
+		http.Error(w, "say which sign or direction to write", http.StatusBadRequest)
+		return
+	}
+
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	changed := 0
+	for _, p := range a.score.Parts {
+		if at < 0 || at >= len(p.Measures) {
+			continue
+		}
+		if setSign {
+			p.Measures[at].Sign = sign
+		}
+		if setJump {
+			p.Measures[at].Jump = jump
+		}
+		changed++
+	}
+	if changed == 0 {
+		http.Error(w, "there is no such measure", http.StatusBadRequest)
+		return
+	}
+	writeJSON(w, map[string]int{"changed": changed})
+}
+
 /*
  * Moving, copying and pasting what is selected
  */

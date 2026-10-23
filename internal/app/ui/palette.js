@@ -142,10 +142,40 @@ const PALETTE = [
       { text: "—", label: "No octave line", apply: "octave", value: "none" },
 
       // An ending is a bracket over whole bars, so it acts on the measure
-      // the cursor is in rather than on a note.
+      // the cursor is in rather than on a note. Select a range of bars to
+      // put one bracket over all of them.
       { text: "1.", label: "First time", ending: "1" },
       { text: "2.", label: "Second time", ending: "2" },
+      { text: "3.", label: "Third time", ending: "3" },
+      { text: "1.2.", label: "First and second time", ending: "1,2" },
       { text: "—", label: "No ending", ending: "" },
+    ],
+  },
+  {
+    id: "jumps",
+    name: "Repeats and jumps",
+    size: 20,
+    columns: 3,
+    items: [
+      // The places a direction refers to. They are written at a bar and mean
+      // nothing on their own: it is the direction further on that gives the
+      // segno and the Fine their work to do.
+      { g: "\uE047", label: "Segno — the sign a D.S. goes back to", sign: "segno" },
+      { g: "\uE048", label: "Coda — where the music goes on after To Coda", sign: "coda" },
+      { text: "Fine", label: "Fine — where the piece ends on the way back", sign: "fine" },
+      { text: "To\u00A0Coda", label: "To Coda — leave here on the way back", sign: "tocoda" },
+      { text: "—", label: "No sign here", sign: "none" },
+
+      // The directions themselves, written at the end of the bar the cursor
+      // is in. Each is taken once: a D.S. taken every time round is a chart
+      // that never ends.
+      { text: "D.C.", label: "Da capo — back to the beginning", jump: "dc" },
+      { text: "D.C.F", label: "D.C. al Fine — back to the beginning, stop at Fine", jump: "dc-fine" },
+      { text: "D.C.C", label: "D.C. al Coda — back to the beginning, then the coda", jump: "dc-coda" },
+      { text: "D.S.", label: "Dal segno — back to the sign", jump: "ds" },
+      { text: "D.S.F", label: "D.S. al Fine — back to the sign, stop at Fine", jump: "ds-fine" },
+      { text: "D.S.C", label: "D.S. al Coda — back to the sign, then the coda", jump: "ds-coda" },
+      { text: "—", label: "No direction here", jump: "none" },
     ],
   },
   {

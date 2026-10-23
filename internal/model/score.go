@@ -231,6 +231,18 @@ type Measure struct {
 	// out. It belongs to the bar across the whole score, because "from B"
 	// has to mean the same bar to everybody in the room.
 	Marker string
+
+	// Sign is the segno, the coda, Fine or To Coda written at this bar: the
+	// places the directions below refer to.
+	Sign Sign
+
+	// Jump is the direction written at the end of this bar — D.C., D.S. and
+	// their al Fine and al Coda forms — which sends the player back.
+	//
+	// Like a repeat, it belongs to the piece and not to a staff: everybody
+	// goes back at the same bar. The editor writes it on every part, and
+	// playback reads it from whichever has it.
+	Jump *Jump
 }
 
 // Ending is one bracket of a repeated passage — the "1." and "2." written over

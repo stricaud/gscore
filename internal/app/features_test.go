@@ -1643,3 +1643,159 @@ func TestACleanFileLeavesNoLog(t *testing.T) {
 		t.Errorf("a clean file reported %q and %v", got.Warning, got.Log)
 	}
 }
+
+/*
+ * Repeats, endings and jumps
+ */
+
+// A volta bracket can be any number, and can cover a run of bars.
+func TestEndingsTakeAnyNumber(t *testing.T) {
+	h := newHarness(t)
+	for i := 0; i < 6; i++ {
+		h.post("/api/addmeasure")
+	}
+	h.post("/api/ending?measure=1&numbers=1")
+	h.post("/api/ending?measure=2&to=3&numbers=2")
+	h.post("/api/ending?measure=4&numbers=3")
+
+	s := h.app.score
+	want := []string{"", "1.", "2.", "2.", "3."}
+	for i, w := range want {
+		got := ""
+		if e := s.Parts[0].Measures[i].Ending; e != nil {
+			got = e.Label()
+		}
+		if got != w {
+			t.Errorf("bar %d has ending %q, want %q", i+1, got, w)
+		}
+	}
+	// The bracket over two bars opens on the first and closes on the second,
+	// which is what the engraver draws the hook from.
+	if e := s.Parts[0].Measures[2].Ending; e == nil || !e.Start || e.Stop {
+		t.Errorf("the first bar of a two-bar bracket is %+v", e)
+	}
+	if e := s.Parts[0].Measures[3].Ending; e == nil || e.Start || !e.Stop {
+		t.Errorf("the last bar of a two-bar bracket is %+v", e)
+	}
+}
+
+// A bracket marked "1., 2." holds both numbers.
+func TestAnEndingCanHoldSeveralNumbers(t *testing.T) {
+	h := newHarness(t)
+	h.post("/api/addmeasure")
+	h.post("/api/ending?measure=1&numbers=1,2")
+	e := h.app.score.Parts[0].Measures[1].Ending
+	if e == nil || e.Label() != "1., 2." {
+		t.Fatalf("the bracket reads %q, want %q", e.Label(), "1., 2.")
+	}
+}
+
+// Signs and directions are written on every staff, because they belong to the
+// piece: a score where the flutes take the D.S. and the horns do not is not a
+// score anybody can play from.
+func TestAJumpIsWrittenOnEveryStaff(t *testing.T) {
+	h := newHarness(t)
+	h.post("/api/addstaff?instrument=40")
+	for i := 0; i < 3; i++ {
+		h.post("/api/addmeasure")
+	}
+	h.post("/api/jump?measure=0&sign=segno")
+	h.post("/api/jump?measure=2&jump=ds-coda")
+
+	for pi, p := range h.app.score.Parts {
+		if p.Measures[0].Sign != model.Segno {
+			t.Errorf("staff %d has no segno at bar 1", pi+1)
+		}
+		if j := p.Measures[2].Jump; j == nil || j.Name() != "ds-coda" {
+			t.Errorf("staff %d has %v at bar 3, want ds-coda", pi+1, j)
+		}
+	}
+}
+
+// A sign and a direction can be written at the same bar in one go: a chart
+// puts the coda sign and a D.S. al Coda in the same place often enough, and
+// two calls would record two steps of undo for one thing done.
+func TestASignAndADirectionTogether(t *testing.T) {
+	h := newHarness(t)
+	h.post("/api/addmeasure")
+	h.post("/api/jump?measure=1&sign=tocoda&jump=dc-coda")
+
+	m := h.app.score.Parts[0].Measures[1]
+	if m.Sign != model.ToCoda {
+		t.Errorf("sign = %v, want tocoda", m.Sign)
+	}
+	if m.Jump == nil || m.Jump.Name() != "dc-coda" {
+		t.Errorf("jump = %v, want dc-coda", m.Jump)
+	}
+}
+
+// Writing one is undoable, like every other edit.
+func TestAJumpCanBeTakenBack(t *testing.T) {
+	h := newHarness(t)
+	h.post("/api/addmeasure")
+	h.post("/api/jump?measure=1&jump=dc")
+	if h.app.score.Parts[0].Measures[1].Jump == nil {
+		t.Fatal("the direction was not written")
+	}
+	h.post("/api/undo")
+	if j := h.app.score.Parts[0].Measures[1].Jump; j != nil {
+		t.Errorf("after undo the bar still has %v", j)
+	}
+}
+
+// Clearing one is how a direction written in the wrong bar is moved.
+func TestAJumpCanBeCleared(t *testing.T) {
+	h := newHarness(t)
+	h.post("/api/addmeasure")
+	h.post("/api/jump?measure=1&sign=fine&jump=dc-fine")
+	h.post("/api/jump?measure=1&sign=none&jump=none")
+
+	m := h.app.score.Parts[0].Measures[1]
+	if m.Sign != model.NoSign || m.Jump != nil {
+		t.Errorf("the bar still has sign %v and jump %v", m.Sign, m.Jump)
+	}
+}
+
+// A name that is not a direction is refused rather than quietly ignored: a
+// button that writes nothing and says nothing is the worst kind of bug.
+func TestANonsenseJumpIsRefused(t *testing.T) {
+	h := newHarness(t)
+	if msg := h.postFails("/api/jump?measure=0&jump=nonesuch"); msg == "" {
+		t.Error("the refusal gave no reason")
+	}
+	if msg := h.postFails("/api/jump?measure=0&sign=nonesuch"); msg == "" {
+		t.Error("the refusal gave no reason")
+	}
+	// And asking for neither is a mistake, not a no-op.
+	h.postFails("/api/jump?measure=0")
+}
+
+// Playback follows the directions, which is the whole point of writing them.
+func TestPlaybackFollowsAJump(t *testing.T) {
+	h := newHarness(t)
+	for i := 0; i < 3; i++ {
+		h.post("/api/addmeasure")
+	}
+	for m := 0; m < 4; m++ {
+		h.note(0, m, 4, "whole")
+	}
+	before := len(h.app.score.PlayOrder())
+
+	h.post("/api/jump?measure=1&sign=fine")
+	h.post("/api/jump?measure=3&jump=dc-fine")
+
+	after := h.app.score.PlayOrder()
+	if len(after) <= before {
+		t.Fatalf("the piece plays %d bars with a D.C. al Fine and %d without", len(after), before)
+	}
+	// Down the four bars, then back for the first two, stopping at Fine.
+	want := []int{0, 1, 2, 3, 0, 1}
+	if len(after) != len(want) {
+		t.Fatalf("plays %v, want %v", after, want)
+	}
+	for i := range want {
+		if after[i] != want[i] {
+			t.Fatalf("plays %v, want %v", after, want)
+		}
+	}
+}

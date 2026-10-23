@@ -122,6 +122,14 @@ async function paletteAction(item) {
     await setEnding(item.ending);
     return;
   }
+  if (item.sign !== undefined) {
+    await setJump({ sign: item.sign }, item.label);
+    return;
+  }
+  if (item.jump !== undefined) {
+    await setJump({ jump: item.jump }, item.label);
+    return;
+  }
   if (item.apply) {
     // A mark that covers a stretch of music needs a stretch selected. Without
     // this it was sent for a single note, where a hairpin opens and closes in
@@ -1489,6 +1497,29 @@ async function setEnding(numbers) {
                         : `Ending ${numbers.replace(",", " and ")} over ` +
                           (first === last ? `measure ${first + 1}`
                                           : `measures ${first + 1}–${last + 1}`));
+}
+
+// setJump writes a sign or a direction at the bar the cursor is in.
+//
+// These act on a bar and not on a note: a D.S. belongs at the end of a bar,
+// and a segno at the head of one. The bar is the selection's, so clicking
+// anywhere in it is enough.
+async function setJump(what, label) {
+  const sel = state.selection;
+  if (!sel) {
+    status("Click a measure first");
+    return;
+  }
+  const p = new URLSearchParams({ measure: String(sel.measure), ...what });
+  const res = await fetch("/api/jump?" + p.toString(), { method: "POST" });
+  if (!res.ok) {
+    status("Could not write it: " + (await res.text()).trim());
+    return;
+  }
+  await refreshScore();
+  const none = what.sign === "none" || what.jump === "none";
+  status(none ? `Cleared at measure ${sel.measure + 1}`
+              : `${label.split(" \u2014 ")[0]} at measure ${sel.measure + 1}`);
 }
 
 // A slur arcs over a passage and a tie joins neighbours, so both want a range

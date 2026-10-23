@@ -238,38 +238,100 @@ func (e *engraver) drawGroupBarlines(x float64, tops []float64) {
 	}
 }
 
-// drawMarkers writes the rehearsal marks over a system.
+// Sizes for the row of directions over a system.
+const (
+	// jumpTextSize is the type "D.C. al Fine" and "Fine" are set in. The
+	// same size as a rehearsal mark, because they are read in the same
+	// glance and one larger than the other would say it mattered more.
+	jumpTextSize = 2.4
+	// signSize is the type size of the segno and coda glyphs, in staff
+	// spaces. They are drawn a little larger than the words beside them,
+	// which is how every printed chart sets them.
+	signSize = 3.2
+	// afterMark is the gap left after something in the row before the next
+	// thing may start.
+	afterMark = 0.8
+)
+
+// drawMarkers writes the rehearsal marks, signs and jump directions over a
+// system.
 //
-// They are drawn once, above the top staff, and taken from whichever part has
-// them: "from letter B" has to mean the same bar to every player in the room,
-// so a mark that belonged to one staff would be worse than none.
+// All three go in one row above the top staff, and all three are taken from
+// whichever part has them: "from letter B", the segno and "D.S. al Coda" each
+// have to mean the same bar to every player in the room, so a direction that
+// belonged to one staff would be worse than none.
+//
+// They share a row because they share a bar more often than not — a chart
+// puts the segno at letter A as a matter of course. Each is placed after the
+// last thing written over that bar rather than at the bar line, which is what
+// keeps the sign from being printed through the letter.
 func (e *engraver) drawMarkers(parts []*model.Part, columns []float64, start, end int, top float64) {
-	for mi := start; mi < end; mi++ {
-		text := ""
+	at := func(mi int) *model.Measure {
 		for _, p := range parts {
-			if mi < len(p.Measures) && p.Measures[mi].Marker != "" {
-				text = p.Measures[mi].Marker
-				break
+			if mi < len(p.Measures) {
+				m := p.Measures[mi]
+				if m.Marker != "" || m.Sign != model.NoSign || m.Jump != nil {
+					return m
+				}
 			}
 		}
-		if text == "" {
+		return nil
+	}
+
+	for mi := start; mi < end; mi++ {
+		m := at(mi)
+		if m == nil {
 			continue
 		}
 		x := columns[mi-start]
-		e.lay.Texts = append(e.lay.Texts, Text{
-			S: text, X: x, Y: top - 2.0, Size: 2.4, Anchor: "start", Bold: true,
-		})
-		// The box around it, which is what makes a rehearsal mark findable
-		// when somebody says "from B" and everybody is looking for a letter.
-		w := textWidth(text, 2.4) + 0.8
-		t := e.opt.Defaults.StaffLineThickness * 1.3
-		y0, y1 := top-4.0, top-1.3
-		e.lay.Lines = append(e.lay.Lines,
-			Line{X1: x - 0.4, Y1: y0, X2: x - 0.4 + w, Y2: y0, Thickness: t},
-			Line{X1: x - 0.4, Y1: y1, X2: x - 0.4 + w, Y2: y1, Thickness: t},
-			Line{X1: x - 0.4, Y1: y0, X2: x - 0.4, Y2: y1, Thickness: t},
-			Line{X1: x - 0.4 + w, Y1: y0, X2: x - 0.4 + w, Y2: y1, Thickness: t})
+
+		if m.Marker != "" {
+			x = e.drawRehearsalMark(m.Marker, x, top) + afterMark
+		}
+		if g := m.Sign.Glyph(); g != "" {
+			e.lay.Glyphs = append(e.lay.Glyphs, Glyph{
+				Name: g, X: x, Y: top - 1.6, Size: signSize,
+			})
+			x += smufl.Advance(g)*signSize/4 + afterMark
+		}
+		if label := m.Sign.Label(); label != "" {
+			e.lay.Texts = append(e.lay.Texts, Text{
+				S: label, X: x, Y: top - 1.6, Size: jumpTextSize,
+				Anchor: "start", Bold: true, Italic: true,
+			})
+		}
+
+		// The direction is written at the end of the bar, because that is
+		// where the player reaches it: a D.C. printed at the head of its bar
+		// says to go back before playing the bar it is in.
+		if m.Jump != nil {
+			if mi-start+1 < len(columns) {
+				e.lay.Texts = append(e.lay.Texts, Text{
+					S: m.Jump.Label(), X: columns[mi-start+1] - 0.4, Y: top - 1.6,
+					Size: jumpTextSize, Anchor: "end", Bold: true, Italic: true,
+				})
+			}
+		}
 	}
+}
+
+// drawRehearsalMark writes one boxed letter and returns where it ends.
+//
+// The box is what makes a rehearsal mark findable when somebody says "from B"
+// and everybody in the room is looking for a letter.
+func (e *engraver) drawRehearsalMark(text string, x, top float64) float64 {
+	e.lay.Texts = append(e.lay.Texts, Text{
+		S: text, X: x, Y: top - 2.0, Size: jumpTextSize, Anchor: "start", Bold: true,
+	})
+	w := textWidth(text, jumpTextSize) + 0.8
+	t := e.opt.Defaults.StaffLineThickness * 1.3
+	y0, y1 := top-4.0, top-1.3
+	e.lay.Lines = append(e.lay.Lines,
+		Line{X1: x - 0.4, Y1: y0, X2: x - 0.4 + w, Y2: y0, Thickness: t},
+		Line{X1: x - 0.4, Y1: y1, X2: x - 0.4 + w, Y2: y1, Thickness: t},
+		Line{X1: x - 0.4, Y1: y0, X2: x - 0.4, Y2: y1, Thickness: t},
+		Line{X1: x - 0.4 + w, Y1: y0, X2: x - 0.4 + w, Y2: y1, Thickness: t})
+	return x - 0.4 + w
 }
 
 // drawMeasureNumbers writes the bar numbers over a system.

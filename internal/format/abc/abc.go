@@ -1364,8 +1364,6 @@ var decorationSymbols = map[string]string{
 	"trill": "ornamentTrill", "turn": "ornamentTurn",
 	"mordent": "ornamentMordent", "lowermordent": "ornamentMordent",
 	"uppermordent": "ornamentShortTrill", "pralltriller": "ornamentShortTrill",
-	"segno": "segno", "coda": "coda",
-	"D.S.": "dalSegno", "D.C.": "daCapo", "fine": "fine",
 	"breath":          "breathMarkComma",
 	"arpeggio":        "arpeggiatoUp",
 	"invertedfermata": "fermataBelow",
@@ -1394,23 +1392,11 @@ func (p *parser) decoration(sc *scanner) error {
 	if name == "" {
 		return p.errf("empty !! decoration")
 	}
-	if a, ok := decorationArticulations[name]; ok {
-		p.pending.AddArticulation(a)
-		return nil
-	}
-	if d, ok := decorationDynamics[name]; ok {
-		p.pending.Dynamic = d
-		return nil
-	}
-	if st, ok := decorationStems[name]; ok {
-		p.pending.Stem = st
-		return nil
-	}
-	symbol := name
-	if s, ok := decorationSymbols[name]; ok {
-		symbol = s
-	}
-	p.pending.Symbols = append(p.pending.Symbols, model.SymbolMark{Name: symbol})
+	// One place decides what a decoration means, for both the !name! form
+	// and the one-letter shorthand. Two chains of lookups is how !segno!
+	// came to be a symbol on a notehead while a bare S was a direction on
+	// the bar: the same mark, read two different ways, in the same file.
+	p.applyDecoration(name)
 	return nil
 }
 
@@ -1519,9 +1505,57 @@ var legacyDecorationNames = map[byte]string{
 	'R': "roll",
 }
 
+// jumpDecorations are the decorations that are directions rather than marks
+// on a note.
+//
+// They used to become symbols hung off the next notehead, which drew the
+// right picture and did nothing: a tune marked !D.C.! played once and
+// stopped. They belong to the bar, because that is what they act on.
+var jumpDecorations = map[string]model.Sign{
+	"segno": model.Segno,
+	"coda":  model.Coda,
+	"fine":  model.Fine,
+	// ABC has no decoration of its own for "To Coda"; abcm2ps users write it
+	// as an annotation, which arrives as text rather than here.
+	"tocoda": model.ToCoda,
+}
+
+// directionDecorations are the ones that send the player back.
+//
+// The names are matched with their spaces and capitals taken out, because a
+// file writes "D.C. al Fine" and "dacapoalfine" and means the same thing.
+var directionDecorations = map[string]string{
+	"d.c.": "dc", "dacapo": "dc",
+	"d.c.alfine": "dc-fine", "dacapoalfine": "dc-fine",
+	"d.c.alcoda": "dc-coda", "dacapoalcoda": "dc-coda", "dacoda": "dc-coda",
+	"d.s.": "ds", "dalsegno": "ds",
+	"d.s.alfine": "ds-fine", "dalsegnoalfine": "ds-fine",
+	"d.s.alcoda": "ds-coda", "dalsegnoalcoda": "ds-coda",
+}
+
+// flatten takes the spaces and capitals out of a decoration name, so that the
+// half-dozen ways a file spells "D.S. al Coda" all find the same entry.
+func flatten(s string) string {
+	return strings.ToLower(strings.ReplaceAll(s, " ", ""))
+}
+
 // applyDecoration attaches a decoration, named as the !...! form names it, to
 // the next element.
 func (p *parser) applyDecoration(name string) {
+	// A direction acts on the bar, so it is written there rather than on the
+	// note that happens to follow it.
+	if sign, ok := jumpDecorations[name]; ok {
+		p.ensureMeasure()
+		p.meas.Sign = sign
+		return
+	}
+	if dir, ok := directionDecorations[flatten(name)]; ok {
+		if j, ok := model.JumpFromName(dir); ok {
+			p.ensureMeasure()
+			p.meas.Jump = j
+			return
+		}
+	}
 	if a, ok := decorationArticulations[name]; ok {
 		p.pending.AddArticulation(a)
 		return

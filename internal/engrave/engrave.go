@@ -629,6 +629,11 @@ func (e *engraver) systemMarkRoom(parts []*model.Part, start, end int) float64 {
 			if m.Marker != "" {
 				at(markerRoom + 1.6)
 			}
+			// The signs and the directions share the rehearsal marks' row,
+			// so they need the same room above the staff and no more.
+			if m.Sign != model.NoSign || m.Jump != nil {
+				at(markerRoom + 1.6)
+			}
 			for _, v := range m.Voices {
 				for _, el := range v.Elements {
 					mk := marksOf(el)

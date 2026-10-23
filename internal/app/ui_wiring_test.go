@@ -76,7 +76,7 @@ func TestEveryPaletteKindIsHandled(t *testing.T) {
 	// The keys an item can carry, other than how it is drawn.
 	kinds := map[string]bool{}
 	for _, m := range regexp.MustCompile(
-		`(?m)\b(tool|apply|measure|staff|ending|custom|needsRange)\s*:`).
+		`(?m)\b(tool|apply|measure|staff|ending|sign|jump|custom|needsRange)\s*:`).
 		FindAllStringSubmatch(palette, -1) {
 		kinds[m[1]] = true
 	}

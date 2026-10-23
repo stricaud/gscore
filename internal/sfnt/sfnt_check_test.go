@@ -1,13 +1,17 @@
-package sfnt
+// An external test package: it reads the font through smufl, and smufl now
+// measures glyph widths through sfnt. Testing from outside breaks the cycle
+// that would otherwise make, which is what an external test package is for.
+package sfnt_test
 
 import (
 	"testing"
 
+	"github.com/stricaud/gscore/internal/sfnt"
 	"github.com/stricaud/gscore/internal/smufl"
 )
 
 func TestBravura(t *testing.T) {
-	f, err := Parse(smufl.FontData())
+	f, err := sfnt.Parse(smufl.FontData())
 	if err != nil {
 		t.Fatal(err)
 	}

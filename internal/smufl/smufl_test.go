@@ -249,3 +249,43 @@ func TestDynamicGlyphsResolve(t *testing.T) {
 		t.Errorf("dynamicFFF advance = %v, too narrow to be right", w)
 	}
 }
+
+// TestAdvanceTableMatchesTheFont keeps the cached widths honest.
+//
+// The table above exists so the common path is a map lookup, not a font
+// parse. A number in it that disagrees with the font is worse than no number
+// at all: the spacing would be wrong everywhere and the font would say
+// otherwise if anybody asked it.
+func TestAdvanceTableMatchesTheFont(t *testing.T) {
+	for name, want := range advanceWidths {
+		got, ok := measured(name)
+		if !ok {
+			t.Errorf("%s is in the table and not in the font", name)
+			continue
+		}
+		if diff := got - want; diff > 0.01 || diff < -0.01 {
+			t.Errorf("%s: the table says %.3f and the font says %.3f", name, want, got)
+		}
+	}
+}
+
+// TestAnUnlistedGlyphIsMeasured is the check that would have caught the coda
+// sign being guessed at a staff space when it is nearly four.
+func TestAnUnlistedGlyphIsMeasured(t *testing.T) {
+	for _, name := range []string{"segno", "coda"} {
+		if _, listed := advanceWidths[name]; listed {
+			continue // fine either way; the test above covers it
+		}
+		if got := Advance(name); got <= 1.0 {
+			t.Errorf("%s measures %.3f, which is the fallback: it was not looked up", name, got)
+		}
+	}
+}
+
+// TestAnUnknownNameStillGetsRoom: a symbol that is in no font at all must not
+// collapse onto its neighbour.
+func TestAnUnknownNameStillGetsRoom(t *testing.T) {
+	if got := Advance("nosuchglyphanywhere"); got != 1.0 {
+		t.Errorf("an unknown glyph measures %.3f, want the one-space fallback", got)
+	}
+}

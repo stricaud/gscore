@@ -30,8 +30,10 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/stricaud/gscore/internal/model"
+	"github.com/stricaud/gscore/internal/sfnt"
 )
 
 //go:embed data/glyphnames.json
@@ -77,6 +79,48 @@ func parseCodepoint(s string) (rune, error) {
 		return 0, fmt.Errorf("smufl: bad codepoint %q", s)
 	}
 	return rune(v), nil
+}
+
+// measuredWidths caches what has been read out of the font, and measureOnce
+// guards the one parse of it.
+var (
+	measuredWidths = map[string]float64{}
+	measuredMu     sync.Mutex
+	measureFont    *sfnt.Font
+	measureOnce    sync.Once
+)
+
+// measured reads a glyph's advance width from the font.
+//
+// A SMuFL font's em is four staff spaces, which is the convention the whole
+// standard rests on and what makes the same numbers work for every font that
+// follows it.
+func measured(name string) (float64, bool) {
+	r, ok := glyphs[name]
+	if !ok {
+		return 0, false
+	}
+	measuredMu.Lock()
+	defer measuredMu.Unlock()
+	if w, ok := measuredWidths[name]; ok {
+		return w, true
+	}
+	measureOnce.Do(func() {
+		f, err := sfnt.Parse(FontData())
+		if err == nil {
+			measureFont = f
+		}
+	})
+	if measureFont == nil {
+		return 0, false
+	}
+	gid := measureFont.GlyphIndex(r)
+	if gid == 0 {
+		return 0, false
+	}
+	w := float64(measureFont.Advance(gid)) / float64(measureFont.UnitsPerEm) * 4
+	measuredWidths[name] = w
+	return w, true
 }
 
 // Glyph returns the codepoint for a canonical SMuFL glyph name.
@@ -166,46 +210,104 @@ func LoadMetadata(data []byte) (EngravingDefaults, map[string]float64, error) {
 }
 
 // advanceWidths are Bravura's advance widths, in staff spaces, for the glyphs
-// the engraver places. They let elements be spaced without measuring outlines.
+// the engraver places most. They let the common case be a map lookup rather
+// than a parse of the font.
+//
+// Every number here is read out of the font, and a test checks that it still
+// is. They were transcribed by hand once and had drifted badly — the four-p
+// dynamic was written as three spaces against the font's five and a half,
+// and the time signature digits as 1.372 against 1.880 — so everything set
+// beside those glyphs was spaced to a width they do not have.
 var advanceWidths = map[string]float64{
-	"gClef": 2.684, "fClef": 2.736, "cClef": 2.796, "unpitchedPercussionClef1": 2.0,
-	"noteheadDoubleWhole": 2.512, "noteheadWhole": 1.688,
-	"noteheadHalf": 1.18, "noteheadBlack": 1.18,
-	"accidentalSharp": 0.98, "accidentalFlat": 0.76, "accidentalNatural": 0.672,
-	"accidentalDoubleSharp": 0.98, "accidentalDoubleFlat": 1.472,
-	"restDoubleWhole": 1.0, "restWhole": 1.52, "restHalf": 1.52,
-	"restQuarter": 1.14, "rest8th": 1.0, "rest16th": 1.22,
-	"rest32nd": 1.4, "rest64th": 1.6, "rest128th": 1.8,
-	"augmentationDot": 0.4,
-	"flag8thUp":       0.884, "flag8thDown": 0.884,
-	"flag16thUp": 0.884, "flag16thDown": 0.884,
-	"flag32ndUp": 0.884, "flag32ndDown": 0.884,
-	"flag64thUp": 0.884, "flag64thDown": 0.884,
-	"flag128thUp": 0.884, "flag128thDown": 0.884,
-	"timeSig0": 1.372, "timeSig1": 1.372, "timeSig2": 1.372, "timeSig3": 1.372,
-	"timeSig4": 1.372, "timeSig5": 1.372, "timeSig6": 1.372, "timeSig7": 1.372,
-	"timeSig8": 1.372, "timeSig9": 1.372,
-	"timeSigCommon": 1.664, "timeSigCutCommon": 1.664,
-	"articAccentAbove": 1.188, "articAccentBelow": 1.188,
-	"articStaccatoAbove": 0.304, "articStaccatoBelow": 0.304,
-	"articTenutoAbove": 1.016, "articTenutoBelow": 1.016,
-	"articMarcatoAbove": 0.918, "articMarcatoBelow": 0.918,
-	"articStaccatissimoAbove": 0.32, "articStaccatissimoBelow": 0.32,
-	"dynamicNiente": 1.0, "dynamicPPPP": 3.0, "dynamicPPP": 2.4,
-	"dynamicPP": 1.8, "dynamicPiano": 1.03, "dynamicMP": 2.2,
-	"dynamicMF": 2.4, "dynamicForte": 1.23, "dynamicFF": 2.1,
-	"dynamicFFF": 3.0, "dynamicFFFF": 3.9,
-	"dynamicSforzando1": 2.0, "dynamicSforzato": 1.9,
-	"dynamicFortePiano": 2.3, "dynamicRinforzando2": 2.3,
-	"fermataAbove": 1.584, "fermataBelow": 1.584,
-	"stringsUpBow": 0.852, "stringsDownBow": 1.096,
+	"accidentalDoubleFlat":     1.652,
+	"accidentalDoubleSharp":    1.000,
+	"accidentalFlat":           0.904,
+	"accidentalNatural":        0.672,
+	"accidentalSharp":          0.996,
+	"articAccentAbove":         1.356,
+	"articAccentBelow":         1.356,
+	"articMarcatoAbove":        0.944,
+	"articMarcatoBelow":        0.944,
+	"articStaccatissimoAbove":  0.408,
+	"articStaccatissimoBelow":  0.408,
+	"articStaccatoAbove":       0.336,
+	"articStaccatoBelow":       0.336,
+	"articTenutoAbove":         1.352,
+	"articTenutoBelow":         1.352,
+	"augmentationDot":          0.400,
+	"cClef":                    2.796,
+	"dynamicFF":                2.436,
+	"dynamicFFF":               3.324,
+	"dynamicFFFF":              4.280,
+	"dynamicForte":             1.456,
+	"dynamicFortePiano":        2.476,
+	"dynamicMF":                3.188,
+	"dynamicMP":                3.304,
+	"dynamicNiente":            1.232,
+	"dynamicPP":                2.908,
+	"dynamicPPP":               4.288,
+	"dynamicPPPP":              5.668,
+	"dynamicPiano":             1.460,
+	"dynamicRinforzando2":      2.976,
+	"dynamicSforzando1":        2.416,
+	"dynamicSforzato":          2.928,
+	"fClef":                    2.736,
+	"fermataAbove":             2.420,
+	"fermataBelow":             2.420,
+	"flag128thDown":            1.100,
+	"flag128thUp":              1.036,
+	"flag16thDown":             1.168,
+	"flag16thUp":               1.116,
+	"flag32ndDown":             1.096,
+	"flag32ndUp":               1.048,
+	"flag64thDown":             1.100,
+	"flag64thUp":               1.048,
+	"flag8thDown":              1.224,
+	"flag8thUp":                1.056,
+	"gClef":                    2.684,
+	"noteheadBlack":            1.180,
+	"noteheadDoubleWhole":      2.396,
+	"noteheadHalf":             1.180,
+	"noteheadWhole":            1.688,
+	"rest128th":                1.940,
+	"rest16th":                 1.280,
+	"rest32nd":                 1.452,
+	"rest64th":                 1.696,
+	"rest8th":                  1.000,
+	"restDoubleWhole":          0.504,
+	"restHalf":                 1.132,
+	"restQuarter":              1.080,
+	"restWhole":                1.132,
+	"stringsDownBow":           1.248,
+	"stringsUpBow":             1.000,
+	"timeSig0":                 1.880,
+	"timeSig1":                 1.336,
+	"timeSig2":                 1.784,
+	"timeSig3":                 1.684,
+	"timeSig4":                 1.880,
+	"timeSig5":                 1.612,
+	"timeSig6":                 1.736,
+	"timeSig7":                 1.764,
+	"timeSig8":                 1.744,
+	"timeSig9":                 1.736,
+	"timeSigCommon":            1.696,
+	"timeSigCutCommon":         1.668,
+	"unpitchedPercussionClef1": 1.528,
 }
 
-// Advance returns a glyph's advance width in staff spaces. Unknown glyphs get
-// one staff space, which keeps an unrecognised symbol from collapsing onto its
-// neighbour.
+// Advance returns a glyph's advance width in staff spaces.
+//
+// The table above is a cache of the widths the engraver asks for most, so
+// that the common path is a map lookup. Anything not in it is measured in the
+// font itself — because the alternative, a fixed guess, is a glyph that
+// overlaps whatever is beside it and nothing anywhere saying so. The coda
+// sign is 3.8 spaces wide and was guessed at 1.0, which printed "To Coda"
+// through its own symbol.
 func Advance(name string) float64 {
 	if w, ok := advanceWidths[name]; ok {
+		return w
+	}
+	if w, ok := measured(name); ok {
 		return w
 	}
 	return 1.0

@@ -31,7 +31,10 @@
       <button data-action="save-svg"><span>Export SVG…</span><kbd>E</kbd></button>
       <button data-action="save-page"><span>Export web page…</span><kbd>⇧H</kbd></button>
       <button data-action="save-midi"><span>Export MIDI…</span></button>
-      <button data-action="save-audio"><span>Export as audio…</span></button>
+      <!-- Only where there is a machine to do it on: recording needs a
+           soundfont, which is a file on a disk. Hidden rather than shown
+           and refused. -->
+      <button data-action="save-audio" data-only-local hidden><span>Export as audio…</span></button>
       <hr>
       <button data-action="page-setup" disabled><span>Page Setup</span></button>
       <button data-action="print-preview" disabled><span>Print Preview…</span></button>
@@ -310,6 +313,10 @@
       <button data-action="play"><span>Play / Pause</span><kbd>⇧Space</kbd></button>
       <button data-action="play-from-start"><span>Play from the beginning</span><kbd>⌃⇧Space</kbd></button>
       <button data-action="stop"><span>Stop</span><kbd>Esc</kbd></button>
+      <hr>
+      <!-- What the editor plays through. Only where there is a disk to keep
+           a soundfont on. -->
+      <button data-action="playback-sound" data-only-local hidden><span>Playback sound…</span></button>
     </div>
   </div>
 

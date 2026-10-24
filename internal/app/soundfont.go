@@ -65,6 +65,15 @@ var catalogue = []source{{
 		"The usual recommendation for a first soundfont: every program is " +
 		"there and none of them is embarrassing.",
 	License: "Free to use for any purpose, including commercial work.",
+}, {
+	ID:   "fluidr3-gm",
+	Name: "FluidR3 GM",
+	URL:  zanderjazBase + "packs/FluidR3%20GM.SF2",
+	Size: 148358590,
+	About: "The bank FluidSynth ships with, by Frank Wen: 148 MB of General " +
+		"MIDI, bigger and fuller than GeneralUser GS and the reason a Linux " +
+		"machine playing a MIDI file sounds the way it does.",
+	License: "MIT.",
 }}
 
 // soundfontDir is where downloaded soundfonts are kept.
@@ -78,6 +87,31 @@ func soundfontDir() (string, error) {
 		return "", err
 	}
 	return filepath.Join(base, "Gscore", "soundfonts"), nil
+}
+
+// bundledSoundfontDirs are the ones shipped with this copy of gscore.
+//
+// The macOS application carries a General MIDI bank in its Resources so that
+// it can make a sound the first time it is opened, with nothing to fetch and
+// nothing to choose. Found by where the program itself is rather than by an
+// installed path, so that a bundle dragged anywhere — another folder, another
+// machine, a disk image somebody was sent — still finds its own instruments.
+func bundledSoundfontDirs() []string {
+	exe, err := os.Executable()
+	if err != nil {
+		return nil
+	}
+	if resolved, err := filepath.EvalSymlinks(exe); err == nil {
+		exe = resolved
+	}
+	dir := filepath.Dir(exe)
+	return []string{
+		// Gscore.app/Contents/MacOS/gscore → Contents/Resources/soundfonts
+		filepath.Join(dir, "..", "Resources", "soundfonts"),
+		// And beside the binary, which is where the other platforms put
+		// anything that travels with it.
+		filepath.Join(dir, "soundfonts"),
+	}
 }
 
 // systemSoundfontDirs are the places other programs put soundfonts, so that
@@ -94,6 +128,7 @@ func systemSoundfontDirs() []string {
 		"/Library/Audio/Sounds/Banks",
 		"/usr/share/sounds/sf2",
 		"/usr/share/soundfonts",
+		"/usr/share/sounds/sf2/zanderjaz",
 		"/usr/local/share/sounds/sf2",
 		"/opt/homebrew/share/sounds/sf2",
 	)
@@ -142,6 +177,9 @@ func listSoundfonts() []installed {
 
 	if dir, err := soundfontDir(); err == nil {
 		add(dir, "downloaded")
+	}
+	for _, dir := range bundledSoundfontDirs() {
+		add(dir, "with Gscore")
 	}
 	for _, dir := range systemSoundfontDirs() {
 		add(dir, "on this machine")
@@ -192,10 +230,16 @@ type voice struct {
 	// Font is the soundfont this part is set to play through, empty for
 	// whichever one is the default.
 	Font string `json:"font,omitempty"`
-	// Preset is what that soundfont will actually sound, and Missing says
-	// it has nothing for this instrument at all.
-	Preset  string `json:"preset,omitempty"`
-	Missing bool   `json:"missing"`
+	// Preset is what that soundfont will actually sound.
+	//
+	// Substitute says it is not the instrument asked for: the font has
+	// nothing at this program and its first preset is being used instead,
+	// which is right for a one-instrument soundfont and wrong for a staff
+	// pointed at the wrong file. Only the person looking can tell which,
+	// so they are shown.
+	Preset     string `json:"preset,omitempty"`
+	Substitute bool   `json:"substitute"`
+	Missing    bool   `json:"missing"`
 }
 
 // voices lists the parts of a score with the instrument each one sounds as.
@@ -225,10 +269,14 @@ func (a *App) voices(assign map[int]string, def string) []voice {
 		}
 		if path != "" {
 			if f, err := loadFont(path); err == nil {
-				if preset, ok := f.Lookup(v.Program, v.Drum); ok {
-					v.Preset = preset.Name
-				} else {
+				preset, exact := f.Lookup(v.Program, v.Drum)
+				switch {
+				case preset.Name == "":
 					v.Missing = true
+				case !exact:
+					v.Preset, v.Substitute = strings.TrimSpace(preset.Name), true
+				default:
+					v.Preset = strings.TrimSpace(preset.Name)
 				}
 			}
 		}
@@ -249,6 +297,10 @@ func partName(p *model.Part, i int) string {
  * The API
  */
 
+// isCollection says an entry in the list is not one soundfont but hundreds,
+// which are browsed rather than downloaded whole.
+const zanderjazID = "zanderjaz"
+
 // handleSoundfonts answers with everything the recording dialog shows: the
 // soundfonts on this machine, the ones that can be fetched, and what the
 // score is scored for.
@@ -262,9 +314,11 @@ func (a *App) handleSoundfonts(w http.ResponseWriter, r *http.Request) {
 	a.mu.RUnlock()
 
 	dir, _ := soundfontDir()
+	_, zcount := zanderjazCategories()
 	writeJSON(w, map[string]any{
 		"installed":   listSoundfonts(),
 		"catalogue":   catalogue,
+		"collection":  map[string]any{"id": zanderjazID, "count": zcount},
 		"dir":         dir,
 		"canDownload": a.local,
 		"voices":      parts,

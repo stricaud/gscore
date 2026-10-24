@@ -899,6 +899,7 @@ body.fullscreen #canvas-wrap { padding: 10px; }
 #record-voices td:first-child { white-space: nowrap; }
 #record-voices select { font: inherit; font-size: 11px; max-width: 170px; }
 #record-voices .missing { color: var(--danger, #c0392b); }
+#record-voices .substitute { color: var(--muted); font-style: italic; }
 .record-check { display: flex; gap: 9px; align-items: flex-start; padding: 6px 0; cursor: pointer; }
 .record-check span { display: flex; flex-direction: column; gap: 1px; }
 .record-check em { font-style: normal; font-size: 11px; color: var(--muted); }

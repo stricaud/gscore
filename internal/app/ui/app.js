@@ -359,6 +359,9 @@ async function action(name) {
     case "save-audio":
       await recordAudio();
       break;
+    case "playback-sound":
+      await playbackSound();
+      break;
     case "print":
       await printScore();
       break;
@@ -703,6 +706,10 @@ async function loadInfo() {
   // In a native window the title bar already says gscore; repeating it
   // inside the window is what makes a web view look like a web page.
   document.body.classList.toggle("native", !!i.native);
+  // Some things can only be done on the machine the score is on. Served as a
+  // page, they are not offered: an item that is there and answers with an
+  // apology is worse than one that was never there.
+  $$("[data-only-local]").forEach((el) => (el.hidden = !i.local));
   $("#version").textContent = "Gscore " + i.version;
   $("#about-version").textContent = "Version " + i.version;
   $("#filename").textContent = i.filename || "untitled";
@@ -1027,6 +1034,150 @@ async function exportMIDI() {
   status("Exported MIDI");
 }
 
+/* ---------- playing through a soundfont ---------- */
+
+// How far ahead of the listener to keep the rendered music, in seconds.
+//
+// Enough that a slow render or a busy moment in the browser cannot open a
+// gap you would hear, short enough that stopping does not throw much away.
+const liveAhead = 3;
+
+// startLive asks the server to play the score through a soundfont and
+// schedules what comes back.
+//
+// Returns false if it cannot — no soundfont, or served from somewhere that
+// has no disk — and the oscillators take over, which is what gscore has
+// always done and still sounds like something.
+async function startLive(from, master, t0) {
+  if (!state.info?.local) return false;
+  const p = new URLSearchParams({
+    from: String(from),
+    // At the rate the browser is mixing at, so that nothing is resampled on
+    // the way in.
+    rate: String(Math.round(audio.sampleRate)),
+  });
+  let d;
+  try {
+    const res = await fetch("/api/play/start?" + p.toString(), { method: "POST" });
+    if (!res.ok) return false;
+    d = await res.json();
+  } catch (_) {
+    return false;
+  }
+
+  live = { id: d.id, rate: d.rate, at: t0, ended: false, timer: null, master, font: d.font };
+  pumpLive();
+  return true;
+}
+
+// pumpLive keeps the music rendered a few seconds ahead of where it is being
+// listened to.
+//
+// One piece at a time, each scheduled to start exactly where the last one
+// ended, so the joins are not joins: the server is rendering one continuous
+// performance and these are only the lengths it was handed over in.
+async function pumpLive() {
+  const mine = live;
+  if (!mine || mine.ended) return;
+  while (mine === live && !mine.ended && mine.at - audio.currentTime < liveAhead) {
+    let res;
+    try {
+      res = await fetch("/api/play/chunk?id=" + encodeURIComponent(mine.id));
+    } catch (_) {
+      return; // stopped, or the server went away
+    }
+    if (mine !== live) return; // something else started while we waited
+    if (!res.ok) {
+      mine.ended = true;
+      return;
+    }
+    const pcm = new Int16Array(await res.arrayBuffer());
+    if (res.headers.get("X-Gscore-End")) mine.ended = true;
+    if (!pcm.length) break;
+
+    const frames = pcm.length / 2;
+    const buf = audio.createBuffer(2, frames, mine.rate);
+    const L = buf.getChannelData(0);
+    const R = buf.getChannelData(1);
+    for (let i = 0; i < frames; i++) {
+      L[i] = pcm[2 * i] / 32768;
+      R[i] = pcm[2 * i + 1] / 32768;
+    }
+    const src = audio.createBufferSource();
+    src.buffer = buf;
+    src.connect(mine.master);
+    // Never in the past: a render that took longer than the music it
+    // produced would otherwise schedule itself behind the clock and be
+    // dropped, leaving a hole.
+    mine.at = Math.max(mine.at, audio.currentTime + 0.02);
+    src.start(mine.at);
+    mine.at += buf.duration;
+    voices.push(src);
+  }
+  if (mine === live && !mine.ended) {
+    mine.timer = setTimeout(pumpLive, 250);
+  }
+}
+
+// endLive stops asking for music and tells the server it can let go.
+function endLive() {
+  const mine = live;
+  live = null;
+  if (!mine) return;
+  if (mine.timer) clearTimeout(mine.timer);
+  // Nothing waits on this: the performance is over here whatever the server
+  // makes of it, and it would be dropped on its own soon enough.
+  fetch("/api/play/stop?id=" + encodeURIComponent(mine.id), { method: "POST" })
+    .catch(() => {});
+}
+
+// playbackSound lets somebody choose what the editor plays through.
+async function playbackSound() {
+  if (!state.info?.local) {
+    status("Choosing the playback sound needs gscore running on your own machine");
+    return;
+  }
+  await loadSoundfonts();
+  const current = await (await fetch("/api/settings")).json();
+
+  const options = record.fonts.map((f) => ({
+    value: f.path,
+    label: f.name + (f.path === current.playbackFont ? " — playing now" : ""),
+  }));
+  options.push({ value: "get", label: "Download another…" });
+
+  const choice = await ask({
+    title: "Playback sound",
+    label: "Play through",
+    value: current.playbackFont || "",
+    note: record.fonts.length
+      ? "The editor plays through this. It is also what a new recording starts with."
+      : "There are no soundfonts yet. Download one and the editor will play through it.",
+    options,
+  });
+  if (!choice) return;
+  if (choice === "get") {
+    await getSoundfont();
+    if (!record.font) return;
+    await saveSetting("playbackFont", record.font);
+    return;
+  }
+  await saveSetting("playbackFont", choice);
+}
+
+async function saveSetting(key, value) {
+  const p = new URLSearchParams({ [key]: value });
+  const res = await fetch("/api/settings?" + p.toString(), { method: "POST" });
+  if (!res.ok) {
+    status("Could not keep that: " + (await res.text()).trim());
+    return;
+  }
+  const d = await res.json();
+  // Anything already playing is playing through the old one.
+  if (state.playing) stop();
+  status("Playing through " + (d.playbackFontName || "the chosen soundfont"));
+}
+
 /* ---------- recording ---------- */
 
 // What the recording dialog is showing: the soundfonts it knows about, which
@@ -1047,6 +1198,8 @@ const record = { fonts: [], catalogue: [], font: "", assign: {}, voices: [] };
 // scored into a piano soundfont comes out as nine pianos, silently.
 async function recordAudio() {
   if (!state.info?.local) {
+    // The menu item is not there without a disk to read a soundfont from, so
+    // this is only reachable by a keyboard shortcut or a stale page.
     status("Exporting audio needs gscore running on your own machine");
     return;
   }
@@ -1100,6 +1253,7 @@ async function loadSoundfonts() {
   const d = await res.json();
   record.fonts = d.installed || [];
   record.catalogue = d.catalogue || [];
+  record.collection = d.collection || null;
   record.voices = d.voices || [];
   record.dir = d.dir;
   if (!record.font && record.fonts.length) record.font = record.fonts[0].path;
@@ -1166,7 +1320,14 @@ function drawVoices() {
     if (v.missing) {
       missing++;
       sound.className = "missing";
-      sound.textContent = "nothing for this instrument";
+      sound.textContent = "nothing in this soundfont";
+    } else if (v.substitute) {
+      // A soundfont of one instrument files it wherever it likes, so this is
+      // the ordinary case for those and a mistake for a General MIDI bank.
+      // Which it is depends on what was chosen, so it is shown and not
+      // judged.
+      sound.className = "substitute";
+      sound.textContent = v.preset + " — the only thing it has";
     } else {
       sound.textContent = v.preset || "—";
     }
@@ -1205,6 +1366,41 @@ function drawVoices() {
   $("#record-go").disabled = !record.font;
 }
 
+// browseCollection walks the ZanderJaz collection: a category, then one of
+// the instruments in it.
+//
+// Two questions rather than a list of five hundred, because the categories
+// are the only thing anybody knows about a collection they have not heard:
+// somebody looking for a Rhodes looks under pianos, not through everything
+// beginning with R.
+async function browseCollection() {
+  const res = await fetch("/api/soundfont/collection");
+  if (!res.ok) return null;
+  const d = await res.json();
+
+  const category = await ask({
+    title: "ZanderJaz collection",
+    label: "Which kind",
+    note: d.about,
+    options: d.categories.map((c) => ({
+      value: c.name,
+      label: c.name.replace(/-/g, " ") + " — " + c.fonts.length,
+    })),
+  });
+  if (!category) return null;
+
+  const found = d.categories.find((c) => c.name === category);
+  if (!found) return null;
+  const url = await ask({
+    title: "ZanderJaz — " + category.replace(/-/g, " "),
+    label: "Which one",
+    search: true,
+    options: found.fonts.map((f) => ({ value: f.url, label: f.name })),
+  });
+  if (!url) return null;
+  return { url, name: found.fonts.find((f) => f.url === url)?.name || "" };
+}
+
 async function pickSoundfont() {
   status("Choose a soundfont…");
   const res = await fetch("/api/soundfont/pick", { method: "POST" });
@@ -1230,6 +1426,12 @@ async function getSoundfont() {
     value: c.id,
     label: c.name + " — " + megabytes(c.size),
   }));
+  if (record.collection?.count) {
+    options.push({
+      value: "collection",
+      label: "ZanderJaz collection — " + record.collection.count + " instruments…",
+    });
+  }
   options.push({ value: "url", label: "From a link to a .sf2 file…" });
 
   // What each one is goes in the note rather than in the list: a list of
@@ -1252,6 +1454,10 @@ async function getSoundfont() {
     const url = await ask({ title: "Download a soundfont", label: "Link to a .sf2 file" });
     if (!url) return;
     query = new URLSearchParams({ url });
+  } else if (choice === "collection") {
+    const picked = await browseCollection();
+    if (!picked) return;
+    query = new URLSearchParams({ url: picked.url, name: picked.name });
   } else {
     query = new URLSearchParams({ id: choice });
   }
@@ -4052,6 +4258,14 @@ function wakeAudio() {
 let voices = [];
 let rafID = null;
 let playStart = 0;
+
+// The performance being rendered on the other side, when the score is being
+// played through a soundfont rather than through the oscillators.
+//
+// null whenever it is not: everything else about playing — the clock, the
+// cursor, the notes lighting up — is driven by playStart and does not know
+// or care which of the two is making the noise.
+let live = null;
 // The refs lit up right now, which is a set because a chord is several
 // noteheads and a score is several staves.
 let current = new Set();
@@ -4425,7 +4639,6 @@ async function play(opts) {
   }
 
   const master = audio.createGain();
-  master.gain.value = 0.22; // keep simultaneous notes from clipping
   master.connect(audio.destination);
 
   const lead = 0.1;
@@ -4438,16 +4651,26 @@ async function play(opts) {
 
   let sounded = 0;
   for (const ev of pb.events) {
-    const end = ev.start + ev.dur;
-    if (end <= from) continue; // already over by the time we start
-    sounded++;
-    if (ev.start >= from) {
-      sound(ev, t0 + ev.start - from, master);
-      continue;
+    if (ev.start + ev.dur > from) sounded++;
+  }
+
+  // Real instruments where there are any, and the oscillators where there
+  // are not. Which one it is changes nothing else about playing: both end up
+  // as sound scheduled against the same clock.
+  master.gain.value = 1;
+  if (!(await startLive(from, master, t0))) {
+    master.gain.value = 0.22; // keep simultaneous notes from clipping
+    for (const ev of pb.events) {
+      const end = ev.start + ev.dur;
+      if (end <= from) continue; // already over by the time we start
+      if (ev.start >= from) {
+        sound(ev, t0 + ev.start - from, master);
+        continue;
+      }
+      // A note already ringing when we come in: take it up part way, for
+      // what is left of it, rather than striking it again.
+      sound({ ...ev, dur: end - from }, t0, master);
     }
-    // A note already ringing when we come in: take it up part way, for what
-    // is left of it, rather than striking it again.
-    sound({ ...ev, dur: end - from }, t0, master);
   }
 
   state.playing = true;
@@ -4832,6 +5055,7 @@ function setupFollowRelease() {
 function silence() {
   if (rafID) cancelAnimationFrame(rafID);
   rafID = null;
+  endLive();
   for (const v of voices) {
     try {
       v.stop();
@@ -5962,6 +6186,9 @@ async function main() {
             items: items ? read(items) : [],
           }];
         }
+        // Hidden here, hidden in the native menu bar: one list of what can
+        // be done, not two that disagree.
+        if (node.hidden) return [];
         if (node.tagName !== "BUTTON" || !node.dataset.action) return [];
         return [{
           kind: "item",

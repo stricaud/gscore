@@ -5,6 +5,7 @@
 #   make app          a macOS application bundle, unpackaged
 #   make windows      a Windows .exe, cross-compiled from here
 #   make debian       a .deb, cross-compiled from here
+#   make soundfonts   fetch the instruments the packages ship with
 #   make web          the static page, for GitHub Pages
 #   make all          every package above
 #   make test         vet and the test suite
@@ -38,7 +39,8 @@ LDFLAGS := -s -w
 HOST_OS := $(shell go env GOOS)
 
 .DEFAULT_GOAL := default
-.PHONY: default all build run test vet clean web app dmg windows debian help
+.PHONY: default all build run test vet clean web app dmg windows debian help \
+	soundfonts
 
 ## default: package for this machine
 default:
@@ -96,8 +98,53 @@ ICONSET  := $(BUILD)/gscore.iconset
 # one drawing, and every size generated from it.
 ICON_PNG := assets/icon/gscore.png
 
+# The instruments the application is shipped with.
+#
+# gscore plays through a soundfont — somebody's recordings of real
+# instruments — and carries none in the binary, because thirty megabytes of
+# samples has no business inside an editor that most people will use to write
+# a tune and play it themselves. The application bundle is the exception: it
+# is a download already, and an application that cannot make a sound until
+# you have found a soundfont is an application that cannot make a sound.
+#
+# Only what may be redistributed. GeneralUser GS says so in as many words.
+# FluidR3 GM is MIT and may be added with BUNDLE_FONTS="generaluser fluidr3",
+# at the cost of 148MB in the disk image. The ZanderJaz collection is not
+# here and will not be: it is five hundred files of mixed provenance, a good
+# many of them lifted from Roland, E-Mu and Korg ROMs, and shipping those in
+# a signed application is not the same act as a user fetching one for
+# themselves. They stay a download, which is what the dialog offers.
+BUNDLE_FONTS ?= generaluser
+FONT_DIR     := $(BUILD)/soundfonts
+
+generaluser_URL := https://raw.githubusercontent.com/mrbumpy409/GeneralUser-GS/main/GeneralUser-GS.sf2
+generaluser_SF2 := $(FONT_DIR)/GeneralUser GS.sf2
+fluidr3_URL     := https://www.zanderjaz.com/soundfonts/packs/FluidR3%20GM.SF2
+fluidr3_SF2     := $(FONT_DIR)/FluidR3 GM.sf2
+
+## soundfonts: fetch the instruments the packages are shipped with
+soundfonts:
+	@mkdir -p $(FONT_DIR)
+	@for name in $(BUNDLE_FONTS); do \
+		url=$$(make --no-print-directory print-$${name}_URL); \
+		out=$$(make --no-print-directory print-$${name}_SF2); \
+		if [ -s "$$out" ]; then \
+			echo "  $$name: already here"; \
+		else \
+			echo "  $$name: downloading"; \
+			curl -fsSL "$$url" -o "$$out.part" && mv "$$out.part" "$$out" || { \
+				rm -f "$$out.part"; \
+				echo "could not download $$name from $$url" >&2; exit 1; }; \
+		fi; \
+	done
+
+# Reading a variable from a recipe, which is the only way to index one by a
+# name that is only known while the loop is running.
+print-%:
+	@echo '$($*)'
+
 ## app: a macOS application bundle
-app: $(BUILD)/gscore.icns
+app: $(BUILD)/gscore.icns soundfonts
 	@test "$(HOST_OS)" = darwin || { echo "a .app can only be built on macOS" >&2; exit 1; }
 	@command -v swiftc >/dev/null || { \
 		echo "need the Swift compiler: xcode-select --install" >&2; exit 1; }
@@ -111,6 +158,13 @@ app: $(BUILD)/gscore.icns
 		$(foreach a,$(MAC_ARCH),$(BUILD)/$(BINARY)-app-$(a))
 	@rm -f $(foreach a,$(MAC_ARCH),$(BUILD)/$(BINARY)-app-$(a))
 	@cp $(BUILD)/gscore.icns $(APP)/Contents/Resources/
+	@# Beside the executable, where the program looks for them: a bundle that
+	@# is moved or copied takes its instruments with it.
+	@mkdir -p "$(APP)/Contents/Resources/soundfonts"
+	@for name in $(BUNDLE_FONTS); do \
+		cp "$$(make --no-print-directory print-$${name}_SF2)" \
+			"$(APP)/Contents/Resources/soundfonts/"; \
+	done
 	@# From a real file, not from a make variable. GNU make 3.81 — which is
 	@# the make macOS ships — runs each line of a recipe in its own shell,
 	@# and a variable holding a multi-line document is split across them:

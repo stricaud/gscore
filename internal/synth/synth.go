@@ -96,12 +96,22 @@ func (f *Font) Presets() []Preset {
 	return out
 }
 
-// Lookup finds the sound a part will actually be played with.
+// Lookup finds the sound a part will actually be played with, and says
+// whether it is the one that was asked for.
 //
-// A font is not obliged to carry all 128 programs, and most of the small ones
-// do not. What happens then is decided here rather than discovered when the
-// recording comes out silent: the answer is the name of what will sound, or
-// nothing, which is what the interface reports as missing.
+// A font is not obliged to carry all 128 programs and most are nowhere near
+// it: half the soundfonts in the world are one instrument, recorded by one
+// person, filed at whichever program number they felt like. A violin
+// soundfont whose single preset sits at program 0 is not a soundfont without
+// a violin in it — but asking it for program 40, which is what General MIDI
+// calls a violin, finds nothing.
+//
+// So an exact match wins, and failing that the font's first preset is used:
+// if somebody points a staff at "Dark Violins.sf2" they mean to hear dark
+// violins, whatever number is written inside the file. What they do not mean
+// is silence, which is what a strict reading gives them. The second return
+// says which of the two happened, so that the dialog can show a substitution
+// as a substitution rather than quietly making one.
 func (f *Font) Lookup(program int, drum bool) (Preset, bool) {
 	bank := 0
 	if drum {
@@ -111,6 +121,9 @@ func (f *Font) Lookup(program int, drum bool) (Preset, bool) {
 		if int(p.BankNumber) == bank && int(p.PatchNumber) == program {
 			return Preset{Name: p.Name, Bank: bank, Program: program}, true
 		}
+	}
+	if presets := f.Presets(); len(presets) > 0 {
+		return presets[0], false
 	}
 	return Preset{}, false
 }
@@ -157,157 +170,28 @@ func DefaultOptions() Options {
 // different fonts are rendered separately and mixed, which is the only way
 // to have a piano from one library and strings from another in one recording.
 func Render(song midi.Song, fonts map[int]*Font, fallback *Font, opt Options) ([]int16, error) {
-	if opt.SampleRate <= 0 {
-		opt.SampleRate = 44100
-	}
-	if opt.Gain == 0 {
-		opt.Gain = 1
-	}
-	if fallback == nil {
-		return nil, errors.New("synth: no soundfont to play this with")
-	}
 	if len(song.Notes) == 0 {
 		return nil, errors.New("synth: there is nothing to play")
 	}
-
-	end := 0.0
-	for _, n := range song.Notes {
-		if stop := n.Start + n.Dur; stop > end {
-			end = stop
-		}
+	st, err := NewStream(song, fonts, fallback, opt, 0)
+	if err != nil {
+		return nil, err
 	}
-	frames := int((end+opt.Tail)*float64(opt.SampleRate)) + 1
-
-	// One group per font, because one synthesizer plays one soundfont.
-	groups := map[*Font][]midi.Note{}
-	for _, n := range song.Notes {
-		f := fallback
-		if assigned, ok := fonts[n.Part]; ok && assigned != nil {
-			f = assigned
-		}
-		groups[f] = append(groups[f], n)
-	}
-
+	// Rendered whole, because a recording is weighed before it is written:
+	// how loud the loudest moment turned out is not known until the last
+	// one has been played.
+	frames := int(st.Left()*float64(st.SampleRate())) + 1
 	left := make([]float64, frames)
 	right := make([]float64, frames)
-	for f, notes := range groups {
-		if err := play(f, notes, left, right, opt); err != nil {
-			return nil, err
-		}
-	}
-	return mixdown(left, right, opt.Gain, opt.Normalize), nil
-}
-
-// play renders one font's share of the music into the mix.
-func play(f *Font, notes []midi.Note, left, right []float64, opt Options) error {
-	settings := meltysynth.NewSynthesizerSettings(int32(opt.SampleRate))
-	settings.EnableReverbAndChorus = opt.Reverb
-	// A score can have more going on at once than a synthesizer's default
-	// allowance: a held pedal under a chord in every part, plus the tails of
-	// what came before. Notes over the limit are stolen, and a stolen note
-	// stops in the middle, which is heard.
-	settings.MaximumPolyphony = 256
-	sy, err := meltysynth.NewSynthesizer(f.sf, settings)
-	if err != nil {
-		return err
-	}
-
-	channels := channelsFor(notes)
-	for part, ch := range channels {
-		program, drum := 0, false
-		for _, n := range notes {
-			if n.Part == part {
-				program, drum = n.Program, n.Drum > 0
-				break
-			}
-		}
-		if drum {
-			// The percussion channel is already a drum channel in the
-			// synthesizer; everywhere else the bank has to be asked for.
-			if ch != 9 {
-				sy.ProcessMidiMessage(int32(ch), 0xB0, 0, drumBank)
-			}
-		}
-		sy.ProcessMidiMessage(int32(ch), 0xC0, int32(program), 0)
-	}
-
-	// Everything that happens, in the order it happens. Stopping a note is
-	// an event like starting one, and the two interleave: a long note is
-	// still sounding while several short ones come and go.
-	type event struct {
-		at  int
-		on  bool
-		ch  int
-		key int
-		vel int
-		seq int
-	}
-	events := make([]event, 0, 2*len(notes))
-	for i, n := range notes {
-		ch := channels[n.Part]
-		gate := n.Gate
-		if gate <= 0 {
-			gate = 1
-		}
-		start := int(n.Start * float64(opt.SampleRate))
-		stop := int((n.Start + n.Dur*gate) * float64(opt.SampleRate))
-		if stop <= start {
-			stop = start + 1
-		}
-		// A drum's key is which drum it is, not a pitch.
-		key := n.MIDI
-		if n.Drum > 0 {
-			key = n.Drum
-		}
-		events = append(events,
-			event{at: start, on: true, ch: ch, key: key, vel: n.Velocity, seq: i},
-			event{at: stop, ch: ch, key: key, seq: i})
-	}
-	sort.Slice(events, func(i, j int) bool {
-		if events[i].at != events[j].at {
-			return events[i].at < events[j].at
-		}
-		// At the same instant, release before striking: a repeated note has
-		// to be let go before it is played again, or the second one is not
-		// heard at all.
-		return !events[i].on && events[j].on
-	})
-
-	buf := struct{ l, r []float32 }{
-		make([]float32, len(left)), make([]float32, len(right)),
-	}
 	at := 0
-	render := func(to int) {
-		if to > len(buf.l) {
-			to = len(buf.l)
-		}
-		if to > at {
-			sy.Render(buf.l[at:to], buf.r[at:to])
-			at = to
-		}
-	}
-	for _, e := range events {
-		render(e.at)
-		if e.at >= len(buf.l) {
+	for at < frames {
+		n := st.read(left[at:], right[at:])
+		if n == 0 {
 			break
 		}
-		if e.on {
-			vel := e.vel
-			if vel <= 0 {
-				vel = 80
-			}
-			sy.NoteOn(int32(e.ch), int32(e.key), int32(vel))
-		} else {
-			sy.NoteOff(int32(e.ch), int32(e.key))
-		}
+		at += n
 	}
-	render(len(buf.l))
-
-	for i := range left {
-		left[i] += float64(buf.l[i])
-		right[i] += float64(buf.r[i])
-	}
-	return nil
+	return mixdown(left[:at], right[:at], opt.Gain, opt.Normalize), nil
 }
 
 // channelsFor gives every part a MIDI channel of its own.

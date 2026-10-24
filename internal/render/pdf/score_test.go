@@ -236,7 +236,6 @@ func buildDemo() *model.Score {
 		drums.Measures = append(drums.Measures, dm)
 	}
 
-
 	s := &model.Score{
 		Identity: model.Identity{
 			Title:    "Walking the Line",

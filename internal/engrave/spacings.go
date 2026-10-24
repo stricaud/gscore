@@ -55,7 +55,17 @@ type Spacings struct {
 
 	BetweenKeyAccidentals float64 // KeySignatures.sbksa
 	AfterKeySignature     float64 // KeySignatures.saks
-	AfterTimeSignature    float64 // TimeSignatures.sats
+
+	// AfterKeyCancel is the air between the naturals that cancel the old key
+	// and the accidentals of the new one.
+	//
+	// More than the air inside either group, which is almost none: the
+	// accidentals of a key signature are set close enough to read as one
+	// block, and two blocks set that close read as one block of mixed signs.
+	// A player glancing at a key change has to see where the cancelling
+	// stops and the new key starts.
+	AfterKeyCancel     float64
+	AfterTimeSignature float64 // TimeSignatures.sats
 
 	AfterBarline    float64 // Barlines.sab
 	BetweenMeasures float64 // Measures.slbm
@@ -104,6 +114,7 @@ func DefaultSpacings() Spacings {
 		ClefAfter:  0.9,
 
 		BetweenKeyAccidentals: 0.1,
+		AfterKeyCancel:        0.7,
 		AfterKeySignature:     0.9,
 		AfterTimeSignature:    1.2,
 

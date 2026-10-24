@@ -14,8 +14,12 @@ package pdf
 
 import (
 	"bytes"
+	"compress/zlib"
+	"fmt"
+	"io"
 	"testing"
 
+	"github.com/stricaud/gscore/internal/brand"
 	"github.com/stricaud/gscore/internal/engrave"
 	"github.com/stricaud/gscore/internal/model"
 )
@@ -168,13 +172,97 @@ func TestEveryPageIsStamped(t *testing.T) {
 	}
 	out := buf.Bytes()
 
-	// A page's resources name the image it draws, and that dictionary is not
-	// compressed: one mention per page that uses it.
 	pages := bytes.Count(out, []byte("/Type /Page")) - bytes.Count(out, []byte("/Type /Pages"))
 	if pages < 2 {
 		t.Fatalf("%d pages, so this proves nothing about every page", pages)
 	}
-	if n := bytes.Count(out, []byte("Imgilbert")); n != pages {
-		t.Errorf("the mascot is named on %d of %d pages", n, pages)
+
+	// The mascot is the only thing on a page that is filled and stroked in
+	// one go — music is one or the other — so the B operator counts his
+	// shapes, and they should come to one mascot's worth per page.
+	d, err := brand.GilbertDrawing()
+	if err != nil {
+		t.Fatal(err)
+	}
+	each := 0
+	for _, sh := range d.Shapes {
+		if sh.Fill != nil && sh.Stroke != nil {
+			each++
+		}
+	}
+	if each == 0 {
+		t.Fatal("the drawing has no filled-and-stroked shape to count")
+	}
+	if n := countOp(t, out, " B\n"); n != each*pages {
+		t.Errorf("the mascot's shapes were drawn %d times over %d pages, "+
+			"want %d — one stamp each", n, pages, each*pages)
+	}
+}
+
+// countOp inflates the page contents and counts an operator in them.
+//
+// A PDF's content streams are compressed, so what a page draws cannot be
+// read off the file as it stands. Each stream's length is in the dictionary
+// in front of it, and that is what says where it ends: compressed bytes are
+// bytes like any others and "endstream" turns up inside them.
+func countOp(t *testing.T, doc []byte, op string) int {
+	t.Helper()
+	total := 0
+	for i := 0; ; {
+		j := bytes.Index(doc[i:], []byte("stream\n"))
+		if j < 0 {
+			break
+		}
+		head := doc[i : i+j]
+		start := i + j + len("stream\n")
+		i = start
+
+		at := bytes.LastIndex(head, []byte("/Length "))
+		if at < 0 {
+			continue
+		}
+		var n int
+		if _, err := fmt.Sscanf(string(head[at+len("/Length "):]), "%d", &n); err != nil {
+			continue
+		}
+		if start+n > len(doc) {
+			continue
+		}
+		zr, err := zlib.NewReader(bytes.NewReader(doc[start : start+n]))
+		if err != nil {
+			continue
+		}
+		plain, _ := io.ReadAll(zr)
+		zr.Close()
+		total += bytes.Count(plain, []byte(op))
+		i = start + n
+	}
+	return total
+}
+
+// The mark goes in the margin and the music must not be drawn into it.
+//
+// The stamp is larger than the margin a part is printed with, so the music
+// is given room for it. Everything that measures the page has to agree:
+// where a page is cut, where a point on the drawing lands and how big the
+// music may be set are the same number asked three times.
+func TestTheMusicIsGivenRoomForTheStamp(t *testing.T) {
+	o := DefaultOptions()
+	if o.musicTop() < stampSize {
+		t.Errorf("the music starts at %.1f, inside a stamp %dpt tall",
+			o.musicTop(), stampSize)
+	}
+	// And never less room than the paper was set up with.
+	if o.musicTop() < o.MarginTop {
+		t.Errorf("the music starts at %.1f, above its own %.1fpt margin",
+			o.musicTop(), o.MarginTop)
+	}
+
+	// And a page with margins of its own that are already big enough is
+	// left alone.
+	wide := DefaultOptions()
+	wide.MarginTop = 200
+	if wide.musicTop() != 200 {
+		t.Errorf("a 200pt margin came out as %.1f", wide.musicTop())
 	}
 }

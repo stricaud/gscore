@@ -36,6 +36,15 @@ const Name = "Gscore"
 // Gilbert is the mascot: the bug who has been the program's face since the
 // first version, drawn as an X pixmap in 2001 and kept.
 //
+// Twice over, because the two are wanted for different things. The drawing
+// is what is printed — outlines go onto paper at the printer's resolution
+// rather than at the bitmap's — and the bitmap is what the original was, 321
+// pixels square, kept because the drawing was traced from it and is checked
+// against it.
+//
+//go:embed gilbert.svg
+var GilbertSVG []byte
+
 //go:embed gilbert.png
 var GilbertPNG []byte
 
@@ -43,12 +52,24 @@ var (
 	once    sync.Once
 	gilbert image.Image
 	gErr    error
+
+	drawOnce sync.Once
+	drawing  *Drawing
+	dErr     error
 )
 
-// Gilbert decodes the mascot, once.
+// Gilbert decodes the mascot as a picture, once.
 func Gilbert() (image.Image, error) {
 	once.Do(func() {
 		gilbert, gErr = png.Decode(bytes.NewReader(GilbertPNG))
 	})
 	return gilbert, gErr
+}
+
+// GilbertDrawing reads the mascot as outlines, once.
+func GilbertDrawing() (*Drawing, error) {
+	drawOnce.Do(func() {
+		drawing, dErr = ParseSVG(GilbertSVG)
+	})
+	return drawing, dErr
 }

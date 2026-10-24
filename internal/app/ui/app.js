@@ -381,6 +381,8 @@ async function action(name) {
     case "octave-15mb": await setOctave("15mb", "15mb"); break;
     case "octave-none": await setOctave("none", "Octave line removed"); break;
 
+    case "jump": await jumpToMeasure(); break;
+
     case "tuplet-3": await setTuplet(3); break;
     case "tuplet-4": await setTuplet(4); break;
     case "tuplet-5": await setTuplet(5); break;
@@ -4655,6 +4657,10 @@ function setupKeys() {
           // every other notation program puts it. Ctrl+1 is the way back:
           // one note, as it was.
           e.preventDefault(); void setTuplet(Number(e.key)); return;
+        case "g": case "G":
+          // Where every other program puts "go to", for anybody who reaches
+          // for it before reading the menu.
+          e.preventDefault(); void jumpToMeasure(); return;
         case "c": case "C":
           e.preventDefault(); void copySelection(); return;
         case "x": case "X":
@@ -4746,6 +4752,7 @@ function setupKeys() {
         if (state.playing || state.pausedAt !== null) stop();
         else clearSelection();
         break;
+      case "j": action("jump"); break;
       case "m": action("add-measure"); break;
       case "l": action("set-lyrics"); break;
       case "F2": e.preventDefault(); toggleFingering(); break;
@@ -4931,6 +4938,146 @@ function moveCursorBy(delta) {
 }
 
 // scrollSelectionIntoView keeps the cursor on screen as it walks the music.
+/* ---------- going to a measure ---------- */
+
+// jumpToMeasure asks which bar and takes the page there.
+//
+// A long piece is a long way to scroll. Hunting for bar 184 by dragging is
+// the kind of thing a computer should be doing, and it is the first thing
+// anybody wants after being told "from bar 184" across a rehearsal room.
+async function jumpToMeasure() {
+  const total = measureCount();
+  if (!total) {
+    status("There is nothing to go to yet");
+    return;
+  }
+  const here = (state.selection?.measure ?? 0) + 1;
+  const answer = await ask({
+    title: "Go to measure",
+    label: `Measure number (1 to ${total})`,
+    value: String(here),
+    note: "The score is numbered from the first full bar.",
+  });
+  if (answer === null) return;
+
+  const n = Math.round(Number(String(answer).trim()));
+  if (!Number.isFinite(n) || n < 1) {
+    status("That is not a measure number");
+    return;
+  }
+  if (n > total) {
+    status(`There are only ${total} measures`);
+    return;
+  }
+  await goToMeasure(n - 1);
+}
+
+// measureCount is how many bars the part being written in has.
+function measureCount() {
+  let most = 0;
+  for (const h of state.hits) {
+    if (h.measure + 1 > most) most = h.measure + 1;
+  }
+  return most;
+}
+
+// goToMeasure moves the page to a bar, selects it and says where it landed.
+async function goToMeasure(index) {
+  const box = measureBox(index);
+  if (!box) {
+    status(`Measure ${index + 1} is not on the page`);
+    return;
+  }
+  selectMeasure(state.selection?.part ?? 0, index);
+  await glideTo(box);
+  flashMeasure(box);
+  status(`Measure ${index + 1}`);
+}
+
+// glideTo scrolls the view to a box, over time rather than in one jump.
+//
+// A page that simply appears somewhere else leaves you looking for the bar
+// you asked for: nothing on the screen connects where you were to where you
+// are. Moving there, even quickly, carries the eye along with it.
+//
+// The scroll is driven here rather than handed to the browser's own smooth
+// behaviour because that is a single speed for any distance — a crawl across
+// a long score, a lurch across a short one. This takes longer for a longer
+// journey, but not proportionally, and never longer than about half a
+// second.
+function glideTo(box) {
+  const wrap = $("#canvas-wrap");
+  if (!wrap) return Promise.resolve();
+
+  const z = state.zoom;
+  const off = tuneOffsetY();
+  // A third in from the left, so there is music either side of the bar: the
+  // bar before it is as much a part of "where am I" as the bar itself.
+  const wantX = Math.max(0, box.x0 * z - wrap.clientWidth * 0.33);
+  const wantY = Math.max(0, (box.top * z + off) - wrap.clientHeight * 0.3);
+  const maxX = Math.max(0, wrap.scrollWidth - wrap.clientWidth);
+  const maxY = Math.max(0, wrap.scrollHeight - wrap.clientHeight);
+  const toX = Math.min(wantX, maxX);
+  const toY = Math.min(wantY, maxY);
+
+  const fromX = wrap.scrollLeft;
+  const fromY = wrap.scrollTop;
+  const far = Math.hypot(toX - fromX, toY - fromY);
+  if (far < 2) return Promise.resolve();
+
+  // Somebody who has asked for less movement gets none of this.
+  const still = window.matchMedia &&
+                window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  if (still) {
+    wrap.scrollLeft = toX;
+    wrap.scrollTop = toY;
+    return Promise.resolve();
+  }
+
+  // Long enough to follow, short enough not to be waited on.
+  const ms = Math.min(520, 220 + far * 0.12);
+  const started = performance.now();
+  return new Promise((done) => {
+    const step = (now) => {
+      const t = Math.min(1, (now - started) / ms);
+      // Ease in and out: it sets off and arrives gently, which is what makes
+      // it read as the page moving rather than as the page being replaced.
+      const e = t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+      wrap.scrollLeft = fromX + (toX - fromX) * e;
+      wrap.scrollTop = fromY + (toY - fromY) * e;
+      if (t < 1) {
+        requestAnimationFrame(step);
+        return;
+      }
+      done();
+    };
+    requestAnimationFrame(step);
+  });
+}
+
+// flashMeasure lights the bar that was arrived at, and lets it fade.
+//
+// The selection marks it too, but a selection is a quiet thing that stays;
+// this says "here" once, at the moment the movement stops, and takes itself
+// away. The fading is the stylesheet's — it ends with the animation, so
+// there is nothing to clean up if the view moves again first.
+function flashMeasure(box) {
+  const svg = currentSVG();
+  if (!svg) return;
+  svg.querySelectorAll("rect.goto-flash").forEach((r) => r.remove());
+
+  const z = state.zoom;
+  const r = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+  r.setAttribute("class", "goto-flash");
+  r.setAttribute("x", String((box.x0 - 0.5) * z));
+  r.setAttribute("y", String((box.top - 1.5) * z));
+  r.setAttribute("width", String((box.x1 - box.x0 + 1) * z));
+  r.setAttribute("height", String((box.bottom - box.top + 3) * z));
+  r.setAttribute("rx", String(z * 0.4));
+  svg.appendChild(r);
+  r.addEventListener("animationend", () => r.remove());
+}
+
 function scrollSelectionIntoView() {
   const svg = currentSVG();
   if (!svg || !state.selection?.ref) return;

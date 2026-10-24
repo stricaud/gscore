@@ -247,6 +247,22 @@ Ledger lines only, because the stem of a note above a staff points down —
 towards the staff it belongs to — and the stem of one below it points up. The
 notehead is as far into the gap as either gets.
 
+## 12. A key change is two blocks, not one
+
+The naturals cancel the old key and the accidentals state the new one, and
+`Spacings.AfterKeyCancel` goes between them.
+
+Within a signature the accidentals are set close — `BetweenKeyAccidentals` is
+a tenth of a space — so that the group reads as one thing. Set that close to
+each other, the cancellation and the new key read as one block of mixed
+signs, and at a glance that is a key signature nobody can name. A natural is
+narrow (its advance is 0.672) which made it worse: the gap between the last
+natural and the first flat came to a tenth of a space of actual air.
+
+The width of a change is counted in `measureChange` and drawn in
+`drawSignatureChange`. Both have to know about the gap or the music after it
+is spaced against a width the engraver did not draw.
+
 ---
 
 ## What is still wrong
@@ -298,6 +314,8 @@ As properties over the layout, not as pictures:
   notehead.
 - `staffgap_test.go` — music reaching into the gap pushes the staves apart,
   and music inside the staff leaves them where they were.
+- `keychange_test.go` — the cancelling naturals are set apart from the new
+  key, while each block itself stays tight.
 
 **Write the failing case first and check it fails.** Twice here a test passed
 against the broken code because the fixture did not actually exercise the bug:

@@ -124,6 +124,7 @@ enum Menus {
             item("Paste", "paste", "v", target: t),
             item("Delete", "delete", "\u{8}", [], target: t),
             .separator(),
+            item("Go to Measure…", "jump", "g", target: t),
             item("Add Measure", "add-measure", "m", target: t),
         ])
     }

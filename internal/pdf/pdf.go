@@ -194,6 +194,21 @@ func (p *Page) SetRGB(r, g, b float64) {
 	fmt.Fprintf(&p.buf, "%.3f %.3f %.3f rg %.3f %.3f %.3f RG\n", r, g, b, r, g, b)
 }
 
+// SetFillRGB and SetStrokeRGB set the two colours separately.
+//
+// SetRGB sets both to the same thing, which is all music needs: a notehead
+// is one colour. A drawing is not — a white shape with a black outline is
+// two — so these exist for it.
+func (p *Page) SetFillRGB(r, g, b float64) {
+	p.gray = -1
+	fmt.Fprintf(&p.buf, "%.3f %.3f %.3f rg\n", r, g, b)
+}
+
+func (p *Page) SetStrokeRGB(r, g, b float64) {
+	p.gray = -1
+	fmt.Fprintf(&p.buf, "%.3f %.3f %.3f RG\n", r, g, b)
+}
+
 // SetLineWidth sets the stroke width in points.
 func (p *Page) SetLineWidth(w float64) {
 	if w == p.lineWide {
@@ -279,6 +294,56 @@ func (p *Page) Polygon(pts ...Point) {
 		fmt.Fprintf(&p.buf, " %.2f %.2f l", pts[i], pts[i+1])
 	}
 	p.buf.WriteString(" h f\n")
+}
+
+// An outline built up and then painted.
+//
+// Rect, Circle and Polygon each draw one shape and paint it in the same
+// breath, which is all the engraver ever needs: music is made of lines,
+// curves and glyphs. A drawing is not — it is a path of many pieces, filled
+// and stroked as one — so this is the general form, and it is the only thing
+// in here with a state of its own.
+//
+// Between the first operator of a path and the one that paints it, nothing
+// may change the graphics state: a width or a colour set in the middle
+// leaves the path unfinished and the rest of the page is drawn into the
+// wreckage. So the colour and the width go on before Begin.
+
+// Begin starts an outline at a point.
+func (p *Page) Begin(x, y Point) {
+	fmt.Fprintf(&p.buf, "%.3f %.3f m", x, y)
+}
+
+// LineTo adds a straight piece.
+func (p *Page) LineTo(x, y Point) {
+	fmt.Fprintf(&p.buf, " %.3f %.3f l", x, y)
+}
+
+// CurveTo adds a cubic Bézier, which is the only curve PDF knows.
+func (p *Page) CurveTo(c1x, c1y, c2x, c2y, x, y Point) {
+	fmt.Fprintf(&p.buf, " %.3f %.3f %.3f %.3f %.3f %.3f c",
+		c1x, c1y, c2x, c2y, x, y)
+}
+
+// ClosePath joins the end of the outline back to where it started.
+func (p *Page) ClosePath() { p.buf.WriteString(" h") }
+
+// Paint finishes the outline: filled, stroked, or both.
+//
+// Both is one operator rather than two paths, because a shape filled and
+// then stroked separately is drawn twice and the seam between the two shows
+// at the edges.
+func (p *Page) Paint(fill, stroke bool) {
+	switch {
+	case fill && stroke:
+		p.buf.WriteString(" B\n")
+	case fill:
+		p.buf.WriteString(" f\n")
+	case stroke:
+		p.buf.WriteString(" S\n")
+	default:
+		p.buf.WriteString(" n\n") // nothing to paint, but the path must end
+	}
 }
 
 // Text draws a string in a font at a size, with the given left baseline.

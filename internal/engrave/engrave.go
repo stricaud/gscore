@@ -1298,6 +1298,9 @@ func (e *engraver) signatureAt(p *model.Part, index int) (signatureChange, float
 		for range naturals {
 			w += smufl.Advance("accidentalNatural") + sp.BetweenKeyAccidentals
 		}
+		if len(naturals) > 0 && len(accidentals) > 0 {
+			w += sp.AfterKeyCancel
+		}
 		glyph := "accidentalSharp"
 		if m.Key.Fifths < 0 {
 			glyph = "accidentalFlat"

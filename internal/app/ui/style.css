@@ -491,6 +491,36 @@ body.native #menubar { padding-left: 12px; }
   pointer-events: none;
 }
 
+/* Where a jump landed.
+ *
+ * Going to measure 184 of a long score moves the page a long way, and a page
+ * that simply appears somewhere else leaves you looking for the bar you
+ * asked for. The scroll is animated so the eye can follow it, and the bar is
+ * lit as it arrives so the eye knows where it stopped. It fades by itself —
+ * a mark that stays is a mark to be cleared later, and this is not a
+ * selection.
+ */
+#canvas rect.goto-flash {
+  fill: var(--accent);
+  stroke: var(--accent);
+  stroke-width: 1.5;
+  pointer-events: none;
+  animation: goto-land 1.15s ease-out forwards;
+}
+
+@keyframes goto-land {
+  0%   { fill-opacity: 0;   stroke-opacity: 0;   }
+  18%  { fill-opacity: .30; stroke-opacity: .95; }
+  55%  { fill-opacity: .18; stroke-opacity: .75; }
+  100% { fill-opacity: 0;   stroke-opacity: 0;   }
+}
+
+/* Somebody who would rather the page did not move on its own gets the same
+ * thing without the movement: it still goes there and still says where. */
+@media (prefers-reduced-motion: reduce) {
+  #canvas rect.goto-flash { animation-duration: .6s; }
+}
+
 /* Ctrl or Command with a drag pans the score. */
 #canvas-wrap.panning { cursor: grabbing; }
 #canvas-wrap.panning svg { cursor: grabbing; }

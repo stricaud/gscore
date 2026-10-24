@@ -31,6 +31,7 @@ package pdf
 
 import (
 	"io"
+	"math"
 	"strings"
 
 	"github.com/stricaud/gscore/internal/brand"
@@ -97,6 +98,21 @@ func (o Options) Landscape() Options {
 		o.PageWidth, o.PageHeight = o.PageHeight, o.PageWidth
 	}
 	return o
+}
+
+// musicTop is where the music starts down the page.
+//
+// The top margin, or enough room for the stamp if that is larger. The mark
+// goes in the margin and the music must not be drawn into it — and the two
+// have to agree, because the same number says where a page is cut
+// (`pages`), where a point on the drawing lands (`y`) and how big the music
+// may be set (`Fit`). Three answers to that question is three different
+// pages.
+func (o Options) musicTop() float64 {
+	if room := float64(stampSize + 2*stampGap); o.MarginTop < room {
+		return room
+	}
+	return o.MarginTop
 }
 
 // LineWidth is how much room a system has on this paper, in staff spaces,
@@ -220,42 +236,81 @@ func (r *renderer) run() {
 	}
 }
 
-// stampSize is how tall the mascot is printed, in points.
-//
-// Eight millimetres or so: big enough to be recognised across a desk, small
-// enough that it stays a maker's mark in the margin rather than something
-// printed on somebody else's music.
-const stampSize = 22
+// How the mascot is stamped on a page.
+const (
+	// stampSize is the box he is drawn in, in points: a square, with the
+	// drawing fitted inside it and its proportions kept.
+	//
+	// Eleven millimetres. Big enough to be recognised across a desk, small
+	// enough to stay a maker's mark in the margin rather than something
+	// printed on somebody else's music — and small enough that the music
+	// keeps nearly all the page it had.
+	stampSize = 32
+	// stampGap is the air under him, between the stamp and the music.
+	stampGap = 8
+)
 
-// stamp prints Gilbert in the top left margin of the page.
+// stamp prints Gilbert in the top left of the page.
 //
 // Every page, not only the first: the pages of a score are pulled apart,
 // handed round a band and photocopied, and a mark on the first sheet alone
 // says nothing about the one in front of you.
 //
-// In the margin above the music, where there is nothing else — the title
-// block and the tempo mark both sit inside the text area, below it.
+// He is drawn, not placed: the outlines go onto the paper at whatever
+// resolution prints them, where a bitmap would be fixed at its own and go
+// soft the moment it is printed larger than it was drawn.
 func (r *renderer) stamp() {
-	img, err := brand.Gilbert()
-	if err != nil || img == nil {
-		return // a logo that will not decode is not worth failing a score for
+	d, err := brand.GilbertDrawing()
+	if err != nil || d == nil || len(d.Shapes) == 0 {
+		return // a logo that will not read is not worth failing a score for
 	}
-	im := r.doc.Image("gilbert", img)
-	if im == nil {
+	side := math.Max(d.Width, d.Height)
+	if side <= 0 {
 		return
 	}
-	b := img.Bounds()
-	h := float64(stampSize)
-	w := h * float64(b.Dx()) / float64(b.Dy())
-	// Centred in the top margin, so it sits clear of the music whatever the
-	// margin is set to, and never on top of it.
-	top := r.opt.MarginTop
-	if top < h+4 {
-		top = h + 4
+	s := stampSize / side
+
+	// The top left of the box he is drawn in. Up the page from the music,
+	// which has been given room for him in musicTop.
+	left := r.opt.MarginLeft
+	top := r.opt.PageHeight - (r.opt.musicTop()-stampSize-stampGap)/2 -
+		stampSize - stampGap/2
+	if top > r.opt.PageHeight-2 {
+		top = r.opt.PageHeight - 2
 	}
-	y := r.opt.PageHeight - (top+h)/2 - h/2
-	r.page.Image(im, pdf.Point(r.opt.MarginLeft), pdf.Point(y),
-		pdf.Point(w), pdf.Point(h))
+
+	// SVG measures down the page and PDF measures up it, so y is turned
+	// over here — once, in the one place that knows both.
+	x := func(v float64) pdf.Point { return pdf.Point(left + v*s) }
+	y := func(v float64) pdf.Point { return pdf.Point(top - v*s) }
+
+	r.page.Save()
+	for _, sh := range d.Shapes {
+		if sh.Fill != nil {
+			r.page.SetFillRGB(sh.Fill.R, sh.Fill.G, sh.Fill.B)
+		}
+		if sh.Stroke != nil {
+			r.page.SetStrokeRGB(sh.Stroke.R, sh.Stroke.G, sh.Stroke.B)
+			r.page.SetLineWidth(sh.StrokeWidth * s)
+		}
+		for _, op := range sh.Ops {
+			switch op.Kind {
+			case 'm':
+				r.page.Begin(x(op.P[0]), y(op.P[1]))
+			case 'l':
+				r.page.LineTo(x(op.P[0]), y(op.P[1]))
+			case 'c':
+				r.page.CurveTo(x(op.P[0]), y(op.P[1]), x(op.P[2]), y(op.P[3]),
+					x(op.P[4]), y(op.P[5]))
+			case 'z':
+				r.page.ClosePath()
+			}
+		}
+		r.page.Paint(sh.Fill != nil, sh.Stroke != nil)
+	}
+	r.page.Restore()
+	// The music is drawn in black, and the drawing was not.
+	r.page.SetGray(0)
 }
 
 // band is one page's worth of the layout, in staff spaces.
@@ -268,7 +323,7 @@ type band struct{ top, bottom float64 }
 // system is a score somebody meant to print on a larger sheet, and saying so
 // by printing it is clearer than silently losing a line of music.
 func (r *renderer) pages() []band {
-	usable := (r.opt.PageHeight - r.opt.MarginTop - r.opt.MarginBottom) / r.opt.StaffSpace
+	usable := (r.opt.PageHeight - r.opt.musicTop() - r.opt.MarginBottom) / r.opt.StaffSpace
 	if usable <= 0 {
 		usable = 1
 	}
@@ -309,7 +364,7 @@ func (r *renderer) x(v float64) pdf.Point {
 }
 
 func (r *renderer) y(v float64) pdf.Point {
-	return pdf.Point(r.opt.PageHeight-r.opt.MarginTop) - pdf.Point(v-r.offset)*r.s
+	return pdf.Point(r.opt.PageHeight-r.opt.musicTop()) - pdf.Point(v-r.offset)*r.s
 }
 
 // visible says whether something at this height belongs on this page.

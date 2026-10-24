@@ -1,0 +1,113 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Gilbert — the gscore mascot, a bug holding two swords.
+
+  Hand-vectorised from pixmaps/gilbert.png.  The viewBox matches the original
+  bitmap (321x317) and every coordinate below is in those pixel units, so any
+  shape can be checked against the PNG one-to-one.
+
+  The background is left transparent.  The original PNG has a white fringe
+  around the artwork, left over from cutting out its background; that fringe
+  is an artefact and is deliberately not reproduced here.
+
+  Drawing order: antennae -> body -> hair -> swords -> eyes.
+  The hair tufts pass behind the swords, so each blade stays unbroken
+  from its tip down to the handle.
+-->
+<svg xmlns="http://www.w3.org/2000/svg"
+     viewBox="0 0 321 317" width="321" height="317">
+
+  <title>Gilbert</title>
+  <desc>A round black cartoon bug with two antennae and two hair tufts, holding a sword on each side.</desc>
+
+  <!-- Line art: one weight for the outlines, one ink colour throughout. -->
+  <g id="gilbert" stroke="#000000" stroke-width="2.5"
+     stroke-linejoin="round" stroke-linecap="round">
+
+    <!-- ============ antennae ============
+         Drawn first so the stalks disappear behind the body. -->
+    <g id="antennae" fill="#000000">
+      <path d="M 161,122 C 157,100 152,70 137,46" fill="none" stroke-width="5.5"/>
+      <circle cx="130" cy="38" r="12.5" stroke="none"/>
+      <path d="M 197,122 C 203,104 214,84 239,66" fill="none" stroke-width="6"/>
+      <circle cx="252" cy="61" r="13" stroke="none"/>
+    </g>
+
+    <!-- ============ body ============ -->
+    <ellipse id="body" cx="149" cy="218" rx="131" ry="97" fill="#000000" stroke="none"/>
+
+    <!-- loose strands sweeping back from the left tuft, over the shoulder -->
+    <g id="wisps" fill="none" stroke-width="1.8">
+      <path d="M 96,106 C 112,99 132,101 146,112"/>
+      <path d="M 99,116 C 112,108 126,107 137,113"/>
+    </g>
+
+    <!-- highlight low on the right flank -->
+    <g id="highlight" stroke="none">
+      <ellipse cx="209" cy="272.5" rx="11" ry="10" fill="#ffffff"/>
+      <path d="M 213,251 A 24,24 0 0 1 232,273" fill="none" stroke="#ffffff" stroke-width="2.2"/>
+    </g>
+
+    <!-- ============ hair ============
+         Two tufts, each a ring of outward bulges around an ellipse.
+         One arc per bulge, so they can be reshaped individually. -->
+    <path id="hair-left" fill="#ffffff"
+          d="M 45.0 108.5
+             A 16.5 16.5 0 0 1 65.5 97.0
+             A 19.9 19.9 0 0 1 93.9 99.0
+             A 14.4 14.4 0 0 1 108.8 113.1
+             A 12.8 12.8 0 0 1 99.0 128.6
+             A 19.4 19.4 0 0 1 71.9 133.9
+             A 18.0 18.0 0 0 1 47.8 124.9
+             A 11.7 11.7 0 0 1 45.0 108.5 Z"/>
+
+    <path id="hair-right" fill="#ffffff"
+          d="M 224.0 141.1
+             A 15.0 15.0 0 0 1 241.1 128.2
+             A 17.7 17.7 0 0 1 266.3 127.4
+             A 15.5 15.5 0 0 1 284.9 139.3
+             A 16.4 16.4 0 0 1 286.0 162.7
+             A 19.8 19.8 0 0 1 268.9 185.3
+             A 17.7 17.7 0 0 1 243.7 186.6
+             A 19.5 19.5 0 0 1 225.1 165.9
+             A 17.4 17.4 0 0 1 224.0 141.1 Z"/>
+
+    <!-- ============ left sword ============
+         Sweeping up to the right; the blade widens towards its cut tip. -->
+    <g id="sword-left">
+      <path d="M 40,86 L 54,101 L 53,122 L 46,124 L 45,113
+               L 34,127 L 11,127 L 2,117 L 2,103 L 18,91 Z" fill="#000000"/>
+      <path d="M 50,96 Q 117,70 184,24 L 187,36 Q 120,79 52,100 Z" fill="#eaefef"/>
+    </g>
+
+    <!-- ============ right sword ============
+         Held upright, almost vertical. -->
+    <g id="sword-right">
+      <path d="M 278,165 L 300,160 L 312,172 L 319,190
+               L 314,204 L 303,211 L 292,202 L 283,182 Z" fill="#000000"/>
+      <path d="M 273,6 L 283,4 Q 282,88 302,158 L 290,161 Q 274,86 273,6 Z" fill="#eaefef"/>
+    </g>
+
+    <!-- ============ eyes ============
+         Pupil high and inboard, with a crescent catchlight: the white disc
+         is bitten into by a black one offset down and to the left. -->
+    <g id="eyes" stroke="none">
+      <circle cx="102.5" cy="152"   r="28.5" fill="#ffffff"/>
+      <circle cx="104"   cy="142"   r="13"   fill="#000000"/>
+      <circle cx="111"   cy="139"   r="7"    fill="#ffffff"/>
+      <circle cx="108"   cy="142.5" r="6"    fill="#000000"/>
+
+      <circle cx="165"   cy="165.5" r="28"   fill="#ffffff"/>
+      <circle cx="166"   cy="156.5" r="12.5" fill="#000000"/>
+      <circle cx="172"   cy="153.5" r="7"    fill="#ffffff"/>
+      <circle cx="169"   cy="157"   r="6"    fill="#000000"/>
+    </g>
+
+    <!-- flecks in the tufts -->
+    <g id="flecks" fill="#000000" stroke="none">
+      <circle cx="64"  cy="111" r="1.6"/>
+      <circle cx="272" cy="140" r="1.6"/>
+    </g>
+
+  </g>
+</svg>

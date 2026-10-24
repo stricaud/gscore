@@ -51,6 +51,7 @@ cp "$root/web/boot.js" "$out/"
 # the PDF writer stamps the same drawing on every page it prints. As a page
 # he is a plain file, so he is copied beside the rest.
 cp "$root/internal/brand/gilbert.png" "$out/"
+cp "$root/internal/brand/gilbert.svg" "$out/"
 
 # The font is served by the Go handler in the application; as a page it is a
 # plain file, so it is copied beside the rest.

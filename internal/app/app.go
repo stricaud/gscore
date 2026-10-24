@@ -280,6 +280,11 @@ func (a *App) routes(mux *http.ServeMux) {
 		w.Header().Set("Cache-Control", "max-age=86400")
 		w.Write(brand.GilbertPNG)
 	})
+	mux.HandleFunc("/gilbert.svg", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "image/svg+xml")
+		w.Header().Set("Cache-Control", "max-age=86400")
+		w.Write(brand.GilbertSVG)
+	})
 	a.APIRoutes(mux)
 }
 

@@ -308,6 +308,9 @@ func (e *engraver) drawSignatureChange(part *model.Part, b measureBox, x float64
 			})
 			x += smufl.Advance("accidentalNatural") + sp.BetweenKeyAccidentals
 		}
+		if len(naturals) > 0 && len(accidentals) > 0 {
+			x += sp.AfterKeyCancel
+		}
 		glyph := "accidentalSharp"
 		if b.change.key.Fifths < 0 {
 			glyph = "accidentalFlat"

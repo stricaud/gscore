@@ -47,7 +47,7 @@ const state = {
   selection: null,
 
   hits: [],
-  tool: { duration: "quarter", accidental: "none", rest: false, drum: null },
+  tool: { duration: "quarter", dots: 0, accidental: "none", rest: false, drum: null },
   // The kit, once fetched. A score without a drum staff never asks for it.
   kit: null,
   // A file may hold many scores; showAll puts the whole book on screen at
@@ -111,7 +111,12 @@ async function paletteAction(item) {
   }
 
   if (item.apply === "dot") {
-    status("Dotted notes are written by choosing the duration; the dot tool is not wired yet");
+    // The dot is part of how long the next note is, so it belongs to the
+    // value held rather than being a mark applied afterwards. Pressing it
+    // again takes it off.
+    state.tool.dots = state.tool.dots > 0 ? 0 : 1;
+    markPaletteTool((label) => label === currentToolLabel());
+    status(durationName(state.tool.duration, state.tool.dots));
     return;
   }
   // An ending is a bracket over whole bars, so it acts on the measure the
@@ -156,6 +161,60 @@ async function paletteAction(item) {
   if (item.staff) {
     await setStaffProperty(item.staff, item.value);
   }
+}
+
+// pickDuration chooses what the next note written is worth.
+//
+// It is the palette's job done from the keyboard, and it says so: a value
+// chosen and nothing written yet is only visible in the toolbox and the
+// status line, so both are brought up to date.
+//
+// It turns the rest tool off. A number asks for a note; a rest of that value
+// is the rest tool, or Enter, which writes one at the cursor whatever is
+// held.
+function pickDuration(dur, dots) {
+  state.tool.duration = dur;
+  state.tool.dots = dots || 0;
+  state.tool.rest = false;
+  markPaletteTool((label) => label === currentToolLabel());
+  status(durationName(dur, state.tool.dots));
+}
+
+// dotSelection lengthens the note that is selected by half.
+//
+// The dot in the palette belongs to the value being held — "3" is the half
+// button and then the dot — and this is the same dot aimed at a note that
+// is already on the page. With nothing selected it falls back to the value
+// held, so the key does something sensible either way.
+async function dotSelection() {
+  const sel = state.selection;
+  if (!hasSelection()) {
+    state.tool.dots = state.tool.dots > 0 ? 0 : 1;
+    markPaletteTool((label) => label === currentToolLabel());
+    status(durationName(state.tool.duration, state.tool.dots));
+    return;
+  }
+  const p = new URLSearchParams({
+    part: String(sel.part), measure: String(sel.measure), at: String(sel.at),
+  });
+  const res = await fetch("/api/dot?" + p.toString(), { method: "POST" });
+  if (!res.ok) {
+    status("Could not dot that: " + (await res.text()).trim());
+    return;
+  }
+  const d = await res.json();
+  await refreshScore();
+  markSelection();
+  status(d.dots > 0 ? "Dotted — now " + d.dur : "Dot removed — now " + d.dur);
+}
+
+// durationName is what a value is called, for saying so.
+function durationName(dur, dots) {
+  const name = { whole: "whole", half: "half", quarter: "quarter",
+                 eighth: "eighth", sixteenth: "sixteenth", "32nd": "32nd",
+                 "64th": "64th" }[dur] || dur;
+  const dotted = ["", "Dotted ", "Double-dotted "][dots || 0] || "";
+  return dotted + name + " note";
 }
 
 // currentToolLabel names the tool held, so the palette can show it.
@@ -1289,6 +1348,7 @@ async function insertAtSelection(rest, keepSelection) {
     dur: state.tool.duration,
     kind: rest ? "rest" : "note",
   });
+  if (state.tool.dots > 0) p.set("dots", String(state.tool.dots));
   if (replacing) p.set("replace", "1");
   if (!rest && state.tool.accidental !== "none") {
     p.set("accidental", state.tool.accidental);
@@ -4759,6 +4819,21 @@ function setupKeys() {
         if (state.playing || state.pausedAt !== null) stop();
         else clearSelection();
         break;
+      // The number row picks what the next note is worth, the way the
+      // palette does: the figures run down the values, with the dotted
+      // ones beside the plain ones they lengthen.
+      case "1": pickDuration("whole", 0); break;
+      case "2": pickDuration("half", 0); break;
+      case "3": pickDuration("half", 1); break;
+      case "4": pickDuration("quarter", 0); break;
+      case "5": pickDuration("quarter", 1); break;
+      case "8": pickDuration("eighth", 0); break;
+      case "9": pickDuration("sixteenth", 0); break;
+      case "0": pickDuration("32nd", 0); break;
+      // And the dot on its own, for a note already written: it lengthens
+      // that note by half, and pressing it again takes it back.
+      case ".": void dotSelection(); break;
+
       case "j": action("jump"); break;
       case "m": action("add-measure"); break;
       case "l": action("set-lyrics"); break;
@@ -4785,9 +4860,8 @@ function setupKeys() {
         e.preventDefault();
         action("fullscreen");
         break;
-      case "+": case "=": setZoom(state.zoom + 1); break;
+      case "+": setZoom(state.zoom + 1); break;
       case "-": setZoom(state.zoom - 1); break;
-      case "0": setZoom(8); break;
     }
   });
 }

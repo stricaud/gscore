@@ -69,6 +69,28 @@ var durationNames = map[string]model.Duration{
 	"64th":      {Num: 1, Den: 64},
 }
 
+// dotted lengthens a note by its dots: half as long again for the first,
+// half of that again for the second.
+//
+// A dot is part of how long a note is, not a mark on it — a dotted half is
+// three quarters of a whole note and nothing in the model needs to know it
+// was written with a dot. The engraver works the other way round, finding
+// the notehead and the dots that spell a duration, so this has only to get
+// the length right.
+func dotted(d model.Duration, dots string) model.Duration {
+	n, err := strconv.Atoi(dots)
+	if err != nil || n <= 0 {
+		return d
+	}
+	if n > 2 {
+		n = 2 // nobody writes a third dot
+	}
+	// Each dot adds half of the note again, then a quarter, then an eighth:
+	// the whole thing comes to twice the note less what is left, which is
+	// (2^(n+1) - 1) over 2^n. A double-dotted quarter is seven sixteenths.
+	return d.Scale(1<<(n+1)-1, 1<<n).Reduced()
+}
+
 var accidentalByName = map[string]model.Accidental{
 	"":             model.NoAccidental,
 	"none":         model.NoAccidental,
@@ -104,6 +126,7 @@ func (a *App) handleInsert(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		dur = model.Duration{Num: 1, Den: 4}
 	}
+	dur = dotted(dur, q.Get("dots"))
 	acc := accidentalByName[q.Get("accidental")]
 
 	a.mu.Lock()
@@ -2986,4 +3009,70 @@ func (a *App) handleTremolo(w http.ResponseWriter, r *http.Request) {
 		m.Tremolo = &model.Tremolo{Strokes: strokes, Buzz: buzz}
 	}
 	writeJSON(w, map[string]int{"changed": len(marks)})
+}
+
+// handleDot lengthens the selected note by half, or takes that back.
+//
+// The dot is part of how long a note is: a dotted half is a half and a
+// quarter, three quarters of a whole note. So this changes the duration
+// rather than adding a mark, and the engraver finds the dot again on its
+// way out — it draws whatever notehead and dots spell the length it is
+// given.
+//
+// On a note that is already dotted it takes the dot off, because the thing
+// in front of you is one button and pressing it twice should leave the note
+// as it was.
+func (a *App) handleDot(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST required", http.StatusMethodNotAllowed)
+		return
+	}
+	q := r.URL.Query()
+	partIdx, _ := strconv.Atoi(q.Get("part"))
+	measIdx, _ := strconv.Atoi(q.Get("measure"))
+	at, err := strconv.Atoi(q.Get("at"))
+	if err != nil {
+		at = -1
+	}
+
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	p, m, err := a.locate(partIdx, measIdx)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	v := m.Voices[0]
+	if len(v.Elements) == 0 {
+		http.Error(w, "there is nothing there to dot", http.StatusBadRequest)
+		return
+	}
+	if at <= 0 || at > len(v.Elements) {
+		at = len(v.Elements)
+	}
+	el := v.Elements[at-1]
+
+	// What the note is written as now. A length that no notehead spells —
+	// one member of a tuplet, say — has no dot to add or take away.
+	value, dots, ok := el.Duration().Written()
+	if !ok {
+		http.Error(w, "that note's length is not one a dot can change",
+			http.StatusBadRequest)
+		return
+	}
+	plain := value.Duration()
+	next := plain
+	if dots == 0 {
+		next = dotted(plain, "1")
+	}
+	setDuration(el, next)
+
+	// What no longer fits the bar moves into the next one, as when writing.
+	spill(p, measIdx)
+	measure, idx := findElement(p, measIdx, el)
+	writeJSON(w, map[string]any{
+		"dots": map[bool]int{true: 0, false: 1}[dots > 0],
+		"dur":  next.String(), "measure": measure, "at": idx,
+	})
 }

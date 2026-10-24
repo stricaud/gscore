@@ -357,6 +357,7 @@ func (a *App) APIRoutes(mux *http.ServeMux) {
 		"/api/slur":            a.handleSlur,
 		"/api/tie":             a.handleTie,
 		"/api/stem":            a.handleStem,
+		"/api/dot":             a.handleDot,
 		"/api/tuplet":          a.handleTuplet,
 		"/api/tremolo":         a.handleTremolo,
 		"/api/accidental":      a.handleAccidental,

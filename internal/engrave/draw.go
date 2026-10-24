@@ -57,6 +57,37 @@ type placed struct {
 	stemDir int
 }
 
+// placedOf describes one element: what it is, how it is written, and where it
+// sits on the staff. Not where it sits along the bar — that is the one thing
+// about an element the spacing decides rather than reads, and the spacing has
+// to be able to ask these same questions before it can decide it.
+func (e *engraver) placedOf(clef model.Clef, el model.Element, at model.Duration) *placed {
+	p := &placed{start: at}
+	switch el := el.(type) {
+	case *model.Note:
+		p.note = el
+		p.step = e.noteStep(clef, el)
+		p.lo, p.hi = p.step, p.step
+		p.value, p.dots = written(el.WrittenDuration(el.Dur))
+	case *model.Chord:
+		p.chord = el
+		p.lo, p.hi = e.chordRange(clef, el)
+		p.step = p.hi
+		p.value, p.dots = written(el.WrittenDuration(el.Dur))
+	case *model.Rest:
+		p.rest = el
+		p.value, p.dots = written(el.WrittenDuration(el.Dur))
+		// A rest is drawn on the middle line, and anything placed against
+		// it — a fermata over it, a hairpin closing on it — is placed from
+		// the same position rather than from the bottom line, which is
+		// where a step of zero would have put it.
+		p.step, p.lo, p.hi = middleStep, middleStep, middleStep
+	default:
+		p.value = model.Quarter
+	}
+	return p
+}
+
 // marks are what this element carries: its articulations, its dynamic, and
 // the ends of anything reaching across it.
 //
@@ -130,29 +161,8 @@ func (e *engraver) drawMeasure(part *model.Part, b measureBox, x, end float64, s
 		s := &b.slots[i]
 		x += s.lead * stretch
 
-		p := &placed{x: x, index: s.index, start: at, width: s.width * stretch}
-		switch el := s.elem.(type) {
-		case *model.Note:
-			p.note = el
-			p.step = e.noteStep(part.Clef, el)
-			p.lo, p.hi = p.step, p.step
-			p.value, p.dots = written(el.WrittenDuration(el.Dur))
-		case *model.Chord:
-			p.chord = el
-			p.lo, p.hi = e.chordRange(part.Clef, el)
-			p.step = p.hi
-			p.value, p.dots = written(el.WrittenDuration(el.Dur))
-		case *model.Rest:
-			p.rest = el
-			p.value, p.dots = written(el.WrittenDuration(el.Dur))
-			// A rest is drawn on the middle line, and anything placed
-			// against it — a fermata over it, a hairpin closing on it —
-			// is placed from the same position rather than from the bottom
-			// line, which is where a step of zero would have put it.
-			p.step, p.lo, p.hi = middleStep, middleStep, middleStep
-		default:
-			p.value = model.Quarter
-		}
+		p := e.placedOf(part.Clef, s.elem, at)
+		p.x, p.index, p.width = x, s.index, s.width*stretch
 		items = append(items, p)
 		at = at.Add(s.elem.Duration())
 

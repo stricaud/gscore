@@ -1016,7 +1016,7 @@ func (e *engraver) layout() {
 		for mi, m := range p.Measures {
 			e.clef = p.Clef
 			ch, w := e.signatureAt(p, mi)
-			b := e.measureBox(p, m)
+			b := e.measureBox(p, m, mi)
 			b.index = mi
 			b.change, b.prefix = ch, w
 			b.ideal += w
@@ -1038,7 +1038,7 @@ func (e *engraver) layout() {
 	// Room to carry on writing, when the piece has not been declared over.
 	if e.writesAhead(parts, maxMeasures) {
 		for pi, p := range parts {
-			b := e.measureBox(p, &model.Measure{Voices: []*model.Voice{{}}})
+			b := e.measureBox(p, &model.Measure{Voices: []*model.Voice{{}}}, maxMeasures)
 			b.index = maxMeasures
 			b.ahead = true
 			boxes[pi] = append(boxes[pi], b)
@@ -1393,7 +1393,7 @@ func (e *engraver) keySignatureWidth(k model.KeySignature) float64 {
 
 // measureBox computes an ideal and a minimum width for a measure, and claims
 // a Ref for each of its elements.
-func (e *engraver) measureBox(p *model.Part, m *model.Measure) measureBox {
+func (e *engraver) measureBox(p *model.Part, m *model.Measure, index int) measureBox {
 	sp := e.opt.Spacings
 	box := measureBox{m: m}
 
@@ -1401,14 +1401,20 @@ func (e *engraver) measureBox(p *model.Part, m *model.Measure) measureBox {
 	if len(m.Voices) > 0 {
 		elems = m.Voices[0].Elements
 	}
-	for _, el := range elems {
+	flags := e.flagRoom(p, elems, index)
+	for i, el := range elems {
 		s := slot{elem: el, index: e.nextRef}
 		e.nextRef++
 		s.width = e.elementWidth(el)
 		s.lead = e.accidentalLead(el) + graceLead(el)
+		least := sp.MinNote
+		if room := flags[i]; room > 0 {
+			s.width = math.Max(s.width, room)
+			least = math.Max(least, room)
+		}
 		box.slots = append(box.slots, s)
 		box.ideal += s.lead + s.width
-		box.minimum += s.lead + sp.MinNote
+		box.minimum += s.lead + least
 	}
 	if len(elems) == 0 {
 		// An empty measure still needs room to be clicked into.
@@ -1537,6 +1543,63 @@ func (e *engraver) accidentalLead(el model.Element) float64 {
 		return 0
 	}
 	return sp.BeforeAccidental + widest + sp.AccidentalToNote
+}
+
+// afterFlag is the air left between a flag and whatever is written next.
+//
+// Little, because a flag is a thin curl and not a block: it has to be seen to
+// clear the next note, not to stand apart from it.
+const afterFlag = 0.2
+
+// flagRoom is how wide each element of a measure has to be for its flag,
+// indexed as the elements are. Zero for anything that carries no flag, which
+// is most of a bar.
+//
+// A flag hangs off the right of the stem, and on an up-stem note the stem
+// stands at the right edge of the head — so the note's ink reaches further
+// right than its duration says, and a rule that only knows about durations
+// sets the next notehead underneath the curl. Which notes those are is not
+// known from one element either: an eighth in a run is beamed and has no
+// flag at all, and a low one in a group of high ones has its stem turned
+// down, where the flag hangs over the head it belongs to and asks for
+// nothing. So the question is asked of the bar, the way the drawing asks it.
+func (e *engraver) flagRoom(p *model.Part, elems []model.Element, index int) map[int]float64 {
+	if len(elems) == 0 {
+		return nil
+	}
+	items := make([]*placed, 0, len(elems))
+	at := model.Duration{Num: 0, Den: 1}
+	for _, el := range elems {
+		items = append(items, e.placedOf(p.Clef, el, at))
+		at = at.Add(el.Duration())
+	}
+	time := p.TimeAt(index)
+	beamed := make(map[*placed]bool, len(items))
+	for _, g := range beamGroups(items, time) {
+		for _, q := range g {
+			beamed[q] = true
+		}
+	}
+	e.setStemDirections(items, time)
+
+	var out map[int]float64
+	for i, it := range items {
+		if beamed[it] || it.stemDir < 0 {
+			continue
+		}
+		g := smufl.FlagGlyph(it.value, true)
+		if g == "" {
+			continue
+		}
+		if out == nil {
+			out = make(map[int]float64, 4)
+		}
+		// Measured from where drawSingleStem puts the flag, so that the
+		// room reserved and the ink drawn are the same measurement.
+		out[i] = noteheadWidth(it.value) - e.opt.Defaults.StemThickness/2 +
+			smufl.Advance(g) + afterFlag
+	}
+	return out
 }
 
 // elementWidth is the proportional spacing rule that replaces the fixed

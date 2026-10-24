@@ -76,7 +76,7 @@ func Fit(s *model.Score, o Options, eo engrave.Options) (Options, engrave.Option
 	for i := 0; i < 3; i++ {
 		eo.LineWidth = o.LineWidth(eo.Spacings)
 		need := tallestSystem(engrave.Engrave(s, eo))
-		room := (o.PageHeight - o.musicTop() - o.MarginBottom) * fitSlack
+		room := (o.PageHeight - o.MarginTop - o.MarginBottom) * fitSlack
 		if need <= 0 || need*o.StaffSpace <= room {
 			break // it fits
 		}

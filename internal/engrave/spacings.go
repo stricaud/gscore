@@ -32,6 +32,12 @@ package engrave
 type Spacings struct {
 	// NoteBase is the ideal width of a quarter note's slot. Other durations
 	// scale from it, which is what makes justification possible.
+	//
+	// It decides how much music goes on a line, and through that how many
+	// pages a score runs to: at 3.2 a part came out a third longer than it
+	// needed to be, with lines two thirds full of air. A bar of four
+	// quarters is about 28mm at the size a part is printed, which is what a
+	// printed part looks like.
 	NoteBase float64
 	// NoteExponent shapes that scaling. At 1 the spacing is strictly
 	// proportional to duration, which engravers find too wide for long notes
@@ -71,7 +77,9 @@ type Spacings struct {
 	BetweenMeasures float64 // Measures.slbm
 
 	// StaffGap and SystemGap are vertical, measured between the staves of one
-	// system and between systems. The original had no equivalent: it drew one
+	// system and between systems. A system's own extent already holds the
+	// room its marks need above and below it, so SystemGap is the air on top
+	// of that and does not need to be much. The original had no equivalent: it drew one
 	// unbroken strip and never had to lay out a second line.
 	StaffGap  float64
 	SystemGap float64
@@ -100,7 +108,7 @@ func (s Spacings) marginY() float64 {
 // DefaultSpacings returns the starting table, in staff spaces.
 func DefaultSpacings() Spacings {
 	return Spacings{
-		NoteBase:     3.2,
+		NoteBase:     2.8,
 		NoteExponent: 0.6,
 		MinNote:      1.6,
 
@@ -122,7 +130,7 @@ func DefaultSpacings() Spacings {
 		BetweenMeasures: 0.6,
 
 		StaffGap:  10,
-		SystemGap: 9,
+		SystemGap: 5,
 
 		Margin: 4,
 	}

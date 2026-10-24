@@ -263,6 +263,40 @@ The width of a change is counted in `measureChange` and drawn in
 `drawSignatureChange`. Both have to know about the gap or the music after it
 is spaced against a width the engraver did not draw.
 
+## 13. The meter is written once; the clef and key are written always
+
+See `meterAt` in `internal/engrave/engrave.go`.
+
+A player landing anywhere in a piece has to know the clef and the key, so
+both are repeated at the head of every system. The meter is not: it is
+written where the piece begins and wherever it changes, and nowhere else.
+Repeated at every system it says "the meter changes here" to anybody reading
+— and it costs about three staff spaces of every line it is printed on, which
+in a part is a bar every few systems.
+
+The width is counted in `prefixWidth` and drawn in `drawSystem`; both ask
+`meterAt`, or the music is spaced against a width that was never drawn.
+
+## 14. A system's bottom is measured, not estimated
+
+The marks under a staff are placed against whatever is already there — a
+dynamic under a slur that dips low ends up lower than any count of "there is
+a dynamic here" can predict. The room is reserved from the model before
+anything is drawn (`marksBelow`, `roomBelow`, `staffReach`), because a
+system's height has to be settled before its contents are laid out; but once
+the staff is drawn, `skyline.reach` says where things actually went, and the
+system's recorded bottom is taken from that.
+
+Without the measurement a crescendo that began four bars earlier was drawn
+nine spaces below its own staff, in the gap, where it reads as belonging to
+the system underneath — and since pages are cut between systems, it printed
+on the next page over somebody else's first bar.
+
+The test for this is the one that matters: **nothing drawn between one
+system's top and the next one's may fall outside the first one's recorded
+extent**. Stating it as "a hairpin is inside some system" is not enough — the
+hairpin that caused this was inside the *next* system, which is the bug.
+
 ---
 
 ## What is still wrong
@@ -316,6 +350,10 @@ As properties over the layout, not as pictures:
   and music inside the staff leaves them where they were.
 - `keychange_test.go` — the cancelling naturals are set apart from the new
   key, while each block itself stays tight.
+- `meter_test.go` — the meter is written once and at changes; the clef and
+  the key are written on every system.
+- `systemroom_test.go` — nothing drawn under a staff falls past its own
+  system's extent, and systems do not overlap.
 
 **Write the failing case first and check it fails.** Twice here a test passed
 against the broken code because the fixture did not actually exercise the bug:

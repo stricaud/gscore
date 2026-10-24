@@ -100,21 +100,6 @@ func (o Options) Landscape() Options {
 	return o
 }
 
-// musicTop is where the music starts down the page.
-//
-// The top margin, or enough room for the stamp if that is larger. The mark
-// goes in the margin and the music must not be drawn into it — and the two
-// have to agree, because the same number says where a page is cut
-// (`pages`), where a point on the drawing lands (`y`) and how big the music
-// may be set (`Fit`). Three answers to that question is three different
-// pages.
-func (o Options) musicTop() float64 {
-	if room := float64(stampSize + 2*stampGap); o.MarginTop < room {
-		return room
-	}
-	return o.MarginTop
-}
-
 // LineWidth is how much room a system has on this paper, in staff spaces,
 // which is what the engraver needs telling before it lays anything out.
 //
@@ -149,7 +134,8 @@ func Render(w io.Writer, lay *engrave.Layout, opt Options) error {
 	doc.Subject = opt.Subject
 	doc.Creator = brand.Name
 
-	r := &renderer{doc: doc, lay: lay, opt: opt, s: pdf.Point(opt.StaffSpace)}
+	r := &renderer{doc: doc, lay: lay, opt: opt, s: pdf.Point(opt.StaffSpace),
+		first: true}
 
 	music, err := doc.Embed("Bravura", smufl.FontData())
 	if err != nil {
@@ -181,8 +167,9 @@ func RenderAll(w io.Writer, layouts []*engrave.Layout, opt Options) error {
 	if err != nil {
 		return err
 	}
-	for _, lay := range layouts {
-		r := &renderer{doc: doc, lay: lay, opt: opt, s: pdf.Point(opt.StaffSpace)}
+	for i, lay := range layouts {
+		r := &renderer{doc: doc, lay: lay, opt: opt, s: pdf.Point(opt.StaffSpace),
+			first: i == 0}
 		r.music = music
 		r.text = doc.Standard(pdf.Times)
 		r.textBold = doc.Standard(pdf.TimesBold)
@@ -208,15 +195,24 @@ type renderer struct {
 	page *pdf.Page
 	// offset is how far down the layout this page starts, in staff spaces.
 	offset float64
+	// first says this renderer draws the first page of the document, which
+	// is the one that carries the maker's mark. A book of tunes is many
+	// layouts and one document, so it is the document's first page that
+	// counts, not each layout's.
+	first bool
 }
 
 // run cuts the layout into pages and draws each one.
 func (r *renderer) run() {
+	first := r.first
 	for _, band := range r.pages() {
 		r.offset = band.top
 		r.page = r.doc.NewPage(pdf.Point(r.opt.PageWidth), pdf.Point(r.opt.PageHeight))
 		r.page.SetGray(0)
-		r.stamp()
+		if first {
+			r.stamp()
+			first = false
+		}
 
 		// Nothing from the next page's systems may bleed into this one. The
 		// clip is the band, not the page: a stem or a slur is allowed to
@@ -246,19 +242,25 @@ const (
 	// printed on somebody else's music — and small enough that the music
 	// keeps nearly all the page it had.
 	stampSize = 32
-	// stampGap is the air under him, between the stamp and the music.
-	stampGap = 8
+	// stampGap is the air around him: between the stamp and the paper's
+	// edge above, and between the stamp and the music below. Twice this and
+	// the stamp itself have to fit the top margin, or he is drawn smaller.
+	stampGap = 6
 )
 
-// stamp prints Gilbert in the top left of the page.
+// stamp prints Gilbert in the top left of the first page.
 //
-// Every page, not only the first: the pages of a score are pulled apart,
-// handed round a band and photocopied, and a mark on the first sheet alone
-// says nothing about the one in front of you.
+// The first page only. It says who made the thing, which is said once: on
+// every sheet it stops being a maker's mark and becomes something printed
+// over somebody else's music, and a score is mostly not its first page.
 //
 // He is drawn, not placed: the outlines go onto the paper at whatever
 // resolution prints them, where a bitmap would be fixed at its own and go
 // soft the moment it is printed larger than it was drawn.
+//
+// He goes in the margin, and never into the music: on paper with a margin
+// too narrow to hold him he is drawn smaller rather than over the top
+// staff.
 func (r *renderer) stamp() {
 	d, err := brand.GilbertDrawing()
 	if err != nil || d == nil || len(d.Shapes) == 0 {
@@ -268,16 +270,18 @@ func (r *renderer) stamp() {
 	if side <= 0 {
 		return
 	}
-	s := stampSize / side
-
-	// The top left of the box he is drawn in. Up the page from the music,
-	// which has been given room for him in musicTop.
-	left := r.opt.MarginLeft
-	top := r.opt.PageHeight - (r.opt.musicTop()-stampSize-stampGap)/2 -
-		stampSize - stampGap/2
-	if top > r.opt.PageHeight-2 {
-		top = r.opt.PageHeight - 2
+	box := float64(stampSize)
+	if room := r.opt.MarginTop - 2*stampGap; box > room {
+		box = room
 	}
+	if box < 6 {
+		return // a margin with no room in it gets no mark
+	}
+	s := box / side
+
+	// Centred in the top margin, above the music.
+	left := r.opt.MarginLeft
+	top := r.opt.PageHeight - (r.opt.MarginTop-box)/2 - box
 
 	// SVG measures down the page and PDF measures up it, so y is turned
 	// over here — once, in the one place that knows both.
@@ -323,7 +327,7 @@ type band struct{ top, bottom float64 }
 // system is a score somebody meant to print on a larger sheet, and saying so
 // by printing it is clearer than silently losing a line of music.
 func (r *renderer) pages() []band {
-	usable := (r.opt.PageHeight - r.opt.musicTop() - r.opt.MarginBottom) / r.opt.StaffSpace
+	usable := (r.opt.PageHeight - r.opt.MarginTop - r.opt.MarginBottom) / r.opt.StaffSpace
 	if usable <= 0 {
 		usable = 1
 	}
@@ -364,7 +368,7 @@ func (r *renderer) x(v float64) pdf.Point {
 }
 
 func (r *renderer) y(v float64) pdf.Point {
-	return pdf.Point(r.opt.PageHeight-r.opt.musicTop()) - pdf.Point(v-r.offset)*r.s
+	return pdf.Point(r.opt.PageHeight-r.opt.MarginTop) - pdf.Point(v-r.offset)*r.s
 }
 
 // visible says whether something at this height belongs on this page.

@@ -158,10 +158,10 @@ func TestAScoreTooBigForAnyTypeStopsAtTheSmallest(t *testing.T) {
 	}
 }
 
-// Every page carries the mascot, because the pages of a score get pulled
-// apart and handed round a band: a mark on the first sheet alone says
-// nothing about the one in front of you.
-func TestEveryPageIsStamped(t *testing.T) {
+// The mascot goes on the first page and nowhere else. It says who made the
+// thing, which is said once; on every sheet it stops being a maker's mark
+// and becomes something printed over somebody else's music.
+func TestOnlyTheFirstPageIsStamped(t *testing.T) {
 	s := ensemble(4, 60)
 	o, eo := Fit(s, DefaultOptions(), paginated(4))
 	lay := engrave.Engrave(s, eo)
@@ -193,9 +193,9 @@ func TestEveryPageIsStamped(t *testing.T) {
 	if each == 0 {
 		t.Fatal("the drawing has no filled-and-stroked shape to count")
 	}
-	if n := countOp(t, out, " B\n"); n != each*pages {
+	if n := countOp(t, out, " B\n"); n != each {
 		t.Errorf("the mascot's shapes were drawn %d times over %d pages, "+
-			"want %d — one stamp each", n, pages, each*pages)
+			"want %d — one stamp, on the first", n, pages, each)
 	}
 }
 
@@ -240,29 +240,27 @@ func countOp(t *testing.T, doc []byte, op string) int {
 	return total
 }
 
-// The mark goes in the margin and the music must not be drawn into it.
-//
-// The stamp is larger than the margin a part is printed with, so the music
-// is given room for it. Everything that measures the page has to agree:
-// where a page is cut, where a point on the drawing lands and how big the
-// music may be set are the same number asked three times.
-func TestTheMusicIsGivenRoomForTheStamp(t *testing.T) {
+// The mark goes in the margin and never into the music: on paper with a
+// margin too narrow to hold it, it is drawn smaller rather than over the
+// top staff. The music's own room is not touched either way.
+func TestTheStampStaysInTheMargin(t *testing.T) {
 	o := DefaultOptions()
-	if o.musicTop() < stampSize {
-		t.Errorf("the music starts at %.1f, inside a stamp %dpt tall",
-			o.musicTop(), stampSize)
-	}
-	// And never less room than the paper was set up with.
-	if o.musicTop() < o.MarginTop {
-		t.Errorf("the music starts at %.1f, above its own %.1fpt margin",
-			o.musicTop(), o.MarginTop)
+	if float64(stampSize)+2*stampGap > o.MarginTop {
+		t.Errorf("a %dpt stamp with %dpt of air does not fit a %.0fpt margin",
+			stampSize, stampGap, o.MarginTop)
 	}
 
-	// And a page with margins of its own that are already big enough is
-	// left alone.
-	wide := DefaultOptions()
-	wide.MarginTop = 200
-	if wide.musicTop() != 200 {
-		t.Errorf("a 200pt margin came out as %.1f", wide.musicTop())
+	// A page whose top margin is narrower than the stamp still prints, and
+	// still prints music where music goes.
+	narrow := DefaultOptions()
+	narrow.MarginTop = 20
+	var buf bytes.Buffer
+	s := ensemble(2, 8)
+	po, eo := Fit(s, narrow, paginated(2))
+	if err := Render(&buf, engrave.Engrave(s, eo), po); err != nil {
+		t.Fatal(err)
+	}
+	if buf.Len() < 1000 {
+		t.Errorf("a narrow margin gave a %d byte document", buf.Len())
 	}
 }

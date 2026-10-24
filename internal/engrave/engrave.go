@@ -776,6 +776,57 @@ func (e *engraver) musicAbove(parts []*model.Part, start, end int) float64 {
 	return float64(highest-staffHeight*2)/2 + 2.6
 }
 
+// What the marks under a staff need, each the height of the mark and the air
+// over it. They are the figures from the places that draw them.
+const (
+	dynamicBand = 1.4 + 0.7
+	hairpinBand = hairpinMouth + 0.6
+	octaveBelow = octaveBand + 0.5
+)
+
+// marksBelow is the room a staff needs under it for the marks that go there.
+//
+// Counted from the model rather than measured, because a system's height is
+// settled before anything in it is drawn. Over-reserving a little costs a
+// little air; under-reserving puts a dynamic through the staff below.
+//
+// Only the kinds that are written under a staff: the dynamics, the hairpins
+// that run between them, and an octave line below. The trill's wave, the
+// volta and the rehearsal letters go above and are counted there.
+func marksBelow(p *model.Part, start, end int) float64 {
+	var dyn, hair, oct bool
+	for mi := start; mi < end && mi < len(p.Measures); mi++ {
+		for _, v := range p.Measures[mi].Voices {
+			for _, el := range v.Elements {
+				m := marksOf(el)
+				if m == nil {
+					continue
+				}
+				if m.Dynamic != model.DynamicNone {
+					dyn = true
+				}
+				if m.Hairpin != nil {
+					hair = true
+				}
+				if m.Octave != nil && m.Octave.Amount < 0 {
+					oct = true
+				}
+			}
+		}
+	}
+	room := 0.0
+	if dyn {
+		room += dynamicBand
+	}
+	if hair {
+		room += hairpinBand
+	}
+	if oct {
+		room += octaveBelow
+	}
+	return room
+}
+
 // staffClearance is the air left between what one staff's music reaches down
 // to and what the next one's reaches up to.
 //
@@ -1203,7 +1254,7 @@ func (e *engraver) prefixWidth(p *model.Part, at int) float64 {
 	clef, _ := smufl.ClefGlyph(p.Clef)
 	w := sp.ClefBefore + smufl.Advance(clef) + sp.ClefAfter
 	w += e.keySignatureWidth(p.KeyAt(at))
-	if e.opt.HideTimeSignature {
+	if e.opt.HideTimeSignature || !meterAt(p, at) {
 		return w
 	}
 	num, den, sym := smufl.TimeSignatureGlyphs(p.TimeAt(at))
@@ -1213,6 +1264,22 @@ func (e *engraver) prefixWidth(p *model.Part, at int) float64 {
 		w += math.Max(glyphRunWidth(num), glyphRunWidth(den))
 	}
 	return w + sp.AfterTimeSignature
+}
+
+// meterAt says whether a system beginning at this bar writes the meter at
+// its head.
+//
+// The clef and the key signature are repeated at the head of every system,
+// because a player landing anywhere in the piece has to know them. The meter
+// is not: it is written where the piece begins and wherever it changes, and
+// nowhere else. Repeating it says "the meter changes here" to anybody
+// reading, and it costs three staff spaces of every line it is printed on —
+// which in a part is a bar every few systems.
+func meterAt(p *model.Part, at int) bool {
+	if at <= 0 {
+		return true
+	}
+	return p.TimeAt(at) != p.TimeAt(at-1)
 }
 
 func glyphRunWidth(names []string) float64 {
@@ -1516,11 +1583,13 @@ func (e *engraver) drawSystem(parts []*model.Part, boxes [][]measureBox,
 			if above := e.partChordRoom(parts[i+1], start, end); above > 0 {
 				gap += above
 			}
-			// And the music itself. The gap is a constant until the notes
-			// go into it: a run on ledger lines over the lower staff and
-			// another hanging under the upper one meet in the middle, and
-			// then nothing on the page says which staff either belongs to.
+			// And the music itself, with whatever is written under it. The
+			// gap is a constant until something goes into it: a run on
+			// ledger lines over the lower staff and a dynamic under the
+			// upper one meet in the middle, and then nothing on the page
+			// says which staff either belongs to.
 			_, below := e.staffReach(parts[i], start, end)
+			below += marksBelow(parts[i], start, end)
 			above, _ := e.staffReach(parts[i+1], start, end)
 			if need := below + above + staffClearance; gap < need {
 				gap = need
@@ -1532,6 +1601,10 @@ func (e *engraver) drawSystem(parts []*model.Part, boxes [][]measureBox,
 	// Where each staff of this system was put, for the things drawn across
 	// all of them: the brace, the bracket and the names.
 	staffTops := make([]float64, 0, len(parts))
+
+	// The lowest point anything in this system reached, filled in as each
+	// staff is finished.
+	lowest := 0.0
 
 	// How much of the prefix belongs to the names and the bracket rather
 	// than to the clefs.
@@ -1577,9 +1650,11 @@ func (e *engraver) drawSystem(parts []*model.Part, boxes [][]measureBox,
 		was = px
 		px = e.drawKeySignature(p, p.KeyAt(start), px)
 		header("key", was, px-sp.AfterKeySignature/2)
-		was = px
-		px = e.drawTimeSignature(p, p.TimeAt(start), px)
-		header("time", was, px-sp.AfterTimeSignature/2)
+		if meterAt(p, start) {
+			was = px
+			px = e.drawTimeSignature(p, p.TimeAt(start), px)
+			header("time", was, px-sp.AfterTimeSignature/2)
+		}
 
 		for mi := start; mi < end; mi++ {
 			if mi >= len(boxes[pi]) {
@@ -1618,7 +1693,17 @@ func (e *engraver) drawSystem(parts []*model.Part, boxes [][]measureBox,
 		// The staff is finished, so the marks that go outside it now know
 		// what they have to clear. They are placed outwards from the staff
 		// in the order notation puts them in, each clearing the last.
-		e.placeWaiting(e.outline(staffMark, sp.Margin, right, staffTop))
+		sky := e.outline(staffMark, sp.Margin, right, staffTop)
+		e.placeWaiting(sky)
+		// How far down this staff's music and marks actually went. The room
+		// reserved for them was counted from the model before anything was
+		// drawn, and a count is an estimate: a dynamic under a slur that
+		// dips low ends up lower than any estimate of "there is a dynamic
+		// here" can know. This is the measurement, and the system's own
+		// bottom is taken from it.
+		if low := sky.reach(sp.Margin, right, true); low > lowest {
+			lowest = low
+		}
 
 		if pi < len(parts)-1 {
 			e.y += staffHeight + gapAfter(pi)
@@ -1637,7 +1722,19 @@ func (e *engraver) drawSystem(parts []*model.Part, boxes [][]measureBox,
 	for i := 0; i < len(parts)-1; i++ {
 		e.y += staffHeight + gapAfter(i)
 	}
-	e.y += staffHeight + roomBelow(parts[len(parts)-1])
+	// Past the last staff, and past whatever is written under it. The marks
+	// below a staff are placed against what is already there, so they end up
+	// as far down as they have to go — and if nothing has reserved that room
+	// they go on down into the system underneath, where a crescendo that
+	// began four bars ago arrives over somebody else's first bar.
+	foot := parts[len(parts)-1]
+	_, footLow := e.staffReach(foot, start, end)
+	e.y += staffHeight + math.Max(roomBelow(foot),
+		footLow+marksBelow(foot, start, end))
+	// And no higher than what was drawn, whatever the estimate said.
+	if lowest > e.y {
+		e.y = lowest + 0.3
+	}
 	e.lay.Systems = append(e.lay.Systems, SystemPos{
 		// The top reaches above the staff for everything written there: the
 		// chord symbols and their diagrams, and above those the brackets of

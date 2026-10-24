@@ -673,6 +673,39 @@ func (a *App) saveDirectory() string {
 // Running as a page there is no filesystem to write to and no save panel to
 // ask with, so the file comes back in the response. It is the same page
 // either way.
+// handleConvert hands back the score in another format, as a download.
+//
+// For the formats that are text or markup — LilyPond, MusicXML — where
+// there is no machine to save to: served to a browser, or running as a
+// page. The same exporters the save panel uses; only the way out differs.
+func (a *App) handleConvert(w http.ResponseWriter, r *http.Request) {
+	ext := strings.TrimPrefix(r.URL.Query().Get("as"), ".")
+	if ext == "" {
+		http.Error(w, "say which format", http.StatusBadRequest)
+		return
+	}
+	exp, err := format.ExporterFor("score." + ext)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	a.mu.RLock()
+	score := a.score
+	name := a.suggestedBase()
+	a.mu.RUnlock()
+
+	var buf bytes.Buffer
+	if err := exp.Export(&buf, score); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Header().Set("Content-Disposition",
+		fmt.Sprintf("attachment; filename=%q", name+"."+ext))
+	w.Write(buf.Bytes())
+}
+
 // handleMIDI hands back the performance as a standard MIDI file.
 //
 // The counterpart of handlePage for sound: in the browser there is nothing

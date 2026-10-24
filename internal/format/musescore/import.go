@@ -1532,6 +1532,11 @@ func (r *reader) chord(st *msStaff, vs *voiceState) error {
 			return nil
 		case "Note":
 			return r.noteElement(st, ch)
+		case "Ornament":
+			// MuseScore 4 writes the ornaments in an element of their own
+			// rather than among the articulations. They are the same marks
+			// named the same way, so they are read the same way.
+			return r.articulation(ch)
 		case "Articulation":
 			return r.articulation(ch)
 		case "Lyrics":
@@ -1815,6 +1820,10 @@ func (r *reader) articulation(ch *chordData) error {
 		ch.marks.AddArticulation(a)
 		return nil
 	}
+	if a, ok := ornaments[sub]; ok {
+		ch.marks.AddArticulation(a)
+		return nil
+	}
 	// An ornament written on the note rather than as a spanner is a trill on
 	// that note alone: both ends of it are the same note.
 	if sub == "ornamentTrill" || sub == "trill" {
@@ -1827,6 +1836,18 @@ func (r *reader) articulation(ch *chordData) error {
 		r.report("the %q mark is not one gscore draws", sub)
 	}
 	return nil
+}
+
+// ornaments are the marks that say to play notes which are not written.
+//
+// MuseScore names them by their SMuFL glyph, which is what they are, so the
+// table is short and does not have to be guessed at.
+var ornaments = map[string]model.Articulation{
+	"ornamentMordent":      model.Mordent,
+	"ornamentShortTrill":   model.ShortTrill,
+	"ornamentPrallMordent": model.ShortTrill,
+	"ornamentTurn":         model.Turn,
+	"ornamentTurnInverted": model.TurnInverted,
 }
 
 func (r *reader) lyrics(ch *chordData) error {

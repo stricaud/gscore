@@ -39,6 +39,9 @@
       <button data-action="save-svg"><span>Export SVG…</span><kbd>E</kbd></button>
       <button data-action="save-page"><span>Export web page…</span><kbd>⇧H</kbd></button>
       <button data-action="save-midi"><span>Export MIDI…</span></button>
+      <!-- Out to the best engraving there is. What comes back is source,
+           not a picture: it can be edited, and LilyPond sets it. -->
+      <button data-action="save-lilypond"><span>Export LilyPond…</span></button>
       <!-- Only where gscore can make a sound: on this machine, where a
            soundfont is a file on a disk, or in the page, where the core is
            the page and the soundfont has been fetched into it. Hidden
@@ -214,6 +217,12 @@
           <button data-action="tremolo-2"><span>Two slashes</span><kbd>Sixteenths</kbd></button>
           <button data-action="tremolo-3"><span>Three slashes</span><kbd>Thirty-seconds</kbd></button>
           <button data-action="tremolo-4"><span>Four slashes</span><kbd>Sixty-fourths</kbd></button>
+          <hr>
+          <hr>
+          <!-- The other mark: two notes alternating, with the beams drawn
+               between their stems rather than through one. -->
+          <button data-action="tremolo-pair-2"><span>Two notes — two beams</span><kbd>Sixteenths</kbd></button>
+          <button data-action="tremolo-pair-3"><span>Two notes — three beams</span><kbd>Thirty-seconds</kbd></button>
           <hr>
           <button data-action="tremolo-buzz"><span>Buzz roll</span><kbd>Unmeasured</kbd></button>
           <button data-action="tremolo-none"><span>No tremolo</span></button>

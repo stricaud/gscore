@@ -3009,6 +3009,19 @@ func (a *App) handleTremolo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// A two-note tremolo is one mark on two notes, so it is not a question
+	// about the selection's marks but about where in the bar the notes are:
+	// the one chosen and the one written after it.
+	if q.Get("pair") == "1" {
+		n, err := a.pairTremolo(q, strokes, buzz)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		writeJSON(w, map[string]int{"changed": n})
+		return
+	}
+
 	marks, err := a.marksOf(q)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -3022,6 +3035,52 @@ func (a *App) handleTremolo(w http.ResponseWriter, r *http.Request) {
 		m.Tremolo = &model.Tremolo{Strokes: strokes, Buzz: buzz}
 	}
 	writeJSON(w, map[string]int{"changed": len(marks)})
+}
+
+// pairTremolo marks the chosen note and the one after it as a two-note
+// tremolo.
+//
+// Both ends or neither. Half a pair is a mark that draws nothing and plays
+// as an ordinary note, which is worse than being told there is nowhere to
+// put it.
+func (a *App) pairTremolo(q url.Values, strokes int, buzz bool) (int, error) {
+	partIdx, _ := strconv.Atoi(q.Get("part"))
+	measIdx, _ := strconv.Atoi(q.Get("measure"))
+	at, err := strconv.Atoi(q.Get("at"))
+	if err != nil {
+		at = -1
+	}
+
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	_, m, err := a.locate(partIdx, measIdx)
+	if err != nil {
+		return 0, err
+	}
+	v := m.Voices[0]
+	if at <= 0 || at > len(v.Elements) {
+		at = len(v.Elements)
+	}
+	i := at - 1
+	if i < 0 || i+1 >= len(v.Elements) {
+		return 0, editError("a two-note tremolo needs the note after this one, " +
+			"and this is the last in the bar")
+	}
+	first, second := marksOfElement(v.Elements[i]), marksOfElement(v.Elements[i+1])
+	if first == nil || second == nil {
+		return 0, editError("both of them have to be notes")
+	}
+	if v.Elements[i].Duration() != v.Elements[i+1].Duration() {
+		return 0, editError("the two notes of a tremolo are written the same length")
+	}
+	if strokes == 0 && !buzz {
+		first.Tremolo, second.Tremolo = nil, nil
+		return 2, nil
+	}
+	first.Tremolo = &model.Tremolo{Strokes: strokes, Buzz: buzz, Start: true}
+	second.Tremolo = &model.Tremolo{Strokes: strokes, Buzz: buzz, Stop: true}
+	return 2, nil
 }
 
 // handleDot lengthens the selected note by half, or takes that back.

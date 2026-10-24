@@ -95,6 +95,7 @@ score and a play button. There is a working page in
 | [`docs/symbols.md`](docs/symbols.md) | drawing marks no font carries |
 | [`docs/gscore-format.md`](docs/gscore-format.md) | what is inside a `.gscore` file |
 | [`docs/embedding.md`](docs/embedding.md) | putting gscore in a page |
+| [`docs/comparison.md`](docs/comparison.md) | gscore beside MuseScore, NoteWorthy and Frescobaldi |
 
 ## Layout
 

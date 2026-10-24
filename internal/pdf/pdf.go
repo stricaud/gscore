@@ -43,9 +43,9 @@ type Point float64
 
 // Common paper, in points.
 const (
-	A4Width     Point = 595.28
-	A4Height    Point = 841.89
-	LetterWidth Point = 612
+	A4Width      Point = 595.28
+	A4Height     Point = 841.89
+	LetterWidth  Point = 612
 	LetterHeight Point = 792
 )
 

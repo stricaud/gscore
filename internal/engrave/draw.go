@@ -116,6 +116,12 @@ func (p *placed) beamable() bool {
 	if p.rest != nil {
 		return false
 	}
+	// A note in a two-note tremolo carries beams of its own, drawn between
+	// its stem and its partner's. Beaming it to its neighbours as well
+	// would put two sets of beams on one stem.
+	if m := p.marks(); m != nil && m.Tremolo.Paired() {
+		return false
+	}
 	return p.value >= model.Eighth
 }
 
@@ -220,6 +226,7 @@ func (e *engraver) drawMeasure(part *model.Part, b measureBox, x, end float64, s
 		}
 	}
 
+	e.drawWholeNoteTremolos(items)
 	e.drawTuplets(items, part.Time)
 
 	hit := Hit{
@@ -799,6 +806,12 @@ func beamGroupUp(g []*placed) bool {
 
 func (e *engraver) drawStemsAndBeams(items []*placed, t model.TimeSignature) {
 	groups := beamGroups(items, t)
+	// A two-note tremolo is a group of its own. Its beams are drawn
+	// between the two stems, which means the two stems have to arrive at
+	// one line — and arriving at one line is the whole of what a beam
+	// group does to a stem. So it is one, and the stems come out right for
+	// the same reason a beamed pair's do.
+	groups = append(groups, tremoloPairs(items)...)
 	inGroup := map[*placed]bool{}
 	for _, g := range groups {
 		for _, p := range g {
@@ -866,6 +879,48 @@ func (e *engraver) drawSingleStem(p *placed) {
 	e.drawTremolo(p, sx, y1, y2)
 }
 
+// drawWholeNoteTremolos draws the pairs that have no stems.
+//
+// Two whole notes alternating: the beams go in the space between the two
+// heads, level with the music and centred on it, because there is nowhere
+// else for them and nothing to hang them from.
+func (e *engraver) drawWholeNoteTremolos(items []*placed) {
+	d := e.opt.Defaults
+	for i := 0; i+1 < len(items); i++ {
+		a, b := items[i], items[i+1]
+		ma, mb := a.marks(), b.marks()
+		if ma == nil || mb == nil || !ma.Tremolo.Paired() || !mb.Tremolo.Paired() {
+			continue
+		}
+		if !ma.Tremolo.Start || !mb.Tremolo.Stop {
+			continue
+		}
+		if a.value > model.Whole && b.value > model.Whole {
+			continue // it has stems, and was drawn with them
+		}
+		levels := ma.Tremolo.Beams()
+		if levels < 1 {
+			continue
+		}
+		// Between the heads, with a little air at each end so the beams do
+		// not grow out of the noteheads.
+		x0 := a.x + noteheadWidth(a.value) + 0.5
+		x1 := b.x - 0.5
+		if x1-x0 < 1 {
+			continue // nothing readable would fit
+		}
+		y := (e.y + stepY(float64(a.step)) + e.y + stepY(float64(b.step))) / 2
+		for level := 1; level <= levels; level++ {
+			// Centred on that line: the stack grows evenly either side
+			// rather than hanging off it.
+			off := (float64(level) - float64(levels+1)/2) *
+				(d.BeamThickness + d.BeamSpacing)
+			e.beamQuad(x0, y+off, x1, y+off, d.BeamThickness, 1)
+		}
+		i++
+	}
+}
+
 // How the slashes of a tremolo are drawn.
 const (
 	// How far from the notehead the slashes start, along the stem. Drawn
@@ -888,8 +943,8 @@ const (
 // the notehead instead, which is where every published score puts them.
 func (e *engraver) drawTremolo(p *placed, sx, headY, endY float64) {
 	m := p.marks()
-	if m == nil || m.Tremolo == nil {
-		return
+	if m == nil || m.Tremolo == nil || m.Tremolo.Paired() {
+		return // a two-note tremolo is drawn between the stems, not through one
 	}
 	name := tremoloGlyph(m.Tremolo)
 	if name == "" {
@@ -1008,6 +1063,16 @@ func (e *engraver) drawBeamGroup(g []*placed) {
 			}
 		}
 	}
+	// A two-note tremolo stacks its beams inwards from the line, towards
+	// the noteheads, so the line is pushed further out to leave room for
+	// them. Without this a pair of half notes a third apart has three
+	// beams drawn through its own noteheads.
+	if tr := pairTremolo(g); tr != nil {
+		stack := float64(tr.Beams()) * (d.BeamThickness + d.BeamSpacing)
+		if room := stack - d.BeamThickness; room > 0 {
+			shift += room
+		}
+	}
 	if up {
 		y0 -= shift
 		y1 -= shift
@@ -1070,6 +1135,61 @@ func (e *engraver) drawBeamGroup(g []*placed) {
 			i = j + 1
 		}
 	}
+
+	// And the tremolo's own beams, continuing the stack inwards: they are
+	// the beams the written-out notes would have carried, drawn once
+	// between the two the player alternates between.
+	if tr := pairTremolo(g); tr != nil {
+		x0, x1 := ends[0].x, ends[len(ends)-1].x
+		for level := maxFlags + 1; level <= maxFlags+tr.Beams(); level++ {
+			offset := float64(level-1) * (d.BeamThickness + d.BeamSpacing) * -dir
+			e.beamQuad(x0, beamY(x0)+offset, x1, beamY(x1)+offset,
+				d.BeamThickness, dir)
+		}
+	}
+}
+
+// tremoloPairs finds the two-note tremolos in a bar: a note marked as the
+// start with its partner written next to it.
+//
+// Anything else — a start with nothing after it, a stop beginning a bar — is
+// half a mark. It is left alone rather than guessed at, and then nothing is
+// drawn between stems that were never a pair.
+func tremoloPairs(items []*placed) [][]*placed {
+	var out [][]*placed
+	for i := 0; i+1 < len(items); i++ {
+		a, b := items[i], items[i+1]
+		ma, mb := a.marks(), b.marks()
+		if ma == nil || mb == nil {
+			continue
+		}
+		if !ma.Tremolo.Paired() || !mb.Tremolo.Paired() ||
+			!ma.Tremolo.Start || !mb.Tremolo.Stop {
+			continue
+		}
+		if a.value <= model.Whole || b.value <= model.Whole {
+			// A whole note has no stem for a beam to arrive at. That pair
+			// is drawn between the noteheads instead, and making a group
+			// of it here would give both of them stems they do not have.
+			continue
+		}
+		out = append(out, []*placed{a, b})
+		i++
+	}
+	return out
+}
+
+// pairTremolo is the mark a group carries where it is a two-note tremolo,
+// and nil where it is an ordinary beam group.
+func pairTremolo(g []*placed) *model.Tremolo {
+	if len(g) != 2 {
+		return nil
+	}
+	m := g[0].marks()
+	if m == nil || !m.Tremolo.Paired() || !m.Tremolo.Start {
+		return nil
+	}
+	return m.Tremolo
 }
 
 // beamQuad draws a beam as a filled parallelogram, which is what gives it an
@@ -1285,6 +1405,10 @@ func (e *engraver) drawArticulations(m *model.Marks, x float64, step int, stemUp
 		}
 	}
 	for _, a := range m.Articulations {
+		if a.Ornament() {
+			e.ornament(a, x)
+			continue
+		}
 		emit(smufl.ArticulationGlyph(a, above))
 	}
 	for _, sm := range m.Symbols {
@@ -1301,6 +1425,43 @@ func (e *engraver) drawArticulations(m *model.Marks, x float64, step int, stemUp
 		}
 	}
 }
+
+// ornament writes a mordent, a turn or the like above the staff.
+//
+// Above, always, whichever way the stem points. An ornament is not an
+// articulation and does not follow the stem the way a staccato dot does:
+// it is a direction to play notes that are not written, it is read along
+// the top of the line with the trills and the rehearsal letters, and it is
+// written above the staff in every printed score there is.
+//
+// Which is why it cannot be placed beside the notehead. A note with its
+// stem up has the stem in exactly the place the ornament has to go, and a
+// mordent drawn there comes out with the stem through the middle of it. So
+// it waits for the staff to be finished and is then placed clear of
+// everything on it — the stem, the beam over it, the ledger lines, the slur
+// — the same way the dynamics and the octave lines are.
+func (e *engraver) ornament(a model.Articulation, x float64) {
+	name := smufl.ArticulationGlyph(a, true)
+	if name == "" {
+		return
+	}
+	w := smufl.Advance(name)
+	e.wait(waitingMark{
+		// Centred on the note rather than starting at it: an ornament is a
+		// wide sign and sits over the middle of what it ornaments.
+		x0: x - w/2, x1: x + w/2,
+		height: ornamentHeight, gap: 0.5, rank: rankOrnament,
+		draw: func(y float64) {
+			e.lay.Glyphs = append(e.lay.Glyphs, Glyph{
+				Name: name, X: x - w/2, Y: y,
+			})
+		},
+	})
+}
+
+// ornamentHeight is how tall the ornament signs are, in staff spaces: a
+// zigzag with a stroke through it is about one space of ink.
+const ornamentHeight = 1.1
 
 // displacedHeads says which noteheads of a chord are pushed to the other
 // side of the stem.

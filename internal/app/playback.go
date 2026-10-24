@@ -295,7 +295,12 @@ func buildPlayback(s *model.Score) Playback {
 				// Zero means "nothing to highlight", which is the truth.
 				ref = 0
 			}
-			for _, el := range v.Elements {
+			// A two-note tremolo is two written notes and one sound, so the
+			// first of the pair plays both and the second plays nothing.
+			// The second still takes its own time: the bar is the same
+			// length either way.
+			paired := map[int]bool{}
+			for ei, el := range v.Elements {
 				d := el.Duration().Float() * secondsPerWhole
 				mk := marksOf(el)
 				if mk != nil && mk.Octave != nil && mk.Octave.Start {
@@ -318,7 +323,26 @@ func buildPlayback(s *model.Score) Playback {
 						swell = nil // a written dynamic settles the question
 					}
 					gd := addGrace(&out, n.Grace, p, shift, vt, d, secondsPerWhole, pi, loud)
-					if n.Tremolo != nil {
+					if paired[ei] {
+						break // sounded with the note it is paired to
+					}
+					if n.Tremolo.Paired() {
+						if alt, at, ok := tremoloPartner(v.Elements, ei); ok {
+							paired[at] = true
+							addTwoNoteTremolo(&out, n.Tremolo,
+								[]model.Pitch{sounding(p, n.Pitch, shift)},
+								pitchesOf(alt, p, shift),
+								vt+gd, d-gd+partnerSeconds(alt, secondsPerWhole),
+								secondsPerWhole, pi, ref, p.Instrument, loud)
+							break
+						}
+						// A mark with no partner is half a mark. It sounds
+						// as the note it is written on rather than as
+						// nothing at all.
+						addNote(&out, open, &n.Marks, sounding(p, n.Pitch, shift),
+							vt+gd, d-gd, pi, ref, p.Instrument, loud, n.Percussion,
+							slurring && !n.SlurStop)
+					} else if n.Tremolo != nil {
 						addTremolo(&out, n.Tremolo,
 							[]model.Pitch{sounding(p, n.Pitch, shift)},
 							[]int{n.Percussion}, vt+gd, d-gd, secondsPerWhole,
@@ -326,6 +350,9 @@ func buildPlayback(s *model.Score) Playback {
 					} else if trilling && n.Percussion == 0 {
 						addTrill(&out, sounding(p, n.Pitch, shift), p.KeyAt(mi),
 							vt+gd, d-gd, pi, ref, p.Instrument, loud)
+					} else if orn, ok := ornamentOf(&n.Marks); ok && n.Percussion == 0 {
+						addOrnament(&out, orn, sounding(p, n.Pitch, shift),
+							p.KeyAt(mi), vt+gd, d-gd, pi, ref, p.Instrument, loud)
 					} else {
 						addNote(&out, open, &n.Marks, sounding(p, n.Pitch, shift),
 							vt+gd, d-gd, pi, ref, p.Instrument, loud, n.Percussion,
@@ -337,7 +364,24 @@ func buildPlayback(s *model.Score) Playback {
 						swell = nil
 					}
 					gd := addGrace(&out, n.Grace, p, shift, vt, d, secondsPerWhole, pi, loud)
-					if n.Tremolo != nil {
+					if paired[ei] {
+						break // sounded with the chord it is paired to
+					}
+					if n.Tremolo.Paired() {
+						if alt, at, ok := tremoloPartner(v.Elements, ei); ok {
+							paired[at] = true
+							ps := make([]model.Pitch, 0, len(n.Notes))
+							for _, cn := range n.Notes {
+								ps = append(ps, sounding(p, cn.Pitch, shift))
+							}
+							addTwoNoteTremolo(&out, n.Tremolo, ps,
+								pitchesOf(alt, p, shift),
+								vt+gd, d-gd+partnerSeconds(alt, secondsPerWhole),
+								secondsPerWhole, pi, ref, p.Instrument, loud)
+							break
+						}
+					}
+					if n.Tremolo != nil && !n.Tremolo.Paired() {
 						// The whole chord is struck again and again, not
 						// each notehead in turn: that would be an arpeggio.
 						ps := make([]model.Pitch, 0, len(n.Notes))
@@ -593,6 +637,87 @@ func addTremolo(out *Playback, tr *model.Tremolo, pitches []model.Pitch,
 	}
 }
 
+// tremoloPartner finds the note a two-note tremolo is paired with: the very
+// next one, which is where it is written and the only place it can be.
+func tremoloPartner(els []model.Element, at int) (model.Element, int, bool) {
+	if at+1 >= len(els) {
+		return nil, 0, false
+	}
+	next := els[at+1]
+	mk := marksOf(next)
+	if mk == nil || !mk.Tremolo.Paired() || !mk.Tremolo.Stop {
+		return nil, 0, false
+	}
+	return next, at + 1, true
+}
+
+// pitchesOf is what an element sounds as, one pitch or a chord's worth.
+func pitchesOf(el model.Element, p *model.Part, shift int) []model.Pitch {
+	switch n := el.(type) {
+	case *model.Note:
+		return []model.Pitch{sounding(p, n.Pitch, shift)}
+	case *model.Chord:
+		out := make([]model.Pitch, 0, len(n.Notes))
+		for _, cn := range n.Notes {
+			out = append(out, sounding(p, cn.Pitch, shift))
+		}
+		return out
+	}
+	return nil
+}
+
+func partnerSeconds(el model.Element, secondsPerWhole float64) float64 {
+	return el.Duration().Float() * secondsPerWhole
+}
+
+// addTwoNoteTremolo sounds a pair as the two notes alternating.
+//
+// Not as two notes: two half notes with three beams between them are not a
+// pair of half notes, they are sixteen thirty-second notes going back and
+// forth between the two pitches, and the bar lasts exactly as long either
+// way. Played as written the mark would be drawn and then ignored, which is
+// the one thing a shorthand must not be.
+func addTwoNoteTremolo(out *Playback, tr *model.Tremolo, first, second []model.Pitch,
+	start, dur, secondsPerWhole float64,
+	part, ref int, inst model.Instrument, loud model.Dynamic) {
+
+	if dur <= 0 || len(first) == 0 {
+		return
+	}
+	if len(second) == 0 {
+		second = first
+	}
+	step := tr.Repeat().Float() * secondsPerWhole
+	if tr.Buzz {
+		step = 1 / buzzRate
+	}
+	n := 2
+	if step > 0 {
+		n = int(dur/step + 0.5)
+	}
+	if n < 2 {
+		n = 2 // a pair alternates at least once, or it is not a pair
+	}
+	if n%2 == 1 {
+		n++ // and ends on the second note, having been to it as often
+	}
+	each := dur / float64(n)
+	for i := 0; i < n; i++ {
+		pitches := first
+		if i%2 == 1 {
+			pitches = second
+		}
+		at := start + float64(i)*each
+		for _, pt := range pitches {
+			out.Events = append(out.Events, Event{
+				MIDI: pt.MIDI(), Start: at, Dur: each, Part: part, Ref: ref,
+				Program: int(inst), Family: inst.Family().String(),
+				Velocity: loud.Velocity(),
+			})
+		}
+	}
+}
+
 // PageSound is the score resolved into sounds, in the shape a shared web
 // page's player reads.
 //
@@ -758,6 +883,98 @@ func addTrill(out *Playback, p model.Pitch, key model.KeySignature,
 			Program: int(inst), Family: inst.Family().String(),
 			Velocity: loud.Velocity(),
 		})
+	}
+}
+
+// ornamentOf is the ornament written on a note, or false where there is
+// none. Only one is played: two ornaments on one note is not a thing anybody
+// writes, and the first is the one that was meant.
+func ornamentOf(m *model.Marks) (model.Articulation, bool) {
+	if m == nil {
+		return 0, false
+	}
+	for _, a := range m.Articulations {
+		if a.Ornament() {
+			return a, true
+		}
+	}
+	return 0, false
+}
+
+// ornamentRate is how fast the little notes of an ornament go, in notes a
+// second.
+//
+// Faster than a trill, because an ornament is not a texture but a flick:
+// three notes at the front of the written one, over and done with before the
+// ear has decided they were separate.
+const ornamentRate = 14
+
+// addOrnament sounds a mordent, a short trill or a turn.
+//
+// The ornament is played at the front of the note and the rest of the note
+// is what is left. A mordent drops to the note below and comes back, a short
+// trill goes up and comes back, a turn goes round the note above, the note
+// itself, the note below and back — which is what the signs say, and what a
+// player does with them.
+//
+// The neighbours come from the key, like a trill's: a mordent in E flat drops
+// a semitone where the key says so and a whole tone where it does not.
+func addOrnament(out *Playback, a model.Articulation, p model.Pitch,
+	key model.KeySignature, start, dur float64,
+	part, ref int, inst model.Instrument, loud model.Dynamic) {
+
+	if dur <= 0 {
+		return
+	}
+	step := func(by int) model.Pitch {
+		n := p
+		n.Step = model.Step((int(p.Step) + by + 7) % 7)
+		if by > 0 && n.Step < p.Step {
+			n.Octave++
+		}
+		if by < 0 && n.Step > p.Step {
+			n.Octave--
+		}
+		n.Alter = key.AlterFor(n.Step)
+		return n
+	}
+
+	var notes []model.Pitch
+	switch a {
+	case model.Mordent:
+		notes = []model.Pitch{p, step(-1), p}
+	case model.ShortTrill:
+		notes = []model.Pitch{p, step(1), p}
+	case model.Turn:
+		notes = []model.Pitch{step(1), p, step(-1), p}
+	case model.TurnInverted:
+		notes = []model.Pitch{step(-1), p, step(1), p}
+	default:
+		return
+	}
+
+	// The flick, then the note. A note too short to hold both is all flick:
+	// squeezing an ornament into a demisemiquaver is what the player would
+	// do too.
+	quick := 1 / float64(ornamentRate)
+	if n := float64(len(notes) - 1); quick*n > dur/2 {
+		quick = dur / 2 / n
+	}
+	at := start
+	for i, pt := range notes {
+		d := quick
+		if i == len(notes)-1 {
+			d = start + dur - at // the written note, for what is left of it
+		}
+		if d <= 0 {
+			break
+		}
+		out.Events = append(out.Events, Event{
+			MIDI: pt.MIDI(), Start: at, Dur: d, Part: part, Ref: ref,
+			Program: int(inst), Family: inst.Family().String(),
+			Velocity: loud.Velocity(), Gate: breath(gatePlain, d),
+		})
+		at += d
 	}
 }
 

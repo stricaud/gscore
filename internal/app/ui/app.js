@@ -364,6 +364,9 @@ async function action(name) {
     case "save-midi":
       await exportMIDI();
       break;
+    case "save-lilypond":
+      await exportAs("ly", "text/plain", "LilyPond");
+      break;
     case "save-audio":
       await recordAudio();
       break;
@@ -487,6 +490,8 @@ async function action(name) {
     case "tremolo-2": await setTremolo(2, false); break;
     case "tremolo-3": await setTremolo(3, false); break;
     case "tremolo-4": await setTremolo(4, false); break;
+    case "tremolo-pair-2": await setTremolo(2, false, true); break;
+    case "tremolo-pair-3": await setTremolo(3, false, true); break;
     case "tremolo-buzz": await setTremolo(0, true); break;
     case "tremolo-none": await setTremolo(0, false); break;
 
@@ -1020,6 +1025,38 @@ async function exportPage() {
   a.click();
   URL.revokeObjectURL(a.href);
   status("Exported a web page");
+}
+
+// exportAs writes the score through one of the exporters the core
+// registers, by the extension that names it.
+//
+// On this machine the server writes the file through a save panel; served
+// to a browser it comes back and the browser downloads it. The same two
+// paths every export takes.
+async function exportAs(ext, type, what) {
+  if (state.info?.local) {
+    const p = new URLSearchParams({ as: ext });
+    const res = await fetch("/api/save?" + p.toString(), { method: "POST" });
+    if (!res.ok) {
+      status("Could not export: " + (await res.text()).trim());
+      return;
+    }
+    const d = await res.json();
+    status(d.cancelled ? "Ready" : "Exported " + d.path);
+    return;
+  }
+  const res = await fetch("/api/convert?as=" + encodeURIComponent(ext));
+  if (!res.ok) {
+    status("Could not export: " + (await res.text()).trim());
+    return;
+  }
+  const blob = new Blob([await res.text()], { type });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = (state.info?.title || "score").replace(/[^\w-]+/g, "-") + "." + ext;
+  a.click();
+  URL.revokeObjectURL(a.href);
+  status("Exported " + what);
 }
 
 // exportMIDI writes the score as a standard MIDI file.
@@ -2789,9 +2826,11 @@ async function setTie(what, head) {
 const tremoloNames = ["no tremolo", "one slash", "two slashes", "three slashes",
                       "four slashes", "five slashes"];
 
-const setTremolo = (strokes, buzz) =>
-  mark("tremolo", { strokes: String(strokes), buzz: buzz ? "1" : "0" },
-       buzz ? "Buzz roll" : strokes === 0 ? "Tremolo removed"
+const setTremolo = (strokes, buzz, pair = false) =>
+  mark("tremolo",
+       { strokes: String(strokes), buzz: buzz ? "1" : "0", pair: pair ? "1" : "0" },
+       pair ? "Two-note tremolo — " + strokes + " beams"
+            : buzz ? "Buzz roll" : strokes === 0 ? "Tremolo removed"
             : "Tremolo — " + tremoloNames[strokes]);
 
 // setTuplet turns the note at the cursor into a group played in its time.

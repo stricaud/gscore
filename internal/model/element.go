@@ -83,11 +83,35 @@ const (
 	Fermata
 	UpBow
 	DownBow
+
+	// The ornaments written on a note rather than over a stretch of music.
+	//
+	// A mordent says to drop to the note below and come back, a short
+	// trill — the upper mordent, the pralltriller — to go up and come
+	// back, and a turn to go round the note above, the note itself, the
+	// note below and back. They are written where an articulation is
+	// written and are placed with them, which is why they are here rather
+	// than in a kind of their own: the thing a page has to get right about
+	// them is that they stack clear of the staccato dot and the accent.
+	//
+	// The trill is not among them. It can last — "tr" and a wavy line to
+	// where it stops — so it is a span and lives in Marks.Trill.
+	Mordent
+	ShortTrill
+	Turn
+	TurnInverted
 )
 
 var articulationNames = [...]string{
 	"staccato", "staccatissimo", "accent", "tenuto", "marcato",
 	"marcato down", "fermata", "up-bow", "down-bow",
+	"mordent", "short trill", "turn", "inverted turn",
+}
+
+// Ornament says this mark is one of the ornaments: a direction to play
+// notes that are not written, rather than a way of playing the one that is.
+func (a Articulation) Ornament() bool {
+	return a >= Mordent && a <= TurnInverted
 }
 
 func (a Articulation) String() string {
@@ -583,8 +607,11 @@ type Trill struct {
 // counted rather than named: one slash is eighths, two sixteenths, three
 // thirty-seconds, and so on whatever the note they are drawn through.
 //
-// This is the tremolo on one note. The other kind — two notes alternating,
-// with the slashes drawn between them — is a different mark and is not this.
+// Two notes alternating is the other kind, and Start and Stop say so. It is
+// the same mark counted the same way — the strokes are still the beams the
+// repeated note would have had — but it is drawn between the two stems
+// rather than through one, and it is heard as the two notes alternating
+// rather than as one note repeated.
 type Tremolo struct {
 	// Strokes is how many slashes, from one to five.
 	Strokes int
@@ -593,6 +620,22 @@ type Tremolo struct {
 	// division implied. It is written as a z through the stem, and a snare
 	// drum's press roll is the usual reason for it.
 	Buzz bool
+
+	// Start and Stop make this one end of a two-note tremolo: the first
+	// note of the pair and the second. Neither set is the ordinary tremolo
+	// on a single note.
+	//
+	// The two notes keep their own written lengths and those lengths still
+	// add up the way the bar says — two half notes of a two-note tremolo
+	// fill four beats, exactly as two half notes do. What changes is only
+	// what is heard in that time.
+	Start, Stop bool
+}
+
+// Paired says this tremolo is one end of a two-note tremolo rather than the
+// slashes on a single note.
+func (t *Tremolo) Paired() bool {
+	return t != nil && (t.Start || t.Stop)
 }
 
 // Beams is how many beams the repeated note has, which is what the strokes

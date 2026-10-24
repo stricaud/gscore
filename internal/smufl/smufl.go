@@ -510,6 +510,18 @@ func ArticulationGlyph(a model.Articulation, above bool) string {
 		return "stringsUpBow"
 	case model.DownBow:
 		return "stringsDownBow"
+
+	// The ornaments have one glyph each, the same whichever side of the
+	// note they are written: a mordent upside down is a different ornament,
+	// not the same one seen from below.
+	case model.Mordent:
+		return "ornamentMordent"
+	case model.ShortTrill:
+		return "ornamentShortTrill"
+	case model.Turn:
+		return "ornamentTurn"
+	case model.TurnInverted:
+		return "ornamentTurnInverted"
 	}
 	return ""
 }

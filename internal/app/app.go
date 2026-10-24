@@ -327,6 +327,7 @@ func (a *App) APIRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/pdf", a.handlePDF)
 	mux.HandleFunc("/api/page", a.handlePage)
 	mux.HandleFunc("/api/midi", a.handleMIDI)
+	mux.HandleFunc("/api/convert", a.handleConvert)
 	mux.HandleFunc("/api/record", a.handleRecord)
 	mux.HandleFunc("/api/soundfonts", a.handleSoundfonts)
 	mux.HandleFunc("/api/soundfont/fetch", a.handleSoundfontFetch)

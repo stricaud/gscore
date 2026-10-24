@@ -75,12 +75,22 @@ func newSkyline(x0, x1, top, height float64) *skyline {
 }
 
 // span turns an x range into the slice of samples it covers.
+//
+// Half open: a sample belongs to the range when the range reaches into it,
+// not when the range stops exactly where it starts. Rounding both ends
+// outwards made two things drawn side by side share a sample and so appear
+// to overlap — which is why a row of mordents over consecutive notes came
+// out as a staircase, each one climbing to clear a neighbour it never
+// touched.
 func (s *skyline) span(x0, x1 float64) (lo, hi int) {
 	if x1 < x0 {
 		x0, x1 = x1, x0
 	}
 	lo = int(math.Floor((x0 - s.x0) / skylineStep))
-	hi = int(math.Ceil((x1 - s.x0) / skylineStep))
+	hi = int(math.Ceil((x1-s.x0)/skylineStep)) - 1
+	if hi < lo {
+		hi = lo
+	}
 	if lo < 0 {
 		lo = 0
 	}
@@ -316,6 +326,7 @@ type waitingMark struct {
 // somebody has to find from across a room.
 const (
 	rankTrill     = 50 // TrillSpanner: nearer the staff than anything else
+	rankOrnament  = 60 // Script: a mordent or a turn, just outside the trill
 	rankBarNumber = 100
 	rankDynamic   = 250 // DynamicLineSpanner: a dynamic and a hairpin share it
 	rankHairpin   = 250

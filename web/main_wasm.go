@@ -38,6 +38,7 @@ import (
 	// The importers register themselves, exactly as in the desktop build.
 	_ "github.com/stricaud/gscore/internal/format/abc"
 	_ "github.com/stricaud/gscore/internal/format/gscore"
+	_ "github.com/stricaud/gscore/internal/format/lilypond"
 	_ "github.com/stricaud/gscore/internal/format/musescore"
 	_ "github.com/stricaud/gscore/internal/format/musicxml"
 	_ "github.com/stricaud/gscore/internal/format/nwc"

@@ -50,14 +50,14 @@ type Font struct {
 type StandardFont string
 
 const (
-	Times       StandardFont = "Times-Roman"
-	TimesBold   StandardFont = "Times-Bold"
-	TimesItalic StandardFont = "Times-Italic"
-	TimesBoldItalic StandardFont = "Times-BoldItalic"
-	Helvetica   StandardFont = "Helvetica"
-	HelveticaBold StandardFont = "Helvetica-Bold"
+	Times            StandardFont = "Times-Roman"
+	TimesBold        StandardFont = "Times-Bold"
+	TimesItalic      StandardFont = "Times-Italic"
+	TimesBoldItalic  StandardFont = "Times-BoldItalic"
+	Helvetica        StandardFont = "Helvetica"
+	HelveticaBold    StandardFont = "Helvetica-Bold"
 	HelveticaOblique StandardFont = "Helvetica-Oblique"
-	Courier     StandardFont = "Courier"
+	Courier          StandardFont = "Courier"
 )
 
 // Standard adds one of the built-in fonts, or returns the one already added.

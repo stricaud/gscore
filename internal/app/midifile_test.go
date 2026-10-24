@@ -414,3 +414,113 @@ func clonePart(p *model.Part) *model.Part {
 }
 
 var _ = fmt.Sprintf
+
+// A two-note tremolo is the two notes alternating, not two long notes.
+//
+// Two half notes with three beams between them are sixteen thirty-second
+// notes going back and forth between the pitches. Played as written the
+// mark is drawn and then ignored, which is the one thing a shorthand must
+// not be.
+func TestATwoNoteTremoloAlternates(t *testing.T) {
+	half := model.Duration{Num: 1, Den: 2}
+	a := &model.Note{Pitch: model.Pitch{Step: model.StepC, Octave: 4}, Dur: half}
+	b := &model.Note{Pitch: model.Pitch{Step: model.StepG, Octave: 4}, Dur: half}
+	a.Tremolo = &model.Tremolo{Strokes: 3, Start: true}
+	b.Tremolo = &model.Tremolo{Strokes: 3, Stop: true}
+
+	s := &model.Score{
+		Tempo: model.Tempo{BPM: 120, Unit: model.Duration{Num: 1, Den: 4}},
+		Parts: []*model.Part{{
+			Clef: model.Treble,
+			Time: model.TimeSignature{Beats: 4, BeatValue: 4},
+			Measures: []*model.Measure{{
+				Voices:       []*model.Voice{{Elements: []model.Element{a, b}}},
+				RightBarline: model.BarSingle,
+			}},
+		}},
+	}
+	s.Normalise()
+
+	m := midiOf(t, s)
+	// Three beams is a thirty-second note, and a whole bar of them at 120
+	// is thirty-two of them.
+	if len(m.notes) < 16 {
+		t.Fatalf("%d notes sounded, want the bar broken into at least 16",
+			len(m.notes))
+	}
+	low, high := m.notes[0].key, 0
+	for _, n := range m.notes {
+		if n.key > high {
+			high = n.key
+		}
+		if n.key < low {
+			low = n.key
+		}
+	}
+	if high-low != 7 {
+		t.Errorf("the two pitches are %d apart, want a fifth (7)", high-low)
+	}
+	// And they take turns, rather than one sounding and then the other.
+	for i := 1; i < len(m.notes); i++ {
+		if m.notes[i].key == m.notes[i-1].key {
+			t.Fatalf("note %d repeats the pitch before it: the pair is not "+
+				"alternating", i)
+		}
+	}
+	// The bar is still a bar: two half notes, four beats, two seconds.
+	last := m.notes[len(m.notes)-1]
+	if ticks := last.off; ticks < m.division*7/2 || ticks > m.division*9/2 {
+		t.Errorf("the pair ends at tick %d; four beats is %d",
+			ticks, m.division*4)
+	}
+}
+
+// An ornament is a direction to play notes that are not written, so it has
+// to be played. Drawn and then ignored, the sign says one thing and the
+// score sounds another.
+func TestAMordentIsPlayed(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		mark model.Articulation
+		want []int // the keys, from the written C4
+	}{
+		{"a mordent drops below and comes back", model.Mordent, []int{60, 59, 60}},
+		{"a short trill goes up and comes back", model.ShortTrill, []int{60, 62, 60}},
+		{"a turn goes round the note", model.Turn, []int{62, 60, 59, 60}},
+		{"an inverted turn goes the other way", model.TurnInverted, []int{59, 60, 62, 60}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			s := phrase(func(i int, n *model.Note) {
+				n.Pitch = model.Pitch{Step: model.StepC, Octave: 4}
+				if i == 0 {
+					n.AddArticulation(c.mark)
+				}
+			})
+			m := midiOf(t, s)
+			if len(m.notes) < len(c.want) {
+				t.Fatalf("%d notes sounded, want at least %d", len(m.notes), len(c.want))
+			}
+			for i, want := range c.want {
+				if m.notes[i].key != want {
+					t.Errorf("note %d is key %d, want %d (%v)",
+						i, m.notes[i].key, want,
+						func() []int {
+							var k []int
+							for _, n := range m.notes[:len(c.want)] {
+								k = append(k, n.key)
+							}
+							return k
+						}())
+					break
+				}
+			}
+			// And the bar is still the bar: the ornament is played inside
+			// the note's own time, not added to it.
+			last := m.notes[len(m.notes)-1]
+			if last.off > m.division*4+10 {
+				t.Errorf("the phrase runs to tick %d; four beats is %d",
+					last.off, m.division*4)
+			}
+		})
+	}
+}

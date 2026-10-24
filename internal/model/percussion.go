@@ -38,12 +38,12 @@ package model
 type NoteheadKind int
 
 const (
-	HeadNormal NoteheadKind = iota
-	HeadX                   // cymbals, hi-hat, and anything struck on metal
-	HeadCircleX             // open hi-hat, and the cymbals played with a bow
-	HeadTriangle            // the rims and the cowbells
-	HeadDiamond             // harmonics, and a cymbal left to ring
-	HeadSlash               // rhythm to be improvised on
+	HeadNormal   NoteheadKind = iota
+	HeadX                     // cymbals, hi-hat, and anything struck on metal
+	HeadCircleX               // open hi-hat, and the cymbals played with a bow
+	HeadTriangle              // the rims and the cowbells
+	HeadDiamond               // harmonics, and a cymbal left to ring
+	HeadSlash                 // rhythm to be improvised on
 )
 
 var noteheadKindNames = [...]string{

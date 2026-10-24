@@ -307,6 +307,10 @@ func (a *App) APIRoutes(mux *http.ServeMux) {
 	// How the score is drawn rather than what it says, and which of a book's
 	// tunes is in front of you. Taking these back with undo would be
 	// surprising: nobody thinks of turning staff names on as an edit.
+	// Where the cursor is. Not an edit — it changes nothing about the music
+	// — so it is not in the undo block below.
+	mux.HandleFunc("/api/cursor", a.handleCursor)
+
 	mux.HandleFunc("/api/view", a.handleView)
 	mux.HandleFunc("/api/tune", a.handleTune)
 
@@ -450,6 +454,20 @@ type info struct {
 	// they start at. Bar zero is the score's own, which is why it is not
 	// here: the mark in the title block is that marking written over bar one.
 	TempoChanges map[string]tempoInfo `json:"tempoChanges,omitempty"`
+
+	// Cursor is where the writing cursor belongs when the score opens: where
+	// it was left if the file recorded one, and otherwise at the end of the
+	// first staff, which is where somebody opening a piece to add to it
+	// wants to be.
+	Cursor cursorInfo `json:"cursor"`
+}
+
+// cursorInfo is where the writing cursor goes when the score opens.
+type cursorInfo struct {
+	Part    int `json:"part"`
+	Measure int `json:"measure"`
+	At      int `json:"at"`
+	Step    int `json:"step"`
 }
 
 // tempoInfo is one metronome mark as the interface needs it.
@@ -495,6 +513,7 @@ func (a *App) handleInfo(w http.ResponseWriter, r *http.Request) {
 		Composer: a.score.Identity.Composer,
 		Tempo:    a.score.Tempo.BPM,
 	}
+	out.Cursor = a.cursorInfo()
 	out.TempoUnit, out.TempoDotted = beatName(a.score.Tempo.Unit)
 	out.TempoText = a.score.Tempo.Text
 	for i := 0; i < a.score.MeasureCount(); i++ {
@@ -828,3 +847,34 @@ func writeJSON(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(v)
 }
+
+// cursorInfo is where the writing cursor should be when the score opens.
+//
+// Where it was left, if the file said — a .gscore records it. A file from
+// anywhere else does not, and then the answer is the end of the first staff:
+// a new score has nothing in it and the cursor belongs at the start, and a
+// piece somebody opens to add to is a piece they want to carry on writing.
+// Either way there is a cursor on the page from the moment it opens, which
+// is the difference between an editor and a viewer.
+func (a *App) cursorInfo() cursorInfo {
+	if c := a.score.Cursor; c != nil && c.Part < len(a.score.Parts) {
+		return cursorInfo{Part: c.Part, Measure: c.Measure, At: c.At, Step: c.Step}
+	}
+	if len(a.score.Parts) == 0 {
+		return cursorInfo{}
+	}
+	p := a.score.Parts[0]
+	last := len(p.Measures) - 1
+	if last < 0 {
+		return cursorInfo{}
+	}
+	at := 0
+	if len(p.Measures[last].Voices) > 0 {
+		at = len(p.Measures[last].Voices[0].Elements)
+	}
+	return cursorInfo{Measure: last, At: at, Step: middleStaffStep}
+}
+
+// middleStaffStep is the middle line, which is where a cursor with no reason
+// to be anywhere else sits.
+const middleStaffStep = 4

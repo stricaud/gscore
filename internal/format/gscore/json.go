@@ -33,6 +33,16 @@ type scoreDoc struct {
 	Copyright string     `json:"copyright,omitempty"`
 	Tempo     tempoDoc   `json:"tempo"`
 	Parts     []partDoc  `json:"parts"`
+	Cursor    *cursorDoc `json:"cursor,omitempty"`
+}
+
+// Where the writing cursor was left. Not music: it is where somebody was
+// working, kept so that opening a piece puts you back where you were.
+type cursorDoc struct {
+	Part    int `json:"part"`
+	Measure int `json:"measure"`
+	At      int `json:"at"`
+	Step    int `json:"step"`
 }
 
 type groupDoc struct {
@@ -304,6 +314,7 @@ func encodeScore(s *model.Score) *scoreDoc {
 		Subtitle:  s.Identity.Subtitle,
 		Composer:  s.Identity.Composer,
 		Copyright: s.Identity.Copyright,
+		Cursor:    cursorToDoc(s.Cursor),
 		Tempo: tempoDoc{
 			BPM: s.Tempo.BPM, Unit: durString(s.Tempo.Unit), Text: s.Tempo.Text,
 		},
@@ -524,6 +535,11 @@ func decodeScore(doc *scoreDoc) (*model.Score, error) {
 		bpm = 120
 	}
 	s.Tempo = model.Tempo{BPM: bpm, Unit: unit, Text: doc.Tempo.Text}
+	if c := doc.Cursor; c != nil {
+		s.Cursor = &model.Cursor{
+			Part: c.Part, Measure: c.Measure, At: c.At, Step: c.Step,
+		}
+	}
 
 	for _, pd := range doc.Parts {
 		p := &model.Part{
@@ -745,4 +761,11 @@ func decodeMarks(md *marksDoc, m *model.Marks) {
 			Syllabic: syllabicValues[ly.Syllabic], Extend: ly.Extend,
 		})
 	}
+}
+
+func cursorToDoc(c *model.Cursor) *cursorDoc {
+	if c == nil {
+		return nil
+	}
+	return &cursorDoc{Part: c.Part, Measure: c.Measure, At: c.At, Step: c.Step}
 }

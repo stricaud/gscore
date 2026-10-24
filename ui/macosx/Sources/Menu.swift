@@ -160,9 +160,13 @@ enum Menus {
 
     private static func playMenu(_ t: AnyObject) -> NSMenuItem {
         submenu("Play", [
-            item("Play / Stop", "play", " ", [.command], target: t),
+            item("Play / Pause", "play", " ", [.command], target: t),
             item("Play from the Beginning", "play-from-start", " ",
                  [.command, .shift], target: t),
+            // Pausing keeps its place in the music, so there has to be a way
+            // of saying "and go back to the top" that is not playing from the
+            // top. Escape does it in the page; a menu bar needs an item.
+            item("Stop", "stop", ".", [.command], target: t),
         ])
     }
 

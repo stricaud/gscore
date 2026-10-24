@@ -15,6 +15,7 @@ package engrave
 
 import (
 	"math"
+	"sort"
 	"strconv"
 
 	"github.com/stricaud/gscore/internal/model"
@@ -514,6 +515,7 @@ func (e *engraver) drawChordHeads(p *placed) {
 	for i, n := range ch.Notes {
 		steps[i] = StaffStep(e.clef, n.Pitch)
 	}
+	shifted := displacedHeads(steps, up)
 
 	for i, n := range ch.Notes {
 		step := steps[i]
@@ -525,14 +527,8 @@ func (e *engraver) drawChordHeads(p *placed) {
 		}
 		// Noteheads a second apart cannot sit on the same side of the stem.
 		offset := 0.0
-		for j, other := range steps {
-			if j != i && abs(other-step) == 1 {
-				if (up && step == p.lo) || (!up && step == p.hi) {
-					break
-				}
-				offset = smufl.Advance(head)
-				break
-			}
+		if shifted[i] {
+			offset = smufl.Advance(head)
 		}
 		// Every notehead carries the chord's own ref, not just the first.
 		// A chord is one element: selecting it must light all of it up, and
@@ -1075,4 +1071,47 @@ func (e *engraver) drawArticulations(m *model.Marks, x float64, step int, stemUp
 			y += gap
 		}
 	}
+}
+
+// displacedHeads says which noteheads of a chord are pushed to the other
+// side of the stem.
+//
+// Two noteheads a second apart cannot share a column — they would be drawn
+// one through the other — so one of each pair moves across. Which one is not
+// a free choice: the chord is read from the stem outwards, the note nearest
+// the stem stays where it is, and from there they alternate.
+//
+// Alternate, which is the part that was missing. The old rule was "move me
+// if anything is a second away from me", and in a cluster of three that
+// moved the middle note and the top one both — so the top two ended up in
+// the same column a second apart, which is the one thing the rule exists to
+// prevent. A cluster of a third note has to come back to the first column.
+func displacedHeads(steps []int, up bool) []bool {
+	out := make([]bool, len(steps))
+	if len(steps) < 2 {
+		return out
+	}
+	// Read from the stem outwards: up the chord for a stem that points up,
+	// down it for one that points down.
+	order := make([]int, len(steps))
+	for i := range order {
+		order[i] = i
+	}
+	sort.SliceStable(order, func(a, b int) bool {
+		if up {
+			return steps[order[a]] < steps[order[b]]
+		}
+		return steps[order[a]] > steps[order[b]]
+	})
+
+	prev := steps[order[0]]
+	prevShifted := false
+	for _, i := range order[1:] {
+		// A second from the note before it, and only if that one stayed:
+		// two moved notes in a row would land in the same column again.
+		shift := abs(steps[i]-prev) == 1 && !prevShifted
+		out[i] = shift
+		prev, prevShifted = steps[i], shift
+	}
+	return out
 }

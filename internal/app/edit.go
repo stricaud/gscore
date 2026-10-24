@@ -2686,3 +2686,34 @@ func beatName(d model.Duration) (string, bool) {
 	}
 	return "quarter", false
 }
+
+// handleCursor records where the writing cursor is, so that saving the score
+// keeps it and opening the file again puts it back.
+//
+// The editor sends it when the cursor moves rather than the server guessing
+// from the last edit: moving the cursor and not writing anything is still
+// where you are, and a piece you opened to read through should not come back
+// with the cursor wherever you last happened to type.
+func (a *App) handleCursor(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST required", http.StatusMethodNotAllowed)
+		return
+	}
+	q := r.URL.Query()
+	num := func(name string) int {
+		n, _ := strconv.Atoi(q.Get(name))
+		return n
+	}
+	part := num("part")
+
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if part < 0 || part >= len(a.score.Parts) {
+		http.Error(w, "no such staff", http.StatusBadRequest)
+		return
+	}
+	a.score.Cursor = &model.Cursor{
+		Part: part, Measure: num("measure"), At: num("at"), Step: num("step"),
+	}
+	writeJSON(w, map[string]any{"status": "ok"})
+}

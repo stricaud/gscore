@@ -159,6 +159,26 @@ was redrawn on every system to the end of the piece, and a fermata over a bar
 of silence simply vanished. A rest is positioned at the middle line
 (`middleStep`) so that what is placed against it lands sensibly.
 
+## 7. Noteheads a second apart move across the stem, alternately
+
+See `displacedHeads` in `internal/engrave/draw.go`.
+
+Two heads a second apart cannot share a column: drawn there they are one
+through the other. One of each pair goes to the other side of the stem, and
+which one is not a free choice — the chord is read **from the stem outwards**,
+the note nearest it stays in the column the stem is drawn against, and from
+there they alternate.
+
+Alternate is the part that is easy to miss. The rule used to be "move me if
+anything is a second from me", which is right for a pair and wrong for
+anything longer: in a cluster of three it moved the middle note and the top
+one both, and left those two in the same column a second apart — the one
+thing the rule exists to prevent. The third note of a cluster has to come
+back to the first column.
+
+A chord with no seconds in it is one column. Nothing moves that does not have
+to, or a plain triad is printed looking like a cluster.
+
 ---
 
 ## What is still wrong
@@ -170,6 +190,11 @@ of silence simply vanished. A rest is positioned at the middle line
   the system and building each staff's outline from the whole system's music
   clipped to a band around that staff.
 - **Dynamics and hairpins are not aligned** onto a common line (see above).
+- **A displaced head always goes to the right.** With the stem up that is
+  the convention; with the stem down the chord should extend to the *left* of
+  the stem instead, and gscore puts it on the same side either way. Doing it
+  properly also means the column's width has to know about it — the spacing
+  does not currently reserve the extra notehead, in either direction.
 - **Slurs get one shot.** LilyPond enumerates candidate curves and scores them
   on `encompass`, `extra_encompass`, `edges`, `slopes` and variance, then
   takes the cheapest — `lily/slur-scoring.cc` and `lily/slur-configuration.cc`.
@@ -187,6 +212,9 @@ As properties over the layout, not as pictures:
 - `restmarks_test.go` — a hairpin closes on a rest and stays on its system.
 - `spanbreak_test.go` — a curve broken over a system stays on its own staff,
   is an arc and not a spike, and runs to the end of the line.
+- `chordheads_test.go` — no two heads of a chord a second apart share a
+  column, from a pair up to a cluster of four; a chord with no seconds in it
+  is left in one column; the note nearest the stem is the one that stays.
 
 **Write the failing case first and check it fails.** Twice here a test passed
 against the broken code because the fixture did not actually exercise the bug:

@@ -426,13 +426,26 @@ func (e *engraver) slurAt(m *model.Marks, p *placed) {
 	open := e.staffSpans(e.partIndex)
 	x := p.x + noteheadWidth(p.value)/2
 
-	// The side the curve arcs over, and where it leaves the notehead.
-	above := !e.stemUp(p)
-	edge := p.hi
-	if !above {
-		edge = p.lo
+	// Which way this note's stem points, counted into whatever slur is open
+	// so that the side can be settled from the phrase rather than from the
+	// note it happened to begin on.
+	if open.slur != nil {
+		if e.stemUp(p) {
+			open.slur.up++
+		} else {
+			open.slur.down++
+		}
+		if p.lo < open.slur.lowest {
+			open.slur.lowest = p.lo
+		}
+		if p.hi > open.slur.highest {
+			open.slur.highest = p.hi
+		}
 	}
-	y := e.y + stepY(float64(edge))
+
+	// The side this note alone would put the curve on, which is what a tie
+	// uses and what a slur falls back to when it covers one note.
+	above := !e.stemUp(p)
 
 	// Closing first, then opening.
 	//
@@ -442,11 +455,33 @@ func (e *engraver) slurAt(m *model.Marks, p *placed) {
 	// so a phrase slurred bar by bar came out with its first slur drawn and
 	// the rest missing. Four whole notes joined by three slurs showed one.
 	if m.SlurStop && open.slur != nil {
-		e.drawTieOrSlur(open.slur, x, y, slurLift, true)
+		sl := open.slur
+		// Away from the stems of the notes it covers. A tie between them
+		// settles it the way one note would.
+		sl.above = sl.down >= sl.up
+		edge, toEdge := sl.highest, p.hi
+		if !sl.above {
+			edge, toEdge = sl.lowest, p.lo
+		}
+		sl.y = e.y + stepY(float64(edge))
+		e.drawTieOrSlur(sl, x, e.y+stepY(float64(toEdge)), slurLift, true)
 		open.slur = nil
 	}
 	if m.SlurStart && open.slur == nil {
-		open.slur = &openSpan{x: x, y: y, rel: y - e.y, above: above}
+		edge := p.hi
+		if !above {
+			edge = p.lo
+		}
+		y := e.y + stepY(float64(edge))
+		open.slur = &openSpan{
+			x: x, y: y, rel: y - e.y, above: above,
+			lowest: p.lo, highest: p.hi,
+		}
+		if e.stemUp(p) {
+			open.slur.up++
+		} else {
+			open.slur.down++
+		}
 	}
 
 	// A tie is written on both notes: it stops on one and may start again on

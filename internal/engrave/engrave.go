@@ -519,6 +519,21 @@ type openSpan struct {
 	y     float64
 	above bool
 
+	// up and down count the stems of the notes a slur covers, including the
+	// ones it starts and ends on.
+	//
+	// A slur goes on the side away from the stems, and which side that is
+	// is a fact about the whole phrase and not about its first note. Taking
+	// it from the first note put a slur on the stem side of every note but
+	// one wherever a phrase began in a group beamed the other way, and then
+	// it had to dive under the beam to clear it.
+	up, down int
+
+	// lowest and highest are the outermost noteheads the slur covers, so
+	// that once the side is settled it can leave from the right edge of the
+	// notes at each end.
+	lowest, highest int
+
 	// rel is that same height measured from the top of its staff rather than
 	// from the top of the whole drawing. A curve cut at a line break is
 	// picked up on the next system, whose staff is somewhere else entirely;

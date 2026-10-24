@@ -130,6 +130,8 @@ func buildPlayback(s *model.Score) Playback {
 		// An octave line shifts everything under it; it opens at one note and
 		// closes at another, possibly bars later.
 		shift := 0
+		// A trill is held across the notes it covers, like an octave line.
+		trilling := false
 		// A hairpin is a change of volume over a stretch of music, so what it
 		// does cannot be known at the note it starts on. The notes it covers
 		// are collected and scaled once it closes.
@@ -185,6 +187,10 @@ func buildPlayback(s *model.Score) Playback {
 				if mk != nil && mk.Octave != nil && mk.Octave.Start {
 					shift = mk.Octave.Amount
 				}
+				if mk != nil && mk.Trill != nil && mk.Trill.Start {
+					trilling = true
+				}
+
 				first := len(out.Events)
 				switch n := el.(type) {
 				case *model.Note:
@@ -193,8 +199,13 @@ func buildPlayback(s *model.Score) Playback {
 						swell = nil // a written dynamic settles the question
 					}
 					gd := addGrace(&out, n.Grace, p, shift, vt, d, secondsPerWhole, pi, loud)
-					addNote(&out, open, &n.Marks, sounding(p, n.Pitch, shift),
-						vt+gd, d-gd, pi, ref, p.Instrument, loud, n.Percussion)
+					if trilling && n.Percussion == 0 {
+						addTrill(&out, sounding(p, n.Pitch, shift), p.KeyAt(mi),
+							vt+gd, d-gd, pi, ref, p.Instrument, loud)
+					} else {
+						addNote(&out, open, &n.Marks, sounding(p, n.Pitch, shift),
+							vt+gd, d-gd, pi, ref, p.Instrument, loud, n.Percussion)
+					}
 				case *model.Chord:
 					if n.Dynamic != model.DynamicNone {
 						loud = n.Dynamic
@@ -221,6 +232,9 @@ func buildPlayback(s *model.Score) Playback {
 					}
 					if mk.Octave != nil && mk.Octave.Stop {
 						shift = 0
+					}
+					if mk.Trill != nil && mk.Trill.Stop {
+						trilling = false
 					}
 				}
 				if ref != 0 {
@@ -458,4 +472,53 @@ func (s *swelling) apply(out *Playback, end int, loud model.Dynamic) {
 		out.Events[i].Velocity = base + int(float64(span)*f)
 	}
 	_ = loud
+}
+
+// trillRate is how many notes a second a trill is played at.
+//
+// A trill is not measured: it is as fast as the player can make it sound
+// even, and a written-out rhythm would be a different ornament. Twelve a
+// second is about what a wind player does and is fast enough to read as a
+// trill rather than as a run.
+const trillRate = 12.0
+
+// addTrill sounds a trilled note as the alternation it is.
+//
+// Between the note written and the one above it in the key — a trill is a
+// scale step, not a fixed interval, so in a flat key it is a semitone where
+// the scale has one. It starts on the written note, which is what the
+// ornament means today; in the eighteenth century it began on the note above
+// and a score that wants that writes it out.
+func addTrill(out *Playback, p model.Pitch, key model.KeySignature,
+	start, dur float64, part, ref int, inst model.Instrument, loud model.Dynamic) {
+
+	if dur <= 0 {
+		return
+	}
+	upper := p
+	upper.Step = (p.Step + 1) % 7
+	if upper.Step == model.StepC {
+		upper.Octave++
+	}
+	upper.Alter = key.AlterFor(upper.Step)
+
+	n := int(dur*trillRate + 0.5)
+	if n < 2 {
+		// Too short to alternate is too short to be a trill; it sounds as
+		// the note it is written on.
+		n = 1
+	}
+	step := dur / float64(n)
+	for i := 0; i < n; i++ {
+		at := p
+		if i%2 == 1 {
+			at = upper
+		}
+		out.Events = append(out.Events, Event{
+			MIDI: at.MIDI(), Start: start + float64(i)*step, Dur: step,
+			Part: part, Ref: ref,
+			Program: int(inst), Family: inst.Family().String(),
+			Velocity: loud.Velocity(),
+		})
+	}
 }

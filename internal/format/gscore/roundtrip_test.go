@@ -103,3 +103,41 @@ func TestRoundTripKeepsEverything(t *testing.T) {
 		t.Errorf("the beat came back as %v, want %v", m.Tempo.Unit, want)
 	}
 }
+
+// Where the writer was left is kept with the score. Not music — it is the
+// same courtesy a text editor does in remembering the line you were on — and
+// without it, opening a piece means finding your place again every time.
+func TestRoundTripKeepsTheCursor(t *testing.T) {
+	s := model.NewScore()
+	s.Cursor = &model.Cursor{Part: 0, Measure: 3, At: 2, Step: 6}
+
+	var buf bytes.Buffer
+	if err := Write(&buf, s, nil); err != nil {
+		t.Fatal(err)
+	}
+	back, _, err := Read(bytes.NewReader(buf.Bytes()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if back.Cursor == nil {
+		t.Fatal("the cursor did not survive")
+	}
+	if *back.Cursor != *s.Cursor {
+		t.Errorf("the cursor came back as %+v, want %+v", *back.Cursor, *s.Cursor)
+	}
+
+	// A score that never had one does not gain a cursor at the origin,
+	// which would be a claim about where somebody was working.
+	plain := model.NewScore()
+	buf.Reset()
+	if err := Write(&buf, plain, nil); err != nil {
+		t.Fatal(err)
+	}
+	again, _, err := Read(bytes.NewReader(buf.Bytes()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again.Cursor != nil {
+		t.Errorf("a score with no cursor came back with %+v", *again.Cursor)
+	}
+}

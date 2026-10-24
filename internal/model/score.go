@@ -366,11 +366,33 @@ func (p *Part) TimeAt(index int) TimeSignature {
 	return t
 }
 
+// Cursor is where the writing cursor was left.
+//
+// Not music, and said so: it is where somebody was working, the way a text
+// editor remembers the line you were on. It is kept with the score because
+// losing it is the small, daily annoyance of opening a piece and having to
+// find your place again.
+type Cursor struct {
+	// Part and Measure are which staff and which bar.
+	Part, Measure int
+	// At is the place between elements the cursor sits in: 0 is before the
+	// first, len is after the last.
+	At int
+	// Step is the staff position the next note would be written at, counted
+	// in half spaces from the bottom line.
+	Step int
+}
+
 // Score is a complete piece of music.
 type Score struct {
 	Identity Identity
 	Tempo    Tempo
 	Parts    []*Part
+
+	// Cursor is where the writing cursor was left, when the file said. A
+	// score read from a format that does not record one has none, and the
+	// editor puts the cursor at the end of the first staff instead.
+	Cursor *Cursor
 
 	// Groups join staves that belong together: the two hands of a piano, the
 	// four staves of a string quartet. Without them a score is a stack of

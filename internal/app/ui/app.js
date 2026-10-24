@@ -62,6 +62,12 @@ const state = {
   // Player mode: nothing edits, and playing may go round again at the end.
   readOnly: false,
   loop: false,
+  // Where playing was paused, in seconds of the score's own time, or null
+  // for "not paused". Playing again carries on from here.
+  pausedAt: null,
+  // And what was selected at the time, so that picking a different note
+  // while paused can be told from not having touched anything.
+  pausedSel: "",
   // Drawing options that belong to the view rather than to the file.
   view: { names: false, numbers: false },
   // Where each measure's closing barline was drawn, so one can be clicked.
@@ -309,7 +315,9 @@ async function action(name) {
       status(state.mode === "strip" ? "Continuous strip" : "Paginated");
       break;
     case "play":
-      play();
+      // The menus say Play / Pause and the space bar does the same thing, so
+      // this is the same one function and not a second opinion about it.
+      void togglePlay();
       break;
     case "play-from-start":
       await playFromStart();
@@ -708,6 +716,49 @@ async function reload() {
   await loadInfo();
   await drawScore();
   await loadHits();
+  placeCursorOnOpen();
+}
+
+// placeCursorOnOpen puts the writing cursor on the page as soon as the score
+// is there.
+//
+// A score with no cursor on it looks like something to read rather than
+// something to write, and the first thing anybody had to do on opening a
+// piece was click it to find out where they were. The server says where:
+// the place the file recorded, or the end of the first staff for a file from
+// a format that records none.
+function placeCursorOnOpen() {
+  if (state.selection || state.readOnly) return;
+  const c = state.info?.cursor;
+  if (!c) return;
+  state.selection = {
+    part: c.part, measure: c.measure, at: c.at, step: c.step, ref: null,
+    replace: false,
+  };
+  markSelection();
+  scrollSelectionIntoView();
+}
+
+// rememberCursor tells the server where the cursor is, so that saving keeps
+// it and opening the file again puts it back.
+//
+// Sent a moment after it settles rather than on every keystroke: arrowing
+// along a bar would otherwise be one request per note, and only where it
+// stops is worth recording.
+let cursorTimer = null;
+function rememberCursor() {
+  const sel = state.selection;
+  if (!sel || state.readOnly) return;
+  if (cursorTimer) clearTimeout(cursorTimer);
+  cursorTimer = setTimeout(() => {
+    cursorTimer = null;
+    const q = new URLSearchParams({
+      part: String(sel.part), measure: String(sel.measure),
+      at: String(sel.at), step: String(sel.step ?? 0),
+    });
+    void fetch("/api/cursor?" + q.toString(), { method: "POST" })
+      .catch(() => { /* where the cursor is is not worth an error */ });
+  }, 500);
 }
 
 // reopen is for a different file: the view starts over with it.
@@ -1367,6 +1418,7 @@ async function refreshScore() {
 // way every notation program worth using does it. The notes are tinted too,
 // but the rectangle is what the eye reads.
 function markSelection() {
+  rememberCursor();
   const svg = currentSVG();
   if (!svg) return;
   svg.querySelectorAll("rect.selection").forEach((r) => r.remove());
@@ -3315,6 +3367,23 @@ function setupFileInput() {
 /* ---------- playback ---------- */
 
 let audio = null;
+
+// wakeAudio makes the sound context and asks it to start, without waiting.
+//
+// It has to be called straight from whatever the user did, so this is
+// deliberately not async: the asking is what has to happen inside the
+// gesture, not the finishing.
+function wakeAudio() {
+  if (!audio) {
+    audio = new (window.AudioContext || window.webkitAudioContext)();
+    noise = null;
+  }
+  if (audio.state !== "running") {
+    // "interrupted" is WebKit's, for a context the system took away.
+    audio.resume().catch(() => { /* answered by the check in play() */ });
+  }
+  return audio;
+}
 let voices = [];
 let rafID = null;
 let playStart = 0;
@@ -3581,6 +3650,7 @@ function sound(ev, start, master) {
 // looked at, so "play" means "play this one". Getting back to the first bar of
 // the first tune should not mean scrolling up to find it and clicking.
 async function playFromStart() {
+  wakeAudio(); // in the gesture, before anything is awaited — see togglePlay
   stop();
   if ((state.info?.tunes?.length ?? 0) > 1 && (state.info?.current ?? 0) !== 0) {
     await selectTune(0);
@@ -3603,6 +3673,11 @@ function scrollToTop() {
 async function play(opts) {
   if (state.playing) stop();
 
+  // Where a pause left off, if this is carrying on from one. Nothing about
+  // resuming is up for discussion — not the place in the music and not, just
+  // below, which tune is being played.
+  const at = opts && opts.at > 0 ? opts.at : 0;
+
   // In a book, play the tune being looked at. Scrolling down to a tune and
   // pressing space is how somebody asks to hear it; without this the first
   // tune played instead, and since the cursor went with it the view jumped
@@ -3611,7 +3686,7 @@ async function play(opts) {
   // A selection says which tune more precisely than the scroll position does,
   // so it wins — clicking a note in one tune and scrolling to another should
   // still play the note that was clicked.
-  if (!(opts && opts.fromStart) && !hasSelection()) {
+  if (!(opts && opts.fromStart) && !at && !hasSelection()) {
     const seen = visibleTune();
     if (seen !== null && seen !== state.info?.current) {
       await selectTune(seen);
@@ -3627,20 +3702,55 @@ async function play(opts) {
   // Where to begin. A note played more than once — anything inside a repeat
   // — is started at the first time through, which is the one being looked at.
   let from = 0;
-  if (!(opts && opts.fromStart) && hasSelection()) {
+  if (at) {
+    // Carrying on from a pause wins over the selection: the selection has
+    // not moved, and going back to it is the one thing resuming is not.
+    from = at;
+    // And a little before it: back to the start of the note that was
+    // sounding when the music stopped.
+    //
+    // A pause lands wherever it lands, which is usually in the middle of a
+    // note, and taking that note up from its middle strikes it halfway
+    // through its own sustain — a sound nothing in the score asks for. The
+    // note it goes back to is the last one to have started, so this is never
+    // more than one note's worth of rewind, and it is what a player does
+    // anyway. Anything still ringing from further back is taken up part way
+    // as before: a held bass note would otherwise drag the whole piece back
+    // to where it began.
+    let began = -1;
+    for (const ev of pb.events) {
+      if (ev.start <= from && ev.start + ev.dur > from && ev.start > began) {
+        began = ev.start;
+      }
+    }
+    if (began >= 0) from = began;
+    // A piece that has been edited since, or shortened, may no longer reach
+    // that far. Then there is nothing to carry on from and the top is the
+    // only sensible answer.
+    if (from >= pb.duration) from = 0;
+  } else if (!(opts && opts.fromStart) && hasSelection()) {
     const ref = state.multi.length ? orderedSelection()[0].ref : state.selection.ref;
     const ev = pb.events.find((x) => x.ref === ref);
     if (ev) from = ev.start;
   }
+  // Whatever was paused has now been taken up or dropped on purpose.
+  state.pausedAt = null;
+
   // The cursor is placed from the engraved positions, so they have to be in
   // hand before it can be shown.
   await loadHits();
 
-  if (!audio) {
-    audio = new (window.AudioContext || window.webkitAudioContext)();
-    noise = null;
-  }
+  wakeAudio();
   await audio.resume();
+  // Only where the context says outright that it is not running: a browser
+  // that does not report a state at all is not a browser that is refusing.
+  if (audio.state && audio.state !== "running") {
+    // Say so rather than appear to play. A context that will not start is
+    // silence that looks exactly like success: the cursor moves, the
+    // noteheads light up, and nothing comes out.
+    status("The browser will not let the sound start — click the score and try again");
+    return;
+  }
 
   const master = audio.createGain();
   master.gain.value = 0.22; // keep simultaneous notes from clipping
@@ -3850,9 +3960,25 @@ function follow(pb) {
 
 let lastMeasure = null;
 
+// removeCursors takes every playback cursor off the page — the one being
+// tracked, and any that is there without being tracked, which is the way
+// this goes wrong.
+function removeCursors() {
+  cursorEl?.remove();
+  cursorEl = null;
+  currentSVG()?.querySelectorAll("rect.cursor").forEach((r) => r.remove());
+}
+
 function makeCursor() {
   const svg = currentSVG();
   if (!svg) return;
+  // Take away whatever cursor is already on the page before putting one up.
+  //
+  // Playing used to be preceded by a stop, which removed it, so appending
+  // was safe. Pausing keeps the cursor where it is on purpose — it is the
+  // sign of where the music will pick up — and carrying on then left the old
+  // one behind: a pale bar at every place the piece had ever been paused.
+  removeCursors();
   cursorEl = document.createElementNS("http://www.w3.org/2000/svg", "rect");
   cursorEl.setAttribute("class", "cursor");
   // A height from the start, or there is nothing to see until the first note.
@@ -3978,7 +4104,12 @@ function followCursor(pt) {
 }
 
 
-function stop() {
+// silence takes the sound and the clock down and leaves everything else
+// where it is.
+//
+// Stopping and pausing both do this much. What divides them is what becomes
+// of the place in the music: stopping forgets it, pausing keeps it.
+function silence() {
   if (rafID) cancelAnimationFrame(rafID);
   rafID = null;
   for (const v of voices) {
@@ -3993,12 +4124,74 @@ function stop() {
   // Clear every notehead that was lit, on every staff.
   svg?.querySelectorAll(".playing").forEach((n) => n.classList.remove("playing"));
   current = new Set();
-  cursorEl?.remove();
-  cursorEl = null;
-  lastMeasure = null;
   state.playing = false;
   $("#play-btn").classList.remove("active");
+}
+
+// stop goes back to the beginning.
+function stop() {
+  silence();
+  state.pausedAt = null;
+  removeCursors();
+  lastMeasure = null;
   $("#clock").textContent = "0:00";
+}
+
+// pause holds the music where it is, so that playing again carries on from
+// there rather than starting the piece over.
+//
+// The cursor stays on the page and the clock keeps its reading. They are the
+// only sign of where the music will pick up; taking them away leaves a paused
+// score looking exactly like a stopped one, and then the next keypress is a
+// guess.
+function pause() {
+  if (!state.playing) return;
+  // The clock is kept in the score's own time, so this is a place in the
+  // music and not a length of time since a button was pressed — which is
+  // what makes it something playing can be handed back.
+  const at = (performance.now() - playStart) / 1000;
+  silence();
+  state.pausedAt = Math.max(0, at);
+  state.pausedSel = selectionKey();
+  status(lastMeasure === null
+    ? `Paused at ${clock(state.pausedAt)}`
+    : `Paused at measure ${lastMeasure + 1} — ${clock(state.pausedAt)}`);
+}
+
+// togglePlay is the one thing the space bar, the play button and an embedding
+// page all reach, so that pausing and carrying on cannot mean one thing in
+// one place and something else in another.
+function togglePlay() {
+  // Wake the sound up here, in the keypress or the click itself, before
+  // anything at all is awaited.
+  //
+  // A browser only lets a page start making sound from something the user
+  // did, and the permission belongs to that one turn of the event loop:
+  // await anything — the playback, the engraved positions — and it is gone.
+  // play() asks the context to resume well after both, which works only
+  // because the context is usually running already from the last time. Let
+  // it go idle, as stopping and leaving it a while does, and the resume
+  // quietly does nothing: the notes are scheduled on a context that is not
+  // running and the piece plays in silence.
+  wakeAudio();
+  if (state.playing) {
+    pause();
+    return undefined;
+  }
+  // Clicking a different note while paused is a new instruction and not a
+  // resume: playing from what is selected is what clicking a note and
+  // pressing the space bar has always meant, and being paused should not
+  // quietly take that away.
+  const moved = selectionKey() !== state.pausedSel;
+  return play({ at: moved ? null : state.pausedAt });
+}
+
+// selectionKey is what is selected, as one short string, for telling whether
+// it is still what it was.
+function selectionKey() {
+  const s = state.selection;
+  if (!s) return "";
+  return [s.part, s.measure, s.at, s.ref ?? "", state.multi.length].join(":");
 }
 
 function clock(sec) {
@@ -4416,9 +4609,12 @@ function setupKeys() {
         // Space writes the note the palette is showing, at the cursor. It
         // is the key under the thumb and writing notes is what the thumb
         // should be doing; playback moved to shift with it.
+        //
+        // Shift with it plays, pauses, and carries on from where it paused.
+        // Escape is the way back to the beginning.
         e.preventDefault();
         if (e.shiftKey) {
-          state.playing ? stop() : play();
+          void togglePlay();
         } else {
           void insertAtSelection(false);
         }
@@ -4429,7 +4625,8 @@ function setupKeys() {
         void insertAtSelection(true);
         break;
       case "Escape":
-        if (state.playing) stop();
+        // Back to the top, from playing or from paused.
+        if (state.playing || state.pausedAt !== null) stop();
         else clearSelection();
         break;
       case "m": action("add-measure"); break;
@@ -4740,7 +4937,7 @@ async function applyPlayerMode(opt) {
   if (opt.bare) {
     // With no transport to press, the score itself is the button.
     $("#canvas-wrap").addEventListener("click", () => {
-      state.playing ? stop() : play();
+      void togglePlay();
     });
     $("#canvas-wrap").style.cursor = "pointer";
   }
@@ -4787,8 +4984,8 @@ async function main() {
   });
   $("#zoom").addEventListener("input", (e) => setZoom(Number(e.target.value)));
   $("#drumpad-kit").addEventListener("change", (e) => void changeDrumKit(e.target.value));
-  $("#play-btn").addEventListener("click", () => (state.playing ? stop() : play()));
-  $("#stop-btn").addEventListener("click", stop);
+  $("#play-btn").addEventListener("click", () => void togglePlay());
+  $("#stop-btn").addEventListener("click", () => stop());
 
   const opt = readOptions();
   if (opt.isPlayer) await applyPlayerMode(opt);
@@ -4828,7 +5025,7 @@ async function main() {
 
   // A page that embeds gscore can drive it, and wants to know when it may.
   window.gscore = {
-    play, stop, loadFromURL,
+    play, pause, stop, loadFromURL,
     selectTune,
     isPlaying: () => state.playing,
     setZoom,
@@ -4872,7 +5069,7 @@ async function main() {
 //
 //   { gscore: "play" }                  start, from the beginning
 //   { gscore: "stop" }
-//   { gscore: "toggle" }
+//   { gscore: "toggle" }                 play, or pause where it is
 //   { gscore: "tune",  value: 3 }       show tune 3 of a book
 //   { gscore: "load",  value: "x.abc" } open another score
 //   { gscore: "zoom",  value: 10 }
@@ -4886,7 +5083,7 @@ function setupEmbedMessages() {
     switch (m.gscore) {
       case "play": await playFromStart(); break;
       case "stop": stop(); break;
-      case "toggle": state.playing ? stop() : await play(); break;
+      case "toggle": await togglePlay(); break;
       case "tune": await selectTune(Number(m.value) || 0); break;
       case "load": await loadFromURL(String(m.value)); break;
       case "zoom": setZoom(Number(m.value) || state.zoom); break;

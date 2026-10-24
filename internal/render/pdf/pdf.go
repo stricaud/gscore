@@ -33,6 +33,7 @@ import (
 	"io"
 	"strings"
 
+	"github.com/stricaud/gscore/internal/brand"
 	"github.com/stricaud/gscore/internal/engrave"
 	"github.com/stricaud/gscore/internal/pdf"
 	"github.com/stricaud/gscore/internal/smufl"
@@ -130,7 +131,7 @@ func Render(w io.Writer, lay *engrave.Layout, opt Options) error {
 	doc.Title = opt.Title
 	doc.Author = opt.Author
 	doc.Subject = opt.Subject
-	doc.Creator = "gscore"
+	doc.Creator = brand.Name
 
 	r := &renderer{doc: doc, lay: lay, opt: opt, s: pdf.Point(opt.StaffSpace)}
 
@@ -158,7 +159,7 @@ func RenderAll(w io.Writer, layouts []*engrave.Layout, opt Options) error {
 	doc.Title = opt.Title
 	doc.Author = opt.Author
 	doc.Subject = opt.Subject
-	doc.Creator = "gscore"
+	doc.Creator = brand.Name
 
 	music, err := doc.Embed("Bravura", smufl.FontData())
 	if err != nil {
@@ -199,6 +200,7 @@ func (r *renderer) run() {
 		r.offset = band.top
 		r.page = r.doc.NewPage(pdf.Point(r.opt.PageWidth), pdf.Point(r.opt.PageHeight))
 		r.page.SetGray(0)
+		r.stamp()
 
 		// Nothing from the next page's systems may bleed into this one. The
 		// clip is the band, not the page: a stem or a slur is allowed to
@@ -216,6 +218,44 @@ func (r *renderer) run() {
 		r.page.Restore()
 		r.page.Close()
 	}
+}
+
+// stampSize is how tall the mascot is printed, in points.
+//
+// About five millimetres: there to be recognised, not to be read. A page of
+// music is somebody else's work and a maker's mark belongs on it the way a
+// printer's does — in the margin, small.
+const stampSize = 15
+
+// stamp prints Gilbert in the top left margin of the page.
+//
+// Every page, not only the first: the pages of a score are pulled apart,
+// handed round a band and photocopied, and a mark on the first sheet alone
+// says nothing about the one in front of you.
+//
+// In the margin above the music, where there is nothing else — the title
+// block and the tempo mark both sit inside the text area, below it.
+func (r *renderer) stamp() {
+	img, err := brand.Gilbert()
+	if err != nil || img == nil {
+		return // a logo that will not decode is not worth failing a score for
+	}
+	im := r.doc.Image("gilbert", img)
+	if im == nil {
+		return
+	}
+	b := img.Bounds()
+	h := float64(stampSize)
+	w := h * float64(b.Dx()) / float64(b.Dy())
+	// Centred in the top margin, so it sits clear of the music whatever the
+	// margin is set to, and never on top of it.
+	top := r.opt.MarginTop
+	if top < h+4 {
+		top = h + 4
+	}
+	y := r.opt.PageHeight - (top+h)/2 - h/2
+	r.page.Image(im, pdf.Point(r.opt.MarginLeft), pdf.Point(y),
+		pdf.Point(w), pdf.Point(h))
 }
 
 // band is one page's worth of the layout, in staff spaces.

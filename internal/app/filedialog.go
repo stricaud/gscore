@@ -397,9 +397,10 @@ func (a *App) renderPDF(w io.Writer, r *http.Request) error {
 	eopt.Mode = engrave.Paginated
 	eopt.ShowMeasureNumbers = q.Get("numbers") != "0"
 	eopt.ShowPartNames = len(score.Parts) > 1
-	// The paper says how long a line of music it holds; the engraver is told
-	// rather than left to assume one shape of page and one size of type.
-	eopt.LineWidth = popt.LineWidth(eopt.Spacings)
+	// The paper says how big the music is set and how long a line of it it
+	// holds; the engraver is told rather than left to assume one shape of
+	// page and one size of type.
+	popt, eopt = gpdf.Fit(score, popt, eopt)
 
 	var layouts []*engrave.Layout
 	switch q.Get("what") {

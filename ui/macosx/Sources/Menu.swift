@@ -186,7 +186,7 @@ enum Menus {
     }
 
     private static func helpMenu(_ t: AnyObject) -> NSMenuItem {
-        let holder = submenu("Help", [item("gscore Help", "about", "?", target: t)])
+        let holder = submenu("Help", [item("Gscore Help", "about", "?", target: t)])
         NSApp.helpMenu = holder.submenu
         return holder
     }

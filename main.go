@@ -224,9 +224,12 @@ func renderFile(s *model.Score, path string, strip bool, space float64, landscap
 		eopt.Mode = engrave.Paginated
 		eopt.ShowPartNames = len(s.Parts) > 1
 		eopt.ShowMeasureNumbers = true
-		// How long a line of music the paper holds. The page decides, not
-		// the engraver: on its side it holds half as much again.
-		eopt.LineWidth = popt.LineWidth(eopt.Spacings)
+		// How big the music is set and how long a line of music the paper
+		// holds: one decision, made from the music and the paper together.
+		// A size asked for is a size not to be exceeded, so a score with
+		// more staves than the sheet will hold is set smaller rather than
+		// printed with its lower staves falling off the page.
+		popt, eopt = gpdf.Fit(s, popt, eopt)
 	}
 	lay := engrave.Engrave(s, eopt)
 

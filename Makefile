@@ -82,8 +82,12 @@ vet:
 # So a bundle is built in three moves: the core as a C archive, the
 # application against it, and the two architectures joined with lipo.
 
-APP      := $(BUILD)/$(BINARY).app
-DMG      := $(BUILD)/$(BINARY)-$(VERSION).dmg
+# The bundle carries the name as it is written for somebody to read, while
+# the executable inside it keeps the command's own name: in the Finder and
+# the menu bar this is Gscore, and in a terminal it is still gscore.
+APP_NAME := Gscore
+APP      := $(BUILD)/$(APP_NAME).app
+DMG      := $(BUILD)/$(APP_NAME)-$(VERSION).dmg
 MAC_ARCH := arm64 amd64
 MAC_MIN  := 13.0
 MAC_SRC  := $(wildcard ui/macosx/Sources/*.swift)
@@ -140,7 +144,7 @@ dmg: app
 	@cp -R $(APP) $(BUILD)/dmg/
 	@# A link to Applications, so the image is a drag-and-drop installer.
 	@ln -s /Applications $(BUILD)/dmg/Applications
-	@hdiutil create -quiet -volname "$(BINARY) $(VERSION)" \
+	@hdiutil create -quiet -volname "$(APP_NAME) $(VERSION)" \
 		-srcfolder $(BUILD)/dmg -ov -format UDZO $(DMG)
 	@rm -rf $(BUILD)/dmg
 	@echo "built $(DMG) ($(shell du -h $(DMG) 2>/dev/null | cut -f1))"
@@ -215,7 +219,7 @@ help:
 define DESKTOP_FILE
 [Desktop Entry]
 Type=Application
-Name=gscore
+Name=Gscore
 GenericName=Music score editor
 Comment=A musical score editor
 Exec=gscore %f

@@ -32,7 +32,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
 
     func applicationDidFinishLaunching(_ note: Notification) {
         guard let url = Engine.start() else {
-            fail("gscore could not start its editor.",
+            fail("Gscore could not start its editor.",
                  "It could not listen on a port of its own, which usually "
                  + "means something is badly wrong with the network stack.")
             return
@@ -61,7 +61,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
             contentRect: NSRect(x: 0, y: 0, width: 1280, height: 820),
             styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
             backing: .buffered, defer: false)
-        window.title = "gscore"
+        window.title = "Gscore"
         window.minSize = NSSize(width: 720, height: 480)
         window.contentView = web
         window.setFrameAutosaveName("gscore.main")
@@ -118,10 +118,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
             return
         }
         if let problem = Engine.open(path: path) {
-            fail("gscore could not open that file.", problem)
+            fail("Gscore could not open that file.", problem)
             return
         }
-        window.title = (path as NSString).lastPathComponent + " — gscore"
+        window.title = (path as NSString).lastPathComponent + " — Gscore"
         window.representedFilename = path
         NSDocumentController.shared.noteNewRecentDocumentURL(URL(fileURLWithPath: path))
         // The score changed underneath the page, so the page is told to go

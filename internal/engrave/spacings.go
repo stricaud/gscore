@@ -116,3 +116,34 @@ func DefaultSpacings() Spacings {
 		Margin: 4,
 	}
 }
+
+// minStaffGap is as close as two staves of one system are ever set.
+//
+// It still leaves room for a dynamic under one staff and a slur over the next
+// without their meeting, which is what the gap is for.
+const minStaffGap = 6
+
+// staffGap is the air between the staves of a system, which gets less as
+// there are more of them.
+//
+// Spacings.StaffGap is the air a small score can afford. A big one cannot:
+// the gap is most of a system's height, and a system taller than the page is
+// either printed at a type size nobody can read across a pit or — worse —
+// cut in half, with the horns on one sheet and the strings on the next.
+// Seventeen staves at the roomy gap came to twice the height of A4, so the
+// first page of a song printed four staves of it and dropped the rest.
+//
+// A printed conductor's score is set tight for exactly this reason: the air
+// goes, so the notes can stay big enough to read. Half a space goes for each
+// staff past the fourth, which leaves a song or a piano piece exactly as it
+// was.
+func (e *engraver) staffGap(staves int) float64 {
+	gap := e.opt.Spacings.StaffGap
+	if staves <= 4 {
+		return gap
+	}
+	if gap -= 0.5 * float64(staves-4); gap < minStaffGap {
+		gap = minStaffGap
+	}
+	return gap
+}

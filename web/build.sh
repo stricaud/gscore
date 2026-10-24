@@ -47,6 +47,11 @@ for f in "$root"/internal/app/ui/*; do
 done
 cp "$root/web/boot.js" "$out/"
 
+# The mascot is kept with the name rather than with the interface, because
+# the PDF writer stamps the same drawing on every page it prints. As a page
+# he is a plain file, so he is copied beside the rest.
+cp "$root/internal/brand/gilbert.png" "$out/"
+
 # The font is served by the Go handler in the application; as a page it is a
 # plain file, so it is copied beside the rest.
 cp "$root/internal/smufl/data/Bravura.otf" "$out/font.otf"

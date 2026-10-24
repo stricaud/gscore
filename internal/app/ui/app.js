@@ -602,7 +602,7 @@ async function loadInfo() {
   // In a native window the title bar already says gscore; repeating it
   // inside the window is what makes a web view look like a web page.
   document.body.classList.toggle("native", !!i.native);
-  $("#version").textContent = "gscore " + i.version;
+  $("#version").textContent = "Gscore " + i.version;
   $("#about-version").textContent = "Version " + i.version;
   $("#filename").textContent = i.filename || "untitled";
 
@@ -3281,7 +3281,7 @@ function askPrint(many, parts, title, verb, paper) {
   $("#print-parts-row").hidden = !parts;
   $("#print-paper").hidden = !paper;
   $("#print-note").textContent = paper
-    ? "Choose what to export. gscore engraves the pages itself, so the paper is set here."
+    ? "Choose what to export. Gscore engraves the pages itself, so the paper is set here."
     : "Choose what to print. Paper size, margins and “Save as PDF” are in your "
       + "system’s print dialog, which opens next.";
   // A book is almost always wanted whole; a single tune has nothing else to

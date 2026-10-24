@@ -1466,7 +1466,7 @@ func (e *engraver) drawSystem(parts []*model.Part, boxes [][]measureBox,
 	// widening every gap by the worst case pushes a pianist's two staves half
 	// a page apart for the sake of a guitar diagram three staves away.
 	gapAfter := func(i int) float64 {
-		gap := sp.StaffGap + roomBelow(parts[i])
+		gap := e.staffGap(len(parts)) + roomBelow(parts[i])
 		if i+1 < len(parts) {
 			if above := e.partChordRoom(parts[i+1], start, end); above > 0 {
 				gap += above

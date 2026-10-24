@@ -40,6 +40,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/stricaud/gscore/internal/brand"
 	"github.com/stricaud/gscore/internal/desktop"
 	"github.com/stricaud/gscore/internal/engrave"
 	"github.com/stricaud/gscore/internal/format"
@@ -226,9 +227,9 @@ func (a *App) Run(addr string, mode UIMode) error {
 		fmt.Println("listening on all interfaces: anyone who can reach this port can edit the score")
 	}
 
-	title := "gscore"
+	title := brand.Name
 	if a.filename != "" {
-		title = filepath.Base(a.filename) + " — gscore"
+		title = filepath.Base(a.filename) + " — " + brand.Name
 	}
 
 	switch mode {
@@ -271,6 +272,14 @@ func (a *App) routes(mux *http.ServeMux) {
 		panic(err)
 	}
 	mux.Handle("/", http.FileServer(http.FS(ui)))
+	// The mascot is served from the one place he is kept, rather than from a
+	// second copy sitting in the interface's own files: the PDF writer
+	// stamps the same drawing on paper and the two must not drift apart.
+	mux.HandleFunc("/gilbert.png", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "image/png")
+		w.Header().Set("Cache-Control", "max-age=86400")
+		w.Write(brand.GilbertPNG)
+	})
 	a.APIRoutes(mux)
 }
 

@@ -112,13 +112,29 @@ func TestABigScoreIsSetSmallEnoughToFitThePage(t *testing.T) {
 
 // Fitting only ever goes smaller. A page with room to spare is not a reason
 // to blow a song up, and a size somebody asked for is one not to exceed.
-func TestASmallScoreIsLeftAtTheSizeItWasAskedFor(t *testing.T) {
+//
+// Smaller it may well go, and not only to make a system fit: a score that
+// comes to two sheets at the size asked for and one sheet a little under it
+// is set a little under it, which is a page turn saved. So what is checked
+// here is the ceiling, and that a score already on one sheet is left alone.
+func TestFittingNeverMakesTheMusicBigger(t *testing.T) {
 	for _, staves := range []int{1, 2, 4} {
 		o, _ := Fit(ensemble(staves, 24), DefaultOptions(), paginated(staves))
-		if o.StaffSpace != DefaultOptions().StaffSpace {
-			t.Errorf("%d staves: set at %.2fpt, want the default %.2fpt",
+		if o.StaffSpace > DefaultOptions().StaffSpace {
+			t.Errorf("%d staves: set at %.2fpt, larger than the %.2fpt asked for",
 				staves, o.StaffSpace, DefaultOptions().StaffSpace)
 		}
+		if o.StaffSpace < MinStaffSpace {
+			t.Errorf("%d staves: set at %.2fpt, below the smallest readable",
+				staves, o.StaffSpace)
+		}
+	}
+	// One staff of twenty-four bars is one sheet however it is set, so
+	// there is nothing to save and nothing is changed.
+	o, _ := Fit(ensemble(1, 24), DefaultOptions(), paginated(1))
+	if want := DefaultOptions().StaffSpace; o.StaffSpace != want {
+		t.Errorf("a one-page score was set at %.2fpt rather than the %.2fpt "+
+			"asked for, saving nothing", o.StaffSpace, want)
 	}
 }
 

@@ -216,7 +216,7 @@ func (e *engraver) drawMeasure(part *model.Part, b measureBox, x, end float64, s
 			e.slurAt(m, p)
 			e.drawLyrics(m, p)
 			e.drawTexts(m, p)
-			e.drawChordSymbol(m.Chord, p.x)
+			e.waitChord(m.Chord, p.x)
 		}
 	}
 
@@ -1178,20 +1178,34 @@ func (e *engraver) drawDynamic(m *model.Marks, p *placed) {
 // Above the staff unless told otherwise, because that is where a direction to
 // the player goes and below is where the dynamics and the words already are.
 func (e *engraver) drawTexts(m *model.Marks, p *placed) {
+	const textSize = 1.9
 	for _, t := range m.Texts {
 		if t.Text == "" {
 			continue
 		}
-		y := e.y - 2.2 - e.textRise
+		x := p.x + t.OffsetX
 		if t.Placement == model.PlacementBelow {
-			y = e.y + e.staffH() + 3.4
-		} else if p.hi > 10 && e.textRise == 0 {
-			// Clear of a passage that climbs above the staff.
-			y = e.y + stepY(float64(p.hi)) - 1.8
+			e.lay.Texts = append(e.lay.Texts, Text{
+				S: t.Text, X: x, Y: e.y + e.staffH() + 3.4 + t.OffsetY,
+				Size: textSize, Anchor: "start", Italic: t.Italic, Bold: t.Bold,
+			})
+			continue
 		}
-		e.lay.Texts = append(e.lay.Texts, Text{
-			S: t.Text, X: p.x + t.OffsetX, Y: y + t.OffsetY,
-			Size: 1.9, Anchor: "start", Italic: t.Italic, Bold: t.Bold,
+		// Above the staff it joins the queue, so that it clears the music,
+		// the chord symbols over it and anything else already there rather
+		// than being written at a distance decided in advance. "rit." over
+		// a bar that also carries a chord symbol used to be printed through
+		// it whenever the fixed distances happened to coincide.
+		e.wait(waitingMark{
+			x0: x, x1: x + textWidth(t.Text, textSize),
+			height: textSize, gap: 0.6, rank: rankText,
+			draw: func(y float64) {
+				e.lay.Texts = append(e.lay.Texts, Text{
+					S: t.Text, X: x, Y: y + t.OffsetY,
+					Size: textSize, Anchor: "start",
+					Italic: t.Italic, Bold: t.Bold,
+				})
+			},
 		})
 	}
 }

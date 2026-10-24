@@ -89,8 +89,70 @@ func Fit(s *model.Score, o Options, eo engrave.Options) (Options, engrave.Option
 		}
 		o.StaffSpace = want
 	}
+	// Then: the largest of those sizes that does not waste a sheet.
+	o = tighten(s, o, eo)
 	eo.LineWidth = o.LineWidth(eo.Spacings)
 	return o, eo
+}
+
+// PartStaffSpace is the smallest type a score is shrunk to merely to save
+// paper, in points.
+//
+// Four and a half points is about one and a half millimetres, which is a
+// printed orchestral part — smaller than the size a single song is set at
+// and entirely ordinary to read from a stand. Below this is a pocket score,
+// which is a thing somebody asks for and not a thing to be given a page at
+// a time without being asked.
+const PartStaffSpace = 4.6
+
+// tightenStep is how finely the size is tried. Fine enough to find the
+// largest type that saves the sheet, coarse enough not to engrave the score
+// twenty times to find it.
+const tightenStep = 0.3
+
+// tighten shrinks the type where doing so saves whole pages.
+//
+// Choosing the size by "will one system fit the sheet" answers the question
+// a conductor's score asks and no question a song asks: a song's system
+// always fits, so the size never moves, and a hundred bars of it comes out
+// across five sheets with half of each one white. A publisher setting the
+// same song picks the type that gets it onto two, and that is what this
+// does — the largest type that needs the fewest pages, rather than the
+// largest type that fits at all.
+//
+// Only downwards, only as far as a printed part, and only for whole pages
+// saved: the point is the sheet count, so a size that merely leaves less
+// white at the bottom of the last page buys nothing and costs legibility.
+func tighten(sc *model.Score, o Options, eo engrave.Options) Options {
+	best := o
+	fewest := pagesAt(sc, o, eo)
+	if fewest <= 1 {
+		return o // one sheet is as few as there are
+	}
+	for size := o.StaffSpace - tightenStep; size >= PartStaffSpace; size -= tightenStep {
+		try := o
+		try.StaffSpace = size
+		n := pagesAt(sc, try, eo)
+		if n < fewest {
+			fewest, best = n, try
+		}
+		if fewest <= 1 {
+			break
+		}
+	}
+	return best
+}
+
+// pagesAt is how many sheets the score comes to at a type size.
+func pagesAt(sc *model.Score, o Options, eo engrave.Options) int {
+	eo.LineWidth = o.LineWidth(eo.Spacings)
+	lay := engrave.Engrave(sc, eo)
+	if lay == nil {
+		return 0
+	}
+	// The same cut the renderer makes, so that this counts the pages that
+	// will actually be printed and not an idea of them.
+	return len((&renderer{lay: lay, opt: o}).pages())
 }
 
 // tallestSystem is the height of the system that needs the most room, in

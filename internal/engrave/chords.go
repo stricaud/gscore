@@ -12,7 +12,11 @@
 
 package engrave
 
-import "github.com/stricaud/gscore/internal/model"
+import (
+	"math"
+
+	"github.com/stricaud/gscore/internal/model"
+)
 
 // Chord symbols and the fingering diagrams above them.
 //
@@ -33,8 +37,12 @@ const (
 	chordSize = 2.3
 	// chordQualitySize is the smaller type the quality is set in.
 	chordQualitySize = 1.75
-	// chordRise is how far above the top staff line a chord symbol sits.
+	// chordRise is how far above the top staff line a chord symbol sits
+	// when nothing is in the way.
 	chordRise = 2.6
+	// chordGap is the air between the music and the chord symbols over it,
+	// where the music reaches up past the staff.
+	chordGap = 0.8
 	// chordAccidentalSize is the type a sharp or a flat in a root is set in.
 	chordAccidentalSize = 1.5
 
@@ -133,12 +141,77 @@ func chordHeight(c *model.ChordSymbol) float64 {
 	return h
 }
 
-// drawChordSymbol writes the chord over a note.
-func (e *engraver) drawChordSymbol(c *model.ChordSymbol, x float64) {
+// pendingChord is a chord symbol waiting for the staff under it to be
+// finished, so that it can be written clear of it.
+type pendingChord struct {
+	c *model.ChordSymbol
+	x float64
+}
+
+// waitChord holds a chord symbol back until the staff is drawn.
+//
+// Where it goes is not a question about the note it names. A chord symbol
+// sits above the music, and how high "above the music" is depends on the
+// music: a staff whose notes stay between the lines has room at two and a
+// half spaces, and one with a run of notes three ledger lines up has not —
+// which is how "Am7" came to be printed across its own notehead.
+func (e *engraver) waitChord(c *model.ChordSymbol, x float64) {
 	if c == nil {
 		return
 	}
-	y := e.y - chordRise
+	e.chordRow = append(e.chordRow, pendingChord{c: c, x: x})
+}
+
+// placeChords writes the staff's chord symbols, all on one line, above
+// everything already drawn on it.
+//
+// One line, and not each symbol placed over its own bar: a row of chords
+// stepping up and down the page as the tune does is unreadable, and every
+// published chart sets them on a rule. So the whole staff is measured and
+// they are written at the one height that clears all of it.
+//
+// They become part of the outline afterwards, so that the bar numbers and
+// everything else placed above the staff clears them in turn.
+func (e *engraver) placeChords(sky *skyline, x0, x1 float64) {
+	row := e.chordRow
+	e.chordRow = nil
+	if len(row) == 0 {
+		return
+	}
+	// The top of everything on this staff, and the chord row above that.
+	y := sky.reach(x0, x1, false) - chordGap
+	// Never lower than the old fixed height: a staff with nothing above it
+	// still has its chords where they have always been.
+	if plain := e.y - chordRise; y > plain {
+		y = plain
+	}
+	for _, p := range row {
+		e.drawChordSymbol(p.c, p.x, y)
+		w := chordWidth(p.c)
+		top := y - chordSize
+		if p.c.Frame != nil {
+			top -= frameRise + frameHeight
+		}
+		sky.add(p.x, p.x+w, top, y+chordSize*0.25)
+	}
+}
+
+// chordWidth is roughly how wide a written chord symbol is, for the outline.
+func chordWidth(c *model.ChordSymbol) float64 {
+	if c == nil {
+		return 0
+	}
+	if c.Frame != nil && frameWidth > 0 {
+		return math.Max(frameWidth, textWidth(c.Text+c.Root+c.Quality+c.Bass, chordSize))
+	}
+	return textWidth(c.Text+c.Root+c.Quality+c.Bass, chordSize)
+}
+
+// drawChordSymbol writes the chord over a note, at the height it was given.
+func (e *engraver) drawChordSymbol(c *model.ChordSymbol, x, y float64) {
+	if c == nil {
+		return
+	}
 
 	if c.Text != "" {
 		e.lay.Texts = append(e.lay.Texts, Text{

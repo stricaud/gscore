@@ -136,3 +136,75 @@ func TestTheNoteNearestTheStemIsNotMoved(t *testing.T) {
 			"low x=%.3f, high x=%.3f", low.X, high.X)
 	}
 }
+
+// A chord symbol goes above the music, not through it.
+//
+// It used to be written at a fixed height over the top staff line, which is
+// right for a staff whose notes stay between the lines and wrong for one
+// with a run three ledger lines up: "Am7" came out printed across its own
+// notehead. A chart is mostly chord symbols, so this is most of what a chart
+// looks like.
+func TestAChordSymbolClearsTheNotesUnderIt(t *testing.T) {
+	p := &model.Part{Clef: model.Treble, Time: model.TimeSignature{Beats: 4, BeatValue: 4}}
+	// High, low, high: the row has to clear the highest of them and stay a
+	// row, rather than following the tune up and down.
+	for i, octave := range []int{6, 4, 6} {
+		n := &model.Note{
+			Pitch: model.Pitch{Step: model.StepC, Octave: octave},
+			Dur:   model.Duration{Num: 1, Den: 1},
+		}
+		n.Chord = &model.ChordSymbol{Root: "C", Quality: "m7"}
+		_ = i
+		p.Measures = append(p.Measures, &model.Measure{
+			Voices:       []*model.Voice{{Elements: []model.Element{n}}},
+			RightBarline: model.BarSingle,
+		})
+	}
+	s := &model.Score{
+		Tempo: model.Tempo{BPM: 120, Unit: model.Duration{Num: 1, Den: 4}},
+		Parts: []*model.Part{p},
+	}
+	opt := DefaultOptions()
+	opt.Mode = Strip
+	lay := Engrave(s, opt)
+
+	var roots []Text
+	for _, t := range lay.Texts {
+		if t.S == "C" {
+			roots = append(roots, t)
+		}
+	}
+	if len(roots) != 3 {
+		t.Fatalf("%d chord symbols drawn, want 3", len(roots))
+	}
+
+	// One row: every symbol at the same height.
+	for i, r := range roots[1:] {
+		if math.Abs(r.Y-roots[0].Y) > 0.01 {
+			t.Errorf("chord %d is at y=%.2f and the first at y=%.2f: they are "+
+				"not on one line", i+1, r.Y, roots[0].Y)
+		}
+	}
+
+	// And clear of every notehead and ledger line under them.
+	bottom := roots[0].Y + chordSize*0.25
+	for _, g := range lay.Glyphs {
+		if !has(g.Name, "notehead") {
+			continue
+		}
+		if g.Y-0.55 < bottom {
+			t.Errorf("a notehead at y=%.2f is under a chord symbol whose own "+
+				"ink reaches %.2f", g.Y, bottom)
+		}
+	}
+	for _, l := range lay.Lines {
+		// Ledger lines are short and horizontal, above the staff.
+		if math.Abs(l.Y1-l.Y2) > 0.01 || l.X2-l.X1 > 3 {
+			continue
+		}
+		if l.Y1 < bottom && l.Y1 > roots[0].Y-6 {
+			t.Errorf("a ledger line at y=%.2f runs through the chord row at %.2f",
+				l.Y1, bottom)
+		}
+	}
+}

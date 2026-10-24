@@ -1609,8 +1609,45 @@ func (p *parser) quoted(sc *scanner) error {
 		})
 		return nil
 	}
+	// A number is not a chord. What it is, in every file that has one, is a
+	// bar number: somebody wrote the numbering of the score they were
+	// copying from into the only syntax ABC has for putting text over a
+	// staff. Read as a chord it is set in bold over the music, beside the
+	// bar number gscore works out for itself, and the two disagree as often
+	// as not — the source counts an anacrusis, or a repeat, differently.
+	//
+	// So it is dropped and said so. gscore numbers bars itself, and anybody
+	// who really wants a number written over a bar has "^7" for it, which
+	// is ABC's way of saying "this is an annotation, not a chord".
+	if isAllDigits(s) {
+		p.note(fmt.Sprintf("%q over bar %d looks like a bar number written as a "+
+			"chord symbol, and was left out; gscore numbers the bars itself",
+			s, p.barNumber()))
+		return nil
+	}
+
 	p.pending.Chord = parseChordName(s)
 	return nil
+}
+
+// barNumber is the bar being read, counting from one, for a message about
+// it. Before any music has been seen there is no bar yet and it is the first.
+func (p *parser) barNumber() int {
+	if p.cur == nil {
+		return 1
+	}
+	return len(p.cur.Measures) + 1
+}
+
+// isAllDigits says a string is nothing but digits. Empty is not: an empty
+// annotation has already been dropped above.
+func isAllDigits(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] < '0' || s[i] > '9' {
+			return false
+		}
+	}
+	return s != ""
 }
 
 // parseChordName splits a chord symbol into the pieces it is set in: the root

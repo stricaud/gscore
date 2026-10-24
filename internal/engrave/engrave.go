@@ -229,8 +229,13 @@ type StripPos struct {
 type SystemPos struct {
 	Top    float64 `json:"top"`
 	Bottom float64 `json:"bottom"`
-	First  int     `json:"first"`
-	Last   int     `json:"last"`
+	// Staff is the top line of this system's first staff: where the music
+	// begins, as against Top, which is where the room reserved for what is
+	// written over it begins. The difference between them is what the next
+	// pass measures.
+	Staff float64 `json:"staff,omitempty"`
+	First int     `json:"first"`
+	Last  int     `json:"last"`
 }
 
 // HeaderPos is a clef, key signature or meter at the head of a system.
@@ -498,7 +503,18 @@ func PitchForStep(c model.Clef, step int) model.Pitch {
 
 // Engrave lays out a score.
 func Engrave(s *model.Score, opt Options) *Layout {
-	e := &engraver{opt: opt, score: s,
+	lay := engraveWith(s, opt, nil)
+	// Again, knowing where the ink went. The room over each system was
+	// reserved from a count of what might be written there; this is what
+	// was. See room.go — it is worth a page or two on a song.
+	if room := roomAbove(lay); len(room) > 0 {
+		lay = engraveWith(s, opt, room)
+	}
+	return lay
+}
+
+func engraveWith(s *model.Score, opt Options, room map[int]need) *Layout {
+	e := &engraver{opt: opt, score: s, room: room,
 		spans: map[int]*openSpans{},
 		lay:   &Layout{Refs: map[int]RefPos{}, defaults: opt.Defaults}}
 	e.run()
@@ -509,8 +525,13 @@ type engraver struct {
 	opt   Options
 	score *model.Score
 	lay   *Layout
-	y     float64 // top line of the staff being drawn
-	clef  model.Clef
+	// room is how much space each system's ink actually took above its
+	// staff, measured on a previous pass and keyed by the system's first
+	// bar. Empty on the first pass, when there is nothing to go on but the
+	// count.
+	room map[int]need
+	y    float64 // top line of the staff being drawn
+	clef model.Clef
 	// lines and lineGap describe the staff being drawn: five lines a space
 	// apart for ordinary music, one per string and wider for tablature.
 	lines   int
@@ -532,9 +553,9 @@ type engraver struct {
 	// differs from its position as soon as a staff is hidden.
 	origin []int
 
-	// textRise is how far the words written over a staff have to be lifted
-	// to clear the chord symbols already there.
-	textRise float64
+	// chordRow is this staff's chord symbols, waiting for it to be finished
+	// so that they can be written above whatever turned out to be on it.
+	chordRow []pendingChord
 
 	// stretch is how far the system being drawn is pulled out to reach the
 	// margin. It belongs to the system rather than to any staff on it, which
@@ -1665,7 +1686,17 @@ func (e *engraver) drawSystem(parts []*model.Part, boxes [][]measureBox,
 	// bottom staff off the page above.
 	chords := e.systemChordRoom(parts, start, end)
 	marks := e.systemMarkRoom(parts, start, end)
-	e.y += chords + marks
+	reserved := chords + marks
+	// The measurement wins outright, in both directions. It is usually less
+	// — the count reserves a chord row for a system with one chord in it —
+	// but not always: a slur arching over the first note of a line reaches
+	// a little above what "there are notes here" allows for, and a system
+	// whose recorded top cuts through its own slur is one the page break
+	// slices.
+	if measured, ok := e.room[start]; ok {
+		reserved = measured.above
+	}
+	e.y += reserved
 	top := e.y
 
 	// Everything written over the system stacks above the chord symbols,
@@ -1713,11 +1744,6 @@ func (e *engraver) drawSystem(parts []*model.Part, boxes [][]measureBox,
 			Bottom: above,
 		})
 	}
-	// A note's own words go above the chord symbols and above the rehearsal
-	// marks: three things written over the same bar, in three layers rather
-	// than in one place.
-	e.textRise = top - above + markerRoom
-
 	// Words written under a staff need the staff below to move out of the way.
 	// How much room each staff needs for what is written around it.
 	//
@@ -1858,6 +1884,9 @@ func (e *engraver) drawSystem(parts []*model.Part, boxes [][]measureBox,
 		// what they have to clear. They are placed outwards from the staff
 		// in the order notation puts them in, each clearing the last.
 		sky := e.outline(staffMark, sp.Margin, right, staffTop)
+		// The chord symbols first, because they are a row above the music
+		// and everything else is a row above them.
+		e.placeChords(sky, sp.Margin, right)
 		e.placeWaiting(sky)
 		// How far down this staff's music and marks actually went. The room
 		// reserved for them was counted from the model before anything was
@@ -1899,13 +1928,22 @@ func (e *engraver) drawSystem(parts []*model.Part, boxes [][]measureBox,
 	if lowest > e.y {
 		e.y = lowest + 0.3
 	}
+	// Nor above where the ink turned out to go. The outline a mark reserves
+	// is the box it asked for, and a slur drawn through that box dips below
+	// it: measured, the system ends where the last stroke of it does.
+	if measured, ok := e.room[start]; ok {
+		if want := top + measured.below + 0.3; want > e.y {
+			e.y = want
+		}
+	}
 	e.lay.Systems = append(e.lay.Systems, SystemPos{
 		// The top reaches above the staff for everything written there: the
 		// chord symbols and their diagrams, and above those the brackets of
 		// a repeat, the octave signs and the rehearsal marks. A system whose
 		// recorded top stopped at the staff had its chord diagrams drawn on
 		// the page before it.
-		Top:    top - chords - marks,
+		Top:    top - reserved,
+		Staff:  top,
 		Bottom: e.y, First: start, Last: end - 1,
 	})
 	e.y += sp.SystemGap

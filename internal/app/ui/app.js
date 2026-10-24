@@ -1390,6 +1390,19 @@ async function insertAtSelection(rest, keepSelection) {
   );
   const el = hit && (hit.elements || [])[sel.at - 1];
   if (el) sel.ref = el.ref;
+  // A bar with no room left in it is no place for the caret.
+  //
+  // The next note written there goes into the bar after anyway — the server
+  // sends it on — so a caret sitting past the last note of a full bar is
+  // pointing at somewhere nothing can be written, hard against the barline.
+  // It belongs at the start of the next bar, which is where the writing is
+  // about to carry on.
+  //
+  // What was just written stays selected, so a dynamic or a stem change
+  // still lands on it: the caret says where the next note goes and the
+  // selection says what the last one was, and after a bar fills those are
+  // two different places.
+  carryCaretOn(sel);
   markSelection();
   let what = rest ? "Rest" : state.tool.duration + " note";
   if (replacing) {
@@ -1679,6 +1692,13 @@ async function mark(endpoint, params, said) {
     // In order. A hairpin opens on the first and closes on the last, so a
     // selection handed over shuffled would draw a crescendo backwards.
     p.set("sel", orderedSelection().map((m) => `${m.part}:${m.measure}:${m.index}`).join(","));
+  } else if (sel.ref !== null && sel.ref !== undefined) {
+    // One note picked up: the mark goes on that note, wherever the caret
+    // has moved on to. The caret and the selection part company as soon as
+    // a bar fills — the caret carries on into the next bar while what was
+    // written stays selected behind it.
+    const target = refTarget(sel.ref);
+    if (target) p.set("sel", target);
   }
   const res = await fetch(`/api/${endpoint}?` + p.toString(), { method: "POST" });
   if (!res.ok) {
@@ -1687,6 +1707,29 @@ async function mark(endpoint, params, said) {
   }
   await refreshScore();
   status(said);
+}
+
+// carryCaretOn moves the caret into the next bar when this one is full.
+function carryCaretOn(sel) {
+  const hit = state.hits.find(
+    (h) => h.part === sel.part && h.measure === sel.measure);
+  if (!hit || !hit.full) return;
+  if (sel.at < (hit.elements || []).length) return; // not at the end of it
+  const next = state.hits.find(
+    (h) => h.part === sel.part && h.measure === sel.measure + 1);
+  if (!next) return; // nothing after it yet; the server will make one
+  sel.measure += 1;
+  sel.at = 0;
+  sel.replace = false;
+}
+
+// refTarget says where a note is, as the server names places.
+function refTarget(ref) {
+  for (const h of state.hits) {
+    const el = (h.elements || []).find((e) => e.ref === ref);
+    if (el) return `${h.part}:${h.measure}:${el.index}`;
+  }
+  return null;
 }
 
 // hasSelection says whether a note is picked up, rather than merely a place

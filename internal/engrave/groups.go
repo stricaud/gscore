@@ -43,6 +43,20 @@ const (
 	// markerRoom is how much room a boxed rehearsal mark takes, so that
 	// anything else written over the same bar goes above it.
 	markerRoom = 3.0
+
+	// markRowHeight is how tall the row over a bar is, which is as tall as
+	// the tallest thing that goes in it — the segno, drawn at signSize and
+	// reaching half of that either way.
+	//
+	// Everything in the row sits on its lower edge, so that whatever is
+	// placed under the row clears all of it and not just the letter. The
+	// segno hanging below the band it was given is how an 8va came to have
+	// a sign through it again after the row itself was placed correctly.
+	markRowHeight = 3.2
+
+	// markBoxHeight is the boxed letter, which is shorter than the row and
+	// sits on the same edge.
+	markBoxHeight = 2.7
 )
 
 // partLabel is what a staff is called at the head of a system.
@@ -266,7 +280,7 @@ const (
 // course. Each is placed after the last thing written over that bar rather
 // than at the bar line, which is what keeps the sign from being printed
 // through the letter.
-func (e *engraver) drawMarkers(parts []*model.Part, columns []float64, start, end int, top float64) {
+func (e *engraver) drawMarkers(parts []*model.Part, columns []float64, start, end int) {
 	at := func(mi int) *model.Measure {
 		for _, p := range parts {
 			if mi < len(p.Measures) {
@@ -293,47 +307,63 @@ func (e *engraver) drawMarkers(parts []*model.Part, columns []float64, start, en
 		if m == nil && tempo == nil {
 			continue
 		}
-		// After the bar number, which is written in this row too and at the
-		// same height. A tempo marking printed from the bar's own column
-		// came out with the number inside its first letter.
 		x := columns[mi-start] + e.numberWidth(mi, start)
-
-		if m != nil {
-			if m.Marker != "" {
-				x = e.drawRehearsalMark(m.Marker, x, top) + afterMark
-			}
-			if g := m.Sign.Glyph(); g != "" {
-				e.lay.Glyphs = append(e.lay.Glyphs, Glyph{
-					Name: g, X: x, Y: top - 1.6, Size: signSize,
-				})
-				x += smufl.Advance(g)*signSize/4 + afterMark
-			}
-			if label := m.Sign.Label(); label != "" {
-				e.lay.Texts = append(e.lay.Texts, Text{
-					S: label, X: x, Y: top - 1.6, Size: jumpTextSize,
-					Anchor: "start", Bold: true, Italic: true,
-				})
-				x += textWidth(label, jumpTextSize) + afterMark
-			}
+		// One height for everything written over this bar, so that a letter,
+		// a sign and a change of speed sit on one line rather than at three
+		// heights. The row is found once, against whatever is under it —
+		// which by now includes the bar number, the volta bracket and any
+		// note reaching up out of the staff.
+		right := columns[len(columns)-1]
+		if mi-start+1 < len(columns) {
+			right = columns[mi-start+1]
 		}
+		e.wait(waitingMark{
+			x0: x, x1: right, height: markRowHeight, gap: 0.6, rank: rankMarks,
+			draw: func(row float64) { e.drawMarkRow(m, tempo, columns, mi, start, x, row) },
+		})
+	}
+}
 
-		// The new speed, after the letter rather than through it. The mark at
-		// the head of the score is the same thing written over bar one, so
-		// this is drawn the same way and looks like it.
-		if tempo != nil && e.opt.ShowTempoMark {
-			x += e.drawTempoAt(*tempo, x, top-1.6) + afterMark
+// drawMarkRow writes everything that belongs over one bar, once the row it
+// sits in has been found: the letter, the sign, the new speed and the
+// direction at the end of the bar, all on one line.
+func (e *engraver) drawMarkRow(m *model.Measure, tempo *model.Tempo,
+	columns []float64, mi, start int, x, row float64) {
+	if m != nil {
+		if m.Marker != "" {
+			x = e.drawRehearsalMark(m.Marker, x, row) + afterMark
 		}
+		if g := m.Sign.Glyph(); g != "" {
+			e.lay.Glyphs = append(e.lay.Glyphs, Glyph{
+				Name: g, X: x, Y: row - 1.6, Size: signSize,
+			})
+			x += smufl.Advance(g)*signSize/4 + afterMark
+		}
+		if label := m.Sign.Label(); label != "" {
+			e.lay.Texts = append(e.lay.Texts, Text{
+				S: label, X: x, Y: row - 0.6, Size: jumpTextSize,
+				Anchor: "start", Bold: true, Italic: true,
+			})
+			x += textWidth(label, jumpTextSize) + afterMark
+		}
+	}
 
-		// The direction is written at the end of the bar, because that is
-		// where the player reaches it: a D.C. printed at the head of its bar
-		// says to go back before playing the bar it is in.
-		if m != nil && m.Jump != nil {
-			if mi-start+1 < len(columns) {
-				e.lay.Texts = append(e.lay.Texts, Text{
-					S: m.Jump.Label(), X: columns[mi-start+1] - 0.4, Y: top - 1.6,
-					Size: jumpTextSize, Anchor: "end", Bold: true, Italic: true,
-				})
-			}
+	// The new speed, after the letter rather than through it. The mark at
+	// the head of the score is the same thing written over bar one, so
+	// this is drawn the same way and looks like it.
+	if tempo != nil && e.opt.ShowTempoMark {
+		x += e.drawTempoAt(*tempo, x, row-0.6) + afterMark
+	}
+
+	// The direction is written at the end of the bar, because that is
+	// where the player reaches it: a D.C. printed at the head of its bar
+	// says to go back before playing the bar it is in.
+	if m != nil && m.Jump != nil {
+		if mi-start+1 < len(columns) {
+			e.lay.Texts = append(e.lay.Texts, Text{
+				S: m.Jump.Label(), X: columns[mi-start+1] - 0.4, Y: row - 0.6,
+				Size: jumpTextSize, Anchor: "end", Bold: true, Italic: true,
+			})
 		}
 	}
 }
@@ -342,13 +372,15 @@ func (e *engraver) drawMarkers(parts []*model.Part, columns []float64, start, en
 //
 // The box is what makes a rehearsal mark findable when somebody says "from B"
 // and everybody in the room is looking for a letter.
-func (e *engraver) drawRehearsalMark(text string, x, top float64) float64 {
+// row is the bottom edge of the band the mark sits in, found against
+// whatever is under it; everything in the band is measured from there.
+func (e *engraver) drawRehearsalMark(text string, x, row float64) float64 {
 	e.lay.Texts = append(e.lay.Texts, Text{
-		S: text, X: x, Y: top - 2.0, Size: jumpTextSize, Anchor: "start", Bold: true,
+		S: text, X: x, Y: row - 0.6, Size: jumpTextSize, Anchor: "start", Bold: true,
 	})
 	w := textWidth(text, jumpTextSize) + 0.8
 	t := e.opt.Defaults.StaffLineThickness * 1.3
-	y0, y1 := top-4.0, top-1.3
+	y0, y1 := row-markBoxHeight, row
 	e.lay.Lines = append(e.lay.Lines,
 		Line{X1: x - 0.4, Y1: y0, X2: x - 0.4 + w, Y2: y0, Thickness: t},
 		Line{X1: x - 0.4, Y1: y1, X2: x - 0.4 + w, Y2: y1, Thickness: t},
@@ -387,7 +419,7 @@ func (e *engraver) numberWidth(mi, start int) float64 {
 	return textWidth(itoa(mi+1), measureNumberSize) + 0.6
 }
 
-func (e *engraver) drawMeasureNumbers(columns []float64, start, end int, top float64) {
+func (e *engraver) drawMeasureNumbers(columns []float64, start, end int) {
 	if !e.opt.ShowMeasureNumbers {
 		return
 	}
@@ -395,8 +427,15 @@ func (e *engraver) drawMeasureNumbers(columns []float64, start, end int, top flo
 		if n <= 1 {
 			return // bar one needs no telling
 		}
-		e.lay.Texts = append(e.lay.Texts, Text{
-			S: itoa(n), X: x, Y: top - 1.4, Size: measureNumberSize, Anchor: "start",
+		w := textWidth(itoa(n), measureNumberSize)
+		e.wait(waitingMark{
+			x0: x, x1: x + w, height: measureNumberSize, gap: 0.5,
+			rank: rankBarNumber,
+			draw: func(y float64) {
+				e.lay.Texts = append(e.lay.Texts, Text{
+					S: itoa(n), X: x, Y: y, Size: measureNumberSize, Anchor: "start",
+				})
+			},
 		})
 	}
 	if e.opt.Mode != Strip {

@@ -164,6 +164,10 @@ func CloneMarks(m Marks) Marks {
 		o := *m.Octave
 		out.Octave = &o
 	}
+	if m.Trill != nil {
+		t := *m.Trill
+		out.Trill = &t
+	}
 	if m.Chord != nil {
 		c := *m.Chord
 		if m.Chord.Frame != nil {

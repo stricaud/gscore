@@ -514,9 +514,19 @@ func TestThingsAboveTheStaffDoNotCollide(t *testing.T) {
 	if chord == 0 || mark == 0 || text == 0 {
 		t.Fatalf("something was not drawn: chord=%v mark=%v text=%v", chord, mark, text)
 	}
-	// y grows downward, so each must be strictly above the one before.
-	if !(text < mark && mark < chord) {
-		t.Errorf("they overlap: text=%.2f mark=%.2f chord=%.2f", text, mark, chord)
+	// y grows downward, so each must be strictly above the one before:
+	// outwards from the staff it is the chord symbol, then the direction,
+	// then the letter.
+	//
+	// The letter is outermost because it is the thing somebody calls across
+	// a room — "from B" — and it has to be findable at a glance; a direction
+	// is read by the player who is already looking at the bar. They used to
+	// come out the other way round, from the days when each was written at a
+	// fixed distance from the staff and the order fell out of the numbers
+	// rather than out of what the marks are for.
+	if !(mark < text && text < chord) {
+		t.Errorf("they overlap or stack the wrong way: "+
+			"mark=%.2f text=%.2f chord=%.2f", mark, text, chord)
 	}
 }
 

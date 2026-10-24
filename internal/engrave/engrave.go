@@ -466,6 +466,26 @@ type engraver struct {
 	// is exactly why the barlines are placed from it.
 	stretch float64
 
+	// staffMark and staffTop are where the staff being drawn began, so that
+	// its outline can be read at any point while it is being drawn — which
+	// is what a slur needs: by the time one closes, everything it arcs over
+	// has been drawn, and it has to clear all of it.
+	staffMark mark
+	staffTop  float64
+	staffX0   float64
+	staffX1   float64
+
+	// waiting are the marks that go outside the staff and cannot be placed
+	// where they are met.
+	//
+	// A dynamic, a hairpin, an octave line: each has to clear whatever else
+	// is under or over that stretch of music, and what that is depends on
+	// notes that may not be drawn yet — a hairpin is not even drawn until
+	// the bar it closes in, which can be four bars later. So they are
+	// collected as the staff is drawn and placed once it is finished, from
+	// the staff outwards.
+	waiting []waitingMark
+
 	// spans holds the hairpins and octave lines that are open on each staff.
 	// A spanner reaches from one note to another, which may be in a later
 	// measure or on a later line, so it cannot be drawn where it starts: what
@@ -479,6 +499,7 @@ type openSpans struct {
 	hairpin *openSpan
 	octave  *openSpan
 	slur    *openSpan
+	trill   *openSpan
 	// ties are kept per notehead, keyed by the staff step they left. A
 	// chord is tied notehead by notehead — every voice in it carries on
 	// sounding — so one curve for the chord would be one curve short for
@@ -647,33 +668,27 @@ func (e *engraver) verses() int {
 	return most
 }
 
+// systemMarkRoom is how much room to leave over a system for everything
+// written there.
+//
+// It adds the rows up rather than taking the largest of them, because they
+// are stacked: a bar number over a letter over an octave line over a note on
+// three ledger lines needs all four, and reserving the largest reserved one
+// row for four things. The marks then spilled into the gap above, which is
+// where the system before it is.
+//
+// The skyline places each one exactly, within the room reserved here; this
+// only has to be enough. It is counted from the music rather than measured
+// from it, because nothing has been drawn yet when the system's height is
+// decided.
 func (e *engraver) systemMarkRoom(parts []*model.Part, start, end int) float64 {
-	need := 0.0
-	at := func(v float64) {
-		if v > need {
-			need = v
-		}
-	}
+	var hasVolta, hasMark, hasOctave, hasText bool
 	for _, p := range parts {
 		for mi := start; mi < end && mi < len(p.Measures); mi++ {
 			m := p.Measures[mi]
-			if m.Ending != nil {
-				at(voltaRise + 1)
-			}
-			if m.Marker != "" {
-				at(markerRoom + 1.6)
-			}
-			// The signs and the directions share the rehearsal marks' row,
-			// so they need the same room above the staff and no more.
-			if m.Sign != model.NoSign || m.Jump != nil {
-				at(markerRoom + 1.6)
-			}
-			// A tempo change is written in that row too: "a tempo" at the
-			// last chorus sits over the bar it starts at, beside the letter
-			// if there is one.
-			if m.Tempo != nil {
-				at(markerRoom + 1.6)
-			}
+			hasVolta = hasVolta || m.Ending != nil
+			hasMark = hasMark || m.Marker != "" || m.Sign != model.NoSign ||
+				m.Jump != nil || m.Tempo != nil
 			for _, v := range m.Voices {
 				for _, el := range v.Elements {
 					mk := marksOf(el)
@@ -681,21 +696,69 @@ func (e *engraver) systemMarkRoom(parts []*model.Part, start, end int) float64 {
 						continue
 					}
 					if mk.Octave != nil && mk.Octave.Amount > 0 {
-						at(octaveRise + 1)
+						hasOctave = true
 					}
-					// A direction written on a note stacks above the rest.
-					if len(mk.Texts) > 0 {
-						at(markerRoom + 2.8)
+					hasText = hasText || len(mk.Texts) > 0
+				}
+			}
+		}
+	}
+
+	// What the music itself reaches above the top staff, which everything
+	// else is stacked on.
+	need := e.musicAbove(parts, start, end)
+	if hasOctave {
+		need += octaveRise - staffHeight + 2.0
+	}
+	if hasText {
+		need += 2.4
+	}
+	if hasVolta {
+		need += voltaHook + 1.2
+	}
+	if e.opt.ShowMeasureNumbers && (start > 0 || e.opt.Mode == Strip) {
+		need += measureNumberSize + 0.8
+	}
+	if hasMark {
+		need += markRowHeight + 0.8
+	}
+	// Enough for the chord symbols and the rest even where none of the above
+	// is present, which is what the fixed allowance used to give everybody.
+	if need < 2.2 {
+		need = 2.2
+	}
+	return need
+}
+
+// musicAbove is how far the notes of the top staff reach above it, in staff
+// spaces: the ledger lines, and the stems and beams over them.
+func (e *engraver) musicAbove(parts []*model.Part, start, end int) float64 {
+	if len(parts) == 0 {
+		return 0
+	}
+	p := parts[0]
+	highest := staffHeight * 2 // the top line, in staff steps
+	for mi := start; mi < end && mi < len(p.Measures); mi++ {
+		for _, v := range p.Measures[mi].Voices {
+			for _, el := range v.Elements {
+				switch n := el.(type) {
+				case *model.Note:
+					if st := StaffStep(p.Clef, n.Pitch); st > highest {
+						highest = st
+					}
+				case *model.Chord:
+					for _, cn := range n.Notes {
+						if st := StaffStep(p.Clef, cn.Pitch); st > highest {
+							highest = st
+						}
 					}
 				}
 			}
 		}
 	}
-	// The bar number over the start of a later system needs a little too.
-	if e.opt.ShowMeasureNumbers && start > 0 {
-		at(2.2)
-	}
-	return need
+	// Half a space per step above the top line, and room over the highest
+	// note for a stem and whatever is written on its end.
+	return float64(highest-staffHeight*2)/2 + 2.6
 }
 
 // marksOf gets an element's marks, or nil for one that carries none.
@@ -1337,9 +1400,16 @@ func (e *engraver) drawSystem(parts []*model.Part, boxes [][]measureBox,
 
 	// The volta brackets belong to the system, not to a staff: they are drawn
 	// once above the top one before the staves move the cursor down.
-	e.drawVoltas(parts, columns, start, end, above)
-	e.drawMeasureNumbers(columns, start, end, above)
-	e.drawMarkers(parts, columns, start, end, above)
+	// What is written over a system — the brackets of a repeat, the bar
+	// numbers, the letters and the directions — belongs to the top staff and
+	// has to clear its music, so it is held back with everything else that
+	// goes outside a staff and placed when that staff is finished. They are
+	// queued here, before any of it is drawn, because the order they are
+	// placed in is their rank and not the order they were met in.
+	e.drawMeasureNumbers(columns, start, end)
+	e.drawVoltas(parts, columns, start, end)
+	e.drawMarkers(parts, columns, start, end)
+	_ = above
 
 	// The band the bar numbers sit in is also where a bar is picked up. One
 	// band per bar, reaching to where the next begins, so there is no dead
@@ -1407,6 +1477,10 @@ func (e *engraver) drawSystem(parts []*model.Part, boxes [][]measureBox,
 		// starts again here, at this system's left edge.
 		e.resumeSpans(e.staffNumber(pi), sp.Margin+prefix-carried)
 
+		staffTop := e.y
+		staffMark := e.marked()
+		e.staffMark, e.staffTop = staffMark, staffTop
+		e.staffX0, e.staffX1 = sp.Margin, right
 		staffTops = append(staffTops, e.y)
 		// Each staff's clef starts far enough right that its own key and
 		// meter end where everybody else's do, so a staff in C major and one
@@ -1471,6 +1545,11 @@ func (e *engraver) drawSystem(parts []*model.Part, boxes [][]measureBox,
 		// hairpin, octave line and tie stopping four spaces short of the end
 		// of the line it was supposed to run to.
 		e.breakSpans(e.staffNumber(pi), right)
+
+		// The staff is finished, so the marks that go outside it now know
+		// what they have to clear. They are placed outwards from the staff
+		// in the order notation puts them in, each clearing the last.
+		e.placeWaiting(e.outline(staffMark, sp.Margin, right, staffTop))
 
 		if pi < len(parts)-1 {
 			e.y += staffHeight + gapAfter(pi)

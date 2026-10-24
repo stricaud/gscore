@@ -27,12 +27,12 @@ import (
 
 type scoreDoc struct {
 	Groups    []groupDoc `json:"groups,omitempty"`
-	Title     string    `json:"title,omitempty"`
-	Subtitle  string    `json:"subtitle,omitempty"`
-	Composer  string    `json:"composer,omitempty"`
-	Copyright string    `json:"copyright,omitempty"`
-	Tempo     tempoDoc  `json:"tempo"`
-	Parts     []partDoc `json:"parts"`
+	Title     string     `json:"title,omitempty"`
+	Subtitle  string     `json:"subtitle,omitempty"`
+	Composer  string     `json:"composer,omitempty"`
+	Copyright string     `json:"copyright,omitempty"`
+	Tempo     tempoDoc   `json:"tempo"`
+	Parts     []partDoc  `json:"parts"`
 }
 
 type groupDoc struct {
@@ -50,16 +50,16 @@ type tempoDoc struct {
 }
 
 type partDoc struct {
-	ID         string       `json:"id,omitempty"`
-	Name       string       `json:"name,omitempty"`
-	Instrument string       `json:"instrument,omitempty"`
-	Program    int          `json:"program,omitempty"`
-	Clef       string       `json:"clef"`
-	Fifths     int          `json:"fifths"`
-	Mode       string       `json:"mode"`
-	Beats      int          `json:"beats"`
-	Beat       int          `json:"beatValue"`
-	TimeSym    string       `json:"timeSymbol,omitempty"`
+	ID         string `json:"id,omitempty"`
+	Name       string `json:"name,omitempty"`
+	Instrument string `json:"instrument,omitempty"`
+	Program    int    `json:"program,omitempty"`
+	Clef       string `json:"clef"`
+	Fifths     int    `json:"fifths"`
+	Mode       string `json:"mode"`
+	Beats      int    `json:"beats"`
+	Beat       int    `json:"beatValue"`
+	TimeSym    string `json:"timeSymbol,omitempty"`
 	// Transpose is how far below what is printed this staff sounds, written
 	// the way MusicXML writes it so the two agree.
 	Transpose *transposeDoc `json:"transpose,omitempty"`
@@ -78,11 +78,11 @@ type measureDoc struct {
 
 	// A key or meter written here changes it from this bar on; absent means
 	// no change, which is not the same as a change to C major.
-	Fifths  *int    `json:"fifths,omitempty"`
-	Mode    string  `json:"mode,omitempty"`
-	Beats   int     `json:"beats,omitempty"`
-	Beat    int     `json:"beatValue,omitempty"`
-	TimeSym string  `json:"timeSymbol,omitempty"`
+	Fifths  *int   `json:"fifths,omitempty"`
+	Mode    string `json:"mode,omitempty"`
+	Beats   int    `json:"beats,omitempty"`
+	Beat    int    `json:"beatValue,omitempty"`
+	TimeSym string `json:"timeSymbol,omitempty"`
 
 	// Tempo is a new speed written over this bar, held until another says
 	// otherwise. Absent means the bar carries on at whatever it was given.
@@ -120,10 +120,10 @@ type elemDoc struct {
 	Hidden bool       `json:"hidden,omitempty"`
 	// Head is the notehead's shape and Percussion the drum it plays, both
 	// of which a drum staff needs and neither of which the pitch can say.
-	Head       string `json:"notehead,omitempty"`
-	Percussion int    `json:"percussion,omitempty"`
-	Marks  *marksDoc  `json:"marks,omitempty"`
-	Symbol *symbolRef `json:"symbol,omitempty"`
+	Head       string     `json:"notehead,omitempty"`
+	Percussion int        `json:"percussion,omitempty"`
+	Marks      *marksDoc  `json:"marks,omitempty"`
+	Symbol     *symbolRef `json:"symbol,omitempty"`
 }
 
 type pitchDoc struct {
@@ -154,6 +154,7 @@ type marksDoc struct {
 	Dynamic       string      `json:"dynamic,omitempty"`
 	Hairpin       *hairpinDoc `json:"hairpin,omitempty"`
 	Octave        *octaveDoc  `json:"octave,omitempty"`
+	Trill         *trillDoc   `json:"trill,omitempty"`
 	Lyrics        []lyricDoc  `json:"lyrics,omitempty"`
 	Beam          string      `json:"beam,omitempty"`
 	Chord         *chordDoc   `json:"chord,omitempty"`
@@ -196,6 +197,13 @@ type octaveDoc struct {
 	Amount int  `json:"amount"` // octaves, signed: 1 is 8va, -1 is 8vb
 	Start  bool `json:"start,omitempty"`
 	Stop   bool `json:"stop,omitempty"`
+}
+
+// A trill is a spanner: "tr" where it begins and a wavy line to where it
+// stops. Both ends on one note is a trill on that note alone.
+type trillDoc struct {
+	Start bool `json:"start,omitempty"`
+	Stop  bool `json:"stop,omitempty"`
 }
 
 type lyricDoc struct {
@@ -435,7 +443,7 @@ func encodeMarks(m *model.Marks) *marksDoc {
 	}
 	if m.Hairpin != nil {
 		out.Hairpin = &hairpinDoc{
-			Kind: m.Hairpin.Kind.String(),
+			Kind:  m.Hairpin.Kind.String(),
 			Start: m.Hairpin.Start, Stop: m.Hairpin.Stop,
 		}
 	}
@@ -443,6 +451,9 @@ func encodeMarks(m *model.Marks) *marksDoc {
 		out.Octave = &octaveDoc{
 			Amount: m.Octave.Amount, Start: m.Octave.Start, Stop: m.Octave.Stop,
 		}
+	}
+	if m.Trill != nil {
+		out.Trill = &trillDoc{Start: m.Trill.Start, Stop: m.Trill.Stop}
 	}
 	for _, ly := range m.Lyrics {
 		out.Lyrics = append(out.Lyrics, lyricDoc{
@@ -595,7 +606,7 @@ func decodeScore(doc *scoreDoc) (*model.Score, error) {
 		}
 		s.Groups = append(s.Groups, model.StaffGroup{
 			First: gd.First, Last: gd.Last,
-			Symbol: groupSymbolValues[gd.Symbol],
+			Symbol:   groupSymbolValues[gd.Symbol],
 			Barlines: gd.Barlines, Name: gd.Name,
 		})
 	}
@@ -698,6 +709,9 @@ func decodeMarks(md *marksDoc, m *model.Marks) {
 	}
 	if o := md.Octave; o != nil && o.Amount != 0 {
 		m.Octave = &model.OctaveShift{Amount: o.Amount, Start: o.Start, Stop: o.Stop}
+	}
+	if tr := md.Trill; tr != nil {
+		m.Trill = &model.Trill{Start: tr.Start, Stop: tr.Stop}
 	}
 	if b, ok := model.BeamFromName(md.Beam); ok {
 		m.Beam = b

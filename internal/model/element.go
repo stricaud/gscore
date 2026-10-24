@@ -348,6 +348,14 @@ type Marks struct {
 	// the model keeps the written pitch and playback does the shifting.
 	Octave *OctaveShift
 
+	// Trill is a trill opening or closing here.
+	//
+	// It is a spanner and not an articulation because a trill can last: "tr"
+	// over one note is a trill on that note, and "tr" with a wavy line
+	// running four bars is a trill held for four bars, and the difference is
+	// the whole instruction. A trill on a single note carries both ends.
+	Trill *Trill
+
 	// Lyrics are the syllables sung on this note, one per verse.
 	Lyrics []Lyric
 
@@ -518,6 +526,16 @@ type Hairpin struct {
 	// Start opens the wedge at this element, Stop closes it at this one. A
 	// hairpin over a single note has both, which is how it is removed from
 	// one note without disturbing its neighbours.
+	Start, Stop bool
+}
+
+// Trill is an ornament held over a stretch of music: "tr" at the note it
+// begins on, and a wavy line to where it stops.
+//
+// Start and Stop bracket it, as a hairpin's do. Both on one element is a
+// trill on that note alone, which is how the ornament is written when there
+// is nothing to extend it over.
+type Trill struct {
 	Start, Stop bool
 }
 

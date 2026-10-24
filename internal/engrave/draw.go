@@ -946,14 +946,19 @@ func (e *engraver) drawDynamic(m *model.Marks, p *placed) {
 	if name == "" {
 		return
 	}
-	// Below the lowest line, far enough down to clear a stem that points that
-	// way and any ledger lines under it.
-	y := e.y + staffHeight + dynamicDrop
-	if p.lo < 0 {
-		y += float64(-p.lo) / 2
-	}
+	// Below the staff, clear of whatever is under this stretch of it: the
+	// stems that point down, the ledger lines, the words. Where that is
+	// cannot be known yet, so the dynamic waits for the staff to finish.
 	x := p.x + noteheadWidth(p.value)/2 - smufl.Advance(name)/2
-	e.lay.Glyphs = append(e.lay.Glyphs, Glyph{Name: name, X: x, Y: y})
+	w := smufl.Advance(name)
+	e.wait(waitingMark{
+		x0: x, x1: x + w, height: 1.4, gap: 0.7, below: true, rank: rankDynamic,
+		draw: func(y float64) {
+			// place gives the top of the band; a dynamic is drawn from its
+			// baseline, which sits near the bottom of its own letters.
+			e.lay.Glyphs = append(e.lay.Glyphs, Glyph{Name: name, X: x, Y: y + 1.0})
+		},
+	})
 }
 
 // drawTexts writes the words attached to a note: "rit.", "solo", a reminder to

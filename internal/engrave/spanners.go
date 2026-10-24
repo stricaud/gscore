@@ -12,7 +12,10 @@
 
 package engrave
 
-import "github.com/stricaud/gscore/internal/model"
+import (
+	"github.com/stricaud/gscore/internal/model"
+	"github.com/stricaud/gscore/internal/smufl"
+)
 
 // The marks that reach from one note to another: hairpins, octave lines and
 // the volta brackets over the bars of a repeat.
@@ -32,9 +35,18 @@ const (
 	hairpinMouth = 1.1
 
 	// octaveRise is how far above the top staff line an 8va line runs, and
-	// octaveFall how far below the bottom line an 8vb does.
+	// octaveFall how far below the bottom line an 8vb does. Both are now
+	// only the least it will be: the line is placed clear of the music
+	// under it, which where an octave line is wanted is usually higher.
 	octaveRise = 3.4
 	octaveFall = 4.6
+
+	// octaveBand is how tall the sign and its line are together: the line,
+	// and the "8va" hanging off its left end.
+	octaveBand = 2.3
+
+	// trillBand is how tall "tr" and its wavy line are together.
+	trillBand = 1.8
 
 	// voltaRise is how far above the top staff of the system the brackets of
 	// a repeat are drawn, and voltaHook how far their ends turn down.
@@ -99,6 +111,16 @@ func (e *engraver) spanAt(m *model.Marks, p *placed) {
 		}
 	}
 
+	if tr := m.Trill; tr != nil {
+		if tr.Start && open.trill == nil {
+			open.trill = &openSpan{x: x - 0.5}
+		}
+		if tr.Stop && open.trill != nil {
+			e.drawTrill(open.trill, x+noteheadWidth(p.value)/2, true)
+			open.trill = nil
+		}
+	}
+
 	if o := m.Octave; o != nil {
 		if o.Start && open.octave == nil {
 			open.octave = &openSpan{x: x - 0.5, amount: o.Amount, label: o.Label()}
@@ -124,6 +146,13 @@ func (e *engraver) breakSpans(part int, right float64) {
 	if open.octave != nil {
 		e.drawOctave(open.octave, right, false)
 		open.octave.x = -1
+	}
+	if open.trill != nil {
+		e.drawTrill(open.trill, right, false)
+		open.trill.x = -1
+		// The "tr" is written once, where the trill begins; the next system
+		// carries the wavy line alone, as it is written on paper.
+		open.trill.label = "done"
 	}
 	// A slur that runs over a line break is drawn to the margin and picked
 	// up again on the next line, which is how it is written on paper.
@@ -154,6 +183,9 @@ func (e *engraver) resumeSpans(part int, left float64) {
 	}
 	// A slur or a tie comes back at the height it left, on this system's
 	// staff rather than on the one it started from.
+	if open.trill != nil && open.trill.x < 0 {
+		open.trill.x = left
+	}
 	if open.slur != nil && open.slur.x < 0 {
 		open.slur.x = left
 		open.slur.y = e.y + open.slur.rel
@@ -173,7 +205,6 @@ func (e *engraver) drawHairpin(h *openSpan, to float64, complete bool) {
 		return
 	}
 	t := e.opt.Defaults.StaffLineThickness * 1.2
-	y := e.y + staffHeight + hairpinDrop
 	half := hairpinMouth / 2
 
 	// An unfinished wedge is cut at the margin rather than brought to a
@@ -187,16 +218,29 @@ func (e *engraver) drawHairpin(h *openSpan, to float64, complete bool) {
 		// Opening but cut short: it has not reached its full mouth yet.
 		spread = half * 0.8
 	}
-	if !complete && pointAt == to {
-		// Closing but cut short: it never reaches the point.
-		e.lay.Lines = append(e.lay.Lines,
-			Line{X1: openAt, Y1: y - half, X2: to, Y2: y - half*0.3, Thickness: t},
-			Line{X1: openAt, Y1: y + half, X2: to, Y2: y + half*0.3, Thickness: t})
-		return
-	}
-	e.lay.Lines = append(e.lay.Lines,
-		Line{X1: pointAt, Y1: y, X2: openAt, Y2: y - spread, Thickness: t},
-		Line{X1: pointAt, Y1: y, X2: openAt, Y2: y + spread, Thickness: t})
+	cut := !complete && pointAt == to
+
+	// A hairpin runs under a stretch of music and has to clear all of it —
+	// the stems, the slurs that dip below the staff, the dynamics it runs
+	// between. None of that is known until the staff is finished, and a
+	// hairpin is not even drawn until the bar it closes in, so it waits.
+	e.wait(waitingMark{
+		x0: h.x, x1: to, height: hairpinMouth, gap: 0.6,
+		below: true, rank: rankHairpin,
+		draw: func(top float64) {
+			y := top + half
+			if cut {
+				// Closing but cut short: it never reaches the point.
+				e.lay.Lines = append(e.lay.Lines,
+					Line{X1: openAt, Y1: y - half, X2: to, Y2: y - half*0.3, Thickness: t},
+					Line{X1: openAt, Y1: y + half, X2: to, Y2: y + half*0.3, Thickness: t})
+				return
+			}
+			e.lay.Lines = append(e.lay.Lines,
+				Line{X1: pointAt, Y1: y, X2: openAt, Y2: y - spread, Thickness: t},
+				Line{X1: pointAt, Y1: y, X2: openAt, Y2: y + spread, Thickness: t})
+		},
+	})
 }
 
 // drawOctave draws the broken line with its name at the left, and the hook at
@@ -207,33 +251,47 @@ func (e *engraver) drawOctave(o *openSpan, to float64, complete bool) {
 	}
 	t := e.opt.Defaults.StaffLineThickness * 1.1
 	above := o.amount > 0
-	y := e.y - octaveRise
-	if !above {
-		y = e.y + staffHeight + octaveFall
-	}
+	label := o.label
 
-	x := o.x
-	if o.label != "" {
-		e.lay.Texts = append(e.lay.Texts, Text{
-			S: o.label, X: x, Y: y + 0.4, Size: 1.9, Anchor: "start", Italic: true, Bold: true,
-		})
-		x += float64(len(o.label)) * 0.95
-	}
-	if to <= x {
-		return
-	}
-	e.lay.Lines = append(e.lay.Lines,
-		Line{X1: x, Y1: y, X2: to, Y2: y, Thickness: t, Dash: 0.5})
-	if complete {
-		// The hook turns towards the staff: down for a line above it, up for
-		// one below.
-		dy := 0.9
-		if !above {
-			dy = -0.9
-		}
-		e.lay.Lines = append(e.lay.Lines,
-			Line{X1: to, Y1: y, X2: to, Y2: y + dy, Thickness: t})
-	}
+	// The sign and its line run over a stretch of music and have to clear
+	// all of it — the notes on their ledger lines above all, since an
+	// octave line is written exactly where the music is already high. What
+	// that stretch holds is not known until the staff is finished.
+	e.wait(waitingMark{
+		x0: o.x, x1: to, height: octaveBand, gap: 0.5,
+		below: !above, rank: rankOctave,
+		draw: func(edge float64) {
+			// place gives the edge nearest the staff; the line sits at the
+			// far side of the band, with the sign hanging off its left end.
+			y := edge - 0.7
+			if !above {
+				y = edge + 1.6
+			}
+			x := o.x
+			if label != "" {
+				e.lay.Texts = append(e.lay.Texts, Text{
+					S: label, X: x, Y: y + 0.4, Size: 1.9,
+					Anchor: "start", Italic: true, Bold: true,
+				})
+				x += float64(len(label)) * 0.95
+			}
+			if to <= x {
+				return
+			}
+			e.lay.Lines = append(e.lay.Lines,
+				Line{X1: x, Y1: y, X2: to, Y2: y, Thickness: t, Dash: 0.5})
+			if complete {
+				// The hook turns towards the staff: down for a line above
+				// it, up for one below.
+				dy := 0.9
+				if !above {
+					dy = -0.9
+				}
+				e.lay.Lines = append(e.lay.Lines,
+					Line{X1: to, Y1: y, X2: to, Y2: y + dy, Thickness: t})
+			}
+		},
+	})
 }
 
 // drawVoltas draws the first-time and second-time brackets over a system.
@@ -242,12 +300,37 @@ func (e *engraver) drawOctave(o *openSpan, to float64, complete bool) {
 // piece and not to one instrument in it: every player goes back at the same
 // bar. The measures are taken from the first part that has them, which is
 // where MusicXML keeps them too.
-func (e *engraver) drawVoltas(parts []*model.Part, columns []float64, start, end int, top float64) {
+func (e *engraver) drawVoltas(parts []*model.Part, columns []float64, start, end int) {
 	if len(parts) == 0 || end <= start {
 		return
 	}
+	// Nothing to draw unless some bar of this system carries a bracket; a
+	// system without one must not reserve a row for it.
+	any := false
+	for _, p := range parts {
+		for mi := start; mi < end && mi < len(p.Measures); mi++ {
+			if p.Measures[mi].Ending != nil {
+				any = true
+			}
+		}
+	}
+	if !any {
+		return
+	}
+	e.wait(waitingMark{
+		x0: columns[0], x1: columns[len(columns)-1],
+		height: voltaHook + 0.4, gap: 0.8, rank: rankVolta,
+		draw: func(y float64) { e.drawVoltasAt(parts, columns, start, end, y) },
+	})
+}
+
+// drawVoltasAt draws the brackets once the row they share has been found.
+//
+// One height for the whole system's brackets, clear of everything under any
+// of them: a bracket that stepped up and down over the bars it covers would
+// not read as one bracket.
+func (e *engraver) drawVoltasAt(parts []*model.Part, columns []float64, start, end int, y float64) {
 	t := e.opt.Defaults.StaffLineThickness * 1.4
-	y := top - voltaRise
 
 	var open *model.Ending
 	openX := 0.0
@@ -325,6 +408,10 @@ const (
 	tieLift = 0.55
 	tieArch = 0.7
 
+	// slurClearance is the air a slur leaves between itself and the music it
+	// arcs over.
+	slurClearance = 0.6
+
 	// archPerWidth is the most of its own width a curve may rise by, which
 	// is what keeps a very short one — the stub left at a line break — an
 	// arc rather than a spike.
@@ -347,12 +434,19 @@ func (e *engraver) slurAt(m *model.Marks, p *placed) {
 	}
 	y := e.y + stepY(float64(edge))
 
-	if m.SlurStart && open.slur == nil {
-		open.slur = &openSpan{x: x, y: y, rel: y - e.y, above: above}
-	}
+	// Closing first, then opening.
+	//
+	// A note in the middle of a run of slurs carries both: it ends the one
+	// before it and begins the one after. Opening first found a slur
+	// already open and did nothing, and then the close took that one away —
+	// so a phrase slurred bar by bar came out with its first slur drawn and
+	// the rest missing. Four whole notes joined by three slurs showed one.
 	if m.SlurStop && open.slur != nil {
 		e.drawTieOrSlur(open.slur, x, y, slurLift, true)
 		open.slur = nil
+	}
+	if m.SlurStart && open.slur == nil {
+		open.slur = &openSpan{x: x, y: y, rel: y - e.y, above: above}
 	}
 
 	// A tie is written on both notes: it stops on one and may start again on
@@ -459,10 +553,104 @@ func (e *engraver) drawTieOrSlur(from *openSpan, toX, toY, lift float64, slur bo
 	// towards it, so it is set twice as far out as the curve should go.
 	cy := (y1+y2)/2 + dir*arch*2
 
+	// A slur has to clear the music it arcs over.
+	//
+	// Its ends belong to its notes and stay there, but its middle is free,
+	// and an arch of a fixed height is only clear of a phrase that happens
+	// to be flat. Over a rising run it cut straight through the notes
+	// between its ends — which is exactly where a slur must not be, because
+	// the line it draws is the phrase.
+	//
+	// Not a tie: a tie joins two noteheads of one pitch and there is nothing
+	// between them to clear.
+	if slur {
+		cy = e.clearArch(from.x, toX, y1, y2, cy, dir)
+	}
+
 	e.lay.Curves = append(e.lay.Curves, Curve{
 		X1: from.x, Y1: y1,
 		CX: (from.x + toX) / 2, CY: cy,
 		X2: toX, Y2: y2,
 		Thickness: e.opt.Defaults.StaffLineThickness * 1.6,
+	})
+}
+
+// clearArch lifts a slur's control point until the curve clears what it arcs
+// over, and leaves it alone when it already does.
+//
+// A quadratic passes through the point a quarter of the way from each end
+// and half of the way towards the control point, so the height of the arch
+// at its middle is that average; turning the wanted middle back into a
+// control point is the same arithmetic the other way round.
+func (e *engraver) clearArch(x0, x1, y1, y2, cy, dir float64) float64 {
+	if x1 <= x0 {
+		return cy
+	}
+	sky := e.outline(e.staffMark, e.staffX0, e.staffX1, e.staffTop)
+
+	// Only what lies between the ends: the notes the slur starts and ends
+	// on are its own, and a slur is drawn from them, not over them.
+	inset := (x1 - x0) * 0.15
+	a, b := x0+inset, x1-inset
+	if b <= a {
+		return cy
+	}
+
+	above := dir < 0
+	want := sky.reach(a, b, !above)
+	if above {
+		want -= slurClearance
+	} else {
+		want += slurClearance
+	}
+
+	// The middle of the curve as it stands, and the control point that would
+	// put the middle where it is wanted instead.
+	mid := 0.25*y1 + 0.5*cy + 0.25*y2
+	if (above && want >= mid) || (!above && want <= mid) {
+		return cy // already clear
+	}
+	return 2*want - 0.5*(y1+y2)
+}
+
+// drawTrill writes "tr" and the wavy line that holds it.
+//
+// A trill over one note is the ornament alone; over a stretch of music it is
+// the ornament and a line to where it stops, and the line is what says to go
+// on trilling. The wavy line is a glyph repeated rather than a drawn curve,
+// so it looks like the font it is set in at any size.
+//
+// It goes above the staff and nearer to it than anything else written there,
+// which is LilyPond's order and the one printed music uses: a trill belongs
+// to its note, so it stays with it and the rest stacks over the top.
+func (e *engraver) drawTrill(t *openSpan, to float64, complete bool) {
+	if to <= t.x {
+		return
+	}
+	first := t.label == "" // the "tr" is written once, at the start
+	from := t.x
+	e.wait(waitingMark{
+		x0: from, x1: to, height: trillBand, gap: 0.5, rank: rankTrill,
+		draw: func(edge float64) {
+			y := edge - 0.4
+			x := from
+			if first {
+				e.lay.Glyphs = append(e.lay.Glyphs, Glyph{
+					Name: "ornamentTrill", X: x, Y: y,
+				})
+				x += smufl.Advance("ornamentTrill") + 0.2
+			}
+			// The wave is only drawn where there is room for it: a trill on
+			// a single note is the ornament and nothing else.
+			w := smufl.Advance("wiggleTrill")
+			if w <= 0 {
+				return
+			}
+			for ; x+w <= to; x += w {
+				e.lay.Glyphs = append(e.lay.Glyphs, Glyph{
+					Name: "wiggleTrill", X: x, Y: y,
+				})
+			}
+		},
 	})
 }

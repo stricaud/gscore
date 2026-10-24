@@ -1,5 +1,10 @@
 # Engraving decisions carried over from gscore 0.0.9
 
+> Changing the engraver? Read [`engraving-layout.md`](engraving-layout.md)
+> first: it is the rules the Go engraver follows now — how a page is laid
+> out, what goes where above and below a staff, and in what order. This file
+> is the history behind some of them.
+
 This records the engraving judgment embedded in the C engine, so that the Go
 rewrite preserves it deliberately rather than by accident, and discards the
 rest on purpose. Line references are into `legacy/`.

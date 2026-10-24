@@ -1327,6 +1327,16 @@ func (r *reader) spanner(st *msStaff, vs *voiceState, kind string) error {
 		if stop {
 			st.octaveEnds = true
 		}
+	case "Trill":
+		// A trill is an ornament that can last: "tr" at the note it begins
+		// on and a wavy line to where it stops.
+		vs.markNext(func(m *model.Marks) {
+			if m.Trill == nil {
+				m.Trill = &model.Trill{}
+			}
+			m.Trill.Start = m.Trill.Start || start
+			m.Trill.Stop = m.Trill.Stop || stop
+		})
 	case "Volta":
 		volta(vs.m, label, start, stop)
 	case "Tie":
@@ -1712,6 +1722,14 @@ func (r *reader) articulation(ch *chordData) error {
 	}
 	if a, ok := articulations[sub]; ok {
 		ch.marks.AddArticulation(a)
+		return nil
+	}
+	// An ornament written on the note rather than as a spanner is a trill on
+	// that note alone: both ends of it are the same note.
+	if sub == "ornamentTrill" || sub == "trill" {
+		if ch.marks.Trill == nil {
+			ch.marks.Trill = &model.Trill{Start: true, Stop: true}
+		}
 		return nil
 	}
 	if sub != "" {

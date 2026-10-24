@@ -90,7 +90,8 @@ score and a play button. There is a working page in
 
 | | |
 |---|---|
-| [`docs/engraving.md`](docs/engraving.md) | how the layout is decided |
+| [`docs/engraving-layout.md`](docs/engraving-layout.md) | how a page is laid out: the rules to read before changing the engraver |
+| [`docs/engraving.md`](docs/engraving.md) | what the 2001 engine decided, kept or discarded on purpose |
 | [`docs/symbols.md`](docs/symbols.md) | drawing marks no font carries |
 | [`docs/gscore-format.md`](docs/gscore-format.md) | what is inside a `.gscore` file |
 | [`docs/embedding.md`](docs/embedding.md) | putting gscore in a page |

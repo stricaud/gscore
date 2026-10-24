@@ -6,6 +6,7 @@
 #   make windows      a Windows .exe, cross-compiled from here
 #   make debian       a .deb, cross-compiled from here
 #   make soundfonts   fetch the instruments the packages ship with
+#   make slides       the talk in docs/, as a PDF
 #
 # The macOS and Windows packages carry a General MIDI soundfont — thirty
 # megabytes of recorded instruments — so that the application can play
@@ -60,7 +61,7 @@ endif
 # waiting on a two-architecture Swift build you did not ask for.
 .DEFAULT_GOAL := help
 .PHONY: default package all build run test vet clean web app dmg windows \
-	debian help soundfonts
+	debian help soundfonts slides
 
 ## package: build the package this machine is for
 package default:
@@ -141,6 +142,19 @@ generaluser_URL := https://raw.githubusercontent.com/mrbumpy409/GeneralUser-GS/m
 generaluser_SF2 := $(FONT_DIR)/GeneralUser GS.sf2
 fluidr3_URL     := https://www.zanderjaz.com/soundfonts/packs/FluidR3%20GM.SF2
 fluidr3_SF2     := $(FONT_DIR)/FluidR3 GM.sf2
+
+## slides: the talk, as a PDF
+slides:
+	@command -v pdflatex >/dev/null || { \
+		echo "need LaTeX for the slides: brew install --cask mactex-no-gui" >&2; \
+		exit 1; }
+	@# Twice, because the slide numbers are not known until the first pass
+	@# has counted them.
+	@cd docs && pdflatex -interaction=batchmode presentation.tex >/dev/null \
+		&& pdflatex -interaction=batchmode presentation.tex >/dev/null
+	@rm -f docs/presentation.aux docs/presentation.log docs/presentation.nav \
+		docs/presentation.out docs/presentation.snm docs/presentation.toc
+	@echo "built docs/presentation.pdf ($$(du -h docs/presentation.pdf | cut -f1))"
 
 ## soundfonts: fetch the instruments the packages are shipped with
 soundfonts:
@@ -298,6 +312,9 @@ web:
 ## clean: remove everything built
 clean:
 	rm -rf $(BUILD) web/dist
+	rm -f docs/presentation.pdf docs/presentation.aux docs/presentation.log \
+		docs/presentation.nav docs/presentation.out docs/presentation.snm \
+		docs/presentation.toc
 
 ## help: this list
 help:

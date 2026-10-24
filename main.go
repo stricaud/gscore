@@ -173,6 +173,8 @@ usage:
                            and the font — all in one file unless -font or
                            -script are given an address to fetch them from
   gscore -o OUT.js         write the player on its own, to serve beside pages
+  gscore -o OUT.mid FILE   the performance as a MIDI file, for rendering with
+                           a soundfont or opening in a sequencer
   gscore -serve :8080    run as a web server
   gscore -describe FILE  print what FILE contains
   gscore -convert OUT.musicxml FILE   convert between formats
@@ -219,6 +221,9 @@ func convertTo(s *model.Score, path string, withPDF bool) error {
 	// score does: renamed .pdf, the same file opens in anything that reads
 	// one. -nopdf writes the music alone, which is three decimal orders
 	// smaller.
+	if e := strings.ToLower(filepath.Ext(path)); e == ".mid" || e == ".midi" {
+		return app.MIDIFile(f, s)
+	}
 	if withPDF && strings.EqualFold(filepath.Ext(path), ".gscore") {
 		var pdf bytes.Buffer
 		if err := renderPDFTo(&pdf, s); err != nil {
@@ -258,6 +263,16 @@ func renderFile(s *model.Score, path string, strip bool, space float64,
 	// option at all.
 	if ext == ".js" {
 		return os.WriteFile(path, []byte(ghtml.PlayerJS()), 0o644)
+	}
+	// A MIDI file is not a drawing, but it is what -o means to anybody who
+	// wants the music handed to something that makes a better noise.
+	if ext == ".mid" || ext == ".midi" {
+		f, err := os.Create(path)
+		if err != nil {
+			return err
+		}
+		defer f.Close()
+		return app.MIDIFile(f, s)
 	}
 
 	eopt := engrave.DefaultOptions()

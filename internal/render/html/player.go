@@ -93,7 +93,11 @@ const playerJS = `
   function sound1(n, when) {
     var v = voiceFor(n.f);
     var hz = 440 * Math.pow(2, (n.m - 69) / 12);
-    var dur = Math.max(0.05, n.d);
+    // n.g is how much of the written length sounds: the staccato dots and
+    // slurs, worked out when the page was made.
+    var gap = n.d * (1 - (n.g > 0 ? n.g : 0.88));
+    if (gap > 0) gap = Math.max(0.02, gap);
+    var dur = Math.max(0.05, n.d - gap);
     var osc = audio.createOscillator();
     var filter = audio.createBiquadFilter();
     var gain = audio.createGain();

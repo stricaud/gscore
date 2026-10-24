@@ -269,6 +269,19 @@ func (a *App) handleSave(w http.ResponseWriter, r *http.Request) {
 		}
 		writeJSON(w, map[string]string{"status": "ok", "path": path})
 		return
+	case ".mid", ".midi":
+		// Nor is a performance. This is the music as it is played rather
+		// than as it is written, which is what another program wants when
+		// it is going to make a sound out of it.
+		a.mu.RLock()
+		err := MIDIFile(f, a.score)
+		a.mu.RUnlock()
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, map[string]string{"status": "ok", "path": path})
+		return
 	}
 
 	if strings.EqualFold(filepath.Ext(path), ".gscore") {
@@ -622,6 +635,26 @@ func (a *App) saveDirectory() string {
 // Running as a page there is no filesystem to write to and no save panel to
 // ask with, so the file comes back in the response. It is the same page
 // either way.
+// handleMIDI hands back the performance as a standard MIDI file.
+//
+// The counterpart of handlePage for sound: in the browser there is nothing
+// to save to, so the file comes back as a download.
+func (a *App) handleMIDI(w http.ResponseWriter, r *http.Request) {
+	var buf bytes.Buffer
+	a.mu.RLock()
+	err := MIDIFile(&buf, a.score)
+	name := a.suggestedBase()
+	a.mu.RUnlock()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "audio/midi")
+	w.Header().Set("Content-Disposition",
+		fmt.Sprintf("attachment; filename=%q", name+".mid"))
+	w.Write(buf.Bytes())
+}
+
 func (a *App) handlePage(w http.ResponseWriter, r *http.Request) {
 	var buf bytes.Buffer
 	if err := a.renderPage(&buf, r); err != nil {

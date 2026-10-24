@@ -34,6 +34,10 @@ type Note struct {
 	MIDI  int     `json:"m"`
 	// Velocity is how loud, 0 to 127, from the dynamic in force.
 	Velocity int `json:"v,omitempty"`
+	// Gate is how much of Dur is sounded, as a fraction: short under a
+	// staccato dot, the whole length under a tenuto line, over 1 where a
+	// slur carries the note into the next one.
+	Gate float64 `json:"g,omitempty"`
 	// Family is how it is sounded — sustained, plucked, struck — which is
 	// all the player needs to choose a voice.
 	Family string `json:"f,omitempty"`

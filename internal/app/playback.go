@@ -21,6 +21,7 @@ import (
 	"net/http"
 
 	"github.com/stricaud/gscore/internal/engrave"
+	"github.com/stricaud/gscore/internal/midi"
 	"github.com/stricaud/gscore/internal/model"
 	ghtml "github.com/stricaud/gscore/internal/render/html"
 	"github.com/stricaud/gscore/internal/smufl"
@@ -54,6 +55,113 @@ type Event struct {
 	// engraver numbers its glyphs. That shared numbering is what lets the
 	// editor light up the notehead that is sounding.
 	Ref int `json:"ref"`
+
+	// Gate is how much of Dur the note actually sounds, as a fraction.
+	//
+	// Dur is how long the note *occupies*: the written length, which the
+	// cursor and the highlight follow. How long it is *heard* is a
+	// different question, and the answer is what tells a staccato quaver
+	// from an ordinary one — a staccato note still takes its whole beat, it
+	// is simply short, and the silence after it is the point.
+	//
+	// An ordinary note stops a little before the next begins, the way a
+	// player tongues or bows one. A slurred note does not stop at all: it
+	// runs a hair into the one after it, which is what a synthesiser and a
+	// reader both take for a phrase rather than a row of separate notes.
+	Gate float64 `json:"gate,omitempty"`
+}
+
+// How long a note is held, as a fraction of its written length.
+//
+// These are the figures a sequencer uses and a player would recognise.
+// Ordinary notes are detached a little: run end to end they sound like one
+// held note with the pitch changing, which is the one thing nobody plays.
+const (
+	gatePlain         = 0.88
+	gateStaccato      = 0.50
+	gateStaccatissimo = 0.35
+	gateTenuto        = 1.00
+	// Slurred notes overlap, so that what follows is heard as the same
+	// breath or bow rather than as the next note.
+	gateSlurred = 1.02
+)
+
+// maxDetach is the longest silence left before the next note, in seconds.
+//
+// The gap between ordinary notes is a breath or the turn of a bow, and
+// those take about as long whatever is being played. Taken as a fraction
+// the gap grows with the note, so a tied semibreve at a slow tempo would be
+// let go a quarter of a second early and the music would start to limp. A
+// staccato mark is the other thing and stays a fraction: a staccato minim
+// really is short.
+const maxDetach = 0.06
+
+// How much louder an accent is, as a factor on the velocity in force.
+const (
+	accentLouder  = 1.2
+	marcatoLouder = 1.3
+)
+
+// gateOf is how much of its length a note is held for, from what is written
+// on it and whether it is inside a slur.
+//
+// A slur wins over the plain gate and loses to a staccato dot: a dot under a
+// slur is a portato, which is played detached inside the phrase, and that is
+// what the two marks together mean.
+func gateOf(m *model.Marks, slurred bool) float64 {
+	if m != nil {
+		for _, a := range m.Articulations {
+			switch a {
+			case model.Staccato:
+				return gateStaccato
+			case model.Staccatissimo:
+				return gateStaccatissimo
+			case model.Tenuto:
+				return gateTenuto
+			}
+		}
+	}
+	if slurred {
+		return gateSlurred
+	}
+	return gatePlain
+}
+
+// breath caps the gap an ordinary note leaves before the next one.
+//
+// Only the ordinary gap: a staccato note is meant to be a fraction of its
+// length and a slurred one is meant to overlap, and neither is a breath.
+func breath(gate, dur float64) float64 {
+	if gate != gatePlain || dur <= 0 {
+		return gate
+	}
+	if gap := dur * (1 - gate); gap > maxDetach {
+		return 1 - maxDetach/dur
+	}
+	return gate
+}
+
+// velocityOf is how hard the note is struck: the dynamic in force, and the
+// accents written on this note alone.
+func velocityOf(m *model.Marks, loud model.Dynamic) int {
+	v := float64(loud.Velocity())
+	if m != nil {
+		for _, a := range m.Articulations {
+			switch a {
+			case model.Accent:
+				v *= accentLouder
+			case model.Marcato, model.MarcatoDown:
+				v *= marcatoLouder
+			}
+		}
+	}
+	if v > 127 {
+		v = 127
+	}
+	if v < 1 {
+		v = 1
+	}
+	return int(v + 0.5)
 }
 
 // MeasureTime is when a measure begins and how long it lasts.
@@ -134,6 +242,10 @@ func buildPlayback(s *model.Score) Playback {
 		shift := 0
 		// A trill is held across the notes it covers, like an octave line.
 		trilling := false
+		// So is a slur. Inside one the notes are not re-articulated: each
+		// runs into the next, which is what a player does with a bow or a
+		// breath and what the mark is asking for.
+		slurring := false
 		// A hairpin is a change of volume over a stretch of music, so what it
 		// does cannot be known at the note it starts on. The notes it covers
 		// are collected and scaled once it closes.
@@ -192,6 +304,11 @@ func buildPlayback(s *model.Score) Playback {
 				if mk != nil && mk.Trill != nil && mk.Trill.Start {
 					trilling = true
 				}
+				// The note a slur begins on is inside it, so this is read
+				// before the note is sounded and closed after.
+				if mk != nil && mk.SlurStart {
+					slurring = true
+				}
 
 				first := len(out.Events)
 				switch n := el.(type) {
@@ -211,7 +328,8 @@ func buildPlayback(s *model.Score) Playback {
 							vt+gd, d-gd, pi, ref, p.Instrument, loud)
 					} else {
 						addNote(&out, open, &n.Marks, sounding(p, n.Pitch, shift),
-							vt+gd, d-gd, pi, ref, p.Instrument, loud, n.Percussion)
+							vt+gd, d-gd, pi, ref, p.Instrument, loud, n.Percussion,
+							slurring && !n.SlurStop)
 					}
 				case *model.Chord:
 					if n.Dynamic != model.DynamicNone {
@@ -234,7 +352,8 @@ func buildPlayback(s *model.Score) Playback {
 					}
 					for _, cn := range n.Notes {
 						addNote(&out, open, &n.Marks, sounding(p, cn.Pitch, shift),
-							vt+gd, d-gd, pi, ref, p.Instrument, loud, cn.Percussion)
+							vt+gd, d-gd, pi, ref, p.Instrument, loud, cn.Percussion,
+							slurring && !n.SlurStop)
 					}
 				}
 				if mk != nil {
@@ -247,14 +366,15 @@ func buildPlayback(s *model.Score) Playback {
 							swell = nil
 						}
 					}
-					if swell != nil {
-						swell.to = len(out.Events)
-					}
+
 					if mk.Octave != nil && mk.Octave.Stop {
 						shift = 0
 					}
 					if mk.Trill != nil && mk.Trill.Stop {
 						trilling = false
+					}
+					if mk.SlurStop {
+						slurring = false
 					}
 				}
 				if ref != 0 {
@@ -357,8 +477,10 @@ func addGrace(out *Playback, g *model.GraceGroup, part *model.Part, shift int,
 	for _, gn := range g.Notes {
 		// Ref 0: a grace note is drawn but not numbered, so there is no
 		// notehead for the editor to light up. Zero says so.
+		// Slurred to what follows: a grace note is played into the note it
+		// leans on, never detached from it.
 		addNote(out, map[int]int{}, &model.Marks{}, sounding(part, gn.Pitch, shift),
-			at, each, pi, 0, part.Instrument, loud, gn.Percussion)
+			at, each, pi, 0, part.Instrument, loud, gn.Percussion, true)
 		at += each
 	}
 	return each * n
@@ -366,7 +488,7 @@ func addGrace(out *Playback, g *model.GraceGroup, part *model.Part, shift int,
 
 func addNote(out *Playback, open map[int]int, m *model.Marks, p model.Pitch,
 	start, dur float64, part, ref int, inst model.Instrument, loud model.Dynamic,
-	drum int) {
+	drum int, slurred bool) {
 	midi := p.MIDI()
 
 	// A drum is a hit, not a note: it does not sustain, it is not tied, and
@@ -379,7 +501,10 @@ func addNote(out *Playback, open map[int]int, m *model.Marks, p model.Pitch,
 		out.Events = append(out.Events, Event{
 			MIDI: drum, Start: start, Dur: dur, Part: part, Ref: ref,
 			Family: "percussion", Drum: drum, DrumName: name,
-			Velocity: loud.Velocity(),
+			Velocity: velocityOf(m, loud),
+			// A drum is struck and then rings as long as it rings: holding
+			// the stick down does not lengthen it.
+			Gate: gateStaccato,
 		})
 		return
 	}
@@ -397,7 +522,7 @@ func addNote(out *Playback, open map[int]int, m *model.Marks, p model.Pitch,
 	out.Events = append(out.Events, Event{
 		MIDI: midi, Start: start, Dur: dur, Part: part, Ref: ref,
 		Program: int(inst), Family: inst.Family().String(),
-		Velocity: loud.Velocity(),
+		Velocity: velocityOf(m, loud), Gate: breath(gateOf(m, slurred), dur),
 	})
 	if m.TieStart {
 		open[midi] = len(out.Events) - 1
@@ -483,7 +608,7 @@ func PageSound(s *model.Score, lay *engrave.Layout, scale float64) *ghtml.Sound 
 	}
 	for _, e := range pb.Events {
 		out.Notes = append(out.Notes, ghtml.Note{
-			Start: e.Start, Dur: e.Dur, MIDI: e.MIDI,
+			Start: e.Start, Dur: e.Dur, MIDI: e.MIDI, Gate: e.Gate,
 			Velocity: e.Velocity, Family: e.Family, Ref: e.Ref,
 		})
 	}
@@ -545,8 +670,8 @@ func marksOf(el model.Element) *model.Marks {
 // swelling is a hairpin being collected: the events it covers, and which way
 // it goes.
 type swelling struct {
-	kind     model.HairpinKind
-	from, to int
+	kind model.HairpinKind
+	from int
 }
 
 // apply ramps the velocity of everything under the hairpin.
@@ -555,13 +680,16 @@ type swelling struct {
 // the music already is and arrives one step louder, unless a written dynamic
 // says otherwise, in which case the dynamic has already replaced this.
 func (s *swelling) apply(out *Playback, end int, loud model.Dynamic) {
-	if s.to > end {
-		s.to = end
-	}
-	n := s.to - s.from
+	// Everything from the note it opens on to the note it closes on, that
+	// last one included: a crescendo arrives somewhere, and where it
+	// arrives is the note the sign stops under. Ramping up to it and
+	// leaving it at the volume the music started from is the one note that
+	// must not be left behind.
+	n := end - s.from
 	if n <= 0 {
 		return
 	}
+	to := end
 	base := out.Events[s.from].Velocity
 	span := 28
 	if s.kind == model.Diminuendo {
@@ -574,7 +702,7 @@ func (s *swelling) apply(out *Playback, end int, loud model.Dynamic) {
 	if base+span < 16 {
 		span = 16 - base
 	}
-	for i := s.from; i < s.to; i++ {
+	for i := s.from; i < to; i++ {
 		f := float64(i-s.from) / float64(n-1)
 		if n == 1 {
 			f = 1
@@ -631,4 +759,34 @@ func addTrill(out *Playback, p model.Pitch, key model.KeySignature,
 			Velocity: loud.Velocity(),
 		})
 	}
+}
+
+// MIDIFile writes the score as a standard MIDI file.
+//
+// It is the same performance the editor plays — the one place that works out
+// what the music sounds like — handed to something that writes it down for
+// other programs. Ties, repeats, trills, tremolos, grace notes, the dynamics
+// and the swells between them, every transposition: all of it is already
+// resolved by the time this sees it.
+func MIDIFile(w io.Writer, s *model.Score) error {
+	pb := buildPlayback(s)
+
+	song := midi.Song{Name: s.Identity.Title}
+	for _, e := range pb.Events {
+		song.Notes = append(song.Notes, midi.Note{
+			Start: e.Start, Dur: e.Dur, Gate: e.Gate, MIDI: e.MIDI,
+			Velocity: e.Velocity, Part: e.Part, Program: e.Program,
+			Drum: e.Drum,
+		})
+	}
+	// Each bar as the performance played it, in seconds and in quarter
+	// notes: the first says where the notes are and the second says what
+	// the tempo was, and a MIDI file needs both.
+	for _, m := range pb.Measures {
+		song.Bars = append(song.Bars, midi.Bar{
+			Start: m.Start, Dur: m.Dur,
+			Quarters: s.MeasureDuration(m.Index).Float() * 4,
+		})
+	}
+	return midi.Write(w, song)
 }

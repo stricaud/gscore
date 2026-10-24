@@ -353,6 +353,9 @@ async function action(name) {
     case "save-page":
       await exportPage();
       break;
+    case "save-midi":
+      await exportMIDI();
+      break;
     case "print":
       await printScore();
       break;
@@ -988,6 +991,37 @@ async function exportPage() {
   a.click();
   URL.revokeObjectURL(a.href);
   status("Exported a web page");
+}
+
+// exportMIDI writes the score as a standard MIDI file.
+//
+// Not the page and not the drawing: the performance. What comes out is what
+// pressing play sounds, with the dynamics, the swells, the slurs held and
+// the staccato notes short, for anything else that makes sound out of it.
+async function exportMIDI() {
+  if (state.info?.local) {
+    const p = new URLSearchParams({ as: "mid" });
+    const res = await fetch("/api/save?" + p.toString(), { method: "POST" });
+    if (!res.ok) {
+      status("Could not export: " + (await res.text()).trim());
+      return;
+    }
+    const d = await res.json();
+    status(d.cancelled ? "Ready" : "Exported " + d.path);
+    return;
+  }
+  const res = await fetch("/api/midi");
+  if (!res.ok) {
+    status("Could not export: " + (await res.text()).trim());
+    return;
+  }
+  const blob = await res.blob();
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = (state.info?.title || "score").replace(/[^\w-]+/g, "-") + ".mid";
+  a.click();
+  URL.revokeObjectURL(a.href);
+  status("Exported MIDI");
 }
 
 /* ---------- editing ---------- */
@@ -3947,12 +3981,19 @@ function sound(ev, start, master) {
   const v = VOICES[ev.family] || VOICES.sustained;
   const hz = midiToHz(ev.midi);
 
-  // Two notes of the same pitch in a row have to be heard as two. What
-  // separates them is not the silence between — a hair of it is enough — but
-  // the attack at the front of each: a soft ramp makes the second note sound
-  // like the first one still ringing. So every note gets a short gap and its
-  // family's own transient.
-  const gap = Math.min(0.09, Math.max(0.035, ev.dur * 0.12));
+  // How much of its written length a note actually sounds is the marks on
+  // it: staccato is short, tenuto is held to the end, a slurred note runs
+  // into the next so the two are one breath. The server works that out and
+  // sends it as the gate, because it is a question about music.
+  //
+  // Whatever the gate, two notes of the same pitch in a row have to be heard
+  // as two. What separates them is not the silence between — a hair of it is
+  // enough — but the attack at the front of each: a soft ramp makes the
+  // second note sound like the first one still ringing. So a detached note
+  // keeps at least that hair of silence, and a slurred one, whose gate is
+  // over 1, overlaps what follows instead.
+  let gap = ev.dur * (1 - (ev.gate > 0 ? ev.gate : 0.88));
+  if (gap > 0) gap = Math.max(0.02, gap);
   const dur = Math.max(0.06, ev.dur - gap);
 
   const gain = audio.createGain();

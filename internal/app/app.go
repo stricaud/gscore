@@ -304,6 +304,7 @@ func (a *App) APIRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/print", a.handlePrint)
 	mux.HandleFunc("/api/pdf", a.handlePDF)
 	mux.HandleFunc("/api/page", a.handlePage)
+	mux.HandleFunc("/api/midi", a.handleMIDI)
 	mux.HandleFunc("/api/info", a.handleInfo)
 	mux.HandleFunc("/api/layout", a.handleLayout)
 	mux.HandleFunc("/api/hits", a.handleHits)

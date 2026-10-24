@@ -33,6 +33,7 @@ package synth
 import (
 	"errors"
 	"fmt"
+	"io"
 	"math"
 	"os"
 	"sort"
@@ -68,15 +69,24 @@ func LoadFont(path string) (*Font, error) {
 		return nil, err
 	}
 	defer f.Close()
-	sf, err := meltysynth.NewSoundFont(f)
+	return LoadFontFrom(f, path)
+}
+
+// LoadFontFrom reads a soundfont from anywhere.
+//
+// where is what to call it if the file does not name itself, and what to say
+// in an error. It need not be a path: the browser build has no disk and
+// hands over the bytes it fetched.
+func LoadFontFrom(r io.Reader, where string) (*Font, error) {
+	sf, err := meltysynth.NewSoundFont(r)
 	if err != nil {
-		return nil, fmt.Errorf("%s: %w", path, err)
+		return nil, fmt.Errorf("%s: %w", where, err)
 	}
 	name := sf.Info.BankName
 	if name == "" {
-		name = path
+		name = where
 	}
-	return &Font{Path: path, Name: name, sf: sf}, nil
+	return &Font{Path: where, Name: name, sf: sf}, nil
 }
 
 // Presets lists what the font can play, in bank and program order.

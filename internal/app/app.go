@@ -87,6 +87,10 @@ type App struct {
 	engraveOpt engrave.Options
 	renderOpt  svg.Options
 
+	// inBrowser records that this core is the page: compiled to WebAssembly
+	// and answering its own requests, with no server and no filesystem.
+	inBrowser bool
+
 	// local records that the server is only reachable from this machine, which
 	// is what makes it safe to show a file dialog or open a path.
 	local bool
@@ -103,6 +107,19 @@ func New(s *model.Score, filename string) *App {
 		s = model.NewScore()
 	}
 	return NewBook([]*model.Score{s}, filename)
+}
+
+// InBrowser says this core is running as the page itself, compiled to
+// WebAssembly. The browser build calls it on the way up.
+//
+// It unlocks the things that need a soundfont — playing through one and
+// recording — which are otherwise kept to the machine gscore is running on.
+// There is no machine here, but there is no network either: the core, the
+// page and the person are all the same computer.
+func (a *App) InBrowser() {
+	a.mu.Lock()
+	a.inBrowser = true
+	a.mu.Unlock()
 }
 
 // Opened records what the importer could not read in the file the app was
@@ -309,6 +326,7 @@ func (a *App) APIRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/soundfonts", a.handleSoundfonts)
 	mux.HandleFunc("/api/soundfont/fetch", a.handleSoundfontFetch)
 	mux.HandleFunc("/api/soundfont/pick", a.handleSoundfontPick)
+	mux.HandleFunc("/api/soundfont/load", a.handleSoundfontLoad)
 	mux.HandleFunc("/api/soundfont/presets", a.handleSoundfontPresets)
 	mux.HandleFunc("/api/soundfont/collection", a.handleZanderjaz)
 	mux.HandleFunc("/api/settings", a.handleSettings)
@@ -460,19 +478,24 @@ type info struct {
 	Tunes []tuneInfo `json:"tunes,omitempty"`
 	// CanUndo and CanRedo grey the Edit menu entries, so the menu says what
 	// it will do rather than looking the same whether it will do it or not.
-	CanUndo  bool       `json:"canUndo"`
-	CanRedo  bool       `json:"canRedo"`
-	Current  int        `json:"current"`
-	Native   bool       `json:"native"`
-	Local    bool       `json:"local"`
-	Version  string     `json:"version"`
-	Filename string     `json:"filename"`
-	Title    string     `json:"title"`
-	Subtitle string     `json:"subtitle"`
-	Composer string     `json:"composer"`
-	Tempo    int        `json:"tempo"`
-	Parts    []partInfo `json:"parts"`
-	Formats  []string   `json:"formats"`
+	CanUndo bool `json:"canUndo"`
+	CanRedo bool `json:"canRedo"`
+	Current int  `json:"current"`
+	Native  bool `json:"native"`
+	Local   bool `json:"local"`
+	// InBrowser says the core is running inside the page as WebAssembly,
+	// with no server and no disk. It is not "local" — there is no machine
+	// to save to — but it can still make a sound, because the synthesizer
+	// is compiled into the page along with everything else.
+	InBrowser bool       `json:"inBrowser,omitempty"`
+	Version   string     `json:"version"`
+	Filename  string     `json:"filename"`
+	Title     string     `json:"title"`
+	Subtitle  string     `json:"subtitle"`
+	Composer  string     `json:"composer"`
+	Tempo     int        `json:"tempo"`
+	Parts     []partInfo `json:"parts"`
+	Formats   []string   `json:"formats"`
 
 	// The beat the tempo counts and the words beside it. A number on its own
 	// does not say anything: 120 in 6/8 is a different speed depending on
@@ -530,19 +553,20 @@ func (a *App) handleInfo(w http.ResponseWriter, r *http.Request) {
 	defer a.mu.RUnlock()
 
 	out := info{
-		Warning:  a.warning,
-		Log:      a.importLog,
-		Current:  a.current,
-		Native:   a.native,
-		Local:    a.local,
-		Version:  version.Version,
-		Filename: a.filename,
-		CanUndo:  len(a.undoStack) > 0,
-		CanRedo:  len(a.redoStack) > 0,
-		Title:    a.score.Identity.Title,
-		Subtitle: a.score.Identity.Subtitle,
-		Composer: a.score.Identity.Composer,
-		Tempo:    a.score.Tempo.BPM,
+		Warning:   a.warning,
+		Log:       a.importLog,
+		Current:   a.current,
+		Native:    a.native,
+		Local:     a.local,
+		InBrowser: a.inBrowser,
+		Version:   version.Version,
+		Filename:  a.filename,
+		CanUndo:   len(a.undoStack) > 0,
+		CanRedo:   len(a.redoStack) > 0,
+		Title:     a.score.Identity.Title,
+		Subtitle:  a.score.Identity.Subtitle,
+		Composer:  a.score.Identity.Composer,
+		Tempo:     a.score.Tempo.BPM,
 	}
 	out.Cursor = a.cursorInfo()
 	out.TempoUnit, out.TempoDotted = beatName(a.score.Tempo.Unit)

@@ -23,7 +23,6 @@ package app
 import (
 	"encoding/json"
 	"net/http"
-	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -42,14 +41,6 @@ var stored struct {
 	read     bool
 }
 
-func settingsPath() (string, error) {
-	base, err := os.UserConfigDir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(base, "Gscore", "settings.json"), nil
-}
-
 // loadSettings reads what was kept, once, and never fails: a settings file
 // that cannot be read is a settings file that has not been written yet, and
 // every value in it has an answer for that case.
@@ -60,11 +51,7 @@ func loadSettings() settings {
 		return stored.settings
 	}
 	stored.read = true
-	path, err := settingsPath()
-	if err != nil {
-		return stored.settings
-	}
-	b, err := os.ReadFile(path)
+	b, err := readSettings()
 	if err != nil {
 		return stored.settings
 	}
@@ -77,18 +64,11 @@ func saveSettings(s settings) error {
 	stored.settings, stored.read = s, true
 	stored.Unlock()
 
-	path, err := settingsPath()
-	if err != nil {
-		return err
-	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return err
-	}
 	b, err := json.MarshalIndent(s, "", "  ")
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, append(b, '\n'), 0o644)
+	return writeSettings(append(b, '\n'))
 }
 
 // playbackFont is the soundfont to play through.
@@ -100,7 +80,11 @@ func saveSettings(s settings) error {
 // a poor guess for a whole score and is only reached if it is all there is.
 func (a *App) playbackFont() string {
 	if chosen := loadSettings().PlaybackFont; chosen != "" {
-		if _, err := os.Stat(chosen); err == nil {
+		// Loaded into this process, or still where it was on the disk.
+		if f, err := loadFont(chosen); err == nil && f != nil {
+			return chosen
+		}
+		if fontExists(chosen) {
 			return chosen
 		}
 	}
@@ -126,10 +110,11 @@ func (a *App) handleSettings(w http.ResponseWriter, r *http.Request) {
 		if v, ok := r.URL.Query()["playbackFont"]; ok && len(v) > 0 {
 			s.PlaybackFont = v[0]
 		}
-		if err := saveSettings(s); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
+		// A failure to write is not a failure to set: saveSettings has
+		// already kept it for this session, and in the browser there is no
+		// disk to keep it on at all. Reporting that as an error would be an
+		// error message about something nobody asked for.
+		_ = saveSettings(s)
 	}
 	chosen := a.playbackFont()
 	name := ""

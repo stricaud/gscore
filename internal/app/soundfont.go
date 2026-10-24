@@ -25,6 +25,7 @@ package app
 // and a list to choose from.
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -48,6 +49,14 @@ type source struct {
 	Size    int64  `json:"size"`
 	About   string `json:"about"`
 	License string `json:"license"`
+	// Browser says a page may fetch it.
+	//
+	// Not a matter of the file but of the host: a browser will not hand a
+	// page bytes from a site that has not said other sites may read it, and
+	// most sites have never thought about it. gscore running on a machine
+	// has no such rule and can fetch any of them. Offering a download in
+	// the page that is certain to be refused is worse than not offering it.
+	Browser bool `json:"browser,omitempty"`
 }
 
 // catalogue is the list offered to somebody who has no soundfont at all.
@@ -65,6 +74,7 @@ var catalogue = []source{{
 		"The usual recommendation for a first soundfont: every program is " +
 		"there and none of them is embarrassing.",
 	License: "Free to use for any purpose, including commercial work.",
+	Browser: true,
 }, {
 	ID:   "fluidr3-gm",
 	Name: "FluidR3 GM",
@@ -114,26 +124,6 @@ func bundledSoundfontDirs() []string {
 	}
 }
 
-// systemSoundfontDirs are the places other programs put soundfonts, so that
-// somebody who already has one does not download it again.
-func systemSoundfontDirs() []string {
-	var dirs []string
-	if home, err := os.UserHomeDir(); err == nil {
-		dirs = append(dirs,
-			filepath.Join(home, "Library", "Audio", "Sounds", "Banks"),
-			filepath.Join(home, ".local", "share", "soundfonts"),
-		)
-	}
-	return append(dirs,
-		"/Library/Audio/Sounds/Banks",
-		"/usr/share/sounds/sf2",
-		"/usr/share/soundfonts",
-		"/usr/share/sounds/sf2/zanderjaz",
-		"/usr/local/share/sounds/sf2",
-		"/opt/homebrew/share/sounds/sf2",
-	)
-}
-
 // installed is one soundfont found on this machine.
 type installed struct {
 	Path  string `json:"path"`
@@ -142,49 +132,13 @@ type installed struct {
 	Where string `json:"where"`
 }
 
-// listSoundfonts finds every soundfont on this machine gscore knows to look
-// for, the downloaded ones first.
+// listSoundfonts is every soundfont gscore can reach, the ones loaded into
+// this process first and then whatever is on the disk.
 func listSoundfonts() []installed {
-	var out []installed
-	seen := map[string]bool{}
-
-	add := func(dir, where string) {
-		entries, err := os.ReadDir(dir)
-		if err != nil {
-			return
-		}
-		for _, e := range entries {
-			if e.IsDir() || !strings.EqualFold(filepath.Ext(e.Name()), ".sf2") {
-				continue
-			}
-			path := filepath.Join(dir, e.Name())
-			if seen[path] {
-				continue
-			}
-			seen[path] = true
-			size := int64(0)
-			if info, err := e.Info(); err == nil {
-				size = info.Size()
-			}
-			out = append(out, installed{
-				Path:  path,
-				Name:  strings.TrimSuffix(e.Name(), filepath.Ext(e.Name())),
-				Size:  size,
-				Where: where,
-			})
-		}
-	}
-
-	if dir, err := soundfontDir(); err == nil {
-		add(dir, "downloaded")
-	}
-	for _, dir := range bundledSoundfontDirs() {
-		add(dir, "with Gscore")
-	}
-	for _, dir := range systemSoundfontDirs() {
-		add(dir, "on this machine")
-	}
-	return out
+	memoryFonts.Lock()
+	out := append([]installed(nil), memoryFonts.list...)
+	memoryFonts.Unlock()
+	return append(out, diskSoundfonts()...)
 }
 
 /*
@@ -199,11 +153,29 @@ var fonts struct {
 	byPath map[string]*synth.Font
 }
 
+// memoryFonts are the soundfonts handed over as bytes rather than found on
+// a disk, which is how the browser build gets any: it has no filesystem, so
+// the page fetches the file and gives it to the core.
+var memoryFonts struct {
+	sync.Mutex
+	list []installed
+}
+
+// memoryPrefix marks a font that lives only in this process. It is used as a
+// path everywhere a path is used, so that nothing downstream has to know the
+// difference.
+const memoryPrefix = "memory:"
+
 func loadFont(path string) (*synth.Font, error) {
 	fonts.Lock()
 	defer fonts.Unlock()
 	if f, ok := fonts.byPath[path]; ok {
 		return f, nil
+	}
+	if strings.HasPrefix(path, memoryPrefix) {
+		// It was never on a disk, so if it is not already loaded it is gone:
+		// a reloaded page has to be given it again.
+		return nil, errors.New("those instruments are not loaded any more")
 	}
 	f, err := synth.LoadFont(path)
 	if err != nil {
@@ -316,9 +288,12 @@ func (a *App) handleSoundfonts(w http.ResponseWriter, r *http.Request) {
 	dir, _ := soundfontDir()
 	_, zcount := zanderjazCategories()
 	writeJSON(w, map[string]any{
-		"installed":   listSoundfonts(),
-		"catalogue":   catalogue,
-		"collection":  map[string]any{"id": zanderjazID, "count": zcount},
+		"installed": listSoundfonts(),
+		"catalogue": catalogue,
+		// The collection is served from a site that does not let pages read
+		// it, so in the browser it can only be reached by gscore running on
+		// a machine, or opened from a file already downloaded.
+		"collection":  map[string]any{"id": zanderjazID, "count": zcount, "browser": false},
 		"dir":         dir,
 		"canDownload": a.local,
 		"voices":      parts,
@@ -460,6 +435,58 @@ func safeFileName(s string) string {
 	return out
 }
 
+// handleSoundfontLoad takes a soundfont as the body of a request and keeps
+// it in memory.
+//
+// For the browser, which has no disk to point at: the page fetches the file
+// — from wherever, and out of its own cache the second time — and hands the
+// bytes over. Reading it here rather than in JavaScript means the same code
+// plays it, answers what is in it and records with it as everywhere else.
+func (a *App) handleSoundfontLoad(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST required", http.StatusMethodNotAllowed)
+		return
+	}
+	name := r.URL.Query().Get("name")
+	if name == "" {
+		name = "soundfont"
+	}
+	data, err := io.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	f, err := synth.LoadFontFrom(bytes.NewReader(data), name)
+	if err != nil {
+		http.Error(w, "that is not a soundfont: "+err.Error(),
+			http.StatusBadRequest)
+		return
+	}
+	key := memoryPrefix + name
+
+	fonts.Lock()
+	if fonts.byPath == nil {
+		fonts.byPath = map[string]*synth.Font{}
+	}
+	fonts.byPath[key] = f
+	fonts.Unlock()
+
+	entry := installed{
+		Path: key, Name: f.Name, Size: int64(len(data)), Where: "loaded here",
+	}
+	memoryFonts.Lock()
+	kept := memoryFonts.list[:0]
+	for _, e := range memoryFonts.list {
+		if e.Path != key {
+			kept = append(kept, e)
+		}
+	}
+	memoryFonts.list = append(kept, entry)
+	memoryFonts.Unlock()
+
+	writeJSON(w, map[string]any{"status": "ok", "font": entry})
+}
+
 // handleSoundfontPick opens the system's file panel on a soundfont.
 func (a *App) handleSoundfontPick(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -505,6 +532,17 @@ func (a *App) handleSoundfontPresets(w http.ResponseWriter, r *http.Request) {
 	b, _ := json.Marshal(f.Presets())
 	w.Header().Set("Content-Type", "application/json")
 	w.Write(b)
+}
+
+// canSound says whether gscore may play through a soundfont here.
+//
+// On the machine it is running on, or inside the page when the core is the
+// page. Not over a network: the soundfonts are files on somebody's disk and
+// rendering an orchestra is work they did not offer to do for strangers.
+func (a *App) canSound() bool {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	return a.local || a.inBrowser
 }
 
 var errNoSoundfont = errors.New(

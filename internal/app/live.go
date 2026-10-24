@@ -73,7 +73,7 @@ func (a *App) handleLiveStart(w http.ResponseWriter, r *http.Request) {
 	// machine, and rendering an orchestra is work somebody else should not
 	// be able to ask for. Served over a network the editor plays through its
 	// own oscillators, which is what the page falls back to.
-	if !a.local {
+	if !a.canSound() {
 		http.Error(w, "playing through a soundfont only works on this machine",
 			http.StatusForbidden)
 		return

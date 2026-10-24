@@ -905,6 +905,13 @@ body.fullscreen #canvas-wrap { padding: 10px; }
 .record-check em { font-style: normal; font-size: 11px; color: var(--muted); }
 #record details summary { cursor: pointer; margin-top: 16px; }
 
+/* The steps for fetching a soundfont by hand, which is the page's answer
+   when it is not allowed to fetch one itself. */
+#get-font { max-width: 460px; }
+.get-font-steps { margin: 12px 0 0; padding-left: 20px; line-height: 1.6; font-size: 12px; }
+.get-font-steps li { margin-bottom: 8px; }
+#get-font-link { word-break: break-all; font-size: 11px; }
+
 /* A hand-drawn symbol can be picked up and moved. It shows the hand only
    while shift is held, with everything else that is picked up rather than
    placed — a hand over the score while writing says the wrong thing. */

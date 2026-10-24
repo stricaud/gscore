@@ -706,10 +706,12 @@ async function loadInfo() {
   // In a native window the title bar already says gscore; repeating it
   // inside the window is what makes a web view look like a web page.
   document.body.classList.toggle("native", !!i.native);
-  // Some things can only be done on the machine the score is on. Served as a
-  // page, they are not offered: an item that is there and answers with an
-  // apology is worse than one that was never there.
-  $$("[data-only-local]").forEach((el) => (el.hidden = !i.local));
+  // Some things need gscore to be able to make a sound, which means a
+  // soundfont it can reach: on this machine, or fetched into the page when
+  // the core is the page. Served to somebody else's browser they are not
+  // offered at all — an item that is there and answers with an apology is
+  // worse than one that was never there.
+  $$("[data-needs-instruments]").forEach((el) => (el.hidden = !canSound()));
   $("#version").textContent = "Gscore " + i.version;
   $("#about-version").textContent = "Version " + i.version;
   $("#filename").textContent = i.filename || "untitled";
@@ -1049,7 +1051,14 @@ const liveAhead = 3;
 // has no disk — and the oscillators take over, which is what gscore has
 // always done and still sounds like something.
 async function startLive(from, master, t0) {
-  if (!state.info?.local) return false;
+  if (!canSound()) return false;
+  // In the page the instruments have to be in hand before anything can be
+  // played with them. Loading them from the browser's own store takes a
+  // moment and no network; the first time, when there is nothing stored,
+  // playing is not held up for a thirty-megabyte download nobody asked for.
+  if (state.info?.inBrowser && !pageFont.loaded) {
+    if (!(await loadStoredInstruments())) return false;
+  }
   const p = new URLSearchParams({
     from: String(from),
     // At the rate the browser is mixing at, so that nothing is resampled on
@@ -1133,7 +1142,7 @@ function endLive() {
 
 // playbackSound lets somebody choose what the editor plays through.
 async function playbackSound() {
-  if (!state.info?.local) {
+  if (!canSound()) {
     status("Choosing the playback sound needs gscore running on your own machine");
     return;
   }
@@ -1145,6 +1154,12 @@ async function playbackSound() {
     label: f.name + (f.path === current.playbackFont ? " — playing now" : ""),
   }));
   options.push({ value: "get", label: "Download another…" });
+  if (state.info?.inBrowser) {
+    options.push({ value: "file", label: "Open a .sf2 from this computer…" });
+    if (pageFont.url) {
+      options.push({ value: "forget", label: "Forget the kept instruments" });
+    }
+  }
 
   const choice = await ask({
     title: "Playback sound",
@@ -1152,7 +1167,10 @@ async function playbackSound() {
     value: current.playbackFont || "",
     note: record.fonts.length
       ? "The editor plays through this. It is also what a new recording starts with."
-      : "There are no soundfonts yet. Download one and the editor will play through it.",
+      : state.info?.inBrowser
+        ? "There are no instruments yet. Download a set once and this page keeps "
+          + "it, so the next visit has it already and nothing is fetched again."
+        : "There are no soundfonts yet. Download one and the editor will play through it.",
     options,
   });
   if (!choice) return;
@@ -1162,7 +1180,71 @@ async function playbackSound() {
     await saveSetting("playbackFont", record.font);
     return;
   }
+  if (choice === "file") {
+    await pickSoundfont();
+    return;
+  }
+  if (choice === "forget") {
+    await forgetInstruments();
+    return;
+  }
   await saveSetting("playbackFont", choice);
+}
+
+// explainDownload says what the page cannot do and how to do it instead.
+//
+// A refusal is not useful on its own. The file is right there, the person's
+// browser will fetch it perfectly well, and the only thing in the way is a
+// rule about which page asked. So: the link, in as many words, and the
+// button that takes the file once they have it.
+async function explainDownload(name, url) {
+  const dlg = $("#get-font");
+  let host = url;
+  try {
+    host = new URL(url, location.href).host;
+  } catch (_) {
+    /* a link we could not parse is still a link they can click */
+  }
+  $("#get-font-why").textContent =
+    `${host} does not let this page fetch files from it, so gscore cannot `
+    + `download ${name} for you. Your browser can — the rule is about which `
+    + `page asked, not about the file.`;
+  const link = $("#get-font-link");
+  link.href = url;
+  link.textContent = url;
+
+  return new Promise((resolve) => {
+    const close = (open) => {
+      dlg.close();
+      $("#get-font-open").onclick = null;
+      $("#get-font-cancel").onclick = null;
+      if (open) {
+        void pickSoundfont().then(() => resolve(true));
+      } else {
+        status("Ready");
+        resolve(false);
+      }
+    };
+    $("#get-font-open").onclick = () => close(true);
+    $("#get-font-cancel").onclick = () => close(false);
+    dlg.showModal();
+  });
+}
+
+// pickLocalFile shows the browser's file picker and waits for an answer.
+function pickLocalFile(sel) {
+  const input = $(sel);
+  if (!input) return Promise.resolve(null);
+  return new Promise((resolve) => {
+    const done = () => {
+      input.removeEventListener("change", done);
+      const file = input.files && input.files[0];
+      input.value = "";
+      resolve(file || null);
+    };
+    input.addEventListener("change", done);
+    input.click();
+  });
 }
 
 async function saveSetting(key, value) {
@@ -1176,6 +1258,174 @@ async function saveSetting(key, value) {
   // Anything already playing is playing through the old one.
   if (state.playing) stop();
   status("Playing through " + (d.playbackFontName || "the chosen soundfont"));
+}
+
+/* ---------- instruments in the page ---------- */
+
+// gscore running as a web page is the whole program: the core is compiled
+// into it and answers its own requests. What it has not got is a disk, and a
+// soundfont is thirty megabytes of somebody's recordings sitting on one.
+//
+// So the page fetches it once and keeps it in the browser's own store, which
+// is what that store is for. After that it is loaded from there — no network,
+// nothing to re-download — and handed to the core as bytes. Everything from
+// that point is the same code that plays a soundfont on the desktop.
+
+// instrumentStore is the cache the soundfont is kept in, named so that
+// clearing it is an obvious thing to do and clears only this.
+const instrumentStore = "gscore-instruments";
+// And where the choice is remembered between visits.
+const instrumentKey = "gscore-instrument-url";
+
+const pageFont = { loaded: false, name: "", url: "" };
+
+// canSound says whether gscore can play real instruments here at all.
+function canSound() {
+  return !!(state.info?.local || state.info?.inBrowser);
+}
+
+// storedInstrument is what was fetched last time, if the browser still has
+// it. Nothing is downloaded here: a miss is a miss.
+async function storedInstrument() {
+  const url = (() => {
+    try {
+      return localStorage.getItem(instrumentKey) || "";
+    } catch (_) {
+      return "";
+    }
+  })();
+  if (!url || !window.caches) return null;
+  try {
+    const cache = await caches.open(instrumentStore);
+    const hit = await cache.match(url);
+    if (!hit) return null;
+    return { url, bytes: await hit.arrayBuffer() };
+  } catch (_) {
+    return null;
+  }
+}
+
+// loadStoredInstruments hands the core whatever the browser already has.
+//
+// Quiet about failing: with nothing stored there is nothing to say, and the
+// oscillators play. Saying "no instruments" every time somebody pressed play
+// would be nagging about a download they have not asked for.
+async function loadStoredInstruments() {
+  if (pageFont.loaded) return true;
+  const stored = await storedInstrument();
+  if (!stored) return false;
+  status("Loading the instruments…");
+  const ok = await giveInstrumentsToCore(stored.bytes, nameFromURL(stored.url));
+  if (ok) pageFont.url = stored.url;
+  return ok;
+}
+
+// giveInstrumentsToCore hands over the bytes and remembers what came back.
+async function giveInstrumentsToCore(bytes, name) {
+  const res = await fetch("/api/soundfont/load?name=" + encodeURIComponent(name), {
+    method: "POST",
+    body: bytes,
+  });
+  if (!res.ok) {
+    status("Those instruments could not be read: " + (await res.text()).trim());
+    return false;
+  }
+  const d = await res.json();
+  pageFont.loaded = true;
+  pageFont.name = d.font.name;
+  record.font = d.font.path;
+  await saveSetting("playbackFont", d.font.path);
+  return true;
+}
+
+function nameFromURL(url) {
+  try {
+    const base = decodeURIComponent(new URL(url, location.href).pathname.split("/").pop());
+    return base.replace(/\.sf2$/i, "") || "soundfont";
+  } catch (_) {
+    return "soundfont";
+  }
+}
+
+// fetchInstruments downloads a soundfont into the page and keeps it.
+//
+// With a running count, because this is tens of megabytes over somebody's
+// connection and a page that says nothing for a minute is a page that has
+// crashed.
+async function fetchInstruments(url, label) {
+  status("Downloading " + label + "…");
+  let res;
+  try {
+    res = await fetch(url);
+  } catch (e) {
+    // Almost always the same rule, found the hard way: a link somebody
+    // pasted, from a site nobody had checked.
+    await explainDownload(label, url);
+    return false;
+  }
+  if (!res.ok) {
+    status("Could not download " + label + ": " + res.status);
+    return false;
+  }
+
+  const total = Number(res.headers.get("Content-Length")) || 0;
+  let bytes;
+  if (res.body && res.body.getReader) {
+    const reader = res.body.getReader();
+    const parts = [];
+    let got = 0;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      parts.push(value);
+      got += value.length;
+      status(total
+        ? `Downloading ${label}… ${Math.round((100 * got) / total)}%`
+        : `Downloading ${label}… ${megabytes(got)}`);
+    }
+    bytes = new Blob(parts);
+    bytes = await bytes.arrayBuffer();
+  } else {
+    bytes = await res.arrayBuffer();
+  }
+
+  // Kept before it is parsed: a soundfont the core refuses is still a
+  // soundfont somebody waited to download, and the next attempt should not
+  // have to wait again.
+  try {
+    if (window.caches) {
+      const cache = await caches.open(instrumentStore);
+      await cache.put(url, new Response(bytes.slice(0), {
+        headers: { "Content-Type": "application/octet-stream" },
+      }));
+    }
+    localStorage.setItem(instrumentKey, url);
+  } catch (_) {
+    // A browser with no room, or in private mode: it still plays, it just
+    // downloads again next time.
+    status("Downloaded, but there was no room to keep it for next time");
+  }
+
+  pageFont.loaded = false;
+  if (!(await giveInstrumentsToCore(bytes, nameFromURL(url)))) return false;
+  pageFont.url = url;
+  status("Playing through " + pageFont.name);
+  return true;
+}
+
+// forgetInstruments throws away what the page kept, for somebody who wants
+// the room back or picked the wrong one.
+async function forgetInstruments() {
+  try {
+    if (window.caches) await caches.delete(instrumentStore);
+    localStorage.removeItem(instrumentKey);
+  } catch (_) {
+    /* nothing kept it in the first place */
+  }
+  // What the core has loaded stays loaded: it is in memory and throwing it
+  // away would silence a page that is working perfectly well. The store is
+  // what was asked about.
+  status("The instruments will be downloaded again next time");
 }
 
 /* ---------- recording ---------- */
@@ -1197,10 +1447,14 @@ const record = { fonts: [], catalogue: [], font: "", assign: {}, voices: [] };
 // particular score is a real question with a real answer — a brass band
 // scored into a piano soundfont comes out as nine pianos, silently.
 async function recordAudio() {
-  if (!state.info?.local) {
-    // The menu item is not there without a disk to read a soundfont from, so
-    // this is only reachable by a keyboard shortcut or a stale page.
+  if (!canSound()) {
+    // The menu item is not there where gscore cannot make a sound, so this
+    // is only reachable by a keyboard shortcut or a stale page.
     status("Exporting audio needs gscore running on your own machine");
+    return;
+  }
+  if (state.info?.inBrowser && !pageFont.loaded && !(await loadStoredInstruments())) {
+    status("Choose the instruments first — Play ▸ Playback sound…");
     return;
   }
   await loadSoundfonts();
@@ -1402,6 +1656,16 @@ async function browseCollection() {
 }
 
 async function pickSoundfont() {
+  if (state.info?.inBrowser) {
+    const file = await pickLocalFile("#sf2-input");
+    if (!file) return;
+    status("Reading " + file.name + "…");
+    pageFont.loaded = false;
+    if (await giveInstrumentsToCore(await file.arrayBuffer(), file.name)) {
+      status("Playing through " + pageFont.name);
+    }
+    return;
+  }
   status("Choose a soundfont…");
   const res = await fetch("/api/soundfont/pick", { method: "POST" });
   if (!res.ok) {
@@ -1422,17 +1686,29 @@ async function pickSoundfont() {
 
 // getSoundfont downloads one, either from the short list or from a link.
 async function getSoundfont() {
+  // Everything is offered, here and in the page alike. Some of it the page
+  // is not allowed to fetch for itself — a browser will not hand a page
+  // bytes from a site that has not said other sites may read them — and
+  // those are not dropped from the list, because the person's own browser
+  // is under no such rule and can fetch any of them. What the page cannot
+  // do for them, it tells them how to do.
+  const page = !!state.info?.inBrowser;
   const options = record.catalogue.map((c) => ({
     value: c.id,
-    label: c.name + " — " + megabytes(c.size),
+    label: c.name + " — " + megabytes(c.size)
+      + (page && !c.browser ? " (download it yourself)" : ""),
   }));
   if (record.collection?.count) {
     options.push({
       value: "collection",
-      label: "ZanderJaz collection — " + record.collection.count + " instruments…",
+      label: "ZanderJaz collection — " + record.collection.count + " instruments…"
+        + (page && !record.collection.browser ? " (download them yourself)" : ""),
     });
   }
   options.push({ value: "url", label: "From a link to a .sf2 file…" });
+  if (page) {
+    options.push({ value: "file", label: "Open a .sf2 from this computer…" });
+  }
 
   // What each one is goes in the note rather than in the list: a list of
   // soundfonts tells you nothing, and the sentence about what is in one and
@@ -1444,23 +1720,53 @@ async function getSoundfont() {
     title: "Download a soundfont",
     label: "Which one",
     options,
-    note: about + "\nKept in " + (record.dir || "your settings folder")
-      + ", where every score you write afterwards will find it.",
+    note: page
+      ? about + "\nKept by this page, so a later visit has it already and "
+        + "nothing is fetched twice. The ones marked “download it yourself” "
+        + "are on sites that do not let a page fetch from them; pick one and "
+        + "gscore will show you the link and take the file."
+      : about + "\nKept in " + (record.dir || "your settings folder")
+        + ", where every score you write afterwards will find it.",
   });
   if (!choice) return;
 
-  let query;
+  let url = "";
+  let name = "";
+  let fetchable = true;
+  if (choice === "file") {
+    await pickSoundfont();
+    return;
+  }
   if (choice === "url") {
-    const url = await ask({ title: "Download a soundfont", label: "Link to a .sf2 file" });
+    url = await ask({ title: "Download a soundfont", label: "Link to a .sf2 file" });
     if (!url) return;
-    query = new URLSearchParams({ url });
   } else if (choice === "collection") {
     const picked = await browseCollection();
     if (!picked) return;
-    query = new URLSearchParams({ url: picked.url, name: picked.name });
+    url = picked.url;
+    name = picked.name;
+    fetchable = !!record.collection?.browser;
   } else {
-    query = new URLSearchParams({ id: choice });
+    const entry = record.catalogue.find((c) => c.id === choice);
+    if (!entry) return;
+    url = entry.url;
+    name = entry.name;
+    fetchable = !!entry.browser;
   }
+
+  // In the page there is nowhere to put a file, so it is kept in the
+  // browser's own store and handed to the core as bytes — where the page is
+  // allowed to fetch it at all. Where it is not, the person is shown how.
+  if (state.info?.inBrowser) {
+    if (!fetchable) {
+      await explainDownload(name || nameFromURL(url), url);
+      return;
+    }
+    await fetchInstruments(url, name || nameFromURL(url));
+    return;
+  }
+
+  const query = new URLSearchParams(name ? { url, name } : { url });
 
   status("Downloading the soundfont…");
   const res = await fetch("/api/soundfont/fetch?" + query.toString(), { method: "POST" });
@@ -6133,6 +6439,16 @@ async function main() {
 
   const n = (state.info?.tunes || []).length;
   status(n > 1 ? `${n} tunes in this file` : "Ready");
+
+  // Instruments kept from a previous visit are loaded now, so that the first
+  // time play is pressed there is nothing to wait for. Not awaited: it takes
+  // a second to parse thirty megabytes of samples and the score is already
+  // on screen and editable.
+  if (state.info?.inBrowser) {
+    void loadStoredInstruments().then((ok) => {
+      if (ok) status("Playing through " + pageFont.name);
+    });
+  }
 
   if (opt.autoplay) {
     // Browsers refuse to make a sound before the page has been clicked, so

@@ -31,10 +31,11 @@
       <button data-action="save-svg"><span>Export SVG…</span><kbd>E</kbd></button>
       <button data-action="save-page"><span>Export web page…</span><kbd>⇧H</kbd></button>
       <button data-action="save-midi"><span>Export MIDI…</span></button>
-      <!-- Only where there is a machine to do it on: recording needs a
-           soundfont, which is a file on a disk. Hidden rather than shown
-           and refused. -->
-      <button data-action="save-audio" data-only-local hidden><span>Export as audio…</span></button>
+      <!-- Only where gscore can make a sound: on this machine, where a
+           soundfont is a file on a disk, or in the page, where the core is
+           the page and the soundfont has been fetched into it. Hidden
+           rather than shown and refused. -->
+      <button data-action="save-audio" data-needs-instruments hidden><span>Export as audio…</span></button>
       <hr>
       <button data-action="page-setup" disabled><span>Page Setup</span></button>
       <button data-action="print-preview" disabled><span>Print Preview…</span></button>
@@ -316,7 +317,7 @@
       <hr>
       <!-- What the editor plays through. Only where there is a disk to keep
            a soundfont on. -->
-      <button data-action="playback-sound" data-only-local hidden><span>Playback sound…</span></button>
+      <button data-action="playback-sound" data-needs-instruments hidden><span>Playback sound…</span></button>
     </div>
   </div>
 
@@ -405,6 +406,9 @@
 </div>
 
 <input type="file" id="file-input" accept=".abc,.mscz,.mscx,.musicxml,.xml,.mxl,.gscore,.nwctxt,.nwc" hidden>
+<!-- A soundfont off the disk, for the page: there is no file panel to open,
+     so the browser's own picker does it. -->
+<input type="file" id="sf2-input" accept=".sf2,.SF2" hidden>
 
 <!--
   Key signatures are picked by sight, not by name. gscore 0.0.9 did this with
@@ -660,6 +664,26 @@
   <div class="ask-buttons">
     <button type="button" id="record-cancel">Cancel</button>
     <button type="button" id="record-go" class="primary">Export</button>
+  </div>
+</dialog>
+
+<!-- When the page cannot fetch a soundfont itself.
+     A browser will not hand a page bytes from a site that has not said other
+     sites may read them, and most of the sites soundfonts live on have never
+     been asked. The person's own browser is under no such rule, so what
+     cannot be done for them is explained to them instead. -->
+<dialog id="get-font">
+  <h2>Download it yourself</h2>
+  <p class="small" id="get-font-why"></p>
+  <ol class="get-font-steps">
+    <li>Download the file:<br>
+      <a id="get-font-link" target="_blank" rel="noopener"></a></li>
+    <li>Come back here and open it with the button below. It is kept after
+      that, so this is once.</li>
+  </ol>
+  <div class="ask-buttons">
+    <button type="button" id="get-font-cancel">Cancel</button>
+    <button type="button" id="get-font-open" class="primary">Open the file…</button>
   </div>
 </dialog>
 

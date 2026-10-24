@@ -26,6 +26,15 @@ import (
 // where one has been downloaded and say nothing where one has not.
 func aFont(t *testing.T) *Font {
 	t.Helper()
+	// Named outright where the usual place is not reachable — under wasm,
+	// or on a build machine that keeps them elsewhere.
+	if path := os.Getenv("GSCORE_SF2"); path != "" {
+		f, err := LoadFont(path)
+		if err != nil {
+			t.Fatalf("GSCORE_SF2=%s: %v", path, err)
+		}
+		return f
+	}
 	base, err := os.UserConfigDir()
 	if err != nil {
 		t.Skip("nowhere to look for a soundfont")

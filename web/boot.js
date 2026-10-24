@@ -58,10 +58,11 @@
     }
 
     const res = window.gscoreFetch(method, path, body);
-    return new Response(res.body, {
-      status: res.status,
-      headers: { "Content-Type": res.contentType || "application/octet-stream" },
-    });
+    // Every header the core set, not only the type: one of them tells the
+    // player that the music has run out.
+    const headers = { "Content-Type": res.contentType || "application/octet-stream" };
+    if (res.headers) Object.assign(headers, res.headers);
+    return new Response(res.body, { status: res.status, headers });
   };
 
   // The desktop build opens files through the system dialog; a page cannot, so

@@ -45,6 +45,10 @@ import (
 
 func main() {
 	a := app.New(model.NewScore(), "")
+	// The core is the page here, which is what lets it play through a
+	// soundfont: there is no server in between and no stranger to render
+	// for.
+	a.InBrowser()
 	mux := http.NewServeMux()
 	a.APIRoutes(mux)
 
@@ -84,9 +88,18 @@ func serve(mux *http.ServeMux, args []js.Value) any {
 	arr := js.Global().Get("Uint8Array").New(len(data))
 	js.CopyBytesToJS(arr, data)
 
+	// Every header, not only the type. One of them is how the page is told
+	// that the music it is being handed a piece at a time has run out, and
+	// an answer that drops it is an answer the page cannot act on.
+	headers := js.Global().Get("Object").New()
+	for k := range res.Header {
+		headers.Set(k, res.Header.Get(k))
+	}
+
 	out := js.Global().Get("Object").New()
 	out.Set("status", res.StatusCode)
 	out.Set("contentType", res.Header.Get("Content-Type"))
+	out.Set("headers", headers)
 	out.Set("body", arr)
 	return out
 }

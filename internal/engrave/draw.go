@@ -705,6 +705,27 @@ func (e *engraver) drawStemsAndBeams(items []*placed, t model.TimeSignature) {
 	}
 }
 
+// stemEnd is where a stem finishes, given the notehead it grows out of.
+//
+// A stem is stemLength long, except that it always reaches the middle line
+// of the staff. A note out on ledger lines with a stem of the standard
+// length has a stem that stops in mid air — for anything from the third
+// ledger line out it never arrives at the staff at all, and the note reads
+// as something floating above the music rather than as a high note on it.
+// Reaching back to the middle line ties it to the staff, which is why every
+// engraver does it; it is Gould's rule in Behind Bars and LilyPond's in
+// stem.cc.
+//
+// This only ever lengthens a stem. A note inside the staff is already past
+// the middle line at the standard length, so nothing it does is undone.
+func (e *engraver) stemEnd(base float64, up bool) float64 {
+	mid := e.y + stepY(middleStep)
+	if up {
+		return math.Min(base-stemLength, mid)
+	}
+	return math.Max(base+stemLength, mid)
+}
+
 func (e *engraver) drawSingleStem(p *placed) {
 	if p.value <= model.Whole {
 		return // whole notes and breves have no stem
@@ -717,10 +738,10 @@ func (e *engraver) drawSingleStem(p *placed) {
 	hiY := e.y + stepY(float64(p.hi))
 
 	sx := p.x + head - d.StemThickness/2
-	y1, y2 := loY, hiY-stemLength
+	y1, y2 := loY, e.stemEnd(hiY, up)
 	if !up {
 		sx = p.x + d.StemThickness/2
-		y1, y2 = hiY, loY+stemLength
+		y1, y2 = hiY, e.stemEnd(loY, up)
 	}
 	e.lay.Lines = append(e.lay.Lines, Line{X1: sx, Y1: y1, X2: sx, Y2: y2, Thickness: d.StemThickness})
 
@@ -751,11 +772,7 @@ func (e *engraver) drawBeamGroup(g []*placed) {
 			sx = p.x + d.StemThickness/2
 			base = e.y + stepY(float64(p.lo))
 		}
-		reach := base - stemLength
-		if !up {
-			reach = base + stemLength
-		}
-		ends = append(ends, end{x: sx, y: reach, p: p})
+		ends = append(ends, end{x: sx, y: e.stemEnd(base, up), p: p})
 	}
 
 	// The beam is a straight line through the outermost stem ends, with its

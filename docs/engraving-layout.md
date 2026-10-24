@@ -179,6 +179,22 @@ back to the first column.
 A chord with no seconds in it is one column. Nothing moves that does not have
 to, or a plain triad is printed looking like a cluster.
 
+## 8. A stem always reaches the middle line
+
+See `stemEnd` in `internal/engrave/draw.go`.
+
+A stem is `stemLength` long, except that it is lengthened until it arrives at
+the middle line of the staff. A note out on ledger lines with a stem of the
+standard length has a stem that stops in mid air; from the third ledger line
+out it never reaches the staff at all, and the note reads as something
+floating above the music rather than as a high note on it.
+
+This only ever lengthens a stem — a note inside the staff is already past the
+middle line at the standard length — so an ordinary tune is untouched.
+
+It applies to a beamed run too. The beam is drawn through the stem ends, so
+without it a group of high notes floats off the staff together, beam and all.
+
 ---
 
 ## What is still wrong
@@ -215,6 +231,9 @@ As properties over the layout, not as pictures:
 - `chordheads_test.go` — no two heads of a chord a second apart share a
   column, from a pair up to a cluster of four; a chord with no seconds in it
   is left in one column; the note nearest the stem is the one that stays.
+- `stems_test.go` — every stem reaches the middle line, from two ledger lines
+  below to three above and in a beamed run; a note inside the staff keeps the
+  standard length.
 
 **Write the failing case first and check it fails.** Twice here a test passed
 against the broken code because the fixture did not actually exercise the bug:

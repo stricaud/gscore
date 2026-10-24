@@ -309,7 +309,68 @@ type Part struct {
 	// of sight — so this is a decision about the page and not about the
 	// music, and playback ignores it.
 	Hidden bool
-	Measures  []*Measure
+
+	// Tab writes this part as tablature instead of on a staff of pitches:
+	// a line for each string, and the fret to stop it at.
+	//
+	// It is a way of writing the same music, not different music. The notes
+	// keep their pitches — that is what sounds, what transposes and what a
+	// player of any other instrument reads — and the tab is how they are
+	// shown. A part written as tab and the same part written on a staff are
+	// the same Measures.
+	Tab *Tablature
+
+	Measures []*Measure
+}
+
+// Tablature is how a fretted instrument's part is written: one line per
+// string, and on it the fret to stop that string at.
+type Tablature struct {
+	// Strings are the pitches of the open strings, from the top line of the
+	// tab downwards — for a guitar, E4 B3 G3 D3 A2 E2.
+	//
+	// Downwards, because that is the order they are drawn in and the order
+	// the numbering follows: string 1 is the line at the top. Files list
+	// them the other way about, lowest first, and the reader turns them
+	// round once rather than everything after it counting backwards.
+	Strings []Pitch
+
+	// Frets is how many the instrument has, which is what says whether a
+	// note can be played at all.
+	Frets int
+}
+
+// Lines is how many lines the tab staff has: one per string.
+func (t *Tablature) Lines() int {
+	if t == nil {
+		return 0
+	}
+	return len(t.Strings)
+}
+
+// At finds where a pitch is played: the string nearest the top that can
+// reach it, and the fret that does.
+//
+// The highest string that will reach gives the lowest fret, which is where a
+// player's hand goes unless the music says otherwise. A note the instrument
+// cannot reach at all answers false, and is written as the pitch it is
+// rather than as a fret that does not exist.
+func (t *Tablature) At(p Pitch) (str, fret int, ok bool) {
+	if t == nil || len(t.Strings) == 0 {
+		return 0, 0, false
+	}
+	want := p.MIDI()
+	for i, open := range t.Strings {
+		f := want - open.MIDI()
+		if f < 0 {
+			continue // this string is already higher than the note
+		}
+		if t.Frets > 0 && f > t.Frets {
+			continue // off the end of the neck
+		}
+		return i + 1, f, true
+	}
+	return 0, 0, false
 }
 
 // KeyAt is the key signature in force at a measure, following any change

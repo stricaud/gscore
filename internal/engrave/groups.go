@@ -161,7 +161,7 @@ func (e *engraver) drawGroups(parts []*model.Part, left float64, tops []float64,
 			continue
 		}
 		top := tops[fi]
-		bottom := tops[li] + staffHeight
+		bottom := tops[li] + partH(parts[li])
 		x := left - groupGap
 
 		switch g.Symbol {
@@ -224,7 +224,7 @@ func (e *engraver) drawGroups(parts []*model.Part, left float64, tops []float64,
 			// Centred on the staff's middle line, which is where a name sits
 			// in every printed score.
 			S: label, X: left - groupGap - 0.4,
-			Y:    tops[i] + staffHeight/2 + nameSize*0.35,
+			Y:    tops[i] + partH(parts[i])/2 + nameSize*0.35,
 			Size: nameSize, Anchor: "end",
 		})
 	}
@@ -232,7 +232,7 @@ func (e *engraver) drawGroups(parts []*model.Part, left float64, tops []float64,
 
 // drawGroupBarlines runs the barline down through the gap between the staves
 // of a group, so that a pianist's two hands are one instrument on the page.
-func (e *engraver) drawGroupBarlines(x float64, tops []float64) {
+func (e *engraver) drawGroupBarlines(parts []*model.Part, x float64, tops []float64) {
 	d := e.opt.Defaults
 	for _, g := range e.score.Groups {
 		if !g.Barlines {
@@ -245,7 +245,7 @@ func (e *engraver) drawGroupBarlines(x float64, tops []float64) {
 		}
 		for i := fi; i < li; i++ {
 			e.lay.Lines = append(e.lay.Lines, Line{
-				X1: x, Y1: tops[i] + staffHeight, X2: x, Y2: tops[i+1],
+				X1: x, Y1: tops[i] + partH(parts[i]), X2: x, Y2: tops[i+1],
 				Thickness: d.ThinBarlineThickness,
 			})
 		}

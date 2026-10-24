@@ -297,6 +297,37 @@ system's top and the next one's may fall outside the first one's recorded
 extent**. Stating it as "a hairpin is inside some system" is not enough — the
 hairpin that caused this was inside the *next* system, which is the bug.
 
+## 15. Tablature is an ordinary staff with more lines and numbers on them
+
+See `internal/engrave/tab.go`.
+
+A part written as tab is the same music as the staff of pitches it could have
+been written on: the notes keep their pitches, and that is what sounds, what
+transposes and what every other reader of the score sees. Only the drawing
+differs, and it differs in exactly two ways — **a line for each string**
+instead of five, and **a fret number** where the notehead would have gone.
+
+Everything else is the staff machinery untouched: stems, beams, flags, dots,
+rests, ties, slurs and the marks outside the staff. That is what `noteStep`
+is for. It is the one question a tab answers differently — *where on the
+staff does this note sit* — and answering it in one place means nothing after
+it has to know which kind of staff it is looking at. A tab without stems
+would be a part that says which frets and never says when.
+
+Two things a tab does not have, because a fret number needs neither: a clef
+and a key signature. The word TAB stands at the head instead
+(`6stringTabClef`, or the four-string one for a bass), scaled to the staff.
+
+The staff lines are **ruled around the numbers**, not through them: tab is
+read as figures before it is read as lines. The pieces are collected while
+the bars are drawn and used when the lines are ruled, which happens after.
+
+Because a tab staff has six lines where a staff of pitches has five, a
+staff's height is a property of the part (`partH`) rather than a constant.
+Anything that places one staff under another, measures how far a mark is
+outside one, or draws a box round one asks the part — and `Hit.StaffHeight`
+tells the editor the same thing.
+
 ---
 
 ## What is still wrong
@@ -308,6 +339,10 @@ hairpin that caused this was inside the *next* system, which is the bug.
   the system and building each staff's outline from the whole system's music
   clipped to a band around that staff.
 - **Dynamics and hairpins are not aligned** onto a common line (see above).
+- **Tablature cannot be edited or written.** It is read from a file and
+  drawn; clicking a tab staff still works in staff steps, so what it writes
+  is a pitch at that line rather than a fret on that string. Writing tab
+  wants the click to mean a string and the keyboard to mean a fret.
 - **Two-note tremolos are not drawn.** The kind with the slashes between two
   chords belongs to the pair, not to either one, and changes how they are
   beamed. The MuseScore reader reports one rather than turning it into a mark
@@ -354,6 +389,10 @@ As properties over the layout, not as pictures:
   the key are written on every system.
 - `systemroom_test.go` — nothing drawn under a staff falls past its own
   system's extent, and systems do not overlap.
+- `tab_test.go` — a line for each string; the fret is written on the string
+  the file recorded and worked out where it did not; no clef, key or
+  notehead, but stems like any other staff; the lines are broken behind the
+  figures.
 
 **Write the failing case first and check it fails.** Twice here a test passed
 against the broken code because the fixture did not actually exercise the bug:

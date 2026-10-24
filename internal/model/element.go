@@ -665,6 +665,17 @@ type Note struct {
 	// pitches, so the pitch alone cannot say what sounds.
 	Percussion int
 
+	// String and Fret are where this note is played on a fretted
+	// instrument, for a part written as tablature. String is counted from
+	// the top line of the tab down, so 1 is the highest string; 0 says
+	// nothing was recorded and the engraver works it out from the pitch and
+	// the tuning.
+	//
+	// Recorded rather than always worked out, because which string to play a
+	// note on is a decision somebody made: the same pitch is available in
+	// several places and they do not sound or finger alike.
+	String, Fret int
+
 	Marks
 }
 

@@ -60,8 +60,8 @@ type skyline struct {
 }
 
 // newSkyline starts an outline over a range, with nothing in it but the
-// staff: five lines from top to top+staffHeight.
-func newSkyline(x0, x1, top float64) *skyline {
+// staff itself, from its top line to its bottom one.
+func newSkyline(x0, x1, top, height float64) *skyline {
 	n := int((x1-x0)/skylineStep) + 2
 	if n < 1 {
 		n = 1
@@ -69,7 +69,7 @@ func newSkyline(x0, x1, top float64) *skyline {
 	s := &skyline{x0: x0, up: make([]float64, n), down: make([]float64, n)}
 	for i := range s.up {
 		s.up[i] = top
-		s.down[i] = top + staffHeight
+		s.down[i] = top + height
 	}
 	return s
 }
@@ -178,7 +178,7 @@ func (e *engraver) marked() mark {
 // gives their widths but not their heights — and a notehead, which is nearly
 // all of them, is one space tall and centred on where it sits.
 func (e *engraver) outline(from mark, x0, x1, top float64) *skyline {
-	s := newSkyline(x0, x1, top)
+	s := newSkyline(x0, x1, top, e.staffH())
 
 	for _, g := range e.lay.Glyphs[from.glyphs:] {
 		up, down := glyphReach(g.Name)

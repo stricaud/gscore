@@ -134,12 +134,12 @@ func (e *engraver) drawMeasure(part *model.Part, b measureBox, x, end float64, s
 		switch el := s.elem.(type) {
 		case *model.Note:
 			p.note = el
-			p.step = StaffStep(part.Clef, el.Pitch)
+			p.step = e.noteStep(part.Clef, el)
 			p.lo, p.hi = p.step, p.step
 			p.value, p.dots = written(el.WrittenDuration(el.Dur))
 		case *model.Chord:
 			p.chord = el
-			p.lo, p.hi = chordRange(part.Clef, el)
+			p.lo, p.hi = e.chordRange(part.Clef, el)
 			p.step = p.hi
 			p.value, p.dots = written(el.WrittenDuration(el.Dur))
 		case *model.Rest:
@@ -173,12 +173,13 @@ func (e *engraver) drawMeasure(part *model.Part, b measureBox, x, end float64, s
 		e.drawBarline(b.m.RightBarline, x)
 		e.lay.Barlines = append(e.lay.Barlines, BarlinePos{
 			Part: e.partIndex, Measure: b.index, X: x,
-			Top: e.y, Bottom: e.y + staffHeight,
+			Top: e.y, Bottom: e.y + e.staffH(),
 			Style: b.m.RightBarline.String(),
 		})
 		e.lay.Hits = append(e.lay.Hits, Hit{
 			Part: e.partIndex, Measure: b.index,
-			XMin: start, XMax: x, StaffTop: e.y, Clef: part.Clef.String(),
+			XMin: start, XMax: x, StaffTop: e.y, StaffHeight: e.staffH(),
+			Clef:   part.Clef.String(),
 			Fifths: part.KeyAt(b.index).Fifths,
 			Full:   barIsFull(part, b),
 		})
@@ -214,11 +215,12 @@ func (e *engraver) drawMeasure(part *model.Part, b measureBox, x, end float64, s
 	hit := Hit{
 		Part: e.partIndex, Measure: b.index,
 		XMin: start, XMax: x, StaffTop: e.y,
-		Clef:       part.Clef.String(),
-		KeyChange:  b.m.Key != nil,
-		TimeChange: b.m.Time != nil,
-		Fifths:     part.KeyAt(b.index).Fifths,
-		Full:       barIsFull(part, b),
+		StaffHeight: e.staffH(),
+		Clef:        part.Clef.String(),
+		KeyChange:   b.m.Key != nil,
+		TimeChange:  b.m.Time != nil,
+		Fifths:      part.KeyAt(b.index).Fifths,
+		Full:        barIsFull(part, b),
 	}
 	for i, p := range items {
 		kind := "rest"
@@ -238,7 +240,7 @@ func (e *engraver) drawMeasure(part *model.Part, b measureBox, x, end float64, s
 			y = e.y + stepY(float64(p.hi))
 			y2 = e.y + stepY(float64(p.lo))
 			for _, n := range p.chord.Notes {
-				steps = append(steps, StaffStep(e.clef, n.Pitch))
+				steps = append(steps, e.noteStep(e.clef, n))
 			}
 		case p.rest == nil:
 			kind = "symbol"
@@ -274,7 +276,7 @@ func (e *engraver) drawMeasure(part *model.Part, b measureBox, x, end float64, s
 		e.drawBarline(b.m.RightBarline, x)
 		e.lay.Barlines = append(e.lay.Barlines, BarlinePos{
 			Part: e.partIndex, Measure: b.index, X: x,
-			Top: e.y, Bottom: e.y + staffHeight,
+			Top: e.y, Bottom: e.y + e.staffH(),
 			Style: b.m.RightBarline.String(),
 		})
 	}
@@ -486,14 +488,14 @@ func written(d model.Duration) (model.NoteValue, int) {
 	return v, dots
 }
 
-func chordRange(c model.Clef, ch *model.Chord) (lo, hi int) {
+func (e *engraver) chordRange(c model.Clef, ch *model.Chord) (lo, hi int) {
 	if len(ch.Notes) == 0 {
 		return 0, 0
 	}
-	lo = StaffStep(c, ch.Notes[0].Pitch)
+	lo = e.noteStep(c, ch.Notes[0])
 	hi = lo
 	for _, n := range ch.Notes {
-		s := StaffStep(c, n.Pitch)
+		s := e.noteStep(c, n)
 		if s < lo {
 			lo = s
 		}
@@ -573,10 +575,17 @@ func (e *engraver) drawNoteHead(p *placed) {
 		})
 	}
 	head := smufl.NoteheadGlyphOf(p.value, n.Head)
+	y := e.y + stepY(float64(p.step))
+	if e.tab != nil && e.fretNumber(n, p.x+noteheadWidth(p.value)/2, y, p.index) {
+		e.lay.Refs[p.index] = RefPos{X: p.x, Y: y, Staff: e.y}
+		e.drawDots(p.x+smufl.Advance(head)+e.dotGap(e.stemUp(p)),
+			float64(p.step), p.dots)
+		return
+	}
 	e.lay.Glyphs = append(e.lay.Glyphs, Glyph{
-		Name: head, X: p.x, Y: e.y + stepY(float64(p.step)), Ref: p.index,
+		Name: head, X: p.x, Y: y, Ref: p.index,
 	})
-	e.lay.Refs[p.index] = RefPos{X: p.x, Y: e.y + stepY(float64(p.step)), Staff: e.y}
+	e.lay.Refs[p.index] = RefPos{X: p.x, Y: y, Staff: e.y}
 	e.ledgerLines(p.x, smufl.Advance(head), p.step)
 	e.drawDots(p.x+smufl.Advance(head)+e.dotGap(e.stemUp(p)), float64(p.step), p.dots)
 }
@@ -591,12 +600,21 @@ func (e *engraver) drawChordHeads(p *placed) {
 
 	steps := make([]int, len(ch.Notes))
 	for i, n := range ch.Notes {
-		steps[i] = StaffStep(e.clef, n.Pitch)
+		steps[i] = e.noteStep(e.clef, n)
 	}
 	shifted := displacedHeads(steps, up)
 
 	for i, n := range ch.Notes {
 		step := steps[i]
+		if e.tab != nil {
+			y := e.y + stepY(float64(step))
+			if e.fretNumber(n, p.x+noteheadWidth(p.value)/2, y, p.index) {
+				if i == 0 {
+					e.lay.Refs[p.index] = RefPos{X: p.x, Y: y, Staff: e.y}
+				}
+				continue
+			}
+		}
 		if g := smufl.AccidentalGlyph(n.Accidental); g != "" {
 			e.lay.Glyphs = append(e.lay.Glyphs, Glyph{
 				Name: g, X: p.x - smufl.Advance(g) - e.opt.Spacings.AccidentalToNote,
@@ -1150,7 +1168,7 @@ func (e *engraver) drawTexts(m *model.Marks, p *placed) {
 		}
 		y := e.y - 2.2 - e.textRise
 		if t.Placement == model.PlacementBelow {
-			y = e.y + staffHeight + 3.4
+			y = e.y + e.staffH() + 3.4
 		} else if p.hi > 10 && e.textRise == 0 {
 			// Clear of a passage that climbs above the staff.
 			y = e.y + stepY(float64(p.hi)) - 1.8
@@ -1177,7 +1195,7 @@ func (e *engraver) drawLyrics(m *model.Marks, p *placed) {
 		if verse < 1 {
 			verse = 1
 		}
-		y := e.y + staffHeight + lyricDrop + float64(verse-1)*lyricLine
+		y := e.y + e.staffH() + lyricDrop + float64(verse-1)*lyricLine
 		if ly.Text != "" {
 			e.lay.Texts = append(e.lay.Texts, Text{
 				S: ly.Text, X: x, Y: y, Size: lyricSize, Anchor: "middle",
@@ -1221,7 +1239,7 @@ func (e *engraver) drawArticulations(m *model.Marks, x float64, step int, stemUp
 		// y grows downward, so further out is smaller.
 		y = math.Min(noteY-gap, e.y-1.2)
 	} else {
-		y = math.Max(noteY+gap, e.y+staffHeight+1.2)
+		y = math.Max(noteY+gap, e.y+e.staffH()+1.2)
 	}
 	emit := func(name string) {
 		if name == "" {

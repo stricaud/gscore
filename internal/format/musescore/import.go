@@ -242,6 +242,13 @@ type msPart struct {
 	staffClefs  []string
 	staffGroups []string
 
+	// tuning is the open strings of a fretted instrument, in the order the
+	// file lists them — lowest first — and frets is how many it has. A part
+	// written as tablature needs both: the lines are the strings, and what
+	// is written on them is counted from the open pitch.
+	tuning []model.Pitch
+	frets  int
+
 	// instClef is the clef the instrument is written in, and instClefN the
 	// clefs it gives particular staves — a piano names F for its second.
 	instClef  string
@@ -424,6 +431,32 @@ func (r *reader) partStaff(p *msPart) (clef, group string, err error) {
 	return clef, group, err
 }
 
+// stringData reads how a fretted instrument is tuned.
+//
+// The strings are listed lowest first, as MIDI numbers. They are kept in
+// that order here and turned round where the part is built, because the tab
+// is drawn from the top line down and everything after that point counts the
+// same way.
+func (r *reader) stringData(p *msPart) error {
+	return r.children(func(e xml.StartElement) error {
+		switch e.Name.Local {
+		case "string":
+			n, err := r.number()
+			if err != nil {
+				return err
+			}
+			p.tuning = append(p.tuning, midiPitch(n))
+			return nil
+		case "frets":
+			n, err := r.number()
+			p.frets = n
+			return err
+		default:
+			return r.dec.Skip()
+		}
+	})
+}
+
 func (r *reader) instrument(p *msPart) error {
 	return r.children(func(e xml.StartElement) error {
 		switch e.Name.Local {
@@ -445,6 +478,8 @@ func (r *reader) instrument(p *msPart) error {
 				p.name = s
 			}
 			return nil
+		case "StringData":
+			return r.stringData(p)
 		case "transposeDiatonic":
 			n, err := r.number()
 			p.transDia = n
@@ -1651,6 +1686,16 @@ func (r *reader) noteElement(st *msStaff, ch *chordData) error {
 			v, err := r.number()
 			tpc2, haveTpc2 = v, true
 			return err
+		case "string":
+			// Counted from the top line of the tab down, and from zero;
+			// gscore counts from one so that nothing means nothing.
+			v, err := r.number()
+			n.String = v + 1
+			return err
+		case "fret":
+			v, err := r.number()
+			n.Fret = v
+			return err
 		case "Accidental":
 			return r.accidental(n)
 		case "head", "headGroup":
@@ -2081,6 +2126,20 @@ func toPart(p *msPart, st *msStaff, index int) *model.Part {
 		Measures: st.measures,
 		Key:      model.KeySignature{Fifths: 0, Mode: model.Major},
 		Time:     model.TimeSignature{Beats: 4, BeatValue: 4},
+	}
+	// A staff the file calls tablature is written as tablature, if the
+	// instrument said how it is tuned. Without a tuning there is nothing to
+	// count frets from, and the part is better read on a staff of pitches
+	// than as numbers that mean nothing.
+	if index < len(p.staffGroups) && p.staffGroups[index] == "tablature" &&
+		len(p.tuning) > 0 {
+		// The file lists the strings lowest first; the tab is drawn from the
+		// top line down.
+		strings := make([]model.Pitch, len(p.tuning))
+		for i, s := range p.tuning {
+			strings[len(p.tuning)-1-i] = s
+		}
+		out.Tab = &model.Tablature{Strings: strings, Frets: p.frets}
 	}
 	// Only the first staff of an instrument carries its name. A piano is one
 	// instrument on two staves, and writing "Piano" twice down the left of

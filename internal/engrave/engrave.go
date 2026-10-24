@@ -94,6 +94,10 @@ type Text struct {
 	Anchor string // "start", "middle" or "end"
 	Italic bool
 	Bold   bool
+	// Ref is the element this belongs to, where it is one: a fret number on
+	// a tab staff is the note, the way a notehead is on a staff of pitches,
+	// and the editor and the player have to be able to find it.
+	Ref int `json:"ref,omitempty"`
 }
 
 // Circle is a round mark: the dot on a chord diagram, the ring over a string
@@ -179,7 +183,12 @@ type Hit struct {
 	// StaffTop is the y of the staff's top line; a click's distance below it
 	// gives the staff step, and the clef turns that into a pitch.
 	StaffTop float64 `json:"staffTop"`
-	Clef     string  `json:"clef"`
+	// StaffHeight is from that line to the bottom one. A staff of pitches
+	// is four spaces; a tablature is as many as its strings need, set
+	// further apart. Anything drawing a box round a staff has to be told
+	// rather than assuming.
+	StaffHeight float64 `json:"staffHeight"`
+	Clef        string  `json:"clef"`
 	// KeyChange and TimeChange say this bar carries a change of key or meter.
 	// The editor offers to take one away only where there is one, rather
 	// than offering always and failing when there is not.
@@ -422,6 +431,50 @@ func (e *engraver) staffNumber(drawn int) int {
 
 func stepY(step float64) float64 { return staffHeight - step/2 }
 
+/*
+ * Staves that are not five lines of pitches
+ */
+
+// tabLineGap is how far apart the lines of a tablature staff are: a space,
+// the same as any other staff's. A tab is an ordinary staff with a line for
+// each string and numbers where the noteheads would be.
+const tabLineGap = 1
+
+// partLines is how many lines a part's staff has: five, or one per string
+// where the part is written as tablature.
+func partLines(p *model.Part) int {
+	if n := p.Tab.Lines(); n > 1 {
+		return n
+	}
+	return staffLines
+}
+
+// partGap is the distance between those lines.
+func partGap(p *model.Part) float64 {
+	if p.Tab.Lines() > 1 {
+		return tabLineGap
+	}
+	return 1
+}
+
+// partH is how tall a part's staff is, from its top line to its bottom one.
+//
+// A tablature staff is taller than a staff of pitches — six lines a space
+// and a half apart rather than five a space apart — so the height is a
+// property of the part and not a constant. Everything that places one staff
+// under another, or measures how far a mark is outside one, asks for it.
+func partH(p *model.Part) float64 {
+	return float64(partLines(p)-1) * partGap(p)
+}
+
+// staffH is the height of the staff being drawn now.
+func (e *engraver) staffH() float64 {
+	if e.lines < 2 {
+		return staffHeight
+	}
+	return float64(e.lines-1) * e.lineGap
+}
+
 // PitchForStep is the inverse of StaffStep: which pitch is written at a staff
 // position under a clef.
 //
@@ -447,6 +500,17 @@ type engraver struct {
 	lay   *Layout
 	y     float64 // top line of the staff being drawn
 	clef  model.Clef
+	// lines and lineGap describe the staff being drawn: five lines a space
+	// apart for ordinary music, one per string and wider for tablature.
+	lines   int
+	lineGap float64
+	// tab is the tuning of the part being drawn, where it is written as
+	// tablature, and nil where it is not.
+	tab *model.Tablature
+	// tabGaps are the pieces of this staff's lines that are not drawn,
+	// because a fret number is sitting on them. They are collected as the
+	// bars are drawn and used when the lines are ruled, which happens after.
+	tabGaps []tabGap
 	// nextRef numbers elements in reading order. It starts at 1 so that zero
 	// can mean "belongs to no element".
 	nextRef int
@@ -1251,9 +1315,15 @@ func metronomeGlyph(d model.Duration) (string, int) {
 
 func (e *engraver) prefixWidth(p *model.Part, at int) float64 {
 	sp := e.opt.Spacings
-	clef, _ := smufl.ClefGlyph(p.Clef)
-	w := sp.ClefBefore + smufl.Advance(clef) + sp.ClefAfter
-	w += e.keySignatureWidth(p.KeyAt(at))
+	w := 0.0
+	if p.Tab != nil {
+		// The word TAB, and no key signature to follow it.
+		w = tabClefWidth(p, sp)
+	} else {
+		clef, _ := smufl.ClefGlyph(p.Clef)
+		w = sp.ClefBefore + smufl.Advance(clef) + sp.ClefAfter
+		w += e.keySignatureWidth(p.KeyAt(at))
+	}
 	if e.opt.HideTimeSignature || !meterAt(p, at) {
 		return w
 	}
@@ -1615,6 +1685,11 @@ func (e *engraver) drawSystem(parts []*model.Part, boxes [][]measureBox,
 
 	for pi, p := range parts {
 		e.clef = p.Clef
+		// How this staff is ruled: five lines of pitches, or one line per
+		// string with the frets written on them.
+		e.lines, e.lineGap = partLines(p), partGap(p)
+		e.tab = p.Tab
+		e.tabGaps = e.tabGaps[:0]
 		// A hairpin or an octave line cut off at the end of the last system
 		// starts again here, at this system's left edge.
 		e.resumeSpans(e.staffNumber(pi), sp.Margin+prefix-carried)
@@ -1641,15 +1716,23 @@ func (e *engraver) drawSystem(parts []*model.Part, boxes [][]measureBox,
 			}
 			e.lay.Headers = append(e.lay.Headers, HeaderPos{
 				Part: pi, Measure: start, Kind: kind,
-				X0: x0, X1: x1, Top: e.y - 1, Bottom: e.y + staffHeight + 1,
+				X0: x0, X1: x1, Top: e.y - 1, Bottom: e.y + e.staffH() + 1,
 			})
 		}
 		was := px
-		px = e.drawClef(p, px)
-		header("clef", was-sp.ClefBefore/2, px-sp.ClefAfter/2)
-		was = px
-		px = e.drawKeySignature(p, p.KeyAt(start), px)
-		header("key", was, px-sp.AfterKeySignature/2)
+		if p.Tab != nil {
+			// A tab staff has no clef and no key signature: a fret number
+			// says where to put a finger and needs neither. What stands at
+			// the head of it is the word TAB.
+			px = e.tabClef(p, px)
+			header("clef", was-sp.ClefBefore/2, px-sp.ClefAfter/2)
+		} else {
+			px = e.drawClef(p, px)
+			header("clef", was-sp.ClefBefore/2, px-sp.ClefAfter/2)
+			was = px
+			px = e.drawKeySignature(p, p.KeyAt(start), px)
+			header("key", was, px-sp.AfterKeySignature/2)
+		}
 		if meterAt(p, start) {
 			was = px
 			px = e.drawTimeSignature(p, p.TimeAt(start), px)
@@ -1706,7 +1789,7 @@ func (e *engraver) drawSystem(parts []*model.Part, boxes [][]measureBox,
 		}
 
 		if pi < len(parts)-1 {
-			e.y += staffHeight + gapAfter(pi)
+			e.y += partH(p) + gapAfter(pi)
 		}
 	}
 
@@ -1714,13 +1797,13 @@ func (e *engraver) drawSystem(parts []*model.Part, boxes [][]measureBox,
 	// are drawn once the staves' positions are all known.
 	e.drawGroups(parts, sp.Margin+lead, staffTops, start == 0)
 	for i := range columns {
-		e.drawGroupBarlines(columns[i], staffTops)
+		e.drawGroupBarlines(parts, columns[i], staffTops)
 	}
 
 	// Back to the top of the system, then down past all of it.
 	e.y = top
 	for i := 0; i < len(parts)-1; i++ {
-		e.y += staffHeight + gapAfter(i)
+		e.y += partH(parts[i]) + gapAfter(i)
 	}
 	// Past the last staff, and past whatever is written under it. The marks
 	// below a staff are placed against what is already there, so they end up
@@ -1729,7 +1812,7 @@ func (e *engraver) drawSystem(parts []*model.Part, boxes [][]measureBox,
 	// began four bars ago arrives over somebody else's first bar.
 	foot := parts[len(parts)-1]
 	_, footLow := e.staffReach(foot, start, end)
-	e.y += staffHeight + math.Max(roomBelow(foot),
+	e.y += partH(foot) + math.Max(roomBelow(foot),
 		footLow+marksBelow(foot, start, end))
 	// And no higher than what was drawn, whatever the estimate said.
 	if lowest > e.y {
@@ -1753,9 +1836,34 @@ func (e *engraver) drawSystem(parts []*model.Part, boxes [][]measureBox,
 
 func (e *engraver) staffLines(x, width float64) {
 	t := e.opt.Defaults.StaffLineThickness
-	for i := 0; i < staffLines; i++ {
-		y := e.y + float64(i)
-		e.lay.Lines = append(e.lay.Lines, Line{X1: x, Y1: y, X2: x + width, Y2: y, Thickness: t})
+	n, gap := e.lines, e.lineGap
+	if n < 2 {
+		n, gap = staffLines, 1
+	}
+	for i := 0; i < n; i++ {
+		y := e.y + float64(i)*gap
+		// A line with fret numbers on it is ruled in pieces, around them: a
+		// line through a figure is a line through it, and tab is read as
+		// numbers before it is read as lines.
+		at := x
+		for _, g := range e.tabGaps {
+			if math.Abs(g.y-y) > 0.01 || g.x1 <= at || g.x0 >= x+width {
+				continue
+			}
+			if g.x0 > at {
+				e.lay.Lines = append(e.lay.Lines, Line{
+					X1: at, Y1: y, X2: g.x0, Y2: y, Thickness: t,
+				})
+			}
+			if g.x1 > at {
+				at = g.x1
+			}
+		}
+		if at < x+width {
+			e.lay.Lines = append(e.lay.Lines, Line{
+				X1: at, Y1: y, X2: x + width, Y2: y, Thickness: t,
+			})
+		}
 	}
 }
 
@@ -1887,7 +1995,7 @@ func (e *engraver) drawBarline(style model.BarlineStyle, x float64) {
 		return
 	}
 	d := e.opt.Defaults
-	top, bottom := e.y, e.y+staffHeight
+	top, bottom := e.y, e.y+e.staffH()
 
 	thin := func(at float64) {
 		e.lay.Lines = append(e.lay.Lines, Line{

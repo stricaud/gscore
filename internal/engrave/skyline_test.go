@@ -29,7 +29,7 @@ import (
 // of them rather than one each.
 
 func TestTheSkylineStacksWhatIsPutOnIt(t *testing.T) {
-	s := newSkyline(0, 20, 10) // a staff from y=10 to y=14
+	s := newSkyline(0, 20, 10, staffHeight) // a staff from y=10 to y=14
 
 	if got := s.reach(0, 20, false); got != 10 {
 		t.Errorf("an empty outline reaches %v above, want the staff at 10", got)

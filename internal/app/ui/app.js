@@ -1485,7 +1485,7 @@ function markSelection() {
       const key = hit.staffTop;
       const b = byStaff.get(key) || {
         x0: Infinity, x1: -Infinity,
-        top: hit.staffTop - 1.6, bottom: hit.staffTop + STAFF_HEIGHT + 1.6,
+        top: hit.staffTop - 1.6, bottom: hit.staffTop + staffHeightOf(hit) + 1.6,
       };
       b.x0 = Math.min(b.x0, el.x - 0.5);
       b.x1 = Math.max(b.x1, el.x + el.width + 0.5);
@@ -3883,7 +3883,7 @@ function measureBox(index) {
     x0 = Math.min(x0, h.x0);
     x1 = Math.max(x1, h.x1);
     top = Math.min(top, h.staffTop);
-    bottom = Math.max(bottom, h.staffTop + STAFF_HEIGHT);
+    bottom = Math.max(bottom, h.staffTop + staffHeightOf(h));
   }
   if (x0 === Infinity) return null;
   return { x0, x1, top, bottom };
@@ -3953,19 +3953,26 @@ function cursorX(f, box, next) {
 // it, rather than sitting on one staff.
 const STAFF_HEIGHT = 4;
 
+// staffHeightOf is how tall one staff is, which is not always four spaces: a
+// tablature has a line for each string. The engraver says, per staff; the
+// constant is the answer for anything asked before a layout has arrived.
+function staffHeightOf(hit) {
+  return hit && hit.staffHeight > 0 ? hit.staffHeight : STAFF_HEIGHT;
+}
+
 function systemSpan(measure) {
   let top = Infinity;
   let bottom = -Infinity;
   for (const h of state.hits) {
     if (h.measure !== measure) continue;
     top = Math.min(top, h.staffTop);
-    bottom = Math.max(bottom, h.staffTop + STAFF_HEIGHT);
+    bottom = Math.max(bottom, h.staffTop + staffHeightOf(h));
   }
   if (top === Infinity) {
     // The measure is not on this page; fall back to the first system.
     const h = state.hits[0];
     if (!h) return null;
-    return { top: h.staffTop, bottom: h.staffTop + STAFF_HEIGHT };
+    return { top: h.staffTop, bottom: h.staffTop + staffHeightOf(h) };
   }
   return { top, bottom };
 }

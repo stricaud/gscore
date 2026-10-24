@@ -157,6 +157,15 @@ func (a *App) handleOpenPath(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{"status": "ok", "filename": filepath.Base(path)})
 }
 
+// OpenPath reads a file into the editor, for a shell that opens documents
+// itself: the macOS application is handed a path by the Finder and has
+// nowhere to send it but here.
+//
+// A file the importer only half understands is still opened, with the
+// trouble recorded for the log window, because a score with one bad bar in
+// it is still a score.
+func (a *App) OpenPath(path string) error { return a.openPath(path) }
+
 func (a *App) openPath(path string) error {
 	imp, err := format.ImporterFor(path)
 	if err != nil {

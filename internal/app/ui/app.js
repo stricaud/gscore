@@ -4833,6 +4833,30 @@ async function main() {
     isPlaying: () => state.playing,
     setZoom,
   };
+
+  // The macOS application drives the editor from its menu bar. Each item
+  // carries the name of a command — the same name the toolbar puts in a
+  // data-action attribute — and sends it here, so the menu bar and the
+  // interface reach one dispatcher and cannot drift apart: there is one list
+  // of things gscore can do and two ways of reaching it.
+  // Inside the Mac application there is a menu bar at the top of the screen
+  // with these same commands on it, so the page's own goes away: two menu
+  // bars is the same list twice, and one of them in the place a Mac does not
+  // put menus.
+  if (window.gscoreNativeMenu) {
+    document.documentElement.classList.add("native-menu");
+  }
+
+  window.gscoreCommand = (name) => {
+    // The shell has opened a file into the server underneath us, so the page
+    // goes and looks again. A reload would do it too and would lose the
+    // zoom, the selection and where you were on the page.
+    if (name === "reopen-file") {
+      void reopen();
+      return;
+    }
+    void action(name);
+  };
   window.dispatchEvent(new CustomEvent("gscore:ready", { detail: window.gscore }));
   setupEmbedMessages();
   announceToParent();

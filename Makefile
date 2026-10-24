@@ -72,27 +72,66 @@ vet:
 
 # ── macOS ───────────────────────────────────────────────────────────────────
 
+# The Mac application is not the Go binary in a folder. It is an AppKit
+# application — a menu bar, panels, documents, a window of its own — written
+# in Swift under ui/macosx, with the Go core linked into it as a library.
+# Everything about music stays in Go and is tested headlessly; everything
+# about being a Mac application stays in Swift, where AppKit already knows
+# the answers.
+#
+# So a bundle is built in three moves: the core as a C archive, the
+# application against it, and the two architectures joined with lipo.
+
 APP      := $(BUILD)/$(BINARY).app
 DMG      := $(BUILD)/$(BINARY)-$(VERSION).dmg
 MAC_ARCH := arm64 amd64
+MAC_MIN  := 13.0
+MAC_SRC  := $(wildcard ui/macosx/Sources/*.swift)
+ICONSET  := $(BUILD)/gscore.iconset
+# The icon is made from the PNG rather than kept as a second copy in .icns:
+# one drawing, and every size generated from it.
+ICON_PNG := assets/icon/gscore.png
 
 ## app: a macOS application bundle
-app:
+app: $(BUILD)/gscore.icns
 	@test "$(HOST_OS)" = darwin || { echo "a .app can only be built on macOS" >&2; exit 1; }
+	@command -v swiftc >/dev/null || { \
+		echo "need the Swift compiler: xcode-select --install" >&2; exit 1; }
 	@rm -rf $(APP)
 	@mkdir -p $(APP)/Contents/MacOS $(APP)/Contents/Resources
-	@# One binary for both kinds of Mac, so the bundle runs anywhere.
 	@for arch in $(MAC_ARCH); do \
-		echo "  compiling for $$arch"; \
-		CGO_ENABLED=1 GOOS=darwin GOARCH=$$arch \
-			go build -trimpath -ldflags "$(LDFLAGS)" -o $(BUILD)/$(BINARY)-$$arch . ; \
+		echo "  building for $$arch"; \
+		ui/macosx/build.sh $$arch $(MAC_MIN) $(BUILD)/$(BINARY)-app-$$arch; \
 	done
 	@lipo -create -output $(APP)/Contents/MacOS/$(BINARY) \
-		$(foreach a,$(MAC_ARCH),$(BUILD)/$(BINARY)-$(a))
-	@rm -f $(foreach a,$(MAC_ARCH),$(BUILD)/$(BINARY)-$(a))
-	@cp assets/icon/gscore.icns $(APP)/Contents/Resources/
-	@printf '%s' '$(INFO_PLIST)' > $(APP)/Contents/Info.plist
+		$(foreach a,$(MAC_ARCH),$(BUILD)/$(BINARY)-app-$(a))
+	@rm -f $(foreach a,$(MAC_ARCH),$(BUILD)/$(BINARY)-app-$(a))
+	@cp $(BUILD)/gscore.icns $(APP)/Contents/Resources/
+	@# From a real file, not from a make variable. GNU make 3.81 — which is
+	@# the make macOS ships — runs each line of a recipe in its own shell,
+	@# and a variable holding a multi-line document is split across them:
+	@# the first line ends inside an unclosed quote and the build stops with
+	@# a syntax error nobody can trace back to a plist.
+	@sed -e 's/@VERSION@/$(VERSION)/g' -e 's/@MIN@/$(MAC_MIN)/g' \
+		ui/macosx/Info.plist.in > $(APP)/Contents/Info.plist
+	@# Unsigned, the Finder will not open a downloaded bundle. An ad-hoc
+	@# signature is enough for a build you run yourself, and is what makes
+	@# the file associations register at all.
+	@codesign --force --deep --sign - $(APP) 2>/dev/null || \
+		echo "  (could not sign; the bundle still runs from here)"
 	@echo "built $(APP) ($(shell du -sh $(APP) 2>/dev/null | cut -f1))"
+
+# The .icns the bundle carries, generated from the one PNG.
+$(BUILD)/gscore.icns: $(ICON_PNG)
+	@mkdir -p $(ICONSET)
+	@for s in 16 32 128 256 512; do \
+		sips -z $$s $$s $(ICON_PNG) --out $(ICONSET)/icon_$${s}x$${s}.png >/dev/null; \
+		d=$$((s * 2)); \
+		sips -z $$d $$d $(ICON_PNG) --out $(ICONSET)/icon_$${s}x$${s}@2x.png >/dev/null; \
+	done
+	@iconutil -c icns $(ICONSET) -o $@
+	@rm -rf $(ICONSET)
+	@echo "built $@ from $(ICON_PNG)"
 
 ## dmg: a macOS disk image
 dmg: app
@@ -172,45 +211,6 @@ help:
 
 # ── the files that go inside the packages ───────────────────────────────────
 
-define INFO_PLIST
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>CFBundleName</key><string>gscore</string>
-  <key>CFBundleDisplayName</key><string>gscore</string>
-  <key>CFBundleIdentifier</key><string>org.gscore.gscore</string>
-  <key>CFBundleVersion</key><string>$(VERSION)</string>
-  <key>CFBundleShortVersionString</key><string>$(VERSION)</string>
-  <key>CFBundleExecutable</key><string>gscore</string>
-  <key>CFBundleIconFile</key><string>gscore.icns</string>
-  <key>CFBundlePackageType</key><string>APPL</string>
-  <key>NSHighResolutionCapable</key><true/>
-  <key>LSMinimumSystemVersion</key><string>10.15</string>
-  <key>NSHumanReadableCopyright</key><string>GPL v2 or later</string>
-  <key>CFBundleDocumentTypes</key>
-  <array>
-    <dict>
-      <key>CFBundleTypeName</key><string>gscore score</string>
-      <key>CFBundleTypeRole</key><string>Editor</string>
-      <key>CFBundleTypeIconFile</key><string>gscore.icns</string>
-      <key>CFBundleTypeExtensions</key>
-      <array><string>gscore</string></array>
-    </dict>
-    <dict>
-      <key>CFBundleTypeName</key><string>Music score</string>
-      <key>CFBundleTypeRole</key><string>Editor</string>
-      <key>CFBundleTypeIconFile</key><string>gscore.icns</string>
-      <key>CFBundleTypeExtensions</key>
-      <array>
-        <string>abc</string><string>musicxml</string><string>mxl</string>
-        <string>nwc</string><string>nwctxt</string>
-      </array>
-    </dict>
-  </array>
-</dict>
-</plist>
-endef
 
 define DESKTOP_FILE
 [Desktop Entry]

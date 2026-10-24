@@ -166,13 +166,24 @@ const (
 //
 // addr is a listen address; an empty one means a free port on the loopback
 // interface, which is what a desktop window wants.
-func (a *App) Run(addr string, mode UIMode) error {
+// Serve starts the server and comes straight back, saying where it is.
+//
+// It is Run without the window, for a shell that brings its own: the macOS
+// application in ui/macosx owns its menu bar, its panels and its event loop,
+// and wants the pages served into a web view it created itself rather than a
+// window opened for it. Everything behind the pages is the same server —
+// there is one editor, not a desktop one and a web one.
+//
+// native says the interface is inside an application window rather than a
+// browser tab, which is what lets it offer a save panel instead of a
+// download.
+func (a *App) Serve(addr string, native bool) (string, error) {
 	if addr == "" {
 		addr = "127.0.0.1:0"
 	}
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
-		return fmt.Errorf("gscore: cannot listen on %s: %w", addr, err)
+		return "", fmt.Errorf("gscore: cannot listen on %s: %w", addr, err)
 	}
 
 	url := "http://" + ln.Addr().String() + "/"
@@ -194,8 +205,23 @@ func (a *App) Run(addr string, mode UIMode) error {
 		}
 	}()
 
+	host, _, _ := net.SplitHostPort(ln.Addr().String())
+	a.mu.Lock()
+	a.native = native
+	a.local = host == "127.0.0.1" || host == "::1"
+	a.mu.Unlock()
+	return url, nil
+}
+
+func (a *App) Run(addr string, mode UIMode) error {
+	url, err := a.Serve(addr, mode == Native && desktop.Available)
+	if err != nil {
+		return err
+	}
+
 	fmt.Printf("gscore %s — %s\n", version.Version, url)
-	if h, _, err := net.SplitHostPort(ln.Addr().String()); err == nil && h != "127.0.0.1" && h != "::1" {
+	if h, _, err := net.SplitHostPort(strings.TrimSuffix(strings.TrimPrefix(url, "http://"), "/")); err == nil &&
+		h != "127.0.0.1" && h != "::1" && h != "localhost" {
 		// The editor can change the score, so saying who can reach it matters.
 		fmt.Println("listening on all interfaces: anyone who can reach this port can edit the score")
 	}
@@ -204,12 +230,6 @@ func (a *App) Run(addr string, mode UIMode) error {
 	if a.filename != "" {
 		title = filepath.Base(a.filename) + " — gscore"
 	}
-
-	host, _, _ := net.SplitHostPort(ln.Addr().String())
-	a.mu.Lock()
-	a.native = mode == Native && desktop.Available
-	a.local = host == "127.0.0.1" || host == "::1"
-	a.mu.Unlock()
 
 	switch mode {
 	case Native:

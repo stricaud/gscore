@@ -1,0 +1,189 @@
+/*
+ * Menu.swift
+ * gscore - a musical score editor
+ *
+ * (C) Copyright 2026 Sebastien Tricaud
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ */
+
+import AppKit
+
+/// The menu bar.
+///
+/// Every item but the system ones carries the name of a command the editor
+/// already has — "save-pdf", "set-key", "beam-join" — and does nothing but
+/// send it. The web interface names its commands the same way, in
+/// `data-action` attributes, and one dispatcher in app.js answers both. So
+/// the menu bar and the toolbar cannot drift apart: there is one list of
+/// things gscore can do, and two ways of reaching it.
+///
+/// The system items — Hide, Quit, Minimise, Full Screen — are left to AppKit,
+/// which already knows what they mean and what they are called in every
+/// language the Mac speaks.
+enum Menus {
+    static func install(target: AnyObject) {
+        let bar = NSMenu()
+        bar.addItem(appMenu())
+        bar.addItem(fileMenu(target))
+        bar.addItem(editMenu(target))
+        bar.addItem(viewMenu(target))
+        bar.addItem(scoreMenu(target))
+        bar.addItem(playMenu(target))
+        bar.addItem(windowMenu())
+        bar.addItem(helpMenu(target))
+        NSApp.mainMenu = bar
+    }
+
+    /// item makes one entry that sends a command to the editor.
+    private static func item(_ title: String, _ action: String,
+                             _ key: String = "", _ mods: NSEvent.ModifierFlags = .command,
+                             target: AnyObject) -> NSMenuItem {
+        let it = NSMenuItem(title: title,
+                            action: #selector(AppDelegate.runCommand(_:)), keyEquivalent: key)
+        it.keyEquivalentModifierMask = mods
+        it.representedObject = action
+        it.target = target
+        return it
+    }
+
+    private static func submenu(_ title: String, _ items: [NSMenuItem]) -> NSMenuItem {
+        let holder = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+        let menu = NSMenu(title: title)
+        items.forEach { menu.addItem($0) }
+        holder.submenu = menu
+        return holder
+    }
+
+    private static func appMenu() -> NSMenuItem {
+        let name = ProcessInfo.processInfo.processName
+        return submenu(name, [
+            NSMenuItem(title: "About \(name)",
+                       action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)),
+                       keyEquivalent: ""),
+            .separator(),
+            NSMenuItem(title: "Hide \(name)",
+                       action: #selector(NSApplication.hide(_:)), keyEquivalent: "h"),
+            {
+                let it = NSMenuItem(title: "Hide Others",
+                                    action: #selector(NSApplication.hideOtherApplications(_:)),
+                                    keyEquivalent: "h")
+                it.keyEquivalentModifierMask = [.command, .option]
+                return it
+            }(),
+            NSMenuItem(title: "Show All",
+                       action: #selector(NSApplication.unhideAllApplications(_:)),
+                       keyEquivalent: ""),
+            .separator(),
+            NSMenuItem(title: "Quit \(name)",
+                       action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"),
+        ])
+    }
+
+    private static func fileMenu(_ t: AnyObject) -> NSMenuItem {
+        submenu("File", [
+            item("New", "new", "n", target: t),
+            {
+                let it = NSMenuItem(title: "Open…",
+                                    action: #selector(AppDelegate.openDocument(_:)),
+                                    keyEquivalent: "o")
+                it.target = t
+                return it
+            }(),
+            .separator(),
+            // Saving always asks where, so there is no second entry that
+            // would do the same thing under a different name. Saving back
+            // over the file that was opened, without asking, is worth having
+            // and is not here yet.
+            item("Save…", "save", "s", target: t),
+            .separator(),
+            item("Export PDF…", "save-pdf", "p", [.command, .shift], target: t),
+            item("Export SVG…", "save-svg", "e", [.command, .shift], target: t),
+            .separator(),
+            item("Print…", "print", "p", target: t),
+            .separator(),
+            {
+                let it = NSMenuItem(title: "Close Window",
+                                    action: #selector(NSWindow.performClose(_:)),
+                                    keyEquivalent: "w")
+                return it
+            }(),
+        ])
+    }
+
+    private static func editMenu(_ t: AnyObject) -> NSMenuItem {
+        submenu("Edit", [
+            item("Undo", "undo", "z", target: t),
+            item("Redo", "redo", "z", [.command, .shift], target: t),
+            .separator(),
+            item("Cut", "cut", "x", target: t),
+            item("Copy", "copy", "c", target: t),
+            item("Paste", "paste", "v", target: t),
+            item("Delete", "delete", "\u{8}", [], target: t),
+            .separator(),
+            item("Add Measure", "add-measure", "m", target: t),
+        ])
+    }
+
+    private static func viewMenu(_ t: AnyObject) -> NSMenuItem {
+        submenu("View", [
+            item("Zoom In", "zoom-in", "+", target: t),
+            item("Zoom Out", "zoom-out", "-", target: t),
+            item("Actual Size", "zoom-reset", "0", target: t),
+            .separator(),
+            item("Continuous Strip", "mode-strip", "", [], target: t),
+            item("Pages", "mode-page", "", [], target: t),
+        ])
+    }
+
+    private static func scoreMenu(_ t: AnyObject) -> NSMenuItem {
+        submenu("Score", [
+            item("Title and Composer…", "set-header", "", [], target: t),
+            item("Tempo…", "set-tempo", "", [], target: t),
+            item("Key Signature…", "set-key", "", [], target: t),
+            item("Time Signature…", "set-time", "", [], target: t),
+            .separator(),
+            item("Instrument…", "set-instrument", "", [], target: t),
+            item("Add Staff", "add-staff", "", [], target: t),
+            item("Add Grand Staff", "add-grand-staff", "", [], target: t),
+            item("Remove Staff", "remove-staff", "", [], target: t),
+            .separator(),
+            item("Lyrics…", "set-lyrics", "l", target: t),
+            item("Slur", "slur", "", [], target: t),
+            item("Tie", "tie", "", [], target: t),
+            item("Join Beam", "beam-join", "b", target: t),
+        ])
+    }
+
+    private static func playMenu(_ t: AnyObject) -> NSMenuItem {
+        submenu("Play", [
+            item("Play / Stop", "play", " ", [.command], target: t),
+            item("Play from the Beginning", "play-from-start", " ",
+                 [.command, .shift], target: t),
+        ])
+    }
+
+    private static func windowMenu() -> NSMenuItem {
+        let holder = NSMenuItem(title: "Window", action: nil, keyEquivalent: "")
+        let menu = NSMenu(title: "Window")
+        menu.addItem(NSMenuItem(title: "Minimise",
+                                action: #selector(NSWindow.performMiniaturize(_:)),
+                                keyEquivalent: "m"))
+        menu.addItem(NSMenuItem(title: "Zoom",
+                                action: #selector(NSWindow.performZoom(_:)),
+                                keyEquivalent: ""))
+        holder.submenu = menu
+        // AppKit fills this one in with the open windows by itself.
+        NSApp.windowsMenu = menu
+        return holder
+    }
+
+    private static func helpMenu(_ t: AnyObject) -> NSMenuItem {
+        let holder = submenu("Help", [item("gscore Help", "about", "?", target: t)])
+        NSApp.helpMenu = holder.submenu
+        return holder
+    }
+}

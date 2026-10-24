@@ -1190,3 +1190,11 @@ body.player.bare { grid-template-rows: 1fr; }
   color: var(--muted);
   margin-bottom: 12px;
 }
+
+/* ---------- inside the Mac application ---------- */
+
+/* The menu bar is at the top of the screen there, not at the top of the
+   window, so the page's own is not drawn at all. The brand is part of it and
+   goes with it: the application already has a name, in the menu bar and in
+   the Dock. */
+.native-menu #menubar { display: none; }

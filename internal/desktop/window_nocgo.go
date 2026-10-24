@@ -1,4 +1,4 @@
-//go:build !cgo
+//go:build !cgo || nowebview
 
 /*
  * window_nocgo.go
@@ -18,12 +18,14 @@ import "errors"
 
 // Available reports that no native window can be opened in this build.
 //
-// The native window needs cgo, since it wraps the platform's own web view.
-// Built without it, gscore falls back to serving the interface to a browser
-// rather than failing.
+// Two builds end up here. Without cgo there is no web view to wrap, so
+// gscore serves the interface to a browser rather than failing. And with the
+// nowebview tag there is one deliberately: the macOS application in
+// ui/macosx brings its own window, its own menu bar and its own panels, and
+// linking a second web view into it would be two of everything.
 const Available = false
 
-// Open always fails in a build without cgo.
+// Open always fails in a build with no window of its own.
 func Open(url, title string, width, height int) error {
-	return errors.New("desktop: this build has no native window (built without cgo)")
+	return errors.New("desktop: this build has no native window")
 }

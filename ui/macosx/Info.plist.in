@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleName</key><string>gscore</string>
+  <key>CFBundleDisplayName</key><string>gscore</string>
+  <key>CFBundleIdentifier</key><string>org.gscore.gscore</string>
+  <key>CFBundleVersion</key><string>@VERSION@</string>
+  <key>CFBundleShortVersionString</key><string>@VERSION@</string>
+  <key>CFBundleExecutable</key><string>gscore</string>
+  <key>CFBundleIconFile</key><string>gscore.icns</string>
+  <key>CFBundlePackageType</key><string>APPL</string>
+  <key>NSHighResolutionCapable</key><true/>
+  <key>LSMinimumSystemVersion</key><string>@MIN@</string>
+  <key>NSHumanReadableCopyright</key><string>GPL v2 or later</string>
+
+  <!-- The scores gscore owns. A .gscore is its own format and a .abc is the
+       one it was written for; the Finder shows both with gscore's icon and
+       opens them here. -->
+  <key>CFBundleDocumentTypes</key>
+  <array>
+    <dict>
+      <key>CFBundleTypeName</key><string>gscore score</string>
+      <key>CFBundleTypeRole</key><string>Editor</string>
+      <key>LSHandlerRank</key><string>Owner</string>
+      <key>CFBundleTypeIconFile</key><string>gscore.icns</string>
+      <key>CFBundleTypeExtensions</key>
+      <array><string>gscore</string></array>
+    </dict>
+    <dict>
+      <key>CFBundleTypeName</key><string>ABC tune book</string>
+      <key>CFBundleTypeRole</key><string>Editor</string>
+      <key>LSHandlerRank</key><string>Owner</string>
+      <key>CFBundleTypeIconFile</key><string>gscore.icns</string>
+      <key>CFBundleTypeExtensions</key>
+      <array><string>abc</string></array>
+    </dict>
+
+    <!-- The rest it can read but does not claim: somebody with MuseScore
+         installed should go on opening .mscz with MuseScore. -->
+    <dict>
+      <key>CFBundleTypeName</key><string>Music score</string>
+      <key>CFBundleTypeRole</key><string>Editor</string>
+      <key>LSHandlerRank</key><string>Alternate</string>
+      <key>CFBundleTypeIconFile</key><string>gscore.icns</string>
+      <key>CFBundleTypeExtensions</key>
+      <array>
+        <string>mscz</string><string>mscx</string>
+        <string>musicxml</string><string>mxl</string>
+        <string>nwc</string><string>nwctxt</string>
+      </array>
+    </dict>
+  </array>
+</dict>
+</plist>

@@ -3779,6 +3779,9 @@ async function play(opts) {
   }
 
   state.playing = true;
+  // Starting is asking to be shown the music, so the page follows again
+  // however it was left.
+  userScrolled = false;
   $("#play-btn").classList.add("active");
   const where = from > 0
     ? ` from measure ${(cursorAt(pb.measures, from)?.measure ?? 0) + 1}`
@@ -4095,12 +4098,50 @@ function followCursor(pt) {
   // one in view.
   const top = pt.top * z + off;
   const bottom = pt.bottom * z + off;
-  if (top < wrap.scrollTop || bottom > wrap.scrollTop + wrap.clientHeight) {
-    wrap.scrollTo({
-      top: Math.max(0, top - wrap.clientHeight * 0.3),
-      behavior: "smooth",
-    });
+  if (top >= wrap.scrollTop && bottom <= wrap.scrollTop + wrap.clientHeight) {
+    // The music is on screen. Whatever you were looking at, you are looking
+    // at it again, so following takes over from here.
+    userScrolled = false;
+    return;
   }
+  // Out of view, which is either the music having moved on or you having
+  // gone to look at something else. Only the first is ours to answer.
+  if (userScrolled) return;
+  wrap.scrollTo({
+    top: Math.max(0, top - wrap.clientHeight * 0.3),
+    behavior: "smooth",
+  });
+}
+
+// Whether the page belongs to the music or to the person reading it.
+//
+// Following drags the page to wherever the cursor is. That is what you want
+// while you are watching it play and exactly what you do not want the moment
+// you look somewhere else — the other staves of a big score, the bar you are
+// about to fix — because the cursor is then out of view by definition and
+// every frame drags you back to it.
+//
+// So scrolling up or down yourself takes the page off following, and
+// bringing the music back into view puts it back on, without anything to
+// press either way. Sideways is not affected: the strip is one long line and
+// the cursor has to be kept on screen or there is nothing to watch.
+let userScrolled = false;
+
+// setupFollowRelease watches for the scrolling being somebody's own.
+//
+// The gestures, not the scroll event: following sets scrollLeft on every
+// frame, so by the time it is a scroll event there is no telling whose it
+// was.
+function setupFollowRelease() {
+  const wrap = $("#canvas-wrap");
+  if (!wrap) return;
+  const mine = (e) => {
+    // A sideways swipe is not looking away.
+    if (e.type === "wheel" && !e.deltaY) return;
+    if (state.playing) userScrolled = true;
+  };
+  wrap.addEventListener("wheel", mine, { passive: true });
+  wrap.addEventListener("touchmove", mine, { passive: true });
 }
 
 
@@ -4971,6 +5012,7 @@ async function main() {
   setupMarquee();
   setupSymbolDragging();
   setupShiftHint();
+  setupFollowRelease();
   setupFullscreen();
   setupCanvasClicks();
   setupStripHover();

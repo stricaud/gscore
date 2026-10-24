@@ -20,7 +20,9 @@ import (
 	"io/fs"
 	"net/http"
 
+	"github.com/stricaud/gscore/internal/engrave"
 	"github.com/stricaud/gscore/internal/model"
+	ghtml "github.com/stricaud/gscore/internal/render/html"
 	"github.com/stricaud/gscore/internal/smufl"
 )
 
@@ -464,6 +466,32 @@ func addTremolo(out *Playback, tr *model.Tremolo, pitches []model.Pitch,
 			})
 		}
 	}
+}
+
+// PageSound is the score resolved into sounds, in the shape a shared web
+// page's player reads.
+//
+// The page is handed the answer rather than the score: working out when
+// every note sounds is this program's job, and a page that had to do it
+// would have to carry the program.
+func PageSound(s *model.Score, lay *engrave.Layout, scale float64) *ghtml.Sound {
+	pb := buildPlayback(s)
+	out := &ghtml.Sound{
+		Duration: pb.Duration, Tempo: pb.Tempo,
+		Notes: make([]ghtml.Note, 0, len(pb.Events)),
+		Bars:  make([]ghtml.Bar, 0, len(pb.Measures)),
+	}
+	for _, e := range pb.Events {
+		out.Notes = append(out.Notes, ghtml.Note{
+			Start: e.Start, Dur: e.Dur, MIDI: e.MIDI,
+			Velocity: e.Velocity, Family: e.Family, Ref: e.Ref,
+		})
+	}
+	for _, m := range pb.Measures {
+		out.Bars = append(out.Bars, ghtml.Bar{Index: m.Index, Start: m.Start, Dur: m.Dur})
+	}
+	out.Boxes = ghtml.Boxes(lay, scale)
+	return out
 }
 
 func (a *App) handlePlayback(w http.ResponseWriter, r *http.Request) {

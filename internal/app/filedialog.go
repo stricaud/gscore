@@ -29,6 +29,7 @@ import (
 	"github.com/stricaud/gscore/internal/engrave"
 	"github.com/stricaud/gscore/internal/format"
 	gscorefmt "github.com/stricaud/gscore/internal/format/gscore"
+	ghtml "github.com/stricaud/gscore/internal/render/html"
 	gpdf "github.com/stricaud/gscore/internal/render/pdf"
 	"github.com/stricaud/gscore/internal/render/svg"
 )
@@ -254,6 +255,13 @@ func (a *App) handleSave(w http.ResponseWriter, r *http.Request) {
 		}
 		writeJSON(w, map[string]string{"status": "ok", "path": path})
 		return
+	case ".html", ".htm":
+		if err := a.renderPage(f, r); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, map[string]string{"status": "ok", "path": path})
+		return
 	case ".pdf":
 		if err := a.renderPDF(f, r); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -313,6 +321,47 @@ func (a *App) renderTo(w io.Writer, r *http.Request) error {
 		}
 	}
 	return svg.Render(w, engrave.Engrave(score, eopt), ropt)
+}
+
+// renderPage writes the score as a web page: the music drawn and a player
+// to hear it with.
+//
+// It is for sending to somebody who has no music program — they open it and
+// read it. Whether the font and the player travel with it or are fetched
+// from an address is asked for, one each.
+func (a *App) renderPage(w io.Writer, r *http.Request) error {
+	a.mu.RLock()
+	score := a.score
+	eopt := a.engraveOpt
+	symbols := a.symbols
+	a.mu.RUnlock()
+
+	q := r.URL.Query()
+	switch q.Get("mode") {
+	case "strip":
+		eopt.Mode = engrave.Strip
+	case "page":
+		eopt.Mode = engrave.Paginated
+	}
+
+	hopt := ghtml.DefaultOptions()
+	hopt.SVG.Symbols = symbols
+	if v := q.Get("space"); v != "" {
+		if f, err := strconv.ParseFloat(v, 64); err == nil && f >= 3 && f <= 40 {
+			hopt.SVG.StaffSpace = f
+		}
+	}
+	// Addresses to fetch the font and the player from, for a page that will
+	// live on a site that serves them. Left out, each is carried, which is
+	// what a file somebody was sent needs.
+	hopt.FontURL = q.Get("font")
+	hopt.ScriptURL = q.Get("script")
+
+	lay := engrave.Engrave(score, eopt)
+	if q.Get("play") != "0" {
+		hopt.Sound = PageSound(score, lay, hopt.SVG.StaffSpace)
+	}
+	return ghtml.Render(w, lay, score, symbols, hopt)
 }
 
 // handlePDF hands a PDF straight back, for a browser to download.
@@ -555,4 +604,24 @@ func (a *App) saveDirectory() string {
 		return home
 	}
 	return "."
+}
+
+// handlePage hands the web page straight back, for a browser to download.
+//
+// Running as a page there is no filesystem to write to and no save panel to
+// ask with, so the file comes back in the response. It is the same page
+// either way.
+func (a *App) handlePage(w http.ResponseWriter, r *http.Request) {
+	var buf bytes.Buffer
+	if err := a.renderPage(&buf, r); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	a.mu.RLock()
+	name := a.suggestedBase()
+	a.mu.RUnlock()
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Content-Disposition",
+		fmt.Sprintf("attachment; filename=%q", name+".html"))
+	w.Write(buf.Bytes())
 }

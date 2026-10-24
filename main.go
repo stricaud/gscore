@@ -31,6 +31,7 @@ import (
 	"github.com/stricaud/gscore/internal/engrave"
 	"github.com/stricaud/gscore/internal/format"
 	"github.com/stricaud/gscore/internal/model"
+	ghtml "github.com/stricaud/gscore/internal/render/html"
 	gpdf "github.com/stricaud/gscore/internal/render/pdf"
 	"github.com/stricaud/gscore/internal/render/svg"
 	"github.com/stricaud/gscore/internal/version"
@@ -64,6 +65,14 @@ func main() {
 		strip       = flag.Bool("strip", false, "engrave as one continuous strip, as gscore 0.0.9 did")
 		space       = flag.Float64("space", 8, "staff space size in pixels, for -o")
 		landscape   = flag.Bool("landscape", false, "turn the paper on its side, for -o to a PDF")
+		fontURL     = flag.String("font", "",
+			"for -o to .html: fetch the music font from this address instead of "+
+				"writing it into the page")
+		scriptURL = flag.String("script", "",
+			"for -o to .html: fetch the player from this address instead of "+
+				"writing it into the page")
+		noPlay = flag.Bool("noplay", false,
+			"for -o to .html: leave the player out, so the page is a drawing")
 	)
 	flag.Usage = usage
 	flag.Parse()
@@ -109,7 +118,8 @@ func main() {
 		}
 		fmt.Printf("wrote %s\n", *convert)
 	case *out != "":
-		if err := renderFile(score, *out, *strip, *space, *landscape); err != nil {
+		if err := renderFile(score, *out, *strip, *space, *landscape,
+			*fontURL, *scriptURL, !*noPlay); err != nil {
 			fmt.Fprintf(os.Stderr, "gscore: %v\n", err)
 			os.Exit(1)
 		}
@@ -153,6 +163,10 @@ usage:
   gscore FILE            open the editor with FILE
   gscore -o OUT.pdf FILE engrave FILE to PDF and exit
   gscore -o OUT.svg FILE engrave FILE to SVG and exit
+  gscore -o OUT.html FILE  a web page anybody can open: the music, a player,
+                           and the font — all in one file unless -font or
+                           -script are given an address to fetch them from
+  gscore -o OUT.js         write the player on its own, to serve beside pages
   gscore -serve :8080    run as a web server
   gscore -describe FILE  print what FILE contains
   gscore -convert OUT.musicxml FILE   convert between formats
@@ -202,8 +216,18 @@ func convertTo(s *model.Score, path string) error {
 //
 // PDF is paginated whatever -strip says: a continuous strip has no page breaks
 // to print at, and a PDF is pages or it is nothing.
-func renderFile(s *model.Score, path string, strip bool, space float64, landscape bool) error {
-	wantPDF := strings.EqualFold(filepath.Ext(path), ".pdf")
+func renderFile(s *model.Score, path string, strip bool, space float64,
+	landscape bool, fontURL, scriptURL string, play bool) error {
+	ext := strings.ToLower(filepath.Ext(path))
+	wantPDF := ext == ".pdf"
+	wantPage := ext == ".html" || ext == ".htm"
+
+	// The player on its own, for serving beside pages that fetch it rather
+	// than carry it. An option to link to a file nobody can obtain is no
+	// option at all.
+	if ext == ".js" {
+		return os.WriteFile(path, []byte(ghtml.PlayerJS()), 0o644)
+	}
 
 	eopt := engrave.DefaultOptions()
 	if strip && !wantPDF {
@@ -245,6 +269,20 @@ func renderFile(s *model.Score, path string, strip bool, space float64, landscap
 
 	ropt := svg.DefaultOptions()
 	ropt.StaffSpace = space
+
+	if wantPage {
+		// A page any browser opens: the music drawn, and a player to hear
+		// it with. Whether the font and the player travel with it or are
+		// fetched is the caller's choice, one each.
+		hopt := ghtml.DefaultOptions()
+		hopt.SVG = ropt
+		hopt.FontURL = fontURL
+		hopt.ScriptURL = scriptURL
+		if play {
+			hopt.Sound = app.PageSound(s, lay, ropt.StaffSpace)
+		}
+		return ghtml.Render(f, lay, s, nil, hopt)
+	}
 	return svg.Render(f, lay, ropt)
 }
 

@@ -102,6 +102,9 @@ enum Menus {
             .separator(),
             item("Export PDF…", "save-pdf", "p", [.command, .shift], target: t),
             item("Export SVG…", "save-svg", "e", [.command, .shift], target: t),
+            // One file anybody can open: the music, the font and the player
+            // all written into it, so it needs nothing else to work.
+            item("Export Web Page…", "save-page", "h", [.command, .shift], target: t),
             .separator(),
             item("Print…", "print", "p", target: t),
             .separator(),

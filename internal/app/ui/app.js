@@ -343,6 +343,9 @@ async function action(name) {
     case "save-svg":
       await exportSVG();
       break;
+    case "save-page":
+      await exportPage();
+      break;
     case "print":
       await printScore();
       break;
@@ -934,6 +937,42 @@ async function exportSVG() {
   a.click();
   URL.revokeObjectURL(a.href);
   status("Exported SVG");
+}
+
+// exportPage writes the score as a web page that carries itself.
+//
+// For sending to somebody who has no music program: they open it and read
+// it, with nothing to install and nothing fetched. It is still the score —
+// it can be opened here again and gone on with — which a PDF is not.
+async function exportPage() {
+  if (state.info?.local) {
+    const p = new URLSearchParams({
+      as: "html", mode: state.mode, space: String(state.zoom),
+    });
+    const res = await fetch("/api/save?" + p.toString(), { method: "POST" });
+    if (!res.ok) {
+      status("Could not export: " + (await res.text()).trim());
+      return;
+    }
+    const d = await res.json();
+    status(d.cancelled ? "Ready" : "Exported " + d.path);
+    return;
+  }
+  // As a page there is no filesystem to write to, so the file comes back
+  // and the browser does what it does with a download.
+  const p = new URLSearchParams({ mode: state.mode, space: String(state.zoom) });
+  const res = await fetch("/api/page?" + p.toString());
+  if (!res.ok) {
+    status("Could not export: " + (await res.text()).trim());
+    return;
+  }
+  const blob = new Blob([await res.text()], { type: "text/html" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = (state.info?.title || "score").replace(/[^\w-]+/g, "-") + ".html";
+  a.click();
+  URL.revokeObjectURL(a.href);
+  status("Exported a web page");
 }
 
 /* ---------- editing ---------- */
@@ -4896,6 +4935,7 @@ function setupKeys() {
       case "o": action("open"); break;
       case "e": action("save-svg"); break;
       case "P": action("save-pdf"); break;
+      case "H": action("save-page"); break;
       case "p": action("print"); break;
       case "s": action("save"); break;
       case "f": action("fullscreen"); break;

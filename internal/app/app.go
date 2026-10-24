@@ -227,7 +227,12 @@ func (a *App) Serve(addr string, native bool) (string, error) {
 	a.mu.Lock()
 	a.native = native
 	a.local = host == "127.0.0.1" || host == "::1"
+	opened := a.filename
 	a.mu.Unlock()
+	// The file named on the command line counts as opened, and until now
+	// there was no "this machine" to count it on: a.local is what makes the
+	// recent list mean anything, and it is settled here.
+	a.remember(opened)
 	return url, nil
 }
 
@@ -330,6 +335,7 @@ func (a *App) APIRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/soundfont/presets", a.handleSoundfontPresets)
 	mux.HandleFunc("/api/soundfont/collection", a.handleZanderjaz)
 	mux.HandleFunc("/api/settings", a.handleSettings)
+	mux.HandleFunc("/api/recent", a.handleRecent)
 	mux.HandleFunc("/api/play/start", a.handleLiveStart)
 	mux.HandleFunc("/api/play/chunk", a.handleLiveChunk)
 	mux.HandleFunc("/api/play/stop", a.handleLiveStop)

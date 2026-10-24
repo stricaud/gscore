@@ -217,3 +217,148 @@ func TestARealScoreIfThereIsOne(t *testing.T) {
 		t.Errorf("%d bars on one staff came to %d sheets", bars, n)
 	}
 }
+
+// Splitting a system that will not fit the sheet.
+//
+// Seventeen staves on A4 on its side cannot be set at any readable size: the
+// system needs 604pt and the page gives 503. It used to be printed anyway,
+// with the bottom staves sliced off by the paper's edge — the conductor's
+// score came out missing its percussion, silently. Now the page is divided
+// between two staves and the system goes on overleaf.
+
+// bandsOf is how the renderer will cut this drawing into pages.
+func bandsOf(t *testing.T, s *model.Score, o Options) ([]band, *engrave.Layout, Options) {
+	t.Helper()
+	eo := engrave.DefaultOptions()
+	eo.Mode = engrave.Paginated
+	eo.ShowPartNames = len(s.Parts) > 1
+	o, eo = Fit(s, o, eo)
+	lay := engrave.Engrave(s, eo)
+	return (&renderer{lay: lay, opt: o}).pages(), lay, o
+}
+
+// staffSpans lists every staff drawn, by the range of the drawing it covers.
+func staffSpans(lay *engrave.Layout) [][2]float64 {
+	seen := map[float64]bool{}
+	var out [][2]float64
+	for _, h := range lay.Hits {
+		if seen[h.StaffTop] {
+			continue
+		}
+		seen[h.StaffTop] = true
+		height := h.StaffHeight
+		if height <= 0 {
+			height = 4
+		}
+		out = append(out, [2]float64{h.StaffTop, h.StaffTop + height})
+	}
+	return out
+}
+
+func TestNoStaffIsCutInHalfByAPageBreak(t *testing.T) {
+	s := ensemble(17, 8)
+	bands, lay, _ := bandsOf(t, s, DefaultOptions().Landscape())
+	if len(bands) < 2 {
+		t.Fatalf("%d pages, so nothing was divided", len(bands))
+	}
+	for _, span := range staffSpans(lay) {
+		for i, b := range bands[1:] {
+			// A page starts at the previous band's end; a staff that
+			// straddles that line is a staff printed in two halves.
+			if b.top > span[0] && b.top < span[1] {
+				t.Errorf("page %d begins at %.2f, inside a staff running "+
+					"%.2f..%.2f", i+2, b.top, span[0], span[1])
+			}
+		}
+	}
+}
+
+// And the staves are divided evenly. Ten that have to go on two pages read
+// better as five and five than as eight and two: the page is being turned
+// either way.
+func TestADividedSystemIsDividedEvenly(t *testing.T) {
+	s := ensemble(17, 4) // one system, too tall for the sheet on its side
+	bands, lay, o := bandsOf(t, s, DefaultOptions().Landscape())
+	if len(bands) < 2 {
+		t.Skipf("it fitted at %.2fpt, so there was nothing to divide", o.StaffSpace)
+	}
+
+	// How many staves landed on each page.
+	counts := make([]int, len(bands))
+	for _, span := range staffSpans(lay) {
+		for i, b := range bands {
+			if span[0] >= b.top && span[0] < b.bottom+1 {
+				counts[i]++
+				break
+			}
+		}
+	}
+	lo, hi := counts[0], counts[0]
+	for _, n := range counts {
+		if n < lo {
+			lo = n
+		}
+		if n > hi {
+			hi = n
+		}
+	}
+	if total := 17; lo+hi != total && len(bands) == 2 {
+		t.Errorf("%d staves landed on %d pages: %v", total, len(bands), counts)
+	}
+	// Even to within one staff, which is as even as an odd number gets.
+	if hi-lo > 1 {
+		t.Errorf("the staves came out %v, which is not an even division", counts)
+	}
+}
+
+// A score that fits is not divided. Cutting a system in two is the answer to
+// an impossible sheet and must not become the ordinary case.
+func TestAScoreThatFitsIsNotDivided(t *testing.T) {
+	for _, staves := range []int{1, 4, 10} {
+		s := ensemble(staves, 24)
+		bands, lay, o := bandsOf(t, s, DefaultOptions())
+		for _, span := range staffSpans(lay) {
+			for _, b := range bands[1:] {
+				if b.top > span[0] && b.top < span[1] {
+					t.Errorf("%d staves at %.2fpt: a page begins inside a staff",
+						staves, o.StaffSpace)
+				}
+			}
+		}
+		// Every system whole, which is what "not divided" means.
+		for _, sys := range lay.Systems {
+			cut := false
+			for _, b := range bands[1:] {
+				if b.top > sys.Top+0.01 && b.top < sys.Bottom-0.01 {
+					cut = true
+				}
+			}
+			if cut {
+				t.Errorf("%d staves: a system was divided although it fits", staves)
+			}
+		}
+	}
+}
+
+// A part is set for a player on a stand, not for the conductor. Printed with
+// the score's own settings it came out at the size seventeen staves need,
+// which for one staff is unreadable.
+func TestAPartIsSetLargerThanTheScore(t *testing.T) {
+	full := ensemble(17, 16)
+	_, _, scoreOpt := bandsOf(t, full, DefaultOptions())
+
+	one := &model.Score{
+		Identity: full.Identity,
+		Tempo:    full.Tempo,
+		Parts:    []*model.Part{full.Parts[0]},
+	}
+	_, _, partOpt := bandsOf(t, one, DefaultOptions())
+
+	if partOpt.StaffSpace <= scoreOpt.StaffSpace {
+		t.Errorf("the part is set at %.2fpt and the score at %.2fpt: a part "+
+			"should be the larger of the two", partOpt.StaffSpace, scoreOpt.StaffSpace)
+	}
+	if partOpt.StaffSpace < PartStaffSpace {
+		t.Errorf("a one-staff part came out at %.2fpt", partOpt.StaffSpace)
+	}
+}

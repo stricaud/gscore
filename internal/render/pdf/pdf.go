@@ -32,6 +32,8 @@ package pdf
 import (
 	"io"
 	"math"
+	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/stricaud/gscore/internal/brand"
@@ -59,6 +61,31 @@ type Options struct {
 	// Title, Author and Subject go in the document's own properties, which is
 	// what a library or a file manager shows.
 	Title, Author, Subject string
+
+	// Label names this piece in the top margin of its first page, beside
+	// the maker's mark.
+	//
+	// For a part. A score is read whole and says whose it is on its title
+	// page, but a part is pulled out of the document and handed to one
+	// player — printed on its own, photographed on its own, mailed on its
+	// own — and a sheet of music with no instrument on it is a sheet
+	// somebody has to play a bar of to identify. Setting it where the eye
+	// lands first, rather than only under the title, is what a publisher
+	// does for the same reason.
+	//
+	// It also says this piece is shared by itself, so its first page
+	// carries the maker's mark whether or not it is the first page of the
+	// document.
+	Label string
+
+	// PageNumbers writes "2/5" along the foot of each page.
+	//
+	// Counted within this piece and not across the document: a part is
+	// four pages, and the player holding it needs to know they have all
+	// four of theirs, not that they are holding sheets 23 to 26 of
+	// something. A single-page piece is not numbered at all — "1/1" tells
+	// nobody anything.
+	PageNumbers bool
 }
 
 // DefaultOptions is A4 with the margins a part is usually printed with.
@@ -151,25 +178,53 @@ func Render(w io.Writer, lay *engrave.Layout, opt Options) error {
 	return doc.Write(w)
 }
 
-// RenderAll writes several layouts into one PDF, each starting a new page.
+// Section is one piece of a document: a drawing and the paper it goes on.
+//
+// The paper belongs to the piece and not to the document, because the pieces
+// are not the same kind of thing. A conductor's score of seventeen staves is
+// set small, and on its side if that is what holds it; the flute part behind
+// it is one staff and belongs upright at a size somebody can read from a
+// stand. Printing both at the score's settings is how a part comes out at
+// three and a half points, which is what used to happen.
+type Section struct {
+	Layout *engrave.Layout
+	Opt    Options
+}
+
+// RenderAll writes several layouts into one PDF, each starting a new page,
+// all on the same paper.
 //
 // This is what a tune book is: forty exercises are forty layouts and one
-// document, not forty files. It is also how a score and its parts are printed
-// together — the conductor's copy, then one page per player.
+// document, not forty files.
 func RenderAll(w io.Writer, layouts []*engrave.Layout, opt Options) error {
+	secs := make([]Section, 0, len(layouts))
+	for _, lay := range layouts {
+		secs = append(secs, Section{Layout: lay, Opt: opt})
+	}
+	return RenderSections(w, secs)
+}
+
+// RenderSections writes several pieces into one PDF, each on its own paper.
+//
+// This is how a score and its parts are printed together: the conductor's
+// copy, then one part per player, each set the way that piece wants to be.
+func RenderSections(w io.Writer, secs []Section) error {
+	if len(secs) == 0 {
+		return nil
+	}
 	doc := pdf.New()
-	doc.Title = opt.Title
-	doc.Author = opt.Author
-	doc.Subject = opt.Subject
+	doc.Title = secs[0].Opt.Title
+	doc.Author = secs[0].Opt.Author
+	doc.Subject = secs[0].Opt.Subject
 	doc.Creator = brand.Name
 
 	music, err := doc.Embed("Bravura", smufl.FontData())
 	if err != nil {
 		return err
 	}
-	for i, lay := range layouts {
-		r := &renderer{doc: doc, lay: lay, opt: opt, s: pdf.Point(opt.StaffSpace),
-			first: i == 0}
+	for i, sec := range secs {
+		r := &renderer{doc: doc, lay: sec.Layout, opt: sec.Opt,
+			s: pdf.Point(sec.Opt.StaffSpace), first: i == 0}
 		r.music = music
 		r.text = doc.Standard(pdf.Times)
 		r.textBold = doc.Standard(pdf.TimesBold)
@@ -204,13 +259,17 @@ type renderer struct {
 
 // run cuts the layout into pages and draws each one.
 func (r *renderer) run() {
-	first := r.first
-	for _, band := range r.pages() {
+	// The mark goes on the first page of the document, and on the first
+	// page of anything that will be shared on its own.
+	first := r.first || r.opt.Label != ""
+	bands := r.pages()
+	for n, band := range bands {
 		r.offset = band.top
 		r.page = r.doc.NewPage(pdf.Point(r.opt.PageWidth), pdf.Point(r.opt.PageHeight))
 		r.page.SetGray(0)
 		if first {
 			r.stamp()
+			r.label()
 			first = false
 		}
 
@@ -228,6 +287,7 @@ func (r *renderer) run() {
 		r.page.Clip(0, bottom, pdf.Point(r.opt.PageWidth), top-bottom)
 		r.draw(band.top, band.bottom)
 		r.page.Restore()
+		r.pageNumber(n+1, len(bands))
 		r.page.Close()
 	}
 }
@@ -247,6 +307,70 @@ const (
 	// the stamp itself have to fit the top margin, or he is drawn smaller.
 	stampGap = 6
 )
+
+// numberSize is the type a page number is set in, in points.
+const numberSize = 10
+
+// pageNumber writes which sheet this is, along the foot of the page.
+//
+// Centred, because that is where a reader's eye goes for it and because a
+// part is as often photocopied two-up as printed: a number in a corner ends
+// up in the gutter or trimmed off, and one in the middle does not.
+func (r *renderer) pageNumber(n, total int) {
+	if !r.opt.PageNumbers || total < 2 {
+		return
+	}
+	s := strconv.Itoa(n) + "/" + strconv.Itoa(total)
+	w := float64(r.page.TextWidth(r.text, pdf.Point(numberSize), s))
+	// Halfway down the bottom margin, under the music and clear of it.
+	baseline := r.opt.MarginBottom/2 - numberSize*0.36
+	r.page.Text(r.text, pdf.Point(numberSize),
+		pdf.Point((r.opt.PageWidth-w)/2), pdf.Point(baseline), s)
+}
+
+// labelSize is the type an instrument's name is set in, in points.
+//
+// Large enough to read across a music stand without looking for it, small
+// enough to stay a label in the margin: it is not a title, and the title is
+// already on the page under it.
+const labelSize = 13
+
+// label writes whose part this is, in the top margin to the right of the
+// mark.
+func (r *renderer) label() {
+	if r.opt.Label == "" {
+		return
+	}
+	left, top, box := r.stampRect()
+	// To the right of the mark, on its own middle line, so the two read as
+	// one line rather than as a drawing with something written over it.
+	x := left
+	middle := r.opt.PageHeight - r.opt.MarginTop/2
+	if box > 0 {
+		x += box + stampGap*2
+		middle = top - box/2
+	}
+	// Text is drawn from its baseline, which sits about a third of the type
+	// size below the middle of a capital.
+	r.page.Text(r.textBold, pdf.Point(labelSize),
+		pdf.Point(x), pdf.Point(middle-labelSize*0.36), r.opt.Label)
+}
+
+// stampRect is where the mark is drawn and how big: its left edge, its top
+// edge, and the side of the square it is fitted into. A box of zero means
+// the margin has no room for it.
+//
+// Shared with label, which has to stand to the right of it and on its line.
+func (r *renderer) stampRect() (left, top, box float64) {
+	box = float64(stampSize)
+	if room := r.opt.MarginTop - 2*stampGap; box > room {
+		box = room
+	}
+	if box < 6 {
+		return r.opt.MarginLeft, 0, 0
+	}
+	return r.opt.MarginLeft, r.opt.PageHeight - (r.opt.MarginTop-box)/2 - box, box
+}
 
 // stamp prints Gilbert in the top left of the first page.
 //
@@ -270,18 +394,11 @@ func (r *renderer) stamp() {
 	if side <= 0 {
 		return
 	}
-	box := float64(stampSize)
-	if room := r.opt.MarginTop - 2*stampGap; box > room {
-		box = room
-	}
-	if box < 6 {
+	left, top, box := r.stampRect()
+	if box == 0 {
 		return // a margin with no room in it gets no mark
 	}
 	s := box / side
-
-	// Centred in the top margin, above the music.
-	left := r.opt.MarginLeft
-	top := r.opt.PageHeight - (r.opt.MarginTop-box)/2 - box
 
 	// SVG measures down the page and PDF measures up it, so y is turned
 	// over here — once, in the one place that knows both.
@@ -337,28 +454,147 @@ func (r *renderer) pages() []band {
 		return []band{{0, r.lay.Height}}
 	}
 
+	// Where the page may be cut, in order down the drawing.
+	//
+	// Between systems, always. And inside a system that will not fit a page
+	// at any readable size, between its staves: seventeen staves on A4 on
+	// its side is not a thing that can be set, and the choice is between
+	// printing part of the band and printing a band with its bottom sliced
+	// off by the paper's edge.
+	breaks := []float64{}
+	for i, sys := range systems {
+		if i > 0 {
+			breaks = append(breaks, sys.Top)
+		}
+		if sys.Bottom-sys.Top > usable {
+			breaks = append(breaks, r.staffCuts(sys, usable)...)
+		}
+	}
+	breaks = append(breaks, r.lay.Height)
+	sort.Float64s(breaks)
+
 	var out []band
 	// The first page starts at the very top of the drawing, because the
 	// title block sits above the first system and belongs with it.
-	top := 0.0
-	for i, sys := range systems {
-		if sys.Bottom-top <= usable {
-			continue // it still fits
+	top, prev := 0.0, 0.0
+	for _, at := range breaks {
+		if at-top > usable {
+			if prev <= top {
+				// One piece too tall for a page even on its own, and
+				// nowhere to cut it. Print it and let it say so.
+				prev = at
+			}
+			// The page ends where the next piece's own territory begins,
+			// not where the last one's staff lines stopped: the chord
+			// symbols of the system overleaf sit above its staff and would
+			// otherwise print along the bottom of this page.
+			out = append(out, band{top, prev - 0.5})
+			top = prev
 		}
-		if i == 0 {
-			// One system too tall for a page on its own. Printing it and
-			// letting it overflow says so; dropping it would not.
+		if at-top <= usable {
+			prev = at
+		}
+	}
+	if top < r.lay.Height {
+		out = append(out, band{top, r.lay.Height})
+	}
+	if len(out) == 0 {
+		out = append(out, band{0, r.lay.Height})
+	}
+	return out
+}
+
+// staffCuts picks where to divide a system that will not fit one page,
+// splitting it between staves and as evenly as it can.
+//
+// Evenly, because the pages are being printed either way. Ten staves that
+// have to go on two pages read better as five and five than as eight and
+// two: the reader is turning the page in the middle of a bar whatever
+// happens, and two half-empty pages are easier to follow than one crammed
+// one and one nearly blank.
+//
+// Between staves and never through one. A cut through a staff is what the
+// paper's edge does on its own, and it is the thing being fixed here.
+func (r *renderer) staffCuts(sys engrave.SystemPos, usable float64) []float64 {
+	type staff struct{ top, bottom float64 }
+	var staves []staff
+	seen := map[float64]bool{}
+	for _, h := range r.lay.Hits {
+		if h.Measure < sys.First || h.Measure > sys.Last || seen[h.StaffTop] {
 			continue
 		}
-		// The page ends where the next system's own territory begins, not
-		// where the last one's staff lines stopped: the chord symbols and
-		// diagrams of the system overleaf sit above its staff and would
-		// otherwise be printed along the bottom of this page.
-		out = append(out, band{top, sys.Top - 0.5})
-		top = sys.Top
+		seen[h.StaffTop] = true
+		height := h.StaffHeight
+		if height <= 0 {
+			height = 4
+		}
+		staves = append(staves, staff{h.StaffTop, h.StaffTop + height})
 	}
-	out = append(out, band{top, r.lay.Height})
-	return out
+	if len(staves) < 2 {
+		return nil // one staff cannot be divided between two pages
+	}
+	sort.Slice(staves, func(i, j int) bool { return staves[i].top < staves[j].top })
+
+	// The gaps, which are the only places a cut may fall: midway between
+	// what one staff reaches down to and what the next starts at.
+	gaps := make([]float64, 0, len(staves)-1)
+	for i := 0; i+1 < len(staves); i++ {
+		gaps = append(gaps, (staves[i].bottom+staves[i+1].top)/2)
+	}
+
+	height := sys.Bottom - sys.Top
+	// As many pages as it takes, and then more only if the staves do not
+	// divide evenly enough to keep every piece on its page.
+	for n := int(math.Ceil(height / usable)); n <= len(gaps)+1; n++ {
+		if n < 2 {
+			return nil
+		}
+		cuts := evenCuts(gaps, sys.Top, height, n)
+		if fits(cuts, sys.Top, sys.Bottom, usable) {
+			return cuts
+		}
+	}
+	// No division of this system fits. Cut at every gap, which is the most
+	// that can be done, and the clipping says the rest.
+	return gaps
+}
+
+// evenCuts chooses n-1 of the available gaps, as near as they come to
+// dividing the system into n equal pieces.
+func evenCuts(gaps []float64, top, height float64, n int) []float64 {
+	used := make(map[int]bool, n)
+	cuts := make([]float64, 0, n-1)
+	for k := 1; k < n; k++ {
+		want := top + height*float64(k)/float64(n)
+		best := -1
+		for i, at := range gaps {
+			if used[i] {
+				continue
+			}
+			if best < 0 || math.Abs(at-want) < math.Abs(gaps[best]-want) {
+				best = i
+			}
+		}
+		if best < 0 {
+			break
+		}
+		used[best] = true
+		cuts = append(cuts, gaps[best])
+	}
+	sort.Float64s(cuts)
+	return cuts
+}
+
+// fits says every piece a set of cuts makes is short enough for a page.
+func fits(cuts []float64, top, bottom, usable float64) bool {
+	at := top
+	for _, c := range cuts {
+		if c-at > usable {
+			return false
+		}
+		at = c
+	}
+	return bottom-at <= usable
 }
 
 // x and y convert a point in the layout to one on the page. The flip happens

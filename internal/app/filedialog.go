@@ -29,6 +29,7 @@ import (
 	"github.com/stricaud/gscore/internal/engrave"
 	"github.com/stricaud/gscore/internal/format"
 	gscorefmt "github.com/stricaud/gscore/internal/format/gscore"
+	"github.com/stricaud/gscore/internal/model"
 	ghtml "github.com/stricaud/gscore/internal/render/html"
 	gpdf "github.com/stricaud/gscore/internal/render/pdf"
 	"github.com/stricaud/gscore/internal/render/svg"
@@ -187,6 +188,7 @@ func (a *App) openPath(path string) error {
 	a.mu.Lock()
 	a.setBook(scores, path, err)
 	a.mu.Unlock()
+	a.remember(path)
 	return nil
 }
 
@@ -328,6 +330,10 @@ func (a *App) handleSave(w http.ResponseWriter, r *http.Request) {
 	a.mu.Lock()
 	a.filename = path
 	a.mu.Unlock()
+	// A score saved is a score to be reopened. The drawings and recordings
+	// that came out of gscore are not, and they return above without
+	// reaching this.
+	a.remember(path)
 	writeJSON(w, map[string]string{"status": "ok", "path": path})
 }
 
@@ -477,17 +483,26 @@ func (a *App) renderPDF(w io.Writer, r *http.Request) error {
 	if q.Get("orientation") == "landscape" {
 		popt = popt.Landscape()
 	}
+	popt.PageNumbers = q.Get("pagenumbers") != "0"
 
 	eopt := engrave.DefaultOptions()
 	eopt.Mode = engrave.Paginated
 	eopt.ShowMeasureNumbers = q.Get("numbers") != "0"
 	eopt.ShowPartNames = len(score.Parts) > 1
-	// The paper says how big the music is set and how long a line of it it
-	// holds; the engraver is told rather than left to assume one shape of
-	// page and one size of type.
-	popt, eopt = gpdf.Fit(score, popt, eopt)
+	// Not fitted here: what the paper says about type size and line length
+	// is settled per piece below, because the pieces are different sizes of
+	// music.
 
-	var layouts []*engrave.Layout
+	// Each piece is fitted to its own paper. A document of several pieces
+	// is not one drawing in several parts: a book's exercises differ from
+	// one another, and a part differs from the score it came out of by an
+	// order of magnitude — seventeen staves against one.
+	fit := func(sc *model.Score, o engrave.Options, paper gpdf.Options) gpdf.Section {
+		paper, o = gpdf.Fit(sc, paper, o)
+		return gpdf.Section{Layout: engrave.Engrave(sc, o), Opt: paper}
+	}
+
+	var secs []gpdf.Section
 	switch q.Get("what") {
 	case "book":
 		if popt.Title == "" {
@@ -496,27 +511,38 @@ func (a *App) renderPDF(w io.Writer, r *http.Request) error {
 		for _, sc := range book {
 			o := eopt
 			o.ShowPartNames = len(sc.Parts) > 1
-			layouts = append(layouts, engrave.Engrave(sc, o))
+			secs = append(secs, fit(sc, o, popt))
 		}
 	case "parts":
-		layouts = append(layouts, engrave.Engrave(score, eopt))
+		secs = append(secs, fit(score, eopt, popt))
 		if len(score.Parts) > 1 {
+			// The parts go upright whichever way the score went. A score of
+			// many staves is turned on its side because that is what holds
+			// it; one staff on a sheet in that shape is a line of music a
+			// foot long with a hand's breadth of paper under it, and a
+			// player on a stand turns twice as many pages for the trouble.
+			part := popt
+			if part.PageWidth > part.PageHeight {
+				part.PageWidth, part.PageHeight = part.PageHeight, part.PageWidth
+			}
 			for _, p := range score.Parts {
 				o := eopt
 				// One staff on its own needs no name beside it: the subtitle
 				// says whose part it is, and a label on every system of a
 				// single-staff part is only in the way.
 				o.ShowPartNames = false
-				layouts = append(layouts, engrave.Engrave(onePart(score, p), o))
+				paper := part
+				// Whose part it is, in the margin of its first page. A part
+				// leaves the document on its own and has to say what it is
+				// without being read.
+				paper.Label = partLabel(p)
+				secs = append(secs, fit(onePart(score, p), o, paper))
 			}
 		}
 	default:
-		layouts = append(layouts, engrave.Engrave(score, eopt))
+		secs = append(secs, fit(score, eopt, popt))
 	}
-	if len(layouts) == 0 {
-		layouts = append(layouts, engrave.Engrave(score, eopt))
-	}
-	return gpdf.RenderAll(w, layouts, popt)
+	return gpdf.RenderSections(w, secs)
 }
 
 func (a *App) suggestedName() string {

@@ -32,9 +32,9 @@ import "errors"
 // diskSoundfonts finds none, there being nowhere to look.
 func diskSoundfonts() []installed { return nil }
 
-// fontExists is false for anything but what has been loaded into memory,
-// which is answered before this is reached.
-func fontExists(string) bool { return false }
+// fileExists is false for everything: there is no disk to look on, and
+// anything loaded into memory is answered before this is reached.
+func fileExists(string) bool { return false }
 
 var errNoDisk = errors.New("there is no filesystem in a page")
 

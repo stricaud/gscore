@@ -335,6 +335,14 @@ function placeSubmenu(sub) {
 }
 
 async function action(name) {
+  // The files opened before are a list that changes, so their commands are
+  // numbered rather than named. Everything that drives the editor comes
+  // through here — the page's menus and the application's — so they have to
+  // be reachable by name like the rest.
+  if (name.startsWith("open-recent-")) {
+    await openRecent(recentPaths[Number(name.slice("open-recent-".length))]);
+    return;
+  }
   switch (name) {
     case "new":
       await fetch("/api/new", { method: "POST" });
@@ -358,6 +366,11 @@ async function action(name) {
       break;
     case "save-audio":
       await recordAudio();
+      break;
+    case "clear-recent":
+      await fetch("/api/recent?clear=1", { method: "POST" });
+      await loadRecent();
+      status("The list of recent files was cleared");
       break;
     case "playback-sound":
       await playbackSound();
@@ -712,6 +725,9 @@ async function loadInfo() {
   // offered at all — an item that is there and answers with an apology is
   // worse than one that was never there.
   $$("[data-needs-instruments]").forEach((el) => (el.hidden = !canSound()));
+  // And the things that need a disk with the person's own files on it.
+  $$("[data-needs-files]").forEach((el) => (el.hidden = !i.local));
+  if (i.local) void loadRecent();
   $("#version").textContent = "Gscore " + i.version;
   $("#about-version").textContent = "Version " + i.version;
   $("#filename").textContent = i.filename || "untitled";
@@ -901,6 +917,7 @@ async function exportPDF() {
 
   const q = new URLSearchParams({ as: "pdf", what: choice.what });
   if (choice.landscape) q.set("orientation", "landscape");
+  if (!choice.pageNumbers) q.set("pagenumbers", "0");
 
   if (state.info?.local) {
     let res = await fetch("/api/save?" + q.toString(), { method: "POST" });
@@ -1258,6 +1275,96 @@ async function saveSetting(key, value) {
   // Anything already playing is playing through the old one.
   if (state.playing) stop();
   status("Playing through " + (d.playbackFontName || "the chosen soundfont"));
+}
+
+/* ---------- the files opened before ---------- */
+
+// The paths behind the numbered commands, in the order the menu shows them.
+let recentPaths = [];
+
+// loadRecent fills the Open recent submenu.
+//
+// Rebuilt from the server each time rather than kept in step by hand: the
+// list belongs to the program and not to this window, and a second window —
+// or the same one after an hour of work — would otherwise be offering a
+// list that was true when it opened.
+async function loadRecent() {
+  const menu = $("#recent-menu");
+  const items = $("#recent-items");
+  if (!menu || !items) return;
+
+  let files = [];
+  try {
+    const res = await fetch("/api/recent");
+    if (res.ok) files = (await res.json()).files || [];
+  } catch (_) {
+    /* no list is the same as an empty one */
+  }
+
+  recentPaths = files.map((f) => f.path);
+  items.innerHTML = "";
+  const item = (label, command, title) => {
+    const b = document.createElement("button");
+    b.innerHTML = "<span></span>";
+    b.querySelector("span").textContent = label;
+    if (command) {
+      b.dataset.action = command;
+      // Wired here and not by setupMenus, which ran before these existed.
+      // The name is also what the application's own menu bar sends, so
+      // both ways of picking a file reach the same command.
+      b.addEventListener("click", () => {
+        if (b.disabled) return;
+        closeMenus();
+        void action(command);
+      });
+    }
+    if (title) b.title = title;
+    items.append(b);
+    return b;
+  };
+
+  if (files.length === 0) {
+    item("Nothing opened yet", "").disabled = true;
+  } else {
+    files.forEach((f, i) => {
+      // The whole path in the tooltip, where the name alone would not say
+      // which file this is: two folders of parts both hold "Flute.xml".
+      item(f.name, "open-recent-" + i, f.path);
+    });
+    items.append(document.createElement("hr"));
+    item("Clear the list", "clear-recent");
+  }
+  // The native menu bar is built from this one, so it has to be told that
+  // what it copied has changed.
+  rebuildNativeMenus();
+}
+
+// rebuildNativeMenus asks the application to read the page's menus again.
+//
+// Only the Mac application has a menu bar of its own and only it is
+// listening; everywhere else this is nothing.
+function rebuildNativeMenus() {
+  try {
+    window.webkit?.messageHandlers?.gscore?.postMessage("menus");
+  } catch (_) {
+    /* not inside the application */
+  }
+}
+
+async function openRecent(path) {
+  status("Opening " + path + "…");
+  const res = await fetch("/api/openpath?path=" + encodeURIComponent(path), {
+    method: "POST",
+  });
+  if (!res.ok) {
+    status("Could not open it: " + (await res.text()).trim());
+    // Gone or unreadable: the list says so next time it is asked.
+    await loadRecent();
+    return;
+  }
+  await reopen();
+  await loadRecent();
+  status("Opened " + (state.info?.filename || path));
 }
 
 /* ---------- instruments in the page ---------- */
@@ -4477,6 +4584,7 @@ function askPrint(many, parts, title, verb, paper) {
       resolve({
         what: picked ? picked.value : "tune",
         landscape: paper && $("#print-landscape").checked,
+        pageNumbers: !paper || $("#print-numbers").checked,
       });
     };
     dlg.addEventListener("close", done);

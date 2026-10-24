@@ -22,6 +22,14 @@
     <div class="menu-items">
       <button data-action="new"><span>New score…</span><kbd>N</kbd></button>
       <button data-action="open"><span>Open score…</span><kbd>O</kbd></button>
+      <!-- The files opened before, on the machine they are on. Served to a
+           browser there is no such machine and the paths would be somebody
+           else's, so the whole submenu goes. Its items are built when the
+           menu is opened, from what is actually still on the disk. -->
+      <div class="submenu" id="recent-menu" data-needs-files hidden>
+        <button class="submenu-title"><span>Open recent</span><kbd>▸</kbd></button>
+        <div class="menu-items" id="recent-items"></div>
+      </div>
       <hr>
       <button data-action="save"><span>Save as .gscore…</span><kbd>S</kbd></button>
       <!-- A saved score carries a PDF of itself unless this is turned off:
@@ -603,8 +611,12 @@
     </div>
     <div class="choices" id="print-paper" hidden>
       <label><input type="checkbox" id="print-landscape">
-        <span><b>Turn the paper on its side</b><em>A conductor's score is wider than
-          it is tall; landscape fits more staves across and reads at a useful size.</em></span></label>
+        <span><b>Turn the paper on its side</b><em>Wider lines, and fewer staves down
+          the page — a score too tall for the sheet is divided between staves and
+          continued overleaf. Parts are always printed upright.</em></span></label>
+      <label><input type="checkbox" id="print-numbers" checked>
+        <span><b>Number the pages</b><em>“2/5” along the foot. Counted within each
+          part, so a player can tell they have all of theirs.</em></span></label>
     </div>
     <div class="ask-buttons">
       <button value="cancel" type="submit">Cancel</button>

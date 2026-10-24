@@ -21,7 +21,8 @@ import UniformTypeIdentifiers
 /// binary. The split is deliberate: everything about music stays in Go and is
 /// tested headlessly, and everything about being a Mac application stays
 /// here, where AppKit already knows the answers.
-final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate,
+                         WKScriptMessageHandler {
     private var window: NSWindow!
     private var web: WKWebView!
     private var ready = false
@@ -52,13 +53,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
             source: "window.gscoreNativeMenu = true;",
             injectionTime: .atDocumentStart,
             forMainFrameOnly: true))
+
+        // And a way back. The bar is built out of the page's own menus, so
+        // when those change — the list of files opened before is the one
+        // that does, every time a score is opened — the page has to be able
+        // to say so. Without this the bar is whatever it was at launch.
+        config.userContentController.add(self, name: "gscore")
         web = WKWebView(frame: .zero, configuration: config)
         web.navigationDelegate = self
         web.allowsBackForwardNavigationGestures = false
         web.setValue(false, forKey: "drawsBackground")
 
+        // As big as asked for, but never bigger than the screen will show.
+        //
+        // A window taller than the space between the menu bar and the Dock
+        // is centred with its ends off the screen, and what is at its ends
+        // is the status line along the bottom — the one place the program
+        // answers in words. It was being opened underneath the Dock.
+        let wanted = NSSize(width: 1280, height: 820)
+        var size = wanted
+        if let visible = NSScreen.main?.visibleFrame {
+            size.width = min(size.width, visible.width - 40)
+            size.height = min(size.height, visible.height - 40)
+        }
+
         window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 1280, height: 820),
+            contentRect: NSRect(origin: .zero, size: size),
             styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
             backing: .buffered, defer: false)
         window.title = "Gscore"
@@ -66,6 +86,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
         window.contentView = web
         window.setFrameAutosaveName("gscore.main")
         window.center()
+        // And wherever it ended up, bring it back onto the screen: a frame
+        // remembered from a larger display, or from before the Dock moved,
+        // is restored as it was and hangs off the edge.
+        if let visible = NSScreen.main?.visibleFrame,
+           !visible.contains(window.frame) {
+            var f = window.frame
+            f.size.width = min(f.width, visible.width)
+            f.size.height = min(f.height, visible.height)
+            f.origin.x = max(visible.minX, min(f.origin.x, visible.maxX - f.width))
+            f.origin.y = max(visible.minY, min(f.origin.y, visible.maxY - f.height))
+            window.setFrame(f, display: false)
+        }
         window.makeKeyAndOrderFront(nil)
 
         Menus.install(target: self)
@@ -144,6 +176,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
         let quoted = command.replacingOccurrences(of: "\\", with: "\\\\")
                             .replacingOccurrences(of: "'", with: "\\'")
         web.evaluateJavaScript("window.gscoreCommand && window.gscoreCommand('\(quoted)')")
+    }
+
+    func userContentController(_ controller: WKUserContentController,
+                               didReceive message: WKScriptMessage) {
+        guard let what = message.body as? String else { return }
+        switch what {
+        case "menus":
+            // Once: the page is up and talking, so there is nothing to wait
+            // for and nothing to retry.
+            rebuildMenus(tries: 1)
+        default:
+            break
+        }
     }
 
     func webView(_ view: WKWebView, didFinish navigation: WKNavigation!) {

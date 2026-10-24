@@ -13,6 +13,9 @@
 package pdf
 
 import (
+	"fmt"
+	"math"
+
 	"github.com/stricaud/gscore/internal/engrave"
 	"github.com/stricaud/gscore/internal/model"
 )
@@ -172,4 +175,64 @@ func tallestSystem(lay *engrave.Layout) float64 {
 		}
 	}
 	return tallest
+}
+
+// Divided says whether a system had to be cut across pages, and what to do
+// about it.
+//
+// A score of many staves on a small sheet reaches a point where no readable
+// type size will fit one system on one page — seventeen staves on A4 on its
+// side is past it. Rather than print the band with its bottom staves sliced
+// off by the paper's edge, the page is divided between staves and the system
+// continues overleaf. That is the right answer to an impossible request, and
+// it is also the sort of thing somebody wants to be told about, because the
+// usual cause is the paper rather than the music.
+//
+// The message names the way out where there is one. Turning the sheet is the
+// usual way out and is counter-intuitive: a conductor's score is wider than
+// it is tall, so landscape feels right, and landscape is the orientation
+// with less room for staves.
+func Divided(s *model.Score, lay *engrave.Layout, o Options) string {
+	usable := (o.PageHeight - o.MarginTop - o.MarginBottom) / o.StaffSpace
+	tallest, staves := 0.0, 0
+	for _, sys := range lay.Systems {
+		if h := sys.Bottom - sys.Top; h > tallest {
+			tallest = h
+			staves = len(s.Parts)
+		}
+	}
+	if tallest <= usable || usable <= 0 {
+		return ""
+	}
+	pages := int(math.Ceil(tallest / usable))
+
+	msg := fmt.Sprintf(
+		"%d staves need %.0fpt and the page gives %.0fpt, so each system is "+
+			"divided across %d pages",
+		staves, tallest*o.StaffSpace, usable*o.StaffSpace, pages)
+
+	// Would turning the paper hold it whole? Only worth saying if it would.
+	other := o
+	other.PageWidth, other.PageHeight = o.PageHeight, o.PageWidth
+	eo := engrave.DefaultOptions()
+	eo.Mode = engrave.Paginated
+	eo.ShowPartNames = len(s.Parts) > 1
+	eo.ShowMeasureNumbers = true
+	fitted, feo := Fit(s, other, eo)
+	alt := engrave.Engrave(s, feo)
+	room := (fitted.PageHeight - fitted.MarginTop - fitted.MarginBottom) / fitted.StaffSpace
+	whole := true
+	for _, sys := range alt.Systems {
+		if sys.Bottom-sys.Top > room {
+			whole = false
+		}
+	}
+	if whole {
+		way := "upright"
+		if fitted.PageWidth > fitted.PageHeight {
+			way = "on its side"
+		}
+		msg += fmt.Sprintf("; the same paper %s holds a system whole", way)
+	}
+	return msg
 }

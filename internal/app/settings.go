@@ -33,7 +33,21 @@ type settings struct {
 	// PlaybackFont is the soundfont the editor plays through, by path.
 	// Empty means whichever one looks best among those installed.
 	PlaybackFont string `json:"playbackFont,omitempty"`
+
+	// Recent is the scores last opened or saved, newest first.
+	//
+	// Paths and not contents: the file on the disk is the score, and a
+	// list that remembered anything about it would be a second copy to go
+	// stale. A path that has since been moved or deleted is dropped from
+	// the list when the list is read, which is the only moment it matters.
+	Recent []string `json:"recent,omitempty"`
 }
+
+// mostRecent is how many files the list holds.
+//
+// Ten is what every application settles on: long enough to cover the thing
+// you were working on last week, short enough to read without looking.
+const mostRecent = 10
 
 var stored struct {
 	sync.Mutex
@@ -84,7 +98,7 @@ func (a *App) playbackFont() string {
 		if f, err := loadFont(chosen); err == nil && f != nil {
 			return chosen
 		}
-		if fontExists(chosen) {
+		if fileExists(chosen) {
 			return chosen
 		}
 	}
@@ -101,6 +115,74 @@ func (a *App) playbackFont() string {
 		return installed[0].Path
 	}
 	return ""
+}
+
+// remember puts a file at the top of the recent list.
+//
+// Called where a score is opened or saved and nowhere else: a PDF or an
+// audio file that came out of gscore is not a score to be reopened, and a
+// list that offered to open one would be offering to fail.
+func (a *App) remember(path string) {
+	if path == "" || !a.local {
+		// Served over a network there is no "this machine" to have a
+		// recent file on, and the paths would be the server's.
+		return
+	}
+	if abs, err := filepath.Abs(path); err == nil {
+		path = abs
+	}
+	s := loadSettings()
+	out := []string{path}
+	for _, old := range s.Recent {
+		if old != path && len(out) < mostRecent {
+			out = append(out, old)
+		}
+	}
+	s.Recent = out
+	_ = saveSettings(s)
+}
+
+// recentFiles is the list as it stands, with whatever has gone since
+// dropped.
+//
+// Checked at the moment of asking rather than kept true: a file lives on a
+// disk that gscore does not own, and the only honest time to ask whether it
+// is still there is when somebody is about to be offered it.
+func (a *App) recentFiles() []recentFile {
+	if !a.local {
+		return nil
+	}
+	s := loadSettings()
+	out := make([]recentFile, 0, len(s.Recent))
+	kept := make([]string, 0, len(s.Recent))
+	for _, path := range s.Recent {
+		if !fileExists(path) {
+			continue // the same question: is this file still there
+		}
+		kept = append(kept, path)
+		out = append(out, recentFile{Path: path, Name: filepath.Base(path)})
+	}
+	if len(kept) != len(s.Recent) {
+		s.Recent = kept
+		_ = saveSettings(s)
+	}
+	return out
+}
+
+// recentFile is one entry: where it is, and what to call it in a menu.
+type recentFile struct {
+	Path string `json:"path"`
+	Name string `json:"name"`
+}
+
+// handleRecent lists the files last opened, and empties the list.
+func (a *App) handleRecent(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodPost && r.URL.Query().Get("clear") == "1" {
+		s := loadSettings()
+		s.Recent = nil
+		_ = saveSettings(s)
+	}
+	writeJSON(w, map[string]any{"files": a.recentFiles()})
 }
 
 // handleSettings reads and writes what is kept.

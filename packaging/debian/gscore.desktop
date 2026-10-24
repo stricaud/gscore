@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Gscore
+GenericName=Music score editor
+Comment=A musical score editor
+Exec=gscore %f
+Icon=gscore
+Terminal=false
+Categories=AudioVideo;Audio;Music;
+MimeType=application/x-gscore;text/vnd.abc;application/vnd.recordare.musicxml+xml;

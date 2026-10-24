@@ -1,0 +1,19 @@
+Package: gscore
+Version: @VERSION@
+Section: sound
+Priority: optional
+Architecture: amd64
+Maintainer: Sebastien Tricaud <toady@gscore.org>
+Homepage: https://github.com/stricaud/gscore
+Depends: fluid-soundfont-gm | timgm6mb-soundfont
+Description: A musical score editor
+ gscore writes, reads and plays musical scores. It reads ABC, MusicXML and
+ NoteWorthy Composer files and has a format of its own that carries
+ hand-drawn symbols along with the music.
+ .
+ Playing a score through recorded instruments needs a soundfont; the
+ packaged General MIDI banks are enough and one of them is depended on
+ rather than shipped again here.
+ .
+ The interface is shown in the system's web browser. For a window of its
+ own, build on a machine with libwebkit2gtk-4.0-dev installed.

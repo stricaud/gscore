@@ -94,8 +94,9 @@ func diskSoundfonts() []installed {
 	return out
 }
 
-// fontExists says whether a soundfont is still where it was.
-func fontExists(path string) bool {
+// fileExists says whether a file is still where it was. Asked of a
+// soundfont chosen long ago, and of the scores in the recent list.
+func fileExists(path string) bool {
 	_, err := os.Stat(path)
 	return err == nil
 }

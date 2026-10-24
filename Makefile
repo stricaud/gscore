@@ -6,6 +6,12 @@
 #   make windows      a Windows .exe, cross-compiled from here
 #   make debian       a .deb, cross-compiled from here
 #   make soundfonts   fetch the instruments the packages ship with
+#
+# The macOS and Windows packages carry a General MIDI soundfont — thirty
+# megabytes of recorded instruments — so that the application can play
+# something the first time it is opened. It is fetched once into build/ and
+# kept there. See BUNDLE_FONTS below for which, and why the ZanderJaz
+# collection is not among them.
 #   make web          the static page, for GitHub Pages
 #   make all          every package above
 #   make test         vet and the test suite
@@ -38,12 +44,26 @@ LDFLAGS := -s -w
 
 HOST_OS := $(shell go env GOOS)
 
-.DEFAULT_GOAL := default
-.PHONY: default all build run test vet clean web app dmg windows debian help \
-	soundfonts
+# What "make package" comes to on this machine, for the help to say so
+# rather than leaving somebody to read the conditional below.
+ifeq ($(HOST_OS),darwin)
+PACKAGE_FOR := a macOS disk image
+else ifeq ($(HOST_OS),linux)
+PACKAGE_FOR := a Debian package
+else
+PACKAGE_FOR := a bare binary
+endif
 
-## default: package for this machine
-default:
+# Typing make on its own prints the list. Building is a choice between a
+# disk image, an installer, a web page and a bare binary, and guessing which
+# one somebody meant from the machine they are sitting at is how you end up
+# waiting on a two-architecture Swift build you did not ask for.
+.DEFAULT_GOAL := help
+.PHONY: default package all build run test vet clean web app dmg windows \
+	debian help soundfonts
+
+## package: build the package this machine is for
+package default:
 ifeq ($(HOST_OS),darwin)
 	@$(MAKE) --no-print-directory dmg
 else ifeq ($(HOST_OS),linux)
@@ -59,7 +79,7 @@ all: dmg windows debian web
 build:
 	@mkdir -p $(BUILD)
 	go build -trimpath -ldflags "$(LDFLAGS)" -o $(BUILD)/$(BINARY) .
-	@echo "built $(BUILD)/$(BINARY) ($(shell du -h $(BUILD)/$(BINARY) 2>/dev/null | cut -f1))"
+	@echo "built $(BUILD)/$(BINARY) ($$(du -h $(BUILD)/$(BINARY) | cut -f1))"
 
 ## run: build and run
 run: build
@@ -177,7 +197,11 @@ app: $(BUILD)/gscore.icns soundfonts
 	@# the file associations register at all.
 	@codesign --force --deep --sign - $(APP) 2>/dev/null || \
 		echo "  (could not sign; the bundle still runs from here)"
-	@echo "built $(APP) ($(shell du -sh $(APP) 2>/dev/null | cut -f1))"
+	@echo "built $(APP) ($$(du -sh $(APP) | cut -f1)), carrying:"
+	@for name in $(BUNDLE_FONTS); do \
+		sf=$$(make --no-print-directory print-$${name}_SF2); \
+		echo "  $$(basename "$$sf") ($$(du -h "$$sf" | cut -f1)) — the instruments it plays through"; \
+	done
 
 # The .icns the bundle carries, generated from the one PNG.
 $(BUILD)/gscore.icns: $(ICON_PNG)
@@ -201,7 +225,7 @@ dmg: app
 	@hdiutil create -quiet -volname "$(APP_NAME) $(VERSION)" \
 		-srcfolder $(BUILD)/dmg -ov -format UDZO $(DMG)
 	@rm -rf $(BUILD)/dmg
-	@echo "built $(DMG) ($(shell du -h $(DMG) 2>/dev/null | cut -f1))"
+	@echo "built $(DMG) ($$(du -h $(DMG) | cut -f1), from $$(du -sh $(APP) | cut -f1) of application)"
 
 # ── Windows ─────────────────────────────────────────────────────────────────
 
@@ -209,7 +233,7 @@ WIN_DIR := $(BUILD)/windows
 WIN_CC  := x86_64-w64-mingw32-gcc
 
 ## windows: a Windows .exe, cross-compiled
-windows:
+windows: soundfonts
 	@command -v $(WIN_CC) >/dev/null || { \
 		echo "need mingw-w64 for the native window: brew install mingw-w64" >&2; exit 1; }
 	@mkdir -p $(WIN_DIR)
@@ -219,9 +243,16 @@ windows:
 		go build -trimpath -ldflags "$(LDFLAGS) -H windowsgui" \
 		-o $(WIN_DIR)/$(BINARY).exe . 2>&1 | grep -v '^In file\|warning:\|^ *[0-9]* |\|^ *|' || true
 	@test -f $(WIN_DIR)/$(BINARY).exe
+	@# Beside the executable, which is where the program looks: a folder
+	@# somebody unzipped and runs from is as much of an installation as
+	@# Windows gets here, and the instruments have to be in it.
+	@mkdir -p $(WIN_DIR)/soundfonts
+	@for name in $(BUNDLE_FONTS); do \
+		cp "$$(make --no-print-directory print-$${name}_SF2)" $(WIN_DIR)/soundfonts/; \
+	done
 	@cp COPYING $(WIN_DIR)/LICENSE.txt
 	@cd $(BUILD) && zip -qr $(BINARY)-$(VERSION)-windows.zip windows
-	@echo "built $(BUILD)/$(BINARY)-$(VERSION)-windows.zip ($(shell du -h $(BUILD)/$(BINARY)-$(VERSION)-windows.zip 2>/dev/null | cut -f1))"
+	@echo "built $(BUILD)/$(BINARY)-$(VERSION)-windows.zip ($$(du -h $(BUILD)/$(BINARY)-$(VERSION)-windows.zip | cut -f1))"
 
 # ── Debian ──────────────────────────────────────────────────────────────────
 
@@ -246,12 +277,17 @@ debian:
 		go build -trimpath -ldflags "$(LDFLAGS)" -o $(DEB_ROOT)/usr/bin/$(BINARY) .
 	@cp assets/icon/gscore.png $(DEB_ROOT)/usr/share/icons/hicolor/192x192/apps/$(BINARY).png
 	@cp COPYING $(DEB_ROOT)/usr/share/doc/$(BINARY)/copyright
-	@printf '%s' '$(DESKTOP_FILE)' > $(DEB_ROOT)/usr/share/applications/$(BINARY).desktop
-	@printf '%s' '$(DEB_CONTROL)' > $(DEB_ROOT)/DEBIAN/control
+	@# From real files, for the same reason the Info.plist is: GNU make
+	@# 3.81 runs each recipe line in its own shell, and a variable holding
+	@# a multi-line document is split across them — the first line ends
+	@# inside an unclosed quote and the build stops with a syntax error
+	@# nobody can trace back to a desktop entry.
+	@cp packaging/debian/gscore.desktop $(DEB_ROOT)/usr/share/applications/$(BINARY).desktop
+	@sed -e 's/@VERSION@/$(VERSION)/g' packaging/debian/control.in > $(DEB_ROOT)/DEBIAN/control
 	@chmod 755 $(DEB_ROOT)/usr/bin/$(BINARY)
 	@dpkg-deb --root-owner-group --build $(DEB_ROOT) $(DEB) >/dev/null
 	@rm -rf $(DEB_ROOT)
-	@echo "built $(DEB) ($(shell du -h $(DEB) 2>/dev/null | cut -f1))"
+	@echo "built $(DEB) ($$(du -h $(DEB) | cut -f1))"
 
 # ── the web page ────────────────────────────────────────────────────────────
 
@@ -265,37 +301,19 @@ clean:
 
 ## help: this list
 help:
-	@sed -n 's/^## //p' $(MAKEFILE_LIST)
+	@echo "gscore $(VERSION) — make <target>"
+	@echo
+	@sed -n 's/^## /  /p' $(MAKEFILE_LIST)
+	@echo
+	@echo "  this machine is $(HOST_OS), so \"make package\" builds $(PACKAGE_FOR)"
+	@echo "  the macOS and Windows packages carry a soundfont, so the"
+	@echo "  application plays real instruments with nothing to fetch:"
+	@echo "  $(BUNDLE_FONTS) (BUNDLE_FONTS=\"generaluser fluidr3\" adds"
+	@echo "  FluidR3 GM, +148MB). The .deb does not: a Debian machine gets"
+	@echo "  one from Debian, and fluid-soundfont-gm is already packaged."
 
 # ── the files that go inside the packages ───────────────────────────────────
 
 
-define DESKTOP_FILE
-[Desktop Entry]
-Type=Application
-Name=Gscore
-GenericName=Music score editor
-Comment=A musical score editor
-Exec=gscore %f
-Icon=gscore
-Terminal=false
-Categories=AudioVideo;Audio;Music;
-MimeType=application/x-gscore;text/vnd.abc;application/vnd.recordare.musicxml+xml;
-endef
-
-define DEB_CONTROL
-Package: gscore
-Version: $(VERSION)
-Section: sound
-Priority: optional
-Architecture: amd64
-Maintainer: Sebastien Tricaud <toady@gscore.org>
-Homepage: https://github.com/stricaud/gscore
-Description: A musical score editor
- gscore writes, reads and plays musical scores. It reads ABC, MusicXML and
- NoteWorthy Composer files and has a format of its own that carries
- hand-drawn symbols along with the music.
- .
- The interface is shown in the system's web browser. For a window of its
- own, build on a machine with libwebkit2gtk-4.0-dev installed.
-endef
+# The .desktop entry and the Debian control file live in packaging/debian,
+# as files rather than as variables here. See the recipe above for why.

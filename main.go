@@ -242,12 +242,25 @@ func renderPDFTo(w io.Writer, s *model.Score) error {
 	popt := gpdf.DefaultOptions()
 	popt.Title = s.Identity.Title
 	popt.Author = s.Identity.Composer
+	popt.PageNumbers = true
 	eopt := engrave.DefaultOptions()
 	eopt.Mode = engrave.Paginated
 	eopt.ShowPartNames = len(s.Parts) > 1
 	eopt.ShowMeasureNumbers = true
 	popt, eopt = gpdf.Fit(s, popt, eopt)
-	return gpdf.Render(w, engrave.Engrave(s, eopt), popt)
+	lay := engrave.Engrave(s, eopt)
+	sayIfDivided(s, lay, popt)
+	return gpdf.Render(w, lay, popt)
+}
+
+// sayIfDivided reports a system that had to be cut across pages.
+//
+// Printed rather than returned: the file is still written and is still the
+// best that can be done on that sheet. It is a thing to know, not a failure.
+func sayIfDivided(s *model.Score, lay *engrave.Layout, popt gpdf.Options) {
+	if msg := gpdf.Divided(s, lay, popt); msg != "" {
+		fmt.Fprintf(os.Stderr, "gscore: %s\n", msg)
+	}
 }
 
 // renderFile engraves a score to a drawing, in whichever format the name asks
@@ -297,6 +310,7 @@ func renderFile(s *model.Score, path string, strip bool, space float64,
 	if wantPDF {
 		popt.Title = s.Identity.Title
 		popt.Author = s.Identity.Composer
+		popt.PageNumbers = true
 		if space > 0 && space != 8 {
 			popt.StaffSpace = space
 		}
@@ -315,6 +329,9 @@ func renderFile(s *model.Score, path string, strip bool, space float64,
 		popt, eopt = gpdf.Fit(s, popt, eopt)
 	}
 	lay := engrave.Engrave(s, eopt)
+	if wantPDF {
+		sayIfDivided(s, lay, popt)
+	}
 
 	f, err := os.Create(path)
 	if err != nil {

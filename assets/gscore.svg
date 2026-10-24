@@ -1,0 +1,125 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  gscore — application icon.
+
+  Hand-vectorised from pixmaps/gscore.png.  The viewBox matches the original
+  bitmap (170x192) and every coordinate below is in those pixel units, so any
+  shape can be checked against the PNG one-to-one.
+
+  Drawing order: manuscript panel -> staff -> grass -> ground -> bug.
+-->
+<svg xmlns="http://www.w3.org/2000/svg"
+     viewBox="0 0 170 192" width="170" height="192">
+
+  <title>gscore</title>
+  <desc>A cartoon bug sitting on a sheet of manuscript paper.</desc>
+
+  <defs>
+    <!-- Glossy black body, lit from above and slightly to the left. -->
+    <radialGradient id="body-gloss" cx="42%" cy="27%" r="76%">
+      <stop offset="0"    stop-color="#5e5e5e"/>
+      <stop offset="0.38" stop-color="#151515"/>
+      <stop offset="1"    stop-color="#000000"/>
+    </radialGradient>
+
+    <!-- Right cheek: full-strength red catching the same light. -->
+    <radialGradient id="cheek-lit" cx="33%" cy="25%" r="80%">
+      <stop offset="0"    stop-color="#ffd7c8"/>
+      <stop offset="0.28" stop-color="#fb5d41"/>
+      <stop offset="0.70" stop-color="#f3140a"/>
+      <stop offset="1"    stop-color="#9d0202"/>
+    </radialGradient>
+
+    <!-- Left cheek: the far side, so a softer and duller version. -->
+    <radialGradient id="cheek-far" cx="34%" cy="26%" r="78%">
+      <stop offset="0"    stop-color="#ffe2d8"/>
+      <stop offset="0.45" stop-color="#fb7a5c"/>
+      <stop offset="1"    stop-color="#d23a1d"/>
+    </radialGradient>
+  </defs>
+
+  <!-- ============ manuscript panel ============ -->
+  <g id="panel">
+    <rect x="11.5" y="39.5" width="145" height="146" fill="#c0deff"
+          stroke="#8cb0e0" stroke-width="2.5"/>
+    <!-- right and bottom edges fall into shadow -->
+    <path d="M 156.5 39.5 V 185.5 H 11.5" fill="none"
+          stroke="#2f68b4" stroke-width="2.5"/>
+  </g>
+
+  <!-- ============ staff ============
+       Five lines, each starting a little further left than the one above,
+       and running off the right of the panel. -->
+  <g id="staff" stroke="#2d3845" stroke-width="2.4" stroke-linecap="butt">
+    <path d="M 16,96.5  H 167"/>
+    <path d="M 13,115.5 H 167"/>
+    <path d="M  9,133.5 H 167"/>
+    <path d="M  6,150.5 H 167"/>
+    <path d="M  0,169.5 H 167"/>
+  </g>
+
+  <!-- double barline, crossing the whole staff -->
+  <g id="barline" stroke="#101922" stroke-width="2">
+    <path d="M 18,92   V 177"/>
+    <path d="M 22.5,92 V 177"/>
+  </g>
+
+  <!-- ============ grass ============
+       A zigzag with its own shadow sitting just below and right. -->
+  <g id="grass" fill="none" stroke-width="3" stroke-linejoin="miter">
+    <polyline stroke="#111111" transform="translate(-2,3)"
+              points="91,12 100,19 109,7 113,14 122,6 126,15 133,2
+                      137,19 141,12 146,33 155,12 158,31 166,19"/>
+    <polyline stroke="#44a046"
+              points="91,12 100,19 109,7 113,14 122,6 126,15 133,2
+                      137,19 141,12 146,33 155,12 158,31 166,19"/>
+  </g>
+
+  <!-- ============ ground ============ -->
+  <g id="ground" stroke="#000000" fill="none" stroke-linecap="round">
+    <path d="M 38,189 C 60,179 85,175 110,176 S 145,182 157,187"
+          stroke-width="4.5"/>
+    <path d="M 155,158 V 189" stroke-width="3"/>
+  </g>
+
+  <!-- ============ the bug ============ -->
+  <g id="bug">
+
+    <!-- antennae, drawn first so the stalks tuck behind the head -->
+    <g id="antennae" stroke="#000000" fill="#000000" stroke-linecap="round">
+      <path d="M 100,86 C 100,70 98,50 92,34" fill="none" stroke-width="2.2"/>
+      <circle cx="83" cy="28" r="8" stroke="none"/>
+      <path d="M 117,86 C 123,73 133,55 149,42" fill="none" stroke-width="2.2"/>
+      <circle cx="158" cy="45.5" r="7.5" stroke="none"/>
+    </g>
+
+    <ellipse id="head" cx="104" cy="120" rx="56" ry="42"
+             transform="rotate(-7 104 120)" fill="url(#body-gloss)"/>
+
+    <!-- brow: a thick arc arching over the head -->
+    <path id="brow" d="M 78,90 C 85,72 97,65 112,65 C 128,65 140,73 147,90"
+          fill="none" stroke="#000000" stroke-width="6.5" stroke-linecap="round"/>
+
+    <!-- cheeks ride on top of the head, so they break its outline -->
+    <ellipse id="cheek-left"  cx="73"  cy="88"  rx="10.5" ry="10" fill="url(#cheek-far)"/>
+    <ellipse id="cheek-right" cx="150" cy="101" rx="14.5" ry="19.5" fill="url(#cheek-lit)"/>
+
+    <!-- eyes: white, with the pupils high up against the lid -->
+    <g id="eyes">
+      <circle cx="84"    cy="91.5" r="11.8" fill="#ffffff"/>
+      <circle cx="84"    cy="86.5" r="5.4"  fill="#000000"/>
+      <circle cx="81"    cy="84"   r="1.5"  fill="#ffffff"/>
+
+      <circle cx="118.5" cy="98.5" r="11.8" fill="#ffffff"/>
+      <circle cx="119"   cy="93"   r="5.5"  fill="#000000"/>
+      <circle cx="116"   cy="90.5" r="1.5"  fill="#ffffff"/>
+    </g>
+
+    <!-- smile, plus the little crease at its right corner -->
+    <g id="mouth" fill="none" stroke="#ffffff" stroke-linecap="round">
+      <path d="M 100,151 Q 116,157 133,145" stroke-width="2.8"/>
+      <path d="M 133,140 q 6,7 3,14"        stroke-width="1.5"/>
+    </g>
+
+  </g>
+</svg>

@@ -1585,9 +1585,22 @@ func (a *App) handlePaste(w http.ResponseWriter, r *http.Request) {
 		add[i] = cloneElement(el)
 	}
 
-	v.Elements = append(v.Elements, make([]model.Element, len(add))...)
-	copy(v.Elements[at+len(add):], v.Elements[at:])
-	copy(v.Elements[at:], add)
+	// What is pasted takes the place of what was there, rather than shoving
+	// it along. Pasting a bar of a part over another bar should give a bar,
+	// not two bars' worth of music in one and everything after it moved; and
+	// what is pasted over is what was selected to paste over.
+	//
+	// insert=1 is the other way, for adding to a bar rather than replacing
+	// part of it.
+	over := len(add)
+	if r.URL.Query().Get("insert") == "1" {
+		over = 0
+	}
+	if at+over > len(v.Elements) {
+		over = len(v.Elements) - at
+	}
+	tail := append([]model.Element{}, v.Elements[at+over:]...)
+	v.Elements = append(append(v.Elements[:at:at], add...), tail...)
 
 	// What no longer fits the bar moves into the next one, as when writing.
 	spill(p, measIdx)
@@ -2716,4 +2729,261 @@ func (a *App) handleCursor(w http.ResponseWriter, r *http.Request) {
 		Part: part, Measure: num("measure"), At: num("at"), Step: num("step"),
 	}
 	writeJSON(w, map[string]any{"status": "ok"})
+}
+
+/*
+ * Tuplets and tremolos
+ */
+
+// tupletNormal is how many ordinary notes a group of n is played in the time
+// of: the "2" of a triplet's three-in-the-time-of-two.
+//
+// The answers are the ones every engraver uses, and they are not a formula —
+// three goes in the time of two, five and six and seven in the time of four,
+// nine in the time of eight. Where n is itself a power of two the group only
+// means anything against a dotted beat, and then it is the three-quarters of
+// it: four in the time of three, eight in the time of six. Anything larger
+// falls back to the power of two below it, which is the rule the table is an
+// exception to rather than the other way round.
+func tupletNormal(n int) int {
+	switch n {
+	case 2:
+		return 3
+	case 3:
+		return 2
+	case 4:
+		return 3
+	case 5, 6, 7:
+		return 4
+	case 8:
+		return 6
+	case 9:
+		return 8
+	}
+	p := 1
+	for p*2 < n {
+		p *= 2
+	}
+	return p
+}
+
+// tupletFit picks what a group of n is played in the time of, over a span.
+//
+// The table is the answer where the span can be divided that way. It often
+// cannot: four in the time of three divides the beat in three, so it goes on
+// a dotted note and nowhere else, and asked for on a plain quarter it would
+// want a written value of a twelfth of a whole note — which is not a
+// notehead and cannot be drawn.
+//
+// Rather than refuse, it comes down to the largest division that does work.
+// Somebody asking for four notes in this space means the four notes; the
+// ratio printed over them is the engraver's business, and the caller is told
+// which one it used so it can say so.
+func tupletFit(n int, span model.Duration) (normal int, ok bool) {
+	try := func(d int) bool {
+		if d < 1 || d >= n {
+			return false
+		}
+		_, _, fits := span.Scale(1, d).Written()
+		return fits
+	}
+	if d := tupletNormal(n); try(d) {
+		return d, true
+	}
+	for d := n - 1; d >= 1; d-- {
+		if try(d) {
+			return d, true
+		}
+	}
+	return 0, false
+}
+
+// handleTuplet turns the note or rest at the cursor into a group of n played
+// in its time, or takes a group back to the single note it was made from.
+//
+// This is the operation that keeps a bar full. The other way round — writing
+// three notes and then calling them a triplet — leaves the bar a beat short
+// and the person who asked wondering what they did wrong.
+func (a *App) handleTuplet(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST required", http.StatusMethodNotAllowed)
+		return
+	}
+	q := r.URL.Query()
+	partIdx, _ := strconv.Atoi(q.Get("part"))
+	measIdx, _ := strconv.Atoi(q.Get("measure"))
+	at, err := strconv.Atoi(q.Get("at"))
+	if err != nil {
+		at = -1
+	}
+	n, _ := strconv.Atoi(q.Get("n"))
+
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	p, m, err := a.locate(partIdx, measIdx)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	v := m.Voices[0]
+	if len(v.Elements) == 0 {
+		http.Error(w, "the measure is empty", http.StatusBadRequest)
+		return
+	}
+	if at <= 0 || at > len(v.Elements) {
+		at = len(v.Elements)
+	}
+	idx := at - 1
+
+	if n <= 1 {
+		changed := ungroupTuplet(v, idx)
+		if changed == 0 {
+			http.Error(w, "that note is not in a tuplet", http.StatusBadRequest)
+			return
+		}
+		writeJSON(w, map[string]any{"removed": changed, "measure": measIdx, "at": idx + 1})
+		return
+	}
+	if n > 16 {
+		http.Error(w, "a group of more than sixteen is not a tuplet", http.StatusBadRequest)
+		return
+	}
+	if mk := marksOfElement(v.Elements[idx]); mk != nil && mk.Tuplet != nil {
+		http.Error(w, "that note is already in a tuplet", http.StatusBadRequest)
+		return
+	}
+
+	span := v.Elements[idx].Duration()
+	normal, ok := tupletFit(n, span)
+	if !ok {
+		http.Error(w, fmt.Sprintf(
+			"a group of %d will not divide %s into noteheads", n, span.String()),
+			http.StatusBadRequest)
+		return
+	}
+	each := span.Scale(1, n)
+
+	members := make([]model.Element, 0, n)
+	for i := 0; i < n; i++ {
+		var el model.Element
+		if i == 0 {
+			// The note that was there keeps its pitch and its marks: asking
+			// for a triplet on a note is asking for that note three times
+			// the speed, not for it to be thrown away.
+			el = cloneElement(v.Elements[idx])
+			setDuration(el, each)
+		} else {
+			el = &model.Rest{Dur: each}
+		}
+		mk := marksOfElement(el)
+		if mk == nil {
+			continue
+		}
+		mk.Tuplet = &model.Tuplet{
+			Actual: n, Normal: normal,
+			Start: i == 0, Stop: i == n-1,
+		}
+		members = append(members, el)
+	}
+
+	rest := append([]model.Element{}, v.Elements[idx+1:]...)
+	v.Elements = append(append(v.Elements[:idx:idx], members...), rest...)
+	spill(p, measIdx)
+
+	writeJSON(w, map[string]any{
+		"tuplet": n, "normal": normal, "measure": measIdx, "at": idx + 1,
+	})
+}
+
+// ungroupTuplet takes the group the element at idx belongs to back to one
+// note of the time it filled.
+func ungroupTuplet(v *model.Voice, idx int) int {
+	mk := marksOfElement(v.Elements[idx])
+	if mk == nil || mk.Tuplet == nil {
+		return 0
+	}
+	// The whole group, which is however far the tuplet marks run either way.
+	first, last := idx, idx
+	for first > 0 {
+		m := marksOfElement(v.Elements[first-1])
+		if m == nil || m.Tuplet == nil {
+			break
+		}
+		first--
+		if m.Tuplet.Start {
+			break
+		}
+	}
+	for last+1 < len(v.Elements) {
+		m := marksOfElement(v.Elements[last])
+		if m != nil && m.Tuplet != nil && m.Tuplet.Stop {
+			break
+		}
+		m = marksOfElement(v.Elements[last+1])
+		if m == nil || m.Tuplet == nil {
+			break
+		}
+		last++
+	}
+
+	// From nothing-at-all, which is 0/1: the zero value of a Duration has a
+	// zero denominator and adding to it gives 0/0.
+	span := model.Duration{Num: 0, Den: 1}
+	for _, el := range v.Elements[first : last+1] {
+		span = span.Add(el.Duration())
+	}
+	kept := cloneElement(v.Elements[first])
+	setDuration(kept, span)
+	if m := marksOfElement(kept); m != nil {
+		m.Tuplet = nil
+	}
+	v.Elements = append(v.Elements[:first:first],
+		append([]model.Element{kept}, v.Elements[last+1:]...)...)
+	return last - first + 1
+}
+
+// setDuration writes a duration onto whichever kind of element it is.
+func setDuration(el model.Element, d model.Duration) {
+	switch e := el.(type) {
+	case *model.Note:
+		e.Dur = d
+	case *model.Rest:
+		e.Dur = d
+	case *model.Chord:
+		e.Dur = d
+		for _, n := range e.Notes {
+			n.Dur = d
+		}
+	}
+}
+
+// handleTremolo writes, or takes off, the slashes that stand for a repeated
+// note.
+func (a *App) handleTremolo(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST required", http.StatusMethodNotAllowed)
+		return
+	}
+	q := r.URL.Query()
+	strokes, _ := strconv.Atoi(q.Get("strokes"))
+	buzz := q.Get("buzz") == "1"
+	if !buzz && (strokes < 0 || strokes > 5) {
+		http.Error(w, "a tremolo has one to five slashes", http.StatusBadRequest)
+		return
+	}
+
+	marks, err := a.marksOf(q)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	for _, m := range marks {
+		if strokes == 0 && !buzz {
+			m.Tremolo = nil
+			continue
+		}
+		m.Tremolo = &model.Tremolo{Strokes: strokes, Buzz: buzz}
+	}
+	writeJSON(w, map[string]int{"changed": len(marks)})
 }

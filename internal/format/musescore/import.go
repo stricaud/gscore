@@ -1473,6 +1473,7 @@ type chordData struct {
 	beam    model.Beam
 	grace   bool
 	slashed bool
+	tremolo *model.Tremolo
 }
 
 func (r *reader) chord(st *msStaff, vs *voiceState) error {
@@ -1532,8 +1533,9 @@ func (r *reader) chord(st *msStaff, vs *voiceState) error {
 			"grace32after":
 			ch.grace = true
 			return r.dec.Skip()
-		case "Tremolo", "TremoloTwoChord", "TremoloSingleChord", "Arpeggio",
-			"ChordLine":
+		case "Tremolo", "TremoloSingleChord":
+			return r.tremolo(ch, c)
+		case "TremoloTwoChord", "Arpeggio", "ChordLine":
 			return r.unhandled("chord", c)
 		default:
 			return r.dec.Skip()
@@ -1582,8 +1584,52 @@ func (r *reader) chord(st *msStaff, vs *voiceState) error {
 	}
 	marks.Stem = ch.stem
 	marks.Beam = ch.beam
+	if ch.tremolo != nil {
+		marks.Tremolo = ch.tremolo
+	}
 	vs.attach(marks)
 	vs.add(el)
+	return nil
+}
+
+// tremolo reads the slashes on one chord.
+//
+// MuseScore names them by the note they stand for rather than by how many
+// slashes that is — r8 is a repeated eighth and so one slash, r32 is three —
+// which is the same fact counted from the other end. The two-note kind is
+// written as c8, c16 and so on, and is a different mark: it belongs to the
+// pair of chords it sits between, not to this one, so it is reported rather
+// than quietly turned into a mark on one of them.
+func (r *reader) tremolo(ch *chordData, el xml.StartElement) error {
+	sub := ""
+	err := r.children(func(c xml.StartElement) error {
+		if c.Name.Local == "subtype" {
+			s, err := r.text()
+			sub = s
+			return err
+		}
+		return r.dec.Skip()
+	})
+	if err != nil {
+		return err
+	}
+	switch sub {
+	case "r8":
+		ch.tremolo = &model.Tremolo{Strokes: 1}
+	case "r16":
+		ch.tremolo = &model.Tremolo{Strokes: 2}
+	case "r32":
+		ch.tremolo = &model.Tremolo{Strokes: 3}
+	case "r64":
+		ch.tremolo = &model.Tremolo{Strokes: 4}
+	case "buzz", "buzzRoll":
+		ch.tremolo = &model.Tremolo{Buzz: true}
+	case "":
+		// No subtype at all: one slash is the least it can mean.
+		ch.tremolo = &model.Tremolo{Strokes: 1}
+	default:
+		r.report("a %s of %q is not read", el.Name.Local, sub)
+	}
 	return nil
 }
 

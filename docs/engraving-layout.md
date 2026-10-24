@@ -195,6 +195,58 @@ middle line at the standard length — so an ordinary tune is untouched.
 It applies to a beamed run too. The beam is drawn through the stem ends, so
 without it a group of high notes floats off the staff together, beam and all.
 
+## 9. A tuplet is bracketed only where the beam does not say it
+
+See `drawTuplets` in `internal/engrave/draw.go`.
+
+The figure goes over every group. The bracket goes over the ones that are not
+beamed together: the beam already draws the line and marks both ends, and a
+bracket over it is the same statement twice. This is the rule in Gould and in
+every published score.
+
+The bracket has a gap cut in it for the figure and a hook at each end turning
+in towards the notes. It sits on the figure's own line, which is on the side
+the stems point.
+
+## 10. The slashes of a tremolo go across the stem
+
+See `drawTremolo` in `internal/engrave/draw.go`.
+
+They are **one glyph** — `tremolo1` to `tremolo5`, or `buzzRoll` — rather than
+a drawn stack, because the font has already decided the slant, the thickness
+and the spacing, and three hand-drawn parallelograms would be a second
+opinion about all three.
+
+Those glyphs are registered **on their own centre**, unlike most of the font,
+whose glyphs start at their left edge. Taking half the advance off, the way
+the rest of the engraver does, hangs them off the side of the stem instead of
+across it.
+
+They sit between the notehead and whatever is at the other end of the stem,
+kept clear of both; a note with no stem to put them on has them over the
+notehead.
+
+## 11. The gap between staves follows the music
+
+See `staffReach` and `staffGap` in `internal/engrave`.
+
+Two things decide it:
+
+- **How many staves there are.** `Spacings.StaffGap` is the air a small score
+  can afford. A big one cannot: the gap is most of a system's height, and a
+  system taller than the page is printed at a type size nobody can read or
+  cut in half. Half a space goes for each staff past the fourth, down to
+  `minStaffGap`.
+- **How far the music reaches into it.** A run on ledger lines over the lower
+  staff and another hanging under the upper one meet in the middle, and then
+  nothing on the page says which staff either belongs to. `staffReach`
+  measures both and the gap is opened to hold them with `staffClearance`
+  between.
+
+Ledger lines only, because the stem of a note above a staff points down —
+towards the staff it belongs to — and the stem of one below it points up. The
+notehead is as far into the gap as either gets.
+
 ---
 
 ## What is still wrong
@@ -206,6 +258,10 @@ without it a group of high notes floats off the staff together, beam and all.
   the system and building each staff's outline from the whole system's music
   clipped to a band around that staff.
 - **Dynamics and hairpins are not aligned** onto a common line (see above).
+- **Two-note tremolos are not drawn.** The kind with the slashes between two
+  chords belongs to the pair, not to either one, and changes how they are
+  beamed. The MuseScore reader reports one rather than turning it into a mark
+  on one of the two.
 - **A displaced head always goes to the right.** With the stem up that is
   the convention; with the stem down the chord should extend to the *left* of
   the stem instead, and gscore puts it on the same side either way. Doing it
@@ -234,6 +290,14 @@ As properties over the layout, not as pictures:
 - `stems_test.go` — every stem reaches the middle line, from two ledger lines
   below to three above and in a beamed run; a note inside the staff keeps the
   standard length.
+- `tuplets_test.go` — an unbeamed group is bracketed, with a gap for the
+  figure and a hook at each end; a beamed one is not; the figure says how
+  many.
+- `tremolo_test.go` — the slashes land on the stem and between its ends, the
+  right mark is drawn for each count, and a stemless note gets them over the
+  notehead.
+- `staffgap_test.go` — music reaching into the gap pushes the staves apart,
+  and music inside the staff leaves them where they were.
 
 **Write the failing case first and check it fails.** Twice here a test passed
 against the broken code because the fixture did not actually exercise the bug:

@@ -381,6 +381,22 @@ async function action(name) {
     case "octave-15mb": await setOctave("15mb", "15mb"); break;
     case "octave-none": await setOctave("none", "Octave line removed"); break;
 
+    case "tuplet-3": await setTuplet(3); break;
+    case "tuplet-4": await setTuplet(4); break;
+    case "tuplet-5": await setTuplet(5); break;
+    case "tuplet-6": await setTuplet(6); break;
+    case "tuplet-7": await setTuplet(7); break;
+    case "tuplet-8": await setTuplet(8); break;
+    case "tuplet-9": await setTuplet(9); break;
+    case "tuplet-none": await setTuplet(0); break;
+
+    case "tremolo-1": await setTremolo(1, false); break;
+    case "tremolo-2": await setTremolo(2, false); break;
+    case "tremolo-3": await setTremolo(3, false); break;
+    case "tremolo-4": await setTremolo(4, false); break;
+    case "tremolo-buzz": await setTremolo(0, true); break;
+    case "tremolo-none": await setTremolo(0, false); break;
+
     case "ending-1": await setEnding("1"); break;
     case "ending-2": await setEnding("2"); break;
     case "ending-12": await setEnding("1,2"); break;
@@ -1202,7 +1218,11 @@ function selectRange(from, to) {
 function selectMeasure(part, measure) {
   state.multi = [];
   state.anchor = null;
-  state.selection = { part, measure, at: 0, step: 0, ref: null };
+  // bar says the whole measure is what is picked up, not a place in it.
+  // Copying needs to know: a bar has no ref of its own, and without this
+  // "copy" found nothing selected and said so, which is the one thing
+  // somebody who has just clicked a bar knows to be untrue.
+  state.selection = { part, measure, at: 0, step: 0, ref: null, bar: true };
   markSelection();
   const hit = state.hits.find((h) => h.part === part && h.measure === measure);
   const has = [];
@@ -1704,6 +1724,56 @@ async function setTie(what, head) {
   await mark("tie", params,
     what === "none" ? "Tie removed"
       : params.step !== undefined ? "Tied that notehead" : "Tied");
+}
+
+// A tremolo is a mark on the note, so it goes through the same door as the
+// rest of them.
+const tremoloNames = ["no tremolo", "one slash", "two slashes", "three slashes",
+                      "four slashes", "five slashes"];
+
+const setTremolo = (strokes, buzz) =>
+  mark("tremolo", { strokes: String(strokes), buzz: buzz ? "1" : "0" },
+       buzz ? "Buzz roll" : strokes === 0 ? "Tremolo removed"
+            : "Tremolo — " + tremoloNames[strokes]);
+
+// setTuplet turns the note at the cursor into a group played in its time.
+//
+// It is not a mark but a change to the music, so it has its own call: the
+// one note becomes n of them, the first keeping the pitch and the rest
+// coming in as rests to be written over.
+const tupletNames = {
+  2: "Duplet", 3: "Triplet", 4: "Quadruplet", 5: "Quintuplet",
+  6: "Sextuplet", 7: "Septuplet", 8: "Octuplet", 9: "Nonuplet",
+};
+
+async function setTuplet(n) {
+  const sel = state.selection;
+  if (!sel) {
+    status("Click a note or a rest first");
+    return;
+  }
+  const p = new URLSearchParams({
+    part: String(sel.part), measure: String(sel.measure),
+    at: String(sel.at), n: String(n),
+  });
+  const res = await fetch("/api/tuplet?" + p.toString(), { method: "POST" });
+  if (!res.ok) {
+    status("Could not do that: " + (await res.text()).trim());
+    return;
+  }
+  const d = await res.json();
+  state.multi = [];
+  sel.ref = null;
+  await refreshScore();
+  markSelection();
+  if (n <= 1) {
+    status(`Tuplet removed — ${d.removed} notes back to one`);
+    return;
+  }
+  // Say the ratio as well as the name: asked for four on a plain quarter it
+  // is four in the time of two, not the four-in-three a dotted beat gets,
+  // and the figure printed over the notes says so.
+  status(`${tupletNames[n] || n + "-tuplet"} — ${d.tuplet} in the time of ${d.normal}`);
 }
 
 const setStem = (dir) =>
@@ -4579,6 +4649,12 @@ function setupKeys() {
           e.preventDefault(); setZoom(state.zoom - 1); return;
         case "0":
           e.preventDefault(); setZoom(8); return;
+        case "1": case "2": case "3": case "4": case "5":
+        case "6": case "7": case "8": case "9":
+          // Ctrl with a number is the tuplet of that many, which is where
+          // every other notation program puts it. Ctrl+1 is the way back:
+          // one note, as it was.
+          e.preventDefault(); void setTuplet(Number(e.key)); return;
         case "c": case "C":
           e.preventDefault(); void copySelection(); return;
         case "x": case "X":
@@ -4904,6 +4980,10 @@ async function pasteClipboard() {
   const p = new URLSearchParams({
     part: String(sel.part), measure: String(sel.measure), at: String(sel.at),
   });
+  // Over a bar, the copy takes the bar's place rather than being pushed into
+  // the front of it: pasting four bars of a part into another should give
+  // four bars of it, not eight bars of everything shoved along.
+  if (sel.bar) p.set("at", "0");
   const res = await fetch("/api/paste?" + p.toString(), { method: "POST" });
   if (!res.ok) {
     status("Could not paste: " + (await res.text()).trim());
@@ -4928,7 +5008,16 @@ function selectionTargets() {
     return orderedSelection().map((m) => `${m.part}:${m.measure}:${m.index}`).join(",");
   }
   const sel = state.selection;
-  if (!sel || sel.ref === null || sel.ref === undefined) return null;
+  if (!sel) return null;
+  if (sel.bar) {
+    // A whole bar: everything in it, in the order it is played.
+    const hit = state.hits.find(
+      (h) => h.part === sel.part && h.measure === sel.measure);
+    const els = hit?.elements || [];
+    if (!els.length) return null;
+    return els.map((el) => `${sel.part}:${sel.measure}:${el.index}`).join(",");
+  }
+  if (sel.ref === null || sel.ref === undefined) return null;
   return `${sel.part}:${sel.measure}:${sel.at - 1}`;
 }
 

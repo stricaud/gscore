@@ -258,6 +258,8 @@ func glyphReach(name string) (up, down float64) {
 		return 1.2, 1.2
 	case has(name, "dynamic"):
 		return 0.9, 0.5
+	case has(name, "tremolo"), has(name, "buzzRoll"):
+		return 1.0, 1.0
 	case has(name, "artic"), has(name, "fermata"), has(name, "strings"):
 		return 0.8, 0.8
 	case has(name, "met"):

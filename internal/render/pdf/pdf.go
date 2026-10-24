@@ -222,10 +222,10 @@ func (r *renderer) run() {
 
 // stampSize is how tall the mascot is printed, in points.
 //
-// About five millimetres: there to be recognised, not to be read. A page of
-// music is somebody else's work and a maker's mark belongs on it the way a
-// printer's does — in the margin, small.
-const stampSize = 15
+// Eight millimetres or so: big enough to be recognised across a desk, small
+// enough that it stays a maker's mark in the margin rather than something
+// printed on somebody else's music.
+const stampSize = 22
 
 // stamp prints Gilbert in the top left margin of the page.
 //
@@ -473,27 +473,23 @@ func (r *renderer) drawTexts(top, bottom float64) {
 			f = r.textItalic
 		}
 		size := pdf.Point(t.Size) * r.s
-		x := r.x(t.X)
-		// PDF has no text-anchor: a string is drawn from where it starts, so
-		// centring and right-aligning are done by measuring it first.
-		switch t.Anchor {
-		case "middle":
-			x -= r.page.TextWidth(f, size, t.S) / 2
-		case "end":
-			x -= r.page.TextWidth(f, size, t.S)
-		}
 		// A line break in a text block — a composer credit over three lines —
 		// is drawn as the lines it is.
-		lines := strings.Split(t.S, "\n")
-		for i, line := range lines {
+		for i, line := range strings.Split(t.S, "\n") {
+			// Set in runs, so that a flat sign in a staff name is printed as
+			// one rather than as the question mark WinAnsi has instead.
+			rs := r.split(line, f, size)
 			lx := r.x(t.X)
+			// PDF has no text-anchor: a string is drawn from where it
+			// starts, so centring and right-aligning are done by measuring
+			// it first.
 			switch t.Anchor {
 			case "middle":
-				lx -= r.page.TextWidth(f, size, line) / 2
+				lx -= r.width(rs) / 2
 			case "end":
-				lx -= r.page.TextWidth(f, size, line)
+				lx -= r.width(rs)
 			}
-			r.page.Text(f, size, lx, r.y(t.Y)-pdf.Point(i)*size*1.2, line)
+			r.drawRuns(rs, lx, r.y(t.Y)-pdf.Point(i)*size*1.2)
 		}
 	}
 }

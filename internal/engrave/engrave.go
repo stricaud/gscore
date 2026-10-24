@@ -776,6 +776,48 @@ func (e *engraver) musicAbove(parts []*model.Part, start, end int) float64 {
 	return float64(highest-staffHeight*2)/2 + 2.6
 }
 
+// staffClearance is the air left between what one staff's music reaches down
+// to and what the next one's reaches up to.
+//
+// Two spaces, which is a notehead and a little: enough that the two runs
+// read as two, and that a stem or a slur on either has somewhere to go.
+const staffClearance = 2.0
+
+// staffReach is how far one staff's own notes climb above its top line and
+// hang below its bottom one, in staff spaces.
+//
+// Ledger lines only: the stem of a note high above a staff points down,
+// towards the staff it belongs to, and the stem of one below it points up,
+// so neither reaches further into the gap than the notehead does.
+func (e *engraver) staffReach(p *model.Part, start, end int) (above, below float64) {
+	const topLine = staffHeight * 2 // the top line, in staff steps
+	highest, lowest := topLine, 0
+	for mi := start; mi < end && mi < len(p.Measures); mi++ {
+		for _, v := range p.Measures[mi].Voices {
+			for _, el := range v.Elements {
+				var steps []int
+				switch n := el.(type) {
+				case *model.Note:
+					steps = []int{StaffStep(p.Clef, n.Pitch)}
+				case *model.Chord:
+					for _, cn := range n.Notes {
+						steps = append(steps, StaffStep(p.Clef, cn.Pitch))
+					}
+				}
+				for _, st := range steps {
+					if st > highest {
+						highest = st
+					}
+					if st < lowest {
+						lowest = st
+					}
+				}
+			}
+		}
+	}
+	return float64(highest-topLine) / 2, float64(-lowest) / 2
+}
+
 // marksOf gets an element's marks, or nil for one that carries none.
 func marksOf(el model.Element) *model.Marks {
 	switch e := el.(type) {
@@ -1470,6 +1512,15 @@ func (e *engraver) drawSystem(parts []*model.Part, boxes [][]measureBox,
 		if i+1 < len(parts) {
 			if above := e.partChordRoom(parts[i+1], start, end); above > 0 {
 				gap += above
+			}
+			// And the music itself. The gap is a constant until the notes
+			// go into it: a run on ledger lines over the lower staff and
+			// another hanging under the upper one meet in the middle, and
+			// then nothing on the page says which staff either belongs to.
+			_, below := e.staffReach(parts[i], start, end)
+			above, _ := e.staffReach(parts[i+1], start, end)
+			if need := below + above + staffClearance; gap < need {
+				gap = need
 			}
 		}
 		return gap

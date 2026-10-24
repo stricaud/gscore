@@ -199,7 +199,12 @@ func buildPlayback(s *model.Score) Playback {
 						swell = nil // a written dynamic settles the question
 					}
 					gd := addGrace(&out, n.Grace, p, shift, vt, d, secondsPerWhole, pi, loud)
-					if trilling && n.Percussion == 0 {
+					if n.Tremolo != nil {
+						addTremolo(&out, n.Tremolo,
+							[]model.Pitch{sounding(p, n.Pitch, shift)},
+							[]int{n.Percussion}, vt+gd, d-gd, secondsPerWhole,
+							pi, ref, p.Instrument, loud)
+					} else if trilling && n.Percussion == 0 {
 						addTrill(&out, sounding(p, n.Pitch, shift), p.KeyAt(mi),
 							vt+gd, d-gd, pi, ref, p.Instrument, loud)
 					} else {
@@ -212,6 +217,19 @@ func buildPlayback(s *model.Score) Playback {
 						swell = nil
 					}
 					gd := addGrace(&out, n.Grace, p, shift, vt, d, secondsPerWhole, pi, loud)
+					if n.Tremolo != nil {
+						// The whole chord is struck again and again, not
+						// each notehead in turn: that would be an arpeggio.
+						ps := make([]model.Pitch, 0, len(n.Notes))
+						ds := make([]int, 0, len(n.Notes))
+						for _, cn := range n.Notes {
+							ps = append(ps, sounding(p, cn.Pitch, shift))
+							ds = append(ds, cn.Percussion)
+						}
+						addTremolo(&out, n.Tremolo, ps, ds, vt+gd, d-gd,
+							secondsPerWhole, pi, ref, p.Instrument, loud)
+						break
+					}
 					for _, cn := range n.Notes {
 						addNote(&out, open, &n.Marks, sounding(p, cn.Pitch, shift),
 							vt+gd, d-gd, pi, ref, p.Instrument, loud, cn.Percussion)
@@ -381,6 +399,70 @@ func addNote(out *Playback, open map[int]int, m *model.Marks, p model.Pitch,
 	})
 	if m.TieStart {
 		open[midi] = len(out.Events) - 1
+	}
+}
+
+// buzzRate is how fast an unmeasured roll is taken, in strokes a second.
+//
+// A press roll has no division to count: the player is asked for as fast as
+// the instrument will answer, and the written note only says how long to
+// keep going. Twenty a second is a snare drum and is fast enough to read as
+// a buzz rather than as thirty-second notes.
+const buzzRate = 20.0
+
+// addTremolo sounds a tremolo as the repeated note it stands for.
+//
+// A tremolo is not an ornament on a note, it is a shorthand for a bar of
+// them: three slashes through a half note mean sixteen thirty-second notes
+// and should be heard as sixteen. Played as one long note — which is what
+// happened before, the mark being drawn and then ignored — the shorthand
+// silently means something different from what it is written to mean.
+func addTremolo(out *Playback, tr *model.Tremolo, pitches []model.Pitch,
+	drums []int, start, dur, secondsPerWhole float64,
+	part, ref int, inst model.Instrument, loud model.Dynamic) {
+
+	if dur <= 0 || len(pitches) == 0 {
+		return
+	}
+	step := tr.Repeat().Float() * secondsPerWhole
+	if tr.Buzz {
+		step = 1 / buzzRate
+	}
+	n := 1
+	if step > 0 {
+		n = int(dur/step + 0.5)
+	}
+	if n < 2 {
+		// Too short to repeat is too short to be a tremolo: it sounds as
+		// the note it is written on.
+		n = 1
+	}
+	each := dur / float64(n)
+	for i := 0; i < n; i++ {
+		at := start + float64(i)*each
+		for j, pt := range pitches {
+			drum := 0
+			if j < len(drums) {
+				drum = drums[j]
+			}
+			if drum > 0 {
+				name := ""
+				if pn, ok := model.PercussionByKey(drum); ok {
+					name = pn.Name
+				}
+				out.Events = append(out.Events, Event{
+					MIDI: drum, Start: at, Dur: each, Part: part, Ref: ref,
+					Family: "percussion", Drum: drum, DrumName: name,
+					Velocity: loud.Velocity(),
+				})
+				continue
+			}
+			out.Events = append(out.Events, Event{
+				MIDI: pt.MIDI(), Start: at, Dur: each, Part: part, Ref: ref,
+				Program: int(inst), Family: inst.Family().String(),
+				Velocity: loud.Velocity(),
+			})
+		}
 	}
 }
 

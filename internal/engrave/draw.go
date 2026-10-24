@@ -209,7 +209,7 @@ func (e *engraver) drawMeasure(part *model.Part, b measureBox, x, end float64, s
 		}
 	}
 
-	e.drawTupletNumbers(items)
+	e.drawTuplets(items, part.Time)
 
 	hit := Hit{
 		Part: e.partIndex, Measure: b.index,
@@ -356,9 +356,38 @@ func (e *engraver) drawMeasureRepeat(b measureBox, left, right float64) {
 
 // written picks the notehead for a duration. Callers pass the duration the
 // note is *written* with, which inside a tuplet is not the one it sounds for.
-// drawTupletNumbers writes the ratio over each tuplet group. Without it a
-// triplet is indistinguishable from three ordinary notes that do not add up.
-func (e *engraver) drawTupletNumbers(items []*placed) {
+// How a tuplet is written over its notes.
+const (
+	tupletNumberSize = 1.5
+	// How far the bracket's ends turn in towards the notes.
+	tupletHookDepth = 0.6
+	// The gap left in the bracket for the number to sit in, either side of
+	// it. A line drawn through the figure is a line drawn through it.
+	tupletNumberGap = 0.5
+)
+
+// drawTuplets writes the ratio over each tuplet group, and brackets it where
+// the beam does not already say where the group begins and ends.
+//
+// Without the number a triplet is indistinguishable from three ordinary
+// notes that do not add up. Without the bracket, a group of notes too long to
+// beam — three quarter notes in the time of two — has a figure floating over
+// it saying three of what, from where to where.
+//
+// A group that is beamed together needs no bracket and conventionally does
+// not get one: the beam already draws the line and marks both ends, and a
+// bracket over it is a second statement of the same thing. This is the rule
+// in Gould and in every published score.
+func (e *engraver) drawTuplets(items []*placed, t model.TimeSignature) {
+	// Which notes the beamer joined, so a beamed group can be told from one
+	// that only looks like it.
+	beam := map[*placed]int{}
+	for i, g := range beamGroups(items, t) {
+		for _, p := range g {
+			beam[p] = i + 1
+		}
+	}
+
 	start := -1
 	for i, p := range items {
 		m := p.marks()
@@ -372,31 +401,77 @@ func (e *engraver) drawTupletNumbers(items []*placed) {
 		if !m.Tuplet.Stop {
 			continue
 		}
-
-		first, last := items[start], items[i]
-		// The number goes on the side the stems point, clear of the beam.
-		up := e.stemUp(first)
-		hi, lo := first.hi, first.lo
-		for _, q := range items[start : i+1] {
-			if q.hi > hi {
-				hi = q.hi
-			}
-			if q.lo < lo {
-				lo = q.lo
-			}
-		}
-		y := e.y + stepY(float64(hi)) - stemLength - 0.9
-		if !up {
-			y = e.y + stepY(float64(lo)) + stemLength + 1.4
-		}
-		cx := (first.x + last.x + noteheadWidth(last.value)) / 2
-
-		e.lay.Texts = append(e.lay.Texts, Text{
-			S: strconv.Itoa(m.Tuplet.Actual), X: cx, Y: y,
-			Size: 1.5, Anchor: "middle", Italic: true, Bold: true,
-		})
+		e.drawTuplet(items[start:i+1], m.Tuplet, beam)
 		start = -1
 	}
+}
+
+// drawTuplet writes one group's figure and, where it is wanted, its bracket.
+func (e *engraver) drawTuplet(group []*placed, tp *model.Tuplet, beam map[*placed]int) {
+	first, last := group[0], group[len(group)-1]
+
+	// The figure goes on the side the stems point, clear of the beam.
+	up := e.stemUp(first)
+	hi, lo := first.hi, first.lo
+	for _, q := range group {
+		if q.hi > hi {
+			hi = q.hi
+		}
+		if q.lo < lo {
+			lo = q.lo
+		}
+	}
+	y := e.y + stepY(float64(hi)) - stemLength - 0.9
+	if !up {
+		y = e.y + stepY(float64(lo)) + stemLength + 1.4
+	}
+
+	x0 := first.x
+	x1 := last.x + noteheadWidth(last.value)
+	cx := (x0 + x1) / 2
+
+	e.lay.Texts = append(e.lay.Texts, Text{
+		S: strconv.Itoa(tp.Actual), X: cx, Y: y,
+		Size: tupletNumberSize, Anchor: "middle", Italic: true, Bold: true,
+	})
+
+	if oneBeam(group, beam) {
+		return // the beam says it already
+	}
+
+	// The bracket sits on the figure's own line, with a gap cut in it for
+	// the figure, and a hook at each end turning in towards the notes.
+	ly := y - tupletNumberSize*0.35 // the middle of the figure, not its baseline
+	half := textWidth(strconv.Itoa(tp.Actual), tupletNumberSize)/2 + tupletNumberGap
+	hook := tupletHookDepth
+	if !up {
+		hook = -hook
+	}
+	th := e.opt.Defaults.StemThickness
+	add := func(xa, ya, xb, yb float64) {
+		e.lay.Lines = append(e.lay.Lines, Line{
+			X1: xa, Y1: ya, X2: xb, Y2: yb, Thickness: th,
+		})
+	}
+	add(x0, ly+hook, x0, ly) // the hook at the near end
+	add(x0, ly, cx-half, ly) // up to the figure
+	add(cx+half, ly, x1, ly) // and on from it
+	add(x1, ly, x1, ly+hook) // the hook at the far end
+}
+
+// oneBeam says whether the whole group is joined by a single beam, which is
+// what makes a bracket unnecessary.
+func oneBeam(group []*placed, beam map[*placed]int) bool {
+	g := beam[group[0]]
+	if g == 0 {
+		return false
+	}
+	for _, p := range group[1:] {
+		if beam[p] != g {
+			return false
+		}
+	}
+	return true
 }
 
 func written(d model.Duration) (model.NoteValue, int) {
@@ -728,7 +803,10 @@ func (e *engraver) stemEnd(base float64, up bool) float64 {
 
 func (e *engraver) drawSingleStem(p *placed) {
 	if p.value <= model.Whole {
-		return // whole notes and breves have no stem
+		// No stem. A tremolo on one still has to go somewhere, and over the
+		// notehead is where it goes.
+		e.drawTremolo(p, 0, 0, 0)
+		return
 	}
 	d := e.opt.Defaults
 	up := e.stemUp(p)
@@ -748,6 +826,86 @@ func (e *engraver) drawSingleStem(p *placed) {
 	if g := smufl.FlagGlyph(p.value, up); g != "" {
 		e.lay.Glyphs = append(e.lay.Glyphs, Glyph{Name: g, X: sx, Y: y2})
 	}
+	e.drawTremolo(p, sx, y1, y2)
+}
+
+// How the slashes of a tremolo are drawn.
+const (
+	// How far from the notehead the slashes start, along the stem. Drawn
+	// against the head they read as part of it.
+	tremoloFromHead = 1.1
+	// And how far they are kept from the end of the stem, so they do not
+	// run into a flag or a beam.
+	tremoloFromEnd = 0.9
+)
+
+// drawTremolo draws the slashes that stand for a repeated note.
+//
+// They sit on the stem, between the notehead and whatever is at the other
+// end of it, and they are one glyph rather than a drawn stack: the font
+// carries tremolo1 to tremolo5 with the slant, the thickness and the spacing
+// already decided, and a hand-drawn set of parallelograms would be a second
+// opinion about all three.
+//
+// A note with no stem to put them on — a whole note — has them centred over
+// the notehead instead, which is where every published score puts them.
+func (e *engraver) drawTremolo(p *placed, sx, headY, endY float64) {
+	m := p.marks()
+	if m == nil || m.Tremolo == nil {
+		return
+	}
+	name := tremoloGlyph(m.Tremolo)
+	if name == "" {
+		return
+	}
+	if p.value <= model.Whole {
+		// No stem: over the notehead, clear of it.
+		e.lay.Glyphs = append(e.lay.Glyphs, Glyph{
+			Name: name, X: p.x + noteheadWidth(p.value)/2,
+			Y: e.y + stepY(float64(p.hi)) - 2.2,
+		})
+		return
+	}
+
+	// Along the stem, kept off both ends. A short stem gets them in the
+	// middle, which is the best that can be done with the room there is.
+	lo, hi := headY, endY
+	if lo > hi {
+		lo, hi = hi, lo
+	}
+	y := (lo + hi) / 2
+	if headY < endY { // stem down: the head is at the top
+		if to := headY + tremoloFromHead; y < to {
+			y = to
+		}
+		if to := endY - tremoloFromEnd; y > to {
+			y = to
+		}
+	} else {
+		if to := headY - tremoloFromHead; y > to {
+			y = to
+		}
+		if to := endY + tremoloFromEnd; y < to {
+			y = to
+		}
+	}
+	// Drawn from the stem itself, not from half a glyph's width to the left
+	// of it: the tremolo glyphs are registered on their own centre, so that
+	// is where the stem goes through them. Taking half the advance off — the
+	// way a glyph with its origin at its left edge would need — hung the
+	// slashes off the side of the stem instead of across it.
+	e.lay.Glyphs = append(e.lay.Glyphs, Glyph{Name: name, X: sx, Y: y})
+}
+
+// tremoloGlyph names the mark: the slashes, or the z of a buzz roll.
+func tremoloGlyph(t *model.Tremolo) string {
+	if t == nil {
+		return ""
+	}
+	if t.Buzz {
+		return "buzzRoll"
+	}
+	return "tremolo" + strconv.Itoa(t.Beams())
 }
 
 // drawBeamGroup draws the stems of a beamed run and the beams across them.
@@ -830,6 +988,9 @@ func (e *engraver) drawBeamGroup(g []*placed) {
 		e.lay.Lines = append(e.lay.Lines, Line{
 			X1: en.x, Y1: base, X2: en.x, Y2: beamY(en.x), Thickness: d.StemThickness,
 		})
+		// A beamed note can carry a tremolo too, and then the slashes go
+		// between the notehead and the beam rather than on a bare stem.
+		e.drawTremolo(en.p, en.x, base, beamY(en.x))
 	}
 
 	// Beam levels: one line per flag the notes would otherwise carry. A level

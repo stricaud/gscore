@@ -156,6 +156,10 @@ func CloneMarks(m Marks) Marks {
 		t := *m.Tuplet
 		out.Tuplet = &t
 	}
+	if m.Tremolo != nil {
+		tr := *m.Tremolo
+		out.Tremolo = &tr
+	}
 	if m.Hairpin != nil {
 		h := *m.Hairpin
 		out.Hairpin = &h

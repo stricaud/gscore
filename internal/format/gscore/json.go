@@ -165,6 +165,7 @@ type marksDoc struct {
 	Hairpin       *hairpinDoc `json:"hairpin,omitempty"`
 	Octave        *octaveDoc  `json:"octave,omitempty"`
 	Trill         *trillDoc   `json:"trill,omitempty"`
+	Tremolo       *tremoloDoc `json:"tremolo,omitempty"`
 	Lyrics        []lyricDoc  `json:"lyrics,omitempty"`
 	Beam          string      `json:"beam,omitempty"`
 	Chord         *chordDoc   `json:"chord,omitempty"`
@@ -211,6 +212,13 @@ type octaveDoc struct {
 
 // A trill is a spanner: "tr" where it begins and a wavy line to where it
 // stops. Both ends on one note is a trill on that note alone.
+// A tremolo is the slashes and whether it is measured at all, which is all
+// there is to one: how fast it goes follows from the number of slashes.
+type tremoloDoc struct {
+	Strokes int  `json:"strokes,omitempty"`
+	Buzz    bool `json:"buzz,omitempty"`
+}
+
 type trillDoc struct {
 	Start bool `json:"start,omitempty"`
 	Stop  bool `json:"stop,omitempty"`
@@ -428,6 +436,7 @@ func encodeMarks(m *model.Marks) *marksDoc {
 		!m.TieStart && !m.TieStop && !m.SlurStart && !m.SlurStop &&
 		m.Stem == model.StemAuto && m.Dynamic == model.DynamicNone &&
 		m.Hairpin == nil && m.Octave == nil && len(m.Lyrics) == 0 &&
+		m.Tremolo == nil && m.Trill == nil &&
 		m.Beam == model.BeamAuto && m.Chord == nil && len(m.Texts) == 0 {
 		return nil
 	}
@@ -465,6 +474,11 @@ func encodeMarks(m *model.Marks) *marksDoc {
 	}
 	if m.Trill != nil {
 		out.Trill = &trillDoc{Start: m.Trill.Start, Stop: m.Trill.Stop}
+	}
+	if m.Tremolo != nil {
+		out.Tremolo = &tremoloDoc{
+			Strokes: m.Tremolo.Strokes, Buzz: m.Tremolo.Buzz,
+		}
 	}
 	for _, ly := range m.Lyrics {
 		out.Lyrics = append(out.Lyrics, lyricDoc{
@@ -725,6 +739,9 @@ func decodeMarks(md *marksDoc, m *model.Marks) {
 	}
 	if o := md.Octave; o != nil && o.Amount != 0 {
 		m.Octave = &model.OctaveShift{Amount: o.Amount, Start: o.Start, Stop: o.Stop}
+	}
+	if tm := md.Tremolo; tm != nil {
+		m.Tremolo = &model.Tremolo{Strokes: tm.Strokes, Buzz: tm.Buzz}
 	}
 	if tr := md.Trill; tr != nil {
 		m.Trill = &model.Trill{Start: tr.Start, Stop: tr.Stop}

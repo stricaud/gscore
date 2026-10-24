@@ -326,6 +326,9 @@ type Marks struct {
 	// Tuplet is set when the element belongs to a tuplet group.
 	Tuplet *Tuplet
 
+	// Tremolo repeats the note for its written length.
+	Tremolo *Tremolo
+
 	// Stem overrides the direction the engraver would otherwise choose.
 	Stem Stem
 
@@ -537,6 +540,54 @@ type Hairpin struct {
 // is nothing to extend it over.
 type Trill struct {
 	Start, Stop bool
+}
+
+// Tremolo is a note repeated for its whole written length, written as
+// slashes through its stem rather than as the notes it stands for.
+//
+// A bar of repeated thirty-second notes written out is a bar of beams that
+// says nothing but "shake"; the slashes say the same thing and leave the
+// pitch and the length of the note readable. The number of them is the
+// number of beams the repeated note would have had, which is why it is
+// counted rather than named: one slash is eighths, two sixteenths, three
+// thirty-seconds, and so on whatever the note they are drawn through.
+//
+// This is the tremolo on one note. The other kind — two notes alternating,
+// with the slashes drawn between them — is a different mark and is not this.
+type Tremolo struct {
+	// Strokes is how many slashes, from one to five.
+	Strokes int
+
+	// Buzz is the unmeasured roll: as fast as the player can, with no
+	// division implied. It is written as a z through the stem, and a snare
+	// drum's press roll is the usual reason for it.
+	Buzz bool
+}
+
+// Beams is how many beams the repeated note has, which is what the strokes
+// count. A buzz roll has no measure, so it answers with the fastest thing
+// anybody writes and lets the player decide.
+func (t *Tremolo) Beams() int {
+	if t == nil {
+		return 0
+	}
+	if t.Buzz {
+		return 4
+	}
+	if t.Strokes < 1 {
+		return 1
+	}
+	if t.Strokes > 5 {
+		return 5
+	}
+	return t.Strokes
+}
+
+// Repeat is the duration of the note the slashes stand for: a whole note
+// divided by two for each beam, so one slash is an eighth and three is a
+// thirty-second.
+func (t *Tremolo) Repeat() Duration {
+	return Duration{Num: 1, Den: 1 << (t.Beams() + 2)}
 }
 
 // OctaveShift is an 8va, 8vb, 15ma or 15mb line.

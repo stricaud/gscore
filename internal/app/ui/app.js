@@ -70,6 +70,13 @@ const state = {
   pausedSel: "",
   // Drawing options that belong to the view rather than to the file.
   view: { names: false, numbers: false },
+  // Whether a saved .gscore carries a PDF of itself in front of the music.
+  //
+  // It does by default: renamed .pdf the same file opens in anything that
+  // reads one, which is most of what somebody might send it to. The cost is
+  // the size — the engraving is far larger than the music — so it can be
+  // turned off.
+  savePDF: true,
   // Where each measure's closing barline was drawn, so one can be clicked.
   barlines: [],
   // The clef, key and meter at the head of each system, likewise.
@@ -537,6 +544,7 @@ async function action(name) {
     case "view-names": await setView("names", !state.view.names); break;
     case "view-numbers": await setView("numbers", !state.view.numbers); break;
 
+    case "insert-chord": await chordSymbolDialog(); break;
     case "insert-text": await textDialog(); break;
     case "insert-marker": await markerDialog(); break;
 
@@ -545,6 +553,13 @@ async function action(name) {
     case "group-none": await joinStaves("none"); break;
     case "save":
       await saveScore();
+      break;
+    case "save-with-pdf":
+      state.savePDF = !state.savePDF;
+      markSaveTick();
+      status(state.savePDF
+        ? "Saved scores will carry a PDF — rename one .pdf to read it anywhere"
+        : "Saved scores will hold the music only");
       break;
     case "import-symbols":
       await importSymbolPack();
@@ -2207,7 +2222,8 @@ async function exportSymbolPack() {
 }
 
 async function saveScore() {
-  let res = await fetch("/api/save", { method: "POST" });
+  const carry = state.savePDF ? "" : "?pdf=0";
+  let res = await fetch("/api/save" + carry, { method: "POST" });
   if (!res.ok) {
     status("Could not save: " + (await res.text()).trim());
     return;
@@ -2228,8 +2244,8 @@ async function saveScore() {
       status("Ready");
       return;
     }
-    res = await fetch("/api/save?path=" + encodeURIComponent(where.trim()),
-                      { method: "POST" });
+    res = await fetch("/api/save?path=" + encodeURIComponent(where.trim()) +
+                      (state.savePDF ? "" : "&pdf=0"), { method: "POST" });
     if (!res.ok) {
       status("Could not save: " + (await res.text()).trim());
       return;
@@ -2768,10 +2784,165 @@ async function setView(what, on) {
     : (on ? "Measure numbers shown" : "Measure numbers hidden"));
 }
 
+// markSaveTick shows whether a saved score will carry a PDF.
+function markSaveTick() {
+  const t = $("#pdf-tick");
+  if (t) t.textContent = state.savePDF ? "✓" : "";
+}
+
 function markViewTicks() {
   const n = $("#names-tick"), m = $("#numbers-tick");
   if (n) n.textContent = state.view.names ? "✓" : "";
   if (m) m.textContent = state.view.numbers ? "✓" : "";
+}
+
+// chordSymbolDialog writes a chord over the music.
+//
+// It shows what it is about to write: the same engraver draws the picture in
+// the box and the symbol on the page, so what you see is what lands there.
+// Typing is also the only way to find out what the program makes of "C7#9"
+// without writing it into the score first.
+//
+// The name and the diagram are separate: either, or both. And it does not
+// ask for a note — the bar being selected is enough, and the symbol goes on
+// the first thing in it, which is where a chord that governs a bar belongs.
+async function chordSymbolDialog() {
+  const sel = state.selection;
+  if (!sel) {
+    status("Click a measure first — the chord goes above it");
+    return;
+  }
+  const dlg = $("#chord");
+  const name = $("#chord-name");
+  const frets = $("#chord-frets");
+  const useName = $("#chord-show-name");
+  const useFrame = $("#chord-show-frame");
+  const image = $("#chord-image");
+
+  // What is there already, so changing a chord is changing it and not
+  // typing it again.
+  const had = chordAt(sel);
+  name.value = had.name;
+  frets.value = had.frets;
+  useName.checked = had.name !== "" || had.frets === "";
+  useFrame.checked = had.frets !== "";
+
+  // The fingering is filled in from the name until somebody types their
+  // own, and then it is theirs. Clearing the field asks for the suggestion
+  // again.
+  let suggested = frets.value;
+  let timer = null;
+
+  const suggest = async () => {
+    const text = name.value.trim();
+    if (text === "" || (frets.value !== "" && frets.value !== suggested)) {
+      return; // nothing to go on, or a fingering of their own
+    }
+    const res = await fetch("/api/chordfingering?chord=" + encodeURIComponent(text));
+    if (!res.ok) return;
+    const d = await res.json();
+    if (frets.value !== "" && frets.value !== suggested) return; // typed meanwhile
+    suggested = d.frets || "";
+    frets.value = suggested;
+  };
+
+  const draw = () => {
+    const p = new URLSearchParams({ chord: name.value.trim(), space: "13" });
+    if (!useName.checked) p.set("name", "0");
+    if (useFrame.checked && frets.value.trim() !== "") {
+      p.set("frame", frets.value.trim());
+    }
+    image.src = "/api/chordpreview?" + p.toString();
+    frets.disabled = !useFrame.checked;
+    $("#chord-frets-label").style.opacity = useFrame.checked ? "" : ".5";
+  };
+  // A moment behind the typing: a request a keystroke is a request a
+  // keystroke, and the picture only has to keep up with the eye.
+  const later = () => {
+    if (timer) clearTimeout(timer);
+    timer = setTimeout(async () => {
+      await suggest();
+      draw();
+    }, 150);
+  };
+  name.addEventListener("input", later);
+  frets.addEventListener("input", draw);
+  // Turning the diagram on with nothing in the field asks for the shape of
+  // whatever has been typed.
+  const onFrame = async () => {
+    if (useFrame.checked && frets.value.trim() === "") await suggest();
+    draw();
+  };
+  useFrame.addEventListener("change", onFrame);
+  useName.addEventListener("change", draw);
+  draw();
+
+  const answer = await new Promise((resolve) => {
+    const done = () => {
+      dlg.removeEventListener("close", done);
+      if (timer) clearTimeout(timer);
+      name.removeEventListener("input", later);
+      frets.removeEventListener("input", draw);
+      useFrame.removeEventListener("change", onFrame);
+      useName.removeEventListener("change", draw);
+      resolve(dlg.returnValue);
+    };
+    dlg.addEventListener("close", done);
+    dlg.showModal();
+    setTimeout(() => name.focus(), 0);
+  });
+  if (answer === "cancel" || answer === "") return;
+
+  if (answer === "remove") {
+    await markChord({ chord: "none" }, "Chord symbol removed");
+    return;
+  }
+
+  const text = name.value.trim();
+  const frame = frets.value.trim();
+  if ((!useName.checked || text === "") && (!useFrame.checked || frame === "")) {
+    await markChord({ chord: "none" }, "Chord symbol removed");
+    return;
+  }
+  const params = { chord: text };
+  if (!useName.checked) params.name = "0";
+  if (useFrame.checked && frame !== "") params.frame = frame;
+  await markChord(params,
+    useName.checked && text !== ""
+      ? (params.frame ? text + " with a diagram" : text)
+      : "Chord diagram");
+}
+
+// markChord writes the symbol where the selection says, which is the note
+// picked up or, failing that, the first thing in the bar.
+async function markChord(params, said) {
+  const sel = state.selection;
+  const at = hasSelection() && sel.at > 0 ? sel.at : 1;
+  const p = new URLSearchParams({
+    part: String(sel.part), measure: String(sel.measure), at: String(at),
+    ...params,
+  });
+  const res = await fetch("/api/chordsymbol?" + p.toString(), { method: "POST" });
+  if (!res.ok) {
+    status("Could not write it: " + (await res.text()).trim());
+    return;
+  }
+  await refreshScore();
+  markSelection();
+  status(said);
+}
+
+// chordAt is what is written over the selection already — the name and the
+// fingering apart, which is how the dialog holds them.
+function chordAt(sel) {
+  const empty = { name: "", frets: "" };
+  if (!sel) return empty;
+  const hit = state.hits.find(
+    (h) => h.part === sel.part && h.measure === sel.measure);
+  const els = (hit && hit.elements) || [];
+  const el = els.find((e) => e.ref === sel.ref) || els[0];
+  if (!el) return empty;
+  return { name: el.chord || "", frets: el.chordFrets || "" };
 }
 
 // textDialog writes words beside the selected note.
@@ -4916,6 +5087,7 @@ function setupKeys() {
       // that note by half, and pressing it again takes it back.
       case ".": void dotSelection(); break;
 
+      case "c": action("insert-chord"); break;
       case "j": action("jump"); break;
       case "m": action("add-measure"); break;
       case "l": action("set-lyrics"); break;
@@ -5485,6 +5657,38 @@ async function main() {
   if (window.gscoreNativeMenu) {
     document.documentElement.classList.add("native-menu");
   }
+
+  // The menu bar a Mac puts at the top of the screen is built from these
+  // same menus, rather than being a second list in another language that
+  // drifts from this one. Everything here is what the page shows; the
+  // application reads it once and makes its own bar out of it.
+  window.gscoreMenuTree = () => {
+    const read = (root) =>
+      Array.from(root.children).flatMap((node) => {
+        if (node.tagName === "HR") return [{ kind: "separator" }];
+        if (node.classList.contains("submenu")) {
+          const title = node.querySelector(".submenu-title span");
+          const items = node.querySelector(".menu-items");
+          return [{
+            kind: "submenu",
+            label: (title?.textContent || "").trim(),
+            items: items ? read(items) : [],
+          }];
+        }
+        if (node.tagName !== "BUTTON" || !node.dataset.action) return [];
+        return [{
+          kind: "item",
+          label: (node.querySelector("span")?.textContent || "").trim(),
+          action: node.dataset.action,
+          enabled: !node.disabled,
+        }];
+      });
+
+    return Array.from(document.querySelectorAll("#menubar .menu")).map((m) => ({
+      label: (m.querySelector(".menu-title")?.textContent || "").trim(),
+      items: read(m.querySelector(".menu-items")),
+    }));
+  };
 
   window.gscoreCommand = (name) => {
     // The shell has opened a file into the server underneath us, so the page

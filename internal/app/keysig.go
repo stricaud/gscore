@@ -311,3 +311,71 @@ func dropClefs(in []engrave.Glyph) []engrave.Glyph {
 	}
 	return out
 }
+
+// handleChordPreview draws one chord symbol as it will be engraved.
+//
+// The picker shows what you are about to write rather than describing it:
+// the same engraver draws the preview and the page, so a symbol that looks
+// right in the box looks right on the staff. Typing a name and seeing it
+// appear is also the only way to find out what the program makes of "C7#9"
+// without writing it into the music first.
+func (a *App) handleChordPreview(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	space := 10.0
+	if v := q.Get("space"); v != "" {
+		if f, err := strconv.ParseFloat(v, 64); err == nil && f >= 4 && f <= 30 {
+			space = f
+		}
+	}
+
+	var sym *model.ChordSymbol
+	if text := strings.TrimSpace(q.Get("chord")); text != "" {
+		sym = parseChordSymbol(text)
+	} else {
+		sym = &model.ChordSymbol{}
+	}
+	if q.Get("name") == "0" {
+		// The diagram on its own: somebody who wants the fingering and not
+		// the letters.
+		sym.Root, sym.Quality, sym.Bass, sym.Text = "", "", "", ""
+	}
+	if f := q.Get("frame"); f != "" {
+		sym.Frame = parseChordFrame(f, q.Get("firstfret"), q.Get("barre"))
+	}
+
+	// One bar with nothing in it but a rest to hang the symbol on, squeezed
+	// as narrow as the symbol allows.
+	rest := &model.Rest{Dur: model.Duration{Num: 1, Den: 1}, Hidden: true}
+	rest.Chord = sym
+	part := &model.Part{
+		Clef: model.Treble,
+		Time: model.TimeSignature{Beats: 4, BeatValue: 4},
+		Measures: []*model.Measure{{
+			Voices:       []*model.Voice{{Elements: []model.Element{rest}}},
+			RightBarline: model.BarNone,
+		}},
+	}
+	s := &model.Score{Parts: []*model.Part{part}}
+
+	opt := engrave.DefaultOptions()
+	opt.Mode = engrave.Strip
+	opt.ShowTitle = false
+	opt.ShowTempoMark = false
+	opt.HideTimeSignature = true
+	opt.HideKeySignature = true
+	opt.HideClef = true
+	opt.WriteAhead = false
+	opt.LineWidth = 0
+	opt.Spacings.Margin = 0.6
+	opt.Spacings.MarginY = 1.2
+
+	ropt := svg.DefaultOptions()
+	ropt.StaffSpace = space
+	ropt.EmbedFont = false
+
+	w.Header().Set("Content-Type", "image/svg+xml")
+	w.Header().Set("Cache-Control", "no-store")
+	if err := svg.Render(w, engrave.Engrave(s, opt), ropt); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
+}

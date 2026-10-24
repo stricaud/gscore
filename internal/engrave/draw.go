@@ -256,9 +256,15 @@ func (e *engraver) drawMeasure(part *model.Part, b measureBox, x, end float64, s
 				at = 1
 			}
 		}
+		chord, frets := "", ""
+		if m := p.marks(); m != nil && m.Chord != nil {
+			chord = m.Chord.String()
+			frets = m.Chord.Frame.Spell()
+		}
 		hit.Elements = append(hit.Elements, ElementPos{
 			Ref: p.index, Index: i, X: p.x, Y: y, Y2: y2, At: at,
 			Width: noteheadWidth(p.value), Kind: kind, Steps: steps,
+			Chord: chord, ChordFrets: frets,
 		})
 	}
 	e.lay.Hits = append(e.lay.Hits, hit)

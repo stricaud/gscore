@@ -88,6 +88,33 @@ func Write(w io.Writer, s *model.Score, symbols *symbol.Registry) error {
 	return write(w, s, symbols, usedSymbols(s))
 }
 
+// WriteWithPDF saves a score with a PDF of it in front of the container, so
+// that the one file is both.
+//
+// The two formats are read from opposite ends. A PDF reader looks for
+// %PDF- at the start and finds the cross-reference pointer near the end; a
+// zip reader scans backwards from the end for the central directory and
+// tolerates whatever is in front of it — which is how self-extracting
+// archives have always worked. So neither trips over the other, and a
+// .gscore renamed .pdf opens in anything that reads a PDF.
+//
+// What it costs: the file carries the engraving as well as the music, which
+// for a short piece is three decimal orders more bytes. And anything that
+// rewrites the PDF — a PDF editor, some mail gateways — keeps the drawing
+// and silently drops the music, because what it drops is everything it did
+// not understand. Editing here is safe: a save writes the whole file again.
+//
+// The preview is rendered by the caller. This package knows about the
+// music, not about how it is drawn.
+func WriteWithPDF(w io.Writer, s *model.Score, symbols *symbol.Registry, pdf []byte) error {
+	if len(pdf) > 0 {
+		if _, err := w.Write(pdf); err != nil {
+			return err
+		}
+	}
+	return Write(w, s, symbols)
+}
+
 // WritePack saves a .gscore holding symbols and no music.
 //
 // A file like this is a symbol library: somebody draws a set of marks their

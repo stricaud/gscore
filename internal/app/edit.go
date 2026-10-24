@@ -2091,8 +2091,21 @@ func (a *App) handleChordSymbol(w http.ResponseWriter, r *http.Request) {
 	}
 
 	sym := parseChordSymbol(text)
+	if q.Get("name") == "0" {
+		// The diagram on its own. The name is still asked for, because it
+		// is what the fingering is a fingering of, but it is not written.
+		sym.Root, sym.Quality, sym.Bass, sym.Text = "", "", "", ""
+	}
 	if f := q.Get("frame"); f != "" {
 		sym.Frame = parseChordFrame(f, q.Get("firstfret"), q.Get("barre"))
+	}
+	if sym.String() == "" && sym.Frame == nil {
+		// Neither the name nor the diagram: nothing to write.
+		for _, m := range marks {
+			m.Chord = nil
+		}
+		writeJSON(w, map[string]any{"status": "ok", "chord": ""})
+		return
 	}
 	// One note carries it, not every note of a selection: a chord symbol
 	// marks where the harmony changes, and repeating it on each note of the

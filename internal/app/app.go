@@ -309,6 +309,8 @@ func (a *App) APIRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/hits", a.handleHits)
 	mux.HandleFunc("/api/playback", a.handlePlayback)
 	mux.HandleFunc("/api/keysignatures", a.handleKeySignatures)
+	mux.HandleFunc("/api/chordpreview", a.handleChordPreview)
+	mux.HandleFunc("/api/chordfingering", a.handleChordFingering)
 	mux.HandleFunc("/api/instruments", a.handleInstruments)
 	mux.HandleFunc("/api/percussion", a.handlePercussion)
 	mux.HandleFunc("/api/getlyrics", a.handleGetLyrics)

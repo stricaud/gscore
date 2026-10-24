@@ -287,6 +287,12 @@ type ElementPos struct {
 	Steps []int `json:"steps,omitempty"`
 	// Kind is "note", "chord", "rest" or "symbol".
 	Kind string `json:"kind"`
+	// Chord is the chord symbol written over this element, where there is
+	// one, and ChordFrets its fingering. The editor needs both to offer
+	// what is already there when one is being changed — otherwise changing
+	// C7 to C7♯9 means typing the whole thing again.
+	Chord      string `json:"chord,omitempty"`
+	ChordFrets string `json:"chordFrets,omitempty"`
 }
 
 // Defaults returns the engraving measurements a layout was drawn with, so a
@@ -332,6 +338,11 @@ type Options struct {
 	// HideTimeSignature leaves the meter off, for a picture that is only
 	// meant to show a clef and a key signature.
 	HideTimeSignature bool
+
+	// HideClef leaves the clef off as well, for a picture of something that
+	// is not on the staff at all — a chord symbol being typed, where a
+	// treble clef is most of the width and says nothing.
+	HideClef bool
 	// ShowPartNames writes each staff's name at the head of the system: the
 	// full name on the first, an abbreviation on the rest, which is how a
 	// conductor's score is laid out. On a single-staff piece it is noise, so
@@ -1316,10 +1327,14 @@ func metronomeGlyph(d model.Duration) (string, int) {
 func (e *engraver) prefixWidth(p *model.Part, at int) float64 {
 	sp := e.opt.Spacings
 	w := 0.0
-	if p.Tab != nil {
+	switch {
+	case e.opt.HideClef:
+		// Nothing at the head but what the key and the meter add below.
+		w += e.keySignatureWidth(p.KeyAt(at))
+	case p.Tab != nil:
 		// The word TAB, and no key signature to follow it.
 		w = tabClefWidth(p, sp)
-	} else {
+	default:
 		clef, _ := smufl.ClefGlyph(p.Clef)
 		w = sp.ClefBefore + smufl.Advance(clef) + sp.ClefAfter
 		w += e.keySignatureWidth(p.KeyAt(at))
@@ -1720,7 +1735,10 @@ func (e *engraver) drawSystem(parts []*model.Part, boxes [][]measureBox,
 			})
 		}
 		was := px
-		if p.Tab != nil {
+		if e.opt.HideClef {
+			// Nothing drawn at the head: the picture is of what is above
+			// the staff, not of the staff.
+		} else if p.Tab != nil {
 			// A tab staff has no clef and no key signature: a fret number
 			// says where to put a finger and needs neither. What stands at
 			// the head of it is the word TAB.

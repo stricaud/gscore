@@ -24,6 +24,9 @@
       <button data-action="open"><span>Open score…</span><kbd>O</kbd></button>
       <hr>
       <button data-action="save"><span>Save as .gscore…</span><kbd>S</kbd></button>
+      <!-- A saved score carries a PDF of itself unless this is turned off:
+           renamed .pdf, the same file opens in anything that reads one. -->
+      <button data-action="save-with-pdf"><span>…with a PDF inside it</span><kbd id="pdf-tick">✓</kbd></button>
       <button data-action="save-pdf"><span>Export PDF…</span><kbd>⇧P</kbd></button>
       <button data-action="save-svg"><span>Export SVG…</span><kbd>E</kbd></button>
       <button data-action="save-page"><span>Export web page…</span><kbd>⇧H</kbd></button>
@@ -126,6 +129,7 @@
       <button data-action="repeat-2bars"><span>Repeat the two bars before</span></button>
       <button data-action="repeat-none"><span>Write the bar out</span></button>
       <hr>
+      <button data-action="insert-chord"><span>Chord symbol…</span><kbd>C</kbd></button>
       <button data-action="insert-text"><span>Text…</span><kbd>T</kbd></button>
       <button data-action="insert-marker"><span>Rehearsal mark…</span></button>
       <hr>
@@ -608,6 +612,35 @@
      Rewritten in Go in 2026, engraved with SMuFL and Bravura.</p>
   <p class="small">GPL v2 or later.</p>
   <form method="dialog"><button>Close</button></form>
+</dialog>
+
+<!-- Writing a chord above the music.
+     Typing it shows it: the same engraver draws this picture and the page,
+     so what is in the box is what lands on the staff. -->
+<dialog id="chord">
+  <h2>Chord symbol</h2>
+  <form method="dialog" id="chord-form">
+    <label for="chord-name">Chord</label>
+    <input type="text" id="chord-name" autocomplete="off" placeholder="Am7"
+           spellcheck="false">
+    <div id="chord-preview"><img id="chord-image" alt="How it will look"></div>
+    <div id="chord-opts">
+      <label><input type="checkbox" id="chord-show-name" checked> Name</label>
+      <label><input type="checkbox" id="chord-show-frame"> Diagram</label>
+    </div>
+    <label for="chord-frets" id="chord-frets-label">Fingering</label>
+    <input type="text" id="chord-frets" autocomplete="off" placeholder="x02210"
+           spellcheck="false">
+    <p class="small">Filled in from the name for the usual chords. One
+       character a string, lowest first: a fret number, or x for a string
+       that is not played. Type your own and it stays yours; clear it to be
+       offered one again.</p>
+    <div class="ask-buttons">
+      <button value="remove" type="submit">Remove</button>
+      <button value="cancel" type="submit">Cancel</button>
+      <button value="ok" type="submit" class="primary">Write it</button>
+    </div>
+  </form>
 </dialog>
 
 <dialog id="import-log">

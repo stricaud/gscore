@@ -13,6 +13,8 @@
 
 package model
 
+import "strconv"
+
 // Element is anything that takes up time in a voice.
 //
 // Where the 0.0.9 Object_t was one struct holding every kind of mark together
@@ -465,6 +467,35 @@ type ChordFrame struct {
 	// BarreFrom and BarreTo the strings it covers.
 	Barre              int
 	BarreFrom, BarreTo int
+}
+
+// Spell writes the fingering out the way it is typed in: one character a
+// string, lowest first, a fret number or x for a string that is not played.
+//
+// Frets past nine need spaces between them, because "10" is two characters
+// and a diagram is read a string at a time.
+func (f *ChordFrame) Spell() string {
+	if f == nil || len(f.Frets) == 0 {
+		return ""
+	}
+	wide := false
+	for _, n := range f.Frets {
+		if n > 9 {
+			wide = true
+		}
+	}
+	out := ""
+	for i, n := range f.Frets {
+		if wide && i > 0 {
+			out += " "
+		}
+		if n < 0 {
+			out += "x"
+			continue
+		}
+		out += strconv.Itoa(n)
+	}
+	return out
 }
 
 // TextMark is a piece of writing attached to a note.

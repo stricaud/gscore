@@ -18,9 +18,11 @@
 package main
 
 import (
+	"bytes"
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -30,6 +32,7 @@ import (
 	"github.com/stricaud/gscore/internal/app"
 	"github.com/stricaud/gscore/internal/engrave"
 	"github.com/stricaud/gscore/internal/format"
+	gscorefmt "github.com/stricaud/gscore/internal/format/gscore"
 	"github.com/stricaud/gscore/internal/model"
 	ghtml "github.com/stricaud/gscore/internal/render/html"
 	gpdf "github.com/stricaud/gscore/internal/render/pdf"
@@ -73,6 +76,9 @@ func main() {
 				"writing it into the page")
 		noPlay = flag.Bool("noplay", false,
 			"for -o to .html: leave the player out, so the page is a drawing")
+		noPDF = flag.Bool("nopdf", false,
+			"for -convert to .gscore: write the music alone, without a PDF of "+
+				"it in front")
 	)
 	flag.Usage = usage
 	flag.Parse()
@@ -112,7 +118,7 @@ func main() {
 
 	switch {
 	case *convert != "":
-		if err := convertTo(score, *convert); err != nil {
+		if err := convertTo(score, *convert, !*noPDF); err != nil {
 			fmt.Fprintf(os.Stderr, "gscore: %v\n", err)
 			os.Exit(1)
 		}
@@ -198,7 +204,7 @@ func load(path string) ([]*model.Score, error) {
 }
 
 // convertTo writes the score in whatever format the filename asks for.
-func convertTo(s *model.Score, path string) error {
+func convertTo(s *model.Score, path string, withPDF bool) error {
 	exp, err := format.ExporterFor(path)
 	if err != nil {
 		return err
@@ -208,7 +214,32 @@ func convertTo(s *model.Score, path string) error {
 		return err
 	}
 	defer f.Close()
+
+	// A .gscore carries a PDF of itself in front of the music, as a saved
+	// score does: renamed .pdf, the same file opens in anything that reads
+	// one. -nopdf writes the music alone, which is three decimal orders
+	// smaller.
+	if withPDF && strings.EqualFold(filepath.Ext(path), ".gscore") {
+		var pdf bytes.Buffer
+		if err := renderPDFTo(&pdf, s); err != nil {
+			return err
+		}
+		return gscorefmt.WriteWithPDF(f, s, nil, pdf.Bytes())
+	}
 	return exp.Export(f, s)
+}
+
+// renderPDFTo engraves the score onto paper, for carrying inside a .gscore.
+func renderPDFTo(w io.Writer, s *model.Score) error {
+	popt := gpdf.DefaultOptions()
+	popt.Title = s.Identity.Title
+	popt.Author = s.Identity.Composer
+	eopt := engrave.DefaultOptions()
+	eopt.Mode = engrave.Paginated
+	eopt.ShowPartNames = len(s.Parts) > 1
+	eopt.ShowMeasureNumbers = true
+	popt, eopt = gpdf.Fit(s, popt, eopt)
+	return gpdf.Render(w, engrave.Engrave(s, eopt), popt)
 }
 
 // renderFile engraves a score to a drawing, in whichever format the name asks

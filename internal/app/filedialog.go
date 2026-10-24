@@ -272,8 +272,19 @@ func (a *App) handleSave(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if strings.EqualFold(filepath.Ext(path), ".gscore") {
-		// The one format that can carry the drawings gets handed them.
-		if err := gscorefmt.Write(f, score, symbols); err != nil {
+		// The one format that can carry the drawings gets handed them, and
+		// a PDF of the score in front of them unless that was turned off.
+		// Renamed .pdf, the same file opens in anything that reads one.
+		var preview []byte
+		if r.URL.Query().Get("pdf") != "0" {
+			var buf bytes.Buffer
+			if err := a.renderPDF(&buf, r); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			preview = buf.Bytes()
+		}
+		if err := gscorefmt.WriteWithPDF(f, score, symbols, preview); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}

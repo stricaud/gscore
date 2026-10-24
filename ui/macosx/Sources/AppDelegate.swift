@@ -148,9 +148,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
 
     func webView(_ view: WKWebView, didFinish navigation: WKNavigation!) {
         ready = true
+        rebuildMenus()
         if let path = pending {
             pending = nil
             open(path: path)
+        }
+    }
+
+    /// Ask the editor what it can do, and make the menu bar out of the
+    /// answer.
+    ///
+    /// The bar installed at launch is a skeleton — enough to exist before
+    /// the page has loaded. The real list of commands lives in the page's
+    /// own menus and grows with every feature; read once, here, it cannot
+    /// fall behind the way a second list written by hand does.
+    private func rebuildMenus(tries: Int = 25) {
+        // The page finishing loading is not the editor being ready: it sets
+        // itself up asynchronously — fetching the score, the layout and the
+        // symbols — and names its commands at the end of that. So this asks
+        // again until there is an answer rather than once into the gap.
+        let js = "window.gscoreMenuTree ? JSON.stringify(window.gscoreMenuTree()) : ''"
+        web.evaluateJavaScript(js) { [weak self] result, _ in
+            guard let self else { return }
+            if let text = result as? String, !text.isEmpty,
+               let data = text.data(using: .utf8),
+               let tree = try? JSONSerialization.jsonObject(with: data)
+                   as? [[String: Any]], !tree.isEmpty {
+                Menus.rebuild(from: tree, target: self)
+                return
+            }
+            guard tries > 1 else { return } // leave the bar it was given
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                self.rebuildMenus(tries: tries - 1)
+            }
         }
     }
 

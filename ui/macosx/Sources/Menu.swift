@@ -99,6 +99,10 @@ enum Menus {
             // over the file that was opened, without asking, is worth having
             // and is not here yet.
             item("Save…", "save", "s", target: t),
+            // A saved score carries a PDF of itself unless this is turned
+            // off: renamed .pdf, the same file opens in anything that reads
+            // one.
+            item("…with a PDF Inside It", "save-with-pdf", "", [], target: t),
             .separator(),
             item("Export PDF…", "save-pdf", "p", [.command, .shift], target: t),
             item("Export SVG…", "save-svg", "e", [.command, .shift], target: t),
@@ -193,5 +197,102 @@ enum Menus {
         let holder = submenu("Help", [item("Gscore Help", "about", "?", target: t)])
         NSApp.helpMenu = holder.submenu
         return holder
+    }
+}
+
+/// Building the bar from the page's own menus.
+///
+/// The hand-written menus above are a skeleton: enough to have a bar before
+/// the editor has loaded, and enough for the system items. The real list of
+/// what gscore can do lives in one place — the page's menus — and it grows
+/// every time a feature does. Mirroring it by hand means a bar that is right
+/// on the day it is written and wrong a week later, which is exactly how a
+/// hundred commands came to be missing from it.
+///
+/// So once the page is up, the bar is rebuilt from what the page says it
+/// has. The shortcuts stay here, because what a key means on a Mac is a Mac
+/// question: the page's own are bare letters, which a menu bar must not
+/// claim.
+extension Menus {
+    /// The shortcuts the Mac bar advertises, by command name.
+    static let keys: [String: (String, NSEvent.ModifierFlags)] = [
+        "new": ("n", .command),
+        "save": ("s", .command),
+        "save-pdf": ("p", [.command, .shift]),
+        "save-svg": ("e", [.command, .shift]),
+        "save-page": ("h", [.command, .shift]),
+        "print": ("p", .command),
+        "undo": ("z", .command),
+        "redo": ("z", [.command, .shift]),
+        "jump": ("g", .command),
+        "add-measure": ("m", .command),
+        "play": (" ", .command),
+        "play-from-start": (" ", [.command, .shift]),
+        "stop": (".", .command),
+        "zoom-in": ("+", .command),
+        "zoom-out": ("-", .command),
+        "zoom-reset": ("0", .command),
+    ]
+
+    /// rebuild replaces the bar with one made from the page's menus.
+    ///
+    /// The application, Window and Help menus are the system's and are kept
+    /// as they are; everything between them comes from the page.
+    static func rebuild(from tree: [[String: Any]], target: AnyObject) {
+        guard !tree.isEmpty else { return }
+        let bar = NSMenu()
+        bar.addItem(appMenu())
+        var placedWindow = false
+        for menu in tree {
+            guard let title = menu["label"] as? String, !title.isEmpty,
+                  let items = menu["items"] as? [[String: Any]] else { continue }
+            // Window goes where a Mac puts it: before Help and after
+            // everything else.
+            if title.caseInsensitiveCompare("Help") == .orderedSame,
+               !placedWindow {
+                bar.addItem(windowMenu())
+                placedWindow = true
+            }
+            let holder = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+            let sub = NSMenu(title: title)
+            fill(sub, items, target: target)
+            holder.submenu = sub
+            bar.addItem(holder)
+        }
+        if !placedWindow {
+            bar.addItem(windowMenu())
+        }
+        NSApp.mainMenu = bar
+    }
+
+    private static func fill(_ menu: NSMenu, _ items: [[String: Any]],
+                             target: AnyObject) {
+        // Not "item": that is the maker below, and a loop variable of the
+        // same name hides it.
+        for entry in items {
+            switch entry["kind"] as? String {
+            case "separator":
+                menu.addItem(.separator())
+            case "submenu":
+                guard let label = entry["label"] as? String,
+                      let kids = entry["items"] as? [[String: Any]] else { continue }
+                let holder = NSMenuItem(title: label, action: nil, keyEquivalent: "")
+                let sub = NSMenu(title: label)
+                fill(sub, kids, target: target)
+                holder.submenu = sub
+                menu.addItem(holder)
+            default:
+                guard let label = entry["label"] as? String,
+                      let action = entry["action"] as? String,
+                      !label.isEmpty else { continue }
+                let key = keys[action]
+                let made = item(label, action, key?.0 ?? "",
+                                key?.1 ?? [], target: target)
+                if let enabled = entry["enabled"] as? Bool, !enabled {
+                    made.isEnabled = false
+                }
+                menu.addItem(made)
+            }
+        }
     }
 }

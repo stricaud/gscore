@@ -875,6 +875,35 @@ body.fullscreen #canvas-wrap { padding: 10px; }
 .choices b { font-weight: 600; }
 .choices em { font-style: normal; font-size: 11px; color: var(--muted); }
 
+/* Recording the score. Wider than the other dialogs because the instrument
+   review is a table, and a table of staves against what will play them is
+   the one thing in here that cannot be made narrower. */
+#record { max-width: 560px; }
+#record h3 { margin: 18px 0 2px; font-size: 13px; }
+.record-row { display: flex; align-items: center; gap: 10px; margin: 10px 0; }
+.record-row label { min-width: 104px; }
+.record-row select, .record-row input[type="number"] {
+  font: inherit;
+  padding: 4px 6px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: var(--panel-dark);
+  color: inherit;
+}
+.record-row select { flex: 1; min-width: 0; }
+.record-row input[type="number"] { width: 70px; }
+.record-actions { display: flex; gap: 8px; }
+.record-actions button { margin-top: 0; }
+#record-voices { width: 100%; border-collapse: collapse; font-size: 12px; }
+#record-voices td { padding: 5px 6px; border-top: 1px solid var(--line); vertical-align: middle; }
+#record-voices td:first-child { white-space: nowrap; }
+#record-voices select { font: inherit; font-size: 11px; max-width: 170px; }
+#record-voices .missing { color: var(--danger, #c0392b); }
+.record-check { display: flex; gap: 9px; align-items: flex-start; padding: 6px 0; cursor: pointer; }
+.record-check span { display: flex; flex-direction: column; gap: 1px; }
+.record-check em { font-style: normal; font-size: 11px; color: var(--muted); }
+#record details summary { cursor: pointer; margin-top: 16px; }
+
 /* A hand-drawn symbol can be picked up and moved. It shows the hand only
    while shift is held, with everything else that is picked up rather than
    placed — a hand over the score while writing says the wrong thing. */

@@ -269,6 +269,18 @@ func (a *App) handleSave(w http.ResponseWriter, r *http.Request) {
 		}
 		writeJSON(w, map[string]string{"status": "ok", "path": path})
 		return
+	case ".flac":
+		// A recording, which is the one export that needs something gscore
+		// does not carry: the instruments themselves.
+		a.mu.RLock()
+		score := a.score
+		a.mu.RUnlock()
+		if err := recordFLAC(f, score, readRecording(r.URL.Query())); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		writeJSON(w, map[string]string{"status": "ok", "path": path})
+		return
 	case ".mid", ".midi":
 		// Nor is a performance. This is the music as it is played rather
 		// than as it is written, which is what another program wants when

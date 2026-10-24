@@ -356,6 +356,9 @@ async function action(name) {
     case "save-midi":
       await exportMIDI();
       break;
+    case "save-audio":
+      await recordAudio();
+      break;
     case "print":
       await printScore();
       break;
@@ -1022,6 +1025,249 @@ async function exportMIDI() {
   a.click();
   URL.revokeObjectURL(a.href);
   status("Exported MIDI");
+}
+
+/* ---------- recording ---------- */
+
+// What the recording dialog is showing: the soundfonts it knows about, which
+// one is chosen, and which staves have been pointed at a different one.
+const record = { fonts: [], catalogue: [], font: "", assign: {}, voices: [] };
+
+// recordAudio writes the score out as sound.
+//
+// "Export as audio" in the menu rather than "record": recording is what you
+// do to a performance that is happening, and nothing here is happening — the
+// score is played through a soundfont and written to a file, which is an
+// export like the others.
+//
+// The dialog exists because of the soundfont. A recording is only as good as
+// the instruments it was played on, those are somebody else's thirty-megabyte
+// file, and whether the one you have covers the instruments in this
+// particular score is a real question with a real answer — a brass band
+// scored into a piano soundfont comes out as nine pianos, silently.
+async function recordAudio() {
+  if (!state.info?.local) {
+    status("Exporting audio needs gscore running on your own machine");
+    return;
+  }
+  await loadSoundfonts();
+  const dlg = $("#record");
+
+  const go = async () => {
+    dlg.close();
+    const p = new URLSearchParams({ as: "flac", ...recordSettings() });
+    status("Exporting audio… this takes a few seconds");
+    const res = await fetch("/api/save?" + p.toString(), { method: "POST" });
+    if (!res.ok) {
+      status("Could not export: " + (await res.text()).trim());
+      return;
+    }
+    const d = await res.json();
+    status(d.cancelled ? "Ready" : "Exported " + d.path);
+  };
+
+  $("#record-go").onclick = go;
+  $("#record-cancel").onclick = () => dlg.close();
+  $("#record-pick").onclick = pickSoundfont;
+  $("#record-get").onclick = getSoundfont;
+  $("#record-font").onchange = async (e) => {
+    record.font = e.target.value;
+    await refreshVoices();
+  };
+  dlg.showModal();
+}
+
+// recordSettings is the dialog as query parameters.
+function recordSettings() {
+  const assign = Object.entries(record.assign)
+    .filter(([, path]) => path && path !== record.font)
+    .map(([part, path]) => part + "=" + path)
+    .join(",");
+  return {
+    font: record.font,
+    assign,
+    rate: $("#record-rate").value,
+    tail: $("#record-tail").value,
+    reverb: $("#record-reverb").checked ? "1" : "0",
+    normalize: $("#record-normalize").checked ? "1" : "0",
+  };
+}
+
+async function loadSoundfonts() {
+  const p = new URLSearchParams({ font: record.font });
+  const res = await fetch("/api/soundfonts?" + p.toString());
+  if (!res.ok) return;
+  const d = await res.json();
+  record.fonts = d.installed || [];
+  record.catalogue = d.catalogue || [];
+  record.voices = d.voices || [];
+  record.dir = d.dir;
+  if (!record.font && record.fonts.length) record.font = record.fonts[0].path;
+  drawSoundfonts();
+  await refreshVoices();
+}
+
+function drawSoundfonts() {
+  const sel = $("#record-font");
+  sel.innerHTML = "";
+  for (const f of record.fonts) {
+    const o = document.createElement("option");
+    o.value = f.path;
+    o.textContent = f.name + " — " + megabytes(f.size) + ", " + f.where;
+    o.selected = f.path === record.font;
+    sel.append(o);
+  }
+  if (!record.fonts.length) {
+    const o = document.createElement("option");
+    o.value = "";
+    o.textContent = "none yet — download one";
+    sel.append(o);
+  }
+  $("#record-font-note").textContent = record.fonts.length
+    ? ""
+    : "Gscore does not come with instruments: they are recordings, and a good "
+      + "set is tens of megabytes. Download one here, or point at any .sf2 you "
+      + "already have.";
+}
+
+function megabytes(n) {
+  return (n / 1e6).toFixed(n > 1e8 ? 0 : 1) + " MB";
+}
+
+// refreshVoices asks what each staff is scored for and what the chosen
+// soundfont will actually play it with.
+async function refreshVoices() {
+  const assign = Object.entries(record.assign)
+    .filter(([, path]) => path)
+    .map(([part, path]) => part + "=" + path)
+    .join(",");
+  const p = new URLSearchParams({ font: record.font, assign });
+  const res = await fetch("/api/soundfonts?" + p.toString());
+  if (res.ok) record.voices = (await res.json()).voices || [];
+  drawVoices();
+}
+
+function drawVoices() {
+  const body = $("#record-voices").querySelector("tbody");
+  body.innerHTML = "";
+  let missing = 0;
+  for (const v of record.voices) {
+    const tr = document.createElement("tr");
+
+    const name = document.createElement("td");
+    name.innerHTML = "<b></b><br><span class='small'></span>";
+    name.querySelector("b").textContent = v.name;
+    name.querySelector("span").textContent = v.drum
+      ? "percussion"
+      : v.instrument + " — program " + v.program;
+    tr.append(name);
+
+    const sound = document.createElement("td");
+    if (v.missing) {
+      missing++;
+      sound.className = "missing";
+      sound.textContent = "nothing for this instrument";
+    } else {
+      sound.textContent = v.preset || "—";
+    }
+    tr.append(sound);
+
+    // Any staff can be played through a different soundfont: a piano
+    // library for the piano and an orchestra for the rest is an ordinary
+    // thing to want, and nothing else can do it once the file is written.
+    const pick = document.createElement("td");
+    const sel = document.createElement("select");
+    const def = document.createElement("option");
+    def.value = "";
+    def.textContent = "the chosen soundfont";
+    sel.append(def);
+    for (const f of record.fonts) {
+      const o = document.createElement("option");
+      o.value = f.path;
+      o.textContent = f.name;
+      o.selected = record.assign[v.part] === f.path;
+      sel.append(o);
+    }
+    sel.onchange = async (e) => {
+      record.assign[v.part] = e.target.value;
+      await refreshVoices();
+    };
+    pick.append(sel);
+    tr.append(pick);
+
+    body.append(tr);
+  }
+  $("#record-voices-note").textContent = missing
+    ? "This soundfont has nothing for " + missing
+      + (missing === 1 ? " instrument" : " instruments")
+      + " below. They will be silent — choose another soundfont for them."
+    : "What each staff is scored for, and what the soundfont will play it with.";
+  $("#record-go").disabled = !record.font;
+}
+
+async function pickSoundfont() {
+  status("Choose a soundfont…");
+  const res = await fetch("/api/soundfont/pick", { method: "POST" });
+  if (!res.ok) {
+    status("Could not read that: " + (await res.text()).trim());
+    return;
+  }
+  const d = await res.json();
+  if (d.cancelled || d.unavailable) {
+    status("Ready");
+    return;
+  }
+  record.fonts = [d.font, ...record.fonts.filter((f) => f.path !== d.font.path)];
+  record.font = d.font.path;
+  drawSoundfonts();
+  await refreshVoices();
+  status("Using " + d.font.name);
+}
+
+// getSoundfont downloads one, either from the short list or from a link.
+async function getSoundfont() {
+  const options = record.catalogue.map((c) => ({
+    value: c.id,
+    label: c.name + " — " + megabytes(c.size),
+  }));
+  options.push({ value: "url", label: "From a link to a .sf2 file…" });
+
+  // What each one is goes in the note rather than in the list: a list of
+  // soundfonts tells you nothing, and the sentence about what is in one and
+  // whether you may use it is the part worth reading.
+  const about = record.catalogue
+    .map((c) => c.name + ": " + c.about + " " + c.license)
+    .join("\n");
+  const choice = await ask({
+    title: "Download a soundfont",
+    label: "Which one",
+    options,
+    note: about + "\nKept in " + (record.dir || "your settings folder")
+      + ", where every score you write afterwards will find it.",
+  });
+  if (!choice) return;
+
+  let query;
+  if (choice === "url") {
+    const url = await ask({ title: "Download a soundfont", label: "Link to a .sf2 file" });
+    if (!url) return;
+    query = new URLSearchParams({ url });
+  } else {
+    query = new URLSearchParams({ id: choice });
+  }
+
+  status("Downloading the soundfont…");
+  const res = await fetch("/api/soundfont/fetch?" + query.toString(), { method: "POST" });
+  if (!res.ok) {
+    status("Could not download: " + (await res.text()).trim());
+    return;
+  }
+  const d = await res.json();
+  record.fonts = [d.font, ...record.fonts.filter((f) => f.path !== d.font.path)];
+  record.font = d.font.path;
+  drawSoundfonts();
+  await refreshVoices();
+  status("Downloaded " + d.font.name);
 }
 
 /* ---------- editing ---------- */

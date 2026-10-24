@@ -31,6 +31,7 @@
       <button data-action="save-svg"><span>Export SVG…</span><kbd>E</kbd></button>
       <button data-action="save-page"><span>Export web page…</span><kbd>⇧H</kbd></button>
       <button data-action="save-midi"><span>Export MIDI…</span></button>
+      <button data-action="save-audio"><span>Export as audio…</span></button>
       <hr>
       <button data-action="page-setup" disabled><span>Page Setup</span></button>
       <button data-action="print-preview" disabled><span>Print Preview…</span></button>
@@ -599,6 +600,60 @@
       <button value="ok" type="submit" class="primary">Print</button>
     </div>
   </form>
+</dialog>
+
+<!-- Recording the score as audio.
+     The soundfont is the whole of the question: it is somebody else's
+     recordings of real instruments, it is thirty megabytes, and gscore does
+     not carry one. So the dialog is mostly about getting hold of one and
+     seeing what it will do with this particular score, and only then about
+     how to record. -->
+<dialog id="record">
+  <h2>Export as audio</h2>
+  <p class="small">Played through a soundfont — recorded instruments — and written
+     as FLAC, which is lossless.</p>
+
+  <div class="record-row">
+    <label for="record-font">Soundfont</label>
+    <select id="record-font"></select>
+  </div>
+  <div class="record-actions">
+    <button type="button" id="record-pick">Choose a file…</button>
+    <button type="button" id="record-get">Download one…</button>
+  </div>
+  <p class="small" id="record-font-note"></p>
+
+  <h3>Instruments in this score</h3>
+  <p class="small" id="record-voices-note">What each staff is scored for, and what the
+     soundfont will play it with.</p>
+  <table id="record-voices"><tbody></tbody></table>
+
+  <details id="record-options">
+    <summary>Options</summary>
+    <div class="record-row">
+      <label for="record-rate">Sample rate</label>
+      <select id="record-rate">
+        <option value="44100" selected>44.1 kHz — CD</option>
+        <option value="48000">48 kHz — video</option>
+        <option value="96000">96 kHz</option>
+      </select>
+    </div>
+    <label class="record-check"><input type="checkbox" id="record-reverb" checked>
+      <span>Reverb and chorus<em>The room the soundfont was voiced to be heard in.</em></span></label>
+    <label class="record-check"><input type="checkbox" id="record-normalize" checked>
+      <span>Bring the level up<em>The loudest moment just under full scale, so it is as loud
+        as anything else you would play.</em></span></label>
+    <div class="record-row">
+      <label for="record-tail">Room at the end</label>
+      <input type="number" id="record-tail" min="0" max="20" step="0.5" value="2.5">
+      <span class="small">seconds, for the last chord to ring</span>
+    </div>
+  </details>
+
+  <div class="ask-buttons">
+    <button type="button" id="record-cancel">Cancel</button>
+    <button type="button" id="record-go" class="primary">Export</button>
+  </div>
 </dialog>
 
 <dialog id="about">

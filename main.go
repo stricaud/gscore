@@ -76,6 +76,9 @@ func main() {
 				"writing it into the page")
 		noPlay = flag.Bool("noplay", false,
 			"for -o to .html: leave the player out, so the page is a drawing")
+		soundFont = flag.String("soundfont", "",
+			"the soundfont to record through, for -o to a .flac")
+
 		noPDF = flag.Bool("nopdf", false,
 			"for -convert to .gscore: write the music alone, without a PDF of "+
 				"it in front")
@@ -125,7 +128,7 @@ func main() {
 		fmt.Printf("wrote %s\n", *convert)
 	case *out != "":
 		if err := renderFile(score, *out, *strip, *space, *landscape,
-			*fontURL, *scriptURL, !*noPlay); err != nil {
+			*fontURL, *scriptURL, *soundFont, !*noPlay); err != nil {
 			fmt.Fprintf(os.Stderr, "gscore: %v\n", err)
 			os.Exit(1)
 		}
@@ -253,7 +256,7 @@ func renderPDFTo(w io.Writer, s *model.Score) error {
 // PDF is paginated whatever -strip says: a continuous strip has no page breaks
 // to print at, and a PDF is pages or it is nothing.
 func renderFile(s *model.Score, path string, strip bool, space float64,
-	landscape bool, fontURL, scriptURL string, play bool) error {
+	landscape bool, fontURL, scriptURL, soundFont string, play bool) error {
 	ext := strings.ToLower(filepath.Ext(path))
 	wantPDF := ext == ".pdf"
 	wantPage := ext == ".html" || ext == ".htm"
@@ -273,6 +276,16 @@ func renderFile(s *model.Score, path string, strip bool, space float64,
 		}
 		defer f.Close()
 		return app.MIDIFile(f, s)
+	}
+	// And a recording is the music itself, played: the one output that
+	// needs instruments gscore does not carry.
+	if ext == ".flac" {
+		f, err := os.Create(path)
+		if err != nil {
+			return err
+		}
+		defer f.Close()
+		return app.RecordFile(f, s, soundFont)
 	}
 
 	eopt := engrave.DefaultOptions()

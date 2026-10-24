@@ -769,6 +769,16 @@ func addTrill(out *Playback, p model.Pitch, key model.KeySignature,
 // and the swells between them, every transposition: all of it is already
 // resolved by the time this sees it.
 func MIDIFile(w io.Writer, s *model.Score) error {
+	return midi.Write(w, Song(s))
+}
+
+// Song is the performance in the terms anything outside the editor reads it
+// in: notes in seconds, and the bars they fall in.
+//
+// Both the MIDI file and the recording are made from this, so the two cannot
+// drift apart — a recording that phrased differently from the MIDI of the
+// same score would mean one of them was wrong about the music.
+func Song(s *model.Score) midi.Song {
 	pb := buildPlayback(s)
 
 	song := midi.Song{Name: s.Identity.Title}
@@ -788,5 +798,5 @@ func MIDIFile(w io.Writer, s *model.Score) error {
 			Quarters: s.MeasureDuration(m.Index).Float() * 4,
 		})
 	}
-	return midi.Write(w, song)
+	return song
 }

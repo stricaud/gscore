@@ -226,7 +226,7 @@ func (e *engraver) drawMeasure(part *model.Part, b measureBox, x, end float64, s
 	e.drawStemsAndBeams(items, part.Time)
 	for _, p := range items {
 		if m := p.marks(); m != nil {
-			e.drawArticulations(m, p.x+noteheadWidth(p.value)/2, p.step, e.stemUp(p), p.index)
+			e.drawArticulations(m, p.x+noteheadWidth(p.value)/2, p.lo, p.hi, e.stemUp(p), p.index)
 			e.drawDynamic(m, p, b.index)
 			e.spanAt(m, p)
 			e.slurAt(part, m, p)
@@ -1495,7 +1495,7 @@ func (e *engraver) drawLyrics(m *model.Marks, p *placed) {
 	}
 }
 
-func (e *engraver) drawArticulations(m *model.Marks, x float64, step int, stemUp bool, ref int) {
+func (e *engraver) drawArticulations(m *model.Marks, x float64, lo, hi int, stemUp bool, ref int) {
 	if len(m.Articulations) == 0 && len(m.Symbols) == 0 {
 		return
 	}
@@ -1509,6 +1509,16 @@ func (e *engraver) drawArticulations(m *model.Marks, x float64, step int, stemUp
 	// line the edge of the staff is below the notehead, so the mark was
 	// dragged down onto the note it belonged to.
 	above := !stemUp
+	// From the edge of the chord the mark is on, not from the chord's top.
+	// A chord is a range of noteheads, and a mark written under one has to
+	// clear its lowest note, not its highest: placed from the top, a marcato
+	// under a chord sitting below the staff came out level with the chord's
+	// own noteheads, printed through them. The Entertainer does it at bar
+	// 29, where the left hand's chords are on ledger lines under the staff.
+	step := hi
+	if !above {
+		step = lo
+	}
 	noteY := e.y + stepY(float64(step))
 	gap := 1.3
 	var y float64

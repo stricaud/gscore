@@ -134,6 +134,17 @@
     }, 2600));
   }
 
+  // dropLoader takes it away at once, for when the thing it was waiting for
+  // is no longer wanted.
+  function dropLoader() {
+    loaderTimers.forEach(clearInterval);
+    loaderTimers = [];
+    if (loader) {
+      loader.remove();
+      loader = null;
+    }
+  }
+
   function hideLoader() {
     if (!loader) return;
     loaderTimers.forEach(clearInterval);
@@ -191,10 +202,23 @@
       ? piece.title + " — " + piece.composer
       : piece.title;
     $("#note").textContent = piece.note;
-    // Only reload the editor if it is already here. Switching pieces before
-    // anybody has pressed play should not fetch seventeen megabytes.
-    if (frame) start(piece, false);
+    // Back to the picture. Choosing another piece is looking, not listening:
+    // what should be on the page is the engraving of the piece just picked,
+    // the way it is before anybody has pressed anything. Reloading the
+    // editor into the new piece instead left the tabs switching between
+    // running programs, with no score to look at and nothing to say why.
+    // Play is what asks for the editor, and it asks for it again from here.
+    closeEditor();
     refreshLinks();
+  }
+
+  // closeEditor puts the page back as it was before play was pressed.
+  function closeEditor() {
+    dropLoader();
+    if (!frame) return;
+    frame.remove();
+    frame = null;
+    document.body.classList.remove("live");
   }
 
   /* ---- sharing ------------------------------------------------------ */

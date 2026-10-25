@@ -46,7 +46,7 @@
     <div id="pieces" class="tabs" role="group" aria-label="Choose a piece">@TABS@</div>
     <div class="share">
       <button id="play" class="play">Play it</button>
-      <button id="copy">Copy the link</button>
+      <button id="copy" class="button">Copy the link</button>
       <a id="open" class="button" href="app/">Open it in the editor</a>
       <a id="file" class="button" href="scores/" download>Download the page</a>
       <p id="said" role="status"></p>

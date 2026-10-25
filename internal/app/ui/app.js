@@ -109,17 +109,23 @@ async function paletteAction(item) {
         }
         break;
       case "acc":
-        state.tool.accidental = item.acc;
         // An accidental means two things depending on what is in front of
-        // you. With a note selected it belongs to that note and is written on
-        // it now; with nothing selected it is a decision about the next note,
-        // the way the palette's other tools are.
+        // you. With a note selected it belongs to that note and is written
+        // on it now, and nothing is left held: the click was asked to change
+        // one note and changing one note is all of it. Arming the pen as
+        // well wrote a natural on every note that followed, and the button
+        // that said so was never lit.
         if (hasSelection()) {
           await setAccidental(item.acc, item.label);
-          markPaletteTool((label) => label === currentToolLabel());
+          markTools();
           return;
         }
-        break;
+        // With nothing selected it is a decision about the next note, the
+        // way the palette's other tools are — and only about the next one.
+        state.tool.accidental = item.acc;
+        markTools();
+        status(item.label + " — on the next note written");
+        return;
       default:
         state.tool.rest = false;
         state.tool.duration = item.tool;
@@ -133,7 +139,7 @@ async function paletteAction(item) {
           await setSelectionDuration(item.tool, item.label);
         }
     }
-    markPaletteTool((label) => label === currentToolLabel());
+    markTools();
     status(item.label);
     return;
   }
@@ -204,7 +210,7 @@ function pickDuration(dur, dots) {
   state.tool.duration = dur;
   state.tool.dots = dots || 0;
   state.tool.rest = false;
-  markPaletteTool((label) => label === currentToolLabel());
+  markTools();
   status(durationName(dur, state.tool.dots));
 }
 
@@ -218,7 +224,7 @@ async function dotSelection() {
   const sel = state.selection;
   if (!hasSelection()) {
     state.tool.dots = state.tool.dots > 0 ? 0 : 1;
-    markPaletteTool((label) => label === currentToolLabel());
+    markTools();
     status(durationName(state.tool.duration, state.tool.dots));
     return;
   }
@@ -253,6 +259,39 @@ function currentToolLabel() {
   }
   return { whole: "Whole", half: "Half", quarter: "Quarter", eighth: "Eighth",
            sixteenth: "16th", "32nd": "32nd", "64th": "64th" }[state.tool.duration];
+}
+
+// currentAccidentalLabel is the palette's name for the accidental being
+// held, or null when there is none. The names are the buttons' own, because
+// the button is what has to light up.
+function currentAccidentalLabel() {
+  return { sharp: "Sharp", flat: "Flat", natural: "Natural",
+           "double sharp": "Double sharp",
+           "double flat": "Double flat" }[state.tool.accidental] || null;
+}
+
+// markTools lights what is held, which is a note value and, sometimes, an
+// accidental to write on it.
+//
+// Two tools, one at a time, was the whole of the trouble: markPaletteTool
+// takes a single predicate and the note value always won it, so an armed
+// accidental was a mode with nothing on the screen to say it was on.
+function markTools() {
+  const acc = currentAccidentalLabel();
+  markPaletteTool((label) => label === currentToolLabel() || label === acc);
+}
+
+// useAccidental takes the held accidental off, the note it was for having
+// been written.
+//
+// An accidental belongs to a note and not to the pen. Held on past the note
+// it was clicked for, it is a mode somebody has to know to turn off, and the
+// only way to find out it was still on was to read back what you had just
+// written.
+function useAccidental() {
+  if (state.tool.accidental === "none") return;
+  state.tool.accidental = "none";
+  markTools();
 }
 
 // setStaffProperty changes something about the staff itself, rather than
@@ -2686,6 +2725,9 @@ async function insertAtSelection(rest, keepSelection) {
     status("Could not insert: " + (await res.text()).trim());
     return;
   }
+  // The note is written, so the accidental that was held has been used up.
+  // Not after a rest, which never carried it.
+  if (!rest) useAccidental();
   // A bar that is already full sends what is written next into the bar after
   // it, making one if there is none, so the answer says where the note ended
   // up rather than where it was aimed. The cursor follows it there, which is
@@ -2756,6 +2798,8 @@ async function addPitch(hit, el, step) {
     status((await res.text()).trim());
     return;
   }
+  // The notehead carries it now, so the pen does not.
+  useAccidental();
   state.multi = [];
   state.selection = {
     part: hit.part, measure: hit.measure, at: el.index + 1, step: step, ref: null,
@@ -7608,7 +7652,7 @@ async function main() {
   // The palette and the menus are built first: they need nothing from the
   // core and showing them at once makes the window look alive.
   buildPalette(paletteAction);
-  markPaletteTool((label) => label === currentToolLabel());
+  markTools();
   setupMenus();
   setupFileInput();
   setupKeys();

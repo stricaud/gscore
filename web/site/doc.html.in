@@ -14,7 +14,7 @@
 <body>
 
 <header class="top">
-  <a class="brand" href="@ROOT@"><img src="@ROOT@gilbert.svg" alt="" width="28" height="28"> gscore</a>
+  <a class="brand" href="@ROOT@"><img src="@ROOT@gscore.svg" alt="" width="42" height="47"> Gscore</a>
   <nav>
     <a href="@ROOT@scores/">Scores</a>
     <a href="@ROOT@docs/">Docs</a>

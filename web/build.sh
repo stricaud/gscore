@@ -123,6 +123,9 @@ done
 
 cp "$site/site.css" "$site/hero.js" "$site/share.js" "$out/"
 cp "$root/internal/brand/gilbert.png" "$root/internal/brand/gilbert.svg" "$out/"
+# The application icon, which is what the page wears as its own mark.
+# Gilbert on his own is the mascot, and the loading animation uses him.
+cp "$root/assets/gscore.svg" "$out/gscore.svg"
 cp "$root/internal/app/ui/icon.png" "$out/icon.png"
 
 # The embedding example, with its iframes pointed at where the editor now

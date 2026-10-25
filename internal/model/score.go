@@ -5,10 +5,8 @@
  * (C) Copyright 2001-2005 Sebastien Tricaud
  * (C) Copyright 2026 Sebastien Tricaud
  *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
+ * Permission is hereby granted, free of charge, under the terms of the MIT
+ * licence; see the LICENSE file at the root of this repository.
  */
 
 // Package model holds the musical content of a score and nothing else.
@@ -28,7 +26,7 @@ import (
 // Clef fixes which pitch each staff line carries.
 type Clef int
 
-// The clefs legacy/src/staff.c supported.
+// The clefs 0.0.9's staff code supported.
 const (
 	Treble Clef = iota
 	Bass

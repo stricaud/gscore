@@ -5,10 +5,8 @@
  * (C) Copyright 2001-2005 Sebastien Tricaud
  * (C) Copyright 2026 Sebastien Tricaud
  *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
+ * Permission is hereby granted, free of charge, under the terms of the MIT
+ * licence; see the LICENSE file at the root of this repository.
  */
 
 package model
@@ -71,7 +69,7 @@ func (a Accidental) Semitones() int {
 // Articulation is a mark attached to a single note or chord.
 type Articulation int
 
-// The articulations carried over from legacy/src/articulation.c, plus the bow
+// The articulations carried over from 0.0.9's articulation code, plus the bow
 // marks the ABC samples use.
 const (
 	Staccato Articulation = iota

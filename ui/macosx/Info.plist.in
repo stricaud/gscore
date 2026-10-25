@@ -12,7 +12,7 @@
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>NSHighResolutionCapable</key><true/>
   <key>LSMinimumSystemVersion</key><string>@MIN@</string>
-  <key>NSHumanReadableCopyright</key><string>GPL v2 or later</string>
+  <key>NSHumanReadableCopyright</key><string>© 2001-2026 Sébastien Tricaud. MIT licence.</string>
 
   <!-- The scores gscore owns. A .gscore is its own format and a .abc is the
        one it was written for; the Finder shows both with gscore's icon and

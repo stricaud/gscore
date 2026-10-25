@@ -5,9 +5,10 @@ neume, a percussion pictogram, a microtonal accidental, a fingering glyph for
 an instrument nobody standardised. A program that can only draw what its music
 font knows cannot set those pieces at all.
 
-gscore could always draw them, in its own way: all 287 of its symbols in
-`legacy/pixmaps` are XPM files — pixel grids written as C source, editable by
-hand in any text editor. That capability is kept, and generalised.
+gscore could always draw them, in its own way. The C program of 2001–2005 had
+no music font at all: every one of its 287 symbols was an XPM file — a pixel
+grid written as C source and editable by hand in any text editor — drawn one
+at a time. That capability is kept, and generalised.
 
 ## Three sources, one abstraction
 
@@ -28,17 +29,16 @@ later become an outline without the score changing.
 
 A grid of pixels cannot be placed on a staff on its own: it has no musical size
 and no idea which of its pixels should land on the note's position. XPM records
-neither, which is exactly why the C engine had to hardcode both — in
-`legacy/src/realize_area.c`, every pixmap is drawn at an offset worked out by
-hand. Both are explicit here:
+neither, which is exactly why the C engine had to hardcode both — every pixmap
+was drawn at an offset worked out by hand, in the drawing code. Both are
+explicit here:
 
 - **`PixelSize`** — how much of a staff space one pixel covers. The default,
-  `1/8`, is not arbitrary: `legacy/src/score.c:207` creates every staff with
-  `create_staff(score, 5, 8, ...)`, eight pixels between staff lines, so all
-  287 original pixmaps were drawn to that scale. `noteheads-2.xpm` is 9×8
-  pixels, which at this scale is exactly one staff space tall — as a notehead
-  must be. `clefs-G.xpm` is 18×53, which comes out at 6.6 staff spaces, right
-  for a treble clef.
+  `1/8`, is not arbitrary: 0.0.9 ruled every staff with eight pixels between
+  the lines, so all 287 of its pixmaps were drawn to that scale. It shows in
+  the files themselves — `noteheads-2.xpm` is 9×8 pixels, which at this scale
+  is exactly one staff space tall, as a notehead must be, and `clefs-G.xpm` is
+  18×53, which comes out at 6.6 staff spaces, right for a treble clef.
 - **`OriginX`, `OriginY`** — the registration point inside the grid, the pixel
   placed at the symbol's staff position. The default is the left edge,
   vertically centred, which is what a notehead or any staff-positioned symbol
@@ -47,17 +47,21 @@ hand. Both are explicit here:
 Because of this, a hand-drawn symbol zooms and transposes with everything else.
 It does not gain resolution, but it is never the wrong size.
 
-## Importing the existing 287
+## Reading XPM
 
-`symbol.DecodeXPM` reads XPM directly, and the whole 0.0.9 symbol set decodes:
-one and two characters per pixel, up to 4,501 colours, `None` transparency,
-`#RGB`/`#RRGGBB`/`#RRRRGGGGBBBB` hex, named colours and X11's `gray0`–`gray100`
-percentage greys. That last form turned up in seventeen toolbar pixmaps and was
-found by running the decoder over the real tree, which the test suite still
-does on every run.
+`symbol.DecodeXPM` reads the format directly, and reads all of it: one and two
+characters per pixel, up to 4,501 colours, `None` transparency,
+`#RGB`/`#RRGGBB`/`#RRRRGGGGBBBB` hex, named colours, and X11's `gray0`–`gray100`
+percentage greys.
 
-So every symbol drawn between 2001 and 2005 is usable immediately, and XPM
-stays a supported authoring format: a symbol can still be written by typing.
+That last form is in there because the decoder was once run over the whole
+0.0.9 symbol set and seventeen toolbar pixmaps turned out to use it — the kind
+of thing no specification tells you and only real files do. A handful of those
+files are kept as fixtures in `internal/symbol/testdata`, chosen for being the
+awkward ones, and the tests decode them on every run.
+
+So any symbol drawn for the old program is still usable, and XPM stays a
+supported authoring format: a symbol can be written by typing.
 
 ## Attaching a symbol to music
 

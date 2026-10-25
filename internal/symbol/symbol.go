@@ -4,10 +4,8 @@
  *
  * (C) Copyright 2026 Sebastien Tricaud
  *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
+ * Permission is hereby granted, free of charge, under the terms of the MIT
+ * licence; see the LICENSE file at the root of this repository.
  */
 
 // Package symbol holds the drawable marks a score can use, from whichever of
@@ -19,7 +17,7 @@
 // early-music neume, a percussion pictogram, something invented for one piece
 // — and a program that can only draw what its font knows cannot set them at
 // all. gscore could always do this, in its own way: all 287 of its symbols in
-// legacy/pixmaps are XPM files, which are pixel grids in C source form that
+// 0.0.9's pixmaps are XPM files, which are pixel grids in C source form that
 // can be edited by hand in any text editor. That capability is kept.
 package symbol
 
@@ -104,9 +102,9 @@ type Symbol struct {
 //
 // A grid alone cannot be placed on a staff: it has no size and no idea which
 // of its pixels should land on the note's position. XPM records neither, which
-// is why the C engine hardcoded both — see legacy/src/realize_area.c, where
-// each pixmap is drawn at an offset worked out by hand. Both are stored
-// explicitly here instead.
+// is why the C engine hardcoded both: each pixmap was drawn at an offset
+// worked out by hand, in the drawing code. Both are stored explicitly here
+// instead.
 type Bitmap struct {
 	W, H int
 
@@ -128,7 +126,7 @@ type Bitmap struct {
 //
 // It comes from the C program, which created every staff with eight pixels
 // between its lines — score.c:207 calls create_staff(score, 5, 8, ...) — so
-// all 287 pixmaps in legacy/pixmaps were drawn to that scale. Importing them
+// all 287 pixmaps in 0.0.9's pixmaps were drawn to that scale. Importing them
 // at this size reproduces their intended proportions exactly.
 const DefaultPixelSize = 1.0 / 8.0
 

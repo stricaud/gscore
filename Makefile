@@ -36,7 +36,7 @@
 # a Linux machine with libwebkit2gtk-4.0-dev present it gets the window too,
 # and `make debian` says as much while it runs.
 #
-# (C) Copyright 2026 Sebastien Tricaud. GPL v2 or later.
+# (C) Copyright 2026 Sebastien Tricaud. MIT licence; see LICENSE.
 
 BINARY  := gscore
 VERSION := $(shell sed -n 's/.*Version = "\(.*\)".*/\1/p' internal/version/version.go)
@@ -264,7 +264,7 @@ windows: soundfonts
 	@for name in $(BUNDLE_FONTS); do \
 		cp "$$(make --no-print-directory print-$${name}_SF2)" $(WIN_DIR)/soundfonts/; \
 	done
-	@cp COPYING $(WIN_DIR)/LICENSE.txt
+	@cp LICENSE $(WIN_DIR)/LICENSE.txt
 	@cd $(BUILD) && zip -qr $(BINARY)-$(VERSION)-windows.zip windows
 	@echo "built $(BUILD)/$(BINARY)-$(VERSION)-windows.zip ($$(du -h $(BUILD)/$(BINARY)-$(VERSION)-windows.zip | cut -f1))"
 
@@ -290,7 +290,7 @@ debian:
 	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
 		go build -trimpath -ldflags "$(LDFLAGS)" -o $(DEB_ROOT)/usr/bin/$(BINARY) .
 	@cp assets/icon/gscore.png $(DEB_ROOT)/usr/share/icons/hicolor/192x192/apps/$(BINARY).png
-	@cp COPYING $(DEB_ROOT)/usr/share/doc/$(BINARY)/copyright
+	@cp LICENSE $(DEB_ROOT)/usr/share/doc/$(BINARY)/copyright
 	@# From real files, for the same reason the Info.plist is: GNU make
 	@# 3.81 runs each recipe line in its own shell, and a variable holding
 	@# a multi-line document is split across them — the first line ends

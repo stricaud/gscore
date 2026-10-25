@@ -16,7 +16,7 @@ func stringReader(s string) io.Reader { return strings.NewReader(s) }
 
 func formatImporterFor(name string) (format.Importer, error) { return format.ImporterFor(name) }
 
-// The fixtures are gscore's own sample files, copied from legacy/samples/abc.
+// The fixtures are gscore's own sample files, copied from 0.0.9's sample scores.
 // boite-musique.abc was written out by gscore 0.0.8 itself, so parsing it is a
 // direct test that the rewrite can still read what the C program produced.
 

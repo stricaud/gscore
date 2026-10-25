@@ -5,10 +5,8 @@
  * (C) Copyright 2001-2005 Sebastien Tricaud
  * (C) Copyright 2026 Sebastien Tricaud
  *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
+ * Permission is hereby granted, free of charge, under the terms of the MIT
+ * licence; see the LICENSE file at the root of this repository.
  */
 
 package app
@@ -25,7 +23,7 @@ import (
 
 // Key signatures are chosen by looking at them.
 //
-// gscore 0.0.9 did this already: legacy/pixmaps holds treble_A_flat.xpm,
+// gscore 0.0.9 did this already: 0.0.9's pixmaps holds treble_A_flat.xpm,
 // treble_G_sharp.xpm and the rest — a hand-drawn staff per key, so the user
 // picked the signature they could see rather than a name they had to decode.
 // It was the right idea, taken from how Sibelius does it.

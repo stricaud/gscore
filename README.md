@@ -8,8 +8,11 @@ gscore was written in C and GTK+ between 2001 and 2005, and released up to
 unbroken strip of music designed for editing rather than printing. Mandrake and
 Mandriva packaged it from December 2004, and OpenMandriva still ships it today.
 
-This tree is the 2026 rewrite. The original is preserved intact in
-[`legacy/`](legacy/) and remains the specification.
+This tree is the 2026 rewrite. The 2001–2005 C source is not in it: it was
+somebody else's work in part — two other people contributed to it, and one
+header came from the `abc2midi` package under the GPL — so it could not come
+along to an MIT-licensed tree. It remains in this repository's history, and
+the decisions it made are written down in [`docs/engraving.md`](docs/engraving.md).
 
 Version 0.1.0. The series restarts because nothing but the music is carried
 over.
@@ -32,7 +35,7 @@ exists, so that both halves stay testable.
 ```
 go build ./...
 go test ./...
-go run ./cmd/gscore -v legacy/samples/abc/boite-musique.abc
+go run . samples/exercise.abc
 ```
 
 ## What changed, and why
@@ -110,14 +113,17 @@ internal/version/
 assets/icon/         Gilbert, the application icon
 docs/                design decisions
 samples/             an embeddable page, and a score to put in it
-legacy/              gscore 0.0.9, unmodified
+assets/history/      a screenshot of gscore 0.0.9, from 2005
 testdata/reference/  output the C engine produced in 2004
 ```
 
 ## Licence
 
-GPL v2 or later, as the original. See [LICENSE](LICENSE).
+MIT. See [LICENSE](LICENSE).
 
-The sample scores and all 287 symbols in `legacy/` are part of the original
-release. Gilbert, the mascot in `legacy/pixmaps/gilbert.png` and the icon in
-`assets/icon/`, predates all of this.
+The music font is Bravura, under the SIL Open Font License, and keeps that
+licence wherever it travels; the LICENSE file says so and names everything
+else in here that is somebody else's work.
+
+Gilbert — the mascot in `internal/brand/` and the icon in `assets/icon/` —
+was the splash screen in 2005 and predates all of this.

@@ -4,15 +4,13 @@
  *
  * (C) Copyright 2026 Sebastien Tricaud
  *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
+ * Permission is hereby granted, free of charge, under the terms of the MIT
+ * licence; see the LICENSE file at the root of this repository.
  */
 
 // Package format is the registry of score import and export formats.
 //
-// It replaces the dlopen plugin loader in legacy/src/plugin.c, which opened
+// It replaces the dlopen plugin loader in 0.0.9's plugin loader, which opened
 // shared objects with g_module_open and looked up a gscore_plugin_init symbol.
 // Go's plugin package cannot do that portably — it does not work on Windows at
 // all, and demands a byte-identical toolchain where it does — so formats are

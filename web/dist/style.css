@@ -9,7 +9,11 @@
 
 @font-face {
   font-family: "Bravura";
-  src: url("/font.otf") format("opentype");
+  /* Relative, not "/font.otf". Published under a path like /gscore/, an
+     absolute URL points at the domain root and the font never loads, which
+     turns every glyph in the palette and the score into a missing-character
+     box. Relative resolves against this stylesheet either way. */
+  src: url("font.otf") format("opentype");
   font-display: block;
 }
 
@@ -21,6 +25,8 @@
   --muted: #6d6862;
   --line: #a9a49b;
   --accent: #2f6f9f;
+  /* The writing cursor, from key_cursor.c: 20000 of 65535 in all three. */
+  --cursor: #4e4e4e;
   --accent-soft: #cfe2f0;
   --paper: #ffffff;
 }
@@ -135,7 +141,12 @@ body {
   padding: 4px;
   z-index: 50;
 }
-.menu.open .menu-items { display: block; }
+/* The menu's OWN panel, not every panel inside it.
+   As a descendant selector this matched each submenu's panel too, and at a
+   higher specificity than the rule that hides them — so opening a menu forced
+   all five of its submenus open at once, stacked on top of each other, and no
+   amount of scripting could close them. */
+.menu.open > .menu-items { display: block; }
 
 .menu-items button {
   display: flex;
@@ -154,6 +165,43 @@ body {
 }
 .menu-items button:hover { background: var(--accent); color: #fff; }
 .menu-items hr { border: 0; border-top: 1px solid var(--line); margin: 4px 2px; }
+
+/* Submenus. A menu with fifty entries in a column is a list to be read, not a
+   menu to be used; grouping the long tails behind a name gives back a menu
+   that fits on the screen and says what is in it. */
+.submenu { position: relative; }
+.submenu > .menu-items {
+  display: none;
+  top: -5px;
+  left: 100%;
+  margin-left: 2px;
+  min-width: 190px;
+}
+/* Which submenu is open is decided in script and nowhere else.
+   Opening on :hover as well left a panel behind for every submenu the
+   pointer crossed on its way down the menu — five of them stacked on top of
+   one another. Two rules deciding the same thing is one rule too many. */
+.submenu.open > .menu-items { display: block; }
+.submenu-title {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 24px;
+  width: 100%;
+  background: none;
+  border: 0;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  padding: 6px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.submenu.open > .submenu-title { background: var(--accent); color: #fff; }
+.submenu.open > .submenu-title kbd { color: #fff; background: rgba(255,255,255,.2); }
+.submenu > .submenu-title:hover { background: var(--accent); color: #fff; }
+/* A submenu that would run off the right edge opens to the left instead. */
+.submenu.flip > .menu-items { left: auto; right: 100%; margin: 0 2px 0 0; }
 
 kbd {
   font: 11px ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -193,13 +241,17 @@ kbd {
 
 #main {
   display: grid;
-  grid-template-columns: 164px 1fr 210px;
+  grid-template-columns: 164px 1fr 232px;
   min-height: 0;
 }
 
 #toolbox, #inspector {
   background: var(--panel);
   overflow-y: auto;
+  /* Nothing is allowed to reach past the panel's edge: a value too long for
+     the column wraps inside it instead of being cut off by the window. */
+  overflow-x: hidden;
+  min-width: 0;
   padding: 10px 8px;
 }
 #toolbox { border-right: 1px solid var(--line); }
@@ -273,14 +325,37 @@ kbd {
 
 /* ---- inspector ---- */
 
-#score-info div, #part-info div {
+/* The rows of the panel: a label on the left, its value on the right.
+   Scoped to the rows themselves, because a staff's card is also a div inside
+   #part-info — it was picking this up and laying its rows out sideways, which
+   is what pushed every value off the right edge of the panel. */
+#score-info > div, #part-info .part-card > div {
   display: flex;
   justify-content: space-between;
+  align-items: baseline;
   gap: 10px;
   padding: 3px 0;
   border-bottom: 1px dotted var(--line);
 }
 #score-info b, #part-info b { font-weight: 600; }
+#part-info .part-card { display: block; }
+/* The label stays put and the value takes what is left, aligned right and
+   wrapping within itself. "1♭ major" used to break after the sign and leave
+   "major" alone on the next line, looking like a word that had come adrift. */
+#score-info > div > span:first-child,
+#part-info .part-card > div > span:first-child {
+  flex: 0 0 auto;
+  color: var(--muted);
+}
+#score-info > div > b, #score-info > div > button,
+#part-info .part-card > div > b, #part-info .part-card > div > button {
+  flex: 1 1 auto;
+  min-width: 0;
+  text-align: right;
+  /* A long value wraps inside its own column rather than widening the row
+     and pushing itself out of the panel. */
+  overflow-wrap: anywhere;
+}
 .part-card {
   background: var(--panel-dark);
   border-radius: 5px;
@@ -347,18 +422,16 @@ dialog button {
 }
 .linklike:hover { text-decoration: underline; }
 
-#keysig { max-width: 560px; }
+#keysig { max-width: 620px; }
+#timesig { max-width: 460px; }
 
-#keysig-grid {
+#timesig-grid {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(4, 1fr);
   gap: 6px;
   margin: 12px 0;
-  max-height: 60vh;
-  overflow-y: auto;
 }
-
-.keysig-option {
+.timesig-option {
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -372,13 +445,14 @@ dialog button {
   font: inherit;
   font-size: 11px;
 }
-.keysig-option:hover { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
-.keysig-option[aria-current="true"] {
+.timesig-option:hover { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
+.timesig-option[aria-current="true"] {
   border-color: var(--accent);
   box-shadow: 0 0 0 2px var(--accent);
 }
-.keysig-option img { display: block; height: 42px; width: auto; }
-.keysig-option span { color: var(--muted); }
+.timesig-art { display: block; line-height: 0; }
+.timesig-art svg { display: block; height: 52px; width: auto; max-width: 100%; }
+.timesig-option span { color: var(--muted); }
 
 #canvas text.playing { fill: var(--accent); }
 #canvas rect.cursor {
@@ -416,11 +490,52 @@ body.native #menubar { padding-left: 12px; }
   stroke-width: 1.25;
   pointer-events: none;
 }
-#canvas svg { cursor: crosshair; }
+
+/* Where a jump landed.
+ *
+ * Going to measure 184 of a long score moves the page a long way, and a page
+ * that simply appears somewhere else leaves you looking for the bar you
+ * asked for. The scroll is animated so the eye can follow it, and the bar is
+ * lit as it arrives so the eye knows where it stopped. It fades by itself —
+ * a mark that stays is a mark to be cleared later, and this is not a
+ * selection.
+ */
+#canvas rect.goto-flash {
+  fill: var(--accent);
+  stroke: var(--accent);
+  stroke-width: 1.5;
+  pointer-events: none;
+  animation: goto-land 1.15s ease-out forwards;
+}
+
+@keyframes goto-land {
+  0%   { fill-opacity: 0;   stroke-opacity: 0;   }
+  18%  { fill-opacity: .30; stroke-opacity: .95; }
+  55%  { fill-opacity: .18; stroke-opacity: .75; }
+  100% { fill-opacity: 0;   stroke-opacity: 0;   }
+}
+
+/* Somebody who would rather the page did not move on its own gets the same
+ * thing without the movement: it still goes there and still says where. */
+@media (prefers-reduced-motion: reduce) {
+  #canvas rect.goto-flash { animation-duration: .6s; }
+}
 
 /* Ctrl or Command with a drag pans the score. */
 #canvas-wrap.panning { cursor: grabbing; }
 #canvas-wrap.panning svg { cursor: grabbing; }
+
+/* Writing a chord: the picture is the point, so it gets the room. */
+#chord-preview {
+  display: flex; align-items: center; justify-content: center;
+  min-height: 120px; margin: 10px 0;
+  padding: 8px; border: 1px solid var(--line); border-radius: 4px;
+  background: #fff;
+}
+#chord-image { max-height: 160px; max-width: 100%; }
+#chord-opts { display: flex; gap: 18px; margin: 4px 0 10px; }
+#chord-opts label { display: flex; align-items: center; gap: 6px; }
+#chord-form .small { margin: 4px 0 10px; }
 
 /* Gilbert, from the 2005 splash screen. */
 #about { text-align: center; }
@@ -505,19 +620,49 @@ body.native #menubar { padding-left: 12px; }
   image-rendering: pixelated;
 }
 
-/* The selected element, and the mode that decides what a click does. */
 #canvas .selected { fill: var(--accent); }
-#canvas svg { cursor: default; }
-body.note-input #canvas svg { cursor: crosshair; }
-/* Shift means "select", whatever tool is held. */
-body.shift-select #canvas svg { cursor: default; }
-/* A notehead is always clickable to select, whichever mode is on. */
-#canvas text.g[data-ref] { cursor: pointer; }
-
-/* The cursor tool, from the original toolbar. */
 .tool img { width: 18px; height: 18px; image-rendering: pixelated; }
-body.tool-select #canvas svg { cursor: default; }
-body:not(.tool-select) #canvas svg { cursor: crosshair; }
+
+/* What the pointer says a click will do.
+ *
+ * Two shapes and two meanings. Writing is the crosshair, because you are
+ * placing something at a point. Selecting is the hand, because you are
+ * picking something up. Nothing else over the score shows a hand.
+ *
+ * Everything that decides this is here. Three generations of these rules had
+ * accumulated — one for a mode that no longer exists, one that set the hand
+ * on every notehead at a specificity that beat the rest — and between them
+ * the score showed a hand while you were writing in it.
+ */
+#canvas .tune,
+#canvas svg,
+#canvas text.g[data-ref],
+#canvas image[data-symbol] { cursor: crosshair; }
+
+body.over-strip #canvas svg,
+body.over-strip #canvas .tune,
+body.over-strip #canvas text.g[data-ref] { cursor: pointer; }
+
+body.shift-select #canvas .tune,
+body.shift-select #canvas svg,
+body.shift-select #canvas text.g[data-ref],
+body.shift-select #canvas image[data-symbol] { cursor: grab; }
+
+body.player #canvas .tune,
+body.player #canvas svg,
+body.player #canvas text.g[data-ref] { cursor: default; }
+/* The band over a bar: how a whole bar is picked up. Drawn only under the
+   pointer, because a permanent stripe over every bar would be louder than
+   the music it is over. */
+#canvas rect.strip {
+  fill: var(--accent);
+  fill-opacity: .16;
+  stroke: var(--accent);
+  stroke-opacity: .5;
+  stroke-width: 1;
+  pointer-events: none;
+}
+
 #canvas rect.marquee {
   fill: var(--accent);
   fill-opacity: .14;
@@ -544,7 +689,9 @@ body:not(.tool-select) #canvas svg { cursor: crosshair; }
 
 #canvas .tune {
   border-bottom: 1px solid var(--line);
-  cursor: pointer;
+  /* The pointer shape is decided in one place; see "What the pointer says".
+     A hand here put one over the margins around every score in a book,
+     while you were writing in it. */
 }
 #canvas .tune:last-child { border-bottom: 0; }
 #canvas .tune.current { background: var(--accent-soft); }
@@ -668,7 +815,7 @@ body:not(.tool-select) #canvas svg { cursor: crosshair; }
   color: var(--muted);
   margin-bottom: 4px;
 }
-#ask input[type="text"], #ask select {
+#ask input[type="text"], #ask input[type="search"], #ask select {
   width: 100%;
   font: inherit;
   padding: 6px 8px;
@@ -677,7 +824,10 @@ body:not(.tool-select) #canvas svg { cursor: crosshair; }
   background: var(--paper);
   color: #111;
 }
-#ask input[type="text"]:focus, #ask select:focus {
+#ask input[type="search"] {
+  margin-bottom: 6px;
+}
+#ask input[type="text"]:focus, #ask input[type="search"]:focus, #ask select:focus {
   outline: 2px solid var(--accent);
   outline-offset: -1px;
 }
@@ -700,4 +850,445 @@ body:not(.tool-select) #canvas svg { cursor: crosshair; }
   background: var(--accent);
   border-color: var(--accent);
   color: #fff;
+}
+
+/* Full screen: the score gets the room the chrome was using. */
+body.fullscreen #menubar { height: 30px; }
+body.fullscreen #statusbar { height: 20px; }
+body.fullscreen #canvas-wrap { padding: 10px; }
+
+/* The print dialog's choices. One line each, the explanation under the name,
+   because the difference between them is the explanation. */
+#print { max-width: 440px; }
+.choices { display: flex; flex-direction: column; gap: 2px; margin: 14px 0 4px; }
+.choices label {
+  display: flex;
+  gap: 9px;
+  align-items: flex-start;
+  padding: 8px 9px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.choices label:hover { background: var(--accent-soft); }
+.choices input { margin-top: 2px; }
+.choices span { display: flex; flex-direction: column; gap: 1px; }
+.choices b { font-weight: 600; }
+.choices em { font-style: normal; font-size: 11px; color: var(--muted); }
+
+/* Recording the score. Wider than the other dialogs because the instrument
+   review is a table, and a table of staves against what will play them is
+   the one thing in here that cannot be made narrower. */
+#record { max-width: 560px; }
+#record h3 { margin: 18px 0 2px; font-size: 13px; }
+.record-row { display: flex; align-items: center; gap: 10px; margin: 10px 0; }
+.record-row label { min-width: 104px; }
+.record-row select, .record-row input[type="number"] {
+  font: inherit;
+  padding: 4px 6px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: var(--panel-dark);
+  color: inherit;
+}
+.record-row select { flex: 1; min-width: 0; }
+.record-row input[type="number"] { width: 70px; }
+.record-actions { display: flex; gap: 8px; }
+.record-actions button { margin-top: 0; }
+#record-voices { width: 100%; border-collapse: collapse; font-size: 12px; }
+#record-voices td { padding: 5px 6px; border-top: 1px solid var(--line); vertical-align: middle; }
+#record-voices td:first-child { white-space: nowrap; }
+#record-voices select { font: inherit; font-size: 11px; max-width: 170px; }
+#record-voices .missing { color: var(--danger, #c0392b); }
+#record-voices .substitute { color: var(--muted); font-style: italic; }
+.record-check { display: flex; gap: 9px; align-items: flex-start; padding: 6px 0; cursor: pointer; }
+.record-check span { display: flex; flex-direction: column; gap: 1px; }
+.record-check em { font-style: normal; font-size: 11px; color: var(--muted); }
+#record details summary { cursor: pointer; margin-top: 16px; }
+
+/* The steps for fetching a soundfont by hand, which is the page's answer
+   when it is not allowed to fetch one itself. */
+#get-font { max-width: 460px; }
+.get-font-steps { margin: 12px 0 0; padding-left: 20px; line-height: 1.6; font-size: 12px; }
+.get-font-steps li { margin-bottom: 8px; }
+#get-font-link { word-break: break-all; font-size: 11px; }
+
+/* A hand-drawn symbol can be picked up and moved. It shows the hand only
+   while shift is held, with everything else that is picked up rather than
+   placed — a hand over the score while writing says the wrong thing. */
+#canvas image[data-symbol].dragging { cursor: grabbing; opacity: .75; }
+
+/* The lyric editor: one box for the whole verse, the way a singer's copy has
+   it, rather than a click and a field for every syllable. */
+#lyrics { max-width: 560px; }
+.lyrics-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 12px 0 8px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.lyrics-row select, .lyrics-row input {
+  font: inherit;
+  padding: 4px 6px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: var(--paper);
+  color: #111;
+}
+#lyrics textarea {
+  width: 100%;
+  font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: var(--paper);
+  color: #111;
+  resize: vertical;
+}
+#lyrics textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+#lyrics-count { margin-top: 6px; }
+
+/* ---- player mode ---- */
+
+/*
+ * gscore with everything taken away but the music and a play button.
+ *
+ * This is what a page about a piece of music wants: a score you can see and
+ * hear, and nothing to click that would change it. Everything that edits is
+ * hidden rather than merely disabled, because a disabled menu bar is still a
+ * menu bar and still says "this is a program" to somebody who came to listen.
+ */
+body.player #menubar .menu,
+body.player #palette,
+body.player #inspector,
+body.player #statusbar,
+body.player #empty-hint,
+body.player #zoombar { display: none; }
+
+body.player { grid-template-rows: auto 1fr; }
+body.player #menubar {
+  background: transparent;
+  border-bottom: 0;
+  height: 30px;
+  padding: 0 6px;
+}
+body.player .brand { display: none; }
+body.player #canvas-wrap { padding: 6px; }
+body.player #canvas { box-shadow: none; }
+body.player .transport { margin: 0 0 0 auto; }
+
+/* Chrome off entirely: just the score, playing when it is clicked. */
+body.player.bare #menubar { display: none; }
+body.player.bare { grid-template-rows: 1fr; }
+
+/* ---- fingering charts ---- */
+
+/* A covered hole is filled and an open one is not, which is how every chart
+   ever printed shows it. The levers are drawn as rounded bars because that is
+   what they are, and because an eye picking out a shape reads the difference
+   faster than it reads a label. */
+#fingering { padding-top: 2px; }
+.fing-note {
+  font: 600 20px/1 Georgia, "Times New Roman", serif;
+  color: var(--ink);
+  margin-bottom: 8px;
+}
+.fing-none { color: var(--muted); font-size: 12px; line-height: 1.5; }
+.fing-chart { display: flex; flex-direction: column; gap: 6px; }
+.fing-row { display: flex; align-items: center; gap: 5px; }
+.fing-row.extra { margin-top: 2px; opacity: .85; }
+.fing-label {
+  width: 52px;
+  flex: 0 0 auto;
+  font-size: 10px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: .04em;
+}
+.fing-hole {
+  width: 14px; height: 14px;
+  border: 1.5px solid var(--muted);
+  border-radius: 50%;
+  background: transparent;
+}
+.fing-hole.on { background: var(--ink); border-color: var(--ink); }
+.fing-hole.lever { width: 9px; height: 15px; border-radius: 5px; }
+.fing-hole.small { width: 9px; height: 9px; }
+
+/* A hidden staff stays in the list, greyed, with the dot that shows it
+   hollow — it is out of the drawing, not out of the score, and the list is
+   where you put it back. */
+.part-card .name { display: flex; align-items: center; gap: 6px; }
+.part-card .eye {
+  flex: 0 0 auto;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  color: var(--muted);
+  cursor: pointer;
+  font: inherit;
+  font-size: 11px;
+  line-height: 1;
+  padding: 1px 4px;
+}
+.part-card .eye:hover { color: var(--accent); border-color: var(--accent); }
+.part-card .name { min-width: 0; }
+.part-card .name > span { overflow-wrap: anywhere; }
+
+/* A hidden staff is dimmed but not disabled-looking, and says in words that
+   it is hidden and what to do about it — a greyed card with a small symbol on
+   it left no way of telling how to get the staff back. */
+.part-card.hidden-staff { opacity: .72; border: 1px dashed var(--line); }
+.part-card.hidden-staff .name { font-style: italic; }
+.part-card .show-again {
+  display: block;
+  width: 100%;
+  margin-top: 6px;
+  padding: 3px 6px;
+  font: inherit;
+  font-size: 11px;
+  background: var(--panel);
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  color: var(--accent);
+  cursor: pointer;
+}
+.part-card .show-again:hover { background: var(--accent); color: #fff; }
+
+/* ---------- drum pads ---------- */
+
+/* A grid of pads under the score, the way a drum machine lays out its kit.
+   A drum part is written by instrument and not by staff position — a drummer
+   picks the snare, then says where in the bar — so the pads are the primary
+   way in, and the staff position follows from the pad. */
+#drumpad {
+  border-top: 1px solid var(--line);
+  background: var(--panel);
+  padding: 6px 10px 8px;
+  max-height: 34vh;
+  overflow-y: auto;
+}
+
+#drumpad-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 6px;
+}
+
+.drumpad-title {
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+/* The hint goes last and gives up its room first: on a narrow window the kit
+   picker and the pads matter and the sentence does not. */
+.drumpad-hint {
+  margin-left: auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#drumpad-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(118px, 1fr));
+  gap: 5px;
+}
+
+/* A pad carries four things: the notehead it writes, the instrument's name,
+   the letter that types it and the MIDI key it sounds. The key is there
+   because a drum part that has to line up with a sampler is lined up by
+   number, and looking it up elsewhere is how parts come out wrong. */
+.pad {
+  display: grid;
+  grid-template-columns: 22px 1fr auto;
+  grid-template-rows: auto auto;
+  align-items: center;
+  gap: 0 6px;
+  padding: 5px 7px;
+  text-align: left;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: var(--bg);
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+}
+
+.pad:hover { border-color: var(--accent); }
+
+.pad.on {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--paper);
+}
+
+.pad-head {
+  grid-row: 1 / 3;
+  font-family: Bravura, serif;
+  font-size: 21px;
+  line-height: 1;
+  text-align: center;
+}
+
+.pad-name {
+  font-size: 11.5px;
+  line-height: 1.15;
+}
+
+.pad-key {
+  grid-row: 1 / 3;
+  justify-self: end;
+  display: grid;
+  justify-items: center;
+  gap: 1px;
+}
+
+.pad-key kbd {
+  font-size: 10px;
+  padding: 1px 4px;
+  text-transform: uppercase;
+}
+
+.pad-midi {
+  font-size: 9px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.pad.on .pad-midi { color: inherit; opacity: 0.8; }
+
+/* ---------- Set Tempo ---------- */
+
+/* The note the number counts, as the notes themselves. A metronome mark
+   written as "J = 140" is a program that gave up, and a dialog that offers
+   the beat as the word "quarter" is the same mistake one step earlier: a
+   musician picks the note by looking at it. */
+#tempo-notes {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 10px 12px 12px;
+  margin: 0 0 14px;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 4px 14px;
+  align-items: center;
+}
+#tempo-notes legend { padding: 0 4px; font-size: 12px; color: var(--muted); }
+
+.tempo-grid {
+  display: grid;
+  grid-template-columns: repeat(4, auto);
+  gap: 2px 10px;
+  justify-content: start;
+}
+.tempo-grid label {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 6px;
+  border-radius: 5px;
+  cursor: pointer;
+}
+.tempo-grid label:hover { background: var(--panel-dark); }
+.tempo-grid .music {
+  font-family: Bravura, serif;
+  font-size: 24px;
+  /* SMuFL glyphs hang well below their baseline; a flat line-height keeps
+     them sitting on the row rather than pushing it apart. */
+  line-height: 1;
+  min-width: 18px;
+}
+
+.tempo-dotted {
+  grid-column: 1;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--muted);
+  padding-left: 6px;
+  cursor: pointer;
+}
+.tempo-dotted .music { font-family: Bravura, serif; font-size: 18px; }
+
+.tempo-bpm {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.tempo-bpm .eq { font-size: 18px; color: var(--muted); }
+.tempo-bpm input { width: 5.5em; }
+
+/* ---------- the writing cursor ---------- */
+
+/* Where the next note goes, and on which line.
+   A grey block, which is what gscore 0.0.9 drew: solid enough to find at a
+   glance, and not note-shaped, so it is never mistaken for music already
+   written. Its ledger lines are the ink of the staff, because that is what
+   they would be once the note is there. */
+.write-block  { fill: var(--cursor); }
+/* The same grey, not the page's ink: the score is drawn on light paper in
+   either theme, and --ink flips with the theme while the paper does not. */
+.write-ledger { fill: var(--cursor); }
+
+/* ---------- the key signature picker ---------- */
+
+#keysig-name {
+  text-align: center;
+  font-size: 15px;
+  margin: 2px 0 10px;
+}
+#keysig-art {
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  min-height: 92px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  padding: 6px 10px;
+}
+/* Sized here rather than by the SVG's own width attribute, so that every
+   signature shows at the same height whether it carries one accidental or
+   seven and three naturals. */
+#keysig-art svg { display: block; height: 78px; width: auto; max-width: 100%; }
+#keysig-slider { width: 100%; margin: 14px 0 2px; }
+#keysig-scale {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  color: var(--muted);
+  margin-bottom: 12px;
+}
+
+/* ---------- inside the Mac application ---------- */
+
+/* The menu bar is at the top of the screen there, not at the top of the
+   window, so the page's own menus are not drawn. The brand goes with them:
+   the application already has a name, in the menu bar and in the Dock.
+
+   What stays is the transport. Play, stop and the clock are not menu items
+   that happen to be drawn in a bar — they are the controls you reach for
+   while reading the music, and in the top right corner is where they have
+   always been. Hiding the bar they sit in took them away and left the menu
+   bar, which is three hundred millimetres away at the top of the screen,
+   as the only way to start the music. */
+.native-menu #menubar .menu,
+.native-menu #menubar .brand { display: none; }
+.native-menu #menubar {
+  height: 30px;
+  justify-content: flex-end;
+  padding-right: 10px;
+  /* Under the window's own title bar, which the application draws over the
+     content: without this the buttons sit behind the close and zoom. */
+  padding-top: 2px;
 }

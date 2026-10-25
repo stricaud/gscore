@@ -99,49 +99,6 @@ func TestEveryFixtureDecodes(t *testing.T) {
 	}
 }
 
-// TestLegacyPixmapsAllDecode runs the decoder over every symbol the C program
-// shipped. It is the real test of the format support: 287 files drawn by hand
-// between 2001 and 2005, including two-characters-per-pixel images with
-// thousands of colours.
-func TestLegacyPixmapsAllDecode(t *testing.T) {
-	dir := filepath.Join("..", "..", "legacy", "pixmaps")
-	paths, err := filepath.Glob(filepath.Join(dir, "*.xpm"))
-	if err != nil || len(paths) == 0 {
-		t.Skipf("legacy pixmaps not present at %s", dir)
-	}
-	if len(paths) < 200 {
-		t.Errorf("found only %d pixmaps, expected the full set", len(paths))
-	}
-
-	var empty []string
-	for _, p := range paths {
-		f, err := os.Open(p)
-		if err != nil {
-			t.Errorf("%s: %v", p, err)
-			continue
-		}
-		b, err := DecodeXPM(f)
-		f.Close()
-		if err != nil {
-			t.Errorf("%s: %v", filepath.Base(p), err)
-			continue
-		}
-		if b.W <= 0 || b.H <= 0 {
-			t.Errorf("%s: decoded to %dx%d", filepath.Base(p), b.W, b.H)
-		}
-		if b.Opaque() == 0 {
-			empty = append(empty, filepath.Base(p))
-		}
-	}
-	// A handful of spacer images are legitimately blank; a flood of them would
-	// mean the decoder is losing pixels.
-	if len(empty) > 5 {
-		t.Errorf("%d pixmaps decoded as fully transparent: %s",
-			len(empty), strings.Join(empty[:5], ", ")+", ...")
-	}
-	t.Logf("decoded %d pixmaps from the 0.0.9 tree", len(paths))
-}
-
 func TestColorForms(t *testing.T) {
 	cases := []struct {
 		spec string

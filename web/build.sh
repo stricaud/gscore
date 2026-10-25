@@ -6,7 +6,7 @@
 #
 #     sh web/build.sh [outdir]      # default: web/dist
 #
-# (C) Copyright 2026 Sebastien Tricaud. GPL v2 or later.
+# (C) Copyright 2026 Sebastien Tricaud. MIT licence; see LICENSE.
 
 set -eu
 

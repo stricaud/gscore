@@ -4,10 +4,8 @@
  *
  * (C) Copyright 2026 Sebastien Tricaud
  *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
+ * Permission is hereby granted, free of charge, under the terms of the MIT
+ * licence; see the LICENSE file at the root of this repository.
  */
 
 package app
@@ -225,7 +223,7 @@ func (a *App) handleInsertSymbol(w http.ResponseWriter, r *http.Request) {
 // handleSymbolImport reads an existing picture into the editor's grid.
 //
 // Starting from something is far easier than starting from nothing, and there
-// are 287 symbols in legacy/pixmaps to start from. XPM is read directly, since
+// are 287 symbols in 0.0.9's pixmaps to start from. XPM is read directly, since
 // that is what they are; PNG is accepted too, for anything drawn elsewhere.
 func (a *App) handleSymbolImport(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {

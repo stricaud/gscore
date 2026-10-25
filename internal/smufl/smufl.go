@@ -4,10 +4,8 @@
  *
  * (C) Copyright 2026 Sebastien Tricaud
  *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
+ * Permission is hereby granted, free of charge, under the terms of the MIT
+ * licence; see the LICENSE file at the root of this repository.
  */
 
 // Package smufl is the music font layer.
@@ -144,7 +142,7 @@ func Count() int { return len(glyphs) }
 // EngravingDefaults holds the line weights and distances a font recommends,
 // all in staff spaces.
 //
-// This is the same idea as the Spacings_t tree in legacy/src/include/spacings.h,
+// This is the same idea as the Spacings_t tree in the C engine's spacing header,
 // which gscore had in 2004 before the standard existed: named, tunable
 // engraving measurements rather than constants buried in drawing code. The
 // names here follow SMuFL so a font can supply them.

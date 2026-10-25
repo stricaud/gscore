@@ -11,7 +11,28 @@
  */
 
 (function () {
-  const HANDLED = [/^\/api\//, /^\/score\.svg/, /^\/keysig\.svg/, /^\/font\.otf/];
+  // Running as a page, the core is a WebAssembly module that takes a moment
+  // to start. app.js runs as soon as it is parsed and immediately asks the
+  // core for the score — so without something to wait on, that request goes
+  // out to the network, the host answers 404, and the interface comes up
+  // empty with no sign of why. This promise is what app.js waits on; the
+  // desktop build has no boot.js, finds no promise, and carries straight on.
+  let coreReady;
+  window.gscoreCoreReady = new Promise((resolve) => {
+    coreReady = resolve;
+  });
+
+  // Every path the interface asks the core for. Anything missing here goes
+  // to the network instead, where there is nothing to answer it.
+  const HANDLED = [
+    /^\/api\//,
+    /^\/score\.svg/,
+    /^\/keysig\.svg/,
+    /^\/timesig\.svg/,
+    /^\/symbol\.png/,
+    /^\/font\.otf/,
+    /^\/print/,
+  ];
 
   function isOurs(url) {
     return HANDLED.some((re) => re.test(url));
@@ -37,10 +58,11 @@
     }
 
     const res = window.gscoreFetch(method, path, body);
-    return new Response(res.body, {
-      status: res.status,
-      headers: { "Content-Type": res.contentType || "application/octet-stream" },
-    });
+    // Every header the core set, not only the type: one of them tells the
+    // player that the music has run out.
+    const headers = { "Content-Type": res.contentType || "application/octet-stream" };
+    if (res.headers) Object.assign(headers, res.headers);
+    return new Response(res.body, { status: res.status, headers });
   };
 
   // The desktop build opens files through the system dialog; a page cannot, so
@@ -49,6 +71,7 @@
     document.body.classList.add("wasm");
     const el = document.getElementById("status");
     if (el) el.textContent = "Ready";
+    coreReady();
   };
 
   async function start() {
@@ -74,6 +97,8 @@
       const el = document.getElementById("status");
       if (el) el.textContent = "Could not start gscore: " + err;
       console.error(err);
+      // Let the interface come up anyway and say so, rather than hang.
+      coreReady();
     });
   });
 })();

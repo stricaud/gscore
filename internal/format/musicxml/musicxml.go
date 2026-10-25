@@ -22,6 +22,7 @@ package musicxml
 
 import (
 	"encoding/xml"
+	"fmt"
 	"io"
 
 	"github.com/stricaud/gscore/internal/format"
@@ -117,8 +118,12 @@ type key struct {
 
 type time struct {
 	Symbol string `xml:"symbol,attr,omitempty"`
-	Beats  int    `xml:"beats"`
-	Type   int    `xml:"beat-type"`
+	// A string, not a number, because the specification says so and because
+	// files use it: a composite meter is written "3+2", three beats and two
+	// in a bar of five. Read as an int it ended the import of the whole
+	// file at the first one.
+	Beats string `xml:"beats"`
+	Type  int    `xml:"beat-type"`
 }
 
 type clef struct {
@@ -249,12 +254,20 @@ type sound struct {
 type empty struct{}
 
 type xmlNote struct {
-	Chord      *empty        `xml:"chord,omitempty"`
-	Rest       *restElem     `xml:"rest,omitempty"`
-	Pitch      *pitch        `xml:"pitch,omitempty"`
-	Duration   int           `xml:"duration"`
-	Tie        []tieElem     `xml:"tie,omitempty"`
-	Voice      int           `xml:"voice,omitempty"`
+	// A grace note: written small before the note it leans on, and taking
+	// no time out of the bar, which is why it has no <duration>.
+	Grace *graceElem `xml:"grace,omitempty"`
+	Chord *empty     `xml:"chord,omitempty"`
+	Rest  *restElem  `xml:"rest,omitempty"`
+	Pitch *pitch     `xml:"pitch,omitempty"`
+	// A drum, which has no pitch but still has a line to sit on: the
+	// display step and octave say where on the staff to draw it.
+	Unpitched *unpitched `xml:"unpitched,omitempty"`
+	Duration  int        `xml:"duration"`
+	Tie       []tieElem  `xml:"tie,omitempty"`
+	// Text, by the specification — a voice is named, not numbered, and a
+	// file in this suite names one of them "X".
+	Voice      string        `xml:"voice,omitempty"`
 	Type       string        `xml:"type,omitempty"`
 	Dots       []empty       `xml:"dot,omitempty"`
 	Accidental string        `xml:"accidental,omitempty"`
@@ -263,7 +276,18 @@ type xmlNote struct {
 	Notations  *notationsTag `xml:"notations,omitempty"`
 }
 
+type unpitched struct {
+	Step   string `xml:"display-step"`
+	Octave int    `xml:"display-octave"`
+}
+
 type restElem struct{}
+
+// graceElem is <grace>, whose slash attribute is the stroke through the stem
+// that tells a player to crush the note rather than dwell on it.
+type graceElem struct {
+	Slash string `xml:"slash,attr,omitempty"`
+}
 
 type tieElem struct {
 	Type string `xml:"type,attr"`
@@ -297,9 +321,13 @@ type articulations struct {
 }
 
 type pitch struct {
-	Step   string `xml:"step"`
-	Alter  *int   `xml:"alter,omitempty"`
-	Octave int    `xml:"octave"`
+	Step string `xml:"step"`
+	// Semitones, and a decimal one: the specification defines alter as a
+	// decimal so that microtones can be written, and -1.5 is a sesquiflat.
+	// gscore writes pitches in whole semitones, so a fraction is rounded
+	// and said so in the log rather than throwing the file out.
+	Alter  *float64 `xml:"alter,omitempty"`
+	Octave int      `xml:"octave"`
 }
 
 type barline struct {
@@ -420,3 +448,26 @@ var modeValues = func() map[string]model.Mode {
 	}
 	return m
 }()
+
+// PartialError says a file was read but not all of it came through.
+//
+// The same shape the other importers use: what was read is worth keeping, and
+// what was not is listed so the person who wrote the file can see exactly
+// which of it gscore did not understand. The interface shows it as a warning.
+type PartialError struct {
+	Skipped []string
+}
+
+func (e *PartialError) Error() string {
+	if len(e.Skipped) == 1 {
+		return "musicxml: " + e.Skipped[0]
+	}
+	return fmt.Sprintf("musicxml: %d things could not be read exactly, "+
+		"the first being: %s", len(e.Skipped), e.Skipped[0])
+}
+
+// Partial implements format.Partial: what was read is worth keeping.
+func (e *PartialError) Partial() {}
+
+// Details lists everything that did not come through.
+func (e *PartialError) Details() []string { return e.Skipped }

@@ -147,7 +147,7 @@ func buildDynamic(d model.Dynamic) direction {
 }
 
 func buildTime(t model.TimeSignature) *time {
-	out := &time{Beats: t.Beats, Type: t.BeatValue}
+	out := &time{Beats: strconv.Itoa(t.Beats), Type: t.BeatValue}
 	switch t.Symbol {
 	case model.TimeCommon:
 		out.Symbol = "common"
@@ -203,14 +203,14 @@ func buildElement(el model.Element, divisions int) []xmlNote {
 func buildNote(n *model.Note, divisions int, inChord bool) xmlNote {
 	out := xmlNote{
 		Duration: durationIn(n.Dur, divisions),
-		Voice:    1,
+		Voice:    "1",
 		Pitch: &pitch{
 			Step:   n.Pitch.Step.String(),
 			Octave: n.Pitch.Octave,
 		},
 	}
 	if n.Pitch.Alter != 0 {
-		a := n.Pitch.Alter
+		a := float64(n.Pitch.Alter)
 		out.Pitch.Alter = &a
 	}
 	if inChord {
@@ -237,7 +237,7 @@ func buildRest(r *model.Rest, divisions int) xmlNote {
 	out := xmlNote{
 		Rest:     &restElem{},
 		Duration: durationIn(r.Dur, divisions),
-		Voice:    1,
+		Voice:    "1",
 	}
 	if v, dots, ok := r.Dur.Written(); ok {
 		out.Type = typeNames[v]

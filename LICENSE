@@ -25,9 +25,9 @@ SOFTWARE.
 Third-party components
 --------------------------------------------------------------------------
 
-The licence above covers gscore itself. Two things gscore carries are
-somebody else's work and keep their own licences, which the MIT licence
-above does not and cannot change.
+The licence above covers gscore itself. Some of what gscore carries is
+somebody else's work and keeps its own licence, which the MIT licence above
+does not and cannot change.
 
 Bravura
     internal/smufl/data/Bravura.otf, embedded in the binary.
@@ -52,6 +52,15 @@ Soundfonts
     through gscore is likewise under its own terms and not under this
     licence.
 
+MusicXML test suite
+    internal/format/musicxml/testdata/suite, 182 files used by the tests and
+    by nothing that ships. Copyright © 2016-2026 Michael Scott Asato
+    Cuthbert, MIT licensed; the licence is in that directory. Written
+    originally by Reinhold Kainhofer for LilyPond and now kept by the W3C
+    Music Notation Community Group.
+
 Go dependencies
     github.com/sinshu/go-meltysynth — MIT
     github.com/webview/webview_go — MIT
+    github.com/yuin/goldmark — MIT (builds the documentation pages of the
+    web site; not part of the program)

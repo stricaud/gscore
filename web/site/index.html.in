@@ -45,7 +45,8 @@
   <div class="player">
     <div id="pieces" class="tabs" role="group" aria-label="Choose a piece">@TABS@</div>
     <div class="share">
-      <button id="copy" class="primary">Copy the link</button>
+      <button id="play" class="play">Play it</button>
+      <button id="copy">Copy the link</button>
       <a id="open" class="button" href="app/">Open it in the editor</a>
       <a id="file" class="button" href="scores/" download>Download the page</a>
       <p id="said" role="status"></p>
@@ -64,7 +65,6 @@
       <p class="note" id="note"></p>
       <!-- Until somebody asks, this is a picture of the piece and nothing
            is downloaded. Pressing play puts the real editor in here. -->
-      <button id="play" class="play">Play it</button>
     </div>
 
   </div>

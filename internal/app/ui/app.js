@@ -654,8 +654,12 @@ function markMode() {
 function scoreURL(opts = {}) {
   const p = new URLSearchParams({ space: String(opts.space ?? state.zoom) });
   if (opts.tune !== undefined) p.set("tune", String(opts.tune));
+  // Always say which, rather than naming the strip and letting silence mean
+  // the other one. The server starts in the strip, so an unnamed mode meant
+  // the strip too — and choosing Paginated, which said nothing, drew the
+  // strip again. The menu ticked over and the page did not move.
   const mode = opts.mode ?? state.mode;
-  if (mode === "strip") p.set("mode", "strip");
+  p.set("mode", mode === "strip" ? "strip" : "page");
   if (opts.width) p.set("width", String(opts.width));
   p.set("_", String(Date.now()));
   return "/score.svg?" + p.toString();
@@ -4845,6 +4849,16 @@ const VOICES = {
     wave: "triangle", partial: { wave: "sawtooth", gain: 0.25, ratio: 1 },
     attack: 0.002, decay: 0.5, sustain: 0, release: 0.05, cutoff: 3500,
   },
+  // Struck and left to ring. The hammer is softer than a plectrum, so the
+  // attack is slower and there is no sawtooth at the fundamental to buzz
+  // against it; the octave above gives it body instead. It keeps a little
+  // sustain so the note lasts as long as it is written, rather than ringing
+  // down to nothing halfway through — the decay here is capped at half the
+  // note, and a whole note that stops after two beats is not a piano.
+  piano: {
+    wave: "triangle", partial: { wave: "sine", gain: 0.35, ratio: 2 },
+    attack: 0.004, decay: 0.9, sustain: 0.16, release: 0.18, cutoff: 2400,
+  },
   tuned: {
     wave: "sine", partial: { wave: "sine", gain: 0.3, ratio: 3 },
     attack: 0.001, decay: 0.35, sustain: 0.05, release: 0.06, cutoff: 5000,
@@ -4963,10 +4977,11 @@ function sound(ev, start, master) {
     hit(ev, start, master);
     return;
   }
-  // Anything the score does not name is played as a piano, which is what a keyboard with nothing else said about it
-  // should sound like. Sustained — an organ — was the old answer, and a
-  // score that said nothing about its instrument came out droning.
-  const v = VOICES[ev.family] || VOICES.plucked;
+  // Anything the score does not name is played as a piano, which is what a
+  // keyboard with nothing else said about it should sound like. Sustained —
+  // an organ — was the old answer, and a score that said nothing about its
+  // instrument came out droning; plucked was the next one, and it buzzed.
+  const v = VOICES[ev.family] || VOICES.piano;
   const hz = midiToHz(ev.midi);
 
   // How much of its written length a note actually sounds is the marks on

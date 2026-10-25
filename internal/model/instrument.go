@@ -141,10 +141,19 @@ const (
 	FamilyTuned
 	// Organ and voice: steady, no decay.
 	FamilySustained
+	// Piano: struck and left to ring. Kept apart from the plucked strings
+	// it used to be counted among, because it does not sound like one. A
+	// guitar is bright at the moment it is picked and gone very soon after;
+	// a piano note is softer at the front and rings on for as long as the
+	// written note lasts. Played as a pluck it came out buzzing and then
+	// cut off halfway through the note, which is the first thing anybody
+	// hears, since a piano is what most scores open as.
+	FamilyPiano
 )
 
 var familyNames = [...]string{
 	"plucked", "bowed", "flute", "reed", "brass", "tuned", "sustained",
+	"piano",
 }
 
 func (f Family) String() string {
@@ -159,7 +168,7 @@ func (f Family) String() string {
 func (i Instrument) Family() Family {
 	switch {
 	case i >= 0 && i <= 7: // pianos
-		return FamilyPlucked
+		return FamilyPiano
 	case i >= 8 && i <= 15: // chromatic percussion
 		return FamilyTuned
 	case i >= 16 && i <= 23: // organs

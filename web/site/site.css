@@ -205,13 +205,12 @@ h1 {
 
 .stage { position: relative; }
 
-/* Over the music, because clicking the music is what somebody does when
-   they want to hear it. */
+/* First in the row above the score, because it is the first thing a visitor
+   does and it should be in front of them before they have scrolled past the
+   music. It used to float over the foot of the score, which put the one
+   button that explains the page below the thing it explains. Clicking the
+   music still works too; that is in hero.js. */
 button.play {
-  position: absolute;
-  left: 50%;
-  bottom: 14px;
-  transform: translateX(-50%);
   background: var(--accent);
   color: var(--accent-ink) !important;
   border-color: var(--accent);

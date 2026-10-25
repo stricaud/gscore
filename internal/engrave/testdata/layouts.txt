@@ -99,7 +99,7 @@ suite/33g-Slur-ChordedNotes.musicxml ef2f8126bf143549 23
 suite/33h-Spanners-Glissando.musicxml 616de9fc292ddbd4 56
 suite/33i-Ties-NotEnded.musicxml 65e5ee6a55f69ab0 22
 suite/33j-Beams-Tremolos.musicxml 7b48c606840d2745 54
-suite/33k-Tie-Types.musicxml 66536f2d078d45bc 62
+suite/33k-Tie-Types.musicxml 01e5ebdc0b275383 63
 suite/34a-Print-Object-Spanners.musicxml 4d0cb557c75e6229 120
 suite/34b-Colors.musicxml d1a8e223bf60f9b6 266
 suite/34c-Font-Size.musicxml b63e62d39ca26c1a 195

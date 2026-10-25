@@ -78,6 +78,17 @@ func (e *engraver) carriedCurves() bool {
 	return false
 }
 
+// allVoices is the voice number of the record a staff keeps in common.
+//
+// Most spanners belong to a voice: a slur is a phrase, and two voices on one
+// staff phrase separately. A tie does not. It joins two notes of the same
+// pitch, and in piano writing a chord in one voice routinely resolves into
+// notes that the next bar has split between two — the Altes does it at bar
+// 17, where an F and an A flat are tied together and arrive in different
+// voices. Looked for in its own voice, the F's tie found no note to end on
+// and was drawn to the end of the system: a line that starts and never ends.
+const allVoices = -1
+
 // staffSpans returns what is open on a staff, making the record if this is the
 // first spanner it has seen.
 func (e *engraver) staffSpans(part, voice int) *openSpans {
@@ -512,19 +523,22 @@ func (e *engraver) slurAt(part *model.Part, m *model.Marks, p *placed) {
 	// the same one, which is how a note held through several bars is
 	// spelled. Each notehead is tied separately, so a chord gets one curve
 	// per note rather than one for the whole chord.
+	//
+	// Held for the staff and not for the voice: see allVoices.
+	tied := e.staffSpans(e.partIndex, allVoices)
 	for _, h := range e.tiedHeads(p, m) {
 		if h.stop {
-			if t, ok := open.ties[h.step]; ok {
+			if t, ok := tied.ties[h.step]; ok {
 				e.drawTieOrSlur(t, x, e.y+stepY(float64(h.step)), tieLift, false)
-				delete(open.ties, h.step)
+				delete(tied.ties, h.step)
 			}
 		}
 		if h.start {
-			if open.ties == nil {
-				open.ties = map[int]*openSpan{}
+			if tied.ties == nil {
+				tied.ties = map[int]*openSpan{}
 			}
-			if _, already := open.ties[h.step]; !already {
-				open.ties[h.step] = &openSpan{
+			if _, already := tied.ties[h.step]; !already {
+				tied.ties[h.step] = &openSpan{
 					x: x, y: e.y + stepY(float64(h.step)),
 					rel: stepY(float64(h.step)), above: h.above,
 				}

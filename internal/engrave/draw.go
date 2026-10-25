@@ -254,7 +254,7 @@ func (e *engraver) drawMeasure(part *model.Part, b measureBox, x, end float64, s
 		if m := p.marks(); m != nil {
 			e.drawArticulations(m, p.x+noteheadWidth(p.value)/2, p.lo, p.hi, e.stemUp(p), p.index)
 			e.drawDynamic(m, p, b.index)
-			e.spanAt(m, p)
+			e.spanAt(m, p, b.index)
 			e.slurAt(part, m, p)
 			e.drawLyrics(m, p)
 			e.drawTexts(m, p)

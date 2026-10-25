@@ -171,6 +171,19 @@ type Layout struct {
 	// only thing that knows where anything went.
 	Hits []Hit
 
+	// Hairpins are where the swells ended up, so one can be clicked.
+	Hairpins []HairpinPos `json:"hairpins"`
+
+	// Tempos are where the tempo markings ended up, so one can be clicked.
+	//
+	// A change of speed is written above the staff, between the bars rather
+	// than on a note, so nothing in the music points at it and there was no
+	// way to pick one up: the only way to take one away was to find the bar
+	// it was in and ask the dialog to remove it. Recorded here for the same
+	// reason the dynamics are — the engraver is the only thing that knows
+	// where it went.
+	Tempos []TempoPos `json:"tempos"`
+
 	// Dynamics are where the dynamics ended up, so one can be clicked.
 	//
 	// A dynamic is not where its note is. It is written under the staff, as
@@ -180,6 +193,36 @@ type Layout struct {
 	// click under the staff found nothing, because everything it knew how to
 	// find was on the staff.
 	Dynamics []DynamicPos `json:"dynamics"`
+}
+
+// HairpinPos is one swell's box on the page, in staff spaces.
+//
+// Both ends are named, because taking a hairpin away means taking away both:
+// a wedge with its start cleared and its end left behind is a hairpin that
+// opens and never closes, and the engraver draws one of those to the end of
+// the system.
+type HairpinPos struct {
+	Part    int     `json:"part"`
+	Measure int     `json:"measure"`
+	From    int     `json:"from"`
+	To      int     `json:"to"`
+	X       float64 `json:"x"`
+	Y       float64 `json:"y"`
+	Width   float64 `json:"width"`
+	Height  float64 `json:"height"`
+	Kind    string  `json:"kind"`
+}
+
+// TempoPos is one tempo marking's box on the page, in staff spaces.
+type TempoPos struct {
+	// Measure is the bar it is written over. A marking at bar zero is the
+	// score's own tempo, which belongs to the piece and is not a change.
+	Measure int     `json:"measure"`
+	X       float64 `json:"x"`
+	Y       float64 `json:"y"`
+	Width   float64 `json:"width"`
+	Height  float64 `json:"height"`
+	Label   string  `json:"label"`
 }
 
 // DynamicPos is one dynamic's box on the page, in staff spaces.
@@ -660,10 +703,18 @@ type openSpans struct {
 
 // openSpan is a spanner that has started and not yet finished.
 type openSpan struct {
-	x      float64 // where it began on this system
-	kind   model.HairpinKind
-	amount int    // octaves, for an octave line
-	label  string // what is written over an octave line
+	x    float64 // where it began on this system
+	kind model.HairpinKind
+	// ref and part are the element it opened on and the staff it is on, so
+	// that a hairpin drawn between two notes can be pointed at and taken
+	// away again. A spanner belongs to no single note on the page, which is
+	// why nothing in the music could be clicked to reach it.
+	ref     int
+	toRef   int
+	part    int
+	measure int
+	amount  int    // octaves, for an octave line
+	label   string // what is written over an octave line
 
 	// y and above are where a slur or a tie left the note it started on,
 	// and which side of the music it arcs over.
@@ -1419,7 +1470,9 @@ func (e *engraver) drawTempoMark(x float64) {
 		return
 	}
 	e.y += 1.4
-	e.drawTempoAt(e.score.Tempo, x, e.y)
+	if w := e.drawTempoAt(e.score.Tempo, x, e.y); w > 0 {
+		e.noteTempoBox(0, e.score.Tempo, x, e.y, w)
+	}
 	e.y += 1.2
 }
 
@@ -1482,6 +1535,24 @@ func (e *engraver) drawTempoAt(t model.Tempo, x, y float64) float64 {
 		}
 	}
 	return at - x
+}
+
+// noteTempoBox records where a tempo marking was drawn.
+//
+// The y given is the baseline the words sit on, so the box starts above it:
+// a click lands on the letters, not under them.
+func (e *engraver) noteTempoBox(measure int, t model.Tempo, x, y, w float64) {
+	label := strings.TrimSpace(t.Text)
+	if t.BPM > 0 {
+		if label != "" {
+			label += " "
+		}
+		label += "= " + itoa(t.BPM)
+	}
+	e.lay.Tempos = append(e.lay.Tempos, TempoPos{
+		Measure: measure, X: x, Y: y - 1.6, Width: w, Height: 2.2,
+		Label: label,
+	})
 }
 
 // tempoTextGap is the air between the words of a tempo marking and the note

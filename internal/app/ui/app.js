@@ -1954,6 +1954,8 @@ async function loadHits() {
   const d = await res.json();
   state.hits = d.hits || [];
   state.dynamics = d.dynamics || [];
+  state.tempos = d.tempos || [];
+  state.hairpins = d.hairpins || [];
   state.barlines = d.barlines || [];
   state.headers = d.headers || [];
   state.strips = d.strips || [];
@@ -1974,6 +1976,37 @@ function dynamicAt(x, y) {
     if (x >= d.x - 0.4 && x <= d.x + d.width + 0.4 &&
         y >= d.y - 0.4 && y <= d.y + d.height + 0.4) {
       return d;
+    }
+  }
+  return null;
+}
+
+// hairpinAt finds the swell a click landed on.
+//
+// A hairpin is a wedge under a stretch of music, belonging to the two notes
+// at its ends and to none of the ones between. Taking one away means taking
+// away both ends, which is why the engraver reports both.
+function hairpinAt(x, y) {
+  for (const h of state.hairpins || []) {
+    if (x >= h.x - 0.3 && x <= h.x + h.width + 0.3 &&
+        y >= h.y - 0.5 && y <= h.y + h.height + 0.5) {
+      return h;
+    }
+  }
+  return null;
+}
+
+// tempoAt finds the tempo marking a click landed on.
+//
+// Like a dynamic, a tempo marking belongs to a bar rather than to a note and
+// is written off the staff, so nothing in the music can be clicked to reach
+// it. Unlike a dynamic it sits above everything, where a click used to find
+// nothing at all.
+function tempoMarkAt(x, y) {
+  for (const t of state.tempos || []) {
+    if (x >= t.x - 0.4 && x <= t.x + t.width + 0.4 &&
+        y >= t.y - 0.4 && y <= t.y + t.height + 0.4) {
+      return t;
     }
   }
   return null;
@@ -2201,6 +2234,22 @@ function setupCanvasClicks() {
       return;
     }
 
+    // And above it, for the same reason.
+    const tempo = tempoMarkAt(x, y);
+    if (tempo) {
+      selectTempo(tempo);
+      return;
+    }
+
+    // The swells run under the staff with the dynamics. Tested after them
+    // because a hairpin is wide and a dynamic sitting on one of its ends
+    // would otherwise be unreachable.
+    const hair = hairpinAt(x, y);
+    if (hair) {
+      selectHairpin(hair);
+      return;
+    }
+
     const hit = hitAt(x, y);
     if (!hit) {
       clearSelection();
@@ -2321,6 +2370,38 @@ function selectDynamic(d) {
   };
   markSelection();
   status(`${d.name} \u2014 press Backspace to take it away`);
+}
+
+// selectTempo picks up a tempo marking.
+//
+// What is selected is the marking, so Backspace takes the change away and
+// the bar carries on at whatever speed it had before it. The marking at bar
+// one is the piece's own speed and is not a change: a piece has a speed
+// whether or not anybody chose it, so that one can be selected and looked at
+// but not removed.
+function selectTempo(t) {
+  state.multi = [];
+  state.anchor = null;
+  state.selection = {
+    part: 0, measure: t.measure, ref: null,
+    at: 0, step: 0, tempo: t.measure,
+  };
+  markSelection();
+  status(t.measure === 0
+    ? `${t.label} — the speed the piece starts at`
+    : `${t.label} at bar ${t.measure + 1} — press Backspace to take it away`);
+}
+
+// selectHairpin picks up a swell.
+function selectHairpin(h) {
+  state.multi = [];
+  state.anchor = null;
+  state.selection = {
+    part: h.part, measure: h.measure, ref: h.from,
+    at: 0, step: 0, hairpin: h,
+  };
+  markSelection();
+  status(`${h.kind} \u2014 press Backspace to take it away`);
 }
 
 // selectMeasure picks up a whole bar rather than a note in it.
@@ -2499,6 +2580,47 @@ async function addPitch(hit, el, step) {
 }
 
 async function deleteSelected() {
+  // A swell was picked up by clicking it. Both of its ends go: a hairpin
+  // with its start cleared and its end left behind opens and never closes,
+  // and is drawn to the end of the system.
+  const hair = state.selection?.hairpin;
+  if (hair && !state.multi.length) {
+    const ends = [refTarget(hair.from), refTarget(hair.to)].filter(Boolean);
+    if (!ends.length) {
+      status("Could not find that hairpin any more");
+      return;
+    }
+    const res = await fetch(
+      "/api/hairpin?hairpin=none&sel=" + encodeURIComponent(ends.join(",")),
+      { method: "POST" });
+    if (!res.ok) {
+      status("Could not remove it: " + (await res.text()).trim());
+      return;
+    }
+    state.selection.hairpin = null;
+    await refreshScore();
+    status(`${hair.kind} removed`);
+    return;
+  }
+  // A tempo marking was picked up by clicking it, so it is the change that
+  // goes and the bar carries on at the speed it had before.
+  const atBar = state.selection?.tempo;
+  if (atBar !== undefined && atBar !== null && !state.multi.length) {
+    if (atBar === 0) {
+      status("The piece has a speed whether or not anybody chose it");
+      return;
+    }
+    const res = await fetch("/api/tempo?remove=1&measure=" + atBar,
+                            { method: "POST" });
+    if (!res.ok) {
+      status("Could not remove it: " + (await res.text()).trim());
+      return;
+    }
+    state.selection.tempo = null;
+    await refreshScore();
+    status(`Bar ${atBar + 1} carries on at the tempo before it`);
+    return;
+  }
   // A dynamic was picked up by clicking it, so it is the dynamic that goes.
   if (state.selection?.dynamic && !state.multi.length) {
     const was = state.selection.dynamic;
@@ -2592,6 +2714,24 @@ function markSelection() {
   // itself, under the staff, not round the note it is written on. Seeing a
   // notehead light up after clicking an ff would say the wrong thing about
   // what Backspace is going to take away.
+  if (sel.hairpin) {
+    const h = sel.hairpin;
+    svg.insertBefore(
+      selectionRect(h.x - 0.3, h.y - 0.5, h.width + 0.6, h.height + 1.0, z),
+      svg.firstChild);
+    return;
+  }
+
+  if (sel.tempo !== undefined && sel.tempo !== null) {
+    const t = (state.tempos || []).find((x) => x.measure === sel.tempo);
+    if (t) {
+      svg.insertBefore(
+        selectionRect(t.x - 0.4, t.y - 0.4, t.width + 0.8, t.height + 0.8, z),
+        svg.firstChild);
+      return;
+    }
+  }
+
   if (sel.dynamic) {
     const d = (state.dynamics || []).find(
       (x) => x.part === sel.part && x.measure === sel.measure && x.ref === sel.ref);

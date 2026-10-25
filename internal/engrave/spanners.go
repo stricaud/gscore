@@ -104,7 +104,7 @@ func (e *engraver) staffSpans(part, voice int) *openSpans {
 }
 
 // spanAt handles the spanners that open or close at one element.
-func (e *engraver) spanAt(m *model.Marks, p *placed) {
+func (e *engraver) spanAt(m *model.Marks, p *placed, measure int) {
 	if m == nil {
 		return
 	}
@@ -117,9 +117,13 @@ func (e *engraver) spanAt(m *model.Marks, p *placed) {
 
 	if h := m.Hairpin; h != nil {
 		if h.Start && open.hairpin == nil {
-			open.hairpin = &openSpan{x: x, kind: h.Kind}
+			open.hairpin = &openSpan{
+				x: x, kind: h.Kind,
+				ref: p.index, part: e.partIndex, measure: measure,
+			}
 		}
 		if h.Stop && open.hairpin != nil {
+			open.hairpin.toRef = p.index
 			e.drawHairpin(open.hairpin, x, true)
 			open.hairpin = nil
 		}
@@ -272,10 +276,25 @@ func (e *engraver) drawHairpin(h *openSpan, to float64, complete bool) {
 	// the stems, the slurs that dip below the staff, the dynamics it runs
 	// between. None of that is known until the staff is finished, and a
 	// hairpin is not even drawn until the bar it closes in, so it waits.
+	kind := "crescendo"
+	if h.kind == model.Diminuendo {
+		kind = "diminuendo"
+	}
 	e.wait(waitingMark{
 		x0: h.x, x1: to, height: hairpinMouth, gap: 0.6,
 		below: true, rank: rankHairpin,
 		draw: func(top float64) {
+			// Where it ended up, so the editor can let it be clicked. Only
+			// here is that known: a hairpin waits for the staff to finish
+			// before it is told how far down it goes.
+			if complete {
+				e.lay.Hairpins = append(e.lay.Hairpins, HairpinPos{
+					Part: h.part, Measure: h.measure,
+					From: h.ref, To: h.toRef,
+					X: h.x, Y: top, Width: to - h.x, Height: hairpinMouth,
+					Kind: kind,
+				})
+			}
 			y := top + half
 			if cut {
 				// Closing but cut short: it never reaches the point.

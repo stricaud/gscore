@@ -379,7 +379,10 @@ type Options struct {
 	// it is off unless asked for.
 	ShowPartNames bool
 	// ShowMeasureNumbers writes the bar number over the first measure of each
-	// system. Rehearsing without them means counting from the beginning.
+	// system. Rehearsing without them means counting from the beginning, so
+	// they are on by default and the View menu takes them away. The editor
+	// keeps its own idea of this in app.js, which has to agree with what
+	// DefaultOptions sets here or the tick in the menu starts out lying.
 	ShowMeasureNumbers bool
 	// ShowTempoMark writes the metronome mark and the word that goes with it
 	// above the first staff.
@@ -401,13 +404,14 @@ type Options struct {
 // DefaultOptions returns a sensible engraving setup.
 func DefaultOptions() Options {
 	return Options{
-		Spacings:      DefaultSpacings(),
-		Defaults:      smufl.DefaultEngraving(),
-		Mode:          Paginated,
-		LineWidth:     120,
-		ShowTitle:     true,
-		ShowTempoMark: true,
-		WriteAhead:    true,
+		Spacings:           DefaultSpacings(),
+		Defaults:           smufl.DefaultEngraving(),
+		Mode:               Paginated,
+		LineWidth:          120,
+		ShowTitle:          true,
+		ShowTempoMark:      true,
+		ShowMeasureNumbers: true,
+		WriteAhead:         true,
 	}
 }
 
@@ -1800,7 +1804,51 @@ func (e *engraver) spanWidth(span model.Duration, els []voiced) float64 {
 		// dots crowding whatever came next.
 		w += sp.DotToNote + float64(dots)*dotStep(sp)
 	}
+	over := 0.0
+	for _, v := range els {
+		if o := chordOverhang(v.el); o > over {
+			over = o
+		}
+	}
+	w += over
 	return math.Max(w, sp.MinNote)
+}
+
+// chordOverhang is how far past its own column a chord reaches.
+//
+// Two noteheads a second apart cannot be drawn through each other, so one of
+// each pair is pushed across the stem — always to the right, which is where
+// whatever comes next in the bar is standing. A column budgeted at one
+// notehead wide has no room for that, and the next thing is printed on top
+// of the pushed-out head: in the opening of the Altes, an eighth rest over
+// the C of an A flat-C-D chord.
+//
+// Which heads move depends on the stem, and the stem is not decided until
+// the music is drawn. Whether any move at all does not: it happens exactly
+// when two of the notes are a diatonic second apart, and that is the same
+// question whichever way the stem ends up pointing. So the room can be
+// booked here, before any of that is settled.
+func chordOverhang(el model.Element) float64 {
+	ch, ok := el.(*model.Chord)
+	if !ok || len(ch.Notes) < 2 {
+		return 0
+	}
+	steps := make([]int, len(ch.Notes))
+	for i, n := range ch.Notes {
+		steps[i] = n.Pitch.Octave*7 + int(n.Pitch.Step)
+	}
+	sort.Ints(steps)
+	for i := 1; i < len(steps); i++ {
+		if steps[i]-steps[i-1] != 1 {
+			continue
+		}
+		v, _, ok := ch.Duration().Written()
+		if !ok {
+			v = model.Quarter
+		}
+		return noteheadWidth(v)
+	}
+	return 0
 }
 
 func (e *engraver) elementWidth(el model.Element) float64 {

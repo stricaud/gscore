@@ -69,7 +69,10 @@ const state = {
   // while paused can be told from not having touched anything.
   pausedSel: "",
   // Drawing options that belong to the view rather than to the file.
-  view: { names: false, numbers: false },
+  // Measure numbers are on: the engraver's DefaultOptions says so, and this
+  // has to say the same thing or the tick beside "Measure numbers" in the
+  // View menu starts out contradicting the page.
+  view: { names: false, numbers: true },
   // Whether a saved .gscore carries a PDF of itself in front of the music.
   //
   // It does by default: renamed .pdf the same file opens in anything that

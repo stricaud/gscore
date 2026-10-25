@@ -176,7 +176,13 @@ func (e *exporter) body() {
 			e.line("M:%s", meterText(p.Time))
 		}
 		if p.Instrument != 0 {
-			e.line("%%%%MIDI program %d", int(p.Instrument)+1)
+			// The General MIDI number as it stands. abcMIDI is read both ways
+			// in the wild — some writers count the programs from one — but
+			// gscore's own reader takes the number as written, and a file
+			// this program writes has to be one it can read back. Adding one
+			// here turned every grand piano into a bright piano and every
+			// flute into a recorder, once around the trip.
+			e.line("%%%%MIDI program %d", int(p.Instrument))
 		}
 		e.part(p)
 	}

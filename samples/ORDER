@@ -1,0 +1,10 @@
+# The order the scores are shown in, first line first. One id per line — the
+# file name without its extension. Anything in samples/ that is not listed
+# comes after these, in alphabetical order.
+#
+# The front page shows them in this order too, and the first is the one a
+# visitor sees before touching anything: it should be the piece that makes
+# the best case for the program in the two seconds before they decide.
+the-entertainer
+altes-10e-solo
+boite-musique

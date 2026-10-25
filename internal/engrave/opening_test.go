@@ -12,6 +12,7 @@ package engrave_test
 
 import (
 	"fmt"
+	"os"
 	"strings"
 	"testing"
 
@@ -33,7 +34,21 @@ import (
  * quietly taken the B flat of the key signature instead.
  */
 func TestOpeningMatchesTheScore(t *testing.T) {
-	orig, err := load("../../samples/altes-10e-solo.mscz")
+	// The whole piece is not kept in the repository. Point at wherever it
+	// lives to run this:
+	//
+	//     ALTES=~/scores/altes-10e-solo.mscz go test ./internal/engrave
+	//
+	// Without it there is nothing to compare against, which is not the same
+	// as the example being wrong, so this skips rather than fails.
+	source := os.Getenv("ALTES")
+	if source == "" {
+		source = "../../samples/altes-10e-solo.mscz"
+	}
+	if _, err := os.Stat(source); err != nil {
+		t.Skipf("the whole score is not at %s; set ALTES to where it is", source)
+	}
+	orig, err := load(source)
 	if err != nil && orig == nil {
 		t.Fatalf("the score the example was copied from: %v", err)
 	}

@@ -508,6 +508,23 @@ async function action(name) {
     case "tuplet-7": await setTuplet(7); break;
     case "tuplet-8": await setTuplet(8); break;
     case "tuplet-9": await setTuplet(9); break;
+    case "tuplet-other": {
+      const n = await ask({
+        title: "Tuplet",
+        label: "How many notes in the time of one",
+        value: "13",
+        note: "Two to sixteen. A cadenza marked ad libitum may run thirteen " +
+              "into a beat, and the figure is printed over the group.",
+      });
+      if (n === null) break;
+      const want = parseInt(String(n).trim(), 10);
+      if (!Number.isFinite(want) || want < 2 || want > 16) {
+        status("A tuplet is between 2 and 16 notes");
+        break;
+      }
+      await setTuplet(want);
+      break;
+    }
     case "tuplet-none": await setTuplet(0); break;
 
     case "tremolo-1": await setTremolo(1, false); break;
@@ -6492,20 +6509,26 @@ function setupKeys() {
     }
 
     // The arrow keys drive the cursor: left and right along the music, up
-    // and down the staff, a whole octave with shift. They mean one thing
-    // and one only, because a key that moves the cursor sometimes and
-    // rewrites the music other times is a key nobody can press quickly.
+    // and down the staff, a whole octave with shift. Alt with the same
+    // arrows moves notes that are already written.
     //
-    // Moving notes that are already written is alt with the same arrows.
+    // With a passage picked up they move the notes without the alt. There is
+    // nothing to navigate with a dozen notes selected — the cursor is a
+    // place to write the next one and a selection is not about writing the
+    // next one — and moving a phrase up a step is the obvious thing to want
+    // from the arrows while it is in hand. One note picked up still steers
+    // the cursor, because that is how you walk along the music after
+    // clicking something.
+    const passage = state.multi.length > 0;
     switch (e.key) {
       case "ArrowUp":
         e.preventDefault();
-        if (e.altKey) void nudge(e.shiftKey ? 7 : 1);
+        if (e.altKey || passage) void nudge(e.shiftKey ? 7 : 1);
         else moveCursorPitch(e.shiftKey ? 7 : 1);
         return;
       case "ArrowDown":
         e.preventDefault();
-        if (e.altKey) void nudge(e.shiftKey ? -7 : -1);
+        if (e.altKey || passage) void nudge(e.shiftKey ? -7 : -1);
         else moveCursorPitch(e.shiftKey ? -7 : -1);
         return;
       case "ArrowLeft":

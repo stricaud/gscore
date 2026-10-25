@@ -11,6 +11,11 @@ Q:116
 V:0
 L:1/4
 K:C
+% All three voices are flutes — the part is headed "1st flute"
+% part", and the tone a player falls back to without being told is a
+% struck one. A music box tune struck rather than blown is a
+% different piece. 73 is the General MIDI flute.
+%%MIDI program 73
  (e g) .d (d/e/) | .c .c. d. d |  (e g). d (d/e/) | . c. c c2 |
 . g. g .e (f/g/) | . f. f. d. d | . g. g. e (f/g/) | . f. f d2 |
  (e g) .d (d/e/) | . c. c. d. d |  (e g). d (d/e/) | . c. c c2 |]
@@ -18,6 +23,7 @@ K:C
 V:1
 L:1/4
 K:C
+%%MIDI program 73
  (G E). F. B |
 . c. G. F. F |  (G E). F. B | . c. A E2 | . c. c. c (d/e/) |
 . d. A. B. B | . c. c. c (d/e/) | . d. A B2 |  (c E). F. B |
@@ -26,6 +32,7 @@ K:C
 V:2
 L:1/4
 K:C
+%%MIDI program 73
 . C. C. D. F | . E. E. D. D |
 . C. C. D. F | . E. F C2 | . E. E. C. C | . F. F. G. F |
 . E. E. C. C | . F. F G2 | . C. C. D. F | . E. E. D. D |

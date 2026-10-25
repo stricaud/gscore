@@ -108,7 +108,14 @@ func DefaultSpacings() Spacings {
 	return Spacings{
 		NoteBase:     2.8,
 		NoteExponent: 0.6,
-		MinNote:      1.6,
+		// Two is not a round number chosen for looking right: it is what a
+		// ledger line measures. A notehead is 1.18 spaces wide and a ledger
+		// line runs 0.4 past it at each end, which is 1.98 — so two notes
+		// closer together than that have ledger lines that touch, and a run
+		// of sixteenths above the staff is drawn with one unbroken line
+		// through all of it instead of a line under each note. The floor
+		// has to clear a ledger line; the test beside this says so.
+		MinNote:      2.0,
 
 		BeforeAccidental:   0.4,
 		AccidentalToNote:   0.25,

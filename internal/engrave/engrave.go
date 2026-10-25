@@ -514,7 +514,7 @@ func Engrave(s *model.Score, opt Options) *Layout {
 
 func engraveWith(s *model.Score, opt Options, room map[int]need) *Layout {
 	e := &engraver{opt: opt, score: s, room: room,
-		spans: map[int]*openSpans{},
+		spans: map[[2]int]*openSpans{},
 		lay:   &Layout{Refs: map[int]RefPos{}, defaults: opt.Defaults}}
 	e.run()
 	return e.lay
@@ -590,7 +590,10 @@ type engraver struct {
 	// measure or on a later line, so it cannot be drawn where it starts: what
 	// is open is carried along and drawn when it closes, or broken at the end
 	// of the system and resumed on the next.
-	spans map[int]*openSpans
+	// Keyed by staff and voice. A staff can carry two lines of music, and
+	// each keeps its own slurs: a slur opened in the upper voice must not
+	// be closed by the lower one reaching the end of its own phrase.
+	spans map[[2]int]*openSpans
 }
 
 // openSpans are the spanners in progress on one staff.

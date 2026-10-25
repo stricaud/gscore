@@ -80,11 +80,12 @@ func (e *engraver) carriedCurves() bool {
 
 // staffSpans returns what is open on a staff, making the record if this is the
 // first spanner it has seen.
-func (e *engraver) staffSpans(part int) *openSpans {
-	s, ok := e.spans[part]
+func (e *engraver) staffSpans(part, voice int) *openSpans {
+	key := [2]int{part, voice}
+	s, ok := e.spans[key]
 	if !ok {
 		s = &openSpans{}
-		e.spans[part] = s
+		e.spans[key] = s
 	}
 	return s
 }
@@ -94,7 +95,9 @@ func (e *engraver) spanAt(m *model.Marks, p *placed) {
 	if m == nil {
 		return
 	}
-	open := e.staffSpans(e.partIndex)
+	// Hairpins and octave lines belong to the staff rather than to one of
+	// its voices, and are kept with the voice they were written in.
+	open := e.staffSpans(e.partIndex, p.voice)
 	// The middle of the notehead, so a hairpin between two notes reaches from
 	// under one to under the other rather than from their left edges.
 	x := p.x + noteheadWidth(p.value)/2
@@ -133,10 +136,15 @@ func (e *engraver) spanAt(m *model.Marks, p *placed) {
 // breakSpans ends every open spanner at the right margin of a system and
 // leaves it open, so the next system starts it again at its own left edge.
 func (e *engraver) breakSpans(part int, right float64) {
-	open, ok := e.spans[part]
-	if !ok {
-		return
+	for key, open := range e.spans {
+		if key[0] != part {
+			continue
+		}
+		e.breakSpansOf(open, right)
 	}
+}
+
+func (e *engraver) breakSpansOf(open *openSpans, right float64) {
 	if open.hairpin != nil {
 		e.drawHairpin(open.hairpin, right, false)
 		open.hairpin.x = -1 // resumed at the start of the next system
@@ -166,10 +174,15 @@ func (e *engraver) breakSpans(part int, right float64) {
 
 // resumeSpans picks a broken spanner up again at the left of a new system.
 func (e *engraver) resumeSpans(part int, left float64) {
-	open, ok := e.spans[part]
-	if !ok {
-		return
+	for key, open := range e.spans {
+		if key[0] != part {
+			continue
+		}
+		e.resumeSpansOf(open, left)
 	}
+}
+
+func (e *engraver) resumeSpansOf(open *openSpans, left float64) {
 	if open.hairpin != nil && open.hairpin.x < 0 {
 		open.hairpin.x = left
 	}
@@ -421,7 +434,7 @@ func (e *engraver) slurAt(part *model.Part, m *model.Marks, p *placed) {
 	if m == nil {
 		return
 	}
-	open := e.staffSpans(e.partIndex)
+	open := e.staffSpans(e.partIndex, p.voice)
 	x := p.x + noteheadWidth(p.value)/2
 
 	// Which way this note's stem points, counted into whatever slur is open

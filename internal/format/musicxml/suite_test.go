@@ -165,8 +165,6 @@ var shortBy = map[string]int{
 	"24a-GraceNotes.musicxml":              25, // of 26
 	"24c-GraceNote-MeasureEnd.musicxml":    2,  // of 4
 	"24d-AfterGrace.musicxml":              5,  // of 7
-	"24g-GraceNote-Dynamics.musicxml":      1,  // of 5
-	"24h-GraceNote-Simultaneous.musicxml":  7,  // of 8
 	"33f-Trill-EndingOnGraceNote.musicxml": 5,  // of 7
 }
 

@@ -84,7 +84,9 @@ type piece struct {
 	Title    string
 	Composer string
 	Note     string // the first comment line of the ABC, if it reads as prose
-	ABC      string
+	ABC      string // only for a score written as ABC, which fits in a link
+	Source   string // the file it was written in, as published
+	Kind     string // what that file is: abc, mxl, musicxml, gscore
 	SVG      string // lifted out of the page gscore wrote
 	Sound    string // the performance, as the JSON gscore wrote
 	Ways     []way  // every format it was exported to
@@ -101,19 +103,41 @@ var (
 	soundTag = regexp.MustCompile(`(?s)<script id="gscore-sound"[^>]*>(.*?)</script>`)
 )
 
+// scoreFile says whether a file in samples/ is a score gscore can read.
+func scoreFile(name string) bool {
+	switch strings.ToLower(filepath.Ext(name)) {
+	case ".abc", ".mxl", ".musicxml", ".xml", ".mscz", ".mscx", ".nwctxt", ".gscore":
+		return true
+	}
+	return false
+}
+
 func readPieces(samples, built string) ([]piece, error) {
-	files, err := filepath.Glob(filepath.Join(samples, "*.abc"))
+	all, err := filepath.Glob(filepath.Join(samples, "*"))
 	if err != nil {
 		return nil, err
+	}
+	var files []string
+	for _, f := range all {
+		if scoreFile(f) {
+			files = append(files, f)
+		}
 	}
 	sort.Strings(files)
 
 	var out []piece
 	for _, f := range files {
-		id := strings.TrimSuffix(filepath.Base(f), ".abc")
-		abc, err := os.ReadFile(f)
-		if err != nil {
-			return nil, err
+		base := filepath.Base(f)
+		id := strings.TrimSuffix(base, filepath.Ext(base))
+		// Only a score written as ABC can be carried in a link: it is the
+		// one format small enough to fit in one. Anything else is shared as
+		// the page built for it, which is a few tens of kilobytes and still
+		// needs nothing at the other end.
+		var abc []byte
+		if strings.EqualFold(filepath.Ext(f), ".abc") {
+			if abc, err = os.ReadFile(f); err != nil {
+				return nil, err
+			}
 		}
 		page, err := os.ReadFile(filepath.Join(built, id+".html"))
 		if err != nil {
@@ -134,9 +158,22 @@ func readPieces(samples, built string) ([]piece, error) {
 			Sound: strings.TrimSpace(string(sound[1])),
 		}
 		p.Title, p.Composer, p.Note = readHeader(string(abc))
+		// What gscore itself said the piece is, which is the only thing
+		// that can read every format in samples/.
+		if said, err := os.ReadFile(filepath.Join(built, id+".txt")); err == nil {
+			t, c := described(string(said))
+			if t != "" {
+				p.Title = t
+			}
+			if c != "" {
+				p.Composer = c
+			}
+		}
 		if p.Title == "" {
 			p.Title = id
 		}
+		p.Kind = strings.TrimPrefix(strings.ToLower(filepath.Ext(f)), ".")
+		p.Source = id + "." + p.Kind
 		p.Ways = waysFor(built, id)
 		out = append(out, p)
 	}
@@ -167,6 +204,27 @@ func readHeader(abc string) (title, composer, note string) {
 	return
 }
 
+// described reads what `gscore -describe` said about a file.
+func described(s string) (title, composer string) {
+	for _, line := range strings.Split(s, "\n") {
+		f := strings.SplitN(strings.TrimSpace(line), " ", 2)
+		if len(f) != 2 {
+			continue
+		}
+		switch f[0] {
+		case "title":
+			if title == "" {
+				title = strings.TrimSpace(f[1])
+			}
+		case "composer":
+			if composer == "" {
+				composer = strings.TrimSpace(f[1])
+			}
+		}
+	}
+	return
+}
+
 // waysFor lists the formats a piece was actually exported to, in the order
 // somebody is likely to want them.
 func waysFor(built, id string) []way {
@@ -177,6 +235,7 @@ func waysFor(built, id string) []way {
 		{"LilyPond", id + ".ly"},
 		{"MIDI", id + ".mid"},
 		{"ABC", id + ".abc"},
+		{"MusicXML (original)", id + ".mxl"},
 	}
 	var out []way
 	for _, w := range want {
@@ -202,13 +261,14 @@ func writeLanding(out, site, version string, pieces []piece) error {
 		fmt.Fprintf(&tabs, "<button type=\"button\" data-id=%q aria-pressed=\"false\">%s</button>\n",
 			p.ID, html.EscapeString(p.Title))
 
-		fmt.Fprintf(&blocks, `<div class="piece" data-id=%q data-title=%q data-composer=%q data-note=%q data-file=%q hidden>
+		fmt.Fprintf(&blocks, `<div class="piece" data-id=%q data-title=%q data-composer=%q data-note=%q data-file=%q data-src=%q data-kind=%q hidden>
 <script type="application/json" class="sound">%s</script>
 <script type="text/plain" class="abc">%s</script>
 <div class="paper">%s</div>
 </div>
 `,
 			p.ID, p.Title, p.Composer, p.Note, p.ID+".html",
+			p.Source, p.Kind,
 			p.Sound, escapeForScript(p.ABC), p.SVG)
 	}
 

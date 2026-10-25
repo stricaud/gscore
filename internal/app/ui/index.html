@@ -350,8 +350,16 @@
 
   <div class="transport">
     <button id="fs-btn" title="Full screen (F)">⤢</button>
-    <button id="play-btn" title="Play / Pause (Shift+Space)">▶</button>
-    <button id="stop-btn" title="Stop, back to the beginning (Esc)">■</button>
+    <!-- Named, not only drawn. Somebody opening gscore for the first time
+         has no reason to know that Shift+Space starts the music, and a
+         glyph in the corner of a menu bar is not an answer: it reads as
+         decoration until you have already been told what it does. -->
+    <button id="play-btn" title="Play / Pause (Shift+Space)">
+      <span aria-hidden="true">▶</span><span class="label">Play</span>
+    </button>
+    <button id="stop-btn" title="Stop, back to the beginning (Esc)">
+      <span aria-hidden="true">■</span><span class="label">Stop</span>
+    </button>
     <span id="clock">0:00</span>
   </div>
 </div>

@@ -2,3 +2,7 @@
 .DS_Store
 /gscore_windows_amd64.syso
 /web/dist/
+
+# The site builder, if it is ever built rather than go run. web/build.sh
+# runs it straight from source, so a binary here is somebody's stray build.
+/mksite

@@ -1072,10 +1072,16 @@ func tremoloGlyph(t *model.Tremolo) string {
 func (e *engraver) drawBeamGroup(g []*placed) {
 	d := e.opt.Defaults
 
-	// One direction serves the whole group, decided in the one place that
-	// decides it, so that what is drawn here and what the slurs and dots
-	// were placed against cannot come apart.
-	up := beamGroupUp(g)
+	// One direction serves the whole group, and it was decided in the one
+	// place that decides it — setStemDirections — so that what is drawn
+	// here and what the slurs and dots were placed against cannot come
+	// apart. This used to ask beamGroupUp again instead of reading the
+	// answer. That gave the same result for as long as there was only ever
+	// one rule; once a staff could carry two voices there were two, and the
+	// beam went one way while the stems went the other. The stems came out
+	// drawn from a notehead to a beam that was not there, which on the page
+	// looks like a chord with no stem at all.
+	up := e.stemUp(g[0])
 
 	type end struct {
 		x, y float64

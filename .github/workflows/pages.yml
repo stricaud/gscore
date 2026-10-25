@@ -68,12 +68,20 @@ jobs:
             test -s "web/dist/$f" || { echo "missing or empty: $f" >&2; exit 1; }
           done
           # A score page per sample, with the exports the gallery offers.
-          for abc in samples/*.abc; do
-            id=$(basename "$abc" .abc)
-            for ext in html pdf mid musicxml ly abc; do
-              test -s "web/dist/scores/$id.$ext" \
-                || { echo "missing: scores/$id.$ext" >&2; exit 1; }
+          # Samples are not all ABC — a piano rag arrives as compressed
+          # MusicXML — so the source is whatever it was written in.
+          for src in samples/*; do
+            case "$src" in
+            *.abc|*.mxl|*.musicxml|*.xml|*.mscz|*.mscx|*.nwctxt|*.gscore) ;;
+            *) continue ;;
+            esac
+            id=$(basename "${src%.*}")
+            for want in html pdf mid musicxml ly; do
+              test -s "web/dist/scores/$id.$want" \
+                || { echo "missing: scores/$id.$want" >&2; exit 1; }
             done
+            test -s "web/dist/scores/$(basename "$src")" \
+              || { echo "missing the source: scores/$(basename "$src")" >&2; exit 1; }
           done
 
           # Every file every page asks for has to be beside it. A page that
@@ -83,7 +91,7 @@ jobs:
           python3 - <<'PY'
           import os, re, sys
           root = "web/dist"
-          pat = re.compile(r'(?:src|href)="([^"#?][^"]*?)"')
+          pat = re.compile(r'(?<![-\w])(?:src|href)="([^"#?][^"]*?)"')
           missing = []
           checked = 0
           for dirpath, _, files in os.walk(root):
@@ -111,7 +119,8 @@ jobs:
           # substitution ever silently did nothing, the page would still look
           # fine here and be empty in a browser.
           pieces=$(grep -c '<div class="piece"' web/dist/index.html)
-          want=$(ls samples/*.abc | wc -l | tr -d ' ')
+          want=$(ls web/dist/scores/*.html | wc -l | tr -d ' ')
+          want=$((want - 1))   # the gallery's own index
           [ "$pieces" = "$want" ] || {
             echo "the front page holds $pieces scores, and there are $want samples" >&2
             exit 1; }

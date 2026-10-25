@@ -83,24 +83,34 @@ trap 'rm -rf "$tmp"' EXIT
 # With cgo on, the site could only be built on a desktop.
 CGO_ENABLED=0 go build -trimpath -o "$tmp/gscore" "$root"
 
-for abc in "$root"/samples/*.abc; do
-    id=$(basename "$abc" .abc)
+for src in "$root"/samples/*; do
+    case "$src" in
+    *.abc|*.mxl|*.musicxml|*.xml|*.mscz|*.mscx|*.nwctxt|*.gscore) ;;
+    *) continue ;;   # the embedding example and anything else
+    esac
+    id=$(basename "${src%.*}")
+    ext="${src##*.}"
     printf '  %s' "$id"
     # The page a visitor opens, and the one the front page takes its drawing
     # from. The font is linked rather than carried: it is served beside the
     # page here, and one copy of it does for the whole site.
-    "$tmp/gscore" -o "$out/scores/$id.html" -font ../font.otf "$abc" >/dev/null
+    "$tmp/gscore" -o "$out/scores/$id.html" -font ../font.otf "$src" >/dev/null
+    # What the program says the piece is, for the pages that list it. Asked
+    # of gscore rather than parsed out of the file here, because gscore is
+    # the thing that knows how to read every format it reads.
+    "$tmp/gscore" -describe "$src" 2>/dev/null > "$out/scores/$id.txt"
     # And the same music every other way out of the program, because that is
     # the claim the site makes about it.
-    for ext in pdf mid; do
-        "$tmp/gscore" -o "$out/scores/$id.$ext" "$abc" >/dev/null 2>&1 || \
-            printf ' (no %s)' "$ext"
+    for want in pdf mid; do
+        "$tmp/gscore" -o "$out/scores/$id.$want" "$src" >/dev/null 2>&1 || \
+            printf ' (no %s)' "$want"
     done
-    for ext in musicxml ly; do
-        "$tmp/gscore" -convert "$out/scores/$id.$ext" "$abc" >/dev/null 2>&1 || \
-            printf ' (no %s)' "$ext"
+    for want in musicxml ly; do
+        "$tmp/gscore" -convert "$out/scores/$id.$want" "$src" >/dev/null 2>&1 || \
+            printf ' (no %s)' "$want"
     done
-    cp "$abc" "$out/scores/$id.abc"
+    # And the file it was written in, whatever that was.
+    cp "$src" "$out/scores/$id.$ext"
     printf '\n'
 done
 
@@ -130,6 +140,7 @@ go run "$root/web/mksite" \
 : > "$out/.nojekyll"
 
 wasm=$(ls -lh "$out/app/gscore.wasm" | awk '{print $5}')
-scores=$(ls "$root"/samples/*.abc | wc -l | tr -d ' ')
+scores=$(ls "$out"/scores/*.html | wc -l | tr -d ' ')
+scores=$((scores - 1))   # the gallery's own index
 docs=$(ls "$root"/docs/*.md | wc -l | tr -d ' ')
 echo "built $out (editor $wasm, $scores scores, $docs pages of documentation)"

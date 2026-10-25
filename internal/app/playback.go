@@ -258,191 +258,195 @@ func buildPlayback(s *model.Score) Playback {
 			if len(m.Voices) == 0 {
 				continue
 			}
-			// Only the first voice, matching the engraver, so that refs line
-			// up. ABC import puts everything in one voice per measure.
-			v := m.Voices[0]
+			// Every voice of the staff. Two lines of music written on one
+			// staff sound together, so each begins where the bar begins —
+			// and a second voice that is drawn and not heard is half an
+			// editor. Most music has one, and then this runs once.
+			for vi := range m.Voices {
+				v := m.Voices[vi]
 
-			// A bar marked as a repeat sounds as the bar it stands for. The
-			// sign is an instruction to the player, so it has to be one to
-			// the playback too — a chart with eight repeat signs in it is
-			// otherwise eight bars of silence.
-			if m.Repeat > 0 {
-				if src := p.RepeatSource(mi, m.Repeat); src != nil {
-					v = src
-				}
-			}
-			// Every part starts this bar where the bar starts, not where its
-			// own last bar happened to end.
-			vt := 0.0
-			if step < len(starts) {
-				vt = starts[step]
-			}
-			// How long a whole note lasts in this bar. A piece is not one
-			// speed, so this is asked bar by bar rather than once for the
-			// score: a tempo change partway through has to reach the notes
-			// as well as the barlines, or the two drift apart from the bar
-			// it is written at onwards.
-			secondsPerWhole := wholeNoteSeconds(s, mi)
-
-			ref := refBase[pi][mi]
-			if m.Repeat > 0 {
-				// A bar showing a repeat sign has no noteheads of its own —
-				// the sign is all that is drawn. Its notes are borrowed from
-				// the bar it stands for, so numbering them after that bar's
-				// noteheads would light up a bar somewhere else on the page.
-				// Zero means "nothing to highlight", which is the truth.
-				ref = 0
-			}
-			// A two-note tremolo is two written notes and one sound, so the
-			// first of the pair plays both and the second plays nothing.
-			// The second still takes its own time: the bar is the same
-			// length either way.
-			// Which number the engraver gave each of this voice's elements.
-			// It numbers a bar by when things start, across all its voices,
-			// so a voice's third element is not necessarily the third
-			// number — and a highlight on the wrong number lights up
-			// somebody else's notehead.
-			var voiceRefs []int
-			if ref != 0 {
-				voiceRefs = make([]int, len(v.Elements))
-				for k, vd := range m.Ordered() {
-					if vd.Voice == 0 && vd.Index < len(voiceRefs) {
-						voiceRefs[vd.Index] = ref + k
+				// A bar marked as a repeat sounds as the bar it stands for. The
+				// sign is an instruction to the player, so it has to be one to
+				// the playback too — a chart with eight repeat signs in it is
+				// otherwise eight bars of silence.
+				if m.Repeat > 0 {
+					if src := p.RepeatSource(mi, m.Repeat); src != nil {
+						v = src
 					}
 				}
-			}
+				// Every part starts this bar where the bar starts, not where its
+				// own last bar happened to end.
+				vt := 0.0
+				if step < len(starts) {
+					vt = starts[step]
+				}
+				// How long a whole note lasts in this bar. A piece is not one
+				// speed, so this is asked bar by bar rather than once for the
+				// score: a tempo change partway through has to reach the notes
+				// as well as the barlines, or the two drift apart from the bar
+				// it is written at onwards.
+				secondsPerWhole := wholeNoteSeconds(s, mi)
 
-			paired := map[int]bool{}
-			for ei, el := range v.Elements {
-				if ei < len(voiceRefs) {
-					ref = voiceRefs[ei]
+				ref := refBase[pi][mi]
+				if m.Repeat > 0 {
+					// A bar showing a repeat sign has no noteheads of its own —
+					// the sign is all that is drawn. Its notes are borrowed from
+					// the bar it stands for, so numbering them after that bar's
+					// noteheads would light up a bar somewhere else on the page.
+					// Zero means "nothing to highlight", which is the truth.
+					ref = 0
 				}
-				d := el.Duration().Float() * secondsPerWhole
-				mk := marksOf(el)
-				if mk != nil && mk.Octave != nil && mk.Octave.Start {
-					shift = mk.Octave.Amount
-				}
-				if mk != nil && mk.Trill != nil && mk.Trill.Start {
-					trilling = true
-				}
-				// The note a slur begins on is inside it, so this is read
-				// before the note is sounded and closed after.
-				if mk != nil && mk.SlurStart {
-					slurring = true
-				}
-
-				first := len(out.Events)
-				switch n := el.(type) {
-				case *model.Note:
-					if n.Dynamic != model.DynamicNone {
-						loud = n.Dynamic
-						swell = nil // a written dynamic settles the question
-					}
-					gd := addGrace(&out, n.Grace, p, shift, vt, d, secondsPerWhole, pi, loud)
-					if paired[ei] {
-						break // sounded with the note it is paired to
-					}
-					if n.Tremolo.Paired() {
-						if alt, at, ok := tremoloPartner(v.Elements, ei); ok {
-							paired[at] = true
-							addTwoNoteTremolo(&out, n.Tremolo,
-								[]model.Pitch{sounding(p, n.Pitch, shift)},
-								pitchesOf(alt, p, shift),
-								vt+gd, d-gd+partnerSeconds(alt, secondsPerWhole),
-								secondsPerWhole, pi, ref, p.Instrument, loud)
-							break
+				// A two-note tremolo is two written notes and one sound, so the
+				// first of the pair plays both and the second plays nothing.
+				// The second still takes its own time: the bar is the same
+				// length either way.
+				// Which number the engraver gave each of this voice's elements.
+				// It numbers a bar by when things start, across all its voices,
+				// so a voice's third element is not necessarily the third
+				// number — and a highlight on the wrong number lights up
+				// somebody else's notehead.
+				var voiceRefs []int
+				if ref != 0 {
+					voiceRefs = make([]int, len(v.Elements))
+					for k, vd := range m.Ordered() {
+						if vd.Voice == vi && vd.Index < len(voiceRefs) {
+							voiceRefs[vd.Index] = ref + k
 						}
-						// A mark with no partner is half a mark. It sounds
-						// as the note it is written on rather than as
-						// nothing at all.
-						addNote(&out, open, &n.Marks, sounding(p, n.Pitch, shift),
-							vt+gd, d-gd, pi, ref, p.Instrument, loud, n.Percussion,
-							slurring && !n.SlurStop)
-					} else if n.Tremolo != nil {
-						addTremolo(&out, n.Tremolo,
-							[]model.Pitch{sounding(p, n.Pitch, shift)},
-							[]int{n.Percussion}, vt+gd, d-gd, secondsPerWhole,
-							pi, ref, p.Instrument, loud)
-					} else if trilling && n.Percussion == 0 {
-						addTrill(&out, sounding(p, n.Pitch, shift), p.KeyAt(mi),
-							vt+gd, d-gd, pi, ref, p.Instrument, loud)
-					} else if orn, ok := ornamentOf(&n.Marks); ok && n.Percussion == 0 {
-						addOrnament(&out, orn, sounding(p, n.Pitch, shift),
-							p.KeyAt(mi), vt+gd, d-gd, pi, ref, p.Instrument, loud)
-					} else {
-						addNote(&out, open, &n.Marks, sounding(p, n.Pitch, shift),
-							vt+gd, d-gd, pi, ref, p.Instrument, loud, n.Percussion,
-							slurring && !n.SlurStop)
 					}
-				case *model.Chord:
-					if n.Dynamic != model.DynamicNone {
-						loud = n.Dynamic
-						swell = nil
+				}
+
+				paired := map[int]bool{}
+				for ei, el := range v.Elements {
+					if ei < len(voiceRefs) {
+						ref = voiceRefs[ei]
 					}
-					gd := addGrace(&out, n.Grace, p, shift, vt, d, secondsPerWhole, pi, loud)
-					if paired[ei] {
-						break // sounded with the chord it is paired to
+					d := el.Duration().Float() * secondsPerWhole
+					mk := marksOf(el)
+					if mk != nil && mk.Octave != nil && mk.Octave.Start {
+						shift = mk.Octave.Amount
 					}
-					if n.Tremolo.Paired() {
-						if alt, at, ok := tremoloPartner(v.Elements, ei); ok {
-							paired[at] = true
-							ps := make([]model.Pitch, 0, len(n.Notes))
-							for _, cn := range n.Notes {
-								ps = append(ps, sounding(p, cn.Pitch, shift))
+					if mk != nil && mk.Trill != nil && mk.Trill.Start {
+						trilling = true
+					}
+					// The note a slur begins on is inside it, so this is read
+					// before the note is sounded and closed after.
+					if mk != nil && mk.SlurStart {
+						slurring = true
+					}
+
+					first := len(out.Events)
+					switch n := el.(type) {
+					case *model.Note:
+						if n.Dynamic != model.DynamicNone {
+							loud = n.Dynamic
+							swell = nil // a written dynamic settles the question
+						}
+						gd := addGrace(&out, n.Grace, p, shift, vt, d, secondsPerWhole, pi, loud)
+						if paired[ei] {
+							break // sounded with the note it is paired to
+						}
+						if n.Tremolo.Paired() {
+							if alt, at, ok := tremoloPartner(v.Elements, ei); ok {
+								paired[at] = true
+								addTwoNoteTremolo(&out, n.Tremolo,
+									[]model.Pitch{sounding(p, n.Pitch, shift)},
+									pitchesOf(alt, p, shift),
+									vt+gd, d-gd+partnerSeconds(alt, secondsPerWhole),
+									secondsPerWhole, pi, ref, p.Instrument, loud)
+								break
 							}
-							addTwoNoteTremolo(&out, n.Tremolo, ps,
-								pitchesOf(alt, p, shift),
-								vt+gd, d-gd+partnerSeconds(alt, secondsPerWhole),
-								secondsPerWhole, pi, ref, p.Instrument, loud)
-							break
+							// A mark with no partner is half a mark. It sounds
+							// as the note it is written on rather than as
+							// nothing at all.
+							addNote(&out, open, &n.Marks, sounding(p, n.Pitch, shift),
+								vt+gd, d-gd, pi, ref, p.Instrument, loud, n.Percussion,
+								slurring && !n.SlurStop)
+						} else if n.Tremolo != nil {
+							addTremolo(&out, n.Tremolo,
+								[]model.Pitch{sounding(p, n.Pitch, shift)},
+								[]int{n.Percussion}, vt+gd, d-gd, secondsPerWhole,
+								pi, ref, p.Instrument, loud)
+						} else if trilling && n.Percussion == 0 {
+							addTrill(&out, sounding(p, n.Pitch, shift), p.KeyAt(mi),
+								vt+gd, d-gd, pi, ref, p.Instrument, loud)
+						} else if orn, ok := ornamentOf(&n.Marks); ok && n.Percussion == 0 {
+							addOrnament(&out, orn, sounding(p, n.Pitch, shift),
+								p.KeyAt(mi), vt+gd, d-gd, pi, ref, p.Instrument, loud)
+						} else {
+							addNote(&out, open, &n.Marks, sounding(p, n.Pitch, shift),
+								vt+gd, d-gd, pi, ref, p.Instrument, loud, n.Percussion,
+								slurring && !n.SlurStop)
 						}
-					}
-					if n.Tremolo != nil && !n.Tremolo.Paired() {
-						// The whole chord is struck again and again, not
-						// each notehead in turn: that would be an arpeggio.
-						ps := make([]model.Pitch, 0, len(n.Notes))
-						ds := make([]int, 0, len(n.Notes))
-						for _, cn := range n.Notes {
-							ps = append(ps, sounding(p, cn.Pitch, shift))
-							ds = append(ds, cn.Percussion)
-						}
-						addTremolo(&out, n.Tremolo, ps, ds, vt+gd, d-gd,
-							secondsPerWhole, pi, ref, p.Instrument, loud)
-						break
-					}
-					for _, cn := range n.Notes {
-						addNote(&out, open, &n.Marks, sounding(p, cn.Pitch, shift),
-							vt+gd, d-gd, pi, ref, p.Instrument, loud, cn.Percussion,
-							slurring && !n.SlurStop)
-					}
-				}
-				if mk != nil {
-					if h := mk.Hairpin; h != nil {
-						if h.Start && swell == nil {
-							swell = &swelling{kind: h.Kind, from: first}
-						}
-						if h.Stop && swell != nil {
-							swell.apply(&out, len(out.Events), loud)
+					case *model.Chord:
+						if n.Dynamic != model.DynamicNone {
+							loud = n.Dynamic
 							swell = nil
 						}
+						gd := addGrace(&out, n.Grace, p, shift, vt, d, secondsPerWhole, pi, loud)
+						if paired[ei] {
+							break // sounded with the chord it is paired to
+						}
+						if n.Tremolo.Paired() {
+							if alt, at, ok := tremoloPartner(v.Elements, ei); ok {
+								paired[at] = true
+								ps := make([]model.Pitch, 0, len(n.Notes))
+								for _, cn := range n.Notes {
+									ps = append(ps, sounding(p, cn.Pitch, shift))
+								}
+								addTwoNoteTremolo(&out, n.Tremolo, ps,
+									pitchesOf(alt, p, shift),
+									vt+gd, d-gd+partnerSeconds(alt, secondsPerWhole),
+									secondsPerWhole, pi, ref, p.Instrument, loud)
+								break
+							}
+						}
+						if n.Tremolo != nil && !n.Tremolo.Paired() {
+							// The whole chord is struck again and again, not
+							// each notehead in turn: that would be an arpeggio.
+							ps := make([]model.Pitch, 0, len(n.Notes))
+							ds := make([]int, 0, len(n.Notes))
+							for _, cn := range n.Notes {
+								ps = append(ps, sounding(p, cn.Pitch, shift))
+								ds = append(ds, cn.Percussion)
+							}
+							addTremolo(&out, n.Tremolo, ps, ds, vt+gd, d-gd,
+								secondsPerWhole, pi, ref, p.Instrument, loud)
+							break
+						}
+						for _, cn := range n.Notes {
+							addNote(&out, open, &n.Marks, sounding(p, cn.Pitch, shift),
+								vt+gd, d-gd, pi, ref, p.Instrument, loud, cn.Percussion,
+								slurring && !n.SlurStop)
+						}
 					}
+					if mk != nil {
+						if h := mk.Hairpin; h != nil {
+							if h.Start && swell == nil {
+								swell = &swelling{kind: h.Kind, from: first}
+							}
+							if h.Stop && swell != nil {
+								swell.apply(&out, len(out.Events), loud)
+								swell = nil
+							}
+						}
 
-					if mk.Octave != nil && mk.Octave.Stop {
-						shift = 0
+						if mk.Octave != nil && mk.Octave.Stop {
+							shift = 0
+						}
+						if mk.Trill != nil && mk.Trill.Stop {
+							trilling = false
+						}
+						if mk.SlurStop {
+							slurring = false
+						}
 					}
-					if mk.Trill != nil && mk.Trill.Stop {
-						trilling = false
-					}
-					if mk.SlurStop {
-						slurring = false
-					}
+					vt += d
 				}
-				vt += d
-			}
-			// A note may ring past the last barline; the piece is not over
-			// until it has stopped.
-			if vt > out.Duration {
-				out.Duration = vt
+				// A note may ring past the last barline; the piece is not over
+				// until it has stopped.
+				if vt > out.Duration {
+					out.Duration = vt
+				}
 			}
 		}
 	}

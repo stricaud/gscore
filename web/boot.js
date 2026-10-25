@@ -75,17 +75,19 @@
   // the file dialog uses.
   async function openShared() {
     if (!window.gscoreShare) return;
-    let abc;
+    let score;
     try {
-      abc = await window.gscoreShare.fromLocation();
+      score = await window.gscoreShare.fromLocation();
     } catch (_) {
       return; // a fragment that is not a score, which is most of them
     }
-    if (!abc) return;
+    if (!score) return;
     try {
-      await window.fetch("/api/open?name=shared.abc", {
+      // The name is how the core picks which importer to use, so the
+      // fragment's own word for what it is carrying becomes the extension.
+      await window.fetch("/api/open?name=shared." + score.kind, {
         method: "POST",
-        body: abc,
+        body: score.bytes,
       });
     } catch (err) {
       console.error("could not open the shared score:", err);

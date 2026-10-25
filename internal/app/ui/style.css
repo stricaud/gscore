@@ -219,7 +219,13 @@ kbd {
   gap: 6px;
 }
 .transport button {
-  width: 30px; height: 24px;
+  /* Wide enough for the word beside the glyph. The width was fixed when
+     there was only a glyph in it. */
+  min-width: 30px; height: 24px;
+  padding: 0 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
   background: var(--panel-dark);
   border: 1px solid var(--line);
   border-radius: 4px;
@@ -229,6 +235,19 @@ kbd {
   line-height: 1;
 }
 .transport button:hover { background: var(--accent); color: #fff; border-color: var(--accent); }
+.transport .label { font-size: 11px; letter-spacing: .01em; }
+/* Play is the one thing a visitor is looking for, so it is the one thing
+   that looks like a button rather than like a border. */
+#play-btn { background: var(--accent); color: #fff; border-color: var(--accent); font-weight: 600; }
+#play-btn:hover { filter: brightness(1.12); }
+/* In the Mac application the toolbar is narrow and the menus are at the top
+   of the screen, where Play already has a name and a keystroke beside it.
+   The glyphs alone are enough there, and they are what has always been
+   there. */
+.native-menu .transport .label { display: none; }
+@media (max-width: 760px) {
+  .transport .label { display: none; }
+}
 .transport button.active { background: var(--accent); color: #fff; }
 #clock {
   font: 12px ui-monospace, SFMono-Regular, Menlo, monospace;

@@ -47,6 +47,8 @@
     composer: el.dataset.composer || "",
     note: el.dataset.note || "",
     file: el.dataset.file,
+    src: el.dataset.src,
+    kind: el.dataset.kind,
     abc: $(".abc", el).textContent,
     sound: JSON.parse($(".sound", el).textContent),
     paper: $(".paper", el),
@@ -212,24 +214,59 @@
 
   let linkFor = "";
 
+  // Above this, a link stops being something anybody pastes into a message.
+  // It still works — a fragment never goes near a server and the browser
+  // carries it quite happily — but the page should not pretend otherwise.
+  const COMFORTABLE = 2000;
+
   async function refreshLinks() {
-    const packed = await window.gscoreShare.encode(current.abc);
     const base = location.href.replace(/[?#].*$/, "").replace(/index\.html$/, "");
+    const open = $("#open");
+    const said = $("#size");
+
+    let packed;
+    if (current.abc) {
+      packed = await window.gscoreShare.encode(current.abc, "abc");
+    } else {
+      // Written in something other than ABC, so the file itself goes in,
+      // whatever it is. A .mxl is already a zip; it comes out about eight
+      // kilobytes, which is ten thousand characters of link.
+      const res = await fetch("scores/" + current.src);
+      const bytes = new Uint8Array(await res.arrayBuffer());
+      packed = await window.gscoreShare.encode(bytes, current.kind);
+    }
+
     linkFor = base + "app/#s=" + packed;
-    $("#open").href = linkFor;
+    open.href = linkFor;
     $("#file").href = "scores/" + current.file;
-    $("#size").textContent = linkFor.length + " characters";
+
+    if (linkFor.length <= COMFORTABLE) {
+      said.textContent = linkFor.length + " characters";
+      $("#copy").textContent = "Copy the link";
+      $("#copy").dataset.page = "";
+    } else {
+      // The whole piece still fits, but the short thing to send is the page.
+      said.textContent =
+        "this piece needs " + linkFor.length.toLocaleString() +
+        " characters, so the button copies a link to the page instead";
+      $("#copy").textContent = "Copy a link to it";
+      $("#copy").dataset.page = base + "scores/" + current.file;
+    }
   }
 
   async function copyLink() {
     const said = $("#said");
+    const page = $("#copy").dataset.page;
+    const what = page || linkFor;
     try {
-      await navigator.clipboard.writeText(linkFor);
-      said.textContent = "Copied. That link is the music — paste it anywhere.";
+      await navigator.clipboard.writeText(what);
+      said.textContent = page
+        ? "Copied. That page carries the music with it — no account, nothing to expire."
+        : "Copied. That link is the music — paste it anywhere.";
     } catch (_) {
       // Clipboard refused, which some browsers do unless the page is focused.
       // Show it instead, so there is still something to copy.
-      said.textContent = linkFor;
+      said.textContent = what;
     }
     said.classList.add("said");
     setTimeout(() => said.classList.remove("said"), 4000);

@@ -290,18 +290,38 @@ func measureAt(p *model.Part, n int) *model.Measure {
 // Notes are moved whole and never divided: splitting a note across a barline
 // means tying the halves together, and a tie the user did not ask for is a
 // change to the music rather than to its layout.
+//
+// Nothing happens at all when the barlines are not being kept — see
+// TrackBarlines. A great deal of old music is written with bars that do not
+// add up: a figured bass with the harmony sketched in, a chant barred by
+// phrase rather than by beat, an exercise whose last bar is however long the
+// line was. A program that insists on the arithmetic cannot be used to type
+// any of it in, because every bar it fixes is a bar it has rewritten.
 func spill(p *model.Part, from int) {
+	if !TrackBarlines() {
+		return
+	}
 	bar := p.Time.BarDuration()
 	if bar.IsZero() {
 		return
 	}
 	for i := from; i < len(p.Measures); i++ {
 		v := p.Measures[i].Voices[0]
+		moved := false
 		for len(v.Elements) > 1 && v.Duration().Cmp(bar) > 0 {
 			last := v.Elements[len(v.Elements)-1]
 			v.Elements = v.Elements[:len(v.Elements)-1]
 			next := measureAt(p, i+1).Voices[0]
 			next.Elements = append([]model.Element{last}, next.Elements...)
+			moved = true
+		}
+		// Stop where the pushing stops. Carrying on to the end of the part
+		// tidied bars nobody had touched — which is the whole of what
+		// somebody turning the tracking back on asked not to happen, and
+		// was wrong even with it on: an overfull bar five systems away is
+		// not a consequence of the note just written.
+		if !moved {
+			return
 		}
 	}
 }
@@ -3204,14 +3224,23 @@ func (a *App) handleDuration(w http.ResponseWriter, r *http.Request) {
 	// it falls and the bar has to be reflowed once the whole of it is done.
 	// Reflowing after each note would move the notes still to be changed out
 	// from under the places the selection names them by.
+	// The elements themselves, kept so that they can be found again after
+	// the bars reflow. Making notes longer pushes what no longer fits into
+	// the following bars, so by the time this returns half of them are no
+	// longer where the selection said they were — and a second change asked
+	// for on the same selection reached only the ones that had not moved.
+	type moved struct {
+		part int
+		from int
+		el   model.Element
+	}
+	var done []moved
 	touched := map[[2]int]bool{}
-	changed := 0
 	for _, t := range targets {
-		p, m, err := a.locate(t.part, t.measure)
+		_, m, err := a.locate(t.part, t.measure)
 		if err != nil {
 			continue // a stale selection is not worth failing over
 		}
-		_ = p
 		for _, v := range m.Voices {
 			if v == nil || t.index < 0 || t.index >= len(v.Elements) {
 				continue
@@ -3224,12 +3253,12 @@ func (a *App) handleDuration(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			setDuration(el, want)
-			changed++
+			done = append(done, moved{part: t.part, from: t.measure, el: el})
 			touched[[2]int{t.part, t.measure}] = true
 			break // the first voice that has an element at this index
 		}
 	}
-	if changed == 0 {
+	if len(done) == 0 {
 		http.Error(w, "nothing in the selection has a length to change",
 			http.StatusBadRequest)
 		return
@@ -3241,5 +3270,105 @@ func (a *App) handleDuration(w http.ResponseWriter, r *http.Request) {
 			spill(p, at[1])
 		}
 	}
-	writeJSON(w, map[string]any{"status": "ok", "changed": changed})
+
+	// Where each of them ended up, so that what was selected still is.
+	now := make([]string, 0, len(done))
+	for _, d := range done {
+		p, _, err := a.locate(d.part, d.from)
+		if err != nil {
+			continue
+		}
+		measure, after := findElement(p, d.from, d.el)
+		if after <= 0 {
+			continue
+		}
+		now = append(now, fmt.Sprintf("%d:%d:%d", d.part, measure, after-1))
+	}
+	writeJSON(w, map[string]any{
+		"status": "ok", "changed": len(done), "now": now,
+	})
+}
+
+/*
+ * Ending a bar where you say.
+ *
+ * With the barlines kept to the meter, a bar ends when it is full and there
+ * is nothing to decide. With them left loose — see TrackBarlines — nothing
+ * ends a bar at all, and typing in a piece whose bars do not add up needs
+ * some way of saying "this one ends here". Adding a measure appends an empty
+ * one at the end of the piece, which is a different thing entirely.
+ *
+ * The split happens at the same moment in every staff, not at the same
+ * element: measures are lined up across the staves by their position in the
+ * list, so splitting one staff's bar and not the others would leave the
+ * barlines of a piano part disagreeing with each other from there to the end
+ * of the piece.
+ */
+
+// handleSplitMeasure ends the measure at the cursor, moving what follows into
+// a new measure after it.
+func (a *App) handleSplitMeasure(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST required", http.StatusMethodNotAllowed)
+		return
+	}
+	q := r.URL.Query()
+	partIdx, _ := strconv.Atoi(q.Get("part"))
+	measIdx, _ := strconv.Atoi(q.Get("measure"))
+	at, _ := strconv.Atoi(q.Get("at"))
+
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	p, m, err := a.locate(partIdx, measIdx)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	v := m.Voices[0]
+	if at <= 0 || at >= len(v.Elements) {
+		http.Error(w, "put the cursor where the bar should end", http.StatusBadRequest)
+		return
+	}
+
+	// Where the cursor is, in time rather than in elements.
+	offset := model.Duration{Num: 0, Den: 1}
+	for _, el := range v.Elements[:at] {
+		offset = offset.Add(el.Duration())
+	}
+	_ = p
+
+	for _, part := range a.score.Parts {
+		if measIdx >= len(part.Measures) {
+			continue
+		}
+		src := part.Measures[measIdx]
+		rest := &model.Measure{RightBarline: src.RightBarline}
+		// The bar that is left keeps a plain barline; whatever closed it —
+		// a repeat, a double bar — belongs to the end of what was written,
+		// which is now the second half.
+		src.RightBarline = model.BarSingle
+		for _, voice := range src.Voices {
+			kept := &model.Voice{}
+			moved := &model.Voice{}
+			cursor := model.Duration{Num: 0, Den: 1}
+			for _, el := range voice.Elements {
+				if cursor.Cmp(offset) >= 0 {
+					moved.Elements = append(moved.Elements, el)
+				} else {
+					kept.Elements = append(kept.Elements, el)
+				}
+				cursor = cursor.Add(el.Duration())
+			}
+			voice.Elements = kept.Elements
+			rest.Voices = append(rest.Voices, moved)
+		}
+		if len(rest.Voices) == 0 {
+			rest.Voices = []*model.Voice{{}}
+		}
+		part.Measures = append(part.Measures, nil)
+		copy(part.Measures[measIdx+2:], part.Measures[measIdx+1:])
+		part.Measures[measIdx+1] = rest
+	}
+	writeJSON(w, map[string]any{"status": "ok", "measure": measIdx + 1})
 }

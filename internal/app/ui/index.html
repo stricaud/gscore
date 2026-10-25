@@ -157,6 +157,10 @@
       <button data-action="insert-note"><span>Note</span></button>
       <button data-action="insert-rest"><span>Rest</span></button>
       <button data-action="add-measure"><span>Measure</span><kbd>M</kbd></button>
+      <!-- Ends the bar where the cursor is. With the barlines kept to the
+           meter a bar ends when it is full; with them left loose nothing
+           ends one, and this is how you say where. -->
+      <button data-action="split-measure"><span>Barline here</span><kbd>⇥</kbd></button>
       <hr>
       <button data-action="repeat-bar"><span>Repeat the bar before</span><kbd>R</kbd></button>
       <button data-action="repeat-2bars"><span>Repeat the two bars before</span></button>
@@ -277,6 +281,12 @@
       <hr>
       <button data-action="set-key"><span>Key signature…</span></button>
       <button data-action="set-time"><span>Time signature from here…</span></button>
+      <hr>
+      <!-- Whether a bar that is too long has its last notes moved into the
+           next one. On is what makes typing music in feel like typing; off
+           is how old music gets typed in at all, where the barring is a
+           guide and the count is left to the player. -->
+      <button data-action="track-barlines"><span>Keep bars to the meter</span><kbd id="barline-tick">✓</kbd></button>
       <hr>
       <button data-action="score-options" disabled><span>Score options…</span></button>
       <button data-action="parameters" disabled><span>Parameters…</span></button>

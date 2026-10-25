@@ -49,6 +49,18 @@ type settings struct {
 	// gscore is paying a second rendering of the whole score on every save
 	// for a page nobody looks at, and this is how they stop.
 	NoScorePDF bool `json:"noScorePDF,omitempty"`
+
+	// LooseBarlines stops gscore moving notes across a barline to make the
+	// bars add up.
+	//
+	// On by default, which is why this is the negative of it: a bar that is
+	// too long is nearly always a mistake, and moving what will not fit into
+	// the next bar is what makes typing music in feel like typing. It is not
+	// always a mistake. Plenty of old music is barred by phrase rather than
+	// by beat, or sketches the harmony and leaves the count to the player,
+	// and none of it can be typed in at all while the program keeps
+	// correcting the arithmetic.
+	LooseBarlines bool `json:"looseBarlines,omitempty"`
 }
 
 // mostRecent is how many files the list holds.
@@ -203,6 +215,9 @@ func (a *App) handleSettings(w http.ResponseWriter, r *http.Request) {
 		if v, ok := r.URL.Query()["scorePDF"]; ok && len(v) > 0 {
 			s.NoScorePDF = v[0] == "0"
 		}
+		if v, ok := r.URL.Query()["trackBarlines"]; ok && len(v) > 0 {
+			s.LooseBarlines = v[0] == "0"
+		}
 		// A failure to write is not a failure to set: saveSettings has
 		// already kept it for this session, and in the browser there is no
 		// disk to keep it on at all. Reporting that as an error would be an
@@ -221,8 +236,13 @@ func (a *App) handleSettings(w http.ResponseWriter, r *http.Request) {
 		"playbackFontName": name,
 		"stored":           loadSettings().PlaybackFont,
 		"scorePDF":         SaveScorePDF(),
+		"trackBarlines":    TrackBarlines(),
 	})
 }
 
 // SaveScorePDF says whether a .gscore file should carry a PDF of the score.
 func SaveScorePDF() bool { return !loadSettings().NoScorePDF }
+
+// TrackBarlines says whether notes that overflow a bar are moved into the
+// next one.
+func TrackBarlines() bool { return !loadSettings().LooseBarlines }

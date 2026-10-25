@@ -73,6 +73,13 @@ const state = {
   // has to say the same thing or the tick beside "Measure numbers" in the
   // View menu starts out contradicting the page.
   view: { names: false, numbers: true },
+  // Whether a bar that is too long has its last notes moved along. Read from
+  // the server at startup, because it is remembered between sessions.
+  trackBarlines: true,
+  // The two ends of a selection being grown from the keyboard: the one that
+  // stays put and the one the arrows move.
+  anchor: null,
+  focus: null,
   // Whether a saved .gscore carries a PDF of itself in front of the music.
   //
   // It does by default: renamed .pdf the same file opens in anything that
@@ -442,6 +449,9 @@ async function action(name) {
     case "insert-rest":
       await insertAtSelection(true);
       break;
+    case "split-measure":
+      await splitMeasure();
+      break;
     case "add-measure":
       await fetch("/api/addmeasure", { method: "POST" });
       await reload();
@@ -600,6 +610,9 @@ async function action(name) {
       break;
     case "settings":
       await settingsDialog();
+      break;
+    case "track-barlines":
+      await setTrackBarlines(!state.trackBarlines);
       break;
     case "import-symbols":
       await importSymbolPack();
@@ -2049,13 +2062,36 @@ function barlineAt(x, y) {
 
 // hitAt finds the measure under a point given in staff spaces.
 function hitAt(x, y) {
+  // As far as the music actually goes, not a guess at it.
+  //
+  // The reach above and below used to be a fixed five spaces, which covers
+  // a couple of ledger lines and no more. A flute run climbing to four and
+  // a half spaces above the staff was therefore right on the edge of being
+  // clickable at all, and the notes at the top of it could not be picked up
+  // without landing the pointer inside half a space — which is what made
+  // selecting a long run across the top of the staff a struggle.
   let best = null;
+  let bestDist = Infinity;
   for (const h of state.hits) {
     if (x < h.x0 || x > h.x1) continue;
-    // Allow a few spaces above and below for ledger lines.
-    if (y < h.staffTop - 5 || y > h.staffTop + 9) continue;
-    best = h;
-    break;
+    const staffBottom = h.staffTop + staffHeightOf(h);
+    let top = h.staffTop - 5;
+    let bottom = staffBottom + 5;
+    for (const el of h.elements || []) {
+      const a = Math.min(el.y, el.y2 ?? el.y) - 1.5;
+      const b = Math.max(el.y, el.y2 ?? el.y) + 1.5;
+      if (a < top) top = a;
+      if (b > bottom) bottom = b;
+    }
+    if (y < top || y > bottom) continue;
+    // Where two staves reach the same place — the two hands of a piano, a
+    // run below one and a run above the other — the nearer staff owns it.
+    const d = y < h.staffTop ? h.staffTop - y
+      : Math.max(0, y - staffBottom);
+    if (d < bestDist) {
+      best = h;
+      bestDist = d;
+    }
   }
   return best;
 }
@@ -2103,6 +2139,7 @@ function elementAt(hit, x, y) {
     const bottom = Math.max(el.y, el.y2 ?? el.y);
     const dy = y < top ? top - y : Math.max(0, y - bottom);
     if (dx > 0.6 || dy > 1.2) continue;
+
     const d = dx * dx + dy * dy;
     if (d < bestDist) {
       best = el;
@@ -2276,10 +2313,24 @@ function setupCanvasClicks() {
         selectRange(state.anchor, { part: hit.part, measure: hit.measure, index: el.index });
         return;
       }
+      // On the notehead, or above it.
+      //
+      // Clicking a note's column at a height the note does not occupy adds
+      // that pitch to it, which is how a chord is written. Whether you are
+      // on the note was an exact match on the step the click rounds to —
+      // and a step is half a space, so the part of a notehead that counted
+      // as the notehead was the middle quarter of it. Everywhere else on
+      // the same notehead built a chord instead of picking the note up,
+      // which is why clicking a note sitting on a staff line so often gave
+      // you two notes.
+      //
+      // A notehead is a space tall, so anywhere within one step of its
+      // centre is on it. Further out than that is the gesture that means a
+      // chord, and it still does.
+      const onNote = (el.steps || []).some((st) => Math.abs(st - step) <= 1);
       const stackable =
         !picking && !state.tool.rest &&
-        (el.kind === "note" || el.kind === "chord") &&
-        !(el.steps || []).includes(step);
+        (el.kind === "note" || el.kind === "chord") && !onNote;
       if (stackable) {
         await addPitch(hit, el, step);
         return;
@@ -2319,6 +2370,74 @@ function setupCanvasClicks() {
     }
     await insertAtSelection(state.tool.rest, false);
   });
+}
+
+// extendSelection reaches one note further along the music, the way shift
+// with an arrow reaches one character further in a line of text.
+//
+// Selecting a long run by clicking the first note and shift-clicking the
+// last works, and wants the pointer on both of them; a run of sixty-fourths
+// climbing above the staff gives you two targets half a space wide at either
+// end of it. From the keyboard there is nothing to aim at.
+function extendSelection(dir) {
+  const sel = state.selection;
+  if (!sel) {
+    status("Pick a note first");
+    return;
+  }
+  // The end that stays put. Set on a plain click, so shift with an arrow
+  // after clicking a note grows the selection away from that note.
+  if (!state.anchor) {
+    state.anchor = {
+      part: sel.part, measure: sel.measure,
+      index: Math.max(0, (sel.at || 1) - 1),
+    };
+  }
+  const from = state.focus || state.anchor;
+  const next = elementAlong(from, dir);
+  if (!next) {
+    status(dir > 0 ? "That is the end of the music" : "That is the beginning");
+    return;
+  }
+  state.focus = next;
+  selectRange(state.anchor, next);
+  // selectRange points the caret at the start of the range; the end that is
+  // moving is the one to keep typing from.
+  const hit = state.hits.find(
+    (h) => h.part === next.part && h.measure === next.measure);
+  const el = hit && (hit.elements || []).find((e) => e.index === next.index);
+  if (el) {
+    state.selection = {
+      part: next.part, measure: next.measure, at: next.index + 1,
+      step: (el.steps && el.steps.length) ? el.steps[0] : 0, ref: el.ref,
+    };
+  }
+}
+
+// elementAlong is the element one step either side of this one, crossing
+// barlines as it goes: the music is a line, not a series of boxes.
+function elementAlong(at, dir) {
+  const bars = state.hits
+    .filter((h) => h.part === at.part)
+    .sort((a, b) => a.measure - b.measure);
+  const here = bars.findIndex((h) => h.measure === at.measure);
+  if (here < 0) return null;
+
+  let i = here;
+  let index = at.index + dir;
+  while (i >= 0 && i < bars.length) {
+    const els = bars[i].elements || [];
+    if (index >= 0 && index < els.length) {
+      return { part: at.part, measure: bars[i].measure, index };
+    }
+    i += dir;
+    if (i < 0 || i >= bars.length) return null;
+    const next = bars[i].elements || [];
+    index = dir > 0 ? 0 : next.length - 1;
+    if (!next.length) continue;
+    return { part: at.part, measure: bars[i].measure, index };
+  }
+  return null;
 }
 
 // selectRange picks up everything between two points, in reading order.
@@ -2363,7 +2482,7 @@ function selectRange(from, to) {
 // clicked the ff meant by pressing it.
 function selectDynamic(d) {
   state.multi = [];
-  state.anchor = null;
+  state.anchor = state.focus = null;
   state.selection = {
     part: d.part, measure: d.measure, ref: d.ref,
     at: 0, step: 0, dynamic: d.name,
@@ -2381,7 +2500,7 @@ function selectDynamic(d) {
 // but not removed.
 function selectTempo(t) {
   state.multi = [];
-  state.anchor = null;
+  state.anchor = state.focus = null;
   state.selection = {
     part: 0, measure: t.measure, ref: null,
     at: 0, step: 0, tempo: t.measure,
@@ -2395,7 +2514,7 @@ function selectTempo(t) {
 // selectHairpin picks up a swell.
 function selectHairpin(h) {
   state.multi = [];
-  state.anchor = null;
+  state.anchor = state.focus = null;
   state.selection = {
     part: h.part, measure: h.measure, ref: h.from,
     at: 0, step: 0, hairpin: h,
@@ -2411,7 +2530,7 @@ function selectHairpin(h) {
 // bar and selecting that instead.
 function selectMeasure(part, measure) {
   state.multi = [];
-  state.anchor = null;
+  state.anchor = state.focus = null;
   // bar says the whole measure is what is picked up, not a place in it.
   // Copying needs to know: a bar has no ref of its own, and without this
   // "copy" found nothing selected and said so, which is the one thing
@@ -2429,7 +2548,10 @@ function selectMeasure(part, measure) {
 
 // select picks up an existing element, so the next command acts on it.
 function select(hit, el, step) {
+  // This note is both ends of the selection until an arrow or a shift-click
+  // moves one of them.
   state.anchor = { part: hit.part, measure: hit.measure, index: el.index };
+  state.focus = null;
   state.multi = [];
   // Which notehead of a chord was clicked, so a tie can be put on that one
   // rather than on all of them. Null means the element as a whole.
@@ -2458,7 +2580,7 @@ function select(hit, el, step) {
 function clearSelection() {
   state.selection = null;
   state.multi = [];
-  state.anchor = null;
+  state.anchor = state.focus = null;
   markSelection();
 }
 
@@ -2919,10 +3041,12 @@ async function mark(endpoint, params, said) {
   const res = await fetch(`/api/${endpoint}?` + p.toString(), { method: "POST" });
   if (!res.ok) {
     status("Could not apply: " + (await res.text()).trim());
-    return;
+    return null;
   }
+  const d = await res.json().catch(() => ({}));
   await refreshScore();
   status(said);
+  return d;
 }
 
 // carryCaretOn moves the caret into the next bar when this one is full.
@@ -3099,10 +3223,36 @@ async function setTuplet(n) {
   status(`${tupletNames[n] || n + "-tuplet"} — ${d.tuplet} in the time of ${d.normal}`);
 }
 
-// setSelectionDuration rewrites the length of the notes that are picked up.
-const setSelectionDuration = (value, label) =>
-  mark("duration", { value, dots: String(0) },
-       "Changed to " + (label || value).toLowerCase());
+// setSelectionDuration rewrites the length of the notes that are picked up,
+// and keeps them picked up.
+//
+// Making notes longer pushes what no longer fits into the bars after them,
+// so the places the selection named them by are not where they are any more.
+// Left alone, a second change asked for on the same selection reached only
+// the notes that happened not to have moved — which on a run of sixty-fourths
+// is the first group and nothing else. The server says where each of them
+// ended up and the selection follows them there.
+async function setSelectionDuration(value, label) {
+  const d = await mark("duration", { value, dots: String(0) },
+                       "Changed to " + (label || value).toLowerCase());
+  if (!d || !Array.isArray(d.now) || !d.now.length) return;
+
+  state.multi = d.now.map((at) => {
+    const [part, measure, index] = at.split(":").map(Number);
+    const hit = state.hits.find((h) => h.part === part && h.measure === measure);
+    const el = hit && (hit.elements || []).find((e) => e.index === index);
+    return { part, measure, index, ref: el ? el.ref : null };
+  }).filter((m) => m.ref !== null);
+
+  const first = state.multi[0];
+  if (first) {
+    state.selection = {
+      part: first.part, measure: first.measure,
+      at: first.index + 1, step: 0, ref: first.ref,
+    };
+  }
+  markSelection();
+}
 
 const setStem = (dir) =>
   mark("stem", { stem: dir },
@@ -3452,6 +3602,51 @@ async function saveScore(ask) {
   }
   await loadInfo();
   status("Saved " + d.path);
+}
+
+// splitMeasure ends the bar where the cursor is.
+async function splitMeasure() {
+  const sel = state.selection;
+  if (!sel || !sel.at) {
+    status("Put the cursor where the bar should end");
+    return;
+  }
+  const q = new URLSearchParams({
+    part: String(sel.part), measure: String(sel.measure), at: String(sel.at),
+  });
+  const res = await fetch("/api/splitmeasure?" + q.toString(), { method: "POST" });
+  if (!res.ok) {
+    status("Could not put a barline there: " + (await res.text()).trim());
+    return;
+  }
+  await refreshScore();
+  status("Barline added");
+}
+
+// setTrackBarlines turns the arithmetic on a bar's length on and off.
+//
+// Turning it back on changes nothing that is already written: the bars that
+// do not add up stay as they are, and only the next thing typed is moved
+// along if it will not fit. That is the point of the switch — somebody
+// typing in a piece of old music wants the program to stop correcting them
+// for a while, not to be told later that it has gone back and tidied up.
+async function setTrackBarlines(on) {
+  const res = await fetch("/api/settings?trackBarlines=" + (on ? "1" : "0"),
+                          { method: "POST" });
+  if (!res.ok) {
+    status("Could not change that");
+    return;
+  }
+  state.trackBarlines = on;
+  markBarlineTick();
+  status(on
+    ? "Bars are kept to the meter — what will not fit moves into the next bar"
+    : "Bars are left as written — notes stay in the bar they are typed in");
+}
+
+function markBarlineTick() {
+  const t = $("#barline-tick");
+  if (t) t.textContent = state.trackBarlines ? "✓" : "";
 }
 
 // settingsDialog is what gscore remembers between sessions.
@@ -6054,6 +6249,7 @@ function setupMarquee() {
         part: f.part, measure: f.measure, at: f.index + 1, step: 0, ref: f.ref,
       };
       state.anchor = { part: f.part, measure: f.measure, index: f.index };
+      state.focus = null;
     }
     markSelection();
     status(state.multi.length
@@ -6298,11 +6494,13 @@ function setupKeys() {
         return;
       case "ArrowLeft":
         e.preventDefault();
-        moveCursorBy(-1);
+        if (e.shiftKey) extendSelection(-1);
+        else moveCursorBy(-1);
         return;
       case "ArrowRight":
         e.preventDefault();
-        moveCursorBy(1);
+        if (e.shiftKey) extendSelection(1);
+        else moveCursorBy(1);
         return;
     }
 
@@ -6362,6 +6560,12 @@ function setupKeys() {
       case "c": action("insert-chord"); break;
       case "j": action("jump"); break;
       case "m": action("add-measure"); break;
+      case "Tab":
+        // Ends the bar here. Tab is where the hand already is when typing
+        // music in, and it does nothing else in this window.
+        e.preventDefault();
+        action("split-measure");
+        break;
       case "l": action("set-lyrics"); break;
       case "F2": e.preventDefault(); toggleFingering(); break;
       case "t": action("insert-text"); break;
@@ -6530,6 +6734,7 @@ function moveCursorBy(delta) {
   const p = line[at];
   state.multi = [];
   state.anchor = { part: sel.part, measure: p.measure, index: p.index };
+  state.focus = null;
   // The cursor takes the pitch of whatever it lands on, so that arrowing
   // onto a note and then pressing up writes the next one a step above it
   // rather than jumping back to the bottom line.
@@ -6868,6 +7073,14 @@ async function main() {
   setupStripHover();
   setupDrawing();
   markMode();
+  // What was remembered from last time.
+  try {
+    const kept = await (await fetch("/api/settings")).json();
+    state.trackBarlines = kept.trackBarlines !== false;
+  } catch (_) {
+    // Served without a disk behind it. The default stands.
+  }
+  markBarlineTick();
 
   $("#tune-select").addEventListener("change", (e) => selectTune(Number(e.target.value)));
   $("#show-all").addEventListener("change", async (e) => {

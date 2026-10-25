@@ -99,7 +99,11 @@ type way struct {
 }
 
 var (
-	svgTag   = regexp.MustCompile(`(?s)<svg[^>]*class="gscore-score".*?</svg>`)
+	svgTag = regexp.MustCompile(`(?s)<svg[^>]*class="gscore-score".*?</svg>`)
+	// The @font-face the page it came from carries inside it. The base64 of
+	// an OpenType face holds no closing brace, so stopping at the first one
+	// ends the rule exactly.
+	fontFace = regexp.MustCompile(`(?s)@font-face\s*\{[^}]*\}`)
 	soundTag = regexp.MustCompile(`(?s)<script id="gscore-sound"[^>]*>(.*?)</script>`)
 )
 
@@ -151,13 +155,14 @@ func readPieces(samples, built string) ([]piece, error) {
 			return nil, fmt.Errorf("%s: the built page has no score in it", id)
 		}
 		// The drawing on its own, for the front page to fetch when it shows
-		// this piece. It names the music font rather than carrying it — the
-		// page declares the face once and every piece uses it — which is the
-		// difference between thirty kilobytes and a megabyte. The .svg beside
-		// it keeps the font inside, because that one is a file somebody
-		// downloads and it has to stand alone.
+		// this piece. The face it is set in comes out: site.css declares
+		// Bravura once for the whole page and every piece is drawn in it,
+		// which is the difference between thirty kilobytes and a megabyte
+		// and a half. The page and the .svg beside it keep the font, because
+		// those are the files somebody downloads and they have to stand on
+		// their own wherever they are opened.
 		if err := os.WriteFile(filepath.Join(built, id+".inline.svg"),
-			svg, 0o644); err != nil {
+			fontFace.ReplaceAll(svg, nil), 0o644); err != nil {
 			return nil, err
 		}
 

@@ -94,9 +94,16 @@ for src in "$root"/samples/*; do
     ext="${src##*.}"
     printf '  %s' "$id"
     # The page a visitor opens, and the one the front page takes its drawing
-    # from. The font is linked rather than carried: it is served beside the
-    # page here, and one copy of it does for the whole site.
-    "$tmp/gscore" -o "$out/scores/$id.html" -font ../font.otf "$src" >/dev/null
+    # from. It carries the music font inside it, because this is the file the
+    # "Download the page" button hands over and the whole promise of that
+    # button is a page that works wherever it ends up. Linked to the copy
+    # served beside it here, it worked perfectly on the site and showed a
+    # grid of empty boxes the moment anybody saved it — every notehead a
+    # tofu square with E0A4 printed in it.
+    #
+    # The front page does not pay for this. It shows the drawing alone, as
+    # <id>.inline.svg, which names the face that site.css declares once.
+    "$tmp/gscore" -o "$out/scores/$id.html" "$src" >/dev/null
     # What the program says the piece is, for the pages that list it. Asked
     # of gscore rather than parsed out of the file here, because gscore is
     # the thing that knows how to read every format it reads.
@@ -104,7 +111,8 @@ for src in "$root"/samples/*; do
     # And the same music every other way out of the program, because that is
     # the claim the site makes about it.
     # The still picture the front page shows before anybody presses play.
-    "$tmp/gscore" -o "$out/scores/$id.svg" -font ../font.otf "$src" >/dev/null 2>&1 || \
+    # Standing alone too, for the same reason: it is offered as a file.
+    "$tmp/gscore" -o "$out/scores/$id.svg" "$src" >/dev/null 2>&1 || \
         printf ' (no svg)'
     for want in pdf mid; do
         "$tmp/gscore" -o "$out/scores/$id.$want" "$src" >/dev/null 2>&1 || \

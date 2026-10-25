@@ -22,9 +22,10 @@ import (
 )
 
 /*
- * samples/altes-opening.abc is the first six bars of the 10me Solo, typed out
- * by hand from the original edition, and samples/altes-10e-solo.mscz is the
- * whole piece. They are the same music, so they had better say so.
+ * samples/altes-opening.abc is the first eleven bars of the 10me Solo, typed
+ * out by hand from the original edition: the piano introduction and the entry
+ * of the flute. They are the same music as the score they were copied from, so
+ * they had better say so.
  *
  * Written by hand, an example drifts: a tie is dropped, an accidental is
  * forgotten, and nobody notices because it still looks like music. This
@@ -61,7 +62,7 @@ func TestOpeningMatchesTheScore(t *testing.T) {
 			"the two hands of the piano", len(mine.Parts))
 	}
 	for i := range mine.Parts {
-		a, b := firstBars(orig.Parts[i], 6), firstBars(mine.Parts[i], 6)
+		a, b := firstBars(orig.Parts[i], 11), firstBars(mine.Parts[i], 11)
 		if a != b {
 			t.Errorf("staff %d is not what the score has:\n--- the score\n%s--- the example\n%s",
 				i, a, b)

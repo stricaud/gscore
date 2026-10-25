@@ -77,7 +77,10 @@ const playerJS = `
     plucked:   { wave: "triangle", cut: 3200, a: 0.004, d: 0.22, s: 0.0,  r: 0.10 },
     tuned:     { wave: "triangle", cut: 3600, a: 0.002, d: 0.30, s: 0.0,  r: 0.08 }
   };
-  function voiceFor(f) { return VOICES[f] || VOICES.sustained; }
+  // Anything the score does not name is played as a piano, which is what a keyboard with nothing else said about it
+  // should sound like. Sustained — an organ — was the old answer, and a
+  // score that said nothing about its instrument came out droning.
+  function voiceFor(f) { return VOICES[f] || VOICES.plucked; }
 
   var audio = null, master = null, voices = [];
   var playing = false, startedAt = 0, from = 0, raf = 0, lit = null;

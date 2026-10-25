@@ -124,6 +124,7 @@ func readPieces(samples, built string) ([]piece, error) {
 		}
 	}
 	sort.Strings(files)
+	files = inOrder(files, filepath.Join(samples, "ORDER"))
 
 	var out []piece
 	for _, f := range files {
@@ -423,4 +424,44 @@ func shellPage(site, title, root, body string) (string, error) {
 	page = strings.ReplaceAll(page, "@ROOT@", root)
 	page = strings.ReplaceAll(page, "@BODY@", body)
 	return page, nil
+}
+
+// inOrder puts the scores in the order samples/ORDER asks for.
+//
+// Alphabetical is an accident, and the first piece on the front page is the
+// one a visitor judges the program by. So the order is written down, and
+// anything the file does not mention follows after it.
+func inOrder(files []string, orderFile string) []string {
+	raw, err := os.ReadFile(orderFile)
+	if err != nil {
+		return files
+	}
+	rank := map[string]int{}
+	for _, line := range strings.Split(string(raw), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		if _, seen := rank[line]; !seen {
+			rank[line] = len(rank)
+		}
+	}
+	idOf := func(p string) string {
+		b := filepath.Base(p)
+		return strings.TrimSuffix(b, filepath.Ext(b))
+	}
+	sort.SliceStable(files, func(i, j int) bool {
+		ri, oki := rank[idOf(files[i])]
+		rj, okj := rank[idOf(files[j])]
+		switch {
+		case oki && okj:
+			return ri < rj
+		case oki:
+			return true
+		case okj:
+			return false
+		}
+		return files[i] < files[j]
+	})
+	return files
 }

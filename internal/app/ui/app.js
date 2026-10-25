@@ -4891,7 +4891,10 @@ function sound(ev, start, master) {
     hit(ev, start, master);
     return;
   }
-  const v = VOICES[ev.family] || VOICES.sustained;
+  // Anything the score does not name is played as a piano, which is what a keyboard with nothing else said about it
+  // should sound like. Sustained — an organ — was the old answer, and a
+  // score that said nothing about its instrument came out droning.
+  const v = VOICES[ev.family] || VOICES.plucked;
   const hz = midiToHz(ev.midi);
 
   // How much of its written length a note actually sounds is the marks on

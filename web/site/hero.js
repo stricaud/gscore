@@ -1,5 +1,5 @@
 /*
- * hero.js - the score on the front page: playing it, changing it, sharing it.
+ * hero.js - the score on the front page.
  * gscore - a musical score editor
  *
  * (C) Copyright 2026 Sebastien Tricaud
@@ -9,34 +9,27 @@
  */
 
 /*
- * The music on this page was engraved by gscore itself, at the time the site
- * was built, and is sitting in the page as SVG with the performance beside it
- * as JSON. Nothing here draws a note or works out a rhythm: that was all
- * decided by the same Go code the desktop program runs, which is the point
- * being made — what you are looking at is the program's own output, not a
- * picture of it.
+ * What a visitor sees first, and what happens when they press play.
  *
- * What is left for this file is the part a visitor touches. The voices below
- * mirror the ones in internal/render/html/player.go, which is where the
- * shipped single-file player gets them; that player has no knobs on it, and
- * this page wants knobs.
+ * The music on this page was engraved by gscore at the time the site was
+ * built, and is sitting here as SVG. That is what paints: a picture of the
+ * piece, immediately, with nothing to download.
+ *
+ * Pressing play hands over to the real thing. The editor is loaded into a
+ * frame in its player mode — the same program as the desktop build, as
+ * WebAssembly — and from then on the page is running gscore rather than an
+ * imitation of it: the same engraving, the same cursor travelling the music,
+ * the same playback, with real instruments if the visitor has fetched a
+ * soundfont and oscillators if not.
+ *
+ * It is seventeen megabytes, which is why it waits to be asked. This page
+ * used to answer with a small player of its own; it started faster and
+ * behaved differently from the program it was advertising, which is the one
+ * thing a demonstration must not do.
  */
 
 (function () {
   "use strict";
-
-  // How each family of instrument is sounded. Oscillators rather than
-  // recordings: thirty megabytes of samples to hear eight bars is not a
-  // landing page. The editor plays through real soundfonts.
-  const VOICES = {
-    flute: { wave: "sine", cut: 2400, a: 0.045, d: 0.1, s: 0.85, r: 0.12 },
-    reed: { wave: "sawtooth", cut: 2200, a: 0.03, d: 0.12, s: 0.8, r: 0.12 },
-    brass: { wave: "sawtooth", cut: 2800, a: 0.035, d: 0.14, s: 0.78, r: 0.12 },
-    bowed: { wave: "sawtooth", cut: 2000, a: 0.06, d: 0.14, s: 0.8, r: 0.18 },
-    sustained: { wave: "sawtooth", cut: 2600, a: 0.04, d: 0.12, s: 0.75, r: 0.14 },
-    plucked: { wave: "triangle", cut: 3200, a: 0.004, d: 0.22, s: 0.0, r: 0.1 },
-    tuned: { wave: "triangle", cut: 3600, a: 0.002, d: 0.3, s: 0.0, r: 0.08 },
-  };
 
   const $ = (sel, within) => (within || document).querySelector(sel);
   const $$ = (sel, within) => Array.from((within || document).querySelectorAll(sel));
@@ -49,255 +42,138 @@
     file: el.dataset.file,
     src: el.dataset.src,
     kind: el.dataset.kind,
-    abc: $(".abc", el).textContent,
-    sound: JSON.parse($(".sound", el).textContent),
-    paper: $(".paper", el),
+    abc: $(".abc", el) ? $(".abc", el).textContent : "",
     el,
   }));
   if (!pieces.length) return;
 
+  const stage = $("#stage");
   let current = pieces[0];
-  let rate = 1;
-  let voice = "";          // "" means each part keeps its own sound
-  let audio = null;
-  let playing = false;
-  let startedAt = 0;
-  let timer = null;
+  let frame = null; // the editor, once it has been asked for
 
-  /* ---- playing ---------------------------------------------------------- */
+  /* ---- handing over to the editor ---------------------------------- */
 
-  function context() {
-    if (!audio) audio = new (window.AudioContext || window.webkitAudioContext)();
-    return audio;
-  }
-
-  function sound(ctx, n, at) {
-    const v = VOICES[voice || n.f] || VOICES.sustained;
-    const hz = 440 * Math.pow(2, (n.m - 69) / 12);
-    // A note is held for as long as it is written, less whatever the
-    // articulation takes off it: that is what g carries, and it is why a
-    // staccato sounds short here and not only on paper.
-    const held = (n.d * (n.g || 1)) / rate;
-
-    const osc = ctx.createOscillator();
-    osc.type = v.wave;
-    osc.frequency.value = hz;
-
-    const tone = ctx.createBiquadFilter();
-    tone.type = "lowpass";
-    tone.frequency.value = v.cut;
-
-    const gain = ctx.createGain();
-    const peak = ((n.v || 80) / 127) * 0.22;
-    const g = gain.gain;
-    g.setValueAtTime(0.0001, at);
-    g.exponentialRampToValueAtTime(peak, at + v.a);
-    g.exponentialRampToValueAtTime(Math.max(peak * v.s, 0.0001), at + v.a + v.d);
-    g.setValueAtTime(Math.max(peak * v.s, 0.0001), at + Math.max(held, v.a + v.d));
-    g.exponentialRampToValueAtTime(0.0001, at + Math.max(held, v.a + v.d) + v.r);
-
-    osc.connect(tone).connect(gain).connect(ctx.destination);
-    osc.start(at);
-    osc.stop(at + Math.max(held, v.a + v.d) + v.r + 0.05);
-  }
-
-  function play() {
-    stop();
-    const ctx = context();
-    if (ctx.state === "suspended") ctx.resume();
-
-    const lead = 0.08; // a moment to schedule in, so the first note is not clipped
-    startedAt = ctx.currentTime + lead;
-    for (const n of current.sound.notes) sound(ctx, n, startedAt + n.t / rate);
-
-    playing = true;
-    document.body.classList.add("playing");
-    $("#play").textContent = "Stop";
-    $("#play").setAttribute("aria-label", "Stop");
-    follow();
-  }
-
-  function stop() {
-    if (audio) {
-      // Closing and reopening is the blunt way to silence everything already
-      // scheduled, and the only one that does not need a handle on each note.
-      audio.close();
-      audio = null;
-    }
-    playing = false;
-    document.body.classList.remove("playing");
-    const b = $("#play");
-    if (b) {
-      b.textContent = "Play";
-      b.setAttribute("aria-label", "Play");
-    }
-    if (timer) cancelAnimationFrame(timer);
-    timer = null;
-    clearHighlight();
-  }
-
-  /* ---- following the music across the page ------------------------------ */
-
-  function clearHighlight() {
-    $$(".lit").forEach((e) => e.classList.remove("lit"));
-    const box = $("#barbox");
-    if (box) box.style.opacity = "0";
-  }
-
-  function barBox() {
-    let box = $("#barbox", current.paper);
-    if (!box) {
-      const svg = $("svg", current.paper);
-      if (!svg) return null;
-      box = document.createElementNS("http://www.w3.org/2000/svg", "rect");
-      box.setAttribute("id", "barbox");
-      box.setAttribute("rx", "1");
-      svg.insertBefore(box, svg.firstChild);
-    }
-    return box;
-  }
-
-  function follow() {
-    if (!playing || !audio) return;
-    const now = (audio.currentTime - startedAt) * rate;
-    const end = current.sound.duration || 0;
-
-    if (now > end + 0.4) {
-      stop();
-      return;
-    }
-
-    // The bar being played, lit behind the notes.
-    const bar = current.sound.bars.find((b) => now >= b.t && now < b.t + b.d);
-    const box = barBox();
-    if (box && bar) {
-      const g = (current.sound.boxes || []).find((x) => x.i === bar.i);
-      if (g) {
-        box.setAttribute("x", g.a);
-        box.setAttribute("y", g.c);
-        box.setAttribute("width", Math.max(g.b - g.a, 0));
-        box.setAttribute("height", Math.max(g.e - g.c, 0));
-        box.style.opacity = "1";
-      }
-    }
-
-    // And the notes themselves, which the engraver tagged with the same
-    // number it gave the performance.
-    const want = new Set();
-    for (const n of current.sound.notes) {
-      if (n.r && now >= n.t && now < n.t + n.d) want.add(String(n.r));
-    }
-    $$("[data-ref]", current.paper).forEach((e) => {
-      const on = want.has(e.getAttribute("data-ref"));
-      if (on !== e.classList.contains("lit")) e.classList.toggle("lit", on);
+  function editorURL(piece, autoplay) {
+    // player=1 takes away the menus and the palette and leaves the score
+    // and a transport. score= is resolved against the editor's own page.
+    const q = new URLSearchParams({
+      player: "1",
+      score: "../scores/" + piece.src,
+      zoom: "9",
     });
-
-    timer = requestAnimationFrame(follow);
+    if (autoplay) q.set("autoplay", "1");
+    return "app/?" + q.toString();
   }
 
-  /* ---- choosing a piece ------------------------------------------------- */
+  function start(piece, autoplay) {
+    if (!frame) {
+      frame = document.createElement("iframe");
+      frame.className = "editor";
+      frame.title = "gscore";
+      frame.setAttribute("allow", "autoplay");
+      stage.appendChild(frame);
+      document.body.classList.add("live");
+      say("Starting gscore — the whole program, in this page.");
+    }
+    frame.src = editorURL(piece, autoplay);
+  }
+
+  function say(words) {
+    const el = $("#said");
+    el.textContent = words;
+    el.classList.add("said");
+    setTimeout(() => el.classList.remove("said"), 4000);
+  }
+
+  /* ---- choosing a piece -------------------------------------------- */
 
   function show(piece) {
-    stop();
     current = piece;
     pieces.forEach((p) => (p.el.hidden = p !== piece));
     $$("#pieces button").forEach((b) =>
       b.setAttribute("aria-pressed", String(b.dataset.id === piece.id)),
     );
-    const by = $("#by");
-    by.textContent = piece.composer ? piece.title + " — " + piece.composer : piece.title;
+    $("#by").textContent = piece.composer
+      ? piece.title + " — " + piece.composer
+      : piece.title;
     $("#note").textContent = piece.note;
+    // Only reload the editor if it is already here. Switching pieces before
+    // anybody has pressed play should not fetch seventeen megabytes.
+    if (frame) start(piece, false);
     refreshLinks();
   }
 
-  /* ---- sharing ---------------------------------------------------------- */
+  /* ---- sharing ------------------------------------------------------ */
 
   let linkFor = "";
 
-  // Above this, a link stops being something anybody pastes into a message.
-  // It still works — a fragment never goes near a server and the browser
-  // carries it quite happily — but the page should not pretend otherwise.
+  // Above this a link stops being something anybody pastes into a message.
+  // It still works — a fragment never goes near a server — but the page
+  // should not pretend otherwise.
   const COMFORTABLE = 2000;
 
   async function refreshLinks() {
     const base = location.href.replace(/[?#].*$/, "").replace(/index\.html$/, "");
-    const open = $("#open");
-    const said = $("#size");
+    const size = $("#size");
+    const copy = $("#copy");
 
     let packed;
     if (current.abc) {
       packed = await window.gscoreShare.encode(current.abc, "abc");
     } else {
-      // Written in something other than ABC, so the file itself goes in,
-      // whatever it is. A .mxl is already a zip; it comes out about eight
-      // kilobytes, which is ten thousand characters of link.
+      // Written in something other than ABC, so the file itself goes in. A
+      // .mxl is already a zip; it comes out about eight kilobytes, which is
+      // ten thousand characters of link.
       const res = await fetch("scores/" + current.src);
-      const bytes = new Uint8Array(await res.arrayBuffer());
-      packed = await window.gscoreShare.encode(bytes, current.kind);
+      packed = await window.gscoreShare.encode(
+        new Uint8Array(await res.arrayBuffer()), current.kind);
     }
 
     linkFor = base + "app/#s=" + packed;
-    open.href = linkFor;
+    $("#open").href = linkFor;
     $("#file").href = "scores/" + current.file;
 
     if (linkFor.length <= COMFORTABLE) {
-      said.textContent = linkFor.length + " characters";
-      $("#copy").textContent = "Copy the link";
-      $("#copy").dataset.page = "";
+      size.textContent = linkFor.length + " characters";
+      copy.textContent = "Copy the link";
+      copy.dataset.page = "";
     } else {
-      // The whole piece still fits, but the short thing to send is the page.
-      said.textContent =
+      size.textContent =
         "this piece needs " + linkFor.length.toLocaleString() +
         " characters, so the button copies a link to the page instead";
-      $("#copy").textContent = "Copy a link to it";
-      $("#copy").dataset.page = base + "scores/" + current.file;
+      copy.textContent = "Copy a link to it";
+      copy.dataset.page = base + "scores/" + current.file;
     }
   }
 
   async function copyLink() {
-    const said = $("#said");
     const page = $("#copy").dataset.page;
     const what = page || linkFor;
     try {
       await navigator.clipboard.writeText(what);
-      said.textContent = page
+      say(page
         ? "Copied. That page carries the music with it — no account, nothing to expire."
-        : "Copied. That link is the music — paste it anywhere.";
+        : "Copied. That link is the music — paste it anywhere.");
     } catch (_) {
-      // Clipboard refused, which some browsers do unless the page is focused.
-      // Show it instead, so there is still something to copy.
-      said.textContent = what;
+      // Clipboard refused, which some browsers do unless the page is
+      // focused. Show it instead, so there is still something to copy.
+      say(what);
     }
-    said.classList.add("said");
-    setTimeout(() => said.classList.remove("said"), 4000);
   }
 
-  /* ---- wiring ----------------------------------------------------------- */
+  /* ---- wiring -------------------------------------------------------- */
 
-  $("#play").addEventListener("click", () => (playing ? stop() : play()));
+  $("#play").addEventListener("click", () => start(current, true));
   $("#copy").addEventListener("click", copyLink);
-
-  $("#speed").addEventListener("input", (e) => {
-    rate = Number(e.target.value);
-    $("#speedsaid").textContent = rate === 1 ? "normal" : rate.toFixed(2) + "×";
-    if (playing) play();
-  });
-
-  $("#voice").addEventListener("change", (e) => {
-    voice = e.target.value;
-    if (playing) play();
-  });
-
   $$("#pieces button").forEach((b) =>
     b.addEventListener("click", () => show(pieces.find((p) => p.id === b.dataset.id))),
   );
 
-  // Space plays, the way it does in the editor — but not while someone is
-  // using the keyboard to reach a button.
-  document.addEventListener("keydown", (e) => {
-    if (e.code !== "Space" || e.target.closest("button, select, input, a")) return;
-    e.preventDefault();
-    playing ? stop() : play();
+  // The still picture is a button too: clicking the music is what somebody
+  // does when they want to hear it.
+  stage.addEventListener("click", (e) => {
+    if (frame || e.target.closest("button, a")) return;
+    start(current, true);
   });
 
   show(pieces[0]);

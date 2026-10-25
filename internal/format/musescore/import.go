@@ -1106,10 +1106,17 @@ func (r *reader) clef(st *msStaff) error {
 		}
 		return nil
 	}
-	if st.clefSet {
-		// gscore carries one clef per staff, so a change partway through has
-		// nowhere to live. Saying so beats drawing the rest of the part in
-		// the wrong clef without a word.
+	// Only a clef in the first bar is the clef the staff starts in. One
+	// written later is a change, and gscore carries one clef per staff, so
+	// it has nowhere to live.
+	//
+	// This used to take the first <Clef> it met wherever it was. A piano's
+	// right hand that dips into the bass once, forty bars in, had that F
+	// clef taken as the clef it begins in — and the whole part was drawn
+	// an octave and a half out, from the first note, with no clef change
+	// in sight to explain it. What the part actually begins in is in the
+	// instrument definition, which had already been read correctly.
+	if st.clefSet || len(st.measures) > 0 {
 		if k != st.clef {
 			r.report("a change to the %s clef partway through a staff is not shown", name)
 		}

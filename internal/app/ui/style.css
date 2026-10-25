@@ -213,7 +213,10 @@ kbd {
 .menu-items button:hover kbd { color: #fff; background: rgba(255,255,255,.2); }
 
 .transport {
-  margin-left: auto;
+  /* First in the bar, before the menus. Somebody opening a score wants to
+     hear it, and the one control they are looking for should not be the
+     last thing in the row, at the far end, past six menu titles. */
+  margin-right: 12px;
   display: flex;
   align-items: center;
   gap: 6px;

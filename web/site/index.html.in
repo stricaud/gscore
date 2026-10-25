@@ -45,36 +45,13 @@
   <div class="player">
     <div id="pieces" class="tabs" role="group" aria-label="Choose a piece">@TABS@</div>
 
-    <div class="stage">
+    <div class="stage" id="stage">
       <p class="by"><span id="by"></span></p>
       @PIECES@
       <p class="note" id="note"></p>
-    </div>
-
-    <div class="transport">
-      <button id="play" class="play" aria-label="Play">Play</button>
-
-      <label class="knob">
-        <span>Speed</span>
-        <input id="speed" type="range" min="0.5" max="1.75" step="0.05" value="1">
-        <output id="speedsaid">normal</output>
-      </label>
-
-      <label class="knob">
-        <span>Sound</span>
-        <select id="voice">
-          <option value="">as written</option>
-          <option value="flute">flute</option>
-          <option value="reed">reed</option>
-          <option value="brass">brass</option>
-          <option value="bowed">strings</option>
-          <option value="plucked">plucked</option>
-          <option value="tuned">bells</option>
-          <option value="sustained">organ</option>
-        </select>
-      </label>
-
-      <img class="gilbert" src="gilbert.svg" alt="" width="44" height="44">
+      <!-- Until somebody asks, this is a picture of the piece and nothing
+           is downloaded. Pressing play puts the real editor in here. -->
+      <button id="play" class="play">Play it</button>
     </div>
 
     <div class="share">
@@ -83,9 +60,11 @@
       <a id="file" class="button" href="scores/" download>Download the page</a>
       <p id="said" role="status"></p>
       <p class="fine">
-        The link carries the notes themselves — <span id="size"></span> after the
-        <code>#</code>, which browsers never send to a server. There is nothing
-        stored anywhere, nothing to expire, and nothing to take down.
+        Pressing play loads gscore itself into this page — the same program as
+        the desktop build, compiled to WebAssembly, with its own cursor
+        travelling the music. The link carries the notes themselves —
+        <span id="size"></span> after the <code>#</code>, which browsers never
+        send to a server. Nothing is stored anywhere and nothing expires.
       </p>
     </div>
   </div>

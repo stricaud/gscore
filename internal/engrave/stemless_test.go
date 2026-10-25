@@ -1,6 +1,8 @@
 package engrave_test
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -20,19 +22,57 @@ import (
 // Checked over every score in the tree, from the layout rather than from a
 // picture of it.
 func TestEveryChordHasAStem(t *testing.T) {
+	// Two sorts of staff have noteheads with no stems on purpose.
+	//
+	//   tablature       the notes are fret numbers on strings; there is no
+	//                   stem to draw and nowhere to draw it
+	//   tremolo chords  the slashes stand between two stems that the
+	//                   tremolo draws itself
+	//
+	// Listed rather than quietly tolerated, so that the day a stem goes
+	// missing somewhere else the count says so.
+	expected := map[string]int{
+		// Fret numbers on strings: there is no stem to draw.
+		"71e-TabStaves.musicxml": 4,
+		// A tremolo draws its own stems, with the slashes between them.
+		"21g-Chords-Tremolos.musicxml": 6,
+		// A real gap, and the one worth closing: a note written on one
+		// staff of a piano and played by the other hand. The notehead goes
+		// where the file says and the stem has nowhere to run to, because
+		// the beam it belongs to is on the staff above or below.
+		"43d-MultiStaff-StaffChange.musicxml": 2,
+	}
+
 	total := 0
-	for name, path := range corpus(t) {
+	scores := corpus(t)
+	// One file, for looking into a score that is not in the tree.
+	if one := os.Getenv("SCORE"); one != "" {
+		scores = map[string]string{filepath.Base(one): one}
+	}
+	for name, path := range scores {
 		s, _ := load(path)
 		if s == nil {
 			continue
 		}
-		total += stemless(t, name, s)
+		base := filepath.Base(name)
+		want := expected[base]
+		if n := stemless(t, name, s); n != want {
+			t.Errorf("%s: %d noteheads with no stem, expected %d", base, n, want)
+			total += n
+		}
 	}
-	t.Logf("TOTAL chord columns with no stem across the corpus: %d", total)
+	if total > 0 {
+		t.Errorf("%d noteheads were drawn with no stem", total)
+	}
 }
 
 func stemless(t *testing.T, name string, s *model.Score) int {
-	lay := engrave.Engrave(s, engrave.DefaultOptions())
+	opt := engrave.DefaultOptions()
+	if os.Getenv("STRIP") != "" {
+		// What the web pages are drawn in: one unbroken run of music.
+		opt.Mode = engrave.Strip
+	}
+	lay := engrave.Engrave(s, opt)
 
 	type head struct {
 		x, y, size float64
@@ -51,54 +91,35 @@ func stemless(t *testing.T, name string, s *model.Score) int {
 		}
 	}
 
-	cols := map[float64][]head{}
-	for _, h := range heads {
-		cols[h.x] = append(cols[h.x], h)
-	}
+	// Every notehead, not only the ones sharing an x. A chord holding a
+	// second has one of its heads pushed sideways, so it is two columns of
+	// one head each — and a check that only looked at columns of two or
+	// more never looked at those at all.
 	bad := 0
-	for x, hs := range cols {
-		if len(hs) < 2 {
-			continue
-		}
-		allWhole := true
-		for _, h := range hs {
-			if !strings.Contains(h.name, "Whole") {
-				allWhole = false
-			}
-		}
-		if allWhole {
-			continue
-		}
-		lo, hi := hs[0].y, hs[0].y
-		for _, h := range hs {
-			if h.y < lo {
-				lo = h.y
-			}
-			if h.y > hi {
-				hi = h.y
-			}
+	for _, h := range heads {
+		if strings.Contains(h.name, "Whole") {
+			continue // a whole note has no stem by right
 		}
 		found := false
 		for _, l := range stems {
-			if l.X1 < x-1.5 || l.X1 > x+2.0 {
+			// A stem stands at one edge of its notehead or the other.
+			if l.X1 < h.x-1.6 || l.X1 > h.x+1.8 {
 				continue
 			}
-			// and it has to touch the noteheads, not merely share an x
-			// with a barline somewhere else on the page
 			top, bot := l.Y1, l.Y2
 			if top > bot {
 				top, bot = bot, top
 			}
-			if bot >= lo-0.6 && top <= hi+0.6 {
+			if bot >= h.y-0.6 && top <= h.y+0.6 {
 				found = true
 				break
 			}
 		}
 		if !found {
 			bad++
-			if bad <= 2 {
-				t.Logf("  %s: no stem at x=%.2f y=%.2f %s (%d heads)",
-					name, x, hs[0].y, hs[0].name, len(hs))
+			if bad <= 4 {
+				t.Logf("  %s: no stem on %s at x=%.2f y=%.2f",
+					name, h.name, h.x, h.y)
 			}
 		}
 	}

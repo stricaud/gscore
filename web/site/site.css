@@ -201,40 +201,38 @@ h1 {
 #barbox { fill: var(--accent); opacity: 0; transition: opacity 0.12s; }
 .stage .lit { fill: var(--lit); }
 
-/* ---- transport --------------------------------------------------------- */
+/* ---- handing over to the editor --------------------------------------- */
 
-.transport {
-  display: flex;
-  align-items: center;
-  gap: 20px;
-  flex-wrap: wrap;
-  padding: 14px 18px;
-  border-top: 1px solid var(--line);
-}
-button.play { min-width: 92px; font-weight: 600; }
+.stage { position: relative; }
 
-.knob { display: inline-flex; align-items: center; gap: 8px; color: var(--dim); font-size: 0.92rem; }
-.knob input[type="range"] { width: 120px; accent-color: var(--accent); }
-.knob output { min-width: 4.5em; }
-.knob select {
-  background: var(--page);
-  color: var(--text);
-  border: 1px solid var(--line);
-  border-radius: 7px;
-  padding: 6px 8px;
-  font: inherit;
+/* Over the music, because clicking the music is what somebody does when
+   they want to hear it. */
+button.play {
+  position: absolute;
+  left: 50%;
+  bottom: 14px;
+  transform: translateX(-50%);
+  background: var(--accent);
+  color: var(--accent-ink) !important;
+  border-color: var(--accent);
+  font-weight: 600;
+  padding: 10px 22px;
+  box-shadow: 0 2px 14px rgba(0, 0, 0, .25);
 }
+body.live button.play { display: none; }
 
-/* Gilbert keeps time, because why would he not. */
-.gilbert { margin-left: auto; opacity: 0.85; }
-body.playing .gilbert { animation: bob 0.55s ease-in-out infinite alternate; }
-@keyframes bob {
-  from { transform: translateY(0) rotate(-4deg); }
-  to { transform: translateY(-7px) rotate(4deg); }
+/* The editor, once it has been asked for. It is given the room the still
+   picture had, so nothing jumps when it arrives. */
+.stage .editor {
+  display: block;
+  width: 100%;
+  height: 340px;
+  border: 0;
+  background: var(--paper);
 }
-@media (prefers-reduced-motion: reduce) {
-  body.playing .gilbert { animation: none; }
-}
+body.live .stage .piece { display: none; }
+body.live .stage .by,
+body.live .stage .note { display: none; }
 
 /* ---- sharing ----------------------------------------------------------- */
 

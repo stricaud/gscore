@@ -13,6 +13,7 @@ package engrave
 import (
 	"github.com/stricaud/gscore/internal/model"
 	"github.com/stricaud/gscore/internal/smufl"
+	"math"
 )
 
 // What is drawn down the left of a system: the staff names, and the braces and
@@ -514,36 +515,71 @@ func (e *engraver) drawBrace(x, top, bottom float64) {
 		return
 	}
 	mid := (top + bottom) / 2
-	half := h / 2
-	// How far the cusp stands out from the tips. A brace that joins more
-	// staves is drawn a little wider, within reason, the way a larger brace
-	// in a font is not simply a scaled-up small one.
-	w := 0.9 + h*0.02
-	if w > 1.6 {
-		w = 1.6
-	}
-	t := e.opt.Defaults.StaffLineThickness * 2.6
 
-	// Each half sweeps from the tip to the cusp in two curves, so the stroke
-	// leaves the tip almost vertically and arrives at the cusp almost
-	// horizontally — which is what makes it read as a brace rather than as a
-	// pair of brackets.
-	arm := func(tip float64, dir float64) {
-		q1 := tip + dir*half*0.5
-		e.lay.Curves = append(e.lay.Curves,
-			Curve{
-				X1: x, Y1: tip,
-				CX: x - w*0.2, CY: tip + dir*half*0.3,
-				X2: x - w*0.5, Y2: q1,
-				Thickness: t,
-			},
-			Curve{
-				X1: x - w*0.5, Y1: q1,
-				CX: x - w*0.85, CY: tip + dir*half*0.72,
-				X2: x - w, Y2: mid,
-				Thickness: t,
-			})
+	// How far the cusp stands out, and how fat the arms get in the middle.
+	// A brace joining more staves is drawn a little wider, within reason,
+	// the way a larger brace in a font is not a scaled-up small one.
+	w := 1.05 + h*0.022
+	if w > 1.9 {
+		w = 1.9
 	}
-	arm(top, 1)
-	arm(bottom, -1)
+	fat := 0.42 + h*0.009
+	if fat > 0.72 {
+		fat = 0.72
+	}
+
+	// Each arm runs from a tip to the cusp and is a shape, not a stroke.
+	// This is the whole of why it used to look wrong: a brace is not a line
+	// of even width bent into a curve. It is pointed at the tip, swells to
+	// its fattest about halfway along, and comes to a point again where the
+	// two arms meet — and a stroked curve, which is what was drawn here
+	// before, cannot be pointed at either end. It read as a wobbly bracket.
+	arm := func(tipY float64) {
+		// A cubic from the tip to the cusp: it leaves the tip almost
+		// vertically and arrives at the cusp almost horizontally, which is
+		// the line a brace actually takes.
+		p0x, p0y := x, tipY
+		p1x, p1y := x, tipY+(mid-tipY)*0.52
+		p2x, p2y := x-w*0.52, mid
+		p3x, p3y := x-w, mid
+
+		type pt struct{ x, y float64 }
+		// edges is the two sides of the stroke at one point along it.
+		edges := func(t float64) (pt, pt) {
+			if t > 1 {
+				t = 1
+			}
+			u := 1 - t
+			bx := u*u*u*p0x + 3*u*u*t*p1x + 3*u*t*t*p2x + t*t*t*p3x
+			by := u*u*u*p0y + 3*u*u*t*p1y + 3*u*t*t*p2y + t*t*t*p3y
+			dx := 3*u*u*(p1x-p0x) + 6*u*t*(p2x-p1x) + 3*t*t*(p3x-p2x)
+			dy := 3*u*u*(p1y-p0y) + 6*u*t*(p2y-p1y) + 3*t*t*(p3y-p2y)
+			n := math.Hypot(dx, dy)
+			if n == 0 {
+				n = 1
+			}
+			// Across the stroke, not along it.
+			nx, ny := -dy/n, dx/n
+			// Pointed at both ends, fattest in between: that is the shape.
+			th := fat * math.Sin(math.Pi*t)
+			return pt{bx - nx*th/2, by - ny*th/2}, pt{bx + nx*th/2, by + ny*th/2}
+		}
+
+		// Each piece reaches a little past the next. Two filled shapes that
+		// meet along exactly one edge each cover it about half, and the
+		// halves do not add up: the join shows as a pale hairline all the
+		// way down the brace.
+		const steps = 40
+		const over = 1.6 / steps
+		for i := 0; i < steps; i++ {
+			l0, r0 := edges(float64(i) / steps)
+			l1, r1 := edges(float64(i+1)/steps + over)
+			e.lay.Quads = append(e.lay.Quads, Quad{
+				X: [4]float64{l0.x, r0.x, r1.x, l1.x},
+				Y: [4]float64{l0.y, r0.y, r1.y, l1.y},
+			})
+		}
+	}
+	arm(top)
+	arm(bottom)
 }

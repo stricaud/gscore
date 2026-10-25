@@ -1897,7 +1897,17 @@ func (a *App) handlePaste(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "nothing has been copied", http.StatusBadRequest)
 		return
 	}
-	p, m, err := a.locate(partIdx, measIdx)
+	// For writing, the same as a note is: pasting into a bar is putting
+	// music in it.
+	//
+	// The editor draws one bar past the end of the music on every staff, so
+	// that there is somewhere to click before there is anything to click
+	// on, and that bar is made the moment something is written into it.
+	// Paste asked for the bar as it stood instead and was told "no such
+	// measure" — on the one bar of the piece a reader is most likely to aim
+	// at, the empty one at the end, and on the staff just added under the
+	// one being copied from.
+	p, m, err := a.locateForWriting(partIdx, measIdx)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -2320,7 +2330,8 @@ func (a *App) handleGroup(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{"status": "ok", "groups": len(a.score.Groups)})
 }
 
-// handleBeam beams the selection as one group, or breaks it apart.
+// handleBeam beams the selection as one group, breaks it apart, or opens a
+// new group at the note the cursor is on.
 //
 // The engraver groups by beat, which is right nearly always. "Nearly" is the
 // problem: music phrased against the beat needs the beams drawn against it
@@ -2354,6 +2365,19 @@ func (a *App) handleBeam(w http.ResponseWriter, r *http.Request) {
 				m.Beam = model.BeamContinue
 			}
 		}
+	case "start":
+		// The beam is cut to the left of this note and the note stays with
+		// what follows it.
+		//
+		// Breaking at the fifth of eight took the fifth off the beam
+		// altogether: it got a flag of its own, and the four after it had to
+		// be selected and beamed again by hand to get the two groups that
+		// were wanted. A break is a decision about the two groups either
+		// side of it, not about one note — so this says where the second
+		// group opens, and the engraver closes the first one against it.
+		// What follows carries on into the new group, because a group opened
+		// by hand is not broken by the beat.
+		marks[0].Beam = model.BeamStart
 	case "break", "none":
 		for _, m := range marks {
 			m.Beam = model.BeamNone
@@ -2363,7 +2387,7 @@ func (a *App) handleBeam(w http.ResponseWriter, r *http.Request) {
 			m.Beam = model.BeamAuto
 		}
 	default:
-		http.Error(w, "beam is join, break or auto", http.StatusBadRequest)
+		http.Error(w, "beam is join, start, break or auto", http.StatusBadRequest)
 		return
 	}
 	writeJSON(w, map[string]int{"changed": len(marks)})
@@ -2808,7 +2832,10 @@ func (a *App) handleTie(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if len(targets) < 2 {
-		http.Error(w, "a tie joins two notes — select both",
+		// One note and nothing after it: the note it would be held into
+		// does not exist. Said as what it is, because "select both" sounds
+		// like a selection to make and there is no second note to select.
+		http.Error(w, "there is no note after this one to tie it to",
 			http.StatusBadRequest)
 		return
 	}

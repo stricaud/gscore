@@ -513,6 +513,7 @@ async function action(name) {
     case "tie-none": await setTie("none", false); break;
 
     case "beam-join": await mark("beam", { beam: "join" }, "Beamed together"); break;
+    case "beam-here": await beamOrBreak(); break;
     case "beam-break": await mark("beam", { beam: "break" }, "Beam broken"); break;
     case "beam-auto": await mark("beam", { beam: "auto" }, "Beaming left to the engraver"); break;
 
@@ -821,7 +822,15 @@ async function loadInfo() {
   if (i.local) void loadRecent();
   $("#version").textContent = "Gscore " + i.version;
   $("#about-version").textContent = "Version " + i.version;
-  $("#filename").textContent = i.filename || "untitled";
+  // A star beside the name while there is work that is not on the disk yet,
+  // which is how every editor says it. The flag is the server's own — the
+  // same one that makes quitting stop and ask — so the star and the question
+  // at the end can never disagree about whether anything was lost.
+  $("#filename").textContent = documentName(i);
+  // And in the Mac application's own title bar, which is where somebody
+  // looking at the window looks: the status line along the bottom is not
+  // where a Mac says whether a document is saved.
+  tellNativeTitle(documentName(i));
 
   const rows = [];
   if (i.title) rows.push(["Title", i.title]);
@@ -1460,6 +1469,27 @@ async function loadRecent() {
   // The native menu bar is built from this one, so it has to be told that
   // what it copied has changed.
   rebuildNativeMenus();
+}
+
+// documentName is what the score is called, with a star while there is work
+// that is not on the disk. The window and the status line say the same thing
+// because they are the same string.
+function documentName(i) {
+  return (i.filename || "untitled") + (i.unsaved ? " *" : "");
+}
+
+// tellNativeTitle gives the application the name to put in its title bar.
+//
+// The page is the only thing that knows: the application sets a title when
+// it opens a file for you and then never hears about the editing, or about
+// a file opened from inside the page. Everywhere but the Mac application
+// nothing is listening and this does nothing.
+function tellNativeTitle(name) {
+  try {
+    window.webkit?.messageHandlers?.gscore?.postMessage("title:" + name);
+  } catch (_) {
+    /* not inside the application */
+  }
 }
 
 // rebuildNativeMenus asks the application to read the page's menus again.
@@ -2768,6 +2798,9 @@ async function insertAtSelection(rest, keepSelection) {
   // two different places.
   carryCaretOn(sel);
   markSelection();
+  // Writing is the one thing that moves the caret a note at a time, and the
+  // only thing that moves it without anybody having asked to go anywhere.
+  scrollSelectionIntoView();
   let what = rest ? "Rest" : state.tool.duration + " note";
   if (replacing) {
     what = "Replaced with a " + (rest ? "rest" : state.tool.duration + " note");
@@ -3251,6 +3284,26 @@ const setAccidental = (acc, said) =>
   mark("accidental", { accidental: acc },
        acc === "none" ? "Accidental removed" : "Written as " + said.toLowerCase());
 
+// beamOrBreak is what the b key does, which depends on how much is picked up.
+//
+// Two notes or more are a group, and a group is a thing to join: that is
+// what beaming is, and it is what the key has always done. One note is not a
+// group, and asking to beam it was an error — so there the key means the
+// other half of the same job, which is where a group ends.
+//
+// Breaking at the fifth of eight is a break between the fourth and the
+// fifth, not something done to the fifth: it belongs to the group that
+// opens, and is left joined to the three after it. Taking it off the beam
+// instead meant selecting those four and beaming them again to get what the
+// break was asked for in the first place.
+async function beamOrBreak() {
+  if (state.multi.length > 1) {
+    await mark("beam", { beam: "join" }, "Beamed together");
+    return;
+  }
+  await mark("beam", { beam: "start" }, "Beam broken before this note");
+}
+
 // A hairpin and an octave line both cover a stretch of music, so they act on
 // the range that is selected rather than on one note.
 const setHairpin = (kind, said) =>
@@ -3324,11 +3377,14 @@ async function setSlur(what) {
 
 // setTie joins the selected notes. "head" ties only the notehead that was
 // clicked, which is how one note of a chord is held while the others move.
+//
+// One note is enough. A tie means "hold this note into the next one", and
+// the note it runs to is the one that follows — the server has found it for
+// a while now, across the barline if that is where it is. This went on
+// asking for both anyway and never sent the request, so the only way to tie
+// was to shift-click the second note and say a thing the mark already says.
+// Where there is genuinely nothing after it, the server says so.
 async function setTie(what, head) {
-  if (what !== "none" && state.multi.length < 2) {
-    status("A tie joins two notes — click one, then shift-click the next");
-    return;
-  }
   const params = { tie: what };
   if (head && state.selection?.head !== null && state.selection?.head !== undefined) {
     params.step = String(state.selection.head);
@@ -6774,12 +6830,23 @@ const KEY_BINDINGS = [
   { id: "flatten", keys: "-", group: "Accidentals",
     label: "Flatten — again for a double flat, again for none",
     run: () => void cycleAccidental(-1) },
-  { id: "accidental-none", keys: "=", group: "Accidentals",
-    label: "Take the accidental off — or tie, with nothing picked up",
+  { id: "accidental-natural", keys: "=", group: "Accidentals",
+    label: "Natural — or tie, with nothing picked up",
     run: () => {
+      // The sign that belongs between + and -, which is what the key is
+      // next to and what = means wherever a tune is typed out in words.
+      //
+      // It took the written accidental away instead, and that looks like
+      // nothing happening: the note goes back to whatever the key signature
+      // says for it and no sign is drawn at all. What was wanted was the
+      // natural — the sign that says this one is not sharp, out loud, which
+      // is the whole reason anybody writes one. Pressing it again on a note
+      // that already has one still takes it off, because every accidental
+      // here is its own undo.
+      //
       // The key is free when nothing is picked up, and tying two notes is
-      // what it has always done here.
-      if (hasSelection()) void setAccidental("none", "No accidental");
+      // what it has always done there.
+      if (hasSelection()) void setAccidental("natural", "Natural");
       else action("tie");
     } },
 
@@ -6789,7 +6856,8 @@ const KEY_BINDINGS = [
   { id: "slur", menu: "slur", keys: "S", group: "Marks",
     label: "Slur", run: () => action("slur") },
   { id: "beam", menu: "beam-join", keys: "b", group: "Marks",
-    label: "Beam the selected notes together", run: () => action("beam-join") },
+    label: "Beam the selected notes together — on one note, break the beam before it",
+    run: () => action("beam-here") },
   { id: "stem-up", menu: "stem-up", keys: "u", group: "Marks",
     label: "Stem up", run: () => action("stem-up") },
   { id: "stem-down", menu: "stem-down", keys: "d", group: "Marks",
@@ -7309,7 +7377,19 @@ function moveCursorBy(delta) {
   // on the first note of the next.
   const line = [];
   for (const h of staff) {
-    for (const el of h.elements || []) {
+    const els = h.elements || [];
+    // A bar with nothing in it is somewhere to be, not something to step
+    // over. The editor draws one after the last bar of the music so there
+    // is a place to start the next one, and walking from note to note
+    // skipped it — so the end of what was written was the end of where the
+    // arrows could go, and the only way to begin the next bar was to reach
+    // for the mouse. The cursor goes to the front of it, which is where
+    // the writing would start.
+    if (!els.length) {
+      line.push({ measure: h.measure, index: -1, ref: null });
+      continue;
+    }
+    for (const el of els) {
       line.push({
         measure: h.measure, index: el.index, ref: el.ref,
         step: el.steps && el.steps.length ? el.steps[0] : undefined,
@@ -7327,7 +7407,12 @@ function moveCursorBy(delta) {
 
   const p = line[at];
   state.multi = [];
-  state.anchor = { part: sel.part, measure: p.measure, index: p.index };
+  // An empty bar has nothing to anchor a selection to, so shift with an
+  // arrow from there starts from the cursor rather than from a note that
+  // is not there.
+  state.anchor = p.ref === null
+    ? null
+    : { part: sel.part, measure: p.measure, index: p.index };
   state.focus = null;
   // The cursor takes the pitch of whatever it lands on, so that arrowing
   // onto a note and then pressing up writes the next one a step above it
@@ -7341,7 +7426,9 @@ function moveCursorBy(delta) {
   };
   markSelection();
   scrollSelectionIntoView();
-  status(`Measure ${p.measure + 1}, note ${p.index + 1}`);
+  status(p.ref === null
+    ? `Measure ${p.measure + 1} — nothing written here yet`
+    : `Measure ${p.measure + 1}, note ${p.index + 1}`);
 }
 
 // scrollSelectionIntoView keeps the cursor on screen as it walks the music.
@@ -7485,13 +7572,62 @@ function flashMeasure(box) {
   r.addEventListener("animationend", () => r.remove());
 }
 
+// cursorMargin is how near the edge of the window the caret may come before
+// the page moves, in staff spaces. A note's width is about one and a half of
+// them, so this is a bar or so of warning: writing against the edge of the
+// glass, with the next note off it, is what this is here to prevent.
+const cursorMargin = 6;
+
 function scrollSelectionIntoView() {
   const svg = currentSVG();
-  if (!svg || !state.selection?.ref) return;
-  const el = svg.querySelector(`[data-ref="${state.selection.ref}"]`);
-  if (el && el.scrollIntoView) {
-    el.scrollIntoView({ block: "nearest", inline: "nearest", behavior: "smooth" });
+  const wrap = $("#canvas-wrap");
+  if (!svg || !wrap) return;
+  // The caret first, and the notehead only if there is none.
+  //
+  // What was picked up and where the next note goes are two different
+  // places, and typing moves the second one. Following the first meant the
+  // page stood still while the caret walked off the right of it: the note
+  // being written was the one note that could not be seen, which is exactly
+  // backwards. With nothing picked up there was no scrolling at all, and
+  // writing a bar of notes picks nothing up.
+  const target = svg.querySelector(".write-block") ||
+    (state.selection?.ref
+      ? svg.querySelector(`[data-ref="${state.selection.ref}"]`)
+      : null);
+  if (!target || !target.getBoundingClientRect) return;
+
+  const box = target.getBoundingClientRect();
+  const view = wrap.getBoundingClientRect();
+  const margin = cursorMargin * state.zoom;
+
+  // Across: the page moves only when the caret comes near an edge, and then
+  // it moves far enough to leave most of a screen of room in the direction
+  // the writing is going. Moving by just enough to bring the caret back
+  // inside would leave it against that edge, and then every note after it
+  // would move the page again.
+  const x = box.left - view.left + wrap.scrollLeft;
+  const furthest = Math.max(0, wrap.scrollWidth - wrap.clientWidth);
+  let left = wrap.scrollLeft;
+  if (box.right > view.right - margin) {
+    left = x - wrap.clientWidth * cursorLead;
+  } else if (box.left < view.left + margin) {
+    // Going back the other way, the room goes behind it instead.
+    left = x - wrap.clientWidth * (1 - cursorLead);
   }
+  left = Math.min(furthest, Math.max(0, left));
+
+  // Down the page the music does not move continuously — it steps from one
+  // system to the next — so this moves only when the caret has left the one
+  // in view.
+  const top = box.top - view.top + wrap.scrollTop;
+  const bottom = box.bottom - view.top + wrap.scrollTop;
+  let up = wrap.scrollTop;
+  if (top < wrap.scrollTop || bottom > wrap.scrollTop + wrap.clientHeight) {
+    up = Math.max(0, top - wrap.clientHeight * 0.3);
+  }
+
+  if (left === wrap.scrollLeft && up === wrap.scrollTop) return;
+  if (wrap.scrollTo) wrap.scrollTo({ left, top: up, behavior: "smooth" });
 }
 
 async function copySelection() {

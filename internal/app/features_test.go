@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -157,6 +158,96 @@ func TestAccidentalOnASelectedNote(t *testing.T) {
 	}
 }
 
+// Asking for a natural writes one, rather than taking the accidental away.
+//
+// The = key sat between + and -, where the natural belongs, and cleared the
+// written accidental instead: in a sharp key that hands the note back to the
+// signature, so the F is sharp again and nothing at all is drawn. Reported
+// as "if I press = I should see the natural, not everything removed".
+func TestNaturalIsWrittenAndIsSeen(t *testing.T) {
+	h := newHarness(t)
+	h.post("/api/setkey?part=0&fifths=1") // G major: every F is sharp
+	h.note(0, 0, 1, "quarter")            // the F in the bottom space
+
+	h.post("/api/accidental?part=0&measure=0&at=1&accidental=natural")
+	n := h.app.score.Parts[0].Measures[0].Voices[0].Elements[0].(*model.Note)
+	if n.Accidental != model.Natural {
+		t.Errorf("got %v, want a natural", n.Accidental)
+	}
+	if n.Pitch.Alter != 0 {
+		t.Errorf("the natural did not change how it sounds: alter=%d", n.Pitch.Alter)
+	}
+
+	// And it is on the page. A natural that is not drawn is the thing being
+	// complained about: the key signature says sharp and only the sign says
+	// otherwise.
+	opt := engrave.DefaultOptions()
+	opt.Mode = engrave.Strip
+	naturals := 0
+	for _, g := range engrave.Engrave(h.app.score, opt).Glyphs {
+		if g.Name == "accidentalNatural" {
+			naturals++
+		}
+	}
+	if naturals != 1 {
+		t.Errorf("%d naturals drawn, want the one on the note", naturals)
+	}
+
+	// Asked for again, it goes: every accidental here is its own undo, and
+	// the note is handed back to the signature.
+	h.post("/api/accidental?part=0&measure=0&at=1&accidental=natural")
+	if n.Accidental != model.NoAccidental {
+		t.Errorf("got %v, want the natural taken off again", n.Accidental)
+	}
+	if n.Pitch.Alter != 1 {
+		t.Errorf("the note did not go back to the key's F sharp: alter=%d", n.Pitch.Alter)
+	}
+}
+
+// Pasting into the bar drawn past the end of the music.
+//
+// The editor draws one empty bar after the last one on every staff, so that
+// there is somewhere to click before there is anything to click on, and
+// writing a note there is what makes it a bar of the piece. Paste asked for
+// the bar as it stood and was told "no such measure" — so copying a dotted
+// rest and putting it on the staff below, which is the whole point of
+// copying it rather than going back to the menu, did not work.
+func TestPasteIntoTheBarAfterTheMusic(t *testing.T) {
+	h := newHarness(t)
+	h.post("/api/addstaff?instrument=flute&clef=treble")
+	h.post("/api/addstaff?instrument=cello&clef=bass")
+
+	// A dotted rest, which is the thing that is tedious to write twice.
+	h.post("/api/insert?part=0&measure=0&at=-1&step=4&dur=half&dots=1&kind=rest")
+	h.post("/api/copy?sel=0:0:0")
+
+	// The second staff's bar after the music, which is drawn but not stored.
+	if n := len(h.app.score.Parts[1].Measures); n != 1 {
+		t.Fatalf("the second staff has %d bars, want the one", n)
+	}
+	h.post("/api/paste?part=1&measure=1&at=0")
+
+	// Every staff gains the bar, so the barlines stay in a column.
+	for pi, p := range h.app.score.Parts {
+		if len(p.Measures) != 2 {
+			t.Errorf("staff %d has %d bars after the paste, want two", pi+1, len(p.Measures))
+		}
+	}
+
+	els := h.app.score.Parts[1].Measures[1].Voices[0].Elements
+	if len(els) != 1 {
+		t.Fatalf("%d things were pasted, want the one rest", len(els))
+	}
+	if _, ok := els[0].(*model.Rest); !ok {
+		t.Fatalf("what was pasted is a %T, want a rest", els[0])
+	}
+	// With its dot: the dot is why it was copied.
+	v, dots, ok := els[0].Duration().Written()
+	if !ok || v != model.Half || dots != 1 {
+		t.Errorf("the pasted rest is %v with %d dots (ok=%v), want a dotted half", v, dots, ok)
+	}
+}
+
 // A hairpin covers a passage, and is refused when it has nowhere to go.
 func TestHairpinNeedsARange(t *testing.T) {
 	h := newHarness(t)
@@ -293,6 +384,109 @@ func TestBeamingASelection(t *testing.T) {
 	}
 	if els[3].(*model.Note).Beam != model.BeamStop {
 		t.Error("the beam does not stop on the last note")
+	}
+}
+
+// Breaking a beam at a note leaves that note on the beam that follows it.
+//
+// Eight notes beamed together and a break asked for at the fifth: what was
+// wanted is four and four, and what used to happen was four, a lone fifth
+// with a flag, and three. The four after the break then had to be selected
+// and beamed again by hand, which is the whole of the work the break was
+// supposed to do.
+func TestBreakingABeamKeepsTheNoteOnTheGroupAfterIt(t *testing.T) {
+	h := newHarness(t)
+	for i := 0; i < 8; i++ {
+		h.note(0, 0, 2+i%3, "eighth")
+	}
+	h.post("/api/beam?beam=join&sel=0:0:0,0:0:1,0:0:2,0:0:3,0:0:4,0:0:5,0:0:6,0:0:7")
+
+	opt := engrave.DefaultOptions()
+	opt.Mode = engrave.Strip
+	if n := len(engrave.Engrave(h.app.score, opt).Quads); n != 1 {
+		t.Fatalf("eight notes beamed together drew %d beams, want one", n)
+	}
+
+	// At the fifth note, which is where the cursor sits having just written
+	// it: markAt counts from one.
+	h.post("/api/beam?beam=start&part=0&measure=0&at=5")
+
+	els := h.app.score.Parts[0].Measures[0].Voices[0].Elements
+	if got := els[4].(*model.Note).Beam; got != model.BeamStart {
+		t.Errorf("the fifth note is %v, want the beam to start on it", got)
+	}
+
+	// Two beams on the page, and the second one reaches the last note: the
+	// fifth is joined to the three after it, not standing on its own.
+	lay := engrave.Engrave(h.app.score, opt)
+	if len(lay.Quads) != 2 {
+		t.Fatalf("after the break there are %d beams, want two", len(lay.Quads))
+	}
+	var last engrave.Hit
+	for _, hit := range lay.Hits {
+		if hit.Part == 0 && hit.Measure == 0 {
+			last = hit
+		}
+	}
+	if len(last.Elements) != 8 {
+		t.Fatalf("the bar holds %d notes, want eight", len(last.Elements))
+	}
+	second := lay.Quads[1]
+	left, right := second.X[0], second.X[1]
+	if left > right {
+		left, right = right, left
+	}
+	// A beam runs stem to stem, and a stem stands at the edge of its
+	// notehead, so "over the fifth note" is within a notehead's width of it.
+	fourth := last.Elements[3].X
+	fifth, eighth := last.Elements[4].X, last.Elements[7].X
+	if left < fifth || left > fifth+1.5 || right < eighth {
+		t.Errorf("the second beam runs %.2f..%.2f, which does not carry the fifth note at %.2f to the eighth at %.2f",
+			left, right, fifth, eighth)
+	}
+	if left <= fourth+1.5 {
+		t.Errorf("the second beam starts at %.2f, back over the fourth note at %.2f: the break did not cut there",
+			left, fourth)
+	}
+}
+
+// Whether there is work that is not on the disk, which is what the star
+// beside the filename says.
+//
+// The flag is the one quitting asks about, so the star and the question on
+// the way out cannot disagree about whether anything would be lost.
+func TestUnsavedIsSaidInTheInfo(t *testing.T) {
+	h := newHarness(t)
+	unsaved := func() bool {
+		var info struct {
+			Unsaved bool `json:"unsaved"`
+		}
+		if err := json.Unmarshal([]byte(h.get("/api/info")), &info); err != nil {
+			t.Fatalf("info: %v", err)
+		}
+		return info.Unsaved
+	}
+
+	if unsaved() {
+		t.Error("a score nobody has touched is already starred")
+	}
+	h.note(0, 0, 4, "quarter")
+	if !unsaved() {
+		t.Error("a note was written and nothing says the score has changed")
+	}
+
+	// Saving to a path is the machine's own business, which is what the
+	// browser on somebody else's is not allowed to do.
+	h.app.local = true
+	path := filepath.Join(t.TempDir(), "starred.gscore")
+	h.post("/api/save?path=" + url.QueryEscape(path))
+	if unsaved() {
+		t.Error("the score was saved and is still starred")
+	}
+
+	h.note(0, 0, 6, "quarter")
+	if !unsaved() {
+		t.Error("an edit after a save does not star it again")
 	}
 }
 
@@ -1343,9 +1537,15 @@ func TestTieFromOneNote(t *testing.T) {
 		t.Errorf("the tied chain gave %d sounds, want 1", n)
 	}
 
-	// Nothing after the last note, so there is nothing to tie to.
-	if msg := h.postFails("/api/tie?part=0&measure=1&at=1"); msg == "" {
+	// Nothing after the last note, so there is nothing to tie to — and it
+	// says that, rather than asking for a second note to be selected when
+	// there is no second note in the piece.
+	msg := h.postFails("/api/tie?part=0&measure=1&at=1")
+	if msg == "" {
 		t.Error("tying the last note of the piece was allowed")
+	}
+	if !strings.Contains(msg, "no note after this one") {
+		t.Errorf("refused with %q, which does not say what is wrong", msg)
 	}
 }
 

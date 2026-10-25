@@ -68,7 +68,7 @@ test("a keystroke reaches the command it is written against", () => {
     [".", "", "dot"],
     ["+", "", "sharpen"],
     ["-", "", "flatten"],
-    ["=", "", "accidental-none"],
+    ["=", "", "accidental-natural"],
     // The tie is shift with t, which arrives as a capital T.
     ["T", "s", "tie"],
     ["S", "s", "slur"],

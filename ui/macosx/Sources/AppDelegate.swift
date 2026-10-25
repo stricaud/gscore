@@ -184,6 +184,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate,
             // Once: the page is up and talking, so there is nothing to wait
             // for and nothing to retry.
             rebuildMenus(tries: 1)
+        case let title where title.hasPrefix("title:"):
+            // What the score is called, with a star on it while there is
+            // work that is not on the disk. The page is the only thing that
+            // knows either: a title set when the Finder handed us a file
+            // never hears about the editing that follows, and never hears
+            // about a file opened from inside the editor at all.
+            window.title = String(title.dropFirst("title:".count)) + " — Gscore"
         default:
             break
         }

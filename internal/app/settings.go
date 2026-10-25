@@ -39,6 +39,16 @@ type settings struct {
 	// stale. A path that has since been moved or deleted is dropped from
 	// the list when the list is read, which is the only moment it matters.
 	Recent []string `json:"recent,omitempty"`
+
+	// NoScorePDF turns off the PDF that a .gscore file carries in front of
+	// the music.
+	//
+	// On by default, which is why the setting is the negative of it: a
+	// .gscore renamed .pdf opens in anything that reads one, and that is
+	// most of what the format is for. Somebody who only ever opens them in
+	// gscore is paying a second rendering of the whole score on every save
+	// for a page nobody looks at, and this is how they stop.
+	NoScorePDF bool `json:"noScorePDF,omitempty"`
 }
 
 // mostRecent is how many files the list holds.
@@ -190,6 +200,9 @@ func (a *App) handleSettings(w http.ResponseWriter, r *http.Request) {
 		if v, ok := r.URL.Query()["playbackFont"]; ok && len(v) > 0 {
 			s.PlaybackFont = v[0]
 		}
+		if v, ok := r.URL.Query()["scorePDF"]; ok && len(v) > 0 {
+			s.NoScorePDF = v[0] == "0"
+		}
 		// A failure to write is not a failure to set: saveSettings has
 		// already kept it for this session, and in the browser there is no
 		// disk to keep it on at all. Reporting that as an error would be an
@@ -207,5 +220,9 @@ func (a *App) handleSettings(w http.ResponseWriter, r *http.Request) {
 		"playbackFont":     chosen,
 		"playbackFontName": name,
 		"stored":           loadSettings().PlaybackFont,
+		"scorePDF":         SaveScorePDF(),
 	})
 }
+
+// SaveScorePDF says whether a .gscore file should carry a PDF of the score.
+func SaveScorePDF() bool { return !loadSettings().NoScorePDF }

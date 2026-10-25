@@ -1443,7 +1443,16 @@ func (e *engraver) drawTempoAt(t model.Tempo, x, y float64) float64 {
 		e.lay.Texts = append(e.lay.Texts, Text{
 			S: text, X: at, Y: y, Size: 2.0, Anchor: "start", Bold: true,
 		})
-		at += textWidth(text, 2.0) + 1.2
+		// Room between the word and the note that follows it. A metronome
+		// mark set hard against the end of "Allegro moderato" reads as one
+		// long word with a crotchet in the middle of it.
+		at += textWidth(text, 2.0) + tempoTextGap
+	}
+	if bpm > 0 && t.Parens {
+		e.lay.Texts = append(e.lay.Texts, Text{
+			S: "(", X: at, Y: y, Size: 2.0, Anchor: "start",
+		})
+		at += textWidth("(", 2.0) + 0.2
 	}
 	if bpm > 0 {
 		// The note is the real glyph, not the letter it looks like: a
@@ -1464,9 +1473,20 @@ func (e *engraver) drawTempoAt(t model.Tempo, x, y float64) float64 {
 			S: label, X: at + 0.45, Y: y, Size: 2.0, Anchor: "start",
 		})
 		at += 0.45 + textWidth(label, 2.0)
+		if t.Parens {
+			at += 0.2
+			e.lay.Texts = append(e.lay.Texts, Text{
+				S: ")", X: at, Y: y, Size: 2.0, Anchor: "start",
+			})
+			at += textWidth(")", 2.0)
+		}
 	}
 	return at - x
 }
+
+// tempoTextGap is the air between the words of a tempo marking and the note
+// of the metronome mark after them, in staff spaces.
+const tempoTextGap = 2.0
 
 // metronomeGlyph picks the note a metronome mark is counted in.
 func metronomeGlyph(d model.Duration) (string, int) {

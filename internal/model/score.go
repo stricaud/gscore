@@ -168,6 +168,12 @@ type Tempo struct {
 	BPM  int
 	Unit Duration
 	Text string
+
+	// Parens puts the metronome mark in brackets, which is how a score
+	// writes one that is a suggestion rather than an instruction — and how
+	// nearly every engraved score writes one that follows a word. Altes
+	// prints "All° Moderato (♩ = 116)", and so did everybody else in 1888.
+	Parens bool
 }
 
 // Identity is the bibliographic header of a score, from the 0.0.9 Identity_t.

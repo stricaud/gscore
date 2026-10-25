@@ -213,10 +213,12 @@ kbd {
 .menu-items button:hover kbd { color: #fff; background: rgba(255,255,255,.2); }
 
 .transport {
-  /* First in the bar, before the menus. Somebody opening a score wants to
-     hear it, and the one control they are looking for should not be the
-     last thing in the row, at the far end, past six menu titles. */
-  margin-right: 12px;
+  /* Pushed to the far end of the bar, past the menus: everything left of it
+     is a menu title, and the transport sitting among them read as one more.
+     The auto margin is what does it — the bar is a flex row, so the whole
+     of the space left over goes in front of this. */
+  margin-left: auto;
+  padding-right: 4px;
   display: flex;
   align-items: center;
   gap: 6px;
@@ -1255,6 +1257,34 @@ body.player.bare { grid-template-rows: 1fr; }
 }
 .tempo-bpm .eq { font-size: 18px; color: var(--muted); }
 .tempo-bpm input { width: 5.5em; }
+
+/* Which bar the marking lands on, at the top where it is read first. */
+.tempo-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 14px;
+}
+.tempo-bar input { width: 6em; }
+
+/* Brackets round the metronome mark. Its own row under the picker, not
+   squeezed beside the dotted box, because the two say different things. */
+.tempo-parens {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 10px;
+  font-size: 12px;
+  color: var(--muted);
+  padding-left: 6px;
+  cursor: pointer;
+}
+.tempo-parens .music { font-family: Bravura, serif; font-size: 16px; }
+
+/* Air between the note picker and the words that go in front of it. They
+   were hard against each other, which read as one control. */
+#tempo-form label[for="tempo-text"] { margin-top: 18px; display: block; }
 
 /* ---------- the writing cursor ---------- */
 

@@ -1103,7 +1103,10 @@ func (a *App) handleTempo(w http.ResponseWriter, r *http.Request) {
 		unit = unit.Scale(3, 2)
 	}
 
-	t := model.Tempo{BPM: bpm, Unit: unit, Text: q.Get("text")}
+	t := model.Tempo{
+		BPM: bpm, Unit: unit, Text: q.Get("text"),
+		Parens: q.Get("parens") == "1",
+	}
 
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -3146,4 +3149,95 @@ func (a *App) handleDot(w http.ResponseWriter, r *http.Request) {
 		"dots": map[bool]int{true: 0, false: 1}[dots > 0],
 		"dur":  next.String(), "measure": measure, "at": idx,
 	})
+}
+
+/*
+ * Changing the length of notes already written.
+ *
+ * The note values in the palette are tools: they choose what the next click
+ * on the staff writes. That is what they are for and it is not what somebody
+ * who has just selected four sixteenths and noticed they should have been
+ * thirty-seconds is asking for — they are asking for these notes to change,
+ * and clicking the thirty-second did nothing at all, because nothing in
+ * gscore could change the length of a note that was already there.
+ */
+
+// handleDuration rewrites the length of everything selected.
+func (a *App) handleDuration(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST required", http.StatusMethodNotAllowed)
+		return
+	}
+	q := r.URL.Query()
+
+	value, ok := durationNames[q.Get("value")]
+	if !ok {
+		http.Error(w, "unknown note length "+q.Get("value"), http.StatusBadRequest)
+		return
+	}
+	dots := 0
+	if v := q.Get("dots"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 0 || n > 3 {
+			http.Error(w, "a note carries up to three dots", http.StatusBadRequest)
+			return
+		}
+		dots = n
+	}
+	want := value
+	for i := 0; i < dots; i++ {
+		want = dotted(want, "1")
+	}
+
+	targets, err := parseTargets(q.Get("sel"))
+	if err != nil || len(targets) == 0 {
+		http.Error(w, "select the notes to change first", http.StatusBadRequest)
+		return
+	}
+
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	// Bar by bar, because changing a length changes where everything after
+	// it falls and the bar has to be reflowed once the whole of it is done.
+	// Reflowing after each note would move the notes still to be changed out
+	// from under the places the selection names them by.
+	touched := map[[2]int]bool{}
+	changed := 0
+	for _, t := range targets {
+		p, m, err := a.locate(t.part, t.measure)
+		if err != nil {
+			continue // a stale selection is not worth failing over
+		}
+		_ = p
+		for _, v := range m.Voices {
+			if v == nil || t.index < 0 || t.index >= len(v.Elements) {
+				continue
+			}
+			el := v.Elements[t.index]
+			// A note inside a tuplet is written against the group's own
+			// arithmetic, and giving it a plain length would break the
+			// group rather than change the note.
+			if mk := marksOfElement(el); mk != nil && mk.Tuplet != nil {
+				continue
+			}
+			setDuration(el, want)
+			changed++
+			touched[[2]int{t.part, t.measure}] = true
+			break // the first voice that has an element at this index
+		}
+	}
+	if changed == 0 {
+		http.Error(w, "nothing in the selection has a length to change",
+			http.StatusBadRequest)
+		return
+	}
+
+	// What no longer fits the bar moves into the next one, as when writing.
+	for at := range touched {
+		if p, _, err := a.locate(at[0], at[1]); err == nil {
+			spill(p, at[1])
+		}
+	}
+	writeJSON(w, map[string]any{"status": "ok", "changed": changed})
 }

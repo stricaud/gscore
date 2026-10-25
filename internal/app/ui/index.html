@@ -17,21 +17,6 @@
 <div id="menubar">
   <div class="brand"><img src="icon.png" alt="" width="20" height="22"><span>Gscore</span></div>
 
-  <div class="transport">
-    <button id="fs-btn" title="Full screen (F)">⤢</button>
-    <!-- Named, not only drawn. Somebody opening gscore for the first time
-         has no reason to know that Shift+Space starts the music, and a
-         glyph in the corner of a menu bar is not an answer: it reads as
-         decoration until you have already been told what it does. -->
-    <button id="play-btn" title="Play / Pause (Shift+Space)">
-      <span aria-hidden="true">▶</span><span class="label">Play</span>
-    </button>
-    <button id="stop-btn" title="Stop, back to the beginning (Esc)">
-      <span aria-hidden="true">■</span><span class="label">Stop</span>
-    </button>
-    <span id="clock">0:00</span>
-  </div>
-
   <div class="menu" data-menu="file">
     <button class="menu-title">File</button>
     <div class="menu-items">
@@ -46,26 +31,42 @@
         <div class="menu-items" id="recent-items"></div>
       </div>
       <hr>
-      <button data-action="save"><span>Save as .gscore…</span><kbd>S</kbd></button>
-      <!-- A saved score carries a PDF of itself unless this is turned off:
-           renamed .pdf, the same file opens in anything that reads one. -->
-      <button data-action="save-with-pdf"><span>…with a PDF inside it</span><kbd id="pdf-tick">✓</kbd></button>
-      <button data-action="save-pdf"><span>Export PDF…</span><kbd>⇧P</kbd></button>
-      <button data-action="save-svg"><span>Export SVG…</span><kbd>E</kbd></button>
-      <button data-action="save-page"><span>Export web page…</span><kbd>⇧H</kbd></button>
-      <button data-action="save-midi"><span>Export MIDI…</span></button>
-      <!-- Out to the best engraving there is. What comes back is source,
-           not a picture: it can be edited, and LilyPond sets it. -->
-      <button data-action="save-lilypond"><span>Export LilyPond…</span></button>
-      <!-- Only where gscore can make a sound: on this machine, where a
-           soundfont is a file on a disk, or in the page, where the core is
-           the page and the soundfont has been fetched into it. Hidden
-           rather than shown and refused. -->
-      <button data-action="save-audio" data-needs-instruments hidden><span>Export as audio…</span></button>
+      <!-- Save writes back where the score came from; Save as asks. The two
+           of them are the whole of saving, which is why nothing else is
+           here: whether a .gscore carries a PDF of itself is a decision
+           about the program, made once in Settings, not a thing to choose
+           again every time a file is written. -->
+      <button data-action="save"><span>Save</span><kbd>S</kbd></button>
+      <!-- No shortcut: shift-S is already the slur, and a menu entry with a
+           key printed beside it that does something else is worse than one
+           with no key at all. -->
+      <button data-action="save-as"><span>Save as…</span></button>
+      <!-- Everything that leaves gscore for another program, in one place.
+           Six of them in the File menu made saving hard to find among the
+           ways of not quite saving. -->
+      <div class="submenu" id="export-menu">
+        <button class="submenu-title"><span>Export</span><kbd>▸</kbd></button>
+        <div class="menu-items">
+          <button data-action="save-pdf"><span>PDF…</span><kbd>⇧P</kbd></button>
+          <button data-action="save-svg"><span>SVG…</span><kbd>E</kbd></button>
+          <button data-action="save-page"><span>Web page…</span><kbd>⇧H</kbd></button>
+          <button data-action="save-midi"><span>MIDI…</span></button>
+          <!-- Out to the best engraving there is. What comes back is source,
+               not a picture: it can be edited, and LilyPond sets it. -->
+          <button data-action="save-lilypond"><span>LilyPond…</span></button>
+          <!-- Only where gscore can make a sound: on this machine, where a
+               soundfont is a file on a disk, or in the page, where the core
+               is the page and the soundfont has been fetched into it.
+               Hidden rather than shown and refused. -->
+          <button data-action="save-audio" data-needs-instruments hidden><span>Audio…</span></button>
+        </div>
+      </div>
       <hr>
       <button data-action="page-setup" disabled><span>Page Setup</span></button>
       <button data-action="print-preview" disabled><span>Print Preview…</span></button>
       <button data-action="print"><span>Print…</span><kbd>P</kbd></button>
+      <hr>
+      <button data-action="settings"><span>Settings…</span></button>
       <hr>
       <button data-action="close" disabled><span>Close</span></button>
     </div>
@@ -363,6 +364,25 @@
     </div>
   </div>
 
+  <!-- At the far end of the bar, past the menus. The transport is not a
+       menu and sitting in the row with them it read as one; it is also the
+       one thing in here that is used while the music is moving, which is
+       the moment the menus are not. -->
+  <div class="transport">
+    <button id="fs-btn" title="Full screen (F)">⤢</button>
+    <!-- Named, not only drawn. Somebody opening gscore for the first time
+         has no reason to know that Shift+Space starts the music, and a
+         glyph in the corner of a menu bar is not an answer: it reads as
+         decoration until you have already been told what it does. -->
+    <button id="play-btn" title="Play / Pause (Shift+Space)">
+      <span aria-hidden="true">▶</span><span class="label">Play</span>
+    </button>
+    <button id="stop-btn" title="Stop, back to the beginning (Esc)">
+      <span aria-hidden="true">■</span><span class="label">Stop</span>
+    </button>
+    <span id="clock">0:00</span>
+  </div>
+
 </div>
 
 <div id="main">
@@ -551,6 +571,12 @@
   <h2>Set Tempo</h2>
   <p class="small" id="tempo-where">The speed of the piece.</p>
   <form method="dialog" id="tempo-form">
+    <!-- Which bar it lands on, shown and changeable. It used to be taken
+         silently from whatever was selected, so asking for a change of speed
+         with nothing selected quietly rewrote the mark at the top of the
+         score instead, and nothing appeared where it was wanted. -->
+    <label class="tempo-bar" for="tempo-measure">From bar
+      <input type="number" id="tempo-measure" min="1" step="1" value="1"></label>
     <fieldset id="tempo-notes">
       <legend>Note</legend>
       <div class="tempo-grid">
@@ -577,6 +603,11 @@
         <span class="eq">=</span>
         <input type="number" id="tempo-bpm" min="10" max="400" step="1" value="120">
       </div>
+      <!-- "Allegro moderato (♩ = 116)" is how a score writes a metronome
+           mark that follows a word, and how Altes writes his. -->
+      <label class="tempo-parens"><input type="checkbox" id="tempo-parens">
+        <span>In parentheses &#x2014; <span class="music">&#xECA5;</span> = 116
+          becomes (<span class="music">&#xECA5;</span> = 116)</span></label>
     </fieldset>
     <label for="tempo-text">Optional text expression</label>
     <input type="text" id="tempo-text" autocomplete="off"
@@ -639,6 +670,25 @@
     <div class="ask-buttons">
       <button value="cancel" type="submit">Cancel</button>
       <button value="ok" type="submit" class="primary">Print</button>
+    </div>
+  </form>
+</dialog>
+
+<!-- What gscore remembers between sessions.
+     Almost nothing, and on purpose: a score carries its own settings. What
+     is here is about the program rather than about any one piece. -->
+<dialog id="settings">
+  <h2>Settings</h2>
+  <form method="dialog">
+    <label class="setting"><input type="checkbox" id="setting-score-pdf">
+      <span>Carry a PDF inside saved <code>.gscore</code> files</span></label>
+    <p class="small">A <code>.gscore</code> is a container. With this on it holds a
+       PDF of the score as well as the music, so the same file renamed
+       <code>.pdf</code> opens in anything that reads one — and anybody you send it
+       to can read the score without gscore. With it off the file holds the music
+       alone, and saving is quicker on a long piece.</p>
+    <div class="ask-buttons">
+      <button value="ok" type="submit" class="primary">Done</button>
     </div>
   </form>
 </dialog>

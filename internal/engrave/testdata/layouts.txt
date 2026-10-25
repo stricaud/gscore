@@ -6,7 +6,7 @@ abc/boite-musique.abc eabfc14e979c9985 514
 abc/decoration.abc c1c6eea6d301c988 32
 abc/pitch.abc 6de715b685da879f 236
 abc/sunshine.abc 29b39313b40cf0ff 136
-samples/altes-10e-solo.abc 7b70652ce1afffc9 12337
+samples/altes-10e-solo.abc 23748dfc72a769b0 12337
 samples/boite-musique.abc eabfc14e979c9985 514
 suite/01a-Pitches-Pitches.musicxml ac9b5a16d2ed23a9 555
 suite/01b-Pitches-Intervals.musicxml 10c7ac11bad1da6c 412
@@ -81,7 +81,7 @@ suite/24h-GraceNote-Simultaneous.musicxml 10effe38a6ce8c83 234
 suite/31a-Directions.musicxml a1de9e8ae4037552 216
 suite/31b-Directions-Order.musicxml 22dfd0c01bc1a011 17
 suite/31c-MetronomeMarks.musicxml 54f9f5485d5d2141 38
-suite/31d-Directions-Compounds.musicxml 60659e50eeab1ecc 59
+suite/31d-Directions-Compounds.musicxml 82ab73e7a068254a 59
 suite/31f-Direction-Multiline-Compounds.musicxml d533ba139773e967 14
 suite/32a-Notations.musicxml cd38c719e997d03c 276
 suite/32b-Articulations-Texts.musicxml a9500d8c31442450 16

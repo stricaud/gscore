@@ -52,7 +52,8 @@ func pickFile() (string, error) {
 		// No "of type" filter: that clause wants uniform type identifiers, and
 		// handing it bare extensions makes the dialog match nothing and fail,
 		// which looks exactly like the user cancelling.
-		script := `POSIX path of (choose file with prompt "Open score")`
+		script := `POSIX path of (choose file with prompt "Open score"` +
+			appleScriptLocation(ScoresDir()) + `)`
 		cmd := exec.Command("osascript", "-e", script)
 		var stderr strings.Builder
 		cmd.Stderr = &stderr
@@ -74,10 +75,14 @@ func pickFile() (string, error) {
 				continue
 			}
 			var cmd *exec.Cmd
+			// A trailing separator is what tells both of them the path is
+			// the folder to start in rather than a file to select.
+			start := ScoresDir() + string(os.PathSeparator)
 			if tool == "zenity" {
-				cmd = exec.Command(path, "--file-selection", "--title=Open score")
+				cmd = exec.Command(path, "--file-selection",
+					"--title=Open score", "--filename="+start)
 			} else {
-				cmd = exec.Command(path, "--getopenfilename")
+				cmd = exec.Command(path, "--getopenfilename", start)
 			}
 			out, err := cmd.Output()
 			if err != nil {
@@ -90,6 +95,7 @@ func pickFile() (string, error) {
 	case "windows":
 		script := `Add-Type -AssemblyName System.Windows.Forms;` +
 			`$d = New-Object System.Windows.Forms.OpenFileDialog;` +
+			`$d.InitialDirectory = '` + powershellQuote(ScoresDir()) + `';` +
 			`$d.Filter = 'Scores|*.abc;*.mscz;*.mscx;*.musicxml;*.xml;*.mxl;*.gscore;*.nwctxt;*.nwc;*.ly|All files|*.*';` +
 			`if ($d.ShowDialog() -eq 'OK') { $d.FileName }`
 		out, err := exec.Command("powershell", "-NoProfile", "-Command", script).Output()
@@ -301,7 +307,12 @@ func (a *App) handleSave(w http.ResponseWriter, r *http.Request) {
 		// a PDF of the score in front of them unless that was turned off.
 		// Renamed .pdf, the same file opens in anything that reads one.
 		var preview []byte
-		if r.URL.Query().Get("pdf") != "0" {
+		// The setting decides unless this one save says otherwise.
+		want := SaveScorePDF()
+		if v := r.URL.Query().Get("pdf"); v != "" {
+			want = v != "0"
+		}
+		if want {
 			var buf bytes.Buffer
 			if err := a.renderPDF(&buf, r); err != nil {
 				http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -327,6 +338,10 @@ func (a *App) handleSave(w http.ResponseWriter, r *http.Request) {
 
 	a.mu.Lock()
 	a.filename = path
+	// What is on disk is what is in hand, so there is nothing to warn about
+	// on the way out. Here and not above: a PDF or a recording of the score
+	// is not the score, and writing one leaves the edits still unsaved.
+	a.unsaved = false
 	a.mu.Unlock()
 	// A score saved is a score to be reopened. The drawings and recordings
 	// that came out of gscore are not, and they return above without
@@ -585,10 +600,20 @@ func saveDialog(suggested string) (path string, shown bool, err error) {
 	case "darwin":
 		// Bringing the process forward first, or the panel opens behind the
 		// window and looks like nothing happened.
+		// The folder and the name are given separately: AppleScript takes a
+		// name in "default name" and a folder in "default location", and a
+		// path handed to the first of them is read as a very long file name.
+		// So the panel opened wherever the Finder was last, whatever
+		// saveDirectory had decided.
+		dir, name := filepath.Split(suggested)
+		if dir == "" {
+			dir = ScoresDir()
+		}
 		script := `tell application "System Events" to set frontmost of ` +
 			`(first process whose unix id is ` + strconv.Itoa(os.Getpid()) + `) to true
 POSIX path of (choose file name with prompt "Save score" default name "` +
-			strings.ReplaceAll(suggested, `"`, "") + `")`
+			strings.ReplaceAll(name, `"`, "") + `"` +
+			appleScriptLocation(strings.TrimSuffix(dir, "/")) + `)`
 
 		started := time.Now()
 		cmd := exec.Command("osascript", "-e", script)
@@ -629,7 +654,7 @@ POSIX path of (choose file name with prompt "Save score" default name "` +
 	case "windows":
 		script := `Add-Type -AssemblyName System.Windows.Forms;` +
 			`$d = New-Object System.Windows.Forms.SaveFileDialog;` +
-			`$d.FileName = '` + suggested + `';` +
+			`$d.FileName = '` + powershellQuote(suggested) + `';` +
 			`$d.Filter = 'gscore|*.gscore|MusicXML|*.musicxml|All files|*.*';` +
 			`if ($d.ShowDialog() -eq 'OK') { $d.FileName }`
 		started := time.Now()
@@ -642,12 +667,34 @@ POSIX path of (choose file name with prompt "Save score" default name "` +
 	return "", false, errNoDialog
 }
 
+// appleScriptLocation is the clause that tells a Finder panel which folder to
+// open in, or nothing at all when there is no sensible one to name.
+func appleScriptLocation(dir string) string {
+	if dir == "" || dir == "." {
+		return ""
+	}
+	if st, err := os.Stat(dir); err != nil || !st.IsDir() {
+		return ""
+	}
+	// A path with a quote in it would end the string early. Folder names may
+	// hold one, and a broken script reads to the caller exactly like the
+	// person cancelling the panel.
+	return ` default location (POSIX file "` +
+		strings.ReplaceAll(dir, `"`, `\"`) + `")`
+}
+
+// powershellQuote escapes a path for a single-quoted PowerShell string, where
+// the one character that matters is the quote itself, doubled.
+func powershellQuote(s string) string {
+	return strings.ReplaceAll(s, "'", "''")
+}
+
 // panelShownAfter is how long a system panel has to have been up for somebody
 // to have had a chance to cancel it. Anything faster never appeared.
 const panelShownAfter = 400 * time.Millisecond
 
 // saveDirectory is where a file typed by name rather than chosen in a panel
-// should land: beside the score it came from, or in the home directory.
+// should land: beside the score it came from, or in gscore's own folder.
 func (a *App) saveDirectory() string {
 	a.mu.RLock()
 	name := a.filename
@@ -660,10 +707,7 @@ func (a *App) saveDirectory() string {
 			return dir
 		}
 	}
-	if home, err := os.UserHomeDir(); err == nil {
-		return home
-	}
-	return "."
+	return ScoresDir()
 }
 
 // handlePage hands the web page straight back, for a browser to download.

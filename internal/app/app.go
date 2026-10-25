@@ -97,6 +97,11 @@ type App struct {
 	// On macOS the window title already carries the application name, so the
 	// interface must not repeat it the way a web page would.
 	native bool
+
+	// unsaved says the score has been edited since it was last written to
+	// disk. Set by the wrapper every edit goes through and cleared where the
+	// score is written or replaced, so no handler has to remember to.
+	unsaved bool
 }
 
 // New returns an app showing the given score.
@@ -261,7 +266,15 @@ func (a *App) Run(addr string, mode UIMode) error {
 		}
 		// The window owns the main goroutine until it is closed, and closing
 		// it ends the program, the way shutting an application window should.
-		return desktop.Open(url, title, 1280, 820)
+		if err := desktop.Open(url, title, 1280, 820); err != nil {
+			return err
+		}
+		// The window has gone but the program has not, which is the only
+		// moment left to ask about work that was never written down. A page
+		// cannot refuse to be left here the way it can in a browser: the
+		// close button belongs to the system and the view offers no hook
+		// into it. See OfferToSaveOnExit.
+		return a.OfferToSaveOnExit()
 	case Browser:
 		launch(url)
 		select {}
@@ -395,6 +408,7 @@ func (a *App) APIRoutes(mux *http.ServeMux) {
 		"/api/tie":             a.handleTie,
 		"/api/stem":            a.handleStem,
 		"/api/dot":             a.handleDot,
+		"/api/duration":        a.handleDuration,
 		"/api/tuplet":          a.handleTuplet,
 		"/api/tremolo":         a.handleTremolo,
 		"/api/accidental":      a.handleAccidental,
@@ -492,15 +506,18 @@ type info struct {
 	// with no server and no disk. It is not "local" — there is no machine
 	// to save to — but it can still make a sound, because the synthesizer
 	// is compiled into the page along with everything else.
-	InBrowser bool       `json:"inBrowser,omitempty"`
-	Version   string     `json:"version"`
-	Filename  string     `json:"filename"`
-	Title     string     `json:"title"`
-	Subtitle  string     `json:"subtitle"`
-	Composer  string     `json:"composer"`
-	Tempo     int        `json:"tempo"`
-	Parts     []partInfo `json:"parts"`
-	Formats   []string   `json:"formats"`
+	InBrowser bool   `json:"inBrowser,omitempty"`
+	Version   string `json:"version"`
+	Filename  string `json:"filename"`
+	// Unsaved says the score has been edited since it was last written out.
+	// The interface asks before letting the window close on it.
+	Unsaved  bool       `json:"unsaved"`
+	Title    string     `json:"title"`
+	Subtitle string     `json:"subtitle"`
+	Composer string     `json:"composer"`
+	Tempo    int        `json:"tempo"`
+	Parts    []partInfo `json:"parts"`
+	Formats  []string   `json:"formats"`
 
 	// The beat the tempo counts and the words beside it. A number on its own
 	// does not say anything: 120 in 6/8 is a different speed depending on
@@ -508,6 +525,7 @@ type info struct {
 	TempoUnit   string `json:"tempoUnit"`
 	TempoDotted bool   `json:"tempoDotted,omitempty"`
 	TempoText   string `json:"tempoText,omitempty"`
+	TempoParens bool   `json:"tempoParens,omitempty"`
 
 	// TempoChanges are the speeds written partway through, keyed by the bar
 	// they start at. Bar zero is the score's own, which is why it is not
@@ -535,6 +553,7 @@ type tempoInfo struct {
 	Unit   string `json:"unit"`
 	Dotted bool   `json:"dotted,omitempty"`
 	Text   string `json:"text,omitempty"`
+	Parens bool   `json:"parens,omitempty"`
 }
 
 type partInfo struct {
@@ -566,6 +585,7 @@ func (a *App) handleInfo(w http.ResponseWriter, r *http.Request) {
 		InBrowser: a.inBrowser,
 		Version:   version.Version,
 		Filename:  a.filename,
+		Unsaved:   a.unsaved,
 		CanUndo:   len(a.undoStack) > 0,
 		CanRedo:   len(a.redoStack) > 0,
 		Title:     a.score.Identity.Title,
@@ -576,6 +596,7 @@ func (a *App) handleInfo(w http.ResponseWriter, r *http.Request) {
 	out.Cursor = a.cursorInfo()
 	out.TempoUnit, out.TempoDotted = beatName(a.score.Tempo.Unit)
 	out.TempoText = a.score.Tempo.Text
+	out.TempoParens = a.score.Tempo.Parens
 	for i := 0; i < a.score.MeasureCount(); i++ {
 		t := a.score.TempoChangeAt(i)
 		if t == nil || i == 0 {
@@ -587,6 +608,7 @@ func (a *App) handleInfo(w http.ResponseWriter, r *http.Request) {
 		}
 		out.TempoChanges[strconv.Itoa(i)] = tempoInfo{
 			BPM: t.BPM, Unit: unit, Dotted: dotted, Text: t.Text,
+			Parens: t.Parens,
 		}
 	}
 	for _, i := range format.Importers() {
@@ -658,6 +680,9 @@ func (a *App) setBook(scores []*model.Score, filename string, err error) {
 	a.filename = filename
 	a.warning, a.importLog = readProblems(err)
 	a.forgetHistory()
+	// A document just opened has nothing in it that is not on disk, and a
+	// new one has nothing in it at all.
+	a.unsaved = false
 }
 
 // readProblems splits an importer's error into the one line the status bar

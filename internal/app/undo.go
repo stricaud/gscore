@@ -85,6 +85,10 @@ func (a *App) undoable(h http.HandlerFunc) http.HandlerFunc {
 		if rec.code < 200 || rec.code >= 300 {
 			return // nothing happened, so there is nothing to take back
 		}
+		// The one place every edit passes through, and it already knows
+		// whether the edit took: an edit that can be undone is an edit that
+		// is not on disk.
+		a.unsaved = true
 		a.undoStack = append(a.undoStack, before)
 		if len(a.undoStack) > undoDepth {
 			a.undoStack = a.undoStack[len(a.undoStack)-undoDepth:]

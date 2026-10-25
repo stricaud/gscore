@@ -79,7 +79,6 @@ const state = {
   // reads one, which is most of what somebody might send it to. The cost is
   // the size — the engraving is far larger than the music — so it can be
   // turned off.
-  savePDF: true,
   // Where each measure's closing barline was drawn, so one can be clicked.
   barlines: [],
   // The clef, key and meter at the head of each system, likewise.
@@ -98,6 +97,9 @@ async function paletteAction(item) {
       case "rest":
         state.tool.rest = true;
         if (item.dur) state.tool.duration = item.dur;
+        if (item.dur && hasSelection()) {
+          await setSelectionDuration(item.dur, item.label);
+        }
         break;
       case "acc":
         state.tool.accidental = item.acc;
@@ -114,6 +116,15 @@ async function paletteAction(item) {
       default:
         state.tool.rest = false;
         state.tool.duration = item.tool;
+        // A note value means two things depending on what is in front of
+        // you, exactly as an accidental does. With nothing selected it is a
+        // decision about the next note; with notes picked up it is those
+        // notes that are meant — somebody who has selected four sixteenths
+        // and clicked the thirty-second is not choosing a pen, they are
+        // telling you the four notes are wrong.
+        if (hasSelection()) {
+          await setSelectionDuration(item.tool, item.label);
+        }
     }
     markPaletteTool((label) => label === currentToolLabel());
     status(item.label);
@@ -582,14 +593,13 @@ async function action(name) {
     case "group-bracket": await joinStaves("bracket"); break;
     case "group-none": await joinStaves("none"); break;
     case "save":
-      await saveScore();
+      await saveScore(false);
       break;
-    case "save-with-pdf":
-      state.savePDF = !state.savePDF;
-      markSaveTick();
-      status(state.savePDF
-        ? "Saved scores will carry a PDF — rename one .pdf to read it anywhere"
-        : "Saved scores will hold the music only");
+    case "save-as":
+      await saveScore(true);
+      break;
+    case "settings":
+      await settingsDialog();
       break;
     case "import-symbols":
       await importSymbolPack();
@@ -2949,6 +2959,11 @@ async function setTuplet(n) {
   status(`${tupletNames[n] || n + "-tuplet"} — ${d.tuplet} in the time of ${d.normal}`);
 }
 
+// setSelectionDuration rewrites the length of the notes that are picked up.
+const setSelectionDuration = (value, label) =>
+  mark("duration", { value, dots: String(0) },
+       "Changed to " + (label || value).toLowerCase());
+
 const setStem = (dir) =>
   mark("stem", { stem: dir },
        dir === "auto" ? "Stem left to the engraver" : "Stem " + dir);
@@ -3235,9 +3250,33 @@ async function exportSymbolPack() {
   status("Symbols downloaded");
 }
 
-async function saveScore() {
-  const carry = state.savePDF ? "" : "?pdf=0";
-  let res = await fetch("/api/save" + carry, { method: "POST" });
+// saveScore writes the score out: back where it came from, or wherever the
+// save panel is told to put it.
+//
+// Save and Save as are the same work with one question between them, and the
+// question is whether there is already an answer. A score opened from a file
+// has one, and writing it back is what Save means everywhere else; a score
+// that came from nowhere, or from a format gscore cannot write, falls
+// through to the panel rather than refusing.
+//
+// Whether a .gscore carries a PDF of itself is not asked here. It is a
+// setting, which is what it always was — a decision about the program, not
+// about this file — and it used to be a second menu entry that had to be
+// found and understood before the first one could be trusted.
+async function saveScore(ask) {
+  const here = state.info?.filename || "";
+  if (!ask && here) {
+    const back = await fetch("/api/save?path=" + encodeURIComponent(here),
+                             { method: "POST" });
+    if (back.ok) {
+      const d = await back.json();
+      await loadInfo();
+      status("Saved " + d.path);
+      return;
+    }
+    // gscore cannot write that format back. Ask where it should go instead.
+  }
+  let res = await fetch("/api/save", { method: "POST" });
   if (!res.ok) {
     status("Could not save: " + (await res.text()).trim());
     return;
@@ -3258,8 +3297,8 @@ async function saveScore() {
       status("Ready");
       return;
     }
-    res = await fetch("/api/save?path=" + encodeURIComponent(where.trim()) +
-                      (state.savePDF ? "" : "&pdf=0"), { method: "POST" });
+    res = await fetch("/api/save?path=" + encodeURIComponent(where.trim()),
+                      { method: "POST" });
     if (!res.ok) {
       status("Could not save: " + (await res.text()).trim());
       return;
@@ -3273,6 +3312,29 @@ async function saveScore() {
   }
   await loadInfo();
   status("Saved " + d.path);
+}
+
+// settingsDialog is what gscore remembers between sessions.
+async function settingsDialog() {
+  const dlg = $("#settings");
+  const pdf = $("#setting-score-pdf");
+  const now = await (await fetch("/api/settings")).json().catch(() => ({}));
+  pdf.checked = now.scorePDF !== false;
+
+  await new Promise((resolve) => {
+    const done = () => {
+      dlg.removeEventListener("close", done);
+      resolve();
+    };
+    dlg.addEventListener("close", done);
+    dlg.showModal();
+  });
+
+  await fetch("/api/settings?scorePDF=" + (pdf.checked ? "1" : "0"),
+              { method: "POST" });
+  status(pdf.checked
+    ? "Saved scores will carry a PDF — rename one .pdf to read it anywhere"
+    : "Saved scores will hold the music only");
 }
 
 // ask puts one question and returns the answer, or null if it was dismissed.
@@ -3364,21 +3426,39 @@ function ask({ title, label, value = "", note = "", options = null, search = fal
 // the title block is that marking written over bar one.
 async function setTempoDialog() {
   const dlg = $("#tempo");
-  const bar = state.selection?.measure ?? 0;
-  const here = tempoAtBar(bar);
 
-  $("#tempo-where").textContent = bar === 0
-    ? "The speed the piece starts at."
-    : `A change of speed from bar ${bar + 1} on.`;
-  $("#tempo-bpm").value = String(here.bpm);
-  $("#tempo-text").value = here.text;
-  $("#tempo-dotted").checked = !!here.dotted;
-  $$('#tempo-notes input[name="tempo-unit"]').forEach(
-    (r) => (r.checked = r.value === here.unit)
-  );
-  // There is nothing to remove at bar one: the piece has a speed whether or
-  // not anybody chose it.
-  $("#tempo-remove").hidden = bar === 0 || !here.written;
+  // Where the marking lands, shown and changeable rather than taken from
+  // whatever happened to be selected. Asking for a change of speed with
+  // nothing selected used to rewrite the mark at the top of the score and
+  // say nothing about it, so the bar somebody wanted it in stayed as it was.
+  const measure = $("#tempo-measure");
+  measure.value = String((state.selection?.measure ?? 0) + 1);
+  measure.max = String(
+    (state.hits || []).reduce((n, h) => Math.max(n, h.measure + 1), 1));
+
+  const barNow = () => Math.max(1, parseInt(measure.value, 10) || 1);
+
+  // What the rest of the dialog shows follows the bar, so changing the bar
+  // shows what is written there rather than what was written where it was.
+  const describe = () => {
+    const at = barNow();
+    const here = tempoAtBar(at - 1);
+    $("#tempo-where").textContent = at === 1
+      ? "The speed the piece starts at."
+      : `A change of speed from bar ${at} on.`;
+    $("#tempo-bpm").value = String(here.bpm);
+    $("#tempo-text").value = here.text;
+    $("#tempo-dotted").checked = !!here.dotted;
+    $("#tempo-parens").checked = !!here.parens;
+    $$('#tempo-notes input[name="tempo-unit"]').forEach(
+      (r) => (r.checked = r.value === here.unit),
+    );
+    // There is nothing to remove at bar one: the piece has a speed whether
+    // or not anybody chose it.
+    $("#tempo-remove").hidden = at === 1 || !here.written;
+  };
+  measure.oninput = describe;
+  describe();
 
   const answer = await new Promise((resolve) => {
     const done = () => {
@@ -3392,6 +3472,7 @@ async function setTempoDialog() {
   });
   if (answer !== "ok" && answer !== "remove") return;
 
+  const bar = barNow() - 1;
   const q = new URLSearchParams();
   if (bar > 0) q.set("measure", String(bar));
 
@@ -3407,6 +3488,7 @@ async function setTempoDialog() {
     q.set("bpm", String(bpm));
     q.set("unit", unit ? unit.value : "quarter");
     if ($("#tempo-dotted").checked) q.set("dotted", "1");
+    if ($("#tempo-parens").checked) q.set("parens", "1");
     q.set("text", $("#tempo-text").value.trim());
   }
 
@@ -3415,12 +3497,12 @@ async function setTempoDialog() {
     status("Could not set the tempo: " + (await res.text()).trim());
     return;
   }
+  const d = await res.json().catch(() => ({}));
   await refreshScore();
   if (answer === "remove") {
     status(`Bar ${bar + 1} carries on at the tempo before it`);
     return;
   }
-  const d = await res.json().catch(() => ({}));
   status(bar === 0 ? `${d.bpm ?? ""} bpm` : `Bar ${bar + 1}: ${d.bpm ?? ""} bpm`);
 }
 
@@ -3437,6 +3519,7 @@ function tempoAtBar(bar) {
       unit: state.info?.tempoUnit || "quarter",
       dotted: !!state.info?.tempoDotted,
       text: state.info?.tempoText || "",
+      parens: !!state.info?.tempoParens,
       written: true,
     };
   }
@@ -3446,6 +3529,7 @@ function tempoAtBar(bar) {
     unit: state.info?.tempoUnit || "quarter",
     dotted: !!state.info?.tempoDotted,
     text: state.info?.tempoText || "",
+    parens: !!state.info?.tempoParens,
   };
   for (let i = 1; i <= bar; i++) {
     const c = changes[String(i)];
@@ -3796,12 +3880,6 @@ async function setView(what, on) {
   status(what === "names"
     ? (on ? "Staff names shown" : "Staff names hidden")
     : (on ? "Measure numbers shown" : "Measure numbers hidden"));
-}
-
-// markSaveTick shows whether a saved score will carry a PDF.
-function markSaveTick() {
-  const t = $("#pdf-tick");
-  if (t) t.textContent = state.savePDF ? "✓" : "";
 }
 
 function markViewTicks() {
@@ -6813,6 +6891,23 @@ function setupEmbedMessages() {
     }
   });
 }
+
+// Leaving a browser tab with work in hand.
+//
+// The browser writes the warning, not the page — every one of them refuses a
+// custom message now — and it only shows one at all if the page objects
+// during the event itself. So the answer has to be already in hand, which it
+// is: the server sets it on every edit and clears it on every save, and the
+// interface reloads what it knows after each one.
+//
+// This is the browser's half. The native window cannot be asked this way at
+// all, because its close button belongs to the operating system; gscore asks
+// there after the window has gone. See OfferToSaveOnExit.
+window.addEventListener("beforeunload", (e) => {
+  if (state.readOnly || !state.info?.unsaved) return;
+  e.preventDefault();
+  e.returnValue = ""; // what older browsers look at
+});
 
 // announceToParent tells the embedding page that the score is up and that it
 // may start sending messages.

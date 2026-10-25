@@ -11,6 +11,8 @@
 package engrave
 
 import (
+	"sort"
+
 	"github.com/stricaud/gscore/internal/model"
 	"github.com/stricaud/gscore/internal/smufl"
 )
@@ -146,12 +148,22 @@ func (e *engraver) spanAt(m *model.Marks, p *placed) {
 
 // breakSpans ends every open spanner at the right margin of a system and
 // leaves it open, so the next system starts it again at its own left edge.
+//
+// In voice order, because this draws. A map in Go is walked in a different
+// order every run, and a drawing whose marks come out in a different order
+// each time is a drawing that cannot be compared with itself: the golden
+// layouts hashed one order on one machine and another on the next, and the
+// score was identical both times.
 func (e *engraver) breakSpans(part int, right float64) {
-	for key, open := range e.spans {
-		if key[0] != part {
-			continue
+	keys := make([][2]int, 0, len(e.spans))
+	for key := range e.spans {
+		if key[0] == part {
+			keys = append(keys, key)
 		}
-		e.breakSpansOf(open, right)
+	}
+	sort.Slice(keys, func(a, b int) bool { return keys[a][1] < keys[b][1] })
+	for _, key := range keys {
+		e.breakSpansOf(e.spans[key], right)
 	}
 }
 
@@ -177,10 +189,24 @@ func (e *engraver) breakSpansOf(open *openSpans, right float64) {
 		e.drawTieOrSlur(open.slur, right, open.slur.y, slurLift, true)
 		open.slur.x = -1
 	}
-	for _, t := range open.ties {
+	// Up the staff, for the same reason: a chord held over a line break
+	// leaves one stub per note, and which was drawn first decided the order
+	// of the whole layout.
+	for _, step := range sortedSteps(open.ties) {
+		t := open.ties[step]
 		e.drawTieOrSlur(t, right, t.y, tieLift, false)
 		t.x = -1
 	}
+}
+
+// sortedSteps lists a tie map's noteheads from the bottom of the staff up.
+func sortedSteps(ties map[int]*openSpan) []int {
+	out := make([]int, 0, len(ties))
+	for step := range ties {
+		out = append(out, step)
+	}
+	sort.Ints(out)
+	return out
 }
 
 // resumeSpans picks a broken spanner up again at the left of a new system.

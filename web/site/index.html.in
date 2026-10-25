@@ -24,7 +24,7 @@
 <body>
 
 <header class="top">
-  <a class="brand" href="./"><img src="gscore.svg" alt="" width="42" height="47"> Gscore</a>
+  <a class="brand" href="./"><img src="gscore.svg" alt="" width="128" height="145"> Gscore</a>
   <nav>
     <a href="scores/">Scores</a>
     <a href="docs/">Docs</a>

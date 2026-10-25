@@ -287,7 +287,12 @@ windows: soundfonts
 		packaging/windows/gscore.rc.in > $(BUILD)/gscore.rc
 	@$(WIN_RES) -I . -i $(BUILD)/gscore.rc -O coff -o $(WIN_SYSO)
 	@# -H windowsgui keeps a console from opening behind the window.
+	@# The include path carries one header that only exists to spell
+	@# another one with a capital letter; packaging/windows/include says
+	@# why. -O2 -g because naming CGO_CFLAGS at all replaces Go's own.
 	CGO_ENABLED=1 GOOS=windows GOARCH=amd64 \
+		CGO_CFLAGS="-O2 -g -I$(CURDIR)/packaging/windows/include" \
+		CGO_CXXFLAGS="-O2 -g -I$(CURDIR)/packaging/windows/include" \
 		CC=$(WIN_CC) CXX=x86_64-w64-mingw32-g++ \
 		go build -trimpath -ldflags "$(LDFLAGS) -H windowsgui" \
 		-o $(WIN_DIR)/$(BINARY).exe . 2>&1 | grep -v '^In file\|warning:\|^ *[0-9]* |\|^ *|' || true

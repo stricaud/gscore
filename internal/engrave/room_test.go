@@ -53,6 +53,11 @@ func TestASystemWithNothingOverItReservesNothing(t *testing.T) {
 	opt := DefaultOptions()
 	opt.Mode = Paginated
 	opt.LineWidth = 70
+	// Nothing over the staff means nothing, bar numbers included. They are
+	// on by default and they are written above the first measure of every
+	// system after the first, so leaving them on would be asking a system
+	// with a number over it to reserve no room for the number.
+	opt.ShowMeasureNumbers = false
 	lay := Engrave(plainSong(24), opt)
 
 	if len(lay.Systems) < 3 {

@@ -77,7 +77,11 @@ sed -e 's|<script src="app.js"></script>|<script src="wasm_exec.js"></script>\
 echo "engraving the sample scores…"
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
-go build -trimpath -o "$tmp/gscore" "$root"
+# Without cgo. This copy of gscore only has to read scores and write them
+# out again — it never opens a window — and the native window wraps
+# WebKitGTK on Linux, whose headers a build machine has no reason to carry.
+# With cgo on, the site could only be built on a desktop.
+CGO_ENABLED=0 go build -trimpath -o "$tmp/gscore" "$root"
 
 for abc in "$root"/samples/*.abc; do
     id=$(basename "$abc" .abc)

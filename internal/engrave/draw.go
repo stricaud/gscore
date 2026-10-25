@@ -1528,6 +1528,14 @@ func (e *engraver) drawArticulations(m *model.Marks, x float64, lo, hi int, stem
 	} else {
 		y = math.Max(noteY+gap, e.y+e.staffH()+1.2)
 	}
+	// And clear of the other line of music. Two voices on one staff sound
+	// at the same moment and are drawn at the same x, so a mark under the
+	// upper voice has the lower voice's noteheads beneath it — and was
+	// drawn straight through them. The noteheads are already on the page by
+	// now, so the question can be asked of the drawing rather than guessed
+	// at from the model.
+	y = e.clearOfNoteheads(x, y, above)
+
 	emit := func(name string) {
 		if name == "" {
 			return
@@ -1561,6 +1569,32 @@ func (e *engraver) drawArticulations(m *model.Marks, x float64, lo, hi int, stem
 			y += gap
 		}
 	}
+}
+
+// clearOfNoteheads moves a mark out past any notehead already drawn at this
+// point of this staff, in whichever direction it is travelling.
+func (e *engraver) clearOfNoteheads(x, y float64, above bool) float64 {
+	const (
+		reach = 1.1 // how near along the bar counts as "under this mark"
+		air   = 1.3 // what to leave between the notehead and the mark
+	)
+	top, bot := e.y-8, e.y+e.staffH()+8
+	for _, g := range e.lay.Glyphs {
+		if !strings.HasPrefix(g.Name, "notehead") || g.Y < top || g.Y > bot {
+			continue
+		}
+		if g.X > x+reach || g.X+smufl.Advance(g.Name) < x-reach {
+			continue
+		}
+		if above {
+			if want := g.Y - air; want < y {
+				y = want
+			}
+		} else if want := g.Y + air; want > y {
+			y = want
+		}
+	}
+	return y
 }
 
 // ornament writes a mordent, a turn or the like above the staff.

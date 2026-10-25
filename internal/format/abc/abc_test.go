@@ -409,15 +409,26 @@ func TestChordInnerTie(t *testing.T) {
 			t.Errorf("chord note %d does not start a tie", i)
 		}
 	}
-	if !ch.TieStart {
-		t.Error("every note is tied, so the chord as a whole should be too")
+	// On the noteheads and not on the chord, even when every one of them is
+	// tied. A chord may hold one note while the others move, so a tie
+	// belongs to the notehead it is drawn from; said on the chord as well,
+	// the same tie was counted twice, and a stop on the chord closed a tie
+	// on every notehead in it whether or not it had one. It is also how
+	// every other importer records them.
+	if ch.TieStart {
+		t.Error("the tie is on the noteheads; the chord should not claim it too")
 	}
 	next, ok := first[1].(*model.Chord)
 	if !ok {
 		t.Fatalf("got %T, want a chord", first[1])
 	}
-	if !next.TieStop {
-		t.Error("the chord after the tie should stop it")
+	for i, n := range next.Notes {
+		if !n.TieStop {
+			t.Errorf("note %d of the chord after the tie does not stop it", i)
+		}
+	}
+	if next.TieStop {
+		t.Error("the stop is on the noteheads; the chord should not claim it too")
 	}
 }
 

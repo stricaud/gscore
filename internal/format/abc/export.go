@@ -47,7 +47,7 @@ var unitLength = model.Duration{Num: 1, Den: 8}
 // Export writes a score as ABC.
 func Export(w io.Writer, s *model.Score) error {
 	b := &strings.Builder{}
-	e := &exporter{out: b, score: s}
+	e := &exporter{out: b, score: s, acc: map[accKey]int{}}
 	e.header()
 	e.body()
 	_, err := io.WriteString(w, b.String())
@@ -57,6 +57,46 @@ func Export(w io.Writer, s *model.Score) error {
 type exporter struct {
 	out   *strings.Builder
 	score *model.Score
+
+	// What a reader of this file would believe about the notes as they go
+	// by: the signature in force, and the accidentals written so far in the
+	// bar. ABC carries an accidental to the end of the bar, exactly as a
+	// printed score does, so a note's letter alone does not say what it
+	// sounds — and a note whose alteration the score does not print, because
+	// an earlier note in the bar established it, has to be written with one
+	// here or it comes back a semitone out.
+	key model.KeySignature
+	acc map[accKey]int
+	// tied carries an alteration across a tie, the same way the reader does:
+	// the far half of a tied note sounds as the near half did and needs no
+	// accidental of its own, however many barlines are between them.
+	//
+	// Of the staff, not of one line of music on it, because that is how the
+	// reader takes it: a score ties across its voices — the Altes holds a
+	// bass A flat from one line of the left hand into the other at bar 83 —
+	// and the note that ends it is the same note still sounding wherever it
+	// is written.
+	tied map[tieKey]int
+}
+
+// barAccidentals starts the bar again with nothing but the key signature in
+// force, which is what a barline means.
+func (e *exporter) barAccidentals() { e.acc = map[accKey]int{} }
+
+// accidentalText is how ABC spells an alteration.
+func accidentalText(alter int) string {
+	switch {
+	case alter >= 2:
+		return "^^"
+	case alter == 1:
+		return "^"
+	case alter == 0:
+		return "="
+	case alter == -1:
+		return "_"
+	default:
+		return "__"
+	}
 }
 
 func (e *exporter) line(format string, args ...any) {
@@ -94,8 +134,8 @@ func (e *exporter) header() {
 		e.line("M:%s", meterText(first.Time))
 	}
 	e.line("L:%s", fractionText(unitLength))
-	if t := e.score.Tempo; t.BPM > 0 {
-		e.line("Q:%s=%d", fractionText(t.Unit), t.BPM)
+	if t := e.score.Tempo; t.BPM > 0 || t.Text != "" {
+		e.line("Q:%s", tempoText(t))
 	}
 	if first != nil {
 		e.line("K:%s", keyText(first.Key))
@@ -205,7 +245,35 @@ func (e *exporter) part(p *model.Part) {
 		bars = 0
 	}
 
+	e.key = p.Key
 	for mi, m := range p.Measures {
+		if m.Key != nil {
+			e.key = *m.Key
+		}
+		// A barline cancels every accidental written before it.
+		e.barAccidentals()
+		// A change of key or of meter, written where it happens. In ABC a
+		// field in the middle of a line goes in brackets, and it takes
+		// effect from there on — which at the head of a bar is from that bar
+		// on, the way a printed score announces one.
+		//
+		// Without this the header's key was the only one the file carried,
+		// and a piece that modulates came back in the key it started in:
+		// the Altes goes to four flats at bar 60 and to none at bar 82, and
+		// 393 of its notes read back at the wrong pitch.
+		if m.Key != nil {
+			line.WriteString("[K:" + keyText(*m.Key) + "] ")
+		}
+		if m.Time != nil {
+			line.WriteString("[M:" + meterText(*m.Time) + "] ")
+		}
+		// And the speed, where the piece changes it. A score is not one
+		// tempo: the Altes has seven changes after its first bar — Tempo,
+		// Andantino, Andante, Allegro, Meno mosso — and writing only the
+		// one in the header played the whole piece at the opening speed.
+		if mi > 0 && m.Tempo != nil {
+			line.WriteString("[Q:" + tempoText(*m.Tempo) + "] ")
+		}
 		line.WriteString(e.measure(p, m))
 		line.WriteString(barlineText(m.RightBarline))
 		line.WriteByte(' ')
@@ -222,14 +290,27 @@ func (e *exporter) measure(p *model.Part, m *model.Measure) string {
 	if len(m.Voices) == 0 {
 		return ""
 	}
-	var b strings.Builder
-	for vi, v := range m.Voices {
-		if v == nil {
-			continue
+	// The lines of music this bar actually has. A voice with nothing in it
+	// is not a line of music, and writing the & for it anyway shifted every
+	// line after it down one — so a tie begun in the first line of one bar
+	// looked for its end in the second line of the next, and did not find
+	// it. The Altes does this at bar 83, where the left hand's first voice
+	// is empty and its music is in the second.
+	var voices []*model.Voice
+	for _, v := range m.Voices {
+		if v != nil && len(v.Elements) > 0 {
+			voices = append(voices, v)
 		}
+	}
+
+	var b strings.Builder
+	for vi, v := range voices {
 		if vi > 0 {
-			// A second line of music over the same bar.
+			// A second line of music over the same bar. It reads the
+			// accidentals from the key again, the way the reader does: a
+			// sharp in the upper line does not alter the lower one.
 			b.WriteString("& ")
+			e.barAccidentals()
 		}
 		b.WriteString(e.voice(p, v))
 	}
@@ -293,10 +374,23 @@ func (e *exporter) element(el model.Element) string {
 	var b strings.Builder
 
 	if m != nil {
-		b.WriteString(graceText(m.Grace))
+		b.WriteString(e.graceText(m.Grace))
 		b.WriteString(decorationsText(m))
 		if m.Chord != nil && m.Chord.Root != "" {
 			b.WriteString(quote(chordSymbolText(m.Chord)))
+		}
+		// Words to the player — "Con delicatezza", "Suivez", "Sec." — which
+		// ABC writes as a quoted annotation with a character in front saying
+		// which side of the staff it goes.
+		for _, t := range m.Texts {
+			if t.Text == "" {
+				continue
+			}
+			where := "^"
+			if t.Placement == model.PlacementBelow {
+				where = "_"
+			}
+			b.WriteString(quote(where + t.Text))
 		}
 		if m.SlurStart {
 			b.WriteByte('(')
@@ -305,13 +399,22 @@ func (e *exporter) element(el model.Element) string {
 
 	switch v := el.(type) {
 	case *model.Note:
-		b.WriteString(noteText(v, written(el)))
+		b.WriteString(e.noteText(v, written(el)))
 	case *model.Chord:
 		b.WriteByte('[')
 		for _, n := range v.Notes {
 			// Inside the brackets the noteheads carry no length of their
 			// own: the chord's length follows the closing bracket.
-			b.WriteString(pitchText(n))
+			b.WriteString(e.pitchText(n))
+			// A tie on one note of a chord is written on that note, inside
+			// the brackets. Holding the top of a chord while the rest moves
+			// is ordinary writing, and dropping those ties lost both the
+			// tie and — because a tied note does not repeat its accidental
+			// — the alteration it was carrying: the B natural held through
+			// bars 4 to 6 of the Altes came back a B flat.
+			if n.TieStart {
+				b.WriteByte('-')
+			}
 		}
 		b.WriteByte(']')
 		b.WriteString(lengthText(written(el)))
@@ -346,8 +449,8 @@ func written(el model.Element) model.Duration {
 	return d
 }
 
-func noteText(n *model.Note, d model.Duration) string {
-	s := pitchText(n) + lengthText(d)
+func (e *exporter) noteText(n *model.Note, d model.Duration) string {
+	s := e.pitchText(n) + lengthText(d)
 	if n.TieStart {
 		s += "-"
 	}
@@ -356,19 +459,41 @@ func noteText(n *model.Note, d model.Duration) string {
 
 // pitchText writes a notehead: what is printed in front of it, the letter,
 // and which octave it is in.
-func pitchText(n *model.Note) string {
+func (e *exporter) pitchText(n *model.Note) string {
 	var b strings.Builder
-	switch n.Accidental {
-	case model.DoubleSharp:
-		b.WriteString("^^")
-	case model.Sharp:
-		b.WriteString("^")
-	case model.DoubleFlat:
-		b.WriteString("__")
-	case model.Flat:
-		b.WriteString("_")
-	case model.Natural:
-		b.WriteString("=")
+	k := accKey{Step: n.Pitch.Step, Octave: n.Pitch.Octave}
+	// What this file has already said about this note of the staff.
+	inferred, seen := e.acc[k]
+	if !seen {
+		inferred = e.key.AlterFor(n.Pitch.Step)
+	}
+	// The far half of a tied note sounds as the near half did, and that is
+	// what the reader will take it as, so nothing need be written.
+	tk := tieKey{n.Pitch.Step, n.Pitch.Octave}
+	if n.TieStop {
+		if held, ok := e.tied[tk]; ok && held == n.Pitch.Alter {
+			inferred = n.Pitch.Alter
+			delete(e.tied, tk)
+		}
+	}
+	if n.TieStart {
+		if e.tied == nil {
+			e.tied = map[tieKey]int{}
+		}
+		e.tied[tk] = n.Pitch.Alter
+	}
+	switch {
+	case n.Accidental != model.NoAccidental:
+		// The score prints one here, so the file writes the same one.
+		b.WriteString(accidentalText(n.Pitch.Alter))
+		e.acc[k] = n.Pitch.Alter
+	case n.Pitch.Alter != inferred:
+		// The score does not print one, because something earlier in the bar
+		// already said so — a natural on the same note, or a flat that this
+		// one is cancelling. Read back, the letter alone would be wrong, so
+		// the alteration is written out.
+		b.WriteString(accidentalText(n.Pitch.Alter))
+		e.acc[k] = n.Pitch.Alter
 	}
 	letter := n.Pitch.Step.String()
 	switch {
@@ -378,6 +503,26 @@ func pitchText(n *model.Note) string {
 	default:
 		b.WriteString(strings.ToLower(letter))
 		b.WriteString(strings.Repeat("'", n.Pitch.Octave-5))
+	}
+	return b.String()
+}
+
+// tempoText writes a tempo the way Q: wants it: the beat, how many of them a
+// minute, and the word that goes with it if the score has one.
+func tempoText(t model.Tempo) string {
+	var b strings.Builder
+	if t.Text != "" {
+		b.WriteString(quote(t.Text))
+	}
+	if t.BPM > 0 {
+		if b.Len() > 0 {
+			b.WriteByte(' ')
+		}
+		unit := t.Unit
+		if unit.IsZero() {
+			unit = model.Duration{Num: 1, Den: 4}
+		}
+		fmt.Fprintf(&b, "%s=%d", fractionText(unit), t.BPM)
 	}
 	return b.String()
 }
@@ -400,7 +545,7 @@ func lengthText(d model.Duration) string {
 }
 
 // graceText writes the small notes in front of a note.
-func graceText(g *model.GraceGroup) string {
+func (e *exporter) graceText(g *model.GraceGroup) string {
 	if g == nil || len(g.Notes) == 0 {
 		return ""
 	}
@@ -410,7 +555,7 @@ func graceText(g *model.GraceGroup) string {
 		b.WriteByte('/')
 	}
 	for _, n := range g.Notes {
-		b.WriteString(pitchText(n))
+		b.WriteString(e.pitchText(n))
 		b.WriteString(lengthText(n.Dur))
 	}
 	b.WriteByte('}')
@@ -427,8 +572,30 @@ func decorationsText(m *model.Marks) string {
 	if name := dynamicName(m.Dynamic); name != "" {
 		b.WriteString("!" + name + "!")
 	}
-	if m.Trill != nil && m.Trill.Start {
-		b.WriteString("!trill!")
+	// A trill with a stop somewhere else is a spanner and is written with
+	// its two ends; one that begins and ends on its own note is the plain
+	// sign. Writing only the start lost the wavy line between them.
+	if m.Trill != nil {
+		switch {
+		case m.Trill.Start && m.Trill.Stop:
+			b.WriteString("!trill!")
+		case m.Trill.Start:
+			b.WriteString("!trill(!")
+		case m.Trill.Stop:
+			b.WriteString("!trill)!")
+		}
+	}
+	// How this note joins the beam over it, where the score says something
+	// the engraver's own grouping would not.
+	switch m.Beam {
+	case model.BeamStart:
+		b.WriteString("!beamstart!")
+	case model.BeamContinue:
+		b.WriteString("!beamcont!")
+	case model.BeamStop:
+		b.WriteString("!beamstop!")
+	case model.BeamNone:
+		b.WriteString("!nobeam!")
 	}
 	if m.Hairpin != nil {
 		if m.Hairpin.Start {

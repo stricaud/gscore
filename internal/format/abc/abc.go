@@ -252,6 +252,26 @@ type accKey struct {
 	Octave int
 }
 
+// tieKey names one note of a staff, and openTie is the tie waiting on it.
+//
+// Of the staff, not of one line of music on it. A tie joins two notes of the
+// same pitch, and in piano writing a chord in one voice routinely resolves
+// into notes the next bar has split between two: the Altes holds an F and an
+// A flat together at bar 17 and they arrive in different voices at bar 18.
+// Looked for in its own voice, the F's tie found nothing to end on and was
+// drawn to the end of the system, and again on every line after it.
+type tieKey struct {
+	Step   model.Step
+	Octave int
+}
+
+// openTie is what a tie carries to the note that ends it: the alteration,
+// which the far half does not repeat, and the bar it was opened in.
+type openTie struct {
+	alter int
+	bar   int
+}
+
 type parser struct {
 	// How the staves stand together, from %%score, and the brackets still
 	// open while it is being read.
@@ -272,9 +292,38 @@ type parser struct {
 	// on, which is how ABC's inline fields work.
 	unitLen     model.Duration
 	unitLenSeen bool
-	key         model.KeySignature
-	time        model.TimeSignature
-	clef        model.Clef
+	// key is the signature in force at the point being read. A K: in a
+	// tune's header sets it; a K: written once the music has started is a
+	// change of key from that bar on, which is how a piece modulates.
+	key model.KeySignature
+	// tuneKey and tuneTime are what the header declared, which is what a
+	// staff introduced later starts in — not whatever the line written
+	// before it happened to change to by its last bar.
+	tuneKey  model.KeySignature
+	tuneTime model.TimeSignature
+	// runningKey remembers where each staff had got to, so that a file which
+	// writes its voices a line at a time rather than a voice at a time picks
+	// each one up in the key it left off in.
+	runningKey map[*model.Part]model.KeySignature
+	// inGrace is set while the notes inside {} are being read.
+	inGrace bool
+
+	// pendingKey and pendingTime are changes read before the bar they belong
+	// to had started, which is where a change is nearly always written.
+	pendingKey   *model.KeySignature
+	pendingTime  *model.TimeSignature
+	pendingTempo *model.Tempo
+
+	// tiedAlter carries an alteration across a tie.
+	//
+	// A tied note is one note, written twice because a barline came between
+	// the halves, and the second half does not repeat the accidental — it is
+	// the same note still sounding. An accidental otherwise stops at the
+	// barline, so without this the far half of a tied D flat read as a D,
+	// and the two halves of one note were a semitone apart.
+	tiedAlter map[tieKey]openTie
+	time      model.TimeSignature
+	clef      model.Clef
 
 	parts []*model.Part
 	byID  map[string]*model.Part
@@ -290,8 +339,7 @@ type parser struct {
 	pending model.Marks
 	// last points at the marks of the element just parsed, so that a tie or a
 	// closing slur written after it can reach back.
-	last           *model.Marks
-	pendingTieStop bool
+	last *model.Marks
 
 	// lastElem is the element those marks belong to. Broken rhythm has to
 	// reach back and change its duration, which marks alone cannot do.
@@ -684,7 +732,26 @@ func (p *parser) fieldMeter(value string) error {
 	if !p.unitLenSeen {
 		p.unitLen = defaultUnitLen(t)
 	}
-	if p.cur != nil {
+	switch {
+	case p.cur == nil:
+		// Still in the tune's header.
+		p.tuneTime = t
+	case p.started():
+		// A meter written once the music has begun changes the meter from
+		// that bar on, exactly as a key written there changes the key. Set
+		// on the staff instead, the last change in the piece became the
+		// meter of the whole of it: the Altes came back in two-two from its
+		// first bar, with no time signature drawn anywhere, because every
+		// change had overwritten the one before.
+		if p.meas != nil {
+			tt := t
+			p.meas.Time = &tt
+		} else {
+			tt := t
+			p.pendingTime = &tt
+		}
+	default:
+		p.tuneTime = t
 		p.cur.Time = t
 	}
 	return nil
@@ -718,8 +785,28 @@ func (p *parser) fieldTempo(value string) error {
 	if err != nil {
 		return p.errf("Q: bad tempo %q", v)
 	}
+	// A tempo written once the music has started is a change of speed from
+	// that bar on, which is ordinary writing — "a tempo" at the last chorus,
+	// a metronome mark at every section. Read as the tune's own tempo, the
+	// last one in the piece became the speed of the whole of it.
+	if p.started() {
+		p.noteTempo(model.Tempo{BPM: bpm, Unit: unit, Text: p.tempoText})
+		p.tempoText = ""
+		return nil
+	}
 	p.tempoBPM, p.tempoUnit, p.tempoSet = bpm, unit, true
 	return nil
+}
+
+// noteTempo puts a change of speed on the bar it is written in, or on the
+// next one when it is written at the barline.
+func (p *parser) noteTempo(t model.Tempo) {
+	tt := t
+	if p.meas != nil {
+		p.meas.Tempo = &tt
+		return
+	}
+	p.pendingTempo = &tt
 }
 
 // naturalFifths places the seven natural notes on the circle of fifths.
@@ -812,8 +899,28 @@ func (p *parser) fieldKey(value string) error {
 			return p.errf("K: %v", err)
 		}
 		p.key = k
-		if p.cur != nil {
+		switch {
+		case p.cur == nil:
+			// Still in the tune's header: this is what the piece is in.
+			p.tuneKey = k
+		case p.started():
+			// The music has begun, so this is a change of key from here on
+			// rather than a statement of what the staff is in. It belongs
+			// to the bar it is written in; written at a barline, which is
+			// where a change nearly always is, there is no bar open yet and
+			// it waits for the next one.
+			p.noteKey(k)
+			if p.meas != nil {
+				kk := k
+				p.meas.Key = &kk
+			} else {
+				kk := k
+				p.pendingKey = &kk
+			}
+		default:
+			p.tuneKey = k
 			p.cur.Key = k
+			p.noteKey(k)
 		}
 	}
 	if name, ok := attrs["clef"]; ok {
@@ -898,6 +1005,23 @@ func parseAccidentalKey(spec string) (model.KeySignature, error) {
 	return model.KeySignature{Fifths: fifths, Mode: model.Major}, nil
 }
 
+// started says whether the staff being read has any music in it yet, which is
+// what tells a K: that states the key from one that changes it.
+func (p *parser) started() bool {
+	return p.cur != nil && (len(p.cur.Measures) > 0 || p.meas != nil)
+}
+
+// noteKey records where this staff has got to.
+func (p *parser) noteKey(k model.KeySignature) {
+	if p.cur == nil {
+		return
+	}
+	if p.runningKey == nil {
+		p.runningKey = map[*model.Part]model.KeySignature{}
+	}
+	p.runningKey[p.cur] = k
+}
+
 // fieldVoice selects or creates a part. ABC voices become parts, each on its
 // own staff, which is how the 0.0.9 sample meant them: its V:0 is captioned
 // "1st flute part".
@@ -912,9 +1036,22 @@ func (p *parser) fieldVoice(value string) error {
 
 	if pt, ok := p.byID[id]; ok {
 		p.cur = pt
+		// Back in whatever key this staff had reached, not in whatever the
+		// staff written before it modulated to.
+		if k, ok := p.runningKey[pt]; ok {
+			p.key = k
+		} else {
+			p.key = pt.Key
+		}
 		return nil
 	}
-	pt := &model.Part{ID: id, Clef: p.clef, Key: p.key, Time: p.time}
+	// A staff introduced after the header starts in the key and the meter
+	// the header declared. Taking the running values here gave it whatever
+	// the previous staff had changed to by the end of its own line: the
+	// Altes ends in two-two, so every staff after the first was created in
+	// two-two and had its bars beamed in halves from bar one.
+	p.key, p.time = p.tuneKey, p.tuneTime
+	pt := &model.Part{ID: id, Clef: p.clef, Key: p.tuneKey, Time: p.tuneTime}
 	if name, ok := attrs["name"]; ok {
 		pt.Name = name
 	} else if name, ok := attrs["nm"]; ok {
@@ -941,9 +1078,10 @@ func (p *parser) ensurePart() {
 	if p.cur != nil {
 		return
 	}
-	pt := &model.Part{Clef: p.clef, Key: p.key, Time: p.time}
+	pt := &model.Part{Clef: p.clef, Key: p.tuneKey, Time: p.tuneTime}
 	p.parts = append(p.parts, pt)
 	p.cur = pt
+	p.key, p.time = p.tuneKey, p.tuneTime
 }
 
 func (p *parser) ensureMeasure() {
@@ -951,6 +1089,19 @@ func (p *parser) ensureMeasure() {
 	if p.meas == nil {
 		p.voice = &model.Voice{}
 		p.meas = &model.Measure{Voices: []*model.Voice{p.voice}}
+		// A change of key or meter written at the barline belongs to this bar.
+		if p.pendingKey != nil {
+			p.meas.Key = p.pendingKey
+			p.pendingKey = nil
+		}
+		if p.pendingTime != nil {
+			p.meas.Time = p.pendingTime
+			p.pendingTime = nil
+		}
+		if p.pendingTempo != nil {
+			p.meas.Tempo = p.pendingTempo
+			p.pendingTempo = nil
+		}
 		if p.pendingEnding != nil {
 			p.meas.Ending = p.pendingEnding
 			p.endingOpen = p.pendingEnding
@@ -999,6 +1150,80 @@ func (p *parser) openOverlay() {
 	// Each voice reads its own accidentals from the key again: a sharp in
 	// the upper line does not alter the lower one.
 	p.accidentals = map[accKey]int{}
+}
+
+// openTieFor is the tie waiting on this note of the staff, if one is.
+//
+// A tie joins two notes next to each other, which a barline may come
+// between but no more than one: a tie opened two bars ago was never meant
+// for this note, and taking it would join two notes that are not neighbours.
+func (p *parser) openTieFor(tk tieKey) (openTie, bool) {
+	t, ok := p.tiedAlter[tk]
+	if !ok {
+		return openTie{}, false
+	}
+	bar := 0
+	if p.cur != nil {
+		bar = len(p.cur.Measures)
+	}
+	if bar > t.bar+1 {
+		delete(p.tiedAlter, tk)
+		return openTie{}, false
+	}
+	return t, true
+}
+
+// voiceIndex is which line of the bar is being read, counting the first as
+// zero. Read from the measure rather than kept as a field, so it cannot drift
+// out of step with the voices themselves.
+func (p *parser) voiceIndex() int {
+	if p.meas == nil || p.voice == nil {
+		return 0
+	}
+	for i, v := range p.meas.Voices {
+		if v == p.voice {
+			return i
+		}
+	}
+	return 0
+}
+
+// tieWaits records that this staff has a tie looking for the note that ends
+// it, which may be in the next bar, and what that note sounds as.
+func (p *parser) tieWaits() {
+	if p.tiedAlter == nil {
+		p.tiedAlter = map[tieKey]openTie{}
+	}
+	bar := 0
+	if p.cur != nil {
+		bar = len(p.cur.Measures)
+	}
+	remember := func(n *model.Note) {
+		p.tiedAlter[tieKey{n.Pitch.Step, n.Pitch.Octave}] =
+			openTie{alter: n.Pitch.Alter, bar: bar}
+	}
+	switch el := p.lastElem.(type) {
+	case *model.Note:
+		remember(el)
+	case *model.Chord:
+		// Only the noteheads that are actually tied. Remembering the whole
+		// chord meant the next chord found an open tie on every pitch it
+		// shared, and took it: a chord holding its B while the rest moved
+		// gave the next chord four tie ends instead of one.
+		tied := false
+		for _, n := range el.Notes {
+			if n.TieStart {
+				remember(n)
+				tied = true
+			}
+		}
+		if !tied {
+			// The tie is on the chord as a whole, so every note is held.
+			for _, n := range el.Notes {
+				remember(n)
+			}
+		}
+	}
 }
 
 func (p *parser) add(e model.Element) {
@@ -1080,12 +1305,31 @@ func (p *parser) applyPending(m *model.Marks) {
 	if p.pending.Stem != model.StemAuto {
 		m.Stem = p.pending.Stem
 	}
+	if p.pending.Beam != model.BeamAuto {
+		m.Beam = p.pending.Beam
+	}
+	// The marks that reach from one note to another. These waited in
+	// p.pending like everything else and were simply never copied out of
+	// it, so a file could be written with every hairpin in it and read back
+	// with none: fifty-seven of them in the Altes, gone between one line of
+	// this function and the next.
+	if p.pending.Hairpin != nil {
+		m.Hairpin = p.pending.Hairpin
+	}
+	if p.pending.Octave != nil {
+		m.Octave = p.pending.Octave
+	}
+	if p.pending.Trill != nil {
+		m.Trill = p.pending.Trill
+	}
+	if p.pending.Tremolo != nil {
+		m.Tremolo = p.pending.Tremolo
+	}
+	if p.pending.SlurStop {
+		m.SlurStop = true
+	}
 	if p.pending.SlurStart {
 		m.SlurStart = true
-	}
-	if p.pendingTieStop {
-		m.TieStop = true
-		p.pendingTieStop = false
 	}
 	// A stem direction in force applies to everything after it until changed.
 	if m.Stem == model.StemAuto && p.stemDir != model.StemAuto {
@@ -1218,7 +1462,7 @@ func (p *parser) music(line string) error {
 			sc.next()
 			if p.last != nil {
 				p.last.TieStart = true
-				p.pendingTieStop = true
+				p.tieWaits()
 			}
 		case c == '.':
 			sc.next()
@@ -1247,12 +1491,15 @@ func (p *parser) music(line string) error {
 			sc.next()
 			dur, _ := p.length(sc)
 			r := &model.Rest{Dur: dur, Hidden: hidden}
+			// A rest carries marks like anything else: a fermata over it,
+			// a dynamic written at it, a hairpin that opens on it. They
+			// used to be thrown away here, on the reasoning that a rest has
+			// nothing to attach them to — which is true of a notehead and
+			// not of a bar of music. The Altes writes an mf at a rest and a
+			// fermata over one, and neither survived being written out.
+			p.applyPending(&r.Marks)
 			p.applyTuplet(&r.Marks, &r.Dur)
 			p.add(r)
-			// A rest carries no marks, so anything pending is dropped rather
-			// than leaking onto the next note.
-			p.pending = model.Marks{}
-			p.last = nil
 		case c == '^' || c == '_' || c == '=' || isNoteLetter(c):
 			n, err := p.parseNote(sc)
 			if err != nil {
@@ -1401,6 +1648,40 @@ var decorationHairpins = map[string]struct {
 	">)":           {model.Diminuendo, false},
 	"decrescendo(": {model.Diminuendo, true},
 	"decrescendo)": {model.Diminuendo, false},
+}
+
+// decorationBeams spells out how a note joins the beam over it.
+//
+// ABC says beaming by spacing — notes written together are beamed — and
+// gscore's engraver groups by the beat, and between them those cover nearly
+// every bar. What neither covers is a score that deliberately beams against
+// the beat, which is a decision only the person writing the music can make.
+// There is no spelling for it in ABC, so gscore writes it as a decoration:
+// the Altes has nineteen of them in a hundred and thirty-one bars, and
+// without them the exported file re-beamed forty notes its own way.
+var decorationBeams = map[string]model.Beam{
+	"beamstart": model.BeamStart,
+	"beamcont":  model.BeamContinue,
+	"beamstop":  model.BeamStop,
+	"nobeam":    model.BeamNone,
+}
+
+// decorationTrills maps the trill decorations onto the mark the model keeps.
+//
+// A trill is a thing with two ends, not a picture of one: the sign sits over
+// the note it begins on and a wavy line runs from there to where it stops, so
+// that a reader can see how far to shake. Read as a symbol it became an
+// ornament glyph on one notehead and no line at all, which is how the Altes
+// lost all eight of its wavy lines on the way out and back.
+// The plain sign begins and ends on its own note: a trill over one note is
+// not a spanner waiting for an end that never comes. Read as a start alone
+// it was, and the wavy line ran to the end of the piece — eight of them in
+// the Altes became eight hundred and twenty-nine wiggles.
+var decorationTrills = map[string]model.Trill{
+	"trill":  {Start: true, Stop: true},
+	"tr":     {Start: true, Stop: true},
+	"trill(": {Start: true},
+	"trill)": {Stop: true},
 }
 
 // decorationStems maps the stem directives written as decorations.
@@ -1623,11 +1904,38 @@ func (p *parser) applyDecoration(name string) {
 		p.pending.Stem = st
 		return
 	}
+	if bm, ok := decorationBeams[name]; ok {
+		p.pending.Beam = bm
+		return
+	}
+	if tr, ok := decorationTrills[name]; ok {
+		t := tr
+		if p.pending.Trill != nil {
+			// Both ends on one note, which a one-note trill is.
+			t.Start = t.Start || p.pending.Trill.Start
+			t.Stop = t.Stop || p.pending.Trill.Stop
+		}
+		p.pending.Trill = &t
+		return
+	}
 	// A swell is a thing with two ends, not a picture of one. Read as a
 	// symbol it became a crescendo sign printed over a single note, twice,
 	// instead of one hairpin opening here and closing there — and gscore
 	// could not play it, because a symbol sounds like nothing.
 	if h, ok := decorationHairpins[name]; ok {
+		// Both ends on one note is a swell over that note, which is written
+		// as the two decorations one after the other. Replacing the mark
+		// rather than adding to it kept only the second of them, so the
+		// hairpin had a close and no open and was drawn from the start of
+		// the system.
+		if p.pending.Hairpin != nil && p.pending.Hairpin.Kind == h.kind {
+			if h.start {
+				p.pending.Hairpin.Start = true
+			} else {
+				p.pending.Hairpin.Stop = true
+			}
+			return
+		}
 		p.pending.Hairpin = &model.Hairpin{
 			Kind: h.kind, Start: h.start, Stop: !h.start,
 		}
@@ -1757,6 +2065,14 @@ func parseChordName(s string) *model.ChordSymbol {
 // player is meant to play.
 func (p *parser) graceGroup(sc *scanner) error {
 	sc.next() // '{'
+	// A grace note cannot be the far end of a tie: it is an ornament leaning
+	// on the note that follows, and the tie belongs to that note. Without
+	// this a grace note of the same pitch took the tie before the note it
+	// was decorating could, and the tie was left open and drawn to the end
+	// of the system — which the Altes does at bar 79, where a held G is
+	// approached by two grace notes.
+	p.inGrace = true
+	defer func() { p.inGrace = false }()
 	g := &model.GraceGroup{}
 	if sc.peek() == '/' {
 		// An acciaccatura: stolen from before the beat rather than taken out
@@ -2056,23 +2372,53 @@ octaveMarks:
 	// nothing is printed.
 	k := accKey{Step: step, Octave: octave}
 	alter := 0
+	tk := tieKey{step, octave}
+	endsTie := false
 	switch {
 	case hasAcc:
 		alter = acc.Semitones()
 		p.accidentals[k] = alter
 	default:
-		if a, ok := p.accidentals[k]; ok {
-			alter = a
-		} else {
-			alter = p.cur.Key.AlterFor(step)
+		held, tied := p.openTieFor(tk)
+		if p.inGrace {
+			tied = false
+		}
+		barAcc, written := p.accidentals[k]
+		switch {
+		case written:
+			// An accidental written earlier in this bar holds until the
+			// barline, and says more than a tie from before it.
+			alter = barAcc
+		case tied:
+			// The far half of a tied note: the same note still sounding, so
+			// it sounds as the near half did across the barline.
+			alter = held.alter
+			delete(p.tiedAlter, tk)
+			endsTie = true
+		default:
+			alter = p.key.AlterFor(step)
+		}
+	}
+	if !endsTie && !p.inGrace {
+		// The same note again, with its alteration spelled out rather than
+		// carried. Still the far half of the tie.
+		if _, ok := p.openTieFor(tk); ok {
+			delete(p.tiedAlter, tk)
+			endsTie = true
 		}
 	}
 
-	return &model.Note{
+	n := &model.Note{
 		Pitch:      model.Pitch{Step: step, Octave: octave, Alter: alter},
 		Dur:        dur,
 		Accidental: acc,
-	}, nil
+	}
+	// This notehead is where a tie ends, on its own account. A chord may
+	// hold one note while the others move, so the end belongs to the
+	// notehead and not to the chord: closing it on the chord drew a tie
+	// from every notehead in it, including the ones that never had one.
+	n.TieStop = endsTie
+	return n, nil
 }
 
 func (p *parser) chord(sc *scanner) error {
@@ -2147,10 +2493,9 @@ func (p *parser) chord(sc *scanner) error {
 		// Set after applyPending, or the chord would absorb the tie stop it
 		// is itself starting. Whatever comes next carries it, exactly as for
 		// a tie written after the closing bracket.
-		p.pendingTieStop = true
-		if tied == len(ch.Notes) {
-			ch.TieStart = true
-		}
+		// The noteheads carry it themselves; saying it again on the chord
+		// counted the same tie twice.
+		p.tieWaits()
 	}
 	return nil
 }

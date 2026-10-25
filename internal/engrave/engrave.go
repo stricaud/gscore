@@ -1527,6 +1527,50 @@ func (e *engraver) keySignatureWidth(k model.KeySignature) float64 {
 }
 
 // measureBox computes an ideal and a minimum width for a measure, and claims
+// voiceShift is the room a column needs for a notehead that has to step
+// aside, and zero where none does.
+//
+// The rule is separateColumn's, asked at the one moment when the answer can
+// still be acted on: a third apart or more and two voices clear each other,
+// closer than that and one of them moves.
+func (e *engraver) voiceShift(clef model.Clef, col slot) float64 {
+	type reach struct{ lo, hi int }
+	byVoice := map[int]*reach{}
+	var voices []int
+	widest := 0.0
+	for _, v := range col.elems {
+		pl := e.placedOf(clef, v.el, col.at)
+		if pl.rest != nil {
+			continue
+		}
+		if w := noteheadWidth(pl.value); w > widest {
+			widest = w
+		}
+		r, ok := byVoice[v.voice]
+		if !ok {
+			byVoice[v.voice] = &reach{lo: pl.lo, hi: pl.hi}
+			voices = append(voices, v.voice)
+			continue
+		}
+		if pl.lo < r.lo {
+			r.lo = pl.lo
+		}
+		if pl.hi > r.hi {
+			r.hi = pl.hi
+		}
+	}
+	if len(voices) < 2 {
+		return 0
+	}
+	sort.Ints(voices)
+	for i := 1; i < len(voices); i++ {
+		if byVoice[voices[i-1]].lo-byVoice[voices[i]].hi <= 1 {
+			return widest
+		}
+	}
+	return 0
+}
+
 // a Ref for each of its elements.
 func (e *engraver) measureBox(p *model.Part, m *model.Measure, index int) measureBox {
 	sp := e.opt.Spacings
@@ -1575,6 +1619,14 @@ func (e *engraver) measureBox(p *model.Part, m *model.Measure, index int) measur
 			col.lead = math.Max(col.lead, en.lead)
 			col.width = math.Max(col.width, en.room)
 		}
+		// Two lines of music close enough to clash need room for the one
+		// that steps aside. Booked here, before the column is placed,
+		// because the step itself is taken when the noteheads are drawn and
+		// by then there is nowhere to take it from: the lower voice stepped
+		// left into whatever stood there, and at the start of a bar what
+		// stands there is the barline. The Altes prints its bar 10 that way
+		// — a chord of half notes written on top of the barline.
+		col.lead += e.voiceShift(p.Clef, col)
 		box.slots = append(box.slots, col)
 		i = j
 	}

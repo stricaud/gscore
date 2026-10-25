@@ -96,3 +96,37 @@ func overlaps(lay *engrave.Layout) int {
 	}
 	return n
 }
+
+/*
+ * Nothing is written outside its own bar.
+ *
+ * Where two voices on one staff sound a note at the same moment and close
+ * enough to clash, one of them steps sideways so that the reader can see
+ * there are two. The step was taken when the noteheads were drawn, into
+ * whatever space happened to be to the left — and at the start of a bar what
+ * is to the left is the barline. The Altes printed its bar 10 that way: a
+ * chord of half notes written on top of the line that begins the bar.
+ *
+ * The room is booked by the spacing now, before the column is placed, so
+ * this asks the question the page asks: is everything inside the bar it
+ * belongs to.
+ */
+func TestNothingIsWrittenOutsideItsBar(t *testing.T) {
+	for name, path := range corpus(t) {
+		s, _ := load(path)
+		if s == nil {
+			continue
+		}
+		lay := engrave.Engrave(s, engrave.DefaultOptions())
+		for _, h := range lay.Hits {
+			for _, el := range h.Elements {
+				// A hair, for the rounding in the stretch.
+				if el.X < h.XMin-0.05 {
+					t.Errorf("%s: staff %d bar %d has something at x=%.2f, "+
+						"left of the bar's own start at %.2f",
+						name, h.Part, h.Measure+1, el.X, h.XMin)
+				}
+			}
+		}
+	}
+}

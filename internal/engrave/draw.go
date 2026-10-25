@@ -1398,11 +1398,34 @@ func (e *engraver) beamQuad(x0, y0, x1, y1, thickness, dir float64) {
 	})
 }
 
+// ledgerRun is one ledger line as it was drawn: where it ended up in the
+// layout, and the notehead it carries, which it can never be shorter than.
+type ledgerRun struct {
+	line         int
+	y            float64
+	headL, headR float64
+}
+
+// ledgerGap is the air left between the ledger lines of neighbouring notes.
+//
+// A ledger line runs four tenths of a space past the notehead at each end,
+// and two notes may be set as close as two spaces apart — which leaves two
+// hundredths of a space between one line and the next. That is nothing at
+// reading size, so a run of notes above the staff came out with an unbroken
+// rule through the whole of it and read as a staff line that is not there.
+//
+// Three tenths is about twice the thickness of the line, which is what makes
+// it read as a gap rather than as a join.
+const ledgerGap = 0.3
+
 func (e *engraver) ledgerLines(x, headWidth float64, step int) {
 	d := e.opt.Defaults
 	ext := d.LegerLineExtension
 	draw := func(s int) {
 		y := e.y + stepY(float64(s))
+		e.ledgers = append(e.ledgers, ledgerRun{
+			line: len(e.lay.Lines), y: y, headL: x, headR: x + headWidth,
+		})
 		e.lay.Lines = append(e.lay.Lines, Line{
 			X1: x - ext, Y1: y, X2: x + headWidth + ext, Y2: y, Thickness: d.LegerLineThickness,
 		})
@@ -1412,6 +1435,58 @@ func (e *engraver) ledgerLines(x, headWidth float64, step int) {
 	}
 	for s := -2; s >= step; s -= 2 {
 		draw(s)
+	}
+}
+
+// separateLedgers pulls the ledger lines of neighbouring notes apart.
+//
+// Each is drawn on its own, from a little before its notehead to a little
+// after, and at close spacing the little after of one note reaches the
+// little before of the next. The lines then join, and a run climbing above
+// the staff is read as a grid rather than as a note on four ledger lines
+// followed by a note on five — which is the whole of what those lines are
+// for.
+//
+// Widening the spacing would fix it and cost the music: the closest two
+// notes may be set is what makes a run of thirty-seconds fit a bar at all.
+// So the lines give way instead, which is what an engraver does by hand, and
+// neither the notes nor the bar move.
+//
+// A line is never pulled back inside the notehead it carries. Where two
+// noteheads are themselves nearly touching there is no gap to be had, and
+// ending both lines at their noteheads is the best there is.
+func (e *engraver) separateLedgers() {
+	byRow := map[int][]int{}
+	for i, l := range e.ledgers {
+		// Rounded, because two lines meant for the same row are computed
+		// from the same arithmetic and land on the same value — but only
+		// to within what floating point gives back.
+		byRow[int(math.Round(l.y*1000))] = append(byRow[int(math.Round(l.y*1000))], i)
+	}
+	for _, row := range byRow {
+		sort.Slice(row, func(i, j int) bool {
+			return e.ledgers[row[i]].headL < e.ledgers[row[j]].headL
+		})
+		for k := 1; k < len(row); k++ {
+			a, b := e.ledgers[row[k-1]], e.ledgers[row[k]]
+			// The same column: a chord's noteheads, or two voices meeting.
+			// They share the row rather than crowding it, and pulling them
+			// apart would be pulling one note's own line off it.
+			if b.headL < a.headR {
+				continue
+			}
+			la, lb := &e.lay.Lines[a.line], &e.lay.Lines[b.line]
+			if lb.X1-la.X2 >= ledgerGap {
+				continue
+			}
+			mid := (a.headR + b.headL) / 2
+			if end := mid - ledgerGap/2; end < la.X2 {
+				la.X2 = math.Max(end, a.headR)
+			}
+			if start := mid + ledgerGap/2; start > lb.X1 {
+				lb.X1 = math.Min(start, b.headL)
+			}
+		}
 	}
 }
 

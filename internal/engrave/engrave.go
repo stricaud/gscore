@@ -677,6 +677,11 @@ type engraver struct {
 	// the staff outwards.
 	waiting []waitingMark
 
+	// ledgers are the ledger lines as they were drawn, so that one can be
+	// pulled back off its neighbour once everything is placed. See
+	// separateLedgers.
+	ledgers []ledgerRun
+
 	// spans holds the hairpins and octave lines that are open on each staff.
 	// A spanner reaches from one note to another, which may be in a later
 	// measure or on a later line, so it cannot be drawn where it starts: what
@@ -825,6 +830,9 @@ func (e *engraver) run() {
 	if e.lay.Width == 0 {
 		e.lay.Width = e.opt.LineWidth + 2*sp.Margin
 	}
+	// Last, because it needs every ledger line on the page: which of them
+	// crowd each other is not known until they have all been drawn.
+	e.separateLedgers()
 	e.centreTitleBlock()
 }
 

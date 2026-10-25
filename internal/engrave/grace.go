@@ -266,6 +266,11 @@ func (e *engraver) graceLedgerLines(x, headWidth float64, step int) {
 	ext := d.LegerLineExtension * graceScale
 	draw := func(st int) {
 		y := e.y + stepY(float64(st))
+		// Recorded with the rest, so a grace note crowding the note it
+		// leans on has its line pulled back too.
+		e.ledgers = append(e.ledgers, ledgerRun{
+			line: len(e.lay.Lines), y: y, headL: x, headR: x + headWidth,
+		})
 		e.lay.Lines = append(e.lay.Lines, Line{
 			X1: x - ext, Y1: y, X2: x + headWidth + ext, Y2: y,
 			Thickness: d.LegerLineThickness,

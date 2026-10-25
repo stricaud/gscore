@@ -93,7 +93,7 @@ func buildPart(s *model.Score, p *model.Part, id string, index, divisions int) x
 				Divisions: divisions,
 				Key:       &key{Fifths: p.Key.Fifths, Mode: modeNames[p.Key.Mode]},
 				Time:      buildTime(p.Time),
-				Clef:      &c,
+				Clefs:     []clef{c},
 			}})
 			if index == 0 && s.Tempo.BPM > 0 {
 				d := buildTempo(s.Tempo)

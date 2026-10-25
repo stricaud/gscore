@@ -175,13 +175,35 @@ func convert(doc *scorePartwise, lg *log) (*model.Score, error) {
 
 	tempoSet := false
 	for _, xp := range doc.Parts {
-		p := &model.Part{
-			ID:         xp.ID,
-			Name:       names[xp.ID],
-			Instrument: programs[xp.ID],
-			Clef:       model.Treble,
-			Key:        model.KeySignature{Fifths: 0, Mode: model.Major},
-			Time:       model.TimeSignature{Beats: 4, BeatValue: 4, Symbol: model.TimeNumeric},
+		// A part may be written on more than one staff — a piano is one
+		// instrument played with two hands, and the file says so with
+		// <staves>. gscore draws a staff per part, so each becomes a part
+		// here and they are braced together again below.
+		staves := 1
+		for _, xm := range xp.Measures {
+			for _, it := range xm.Content {
+				if it.Attributes != nil && it.Attributes.Staves > staves {
+					staves = it.Attributes.Staves
+				}
+			}
+		}
+
+		parts := make([]*model.Part, staves)
+		for i := range parts {
+			name := ""
+			if i == 0 {
+				// Named once. Printing "Piano" beside both staves of a
+				// piano says there are two of them.
+				name = names[xp.ID]
+			}
+			parts[i] = &model.Part{
+				ID:         xp.ID,
+				Name:       name,
+				Instrument: programs[xp.ID],
+				Clef:       model.Treble,
+				Key:        model.KeySignature{Fifths: 0, Mode: model.Major},
+				Time:       model.TimeSignature{Beats: 4, BeatValue: 4, Symbol: model.TimeNumeric},
+			}
 		}
 
 		// Divisions carry over from measure to measure until restated.
@@ -195,17 +217,22 @@ func convert(doc *scorePartwise, lg *log) (*model.Score, error) {
 				if a.Divisions > 0 {
 					divisions = a.Divisions
 				}
-				if a.Key != nil {
-					p.Key = model.KeySignature{
-						Fifths: a.Key.Fifths,
-						Mode:   modeValues[strings.ToLower(a.Key.Mode)],
+				for i, p := range parts {
+					staff := i + 1
+					if a.Key != nil {
+						p.Key = model.KeySignature{
+							Fifths: a.Key.Fifths,
+							Mode:   modeValues[strings.ToLower(a.Key.Mode)],
+						}
 					}
-				}
-				if a.Time != nil && a.Time.Type > 0 {
-					p.Time = convertTime(a.Time, lg)
-				}
-				if a.Clef != nil {
-					p.Clef = convertClef(a.Clef)
+					if a.Time != nil && a.Time.Type > 0 {
+						p.Time = convertTime(a.Time, lg)
+					}
+					for ci := range a.Clefs {
+						if staffOf(a.Clefs[ci].Number) == staff {
+							p.Clef = convertClef(&a.Clefs[ci])
+						}
+					}
 				}
 			}
 
@@ -222,14 +249,25 @@ func convert(doc *scorePartwise, lg *log) (*model.Score, error) {
 				}
 			}
 
-			m := &model.Measure{
-				Voices:       []*model.Voice{{}},
-				RightBarline: convertBarline(barline),
+			ms := convertMeasure(xm, divisions, staves, lg)
+			for i, p := range parts {
+				ms[i].RightBarline = convertBarline(barline)
+				p.Measures = append(p.Measures, ms[i])
 			}
-			convertMeasure(xm, divisions, m, lg)
-			p.Measures = append(p.Measures, m)
 		}
-		s.Parts = append(s.Parts, p)
+
+		if staves > 1 {
+			// The brace, and barlines running down through the gap: what
+			// makes two staves read as one instrument rather than two.
+			s.Groups = append(s.Groups, model.StaffGroup{
+				First:    len(s.Parts),
+				Last:     len(s.Parts) + staves - 1,
+				Symbol:   model.GroupBrace,
+				Barlines: true,
+				Name:     names[xp.ID],
+			})
+		}
+		s.Parts = append(s.Parts, parts...)
 	}
 	return s, nil
 }
@@ -428,83 +466,237 @@ func convertNotes(notes []xmlNote, divisions int, v *model.Voice, lg *log) {
 
 // convertMeasure walks a measure in document order, so that each dynamic
 // lands on the note that follows it rather than all of them on the first.
-func convertMeasure(xm xmlMeasure, divisions int, m *model.Measure, lg *log) {
-	pending := model.DynamicNone
-	var notes []xmlNote
-	v := m.Voices[0]
+// where is one place in a bar: which staff, which voice, and when.
+type where struct {
+	staff int
+	voice string
+}
 
-	flush := func() {
-		if len(notes) == 0 {
-			return
+// timed is one note with the moment it starts at.
+type timed struct {
+	at model.Duration
+	n  xmlNote
+}
+
+/*
+ * How a bar is actually written.
+ *
+ * MusicXML does not write a bar voice by voice or staff by staff. It writes
+ * a stream of notes with a cursor, and <backup> winds the cursor back so
+ * that something else can be written over what is already there. Whether
+ * that something else is another voice of the same staff or the other hand
+ * of a piano is not said by the backup at all — it is said by the <staff>
+ * and <voice> on the notes that follow.
+ *
+ * So the cursor is what is followed here, and every note is filed under the
+ * staff and voice it claims, at the moment the cursor had reached. The
+ * staves become parts, the voices become voices, and a gap in either is a
+ * rest that is not printed — the other line is already holding that beat.
+ */
+
+// convertMeasure splits one written measure into one gscore measure per
+// staff, each with its own voices.
+func convertMeasure(xm xmlMeasure, divisions, staves int, lg *log) []*model.Measure {
+	zero := model.Duration{Num: 0, Den: 1}
+	cursor := zero
+	last := zero // where the note before this one began, for <chord/>
+
+	notes := map[where][]timed{}
+	var order []where
+	file := func(w where, t timed) {
+		if _, seen := notes[w]; !seen {
+			order = append(order, w)
 		}
-		before := len(v.Elements)
-		convertNotes(notes, divisions, v, lg)
-		if pending != model.DynamicNone {
-			attachDynamic(v.Elements[before:], pending)
-			pending = model.DynamicNone
-		}
-		notes = nil
+		notes[w] = append(notes[w], t)
 	}
+
+	// A dynamic belongs to the next thing written on its staff.
+	pending := map[int]model.Dynamic{}
+	var dyns []dynMark
+	// Grace notes waiting for the note they lean on.
+	var graces []xmlNote
 
 	for _, it := range xm.Content {
 		switch {
-		case it.Direction != nil && it.Direction.Type.Dynamics != nil:
-			// Everything gathered so far belongs to the previous marking.
-			flush()
-			if d := it.Direction.Type.Dynamics.get(); d != model.DynamicNone {
-				pending = d
-			}
-		case it.Note != nil:
-			notes = append(notes, *it.Note)
 		case it.Shift != nil:
-			flush()
-			v = shiftVoice(m, v, *it.Shift, divisions, lg)
+			by := model.Duration{Num: it.Shift.Duration, Den: 4 * divisions}.Reduced()
+			if it.Shift.Back {
+				cursor = cursor.Sub(by)
+				if cursor.Cmp(zero) < 0 {
+					lg.say("a backup reached past the start of its bar; " +
+						"it was read as the start")
+					cursor = zero
+				}
+			} else {
+				cursor = cursor.Add(by)
+			}
+
+		case it.Direction != nil && it.Direction.Type.Dynamics != nil:
+			if d := it.Direction.Type.Dynamics.get(); d != model.DynamicNone {
+				pending[staffOf(it.Direction.Staff)] = d
+			}
+
+		case it.Note != nil:
+			xn := *it.Note
+			if xn.Grace != nil {
+				// Held until the note it leans on turns up, and filed with
+				// that note rather than with its own <staff>. A grace note
+				// may be written on the other staff of a piano from the
+				// note it decorates — the hand reaches across — and a
+				// grace group hangs off a note, so put on a staff where
+				// there is no such note it has nothing to hang from and is
+				// lost.
+				graces = append(graces, xn)
+				continue
+			}
+			w := where{staff: staffOf(xn.Staff), voice: xn.Voice}
+			at := cursor
+			for _, g := range graces {
+				file(w, timed{at: at, n: g})
+			}
+			graces = nil
+			if xn.Chord != nil {
+				// Sounds with the note before it, and took no time of its
+				// own when that one was counted.
+				at = last
+			}
+			file(w, timed{at: at, n: xn})
+
+			if d, ok := pending[w.staff]; ok {
+				// Where the marking falls, to be attached once the voices
+				// exist: an element cannot be marked before it is made.
+				dyns = append(dyns, dynMark{staff: w.staff, at: at, d: d})
+				delete(pending, w.staff)
+			}
+
+			if xn.Chord == nil {
+				last = cursor
+				cursor = cursor.Add(model.Duration{
+					Num: xn.Duration, Den: 4 * divisions,
+				}.Reduced())
+			}
 		}
 	}
+
+	if len(graces) > 0 {
+		lg.say("%d grace note(s) at the end of a bar were left out", len(graces))
+	}
+
+	out := make([]*model.Measure, staves)
+	for i := range out {
+		out[i] = &model.Measure{}
+	}
+	// Voices in the order they were first written, so that the upper line
+	// of a staff is voice one and gets its stems up.
+	for _, w := range order {
+		if w.staff < 1 || w.staff > staves {
+			lg.say("a note on staff %d was moved to staff 1; the part has %d",
+				w.staff, staves)
+			w.staff = 1
+		}
+		v := buildVoice(notes[w], divisions, lg)
+		if v == nil {
+			continue
+		}
+		m := out[w.staff-1]
+		m.Voices = append(m.Voices, v)
+	}
+	for _, m := range out {
+		if len(m.Voices) == 0 {
+			m.Voices = append(m.Voices, &model.Voice{})
+		}
+	}
+	for _, d := range dyns {
+		if d.staff >= 1 && d.staff <= len(out) {
+			markDynamic(out[d.staff-1], d.at, d.d)
+		}
+	}
+	return out
+}
+
+// dynMark is a dynamic and the moment in the bar it was written at.
+type dynMark struct {
+	staff int
+	at    model.Duration
+	d     model.Dynamic
+}
+
+// markDynamic puts a dynamic on the first note of a staff at or after the
+// moment it was written.
+func markDynamic(m *model.Measure, at model.Duration, d model.Dynamic) {
+	for _, v := range m.Voices {
+		t := model.Duration{Num: 0, Den: 1}
+		for _, el := range v.Elements {
+			if t.Cmp(at) >= 0 {
+				switch e := el.(type) {
+				case *model.Note:
+					e.Dynamic = d
+					return
+				case *model.Chord:
+					e.Dynamic = d
+					return
+				}
+			}
+			t = t.Add(el.Duration())
+		}
+	}
+}
+
+// buildVoice turns one staff-and-voice's notes into a line of music, with a
+// rest that is not printed wherever it was not playing.
+func buildVoice(ts []timed, divisions int, lg *log) *model.Voice {
+	v := &model.Voice{}
+	at := model.Duration{Num: 0, Den: 1}
+
+	var run []xmlNote
+	runAt := at
+	flush := func() {
+		if len(run) == 0 {
+			return
+		}
+		if gap := runAt.Sub(at); gap.Cmp(model.Duration{Num: 0, Den: 1}) > 0 {
+			v.Elements = append(v.Elements, &model.Rest{Dur: gap, Hidden: true})
+			at = runAt
+		}
+		before := len(v.Elements)
+		convertNotes(run, divisions, v, lg)
+		for _, el := range v.Elements[before:] {
+			at = at.Add(el.Duration())
+		}
+		run = nil
+	}
+
+	for _, t := range ts {
+		// A run is as much as can be converted together: consecutive notes
+		// that follow on from one another. A jump means the voice was
+		// silent in between.
+		if len(run) == 0 {
+			runAt = t.at
+		} else if t.n.Chord == nil && t.n.Grace == nil && t.at.Cmp(at.Add(runLength(run, divisions))) != 0 {
+			flush()
+			runAt = t.at
+		}
+		run = append(run, t.n)
+	}
 	flush()
+	if len(v.Elements) == 0 {
+		return nil
+	}
+	return v
 }
 
-// filled is how far through the bar a voice has been written.
-func filled(v *model.Voice) model.Duration {
+// runLength is how much time a run of notes has taken so far.
+func runLength(run []xmlNote, divisions int) model.Duration {
 	total := model.Duration{Num: 0, Den: 1}
-	for _, el := range v.Elements {
-		total = total.Add(el.Duration())
+	for _, n := range run {
+		if n.Chord != nil || n.Grace != nil {
+			continue
+		}
+		total = total.Add(model.Duration{
+			Num: n.Duration, Den: 4 * divisions,
+		}.Reduced())
 	}
-	return total.Reduced()
-}
-
-// shiftVoice honours <backup> and <forward>, and returns the voice the notes
-// after it belong to.
-//
-// Winding back is how MusicXML says "another line of music starts here", so
-// it opens a voice. Winding forward is a gap in the voice being written, and
-// a gap is a rest — one that is not printed, because the voice underneath is
-// already holding that beat and a second rest drawn on top of it would only
-// be something else to read.
-func shiftVoice(m *model.Measure, v *model.Voice, s shift,
-	divisions int, lg *log) *model.Voice {
-
-	by := model.Duration{Num: s.Duration, Den: 4 * divisions}.Reduced()
-	if by.IsZero() {
-		return v
-	}
-
-	if !s.Back {
-		v.Elements = append(v.Elements, &model.Rest{Dur: by, Hidden: true})
-		return v
-	}
-
-	at := filled(v).Sub(by).Reduced()
-	if at.Cmp(model.Duration{Num: 0, Den: 1}) < 0 {
-		lg.say("a backup reached past the start of its bar; it was read as the start")
-		at = model.Duration{Num: 0, Den: 1}
-	}
-	next := &model.Voice{}
-	if !at.IsZero() {
-		next.Elements = append(next.Elements, &model.Rest{Dur: at, Hidden: true})
-	}
-	m.Voices = append(m.Voices, next)
-	return next
+	return total
 }
 
 // attachDynamic puts a dynamic on the first sounding element of a run.

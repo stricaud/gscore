@@ -105,10 +105,16 @@ type xmlPart struct {
 }
 
 type attributes struct {
-	Divisions int   `xml:"divisions,omitempty"`
-	Key       *key  `xml:"key,omitempty"`
-	Time      *time `xml:"time,omitempty"`
-	Clef      *clef `xml:"clef,omitempty"`
+	Divisions int `xml:"divisions,omitempty"`
+	// How many staves this part is written on. A piano part is one part on
+	// two staves, not two parts: both hands are one instrument, and the
+	// file says so here.
+	Staves int   `xml:"staves,omitempty"`
+	Key    *key  `xml:"key,omitempty"`
+	Time   *time `xml:"time,omitempty"`
+	// One per staff, each numbered. A part on a single staff writes one
+	// clef with no number at all, which reads as staff one.
+	Clefs []clef `xml:"clef,omitempty"`
 }
 
 type key struct {
@@ -127,14 +133,28 @@ type time struct {
 }
 
 type clef struct {
-	Sign string `xml:"sign"`
-	Line int    `xml:"line"`
+	Number int    `xml:"number,attr,omitempty"`
+	Sign   string `xml:"sign"`
+	Line   int    `xml:"line"`
+}
+
+// staffOf is which staff something belongs to, counted from one. Anything
+// that does not say belongs to the first, which is what a part on a single
+// staff leaves out everywhere.
+func staffOf(n int) int {
+	if n < 1 {
+		return 1
+	}
+	return n
 }
 
 type direction struct {
 	Placement string        `xml:"placement,attr,omitempty"`
 	Type      directionType `xml:"direction-type"`
 	Sound     *sound        `xml:"sound,omitempty"`
+	// Which staff of the part it is written against: a piano's left hand
+	// has its own dynamics.
+	Staff int `xml:"staff,omitempty"`
 }
 
 type directionType struct {
@@ -264,7 +284,9 @@ type xmlNote struct {
 	// display step and octave say where on the staff to draw it.
 	Unpitched *unpitched `xml:"unpitched,omitempty"`
 	Duration  int        `xml:"duration"`
-	Tie       []tieElem  `xml:"tie,omitempty"`
+	// Which staff of the part it is written on.
+	Staff int       `xml:"staff,omitempty"`
+	Tie   []tieElem `xml:"tie,omitempty"`
 	// Text, by the specification — a voice is named, not numbered, and a
 	// file in this suite names one of them "X".
 	Voice      string        `xml:"voice,omitempty"`

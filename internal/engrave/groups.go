@@ -39,6 +39,10 @@ const (
 	// stripHeight is how tall the band over a bar is: enough to hit without
 	// aiming, and no taller than the bar numbers that sit in it.
 	stripHeight = 2.4
+	// stripGap is the air between the music and the band over it: enough
+	// that a click on the topmost notehead is a click on the note and not
+	// on the bar, and small enough that the band stays within reach of it.
+	stripGap = 0.3
 	// markerRoom is how much room a boxed rehearsal mark takes, so that
 	// anything else written over the same bar goes above it.
 	markerRoom = 3.0

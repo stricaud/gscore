@@ -3,6 +3,7 @@ package app
 import (
 	"encoding/json"
 	"io"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -1142,6 +1143,50 @@ func TestEveryBarHasAClickStrip(t *testing.T) {
 		if st.Bottom > hit.StaffTop {
 			t.Errorf("bar %d's band reaches down to %.2f, onto the staff at %.2f",
 				hit.Measure+1, st.Bottom, hit.StaffTop)
+		}
+	}
+}
+
+// A note written above the staff can still be picked up.
+//
+// The band that selects a bar is tested before the notes are, so anywhere it
+// covers is a place a note cannot be clicked. Pinned to the top staff line it
+// covered its own 2.4 spaces of the music: in treble, everything from F above
+// the staff up to about D — the C on the first ledger line among them, which
+// is not an unusual note to want. The band goes above the music instead.
+func TestTheBandDoesNotCoverNotesAboveTheStaff(t *testing.T) {
+	h := newHarness(t)
+	h.post("/api/addstaff?instrument=flute&clef=treble")
+	// A run climbing well over the staff, the C on the first ledger line
+	// among it.
+	for _, step := range []int{9, 11, 12, 14, 16, 14, 12, 10} {
+		h.note(0, 0, step, "eighth")
+	}
+
+	opt := engrave.DefaultOptions()
+	opt.Mode = engrave.Strip
+	lay := engrave.Engrave(h.app.score, opt)
+
+	strips := map[int]engrave.StripPos{}
+	for _, st := range lay.Strips {
+		strips[st.Measure] = st
+	}
+	for _, hit := range lay.Hits {
+		st, ok := strips[hit.Measure]
+		if !ok {
+			continue
+		}
+		for _, el := range hit.Elements {
+			if el.X+el.Width < st.X0 || el.X > st.X1 {
+				continue
+			}
+			// A notehead is a space tall, so it reaches half a space above
+			// the y it is centred on.
+			top := math.Min(el.Y, el.Y2) - 0.5
+			if st.Bottom > top {
+				t.Errorf("bar %d's band reaches down to %.2f, over the notehead at %.2f (steps %v)",
+					hit.Measure+1, st.Bottom, top, el.Steps)
+			}
 		}
 	}
 }

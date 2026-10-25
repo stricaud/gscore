@@ -2171,6 +2171,11 @@ func (e *engraver) drawSystem(parts []*model.Part, boxes [][]measureBox,
 	// The band the bar numbers sit in is also where a bar is picked up. One
 	// band per bar, reaching to where the next begins, so there is no dead
 	// gap over a barline.
+	//
+	// Placed against the staff here and lifted clear of the music once the
+	// staff has been drawn and its outline is known, which is where the bar
+	// numbers themselves end up.
+	firstStrip := len(e.lay.Strips)
 	for mi := start; mi < end && mi-start+1 < len(columns); mi++ {
 		// Not the empty bar drawn past the end of the music: it is not a bar
 		// of the piece yet, so there is nothing there to select.
@@ -2351,6 +2356,29 @@ func (e *engraver) drawSystem(parts []*model.Part, boxes [][]measureBox,
 		// what they have to clear. They are placed outwards from the staff
 		// in the order notation puts them in, each clearing the last.
 		sky := e.outline(staffMark, sp.Margin, right, staffTop)
+		// The band over a bar goes above that bar's music, now that there
+		// is an outline to put it above.
+		//
+		// It was placed against the top staff line, which is right only
+		// where nothing is written over the staff. A note above the staff
+		// is drawn in the band's own 2.4 spaces, and the band is tested
+		// before the notes are — so everything from the top line up to
+		// about the second ledger line was picked up as the whole bar
+		// instead of as the note under the pointer. In treble that is the
+		// C above the staff, which is not an unusual note to want.
+		//
+		// Measured against the music, not against a guess at it: the bar
+		// whose run climbs an octave over the staff has its band up there
+		// with it, where its bar number is.
+		if pi == 0 {
+			for i := firstStrip; i < len(e.lay.Strips); i++ {
+				st := &e.lay.Strips[i]
+				if b := sky.reach(st.X0, st.X1, false) - stripGap; b < st.Bottom {
+					st.Bottom = b
+					st.Top = b - stripHeight
+				}
+			}
+		}
 		// The chord symbols first, because they are a row above the music
 		// and everything else is a row above them.
 		e.placeChords(sky, sp.Margin, right)

@@ -29,7 +29,7 @@ person's set of marks can be handed to another as a file.
 {
   "format": "gscore",
   "version": 1,
-  "generator": "gscore 0.1.0"
+  "generator": "gscore 0.1.1"
 }
 ```
 

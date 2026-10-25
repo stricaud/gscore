@@ -43,6 +43,9 @@ func systemSoundfontDirs() []string {
 		"/usr/share/soundfonts",
 		"/usr/share/sounds/sf2/zanderjaz",
 		"/usr/local/share/sounds/sf2",
+		// Where packaging/linux/install.sh puts the bundled soundfont when it
+		// is run as root, so an installed copy finds its own instruments.
+		"/usr/local/share/soundfonts",
 		"/opt/homebrew/share/sounds/sf2",
 	)
 }

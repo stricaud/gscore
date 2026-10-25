@@ -1,0 +1,51 @@
+/*
+ * gscore.rc.in - what Windows itself shows about the executable.
+ *
+ * Without this the program is an .exe with a blank page for an icon and no
+ * answer when somebody opens its Properties, which is the first thing that
+ * makes a download look like it came from nobody.
+ *
+ * `make windows` substitutes @VERSION@ and @VERSION_COMMA@ and compiles the
+ * result with x86_64-w64-mingw32-windres, from the repository root, which is
+ * where the icon path below is resolved. The numbers are substituted rather
+ * than passed as -D defines because windres hands its command line to a
+ * preprocessor through a shell, and the quotes around a string macro do not
+ * survive the trip.
+ *
+ * (C) Copyright 2026 Sebastien Tricaud. MIT licence; see LICENSE.
+ */
+
+#include <winver.h>
+
+/* The first icon in the file is the one Explorer and the taskbar use. */
+1 ICON "assets/icon/gscore.ico"
+
+1 VERSIONINFO
+FILEVERSION    @VERSION_COMMA@
+PRODUCTVERSION @VERSION_COMMA@
+FILEFLAGSMASK  VS_FFI_FILEFLAGSMASK
+FILEFLAGS      0
+FILEOS         VOS__WINDOWS32
+FILETYPE       VFT_APP
+FILESUBTYPE    VFT2_UNKNOWN
+{
+	BLOCK "StringFileInfo"
+	{
+		/* US English, Unicode. */
+		BLOCK "040904B0"
+		{
+			VALUE "CompanyName",      "Sebastien Tricaud"
+			VALUE "FileDescription",  "gscore - a musical score editor"
+			VALUE "FileVersion",      "@VERSION@"
+			VALUE "InternalName",     "gscore"
+			VALUE "LegalCopyright",   "(C) 2001-2026 Sebastien Tricaud. MIT licence."
+			VALUE "OriginalFilename", "gscore.exe"
+			VALUE "ProductName",      "Gscore"
+			VALUE "ProductVersion",   "@VERSION@"
+		}
+	}
+	BLOCK "VarFileInfo"
+	{
+		VALUE "Translation", 0x0409, 0x04B0
+	}
+}

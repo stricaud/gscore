@@ -1,0 +1,383 @@
+# Build the installers and publish them as a GitHub release, on every tag.
+#
+# One number drives all of this: the VERSION file at the root. A tag has to
+# agree with it or the run stops before anything is built, which is the only
+# way to be sure that the release called 0.1.1 contains a program that says
+# it is 0.1.1.
+#
+#   printf '0.1.2\n' > VERSION && git commit -am 'Version 0.1.2'
+#   git tag v0.1.2 && git push --tags
+#
+# Each package carries its own soundfont, so every download plays real
+# instruments the first time it is opened with nothing to fetch:
+#
+#   macOS     Gscore-<v>.dmg                      drag to Applications
+#   Windows   gscore-<v>-windows-setup.exe        Program Files, Start menu
+#   Linux     gscore-<v>-linux-amd64.tar.gz       any distribution
+#             gscore_<v>_amd64.deb                Debian, Ubuntu
+#
+# The macOS and Windows builds are not signed with a paid certificate, and
+# the release notes say so rather than leaving somebody to work out why
+# their machine refused to open the download.
+
+name: Release
+
+on:
+  push:
+    # Both spellings, because a tag is typed by hand: v0.1.1 and 0.1.1.
+    tags: ["v[0-9]*", "[0-9]*"]
+  # Dispatched by hand this builds everything and publishes nothing, which
+  # is how to find out whether the packaging still works without cutting a
+  # release to do it.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# One release at a time, and never cancelled: a run that has already put
+# some of the files on a release should finish putting the rest there.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # ── does this tag mean what it says, and does the program still work ──
+  check:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      prerelease: ${{ steps.version.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: The tag and the VERSION file have to agree
+        id: version
+        run: |
+          set -eu
+          version=$(tr -d ' \t\n\r' < VERSION)
+          test -n "$version" || { echo "the VERSION file is empty" >&2; exit 1; }
+
+          if [ "${GITHUB_REF_TYPE:-}" = tag ]; then
+            # A leading v is allowed in the tag and nowhere else.
+            tag=${GITHUB_REF_NAME#v}
+            if [ "$tag" != "$version" ]; then
+              echo "tag $GITHUB_REF_NAME is not version $version" >&2
+              echo "set VERSION to $tag, or tag v$version instead" >&2
+              exit 1
+            fi
+            echo "releasing $version as $GITHUB_REF_NAME"
+          else
+            echo "not a tag: building $version without publishing it"
+          fi
+
+          # Anything after the numbers — -rc1, -beta — is not a final
+          # release, and GitHub should not offer it as the latest one.
+          case "$version" in
+          *-*) echo "prerelease=true"  >> "$GITHUB_OUTPUT" ;;
+          *)   echo "prerelease=false" >> "$GITHUB_OUTPUT" ;;
+          esac
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Check the core
+        # Without cgo, as the page build is: the native window wraps
+        # WebKitGTK on Linux and the runner has no headers for it. This also
+        # runs the test that keeps internal/version in step with the VERSION
+        # file, so a build with no linker flags cannot report the wrong one.
+        env:
+          CGO_ENABLED: "0"
+        run: |
+          go vet ./...
+          go test ./...
+
+  # ── macOS: a disk image holding the AppKit application ────────────────
+  macos:
+    needs: check
+    # Whatever the current image is: the deployment target is set by the
+    # Makefile (MAC_MIN) and not by the machine, so a newer runner does not
+    # quietly raise the oldest macOS this runs on. Pinning an image instead
+    # means a release that stops building the month it is retired.
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # Thirty megabytes of samples that never change, fetched once rather
+      # than once per platform per release.
+      - uses: actions/cache@v4
+        with:
+          path: build/soundfonts
+          key: soundfonts-generaluser-gs-v1
+
+      - name: Build the disk image
+        # Both architectures, joined with lipo, so one image runs on an
+        # Apple Silicon and an Intel Mac.
+        run: make dmg
+
+      - name: Check what was built
+        run: |
+          set -eu
+          v='${{ needs.check.outputs.version }}'
+          dmg="build/Gscore-$v.dmg"
+          test -s "$dmg" || { echo "missing: $dmg" >&2; exit 1; }
+
+          # An image that opens, holds an application, and holds the
+          # instruments inside it. Checked here because a disk image that
+          # mounts empty looks exactly like one that does not.
+          hdiutil attach -quiet -nobrowse -readonly -mountpoint /tmp/dmg "$dmg"
+          test -x "/tmp/dmg/Gscore.app/Contents/MacOS/gscore"
+          ls "/tmp/dmg/Gscore.app/Contents/Resources/soundfonts/"*.sf2 >/dev/null
+          plist=/tmp/dmg/Gscore.app/Contents/Info.plist
+          got=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$plist")
+          hdiutil detach -quiet /tmp/dmg
+          [ "$got" = "$v" ] || { echo "the app says $got, not $v" >&2; exit 1; }
+          echo "$dmg: $(du -h "$dmg" | cut -f1), version $got"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos
+          path: build/*.dmg
+          if-no-files-found: error
+
+  # ── Windows: an installer, cross-compiled with mingw-w64 and NSIS ─────
+  windows:
+    needs: check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install the cross-compiler and NSIS
+        run: |
+          sudo apt-get update -qq
+          # mingw-w64 to compile against WebView2, NSIS to build the
+          # installer around it.
+          # mingw to compile, NSIS to wrap, p7zip to look inside what came
+          # out and check it is all in there.
+          sudo apt-get install -y --no-install-recommends \
+            mingw-w64 nsis p7zip-full
+
+      - uses: actions/cache@v4
+        with:
+          path: build/soundfonts
+          key: soundfonts-generaluser-gs-v1
+
+      - name: Build the installer
+        run: make windows
+
+      - name: Check what was built
+        run: |
+          set -eu
+          v='${{ needs.check.outputs.version }}'
+          setup="build/gscore-$v-windows-setup.exe"
+          zip="build/gscore-$v-windows.zip"
+          for f in "$setup" "$zip"; do
+            test -s "$f" || { echo "missing: $f" >&2; exit 1; }
+          done
+
+          # The executable has to be a Windows one, and the version block
+          # compiled into it has to be this version — a resource script that
+          # fails to substitute still compiles and ships a blank icon.
+          file build/windows/gscore.exe | grep -q "PE32+" \
+            || { echo "that is not a Windows executable" >&2; exit 1; }
+          python3 - "$v" <<'PY'
+          import struct, sys
+          want = sys.argv[1]
+          d = open("build/windows/gscore.exe", "rb").read()
+          i = d.find(struct.pack("<I", 0xFEEF04BD))
+          if i < 0:
+              sys.exit("no version resource in gscore.exe")
+          _, _, ms, ls = struct.unpack_from("<IIII", d, i)
+          got = "%d.%d.%d" % (ms >> 16, ms & 0xFFFF, ls >> 16)
+          if got != want.split("-")[0]:
+              sys.exit("gscore.exe reports %s, not %s" % (got, want))
+          if want.encode("utf-16-le") not in d:
+              sys.exit("gscore.exe does not carry the version as a string")
+          print("gscore.exe: version resource says", got)
+          PY
+
+          # And the installer has to contain the program and the
+          # instruments, not just be a large file.
+          7z l "$setup" > /tmp/setup.list
+          for want in gscore.exe LICENSE.txt gscore.ico .sf2; do
+            grep -q -- "$want" /tmp/setup.list \
+              || { echo "the installer has no $want in it" >&2; exit 1; }
+          done
+          echo "$setup: $(du -h "$setup" | cut -f1)"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: |
+            build/*-windows-setup.exe
+            build/*-windows.zip
+          if-no-files-found: error
+
+  # ── Linux: a tarball for any distribution, and a .deb ─────────────────
+  linux:
+    needs: check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - uses: actions/cache@v4
+        with:
+          path: build/soundfonts
+          key: soundfonts-generaluser-gs-v1
+
+      - name: Build the tarball and the .deb
+        run: |
+          make linux
+          make debian
+
+      - name: Check what was built
+        run: |
+          set -eu
+          v='${{ needs.check.outputs.version }}'
+          tgz="build/gscore-$v-linux-amd64.tar.gz"
+          deb="build/gscore_${v}_amd64.deb"
+          for f in "$tgz" "$deb"; do
+            test -s "$f" || { echo "missing: $f" >&2; exit 1; }
+          done
+
+          # The tarball runs where it is unpacked, so what is in it is
+          # checked by unpacking it and running it.
+          mkdir -p /tmp/tgz && tar -xzf "$tgz" -C /tmp/tgz
+          dir=/tmp/tgz/gscore-$v-linux-amd64
+          for f in gscore install.sh LICENSE gscore.desktop gscore.png; do
+            test -e "$dir/$f" || { echo "the tarball has no $f" >&2; exit 1; }
+          done
+          ls "$dir/soundfonts/"*.sf2 >/dev/null
+          sh -n "$dir/install.sh"
+          got=$("$dir/gscore" --version)
+          [ "$got" = "gscore $v" ] || { echo "it says '$got'" >&2; exit 1; }
+          # Static, so it runs on a distribution older or newer than this
+          # one. A dynamic link here would be a dependency nobody declared.
+          file "$dir/gscore" | grep -q "statically linked" \
+            || { echo "the binary is not static" >&2; exit 1; }
+
+          # And the package has to depend on nothing, since it carries the
+          # soundfont itself: a Depends line that crept back in would make
+          # the install fail on a machine without it.
+          if dpkg-deb -I "$deb" | grep -q '^ Depends:'; then
+            echo "the .deb grew a dependency, and it carries its own" >&2
+            exit 1
+          fi
+          dpkg-deb -c "$deb" | grep -q 'usr/share/soundfonts/.*\.sf2' \
+            || { echo "the .deb carries no soundfont" >&2; exit 1; }
+          echo "$got, static, $(du -h "$tgz" | cut -f1) + $(du -h "$deb" | cut -f1)"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux
+          path: |
+            build/*-linux-amd64.tar.gz
+            build/*.deb
+          if-no-files-found: error
+
+  # ── publish, for a tag only ───────────────────────────────────────────
+  release:
+    needs: [check, macos, windows, linux]
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Write the notes and the checksums
+        env:
+          VERSION: ${{ needs.check.outputs.version }}
+        run: |
+          set -eu
+          cd dist
+          ls -lh
+          # Nothing here is signed by a certificate authority, so a checksum
+          # is the only way somebody can tell they got what was built. Named
+          # one by one rather than with a *, so a package that did not
+          # arrive is noticed here instead of going quietly missing.
+          sha256sum \
+            "Gscore-$VERSION.dmg" \
+            "gscore-$VERSION-windows-setup.exe" \
+            "gscore-$VERSION-windows.zip" \
+            "gscore-$VERSION-linux-amd64.tar.gz" \
+            "gscore_${VERSION}_amd64.deb" > SHA256SUMS
+          cd ..
+
+          {
+            echo "## Install"
+            echo
+            echo "| | Download | Then |"
+            echo "|---|---|---|"
+            echo "| **macOS** | \`Gscore-$VERSION.dmg\` | Open it and drag Gscore to Applications. |"
+            echo "| **Windows** | \`gscore-$VERSION-windows-setup.exe\` | Run it. Or unpack \`-windows.zip\` and run \`gscore.exe\` from the folder. |"
+            echo "| **Linux** | \`gscore-$VERSION-linux-amd64.tar.gz\` | Unpack and run \`./gscore\`, or \`sudo ./install.sh\`. Any distribution. |"
+            echo "| **Debian, Ubuntu** | \`gscore_${VERSION}_amd64.deb\` | \`sudo apt install ./gscore_${VERSION}_amd64.deb\` |"
+            echo
+            # One line per paragraph: GitHub renders a single newline as a
+            # line break, so prose wrapped to fit this file would arrive
+            # broken into short lines.
+            echo "Every download carries a General MIDI soundfont, so it plays real instruments the first time it is opened — nothing to fetch, nothing to choose. Linux shows the interface in your browser; macOS and Windows open a window of their own."
+            echo
+            echo "## The first time you open it"
+            echo
+            echo "These builds are signed by nobody, because a certificate is an annual fee and this is a free program. So:"
+            echo
+            echo "- **macOS** will say it cannot check the app for malware. Right-click Gscore in Applications, choose **Open**, once. Or \`xattr -dr com.apple.quarantine /Applications/Gscore.app\`."
+            echo "- **Windows** will show a SmartScreen warning: **More info**, then **Run anyway**."
+            echo
+            echo "Check a download against \`SHA256SUMS\` with \`sha256sum -c SHA256SUMS\`."
+            echo
+            echo "## What changed"
+            echo
+            echo "<https://github.com/${GITHUB_REPOSITORY}/commits/${GITHUB_REF_NAME}>"
+          } > notes.md
+          cat notes.md
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.check.outputs.version }}
+          PRERELEASE: ${{ needs.check.outputs.prerelease }}
+        run: |
+          set -eu
+          flags=""
+          if [ "$PRERELEASE" = true ]; then
+            flags="--prerelease"
+          fi
+
+          # Re-runnable: a release already there is updated rather than
+          # refused, which is what a re-run after a half-finished one needs.
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            echo "updating the existing release"
+            gh release edit "$GITHUB_REF_NAME" \
+              --title "gscore $VERSION" --notes-file notes.md $flags
+            gh release upload "$GITHUB_REF_NAME" dist/* --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" \
+              --title "gscore $VERSION" --notes-file notes.md $flags \
+              dist/*
+          fi
+          gh release view "$GITHUB_REF_NAME"

@@ -39,9 +39,21 @@
 # (C) Copyright 2026 Sebastien Tricaud. MIT licence; see LICENSE.
 
 BINARY  := gscore
-VERSION := $(shell sed -n 's/.*Version = "\(.*\)".*/\1/p' internal/version/version.go)
+# One number, in one file. The VERSION file at the root is the authority:
+# every package name, the disk image, the Info.plist and the binary's own
+# --version all come from the line below, so they cannot disagree.
+VERSION := $(shell cat VERSION)
 BUILD   := build
-LDFLAGS := -s -w
+LDFLAGS := -s -w -X github.com/stricaud/gscore/internal/version.Version=$(VERSION)
+
+# Windows insists on four numbers for a file version. A pre-release suffix
+# is dropped and a missing field is a zero, so 0.1.1 becomes 0.1.1.0 and
+# 1.0-rc2 becomes 1.0.0.0. Twice over, because a resource script writes them
+# with commas and NSIS writes the same thing with dots.
+VERSION_DOTS  := $(shell echo "$(VERSION)" | sed 's/-.*//' | \
+	awk -F. '{printf "%d.%d.%d.0", $$1, $$2, $$3}')
+COMMA         := ,
+VERSION_COMMA := $(subst .,$(COMMA),$(VERSION_DOTS))
 
 HOST_OS := $(shell go env GOOS)
 
@@ -61,7 +73,7 @@ endif
 # waiting on a two-architecture Swift build you did not ask for.
 .DEFAULT_GOAL := help
 .PHONY: default package all build run test vet clean web app dmg windows \
-	debian help soundfonts slides
+	linux debian help soundfonts slides
 
 ## package: build the package this machine is for
 package default:
@@ -74,7 +86,7 @@ else
 endif
 
 ## all: every package
-all: dmg windows debian web
+all: dmg windows linux debian web
 
 ## build: a binary for this machine
 build:
@@ -118,6 +130,12 @@ ICONSET  := $(BUILD)/gscore.iconset
 # The icon is made from the PNG rather than kept as a second copy in .icns:
 # one drawing, and every size generated from it.
 ICON_PNG := assets/icon/gscore.png
+# Windows is the one platform whose icon cannot be made from the drawing at
+# build time: macOS has sips, and nothing here converts a PNG to a .ico. So
+# the .ico is generated once, from the same PNG, and kept beside it - square,
+# padded rather than stretched, with every size from 16 up to 256 in the old
+# uncompressed form that windres and NSIS both read without argument.
+ICON_ICO := assets/icon/gscore.ico
 
 # The instruments the application is shipped with.
 #
@@ -186,7 +204,8 @@ app: $(BUILD)/gscore.icns soundfonts
 	@mkdir -p $(APP)/Contents/MacOS $(APP)/Contents/Resources
 	@for arch in $(MAC_ARCH); do \
 		echo "  building for $$arch"; \
-		ui/macosx/build.sh $$arch $(MAC_MIN) $(BUILD)/$(BINARY)-app-$$arch; \
+		GSCORE_VERSION=$(VERSION) \
+			ui/macosx/build.sh $$arch $(MAC_MIN) $(BUILD)/$(BINARY)-app-$$arch; \
 	done
 	@lipo -create -output $(APP)/Contents/MacOS/$(BINARY) \
 		$(foreach a,$(MAC_ARCH),$(BUILD)/$(BINARY)-app-$(a))
@@ -243,19 +262,36 @@ dmg: app
 
 # ── Windows ─────────────────────────────────────────────────────────────────
 
-WIN_DIR := $(BUILD)/windows
-WIN_CC  := x86_64-w64-mingw32-gcc
+WIN_DIR   := $(BUILD)/windows
+WIN_CC    := x86_64-w64-mingw32-gcc
+WIN_RES   := x86_64-w64-mingw32-windres
+WIN_ZIP   := $(BUILD)/$(BINARY)-$(VERSION)-windows.zip
+WIN_SETUP := $(BUILD)/$(BINARY)-$(VERSION)-windows-setup.exe
+# Go links a .syso sitting in the main package's own directory into a Windows
+# build without being asked, and there is no flag to point it somewhere else.
+# So the icon and the version block are compiled to the repository root and
+# taken away again as soon as the build has read them.
+WIN_SYSO  := $(BINARY)_windows_amd64.syso
 
-## windows: a Windows .exe, cross-compiled
+## windows: a Windows installer and a zip, cross-compiled
 windows: soundfonts
 	@command -v $(WIN_CC) >/dev/null || { \
 		echo "need mingw-w64 for the native window: brew install mingw-w64" >&2; exit 1; }
+	@command -v $(WIN_RES) >/dev/null || { \
+		echo "need mingw-w64's windres for the icon: brew install mingw-w64" >&2; exit 1; }
+	@command -v makensis >/dev/null || { \
+		echo "need NSIS for the installer: brew install makensis" >&2; exit 1; }
 	@mkdir -p $(WIN_DIR)
+	@# The icon and what Properties shows, compiled into the executable.
+	@sed -e 's/@VERSION@/$(VERSION)/g' -e 's/@VERSION_COMMA@/$(VERSION_COMMA)/g' \
+		packaging/windows/gscore.rc.in > $(BUILD)/gscore.rc
+	@$(WIN_RES) -I . -i $(BUILD)/gscore.rc -O coff -o $(WIN_SYSO)
 	@# -H windowsgui keeps a console from opening behind the window.
 	CGO_ENABLED=1 GOOS=windows GOARCH=amd64 \
 		CC=$(WIN_CC) CXX=x86_64-w64-mingw32-g++ \
 		go build -trimpath -ldflags "$(LDFLAGS) -H windowsgui" \
 		-o $(WIN_DIR)/$(BINARY).exe . 2>&1 | grep -v '^In file\|warning:\|^ *[0-9]* |\|^ *|' || true
+	@rm -f $(WIN_SYSO)
 	@test -f $(WIN_DIR)/$(BINARY).exe
 	@# Beside the executable, which is where the program looks: a folder
 	@# somebody unzipped and runs from is as much of an installation as
@@ -265,8 +301,54 @@ windows: soundfonts
 		cp "$$(make --no-print-directory print-$${name}_SF2)" $(WIN_DIR)/soundfonts/; \
 	done
 	@cp LICENSE $(WIN_DIR)/LICENSE.txt
-	@cd $(BUILD) && zip -qr $(BINARY)-$(VERSION)-windows.zip windows
-	@echo "built $(BUILD)/$(BINARY)-$(VERSION)-windows.zip ($$(du -h $(BUILD)/$(BINARY)-$(VERSION)-windows.zip | cut -f1))"
+	@rm -f $(WIN_ZIP)
+	@cd $(BUILD) && zip -qr $(notdir $(WIN_ZIP)) windows
+	@# And the same folder as a real installation: Program Files, the Start
+	@# menu, .gscore files, and something in Installed apps to remove it.
+	@# Absolute paths: makensis resolves a relative one against the folder
+	@# the script is in, not the folder it was run from.
+	@makensis -V2 -DVERSION=$(VERSION) -DVERSION_DOTS=$(VERSION_DOTS) \
+		-DSRCDIR=$(CURDIR)/$(WIN_DIR) -DICON=$(CURDIR)/$(ICON_ICO) \
+		-DOUTFILE=$(CURDIR)/$(WIN_SETUP) \
+		packaging/windows/gscore.nsi
+	@test -f $(WIN_SETUP)
+	@echo "built $(WIN_SETUP) ($$(du -h $(WIN_SETUP) | cut -f1))"
+	@echo "built $(WIN_ZIP) ($$(du -h $(WIN_ZIP) | cut -f1))"
+
+# ── Linux ───────────────────────────────────────────────────────────────────
+
+# A .deb is for Debian and Ubuntu. This is for every other Linux: one folder
+# holding the program, the instruments and a script that copies them into
+# place. The binary is static and the soundfont is beside it, so the folder
+# runs as it is, from anywhere, installed or not.
+#
+# Without cgo, so it depends on nothing at all - no glibc version, no
+# WebKitGTK. The cost is that the interface opens in the default browser
+# rather than in a window of its own; a distribution that wants the window
+# builds the .deb on a machine with libwebkit2gtk-4.0-dev.
+LINUX_NAME := $(BINARY)-$(VERSION)-linux-amd64
+LINUX_DIR  := $(BUILD)/$(LINUX_NAME)
+TARBALL    := $(BUILD)/$(LINUX_NAME).tar.gz
+
+## linux: a portable Linux tarball with an install script, for any distribution
+linux: soundfonts
+	@rm -rf $(LINUX_DIR)
+	@mkdir -p $(LINUX_DIR)/soundfonts
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+		go build -trimpath -ldflags "$(LDFLAGS)" -o $(LINUX_DIR)/$(BINARY) .
+	@for name in $(BUNDLE_FONTS); do \
+		cp "$$(make --no-print-directory print-$${name}_SF2)" $(LINUX_DIR)/soundfonts/; \
+	done
+	@cp LICENSE README.md $(LINUX_DIR)/
+	@cp packaging/linux/install.sh $(LINUX_DIR)/
+	@cp packaging/debian/gscore.desktop $(LINUX_DIR)/
+	@cp assets/icon/gscore.png $(LINUX_DIR)/
+	@chmod 755 $(LINUX_DIR)/$(BINARY) $(LINUX_DIR)/install.sh
+	@# COPYFILE_DISABLE, or bsdtar on a Mac puts a ._ file beside every
+	@# entry and the archive arrives full of rubbish.
+	@COPYFILE_DISABLE=1 tar -czf $(TARBALL) -C $(BUILD) $(LINUX_NAME)
+	@rm -rf $(LINUX_DIR)
+	@echo "built $(TARBALL) ($$(du -h $(TARBALL) | cut -f1))"
 
 # ── Debian ──────────────────────────────────────────────────────────────────
 
@@ -274,7 +356,7 @@ DEB_ROOT := $(BUILD)/deb
 DEB      := $(BUILD)/$(BINARY)_$(VERSION)_amd64.deb
 
 ## debian: a .deb, cross-compiled
-debian:
+debian: soundfonts
 	@command -v dpkg-deb >/dev/null || { \
 		echo "need dpkg: brew install dpkg" >&2; exit 1; }
 	@rm -rf $(DEB_ROOT)
@@ -282,6 +364,7 @@ debian:
 		$(DEB_ROOT)/usr/bin \
 		$(DEB_ROOT)/usr/share/applications \
 		$(DEB_ROOT)/usr/share/icons/hicolor/192x192/apps \
+		$(DEB_ROOT)/usr/share/soundfonts \
 		$(DEB_ROOT)/usr/share/doc/$(BINARY)
 	@# Without cgo, since WebKitGTK's headers are not on this machine. The
 	@# result is static and depends on nothing; it opens the interface in the
@@ -290,6 +373,14 @@ debian:
 	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
 		go build -trimpath -ldflags "$(LDFLAGS)" -o $(DEB_ROOT)/usr/bin/$(BINARY) .
 	@cp assets/icon/gscore.png $(DEB_ROOT)/usr/share/icons/hicolor/192x192/apps/$(BINARY).png
+	@# /usr/share/soundfonts is one of the places gscore looks by itself, so
+	@# the package plays instruments the first time it is opened and depends
+	@# on nothing to do it. Debian has its own General MIDI banks and they
+	@# are still found if they are there; this is only so that a machine
+	@# without one is not silent.
+	@for name in $(BUNDLE_FONTS); do \
+		cp "$$(make --no-print-directory print-$${name}_SF2)" $(DEB_ROOT)/usr/share/soundfonts/; \
+	done
 	@cp LICENSE $(DEB_ROOT)/usr/share/doc/$(BINARY)/copyright
 	@# From real files, for the same reason the Info.plist is: GNU make
 	@# 3.81 runs each recipe line in its own shell, and a variable holding
@@ -312,6 +403,7 @@ web:
 ## clean: remove everything built
 clean:
 	rm -rf $(BUILD) web/dist
+	rm -f $(WIN_SYSO)
 	rm -f docs/presentation.pdf docs/presentation.aux docs/presentation.log \
 		docs/presentation.nav docs/presentation.out docs/presentation.snm \
 		docs/presentation.toc
@@ -323,11 +415,10 @@ help:
 	@sed -n 's/^## /  /p' $(MAKEFILE_LIST)
 	@echo
 	@echo "  this machine is $(HOST_OS), so \"make package\" builds $(PACKAGE_FOR)"
-	@echo "  the macOS and Windows packages carry a soundfont, so the"
-	@echo "  application plays real instruments with nothing to fetch:"
+	@echo "  every package carries a soundfont, so the program plays real"
+	@echo "  instruments the first time it is opened with nothing to fetch:"
 	@echo "  $(BUNDLE_FONTS) (BUNDLE_FONTS=\"generaluser fluidr3\" adds"
-	@echo "  FluidR3 GM, +148MB). The .deb does not: a Debian machine gets"
-	@echo "  one from Debian, and fluid-soundfont-gm is already packaged."
+	@echo "  FluidR3 GM, +148MB)."
 
 # ── the files that go inside the packages ───────────────────────────────────
 

@@ -1,2 +1,6 @@
 /build/
 .DS_Store
+# The Windows icon and version block, compiled to the root because that is
+# where Go looks for one. `make windows` deletes it again; an interrupted
+# build leaves it behind.
+/gscore_windows_amd64.syso

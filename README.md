@@ -14,8 +14,28 @@ header came from the `abc2midi` package under the GPL — so it could not come
 along to an MIT-licensed tree. It remains in this repository's history, and
 the decisions it made are written down in [`docs/engraving.md`](docs/engraving.md).
 
-Version 0.1.0. The series restarts because nothing but the music is carried
-over.
+Version 0.1.1, from the [`VERSION`](VERSION) file at the root: the packages,
+the macOS `Info.plist` and the program's own `--version` all read it, so they
+cannot disagree. Tagging a commit builds the installers and publishes them —
+see [`.github/workflows/release.yml`](.github/workflows/release.yml).
+
+## Install
+
+From [the latest release](https://github.com/stricaud/gscore/releases/latest):
+
+| | Download | Then |
+|---|---|---|
+| macOS | `Gscore-<version>.dmg` | Open it, drag Gscore to Applications |
+| Windows | `gscore-<version>-windows-setup.exe` | Run it |
+| Linux | `gscore-<version>-linux-amd64.tar.gz` | Unpack, run `./gscore`, or `sudo ./install.sh` |
+| Debian, Ubuntu | `gscore_<version>_amd64.deb` | `sudo apt install ./gscore_<version>_amd64.deb` |
+
+Each one carries a General MIDI soundfont, so it plays real instruments the
+first time it is opened with nothing to fetch. None of them is signed with a
+paid certificate, so macOS and Windows will both want telling once that you
+meant to open it; the release notes say how.
+
+Or build it: `make` lists the targets.
 
 ## Status
 

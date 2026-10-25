@@ -39,9 +39,19 @@ esac
 lib="build/cgo/$arch"
 mkdir -p "$lib"
 
+# The version comes in from the Makefile, which reads the VERSION file, so
+# that the number the application reports is the one the disk image is named
+# after. Built on its own, the archive falls back to the literal in
+# internal/version, which a test keeps equal to the file.
+version=${GSCORE_VERSION:-}
+ldflags=
+if [ -n "$version" ]; then
+	ldflags="-X github.com/stricaud/gscore/internal/version.Version=$version"
+fi
+
 CGO_ENABLED=1 GOOS=darwin GOARCH="$arch" MACOSX_DEPLOYMENT_TARGET="$min" \
 	go build -tags nowebview -trimpath -buildmode=c-archive \
-		-o "$lib/libgscore.a" ./ui/macosx/bridge
+		-ldflags "$ldflags" -o "$lib/libgscore.a" ./ui/macosx/bridge
 
 # The linker warns that Go's objects were built for a newer macOS than the
 # application asks for. They were, and it does not matter: the deployment

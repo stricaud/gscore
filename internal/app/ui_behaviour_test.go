@@ -12,6 +12,7 @@ package app
 
 import (
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -33,7 +34,21 @@ func TestTheEditorsSelectionArithmetic(t *testing.T) {
 	if err != nil {
 		t.Skip("node is not installed, so the interface's own tests are skipped")
 	}
-	out, err := exec.Command(node, "--test", "ui/").CombinedOutput()
+	// The files, named one by one, rather than the directory they are in.
+	//
+	// Handing node a directory and letting it find them works on a new
+	// enough node and is read as a module path by an older one, which then
+	// fails with "cannot find module" — on a machine where every test would
+	// have passed. The runner's node is not this machine's node, so the CI
+	// build failed on every push while the same command here was green.
+	files, err := filepath.Glob(filepath.Join("ui", "*_test.mjs"))
+	if err != nil {
+		t.Fatalf("looking for the interface's tests: %v", err)
+	}
+	if len(files) == 0 {
+		t.Fatal("no interface tests found beside app.js")
+	}
+	out, err := exec.Command(node, append([]string{"--test"}, files...)...).CombinedOutput()
 	if err != nil {
 		t.Errorf("the interface's tests failed:\n%s", out)
 		return

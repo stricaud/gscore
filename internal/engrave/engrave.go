@@ -25,6 +25,7 @@ package engrave
 
 import (
 	"math"
+	"sort"
 	"strings"
 
 	"github.com/stricaud/gscore/internal/model"
@@ -641,11 +642,26 @@ type openSpan struct {
 }
 
 // slot is one element's horizontal allocation within a measure.
+// voiced is one element and which of the staff's voices it belongs to.
+type voiced struct {
+	el    model.Element
+	voice int
+	index int // the element's Ref
+}
+
+// slot is one column of a measure: everything that starts at the same moment.
+//
+// A staff can carry more than one line of music — a held bass note under a
+// moving part, two singers on one stave — and they are written across each
+// other, not after each other. So a measure is laid out as a row of columns
+// at the moments something starts, and every voice puts whatever it has at
+// that moment into the same column. With one voice there is one element per
+// column and this is the sequence it always was.
 type slot struct {
-	elem  model.Element
-	lead  float64 // room before the notehead, for an accidental
-	width float64 // the element's own ideal width
-	index int     // the element's Ref
+	at    model.Duration // when in the bar, counted from its start
+	elems []voiced
+	lead  float64 // room before the noteheads, for an accidental
+	width float64 // how wide the column is
 }
 
 // measureBox is a measure with its computed widths.
@@ -965,7 +981,18 @@ const staffClearance = 2.0
 func (e *engraver) staffReach(p *model.Part, start, end int) (above, below float64) {
 	const topLine = staffHeight * 2 // the top line, in staff steps
 	highest, lowest := topLine, 0
+	// Where a staff carries more than one line of music the stems are
+	// forced apart — the upper voice up, the lower down — so the outermost
+	// notes carry their stems away from the staff rather than back into it.
+	// With one voice a low note takes its stem upward and nothing hangs
+	// below the notehead, which is why measuring noteheads alone was enough
+	// until now and is not any more: a fugue's lower voice reached down to
+	// the staff beneath it with a stem nothing had made room for.
+	stemOut := 0.0
 	for mi := start; mi < end && mi < len(p.Measures); mi++ {
+		if len(p.Measures[mi].Voices) > 1 {
+			stemOut = stemLength
+		}
 		for _, v := range p.Measures[mi].Voices {
 			for _, el := range v.Elements {
 				var steps []int
@@ -988,7 +1015,7 @@ func (e *engraver) staffReach(p *model.Part, start, end int) (above, below float
 			}
 		}
 	}
-	return float64(highest-topLine) / 2, float64(-lowest) / 2
+	return float64(highest-topLine)/2 + stemOut, float64(-lowest)/2 + stemOut
 }
 
 // marksOf gets an element's marks, or nil for one that carries none.
@@ -1458,26 +1485,78 @@ func (e *engraver) measureBox(p *model.Part, m *model.Measure, index int) measur
 	sp := e.opt.Spacings
 	box := measureBox{m: m}
 
-	var elems []model.Element
-	if len(m.Voices) > 0 {
-		elems = m.Voices[0].Elements
+	// Everything every voice holds, with the moment it starts at.
+	type entry struct {
+		at   model.Duration
+		v    voiced
+		lead float64
+		room float64 // what a flag needs, if this one has one
 	}
-	flags := e.flagRoom(p, elems, index)
-	for i, el := range elems {
-		s := slot{elem: el, index: e.nextRef}
-		e.nextRef++
-		s.width = e.elementWidth(el)
-		s.lead = e.accidentalLead(el) + graceLead(el)
-		least := sp.MinNote
-		if room := flags[i]; room > 0 {
-			s.width = math.Max(s.width, room)
-			least = math.Max(least, room)
+	var entries []entry
+	empty := true
+	for vi, voice := range m.Voices {
+		if voice == nil || len(voice.Elements) == 0 {
+			continue
 		}
-		box.slots = append(box.slots, s)
-		box.ideal += s.lead + s.width
-		box.minimum += s.lead + least
+		empty = false
+		flags := e.flagRoom(p, voice.Elements, index)
+		at := model.Duration{Num: 0, Den: 1}
+		for i, el := range voice.Elements {
+			entries = append(entries, entry{
+				at:   at,
+				v:    voiced{el: el, voice: vi},
+				lead: e.accidentalLead(el) + graceLead(el),
+				room: flags[i],
+			})
+			at = at.Add(el.Duration())
+		}
 	}
-	if len(elems) == 0 {
+	// Into columns, earliest first. Stable, so that within a column the
+	// voices stay in the order the score lists them — voice one above
+	// voice two, which is what decides their stems.
+	sort.SliceStable(entries, func(i, j int) bool {
+		return entries[i].at.Cmp(entries[j].at) < 0
+	})
+	for i := 0; i < len(entries); {
+		j := i
+		col := slot{at: entries[i].at}
+		for ; j < len(entries) && entries[j].at.Cmp(col.at) == 0; j++ {
+			en := entries[j]
+			en.v.index = e.nextRef
+			e.nextRef++
+			col.elems = append(col.elems, en.v)
+			col.lead = math.Max(col.lead, en.lead)
+			col.width = math.Max(col.width, en.room)
+		}
+		box.slots = append(box.slots, col)
+		i = j
+	}
+	// How wide each column is: the time from it to the next one, which for
+	// one voice is simply the note's own length and lays out exactly as it
+	// always did. A half note over two quarters spans two columns and is
+	// given the room of both.
+	for i := range box.slots {
+		col := &box.slots[i]
+		span := model.Duration{Num: 0, Den: 1}
+		if i+1 < len(box.slots) {
+			span = box.slots[i+1].at.Sub(col.at)
+		} else {
+			// Nothing follows, so the longest thing starting here decides.
+			for _, v := range col.elems {
+				if d := v.el.Duration(); d.Cmp(span) > 0 {
+					span = d
+				}
+			}
+		}
+		least := sp.MinNote
+		if col.width > 0 { // a flag already claimed more than the minimum
+			least = math.Max(least, col.width)
+		}
+		col.width = math.Max(e.spanWidth(span, col.elems), col.width)
+		box.ideal += col.lead + col.width
+		box.minimum += col.lead + least
+	}
+	if empty {
 		// An empty measure still needs room to be clicked into.
 		box.ideal = sp.NoteBase * 2
 		box.minimum = sp.NoteBase
@@ -1665,6 +1744,36 @@ func (e *engraver) flagRoom(p *model.Part, elems []model.Element, index int) map
 
 // elementWidth is the proportional spacing rule that replaces the fixed
 // per-duration table of the C program.
+// spanWidth is how wide a column is: a power of the time it covers, plus
+// the room the dots in it actually take.
+//
+// The time, not the note. With one voice they are the same thing — the gap
+// to the next note is the length of this one — which is why a single-voice
+// score lays out to the staff space exactly as it did before columns. With
+// two, a half note spans the columns of the two quarters played against it
+// and is given the room of both.
+func (e *engraver) spanWidth(span model.Duration, els []voiced) float64 {
+	sp := e.opt.Spacings
+	if span.IsZero() {
+		return sp.MinNote
+	}
+	quarter := model.Duration{Num: 1, Den: 4}
+	w := sp.NoteBase * math.Pow(span.Float()/quarter.Float(), sp.NoteExponent)
+	dots := 0
+	for _, v := range els {
+		if _, d, ok := v.el.Duration().Written(); ok && d > dots {
+			dots = d
+		}
+	}
+	if dots > 0 {
+		// The room the dots actually take: each one is as wide as the glyph,
+		// not as wide as the gap after it. Budgeting the gap alone left the
+		// dots crowding whatever came next.
+		w += sp.DotToNote + float64(dots)*dotStep(sp)
+	}
+	return math.Max(w, sp.MinNote)
+}
+
 func (e *engraver) elementWidth(el model.Element) float64 {
 	sp := e.opt.Spacings
 	d := el.Duration()
@@ -1946,8 +2055,29 @@ func (e *engraver) drawSystem(parts []*model.Part, boxes [][]measureBox,
 	// The names and the brace reach across every staff of the system, so they
 	// are drawn once the staves' positions are all known.
 	e.drawGroups(parts, sp.Margin+lead, staffTops, start == 0)
+	// Down the gaps between the staves, at exactly the x the staves put
+	// their own barlines at. A column is where the next bar begins; the
+	// barline stands a little before it, by the room its style needs. The
+	// joining line was drawn on the column itself, so every grand staff in
+	// every score had a step in its barlines — the line between the staves
+	// standing to the right of the lines on them.
 	for i := range columns {
-		e.drawGroupBarlines(parts, columns[i], staffTops)
+		x := columns[i]
+		if i == 0 {
+			// The first column is where the music starts, which is after
+			// the clef and the meter — there is no barline there, and a
+			// line joining the staves in the middle of a bar's opening is
+			// simply wrong. What belongs at the head of a system is the
+			// line down its left edge, beside the brace, which is where
+			// the staves actually begin.
+			x = sp.Margin + lead
+		} else {
+			if mi := start + i - 1; mi >= 0 && mi < len(parts[0].Measures) {
+				_, right := e.barlineRoom(parts[0].Measures[mi].RightBarline)
+				x = e.barlineAt(columns[i], right)
+			}
+		}
+		e.drawGroupBarlines(parts, x, staffTops, i == 0)
 	}
 
 	// Back to the top of the system, then down past all of it.

@@ -15,6 +15,7 @@ import (
 	"math"
 	"sort"
 	"strconv"
+	"strings"
 
 	"github.com/stricaud/gscore/internal/model"
 	"github.com/stricaud/gscore/internal/smufl"
@@ -30,6 +31,10 @@ import (
 type placed struct {
 	x     float64
 	index int
+	// voice is which line of music on this staff it belongs to. Zero for
+	// the only one, which is nearly always. It decides which way the stem
+	// goes and what may be beamed to what.
+	voice int
 
 	note  *model.Note
 	chord *model.Chord
@@ -160,15 +165,22 @@ func (e *engraver) drawMeasure(part *model.Part, b measureBox, x, end float64, s
 	}
 
 	items := make([]*placed, 0, len(b.slots))
-	at := model.Duration{Num: 0, Den: 1}
 	for i := range b.slots {
 		s := &b.slots[i]
 		x += s.lead * stretch
 
-		p := e.placedOf(part.Clef, s.elem, at)
-		p.x, p.index, p.width = x, s.index, s.width*stretch
-		items = append(items, p)
-		at = at.Add(s.elem.Duration())
+		// Everything that starts at this moment, whatever voice it is in,
+		// at the same x. That is what makes two lines of music on one staff
+		// read as two lines rather than as one long one.
+		col := make([]*placed, 0, len(s.elems))
+		for _, v := range s.elems {
+			p := e.placedOf(part.Clef, v.el, s.at)
+			p.x, p.index, p.width = x, v.index, s.width*stretch
+			p.voice = v.voice
+			items = append(items, p)
+			col = append(col, p)
+		}
+		e.separateColumn(col)
 
 		x += s.width * stretch
 	}
@@ -689,7 +701,35 @@ func beatDuration(t model.TimeSignature) model.Duration {
 }
 
 // beamGroups splits a measure into runs of notes that share beams.
+//
+// One voice at a time. Two lines of music on a staff are beamed separately
+// however close together they run: a beam joining a note of the upper voice
+// to a note of the lower says they are one line of music, which is the one
+// thing the notation is there to deny.
 func beamGroups(items []*placed, t model.TimeSignature) [][]*placed {
+	most := 0
+	for _, p := range items {
+		if p.voice > most {
+			most = p.voice
+		}
+	}
+	if most > 0 {
+		var out [][]*placed
+		for v := 0; v <= most; v++ {
+			var mine []*placed
+			for _, p := range items {
+				if p.voice == v {
+					mine = append(mine, p)
+				}
+			}
+			out = append(out, beamGroupsOfOne(mine, t)...)
+		}
+		return out
+	}
+	return beamGroupsOfOne(items, t)
+}
+
+func beamGroupsOfOne(items []*placed, t model.TimeSignature) [][]*placed {
 	beat := beatDuration(t)
 	var out [][]*placed
 	var cur []*placed
@@ -755,9 +795,36 @@ func beamGroups(items []*placed, t model.TimeSignature) [][]*placed {
 // out again from the note alone is how they came to disagree with the stem
 // actually on the page.
 func (e *engraver) setStemDirections(items []*placed, t model.TimeSignature) {
+	// More than one line of music on the staff settles the question before
+	// the notes get a say: the upper voice takes its stems up and the lower
+	// takes them down, however high or low either happens to sit. That is
+	// what tells a reader which note belongs to which line, and it is the
+	// whole reason two voices can share a staff at all.
+	multi := false
+	for _, p := range items {
+		if p.voice > 0 {
+			multi = true
+			break
+		}
+	}
+	byVoice := func(p *placed) int {
+		// Unless the score itself asked for a direction, which still wins.
+		if m := p.marks(); m != nil && m.Stem == model.StemUp {
+			return 1
+		} else if m != nil && m.Stem == model.StemDown {
+			return -1
+		}
+		if p.voice%2 == 0 {
+			return 1
+		}
+		return -1
+	}
+
 	for _, g := range beamGroups(items, t) {
 		dir := -1
-		if beamGroupUp(g) {
+		if multi {
+			dir = byVoice(g[0])
+		} else if beamGroupUp(g) {
 			dir = 1
 		}
 		for _, p := range g {
@@ -768,9 +835,12 @@ func (e *engraver) setStemDirections(items []*placed, t model.TimeSignature) {
 	// it here as well means nothing downstream has to know the difference.
 	for _, p := range items {
 		if p.stemDir == 0 && p.rest == nil {
-			if e.stemUp(p) {
+			switch {
+			case multi:
+				p.stemDir = byVoice(p)
+			case e.stemUp(p):
 				p.stemDir = 1
-			} else {
+			default:
 				p.stemDir = -1
 			}
 		}
@@ -1297,16 +1367,34 @@ func (e *engraver) drawDynamic(m *model.Marks, p *placed) {
 // the player goes and below is where the dynamics and the words already are.
 func (e *engraver) drawTexts(m *model.Marks, p *placed) {
 	const textSize = 1.9
+	const textLine = 2.2 // how far apart the lines of one text sit
 	for _, t := range m.Texts {
 		if t.Text == "" {
 			continue
 		}
+		// A direction can be several lines — a dedication, a note to the
+		// player — and the newlines in it are real. Drawn as one string
+		// they vanish, because nothing in SVG or PDF breaks a line for
+		// you: "Allein Gott in der Höhe\nund Dank" came out as
+		// "Allein Gott in der Höheund Dank", run together, in one line
+		// across the page.
+		lines := strings.Split(t.Text, "\n")
+		for i := range lines {
+			lines[i] = strings.TrimRight(lines[i], " \t\r")
+		}
+
 		x := p.x + t.OffsetX
 		if t.Placement == model.PlacementBelow {
-			e.lay.Texts = append(e.lay.Texts, Text{
-				S: t.Text, X: x, Y: e.y + e.staffH() + 3.4 + t.OffsetY,
-				Size: textSize, Anchor: "start", Italic: t.Italic, Bold: t.Bold,
-			})
+			for i, line := range lines {
+				if line == "" {
+					continue
+				}
+				e.lay.Texts = append(e.lay.Texts, Text{
+					S: line, X: x,
+					Y:    e.y + e.staffH() + 3.4 + t.OffsetY + float64(i)*textLine,
+					Size: textSize, Anchor: "start", Italic: t.Italic, Bold: t.Bold,
+				})
+			}
 			continue
 		}
 		// Above the staff it joins the queue, so that it clears the music,
@@ -1314,15 +1402,32 @@ func (e *engraver) drawTexts(m *model.Marks, p *placed) {
 		// than being written at a distance decided in advance. "rit." over
 		// a bar that also carries a chord symbol used to be printed through
 		// it whenever the fixed distances happened to coincide.
+		widest := 0.0
+		for _, line := range lines {
+			if w := textWidth(line, textSize); w > widest {
+				widest = w
+			}
+		}
+		// The whole block claims its room at once, so that the lines stay
+		// together and whatever is placed next clears all of them.
 		e.wait(waitingMark{
-			x0: x, x1: x + textWidth(t.Text, textSize),
-			height: textSize, gap: 0.6, rank: rankText,
+			x0: x, x1: x + widest,
+			height: textSize + float64(len(lines)-1)*textLine,
+			gap:    0.6, rank: rankText,
 			draw: func(y float64) {
-				e.lay.Texts = append(e.lay.Texts, Text{
-					S: t.Text, X: x, Y: y + t.OffsetY,
-					Size: textSize, Anchor: "start",
-					Italic: t.Italic, Bold: t.Bold,
-				})
+				// Upwards from the bottom line: the block hangs from where
+				// the queue put it, which is just above the music.
+				top := y - float64(len(lines)-1)*textLine
+				for i, line := range lines {
+					if line == "" {
+						continue
+					}
+					e.lay.Texts = append(e.lay.Texts, Text{
+						S: line, X: x, Y: top + t.OffsetY + float64(i)*textLine,
+						Size: textSize, Anchor: "start",
+						Italic: t.Italic, Bold: t.Bold,
+					})
+				}
 			},
 		})
 	}
@@ -1502,4 +1607,64 @@ func displacedHeads(steps []int, up bool) []bool {
 		prev, prevShifted = steps[i], shift
 	}
 	return out
+}
+
+// separateColumn moves a voice aside where it would be written on top of the
+// one above it.
+//
+// Two voices sounding together at a second — or at the same note — cannot
+// both sit on the same side of their stems: the noteheads would be drawn
+// over each other and the reader could not tell there were two of them. The
+// lower one steps to the left, which is where an engraver puts it, and takes
+// its stem with it.
+//
+// A third apart or more they clear each other and nothing is done, which is
+// the common case and why most two-voice music looks untouched by this.
+func (e *engraver) separateColumn(col []*placed) {
+	if len(col) < 2 {
+		return
+	}
+	// How high and how low each voice reaches at this moment. Rests have no
+	// notehead to clash with, and are spaced by drawRest instead.
+	type reach struct {
+		lo, hi int
+		ps     []*placed
+	}
+	byVoice := map[int]*reach{}
+	var voices []int
+	for _, p := range col {
+		if p.rest != nil {
+			continue
+		}
+		r, ok := byVoice[p.voice]
+		if !ok {
+			r = &reach{lo: p.lo, hi: p.hi}
+			byVoice[p.voice] = r
+			voices = append(voices, p.voice)
+		}
+		if p.lo < r.lo {
+			r.lo = p.lo
+		}
+		if p.hi > r.hi {
+			r.hi = p.hi
+		}
+		r.ps = append(r.ps, p)
+	}
+	if len(voices) < 2 {
+		return
+	}
+	sort.Ints(voices)
+
+	// Down the stack, each voice against the one above it. A larger step is
+	// higher on the staff, so the voice above is the one with the larger
+	// numbers.
+	for i := 1; i < len(voices); i++ {
+		above, below := byVoice[voices[i-1]], byVoice[voices[i]]
+		if above.lo-below.hi > 1 {
+			continue
+		}
+		for _, p := range below.ps {
+			p.x -= noteheadWidth(p.value)
+		}
+	}
 }

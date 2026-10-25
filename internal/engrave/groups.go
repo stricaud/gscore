@@ -230,7 +230,7 @@ func (e *engraver) drawGroups(parts []*model.Part, left float64, tops []float64,
 
 // drawGroupBarlines runs the barline down through the gap between the staves
 // of a group, so that a pianist's two hands are one instrument on the page.
-func (e *engraver) drawGroupBarlines(parts []*model.Part, x float64, tops []float64) {
+func (e *engraver) drawGroupBarlines(parts []*model.Part, x float64, tops []float64, full bool) {
 	d := e.opt.Defaults
 	for _, g := range e.score.Groups {
 		if !g.Barlines {
@@ -241,6 +241,22 @@ func (e *engraver) drawGroupBarlines(parts []*model.Part, x float64, tops []floa
 		if !ok1 || !ok2 || li <= fi || li >= len(tops) {
 			continue
 		}
+		if full {
+			// At the head of a system there is no barline on any staff to
+			// join up to: the staves simply begin. So the line is drawn
+			// whole, from the top line of the first staff to the bottom
+			// line of the last, which is the line a printed grand staff
+			// starts with. Filling only the gaps left it hanging between
+			// the staves, attached to nothing at either end.
+			e.lay.Lines = append(e.lay.Lines, Line{
+				X1: x, Y1: tops[fi],
+				X2: x, Y2: tops[li] + partH(parts[li]),
+				Thickness: d.ThinBarlineThickness,
+			})
+			continue
+		}
+		// Between bars each staff has drawn its own barline through itself,
+		// so only the gaps are left to fill.
 		for i := fi; i < li; i++ {
 			e.lay.Lines = append(e.lay.Lines, Line{
 				X1: x, Y1: tops[i] + partH(parts[i]), X2: x, Y2: tops[i+1],

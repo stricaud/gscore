@@ -297,8 +297,26 @@ func buildPlayback(s *model.Score) Playback {
 			// first of the pair plays both and the second plays nothing.
 			// The second still takes its own time: the bar is the same
 			// length either way.
+			// Which number the engraver gave each of this voice's elements.
+			// It numbers a bar by when things start, across all its voices,
+			// so a voice's third element is not necessarily the third
+			// number — and a highlight on the wrong number lights up
+			// somebody else's notehead.
+			var voiceRefs []int
+			if ref != 0 {
+				voiceRefs = make([]int, len(v.Elements))
+				for k, vd := range m.Ordered() {
+					if vd.Voice == 0 && vd.Index < len(voiceRefs) {
+						voiceRefs[vd.Index] = ref + k
+					}
+				}
+			}
+
 			paired := map[int]bool{}
 			for ei, el := range v.Elements {
+				if ei < len(voiceRefs) {
+					ref = voiceRefs[ei]
+				}
 				d := el.Duration().Float() * secondsPerWhole
 				mk := marksOf(el)
 				if mk != nil && mk.Octave != nil && mk.Octave.Start {
@@ -419,9 +437,6 @@ func buildPlayback(s *model.Score) Playback {
 						slurring = false
 					}
 				}
-				if ref != 0 {
-					ref++
-				}
 				vt += d
 			}
 			// A note may ring past the last barline; the piece is not over
@@ -473,10 +488,12 @@ func wholeNoteSeconds(s *model.Score, bar int) float64 {
 // baseRefs gives the number the engraver assigned to the first element of
 // each bar of each staff.
 //
-// The engraver numbers elements walking staves, then bars, then the first
-// voice. Playback has to agree exactly, because that number is the only thing
-// tying a sounding note to the notehead drawn for it — and once a bar can be
-// played more than once, counting along as we go no longer agrees.
+// The engraver numbers elements walking staves, then bars, then the bar's
+// own order — by when each starts, across every voice, which is what
+// Measure.Ordered gives. Playback has to agree exactly, because that number
+// is the only thing tying a sounding note to the notehead drawn for it — and
+// once a bar can be played more than once, counting along as we go no longer
+// agrees.
 func baseRefs(s *model.Score) [][]int {
 	out := make([][]int, len(s.Parts))
 	ref := 1
@@ -484,9 +501,10 @@ func baseRefs(s *model.Score) [][]int {
 		out[pi] = make([]int, len(p.Measures))
 		for mi, m := range p.Measures {
 			out[pi][mi] = ref
-			if len(m.Voices) > 0 {
-				ref += len(m.Voices[0].Elements)
-			}
+			// Every element of the bar, not the first voice's alone: the
+			// engraver gives a number to each notehead it draws, and it
+			// draws them all.
+			ref += len(m.Ordered())
 		}
 	}
 	return out

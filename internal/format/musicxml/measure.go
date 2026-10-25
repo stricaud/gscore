@@ -27,6 +27,21 @@ type measureItem struct {
 	Direction  *direction
 	Note       *xmlNote
 	Barline    *barline
+	Shift      *shift
+}
+
+// shift is <backup> or <forward>: a move of the place the next note is
+// written to, without writing anything there.
+//
+// This is how MusicXML puts two voices on one staff, and how it puts two
+// staves in one part. A bar is written through once for the first voice,
+// then <backup> winds the position all the way to the start of the bar and
+// it is written through again for the second. Read without honouring it,
+// the second voice is simply appended to the first and the bar comes out
+// holding twice the music it should.
+type shift struct {
+	Duration int  `xml:"duration"`
+	Back     bool // <backup> rather than <forward>
 }
 
 // xmlMeasure is a measure with its children in document order.
@@ -71,6 +86,14 @@ func (m xmlMeasure) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
 		case it.Barline != nil:
 			err = e.EncodeElement(it.Barline, xml.StartElement{
 				Name: xml.Name{Local: "barline"}})
+		case it.Shift != nil:
+			name := "forward"
+			if it.Shift.Back {
+				name = "backup"
+			}
+			err = e.EncodeElement(struct {
+				Duration int `xml:"duration"`
+			}{it.Shift.Duration}, xml.StartElement{Name: xml.Name{Local: name}})
 		}
 		if err != nil {
 			return err
@@ -113,6 +136,17 @@ func (m *xmlMeasure) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error 
 					return err
 				}
 				m.add(measureItem{Note: &v})
+			case "backup", "forward":
+				var v struct {
+					Duration int `xml:"duration"`
+				}
+				if err := d.DecodeElement(&v, &t); err != nil {
+					return err
+				}
+				m.add(measureItem{Shift: &shift{
+					Duration: v.Duration,
+					Back:     t.Name.Local == "backup",
+				}})
 			case "barline":
 				var v barline
 				if err := d.DecodeElement(&v, &t); err != nil {

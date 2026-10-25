@@ -226,7 +226,7 @@ func convert(doc *scorePartwise, lg *log) (*model.Score, error) {
 				Voices:       []*model.Voice{{}},
 				RightBarline: convertBarline(barline),
 			}
-			convertMeasure(xm, divisions, m.Voices[0], lg)
+			convertMeasure(xm, divisions, m, lg)
 			p.Measures = append(p.Measures, m)
 		}
 		s.Parts = append(s.Parts, p)
@@ -428,9 +428,10 @@ func convertNotes(notes []xmlNote, divisions int, v *model.Voice, lg *log) {
 
 // convertMeasure walks a measure in document order, so that each dynamic
 // lands on the note that follows it rather than all of them on the first.
-func convertMeasure(xm xmlMeasure, divisions int, v *model.Voice, lg *log) {
+func convertMeasure(xm xmlMeasure, divisions int, m *model.Measure, lg *log) {
 	pending := model.DynamicNone
 	var notes []xmlNote
+	v := m.Voices[0]
 
 	flush := func() {
 		if len(notes) == 0 {
@@ -455,9 +456,55 @@ func convertMeasure(xm xmlMeasure, divisions int, v *model.Voice, lg *log) {
 			}
 		case it.Note != nil:
 			notes = append(notes, *it.Note)
+		case it.Shift != nil:
+			flush()
+			v = shiftVoice(m, v, *it.Shift, divisions, lg)
 		}
 	}
 	flush()
+}
+
+// filled is how far through the bar a voice has been written.
+func filled(v *model.Voice) model.Duration {
+	total := model.Duration{Num: 0, Den: 1}
+	for _, el := range v.Elements {
+		total = total.Add(el.Duration())
+	}
+	return total.Reduced()
+}
+
+// shiftVoice honours <backup> and <forward>, and returns the voice the notes
+// after it belong to.
+//
+// Winding back is how MusicXML says "another line of music starts here", so
+// it opens a voice. Winding forward is a gap in the voice being written, and
+// a gap is a rest — one that is not printed, because the voice underneath is
+// already holding that beat and a second rest drawn on top of it would only
+// be something else to read.
+func shiftVoice(m *model.Measure, v *model.Voice, s shift,
+	divisions int, lg *log) *model.Voice {
+
+	by := model.Duration{Num: s.Duration, Den: 4 * divisions}.Reduced()
+	if by.IsZero() {
+		return v
+	}
+
+	if !s.Back {
+		v.Elements = append(v.Elements, &model.Rest{Dur: by, Hidden: true})
+		return v
+	}
+
+	at := filled(v).Sub(by).Reduced()
+	if at.Cmp(model.Duration{Num: 0, Den: 1}) < 0 {
+		lg.say("a backup reached past the start of its bar; it was read as the start")
+		at = model.Duration{Num: 0, Den: 1}
+	}
+	next := &model.Voice{}
+	if !at.IsZero() {
+		next.Elements = append(next.Elements, &model.Rest{Dur: at, Hidden: true})
+	}
+	m.Voices = append(m.Voices, next)
+	return next
 }
 
 // attachDynamic puts a dynamic on the first sounding element of a run.

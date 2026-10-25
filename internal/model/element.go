@@ -11,7 +11,10 @@
 
 package model
 
-import "strconv"
+import (
+	"sort"
+	"strconv"
+)
 
 // Element is anything that takes up time in a voice.
 //
@@ -801,5 +804,41 @@ func (c *Chord) Pitches() []Pitch {
 	for i, n := range c.Notes {
 		out[i] = n.Pitch
 	}
+	return out
+}
+
+// Voiced is one element of a measure, with which voice it is in and when it
+// starts.
+type Voiced struct {
+	El    Element
+	Voice int      // which line of music on the staff
+	Index int      // its place within that voice
+	At    Duration // when it starts, from the start of the measure
+}
+
+// Ordered is a measure's elements in the one order everything agrees on: by
+// the moment they start, and within a moment by voice.
+//
+// A staff can carry more than one line of music, and the engraver draws them
+// as columns — everything starting together in the same place. The playback
+// has to walk the same elements in the same order, because the number given
+// to each is the only thing tying a sounding note to the notehead drawn for
+// it. Two walks that have to agree are two walks that will stop agreeing, so
+// there is one here and both use it.
+func (m *Measure) Ordered() []Voiced {
+	var out []Voiced
+	for vi, v := range m.Voices {
+		if v == nil {
+			continue
+		}
+		at := Duration{Num: 0, Den: 1}
+		for i, el := range v.Elements {
+			out = append(out, Voiced{El: el, Voice: vi, Index: i, At: at})
+			at = at.Add(el.Duration())
+		}
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		return out[i].At.Cmp(out[j].At) < 0
+	})
 	return out
 }

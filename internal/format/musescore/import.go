@@ -259,6 +259,12 @@ type msStaff struct {
 	clefSet  bool
 	measures []*model.Measure
 
+	// tick is where this staff has got to, counted from the start of the
+	// score. MuseScore's <tick> is an absolute position, not an offset into
+	// the bar it is written in, so the bar's own start has to be subtracted
+	// from it — and the only way to know that is to have been counting.
+	tick int
+
 	// transChr is the staff's transposition in semitones, written to
 	// sounding, taken from the part that owns it. MuseScore records the
 	// sounding pitch of every note and gscore records the written one.
@@ -731,6 +737,7 @@ func (r *reader) frame(doc *document) error {
 
 func (r *reader) measure(doc *document, st *msStaff) error {
 	m := &model.Measure{RightBarline: model.BarSingle}
+	start := st.tick
 	var loose *voiceState // MuseScore 2 wrote voice one without a wrapper
 	startRepeat := false
 
@@ -748,6 +755,12 @@ func (r *reader) measure(doc *document, st *msStaff) error {
 			if err != nil {
 				return err
 			}
+			// Absolute, from the start of the score. In the first bar the
+			// two readings agree, which is exactly long enough to be fooled
+			// by: by bar forty a tick taken as an offset put thirty-nine
+			// whole notes of silence in front of the voice, and the bar was
+			// drawn forty times too wide with its notes at either end.
+			n -= start
 			// Where the voices of a bar come from in MuseScore 2 and
 			// earlier. Instead of wrapping each in <voice>, it writes them
 			// one after another inside the bar and rewinds the write
@@ -806,6 +819,20 @@ func (r *reader) measure(doc *document, st *msStaff) error {
 	if len(m.Voices) == 0 {
 		m.Voices = append(m.Voices, &model.Voice{})
 	}
+	// Carry the count on to the next bar. The bar's length is the longest
+	// of its voices: they all fill it, and whichever reaches furthest says
+	// how far it reaches.
+	longest := model.Duration{Num: 0, Den: 1}
+	for _, v := range m.Voices {
+		total := model.Duration{Num: 0, Den: 1}
+		for _, el := range v.Elements {
+			total = total.Add(el.Duration())
+		}
+		if total.Cmp(longest) > 0 {
+			longest = total
+		}
+	}
+	st.tick += durationTicks(longest)
 	if startRepeat {
 		// A repeat opens on the barline between this bar and the one before
 		// it, and gscore keeps a barline on the bar it closes.
@@ -2414,4 +2441,12 @@ func tickDuration(ticks int) (model.Duration, bool) {
 	return model.Duration{
 		Num: ticks, Den: msTicksPerQuarter * 4,
 	}.Reduced(), true
+}
+
+// durationTicks is a length of music in MuseScore's own ticks.
+func durationTicks(d model.Duration) int {
+	if d.Den == 0 {
+		return 0
+	}
+	return d.Num * msTicksPerQuarter * 4 / d.Den
 }

@@ -22,26 +22,18 @@ import (
 // Checked over every score in the tree, from the layout rather than from a
 // picture of it.
 func TestEveryChordHasAStem(t *testing.T) {
-	// Two sorts of staff have noteheads with no stems on purpose.
+	// Nothing in the tree draws a notehead without a stem any more.
 	//
-	//   tablature       the notes are fret numbers on strings; there is no
-	//                   stem to draw and nowhere to draw it
-	//   tremolo chords  the slashes stand between two stems that the
-	//                   tremolo draws itself
-	//
-	// Listed rather than quietly tolerated, so that the day a stem goes
-	// missing somewhere else the count says so.
-	expected := map[string]int{
-		// Fret numbers on strings: there is no stem to draw.
-		"71e-TabStaves.musicxml": 4,
-		// A tremolo draws its own stems, with the slashes between them.
-		"21g-Chords-Tremolos.musicxml": 6,
-		// A real gap, and the one worth closing: a note written on one
-		// staff of a piano and played by the other hand. The notehead goes
-		// where the file says and the stem has nowhere to run to, because
-		// the beam it belongs to is on the staff above or below.
-		"43d-MultiStaff-StaffChange.musicxml": 2,
-	}
+	// This map used to list three files as allowed exceptions — tab staves,
+	// tremolo chords, and a note played by the other hand — on the reasoning
+	// that each had a notehead with nowhere to put a stem. They did not.
+	// All three were the same fault: inside a beam, a chord's stem was drawn
+	// from the notehead nearest the beam instead of the one furthest from
+	// it, so it covered one note of the chord and left the others loose.
+	// Fixing that end gave all of them stems, which is how a list of
+	// tolerated exceptions earns its keep: the day the cause is found, the
+	// list empties.
+	expected := map[string]int{}
 
 	total := 0
 	scores := corpus(t)

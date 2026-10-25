@@ -1936,9 +1936,30 @@ async function loadHits() {
   const res = await fetch("/api/hits?mode=" + state.mode);
   const d = await res.json();
   state.hits = d.hits || [];
+  state.dynamics = d.dynamics || [];
   state.barlines = d.barlines || [];
   state.headers = d.headers || [];
   state.strips = d.strips || [];
+}
+
+// dynamicAt finds the dynamic a click landed on.
+//
+// A dynamic sits under the staff, which is inside the bar's clickable region
+// but nowhere near the note it belongs to. So a click on an ff used to be
+// read as a click on the empty space below that note — which, with a note
+// tool in hand, wrote a note there. Writing one was easy and pointing at the
+// result was impossible.
+//
+// The box comes from the engraver, because only the engraver knows how far
+// down this stretch of music pushed it.
+function dynamicAt(x, y) {
+  for (const d of state.dynamics || []) {
+    if (x >= d.x - 0.4 && x <= d.x + d.width + 0.4 &&
+        y >= d.y - 0.4 && y <= d.y + d.height + 0.4) {
+      return d;
+    }
+  }
+  return null;
 }
 
 // headerAt finds the clef, key signature or meter a click landed on.
@@ -2155,6 +2176,14 @@ function setupCanvasClicks() {
       return;
     }
 
+    // Before the staff, because the box is under it: a click here means the
+    // marking, not the space below the note.
+    const dyn = dynamicAt(x, y);
+    if (dyn) {
+      selectDynamic(dyn);
+      return;
+    }
+
     const hit = hitAt(x, y);
     if (!hit) {
       clearSelection();
@@ -2259,6 +2288,22 @@ function selectRange(from, to) {
   status(state.multi.length === 1
     ? "1 selected"
     : `${state.multi.length} selected \u2014 measures ${a.measure + 1}\u2013${b.measure + 1}`);
+}
+
+// selectDynamic picks up a dynamic marking.
+//
+// What is selected is the marking, not the note under it — so Backspace
+// takes the ff away and leaves the music alone, which is what somebody who
+// clicked the ff meant by pressing it.
+function selectDynamic(d) {
+  state.multi = [];
+  state.anchor = null;
+  state.selection = {
+    part: d.part, measure: d.measure, ref: d.ref,
+    at: 0, step: 0, dynamic: d.name,
+  };
+  markSelection();
+  status(`${d.name} \u2014 press Backspace to take it away`);
 }
 
 // selectMeasure picks up a whole bar rather than a note in it.
@@ -2437,6 +2482,15 @@ async function addPitch(hit, el, step) {
 }
 
 async function deleteSelected() {
+  // A dynamic was picked up by clicking it, so it is the dynamic that goes.
+  if (state.selection?.dynamic && !state.multi.length) {
+    const was = state.selection.dynamic;
+    await setDynamic("none");
+    // There is nothing there to have selected any more.
+    if (state.selection) state.selection.dynamic = null;
+    status(`${was} removed`);
+    return;
+  }
   if (state.multi.length) {
     const sel = state.multi.map((m) => `${m.part}:${m.measure}:${m.index}`).join(",");
     const res = await fetch("/api/deleteselection?sel=" + encodeURIComponent(sel),
@@ -2516,6 +2570,21 @@ function markSelection() {
   const sel = state.selection;
   if (!sel) return;
   const z = state.zoom;
+
+  // A dynamic picked up by clicking it: the box goes round the marking
+  // itself, under the staff, not round the note it is written on. Seeing a
+  // notehead light up after clicking an ff would say the wrong thing about
+  // what Backspace is going to take away.
+  if (sel.dynamic) {
+    const d = (state.dynamics || []).find(
+      (x) => x.part === sel.part && x.measure === sel.measure && x.ref === sel.ref);
+    if (d) {
+      svg.insertBefore(
+        selectionRect(d.x - 0.4, d.y - 0.4, d.width + 0.8, d.height + 0.8, z),
+        svg.firstChild);
+      return;
+    }
+  }
 
   // What the rectangle has to enclose.
   let picked = [];
@@ -6498,6 +6567,12 @@ function readOptions() {
     score: q.get("score"),
     autoplay: q.get("autoplay") === "1",
     loop: q.get("loop") === "1",
+    // "strip" draws the music as one unbroken line and "page" breaks it
+    // into pages. Both have always been in the editor, under View; this
+    // lets a page that embeds the editor say which it wants. A score shown
+    // in a band across a web page wants the line, not a paginated score
+    // squeezed into a frame.
+    mode: q.get("mode"),
     tune: q.has("tune") ? Number(q.get("tune")) : null,
     zoom: q.has("zoom") ? Number(q.get("zoom")) : null,
   };
@@ -6569,6 +6644,10 @@ async function main() {
   $("#stop-btn").addEventListener("click", () => stop());
 
   const opt = readOptions();
+  if (opt.mode === "strip" || opt.mode === "page") {
+    // Before anything is drawn, so the first drawing is the right one.
+    state.mode = opt.mode;
+  }
   if (opt.isPlayer) await applyPlayerMode(opt);
   if (opt.zoom) setZoom(opt.zoom);
 

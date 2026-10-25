@@ -32,6 +32,7 @@ import (
 func init() {
 	format.RegisterImporter(importer{})
 	format.RegisterExporter(exporter{})
+	format.RegisterExporter(compressedExporter{})
 }
 
 type importer struct{}
@@ -47,6 +48,19 @@ func (exporter) Name() string         { return "MusicXML" }
 func (exporter) Extensions() []string { return []string{".musicxml", ".xml"} }
 
 func (exporter) Export(w io.Writer, s *model.Score) error { return Export(w, s) }
+
+// compressedExporter writes the same document in the zip container the
+// specification defines. It is a second exporter rather than a flag on the
+// first because an exporter is chosen by the name of the file asked for,
+// and is handed a writer without being told what that name was.
+type compressedExporter struct{}
+
+func (compressedExporter) Name() string         { return "MusicXML (compressed)" }
+func (compressedExporter) Extensions() []string { return []string{".mxl"} }
+
+func (compressedExporter) Export(w io.Writer, s *model.Score) error {
+	return ExportMXL(w, s)
+}
 
 /*
  * The document, as far as gscore models it.

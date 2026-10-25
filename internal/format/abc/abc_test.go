@@ -479,7 +479,6 @@ func TestUnsupportedConstructsAreReportedNotIgnored(t *testing.T) {
 	// skipped in silence. The distinction is the whole point: a score that is
 	// quietly missing a voice is worse than one that says so.
 	cases := []string{
-		"K:C\nabc&def\n",       // voice overlay: the second voice is dropped
 		"K:C\n!unterminated\n", // decoration with no closing !
 		"K:C\nabZc\n",          // multi-measure rest
 	}
@@ -1155,5 +1154,33 @@ func TestBothDecorationSpellingsAgree(t *testing.T) {
 			t.Errorf("!%s! leaves %d symbols on the note and %s leaves %d",
 				c.long, len(an.Symbols), c.short, len(bn.Symbols))
 		}
+	}
+}
+
+// A voice overlay is a second line of music on the same staff, and is read
+// rather than dropped. It used to be skipped to the next barline, because a
+// measure held one voice; it holds as many as the music has now.
+func TestAVoiceOverlayIsReadAsASecondVoice(t *testing.T) {
+	s, err := Import(strings.NewReader("K:C\nabc&def|\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(s.Parts) != 1 {
+		t.Fatalf("%d staves, want one", len(s.Parts))
+	}
+	m := s.Parts[0].Measures[0]
+	if len(m.Voices) != 2 {
+		t.Fatalf("%d voices in the bar, want two", len(m.Voices))
+	}
+	for i, v := range m.Voices {
+		if len(v.Elements) != 3 {
+			t.Errorf("voice %d holds %d notes, want three", i, len(v.Elements))
+		}
+	}
+	// And they are different notes, not the same ones twice.
+	a := m.Voices[0].Elements[0].(*model.Note).Pitch
+	b := m.Voices[1].Elements[0].(*model.Note).Pitch
+	if a == b {
+		t.Errorf("both voices begin on %v", a)
 	}
 }

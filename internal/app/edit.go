@@ -49,6 +49,7 @@ func (a *App) handleHits(w http.ResponseWriter, r *http.Request) {
 
 	writeJSON(w, map[string]any{
 		"hits":        lay.Hits,
+		"dynamics":    lay.Dynamics,
 		"barlines":    lay.Barlines,
 		"strips":      lay.Strips,
 		"headers":     lay.Headers,

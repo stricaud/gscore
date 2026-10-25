@@ -101,6 +101,9 @@ for src in "$root"/samples/*; do
     "$tmp/gscore" -describe "$src" 2>/dev/null > "$out/scores/$id.txt"
     # And the same music every other way out of the program, because that is
     # the claim the site makes about it.
+    # The still picture the front page shows before anybody presses play.
+    "$tmp/gscore" -o "$out/scores/$id.svg" -font ../font.otf "$src" >/dev/null 2>&1 || \
+        printf ' (no svg)'
     for want in pdf mid; do
         "$tmp/gscore" -o "$out/scores/$id.$want" "$src" >/dev/null 2>&1 || \
             printf ' (no %s)' "$want"

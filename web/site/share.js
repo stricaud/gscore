@@ -56,8 +56,8 @@
 
   // The formats a link may carry, by the one letter that names it in the
   // fragment and the extension gscore opens it as.
-  const KINDS = { a: "abc", m: "mxl", x: "musicxml", g: "gscore" };
-  const LETTER = { abc: "a", mxl: "m", musicxml: "x", gscore: "g" };
+  const KINDS = { a: "abc", m: "mxl", x: "musicxml", g: "gscore", s: "mscz" };
+  const LETTER = { abc: "a", mxl: "m", musicxml: "x", gscore: "g", mscz: "s" };
 
   /*
    * encode packs a score into the text that goes after the #.

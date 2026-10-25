@@ -11,6 +11,7 @@
 package musicxml
 
 import (
+	"archive/zip"
 	"encoding/xml"
 	"fmt"
 	"io"
@@ -324,4 +325,56 @@ func buildBarline(style model.BarlineStyle) *barline {
 			Repeat: &repeatTag{Direction: "forward"}}
 	}
 	return nil
+}
+
+/*
+ * The compressed form
+ */
+
+// ExportMXL writes a score as .mxl: MusicXML in the zip container the
+// specification defines and every other program writes.
+//
+// The same XML, in a container that makes it a tenth the size — the Altès
+// solo is 667 KB of MusicXML and 27 KB as an .mxl. That matters for a file
+// somebody is sent, for a file kept in a repository, and for the one place
+// size is the whole question: a score carried inside a link.
+//
+// The layout is fixed by the specification. mimetype comes first and is
+// stored rather than deflated, the way ODF and EPUB do it, so that a reader
+// can identify the file from its first bytes without unpacking it.
+func ExportMXL(w io.Writer, s *model.Score) error {
+	const scoreName = "score.musicxml"
+
+	zw := zip.NewWriter(w)
+	mt, err := zw.CreateHeader(&zip.FileHeader{
+		Name:   "mimetype",
+		Method: zip.Store,
+	})
+	if err != nil {
+		return err
+	}
+	if _, err := io.WriteString(mt, "application/vnd.recordare.musicxml"); err != nil {
+		return err
+	}
+
+	container, err := zw.Create("META-INF/container.xml")
+	if err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(container,
+		`<?xml version="1.0" encoding="UTF-8"?>`+"\n"+
+			`<container><rootfiles><rootfile full-path="%s" `+
+			`media-type="application/vnd.recordare.musicxml+xml"/>`+
+			`</rootfiles></container>`+"\n", scoreName); err != nil {
+		return err
+	}
+
+	score, err := zw.Create(scoreName)
+	if err != nil {
+		return err
+	}
+	if err := Export(score, s); err != nil {
+		return err
+	}
+	return zw.Close()
 }

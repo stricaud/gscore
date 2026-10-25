@@ -58,6 +58,10 @@
     // and a transport. score= is resolved against the editor's own page.
     const q = new URLSearchParams({
       player: "1",
+      // One unbroken line, the way the still picture above it is drawn and
+      // the way a score reads in a band across a page. The editor can do
+      // either; left alone in a frame this narrow, pages look cramped.
+      mode: "strip",
       score: "../scores/" + piece.src,
       zoom: "9",
     });
@@ -87,8 +91,24 @@
 
   /* ---- choosing a piece -------------------------------------------- */
 
+  // The engraving, fetched the first time a piece is looked at. It is the
+  // same drawing the editor will make, so the page does not change its
+  // appearance when it hands over — it simply starts moving.
+  async function picture(piece) {
+    const paper = $(".paper", piece.el);
+    if (!paper || paper.dataset.loaded) return;
+    paper.dataset.loaded = "1";
+    try {
+      const res = await fetch("scores/" + piece.id + ".inline.svg");
+      if (res.ok) paper.innerHTML = await res.text();
+    } catch (_) {
+      // No picture, but play still works: it is the editor that plays.
+    }
+  }
+
   function show(piece) {
     current = piece;
+    void picture(piece);
     pieces.forEach((p) => (p.el.hidden = p !== piece));
     $$("#pieces button").forEach((b) =>
       b.setAttribute("aria-pressed", String(b.dataset.id === piece.id)),
@@ -117,30 +137,46 @@
     const size = $("#size");
     const copy = $("#copy");
 
-    let packed;
+    $("#file").href = "scores/" + current.file;
+
+    let packed = "";
     if (current.abc) {
       packed = await window.gscoreShare.encode(current.abc, "abc");
     } else {
-      // Written in something other than ABC, so the file itself goes in. A
-      // .mxl is already a zip; it comes out about eight kilobytes, which is
-      // ten thousand characters of link.
       const res = await fetch("scores/" + current.src);
-      packed = await window.gscoreShare.encode(
-        new Uint8Array(await res.arrayBuffer()), current.kind);
+      const bytes = new Uint8Array(await res.arrayBuffer());
+      // A whole sonata does not go in a link, and there is no sense
+      // building a quarter of a million characters to find that out. A
+      // tune of a few bars is a few hundred; past this it is a file, and
+      // the editor is pointed at it instead.
+      if (bytes.length <= 24 * 1024) {
+        packed = await window.gscoreShare.encode(bytes, current.kind);
+      }
     }
 
-    linkFor = base + "app/#s=" + packed;
+    if (packed) {
+      linkFor = base + "app/#s=" + packed;
+    } else {
+      // Not carried in the link, but still one address that opens the
+      // piece in the editor — it fetches the file beside it.
+      linkFor = base + "app/?score=../scores/" + current.src;
+    }
     $("#open").href = linkFor;
-    $("#file").href = "scores/" + current.file;
 
-    if (linkFor.length <= COMFORTABLE) {
+    if (packed && linkFor.length <= COMFORTABLE) {
       size.textContent = linkFor.length + " characters";
       copy.textContent = "Copy the link";
       copy.dataset.page = "";
-    } else {
+    } else if (packed) {
       size.textContent =
         "this piece needs " + linkFor.length.toLocaleString() +
         " characters, so the button copies a link to the page instead";
+      copy.textContent = "Copy a link to it";
+      copy.dataset.page = base + "scores/" + current.file;
+    } else {
+      size.textContent =
+        "too long a piece to carry in a link, so the button copies one to " +
+        "the page instead — which still needs no account and nothing installed";
       copy.textContent = "Copy a link to it";
       copy.dataset.page = base + "scores/" + current.file;
     }

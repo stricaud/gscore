@@ -226,10 +226,22 @@ body.live button.play { display: none; }
 .stage .editor {
   display: block;
   width: 100%;
-  height: 340px;
+  /* Tall enough for a grand staff and a line or two under it, which is
+     what the editor shows at this zoom. */
+  height: 420px;
   border: 0;
   background: var(--paper);
 }
+/* The still picture: the opening of the piece, as wide as the panel. A
+   long score is a long drawing, so it is shown from the left and clipped
+   rather than squeezed down to illegibility. */
+.paper img {
+  display: block;
+  height: 150px;
+  width: auto;
+  max-width: none;
+}
+.paper { overflow: hidden; }
 body.live .stage .piece { display: none; }
 body.live .stage .by,
 body.live .stage .note { display: none; }
@@ -241,8 +253,8 @@ body.live .stage .note { display: none; }
   align-items: center;
   gap: 10px;
   flex-wrap: wrap;
-  padding: 14px 18px 18px;
-  border-top: 1px solid var(--line);
+  padding: 12px 18px 14px;
+  border-bottom: 1px solid var(--line);
 }
 .share .fine, .share #said { flex-basis: 100%; margin: 4px 0 0; }
 #said { color: var(--accent); font-size: 0.92rem; min-height: 1.4em; word-break: break-all; }

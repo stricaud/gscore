@@ -983,12 +983,19 @@ body.fullscreen #canvas-wrap { padding: 10px; }
  */
 body.player #menubar .menu,
 body.player #palette,
+/* The tools down the left. Player mode hid #palette, which is inside this
+   and not the thing taking the column — so a page that only wanted to show
+   a score came up with a palette of noteheads beside it, and the score in
+   whatever width was left. */
+body.player #toolbox,
 body.player #inspector,
 body.player #statusbar,
 body.player #empty-hint,
 body.player #zoombar { display: none; }
 
 body.player { grid-template-rows: auto 1fr; }
+/* Nothing either side of the music any more, so the music has the width. */
+body.player #main { grid-template-columns: 1fr; }
 body.player #menubar {
   background: transparent;
   border-bottom: 0;

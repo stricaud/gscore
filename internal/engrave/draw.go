@@ -227,7 +227,7 @@ func (e *engraver) drawMeasure(part *model.Part, b measureBox, x, end float64, s
 	for _, p := range items {
 		if m := p.marks(); m != nil {
 			e.drawArticulations(m, p.x+noteheadWidth(p.value)/2, p.step, e.stemUp(p), p.index)
-			e.drawDynamic(m, p)
+			e.drawDynamic(m, p, b.index)
 			e.spanAt(m, p)
 			e.slurAt(part, m, p)
 			e.drawLyrics(m, p)
@@ -1156,10 +1156,20 @@ func (e *engraver) drawBeamGroup(g []*placed) {
 	}
 
 	// Stems, now that the beam line is fixed.
+	//
+	// A stem runs the whole height of its chord: it starts at the notehead
+	// furthest from the beam and finishes on it, passing the rest on the
+	// way. The end nearest the beam is what decides how long the stem is —
+	// that is the one ends[] measured from — but it is the far one the line
+	// has to start at. Taking the near one at both ends drew a stem that
+	// began at the top of the chord and went up, leaving every note beneath
+	// it hanging in the air with nothing joining it to anything: a chord
+	// that looks unstemmed, which is what the opening of the Altes does with
+	// its C-E flat-C triplets.
 	for _, en := range ends {
-		base := e.y + stepY(float64(en.p.hi))
+		base := e.y + stepY(float64(en.p.lo))
 		if !up {
-			base = e.y + stepY(float64(en.p.lo))
+			base = e.y + stepY(float64(en.p.hi))
 		}
 		e.lay.Lines = append(e.lay.Lines, Line{
 			X1: en.x, Y1: base, X2: en.x, Y2: beamY(en.x), Thickness: d.StemThickness,
@@ -1343,7 +1353,7 @@ func (e *engraver) dotGap(stemUp bool) float64 {
 // Dynamics belong below the staff for most instruments and are aligned on
 // their own line rather than hung off each note, so that a row of them reads
 // as one. The glyph is centred on the note it belongs to.
-func (e *engraver) drawDynamic(m *model.Marks, p *placed) {
+func (e *engraver) drawDynamic(m *model.Marks, p *placed, measure int) {
 	if m.Dynamic == model.DynamicNone {
 		return
 	}
@@ -1357,11 +1367,19 @@ func (e *engraver) drawDynamic(m *model.Marks, p *placed) {
 	x := p.x + noteheadWidth(p.value)/2 - smufl.Advance(name)/2
 	w := smufl.Advance(name)
 	e.wait(waitingMark{
-		x0: x, x1: x + w, height: 1.4, gap: 0.7, below: true, rank: rankDynamic,
+		x0: x, x1: x + w, height: 1.4, gap: 1.2, below: true, rank: rankDynamic,
 		draw: func(y float64) {
 			// place gives the top of the band; a dynamic is drawn from its
 			// baseline, which sits near the bottom of its own letters.
 			e.lay.Glyphs = append(e.lay.Glyphs, Glyph{Name: name, X: x, Y: y + 1.0})
+			// Where it ended up, so the editor can let it be clicked. Only
+			// now is that known: until the staff is finished there is no
+			// saying how far down this stretch of music pushed it.
+			e.lay.Dynamics = append(e.lay.Dynamics, DynamicPos{
+				Part: e.partIndex, Measure: measure, Ref: p.index,
+				X: x, Y: y, Width: w, Height: 1.4,
+				Name: m.Dynamic.String(),
+			})
 		},
 	})
 }

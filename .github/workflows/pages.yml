@@ -124,10 +124,32 @@ jobs:
           [ "$pieces" = "$want" ] || {
             echo "the front page holds $pieces scores, and there are $want samples" >&2
             exit 1; }
-          grep -q 'class="sound"' web/dist/index.html || {
-            echo "the front page has no performance data in it" >&2; exit 1; }
-          grep -q 'class="gscore-score"' web/dist/index.html || {
-            echo "the front page has no engraved music in it" >&2; exit 1; }
+          # The front page shows each piece as an image of the engraving and
+          # hands over to the editor when somebody presses play, so what it
+          # must carry is a picture per piece, not the drawing itself.
+          for src in samples/*; do
+            case "$src" in
+            *.abc|*.mxl|*.musicxml|*.xml|*.mscz|*.mscx|*.nwctxt|*.gscore) ;;
+            *) continue ;;
+            esac
+            id=$(basename "${src%.*}")
+            # The drawing on its own, which the front page fetches, and the
+            # standalone one somebody downloads.
+            for f in "$id.inline.svg" "$id.svg"; do
+              test -s "web/dist/scores/$f" \
+                || { echo "missing: scores/$f" >&2; exit 1; }
+            done
+            grep -q "data-id=\"$id\"" web/dist/index.html \
+              || { echo "the front page does not offer $id" >&2; exit 1; }
+          done
+          # And the page stays light: the drawings are files beside it, not
+          # a megabyte of SVG parsed into it.
+          # The page itself stays small: the drawings are files it fetches,
+          # not a megabyte of SVG written into it.
+          size=$(wc -c < web/dist/index.html)
+          [ "$size" -lt 65536 ] || {
+            echo "the front page is $size bytes; the engravings have got into it" >&2
+            exit 1; }
 
           # The site is published under a path, not at the root of a domain,
           # so an asset asked for as "/font.otf" is looked for on the domain

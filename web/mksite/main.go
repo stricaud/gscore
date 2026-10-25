@@ -147,17 +147,21 @@ func readPieces(samples, built string) ([]piece, error) {
 			return nil, fmt.Errorf("%s has no built page: %w", id, err)
 		}
 		svg := svgTag.Find(page)
-		sound := soundTag.FindSubmatch(page)
-		if svg == nil || sound == nil {
+		if svg == nil {
 			return nil, fmt.Errorf("%s: the built page has no score in it", id)
 		}
-
-		p := piece{
-			ID:    id,
-			ABC:   string(abc),
-			SVG:   string(svg),
-			Sound: strings.TrimSpace(string(sound[1])),
+		// The drawing on its own, for the front page to fetch when it shows
+		// this piece. It names the music font rather than carrying it — the
+		// page declares the face once and every piece uses it — which is the
+		// difference between thirty kilobytes and a megabyte. The .svg beside
+		// it keeps the font inside, because that one is a file somebody
+		// downloads and it has to stand alone.
+		if err := os.WriteFile(filepath.Join(built, id+".inline.svg"),
+			svg, 0o644); err != nil {
+			return nil, err
 		}
+
+		p := piece{ID: id, ABC: string(abc)}
 		p.Title, p.Composer, p.Note = readHeader(string(abc))
 		// What gscore itself said the piece is, which is the only thing
 		// that can read every format in samples/.
@@ -262,15 +266,19 @@ func writeLanding(out, site, version string, pieces []piece) error {
 		fmt.Fprintf(&tabs, "<button type=\"button\" data-id=%q aria-pressed=\"false\">%s</button>\n",
 			p.ID, html.EscapeString(p.Title))
 
+		// The drawing is fetched, not written into the page. Inlining every
+		// piece put nearly two megabytes of SVG into the front page — a
+		// hundred and thirty bars of flute and piano is nine hundred
+		// kilobytes on its own — and all but the one being looked at was
+		// weight nobody asked for.
 		fmt.Fprintf(&blocks, `<div class="piece" data-id=%q data-title=%q data-composer=%q data-note=%q data-file=%q data-src=%q data-kind=%q hidden>
-<script type="application/json" class="sound">%s</script>
 <script type="text/plain" class="abc">%s</script>
-<div class="paper">%s</div>
+<div class="paper"></div>
 </div>
 `,
 			p.ID, p.Title, p.Composer, p.Note, p.ID+".html",
 			p.Source, p.Kind,
-			p.Sound, escapeForScript(p.ABC), p.SVG)
+			escapeForScript(p.ABC))
 	}
 
 	page := string(shell)

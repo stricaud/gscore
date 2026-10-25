@@ -170,6 +170,32 @@ type Layout struct {
 	// to turn a point back into a place in the music, and the engraver is the
 	// only thing that knows where anything went.
 	Hits []Hit
+
+	// Dynamics are where the dynamics ended up, so one can be clicked.
+	//
+	// A dynamic is not where its note is. It is written under the staff, as
+	// far down as that stretch of music needs it to be, and the engraver is
+	// the only thing that knows how far that turned out to be. Without this
+	// the editor could write an ff and then had no way to point at it: a
+	// click under the staff found nothing, because everything it knew how to
+	// find was on the staff.
+	Dynamics []DynamicPos `json:"dynamics"`
+}
+
+// DynamicPos is one dynamic's box on the page, in staff spaces.
+type DynamicPos struct {
+	Part    int `json:"part"`
+	Measure int `json:"measure"`
+	// Ref is the element the dynamic is written on, the same number the
+	// editor uses to reach that element for anything else.
+	Ref int `json:"ref"`
+	// The box the letters occupy: x and y are its top left corner.
+	X      float64 `json:"x"`
+	Y      float64 `json:"y"`
+	Width  float64 `json:"width"`
+	Height float64 `json:"height"`
+	// Name is the dynamic as the editor spells it, "ff" and the like.
+	Name string `json:"name"`
 }
 
 // Hit is one measure's region on the page, in staff spaces.

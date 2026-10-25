@@ -33,6 +33,7 @@ import (
 
 func init() {
 	format.RegisterImporter(importer{})
+	format.RegisterExporter(abcExporter{})
 }
 
 type importer struct{}
@@ -41,6 +42,13 @@ func (importer) Name() string         { return "ABC" }
 func (importer) Extensions() []string { return []string{".abc"} }
 
 func (importer) Import(r io.Reader) (*model.Score, error) { return Import(r) }
+
+type abcExporter struct{}
+
+func (abcExporter) Name() string         { return "ABC" }
+func (abcExporter) Extensions() []string { return []string{".abc"} }
+
+func (abcExporter) Export(w io.Writer, s *model.Score) error { return Export(w, s) }
 
 // Import reads the first tune in an ABC file.
 func Import(r io.Reader) (*model.Score, error) {
@@ -245,6 +253,12 @@ type accKey struct {
 }
 
 type parser struct {
+	// How the staves stand together, from %%score, and the brackets still
+	// open while it is being read.
+	groups      []model.StaffGroup
+	groupOpen   []int
+	groupSymbol []model.GroupSymbol
+
 	titles    []string
 	composer  string
 	copyright string
@@ -372,6 +386,10 @@ func (p *parser) run(src string) error {
 		}
 		if strings.HasPrefix(line, "%%endtext") {
 			inText = false
+			continue
+		}
+		if strings.HasPrefix(line, "%%score") || strings.HasPrefix(line, "%%staves") {
+			p.staffGrouping(line)
 			continue
 		}
 		if strings.HasPrefix(line, "%%MIDI") {
@@ -568,7 +586,15 @@ func (p *parser) field(name byte, value string) error {
 			p.titles = append(p.titles, value)
 		}
 	case 'C':
-		p.composer = value
+		// Several C: lines are several credits — words by one person, music
+		// by another — and they stack, the way the title does. Replacing
+		// kept only the last, so a file that named a composer and an editor
+		// came back having forgotten the composer.
+		if p.composer == "" {
+			p.composer = value
+		} else {
+			p.composer += "\n" + value
+		}
 	case 'Q':
 		return p.fieldTempo(value)
 	case 'M':
@@ -960,6 +986,21 @@ func (p *parser) closeMeasure(style model.BarlineStyle) {
 	p.pendingOctave = 0
 }
 
+// openOverlay starts another voice over the bar being written.
+//
+// Everything after it belongs to that voice until the barline, which is what
+// "&" means: two lines of music written one after the other and played at
+// the same time.
+func (p *parser) openOverlay() {
+	p.ensureMeasure()
+	v := &model.Voice{}
+	p.meas.Voices = append(p.meas.Voices, v)
+	p.voice = v
+	// Each voice reads its own accidentals from the key again: a sharp in
+	// the upper line does not alter the lower one.
+	p.accidentals = map[accKey]int{}
+}
+
 func (p *parser) add(e model.Element) {
 	p.elements++
 	p.ensureMeasure()
@@ -1258,18 +1299,15 @@ func (p *parser) music(line string) error {
 			// be absurd.
 			sc.next()
 		case c == '&':
-			// A voice overlay: what follows sounds over the bar just written,
-			// as a second voice. gscore has no second voice inside a measure
-			// yet, so the overlay is skipped up to the next barline — the one
-			// voice that is read is better than the whole book refused.
+			// A voice overlay: what follows sounds over the bar just
+			// written, as a second line of music on the same staff. This
+			// used to be skipped to the next barline, because a measure
+			// held one voice and there was nowhere to put a second; it
+			// holds as many as the music has now, so the overlay opens one
+			// and the notes after it go there.
 			sc.next()
-			skipped := 0
-			for !sc.eof() && sc.peek() != '|' {
-				sc.next()
-				skipped++
-			}
+			p.openOverlay()
 			p.pending = model.Marks{}
-			p.note(fmt.Sprintf("dropped an overlaid second voice of %d characters", skipped))
 		case c == '\'' || c == ',':
 			// An octave mark written before its note instead of after it.
 			// "'dd/d/" is how John Moore's second book raises an octave, and
@@ -1344,6 +1382,25 @@ var decorationDynamics = map[string]model.Dynamic{
 	"f": model.Forte, "ff": model.FF, "fff": model.FFF, "ffff": model.FFFF,
 	"sfz": model.SForzando, "sf": model.SForzato, "fp": model.FortePiano,
 	"rfz": model.Rinforzando, "niente": model.Niente,
+}
+
+// decorationHairpins maps the swell decorations onto the hairpin they open
+// or close. ABC writes the two ends separately — !crescendo(! where it
+// begins and !crescendo)! where it ends.
+var decorationHairpins = map[string]struct {
+	kind  model.HairpinKind
+	start bool
+}{
+	"crescendo(":   {model.Crescendo, true},
+	"crescendo)":   {model.Crescendo, false},
+	"<(":           {model.Crescendo, true},
+	"<)":           {model.Crescendo, false},
+	"diminuendo(":  {model.Diminuendo, true},
+	"diminuendo)":  {model.Diminuendo, false},
+	">(":           {model.Diminuendo, true},
+	">)":           {model.Diminuendo, false},
+	"decrescendo(": {model.Diminuendo, true},
+	"decrescendo)": {model.Diminuendo, false},
 }
 
 // decorationStems maps the stem directives written as decorations.
@@ -1564,6 +1621,16 @@ func (p *parser) applyDecoration(name string) {
 	}
 	if st, ok := decorationStems[name]; ok {
 		p.pending.Stem = st
+		return
+	}
+	// A swell is a thing with two ends, not a picture of one. Read as a
+	// symbol it became a crescendo sign printed over a single note, twice,
+	// instead of one hairpin opening here and closing there — and gscore
+	// could not play it, because a symbol sounds like nothing.
+	if h, ok := decorationHairpins[name]; ok {
+		p.pending.Hairpin = &model.Hairpin{
+			Kind: h.kind, Start: h.start, Stop: !h.start,
+		}
 		return
 	}
 	symbol := name
@@ -2096,6 +2163,12 @@ func (p *parser) finish() (*model.Score, error) {
 	}
 
 	s := &model.Score{Parts: p.parts}
+	// Only groups that name staves the file actually turned out to have.
+	for _, g := range p.groups {
+		if g.Last < len(p.parts) && g.Last > g.First {
+			s.Groups = append(s.Groups, g)
+		}
+	}
 	if len(p.titles) > 0 {
 		s.Identity.Title = p.titles[0]
 	}
@@ -2110,4 +2183,60 @@ func (p *parser) finish() (*model.Score, error) {
 		s.Tempo = model.Tempo{BPM: p.tempoBPM, Unit: p.tempoUnit, Text: p.tempoText}
 	}
 	return s, nil
+}
+
+// staffGrouping reads %%score, which says how the staves stand together.
+//
+//	%%score 1 {2 3}
+//
+// One stave on its own, then two braced as a piano. Square brackets are a
+// bracket rather than a brace, which is how a section of an orchestra is
+// joined. Without this a piano comes back as two unrelated staves: the music
+// is right and the page is not.
+func (p *parser) staffGrouping(line string) {
+	if i := strings.IndexByte(line, ' '); i >= 0 {
+		line = line[i+1:]
+	} else {
+		return
+	}
+	// Voice ids in the order they are named, so a group can be turned into
+	// the staff numbers gscore uses once every voice is known.
+	order := 0
+	var symbol model.GroupSymbol = model.GroupBrace
+	for i := 0; i < len(line); i++ {
+		switch c := line[i]; {
+		case c == '{' || c == '[':
+			p.groupOpen = append(p.groupOpen, order)
+			symbol = model.GroupBrace
+			if c == '[' {
+				symbol = model.GroupBracket
+			}
+			p.groupSymbol = append(p.groupSymbol, symbol)
+		case c == '}' || c == ']':
+			if len(p.groupOpen) == 0 {
+				continue
+			}
+			from := p.groupOpen[len(p.groupOpen)-1]
+			sym := p.groupSymbol[len(p.groupSymbol)-1]
+			p.groupOpen = p.groupOpen[:len(p.groupOpen)-1]
+			p.groupSymbol = p.groupSymbol[:len(p.groupSymbol)-1]
+			if order-1 > from {
+				p.groups = append(p.groups, model.StaffGroup{
+					First: from, Last: order - 1, Symbol: sym, Barlines: true,
+				})
+			}
+		case c == ' ' || c == '|' || c == '*':
+			// Separators and the bar-through marker, which gscore decides
+			// for itself from the group.
+		default:
+			// A voice id: read it whole and count it as one staff.
+			j := i
+			for j < len(line) && line[j] != ' ' && line[j] != '{' && line[j] != '}' &&
+				line[j] != '[' && line[j] != ']' && line[j] != '|' {
+				j++
+			}
+			order++
+			i = j - 1
+		}
+	}
 }

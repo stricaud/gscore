@@ -1351,3 +1351,39 @@ body.player.bare { grid-template-rows: 1fr; }
      content: without this the buttons sit behind the close and zoom. */
   padding-top: 2px;
 }
+
+/* The keyboard shortcuts window.
+   Wider than the rest, because it is a list of sixty things and a narrow
+   column of them is a scroll rather than a reference. */
+dialog.wide { max-width: 640px; }
+.shortcuts {
+  max-height: 60vh;
+  overflow-y: auto;
+  margin: 10px 0 0;
+}
+.shortcuts h3 {
+  margin: 14px 0 4px;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  color: var(--muted);
+}
+.shortcuts h3:first-child { margin-top: 0; }
+.shortcut {
+  display: grid;
+  /* The keys line up in a column of their own: a reference is read down the
+     keystrokes, not down the descriptions. */
+  grid-template-columns: 7.5em 1fr auto;
+  align-items: baseline;
+  gap: 8px;
+  padding: 3px 0;
+}
+.shortcut + .shortcut { border-top: 1px solid var(--line); }
+.shortcut kbd { justify-self: start; }
+.shortcut .linklike { opacity: 0; font-size: 12px; }
+.shortcut:hover .linklike, .shortcut.catching .linklike { opacity: 1; }
+/* A binding whose keys another one has taken over. It is still in the
+   program, so it is still listed; showing it as live would be a lie. */
+.shortcut.shadowed span { color: var(--muted); }
+.shortcut.shadowed kbd { opacity: .45; text-decoration: line-through; }
+.shortcut.catching kbd { background: var(--accent); color: #fff; }

@@ -139,12 +139,12 @@ async function paletteAction(item) {
   }
 
   if (item.apply === "dot") {
-    // The dot is part of how long the next note is, so it belongs to the
-    // value held rather than being a mark applied afterwards. Pressing it
-    // again takes it off.
-    state.tool.dots = state.tool.dots > 0 ? 0 : 1;
-    markPaletteTool((label) => label === currentToolLabel());
-    status(durationName(state.tool.duration, state.tool.dots));
+    // The same dot the full stop types: with something picked up it dots
+    // that, and with nothing picked up it belongs to the value being held
+    // for the next note. The button used to do only the second of those, so
+    // selecting a rest and pressing the dot changed what the next note
+    // would be and left the rest alone.
+    await dotSelection();
     return;
   }
   // An ending is a bracket over whole bars, so it acts on the measure the
@@ -484,10 +484,10 @@ async function action(name) {
 
     case "acc-sharp": await setAccidental("sharp", "Sharp"); break;
     case "acc-flat": await setAccidental("flat", "Flat"); break;
+    case "shortcuts": await shortcutsDialog(); break;
     case "acc-natural": await setAccidental("natural", "Natural"); break;
     case "acc-dsharp": await setAccidental("double sharp", "Double sharp"); break;
     case "acc-dflat": await setAccidental("double flat", "Double flat"); break;
-    case "acc-none": await setAccidental("none", "None"); break;
 
     case "hairpin-cresc": await setHairpin("crescendo", "Crescendo"); break;
     case "hairpin-dim": await setHairpin("diminuendo", "Diminuendo"); break;
@@ -2431,6 +2431,49 @@ function extendSelection(dir) {
   }
 }
 
+// slideSelection moves the selection itself along the music, keeping its size.
+//
+// The left and right arrows with a passage in hand. Shift with them grows the
+// selection by a note; plain, they carry the whole of it one note further on,
+// so a run of four stays a run of four. The notes are not touched — what moves
+// is which notes are picked up.
+//
+// Both ends move together, so the far end runs off the end of the music
+// before the near end does: when it will not fit the selection stays where it
+// is rather than quietly getting shorter.
+function slideSelection(dir) {
+  const run = orderedSelection();
+  if (!run.length) return;
+
+  const moved = [];
+  for (const m of run) {
+    const next = elementAlong(m, dir);
+    if (!next) {
+      status(dir > 0 ? "That is the end of the music" : "That is the beginning");
+      return;
+    }
+    const hit = state.hits.find(
+      (h) => h.part === next.part && h.measure === next.measure);
+    const el = hit && (hit.elements || []).find((e) => e.index === next.index);
+    if (!el) return;
+    moved.push({ part: next.part, measure: next.measure, index: next.index, ref: el.ref });
+  }
+
+  state.multi = moved;
+  const f = moved[0];
+  const l = moved[moved.length - 1];
+  state.selection = {
+    part: f.part, measure: f.measure, at: f.index + 1, step: 0, ref: f.ref,
+    replace: true,
+  };
+  // The pinned end and the moving end travel with it, so shift with an arrow
+  // after sliding still grows the selection from the end it was growing from.
+  state.anchor = { part: f.part, measure: f.measure, index: f.index };
+  state.focus = { part: l.part, measure: l.measure, index: l.index };
+  markSelection();
+  status(moved.length === 1 ? "1 selected" : `${moved.length} selected`);
+}
+
 // elementAlong is the element one step either side of this one, crossing
 // barlines as it goes: the music is a line, not a series of boxes.
 function elementAlong(at, dir) {
@@ -2486,6 +2529,13 @@ function selectRange(from, to) {
       part, measure: first.measure, at: first.index + 1, step: 0, ref: first.ref,
     };
   }
+  // Which end is pinned and which end moves, kept as they were asked for
+  // rather than as they sort. Shift with an arrow carries on from the end
+  // the selection was dragged to; without this it started again from the
+  // first note, and the first shift-arrow after a selection shrank it to
+  // two notes instead of growing it by one.
+  state.anchor = { part, measure: from.measure, index: from.index };
+  state.focus = { part, measure: to.measure, index: to.index };
   markSelection();
   status(state.multi.length === 1
     ? "1 selected"
@@ -2784,6 +2834,29 @@ async function deleteSelected() {
     return;
   }
   const sel = state.selection;
+
+  // A whole bar picked up: everything in it goes and the empty bar stays.
+  // A bar has no element of its own to point at, so this used to fall
+  // through to "nothing selected to delete" — which is the one thing
+  // somebody who has just clicked a bar knows to be untrue.
+  if (sel && sel.bar) {
+    const p = new URLSearchParams({
+      part: String(sel.part), measure: String(sel.measure),
+    });
+    const res = await fetch("/api/clearmeasure?" + p.toString(),
+                            { method: "POST" });
+    if (!res.ok) {
+      status("Could not empty it: " + (await res.text()).trim());
+      return;
+    }
+    const d = await res.json().catch(() => ({}));
+    await refreshScore();
+    status(d.removed
+      ? `Measure ${sel.measure + 1} emptied — ${d.removed} removed`
+      : `Measure ${sel.measure + 1} was already empty`);
+    return;
+  }
+
   if (!sel || sel.at <= 0) {
     status("Nothing selected to delete");
     return;
@@ -2853,6 +2926,34 @@ function markSelection() {
   // itself, under the staff, not round the note it is written on. Seeing a
   // notehead light up after clicking an ff would say the wrong thing about
   // what Backspace is going to take away.
+  // A whole bar picked up: the box goes round the bar.
+  //
+  // Nothing was drawn at all before, which is why the gesture was a guess.
+  // A barline has a bar on either side of it, so shift-clicking one and
+  // seeing no change left nothing to say which of the two had been picked
+  // up — and then Delete emptied whichever it was. Shown, there is nothing
+  // to wonder about.
+  if (sel.bar) {
+    const hit = state.hits.find(
+      (h) => h.part === sel.part && h.measure === sel.measure);
+    if (hit) {
+      let top = hit.staffTop - 1.6;
+      let bottom = hit.staffTop + staffHeightOf(hit) + 1.6;
+      // Round the music, not only round the staff: a run climbing above the
+      // staff is as much a part of the bar as the notes inside it.
+      for (const el of hit.elements || []) {
+        const a = Math.min(el.y, el.y2 ?? el.y) - 1.4;
+        const b = Math.max(el.y, el.y2 ?? el.y) + 1.4;
+        if (a < top) top = a;
+        if (b > bottom) bottom = b;
+      }
+      svg.insertBefore(
+        selectionRect(hit.x0, top, hit.x1 - hit.x0, bottom - top, z),
+        svg.firstChild);
+      return;
+    }
+  }
+
   if (sel.hairpin) {
     const h = sel.hairpin;
     svg.insertBefore(
@@ -3097,6 +3198,11 @@ function hasSelection() {
   return !!(sel && sel.ref !== null && sel.ref !== undefined);
 }
 
+// cycleAccidental moves what is picked up one step sharper or flatter.
+const cycleAccidental = (dir) =>
+  mark("accidental", { cycle: dir > 0 ? "up" : "down" },
+       dir > 0 ? "Sharpened" : "Flattened");
+
 const setAccidental = (acc, said) =>
   mark("accidental", { accidental: acc },
        acc === "none" ? "Accidental removed" : "Written as " + said.toLowerCase());
@@ -3200,11 +3306,73 @@ const setTremolo = (strokes, buzz, pair = false) =>
             : buzz ? "Buzz roll" : strokes === 0 ? "Tremolo removed"
             : "Tremolo — " + tremoloNames[strokes]);
 
+// shiftPassage moves what is picked up one place along the music.
+//
+// Ctrl or Cmd with the left and right arrows, where the plain ones move the
+// selection and leave the notes where they are. Making a passage into a
+// tuplet, or shortening it, leaves room in the bar that was not there before,
+// and walking the following phrase back into that room is the next thing
+// anybody wants.
+//
+// The notes move, so the places the selection named them by are gone by the
+// time this returns; the server says where each of them ended up and the
+// selection follows them there, the way changing a length does.
+async function shiftPassage(dir) {
+  const sel = state.selection;
+  if (!sel) return;
+  const run = state.multi.length
+    ? orderedSelection()
+    : [{ part: sel.part, measure: sel.measure, index: Math.max(0, (sel.at || 1) - 1) }];
+
+  const p = new URLSearchParams({
+    dir: String(dir),
+    sel: run.map((m) => `${m.part}:${m.measure}:${m.index}`).join(","),
+  });
+  const res = await fetch("/api/shift?" + p.toString(), { method: "POST" });
+  if (!res.ok) {
+    status((await res.text()).trim());
+    return;
+  }
+  const d = await res.json().catch(() => ({}));
+  await refreshScore();
+
+  if (Array.isArray(d.now) && d.now.length) {
+    const was = state.multi.length;
+    state.multi = d.now.map((at) => {
+      const [part, measure, index] = at.split(":").map(Number);
+      const hit = state.hits.find((h) => h.part === part && h.measure === measure);
+      const el = hit && (hit.elements || []).find((e) => e.index === index);
+      return { part, measure, index, ref: el ? el.ref : null };
+    }).filter((m) => m.ref !== null);
+    const f = state.multi[0];
+    const l = state.multi[state.multi.length - 1];
+    if (f) {
+      state.selection = {
+        part: f.part, measure: f.measure, at: f.index + 1, step: 0, ref: f.ref,
+      };
+      // Still the same passage, so shift with an arrow still grows it from
+      // the end it was growing from before.
+      state.anchor = { part: f.part, measure: f.measure, index: f.index };
+      state.focus = { part: l.part, measure: l.measure, index: l.index };
+    }
+    // One note moved on its own stays one note, not a passage of one.
+    if (!was) state.multi = [];
+  }
+  markSelection();
+  status(dir > 0 ? "Moved later" : "Moved earlier");
+}
+
 // setTuplet turns the note at the cursor into a group played in its time.
 //
 // It is not a mark but a change to the music, so it has its own call: the
 // one note becomes n of them, the first keeping the pitch and the rest
 // coming in as rests to be written over.
+//
+// With several notes picked up it works the other way: those notes are the
+// group. Nothing is thrown away — they keep their noteheads and are read as
+// n in the time of normal, and the time the group gives back becomes a rest
+// after it. Which is what you want after writing a passage out plain and
+// then noticing it was a triplet.
 const tupletNames = {
   2: "Duplet", 3: "Triplet", 4: "Quadruplet", 5: "Quintuplet",
   6: "Sextuplet", 7: "Septuplet", 8: "Octuplet", 9: "Nonuplet",
@@ -3220,6 +3388,11 @@ async function setTuplet(n) {
     part: String(sel.part), measure: String(sel.measure),
     at: String(sel.at), n: String(n),
   });
+  if (state.multi.length > 1) {
+    // In order, because the group opens on the first and closes on the last.
+    p.set("sel", orderedSelection()
+      .map((m) => `${m.part}:${m.measure}:${m.index}`).join(","));
+  }
   const res = await fetch("/api/tuplet?" + p.toString(), { method: "POST" });
   if (!res.ok) {
     status("Could not do that: " + (await res.text()).trim());
@@ -3237,7 +3410,17 @@ async function setTuplet(n) {
   // Say the ratio as well as the name: asked for four on a plain quarter it
   // is four in the time of two, not the four-in-three a dotted beat gets,
   // and the figure printed over the notes says so.
-  status(`${tupletNames[n] || n + "-tuplet"} — ${d.tuplet} in the time of ${d.normal}`);
+  const name = tupletNames[n] || n + "-tuplet";
+  let said = `${name} — ${d.tuplet} in the time of ${d.normal}`;
+  if (d.kept > 1) {
+    // What became of the notes, since the bar now has room in it that was
+    // not there before and the next thing to do is usually to move
+    // something into it.
+    said += `, ${d.kept} note${d.kept === 1 ? "" : "s"} kept`;
+    if (d.members > d.kept) said += ` and ${d.members - d.kept} to write`;
+    if (d.freed && d.freed !== "0/1") said += `; ${d.freed} freed as a rest`;
+  }
+  status(said);
 }
 
 // setSelectionDuration rewrites the length of the notes that are picked up,
@@ -6230,10 +6413,30 @@ function setupMarquee() {
     startHit = hit;
     startX = x;
 
+    // As tall as the staff's music, not a fixed band around the staff.
+    //
+    // Seven spaces covers a staff and a ledger line either side, which is
+    // most music and not this: a cadenza running four or five spaces above
+    // the staff was selected correctly — the drag picks notes by where they
+    // are along the bar, not by height — while the band drawn under the
+    // pointer stopped short of them. So it looked as though the notes were
+    // being missed, and the natural response is to drag again more
+    // carefully, which changes nothing.
+    let top = hit.staffTop - 1.6;
+    let bottom = hit.staffTop + staffHeightOf(hit) + 1.6;
+    for (const h of state.hits) {
+      if (h.part !== hit.part || h.staffTop !== hit.staffTop) continue;
+      for (const el of h.elements || []) {
+        const a = Math.min(el.y, el.y2 ?? el.y) - 1.4;
+        const b = Math.max(el.y, el.y2 ?? el.y) + 1.4;
+        if (a < top) top = a;
+        if (b > bottom) bottom = b;
+      }
+    }
     band = document.createElementNS("http://www.w3.org/2000/svg", "rect");
     band.setAttribute("class", "marquee");
-    band.setAttribute("y", String((hit.staffTop - 1.6) * state.zoom));
-    band.setAttribute("height", String(7.2 * state.zoom));
+    band.setAttribute("y", String(top * state.zoom));
+    band.setAttribute("height", String((bottom - top) * state.zoom));
     band.setAttribute("rx", String(0.45 * state.zoom));
     svg.appendChild(band);
     e.preventDefault();
@@ -6281,8 +6484,12 @@ function setupMarquee() {
       state.selection = {
         part: f.part, measure: f.measure, at: f.index + 1, step: 0, ref: f.ref,
       };
+      // The far end of the drag is where shift with an arrow carries on
+      // from, so a dragged selection grows the way a dragged one in a line
+      // of text does.
+      const l = state.multi[state.multi.length - 1];
       state.anchor = { part: f.part, measure: f.measure, index: f.index };
-      state.focus = null;
+      state.focus = { part: l.part, measure: l.measure, index: l.index };
     }
     markSelection();
     status(state.multi.length
@@ -6454,94 +6661,468 @@ function setupZoomGestures() {
 }
 let zoomAccum = 0;
 
+/* ---------- the keyboard ---------- */
+
+// Every key the editor answers to, in one table.
+//
+// It was a switch, and a switch is a fine way to write sixty bindings and a
+// hopeless way to read them: nothing could list them for the person using
+// the program, nothing could tell you two of them had quietly ended up on
+// the same key, and nothing could let anybody change one. The keystroke is
+// data now, and the switch is gone.
+//
+// A chord is written the way it is read, with the modifiers in a fixed order:
+// Mod for ctrl-or-cmd — the same binding on both, because it is the same
+// finger — then Alt, then Shift, then the key. Shift is only named for keys
+// that do not print a character, since the character already says it: the
+// tie is "T" and not "Shift+t".
+//
+// group is the heading the shortcuts window lists it under, and label is the
+// line it reads. Both are for the person, so they say what the key does and
+// not what the function is called.
+const KEY_BINDINGS = [
+  // Writing notes.
+  { id: "write-note", keys: "Space", group: "Writing",
+    label: "Write the note the palette is showing",
+    run: () => void insertAtSelection(false) },
+  { id: "write-rest", keys: "Enter", group: "Writing",
+    label: "Write a rest of the same length",
+    run: () => void insertAtSelection(true) },
+  { id: "chord-note", keys: "Mod+Space", group: "Writing",
+    label: "Add another notehead to the note just written",
+    run: () => void chordAtCursor() },
+  { id: "split-measure", menu: "split-measure", keys: "Tab", group: "Writing",
+    label: "End the bar here", run: () => action("split-measure") },
+  { id: "add-measure", menu: "add-measure", keys: "m", group: "Writing",
+    label: "Add a bar at the end", run: () => action("add-measure") },
+  { id: "delete", menu: "delete", keys: "Backspace", group: "Writing",
+    label: "Delete what is picked up", run: () => action("delete") },
+  { id: "writing-help", menu: "note-input", keys: "i", group: "Writing",
+    label: "How to write and how to select",
+    run: () => status("Click the staff to write. Hold shift to select instead.") },
+
+  // How long the next note is. The figures run down the values, with the
+  // dotted ones beside the plain ones they lengthen.
+  { id: "dur-whole", keys: "1", group: "Note lengths",
+    label: "Whole note", run: () => pickDuration("whole", 0) },
+  { id: "dur-half", keys: "2", group: "Note lengths",
+    label: "Half note", run: () => pickDuration("half", 0) },
+  { id: "dur-half-dot", keys: "3", group: "Note lengths",
+    label: "Dotted half", run: () => pickDuration("half", 1) },
+  { id: "dur-quarter", keys: "4", group: "Note lengths",
+    label: "Quarter note", run: () => pickDuration("quarter", 0) },
+  { id: "dur-quarter-dot", keys: "5", group: "Note lengths",
+    label: "Dotted quarter", run: () => pickDuration("quarter", 1) },
+  { id: "dur-eighth", keys: "8", group: "Note lengths",
+    label: "Eighth note", run: () => pickDuration("eighth", 0) },
+  { id: "dur-sixteenth", keys: "9", group: "Note lengths",
+    label: "Sixteenth note", run: () => pickDuration("sixteenth", 0) },
+  { id: "dur-32nd", keys: "0", group: "Note lengths",
+    label: "Thirty-second note", run: () => pickDuration("32nd", 0) },
+  { id: "dot", keys: ".", group: "Note lengths",
+    label: "Dot what is picked up — again for two dots, three, then none",
+    run: () => void dotSelection() },
+
+  // Accidentals, on the keys that mean raise and lower everywhere else.
+  { id: "sharpen", keys: "+", group: "Accidentals",
+    label: "Sharpen — again for a double sharp, again for none",
+    run: () => void cycleAccidental(1) },
+  { id: "flatten", keys: "-", group: "Accidentals",
+    label: "Flatten — again for a double flat, again for none",
+    run: () => void cycleAccidental(-1) },
+  { id: "accidental-none", keys: "=", group: "Accidentals",
+    label: "Take the accidental off — or tie, with nothing picked up",
+    run: () => {
+      // The key is free when nothing is picked up, and tying two notes is
+      // what it has always done here.
+      if (hasSelection()) void setAccidental("none", "No accidental");
+      else action("tie");
+    } },
+
+  // Marks on the notes.
+  { id: "tie", menu: "tie", keys: "T", group: "Marks",
+    label: "Tie", run: () => action("tie") },
+  { id: "slur", menu: "slur", keys: "S", group: "Marks",
+    label: "Slur", run: () => action("slur") },
+  { id: "beam", menu: "beam-join", keys: "b", group: "Marks",
+    label: "Beam the selected notes together", run: () => action("beam-join") },
+  { id: "stem-up", menu: "stem-up", keys: "u", group: "Marks",
+    label: "Stem up", run: () => action("stem-up") },
+  { id: "stem-down", menu: "stem-down", keys: "d", group: "Marks",
+    label: "Stem down", run: () => action("stem-down") },
+  { id: "repeat-bar", menu: "repeat-bar", keys: "r", group: "Marks",
+    label: "Repeat the bar before", run: () => action("repeat-bar") },
+  { id: "insert-text", menu: "insert-text", keys: "t", group: "Marks",
+    label: "Write a word over the music", run: () => action("insert-text") },
+  { id: "insert-chord", menu: "insert-chord", keys: "c", group: "Marks",
+    label: "Chord symbol", run: () => action("insert-chord") },
+  { id: "set-lyrics", menu: "set-lyrics", keys: "l", group: "Marks",
+    label: "Lyrics", run: () => action("set-lyrics") },
+  { id: "fingering", keys: "F2", group: "Marks",
+    label: "Show the fingering", run: () => toggleFingering() },
+
+  // Tuplets, where every other notation program puts them. Written out one
+  // by one rather than worked out from a list, because this table is read as
+  // often as it is run: a row nobody can grep for is a row nobody can check.
+  { id: "tuplet-1", keys: "Mod+1", group: "Tuplets",
+    label: "No tuplet \u2014 the group back to one note",
+    run: () => void setTuplet(1) },
+  { id: "tuplet-2", keys: "Mod+2", group: "Tuplets",
+    label: "Duplet \u2014 on a selection, those notes become the group",
+    run: () => void setTuplet(2) },
+  { id: "tuplet-3", keys: "Mod+3", group: "Tuplets",
+    label: "Triplet \u2014 on a selection, those notes become the group",
+    run: () => void setTuplet(3) },
+  { id: "tuplet-4", keys: "Mod+4", group: "Tuplets",
+    label: "Quadruplet \u2014 on a selection, those notes become the group",
+    run: () => void setTuplet(4) },
+  { id: "tuplet-5", keys: "Mod+5", group: "Tuplets",
+    label: "Quintuplet \u2014 on a selection, those notes become the group",
+    run: () => void setTuplet(5) },
+  { id: "tuplet-6", keys: "Mod+6", group: "Tuplets",
+    label: "Sextuplet \u2014 on a selection, those notes become the group",
+    run: () => void setTuplet(6) },
+  { id: "tuplet-7", keys: "Mod+7", group: "Tuplets",
+    label: "Septuplet \u2014 on a selection, those notes become the group",
+    run: () => void setTuplet(7) },
+  { id: "tuplet-8", keys: "Mod+8", group: "Tuplets",
+    label: "Octuplet \u2014 on a selection, those notes become the group",
+    run: () => void setTuplet(8) },
+  { id: "tuplet-9", keys: "Mod+9", group: "Tuplets",
+    label: "Nonuplet \u2014 on a selection, those notes become the group",
+    run: () => void setTuplet(9) },
+
+  // Moving about, and what is picked up.
+  { id: "cursor-left", keys: "ArrowLeft", group: "Selecting and moving",
+    label: "Back one note — or move the selection back",
+    run: () => { if (state.multi.length) slideSelection(-1); else moveCursorBy(-1); } },
+  { id: "cursor-right", keys: "ArrowRight", group: "Selecting and moving",
+    label: "On one note — or move the selection on",
+    run: () => { if (state.multi.length) slideSelection(1); else moveCursorBy(1); } },
+  { id: "extend-left", keys: "Shift+ArrowLeft", group: "Selecting and moving",
+    label: "Take the selection one note further back",
+    run: () => extendSelection(-1) },
+  { id: "extend-right", keys: "Shift+ArrowRight", group: "Selecting and moving",
+    label: "Take the selection one note further on",
+    run: () => extendSelection(1) },
+  { id: "cursor-up", menu: "pitch-up", keys: "ArrowUp", group: "Selecting and moving",
+    label: "Up a step — or move the selected notes up",
+    run: () => { if (state.multi.length) void nudge(1); else moveCursorPitch(1); } },
+  { id: "cursor-down", menu: "pitch-down", keys: "ArrowDown", group: "Selecting and moving",
+    label: "Down a step — or move the selected notes down",
+    run: () => { if (state.multi.length) void nudge(-1); else moveCursorPitch(-1); } },
+  { id: "cursor-up-octave", menu: "octave-up", keys: "Shift+ArrowUp", group: "Selecting and moving",
+    label: "Up an octave",
+    run: () => { if (state.multi.length) void nudge(7); else moveCursorPitch(7); } },
+  { id: "cursor-down-octave", menu: "octave-down", keys: "Shift+ArrowDown", group: "Selecting and moving",
+    label: "Down an octave",
+    run: () => { if (state.multi.length) void nudge(-7); else moveCursorPitch(-7); } },
+  { id: "nudge-up", keys: "Alt+ArrowUp", group: "Selecting and moving",
+    label: "Move the note up a step", run: () => void nudge(1) },
+  { id: "nudge-down", keys: "Alt+ArrowDown", group: "Selecting and moving",
+    label: "Move the note down a step", run: () => void nudge(-1) },
+  { id: "shift-earlier", keys: "Mod+ArrowLeft", group: "Selecting and moving",
+    label: "Move the notes themselves earlier", run: () => void shiftPassage(-1) },
+  { id: "shift-later", keys: "Mod+ArrowRight", group: "Selecting and moving",
+    label: "Move the notes themselves later", run: () => void shiftPassage(1) },
+  { id: "clear-selection", keys: "Escape", group: "Selecting and moving",
+    label: "Stop playing, or let go of the selection",
+    run: () => { if (state.playing || state.pausedAt !== null) stop(); else clearSelection(); } },
+  { id: "jump", menu: "jump", keys: "j", group: "Selecting and moving",
+    label: "Go to a bar", run: () => action("jump") },
+  { id: "jump-mod", keys: "Mod+g", group: "Selecting and moving",
+    label: "Go to a bar", run: () => void jumpToMeasure() },
+
+  // The clipboard and the history, where every other program puts them.
+  { id: "copy", menu: "copy", keys: "Mod+c", group: "Editing",
+    label: "Copy", run: () => void copySelection() },
+  { id: "cut", menu: "cut", keys: "Mod+x", group: "Editing",
+    label: "Cut", run: () => void cutSelection() },
+  { id: "paste", menu: "paste", keys: "Mod+v", group: "Editing",
+    label: "Paste", run: () => void pasteClipboard() },
+  { id: "undo", menu: "undo", keys: "Mod+z", group: "Editing",
+    label: "Undo", run: () => void stepHistory("undo") },
+  { id: "redo", menu: "redo", keys: "Mod+Z", group: "Editing",
+    label: "Redo", run: () => void stepHistory("redo") },
+  { id: "redo-y", keys: "Mod+y", group: "Editing",
+    label: "Redo", run: () => void stepHistory("redo") },
+
+  // Playing it.
+  { id: "play", keys: "Shift+Space", group: "Playing",
+    label: "Play, pause, and carry on from where it paused",
+    run: () => void togglePlay() },
+  { id: "play-from-start", keys: "Mod+Shift+Space", group: "Playing",
+    label: "Play from the beginning", run: () => void playFromStart() },
+
+  // The file, and the window.
+  { id: "new", menu: "new", keys: "n", group: "The file",
+    label: "New score", run: () => action("new") },
+  { id: "open", menu: "open", keys: "o", group: "The file",
+    label: "Open", run: () => action("open") },
+  { id: "save", menu: "save", keys: "s", group: "The file",
+    label: "Save", run: () => action("save") },
+  { id: "print", menu: "print", keys: "p", group: "The file",
+    label: "Print", run: () => action("print") },
+  { id: "save-pdf", menu: "save-pdf", keys: "P", group: "The file",
+    label: "Export as PDF", run: () => action("save-pdf") },
+  { id: "save-svg", menu: "save-svg", keys: "e", group: "The file",
+    label: "Export as SVG", run: () => action("save-svg") },
+  { id: "save-page", menu: "save-page", keys: "H", group: "The file",
+    label: "Export as a web page", run: () => action("save-page") },
+  { id: "fullscreen", keys: "f", group: "The window",
+    label: "Fill the screen", run: () => action("fullscreen") },
+  { id: "fullscreen-f11", keys: "F11", group: "The window",
+    label: "Fill the screen", run: () => action("fullscreen") },
+  { id: "zoom-in", keys: "Mod++", group: "The window",
+    label: "Bigger", run: () => setZoom(state.zoom + 1) },
+  { id: "zoom-in-equals", keys: "Mod+=", group: "The window",
+    label: "Bigger", run: () => setZoom(state.zoom + 1) },
+  { id: "zoom-out", keys: "Mod+-", group: "The window",
+    label: "Smaller", run: () => setZoom(state.zoom - 1) },
+  { id: "zoom-out-under", keys: "Mod+_", group: "The window",
+    label: "Smaller", run: () => setZoom(state.zoom - 1) },
+  { id: "zoom-reset", keys: "Mod+0", group: "The window",
+    label: "Back to the usual size", run: () => setZoom(8) },
+];
+
+// chordParts splits a keystroke into the modifiers and the key.
+//
+// Plus is both the separator and a key, so "Mod++" splits into three pieces
+// of which the last two are empty: the key is the plus that was lost between
+// them.
+function chordParts(chord) {
+  const parts = chord.split("+");
+  if (parts.length > 1 && parts[parts.length - 1] === "") {
+    return { mods: parts.slice(0, -2), key: "+" };
+  }
+  return { mods: parts.slice(0, -1), key: parts[parts.length - 1] };
+}
+
+// shortcutText is the keystroke as it should be read, which is not quite how
+// it is stored: Mod is a key with a different name on each platform, and the
+// space bar is not a space.
+function shortcutText(chord, compact) {
+  const mac = navigator.platform.startsWith("Mac");
+  const { mods, key } = chordParts(chord);
+  // A capital letter is shift and that letter, and reading it as the letter
+  // alone would have the tie look like a press of t.
+  const named = /^[A-Z]$/.test(key) && !mods.includes("Shift")
+    ? mods.concat("Shift") : mods;
+  // Keycaps are read in upper case whether or not shift is held — the key
+  // next to A is S, and what distinguishes Save from Slur is the arrow
+  // above, not the case of the letter.
+  const shown = named.map((m) => {
+    if (m === "Mod") return mac ? "\u2318" : "Ctrl";
+    if (m === "Alt") return mac ? "\u2325" : "Alt";
+    if (m === "Shift") return "\u21e7";
+    return m;
+  });
+  shown.push(((part) => {
+    if (/^[a-z]$/.test(part)) return part.toUpperCase();
+    switch (part) {
+      case "Space": return "Space";
+      case "ArrowLeft": return "\u2190";
+      case "ArrowRight": return "\u2192";
+      case "ArrowUp": return "\u2191";
+      case "ArrowDown": return "\u2193";
+      case "Enter": return "\u21b5";
+      case "Backspace": return "\u232b";
+      case "Escape": return "Esc";
+      case "Tab": return "\u21e5";
+    }
+    return part;
+  })(key));
+  return shown.join(compact ? "" : " ");
+}
+
+// syncMenuKeys writes the keys into the menus.
+//
+// The hints were in the markup, which was fine while the keys could not
+// change and is a promise the program cannot keep now that they can: a menu
+// still offering Ctrl+S after somebody moved Save is worse than no hint. The
+// dynamics and the hairpins keep theirs, because what is in their kbd is the
+// name of the marking and not a key at all.
+function syncMenuKeys() {
+  for (const b of KEY_BINDINGS) {
+    if (!b.menu) continue;
+    const el = document.querySelector(`[data-action="${b.menu}"] kbd`);
+    if (el) el.textContent = shortcutText(keyFor(b), true);
+  }
+}
+
+// shortcutsDialog lists every key, and lets one be changed.
+//
+// The list is built from the table rather than written out, so a binding
+// added to the program is a binding that shows up here. Nothing to keep in
+// step, which is the only reason this can be trusted to be complete.
+// redrawShortcuts is the open window's own draw, so that Reset all can take
+// effect in front of the person rather than after they close it.
+let redrawShortcuts = null;
+
+async function shortcutsDialog() {
+  const dlg = $("#shortcuts");
+  const body = $("#shortcuts-list");
+
+  const draw = () => {
+    const bound = boundKeys();
+    body.innerHTML = "";
+    const groups = [];
+    for (const b of KEY_BINDINGS) {
+      let g = groups.find((x) => x.name === b.group);
+      if (!g) groups.push(g = { name: b.group, rows: [] });
+      g.rows.push(b);
+    }
+    for (const g of groups) {
+      const h = document.createElement("h3");
+      h.textContent = g.name;
+      body.appendChild(h);
+      for (const b of g.rows) {
+        const chord = keyFor(b);
+        const row = document.createElement("div");
+        row.className = "shortcut";
+
+        const key = document.createElement("kbd");
+        key.textContent = shortcutText(chord);
+        // A binding another one has taken over is still listed, because it
+        // is still in the program; saying so is better than showing a key
+        // that does nothing.
+        if (bound.get(chord) !== b) {
+          row.classList.add("shadowed");
+          key.title = "Taken by " + bound.get(chord).label;
+        }
+        row.appendChild(key);
+
+        const what = document.createElement("span");
+        what.textContent = b.label;
+        row.appendChild(what);
+
+        const change = document.createElement("button");
+        change.type = "button";
+        change.className = "linklike";
+        change.textContent = (state.keys || {})[b.id] ? "Change \u00b7 reset" : "Change";
+        change.addEventListener("click", () => {
+          if ((state.keys || {})[b.id] && change.textContent.endsWith("reset")) {
+            // Two things on one button is one thing too many, so the second
+            // click is what it offers once there is something to reset.
+            delete state.keys[b.id];
+            void saveKeys();
+            draw();
+            return;
+          }
+          key.textContent = "Press a key\u2026";
+          row.classList.add("catching");
+          state.catchKey = (got) => {
+            row.classList.remove("catching");
+            if (got) {
+              state.keys = state.keys || {};
+              state.keys[b.id] = got;
+              void saveKeys();
+            }
+            draw();
+          };
+        });
+        row.appendChild(change);
+        body.appendChild(row);
+      }
+    }
+  };
+  redrawShortcuts = draw;
+  draw();
+
+  await new Promise((resolve) => {
+    const done = () => {
+      state.catchKey = null;
+      redrawShortcuts = null;
+      dlg.removeEventListener("close", done);
+      resolve();
+    };
+    dlg.addEventListener("close", done);
+    dlg.showModal();
+  });
+}
+
+// saveKeys keeps the changed bindings, and only the changed ones.
+async function saveKeys() {
+  syncMenuKeys();
+  try {
+    await fetch("/api/settings?keys=" +
+                encodeURIComponent(JSON.stringify(state.keys || {})),
+                { method: "POST" });
+  } catch (_) {
+    // Served without a disk behind it: the bindings hold for this session.
+  }
+}
+
+// resetKeys puts every binding back to the key it came with.
+async function resetKeys() {
+  state.keys = {};
+  await saveKeys();
+  status("Every key back to its default");
+}
+
+// chordOf is the keystroke, written the way the table writes it.
+function chordOf(e) {
+  const parts = [];
+  if (e.ctrlKey || e.metaKey) parts.push("Mod");
+  if (e.altKey) parts.push("Alt");
+  let key = e.key === " " ? "Space" : e.key;
+  // Shift is in the character for anything a keyboard prints, so naming it
+  // as well would make the tie "Shift+T" and match nothing.
+  if (e.shiftKey && key.length > 1) parts.push("Shift");
+  parts.push(key);
+  return parts.join("+");
+}
+
+// keyFor is the keystroke a command is on, the one that was asked for or the
+// one it came with.
+function keyFor(b) {
+  const mine = (state.keys || {})[b.id];
+  return mine || b.keys;
+}
+
+// boundKeys is what each keystroke does, built fresh so that changing one
+// takes effect without reloading.
+//
+// Later wins, so a keystroke somebody has asked for beats a default on the
+// same keys — otherwise taking Mod+c for something else would leave Copy
+// still answering to it and the new binding dead.
+function boundKeys() {
+  const out = new Map();
+  for (const b of KEY_BINDINGS) {
+    if (!(b.id in (state.keys || {}))) out.set(b.keys, b);
+  }
+  for (const b of KEY_BINDINGS) {
+    const mine = (state.keys || {})[b.id];
+    if (mine) out.set(mine, b);
+  }
+  return out;
+}
+
 function setupKeys() {
   document.addEventListener("keydown", (e) => {
     if (e.target.matches("input, textarea")) return;
+
+    // Catching a keystroke for the shortcuts window, which is the one thing
+    // that wants the key itself rather than what it does.
+    //
+    // Before the dialog guard below, and not after it: the window doing the
+    // asking is a dialog, so a check for an open one turns every key away
+    // and nothing could ever be caught.
+    if (state.catchKey) {
+      e.preventDefault();
+      // The modifiers on their own are not a keystroke; they are what is
+      // being held while one is pressed.
+      if (["Shift", "Control", "Alt", "Meta"].includes(e.key)) return;
+      const catcher = state.catchKey;
+      state.catchKey = null;
+      catcher(e.key === "Escape" ? null : chordOf(e));
+      return;
+    }
+
     // A dialog has its own keys: enter means its OK button and space means
     // whatever has focus. Writing a note behind an open dialog would be a
     // keystroke landing in two places at once.
     if (document.querySelector("dialog[open]")) return;
-
-    // Ctrl/Cmd with plus, minus or zero zooms; with C and V it is the
-    // clipboard, where every other program puts it.
-    if (e.ctrlKey || e.metaKey) {
-      switch (e.key) {
-        case "+": case "=":
-          e.preventDefault(); setZoom(state.zoom + 1); return;
-        case "-": case "_":
-          e.preventDefault(); setZoom(state.zoom - 1); return;
-        case "0":
-          e.preventDefault(); setZoom(8); return;
-        case "1": case "2": case "3": case "4": case "5":
-        case "6": case "7": case "8": case "9":
-          // Ctrl with a number is the tuplet of that many, which is where
-          // every other notation program puts it. Ctrl+1 is the way back:
-          // one note, as it was.
-          e.preventDefault(); void setTuplet(Number(e.key)); return;
-        case "g": case "G":
-          // Where every other program puts "go to", for anybody who reaches
-          // for it before reading the menu.
-          e.preventDefault(); void jumpToMeasure(); return;
-        case "c": case "C":
-          e.preventDefault(); void copySelection(); return;
-        case "x": case "X":
-          e.preventDefault(); void cutSelection(); return;
-        case "v": case "V":
-          e.preventDefault(); void pasteClipboard(); return;
-        case "z":
-          e.preventDefault(); void stepHistory("undo"); return;
-        case "Z":
-          // Shift with Z: the usual redo everywhere but Windows, which also
-          // has Ctrl+Y, handled below.
-          e.preventDefault(); void stepHistory("redo"); return;
-        case "y": case "Y":
-          e.preventDefault(); void stepHistory("redo"); return;
-        case " ":
-          // Another notehead on the note just written, at the cursor's
-          // pitch: a chord is built one note at a time, from the bottom up,
-          // and this is the key that adds the next one.
-          e.preventDefault();
-          if (e.shiftKey) void playFromStart();
-          else void chordAtCursor();
-          return;
-      }
-      return;
-    }
-
-    // The arrow keys drive the cursor: left and right along the music, up
-    // and down the staff, a whole octave with shift. Alt with the same
-    // arrows moves notes that are already written.
-    //
-    // With a passage picked up they move the notes without the alt. There is
-    // nothing to navigate with a dozen notes selected — the cursor is a
-    // place to write the next one and a selection is not about writing the
-    // next one — and moving a phrase up a step is the obvious thing to want
-    // from the arrows while it is in hand. One note picked up still steers
-    // the cursor, because that is how you walk along the music after
-    // clicking something.
-    const passage = state.multi.length > 0;
-    switch (e.key) {
-      case "ArrowUp":
-        e.preventDefault();
-        if (e.altKey || passage) void nudge(e.shiftKey ? 7 : 1);
-        else moveCursorPitch(e.shiftKey ? 7 : 1);
-        return;
-      case "ArrowDown":
-        e.preventDefault();
-        if (e.altKey || passage) void nudge(e.shiftKey ? -7 : -1);
-        else moveCursorPitch(e.shiftKey ? -7 : -1);
-        return;
-      case "ArrowLeft":
-        e.preventDefault();
-        if (e.shiftKey) extendSelection(-1);
-        else moveCursorBy(-1);
-        return;
-      case "ArrowRight":
-        e.preventDefault();
-        if (e.shiftKey) extendSelection(1);
-        else moveCursorBy(1);
-        return;
-    }
 
     // On a drum staff the letters type the kit. A groove is typed, not
     // clicked thirty-two times, and each pad shows the letter that writes it.
@@ -6549,90 +7130,20 @@ function setupKeys() {
     // drums, and everywhere else they mean what they mean everywhere else.
     // Scoping it to the staff is what lets both sets of letters be the easy
     // ones to reach.
-    if (!e.shiftKey && !e.altKey && state.selection &&
+    if (!e.shiftKey && !e.altKey && !e.ctrlKey && !e.metaKey && state.selection &&
         isDrumStaff(state.selection.part) && drumPadForKey(e.key)) {
       e.preventDefault();
       void typeDrum(e.key);
       return;
     }
 
-    switch (e.key) {
-      case " ":
-        // Space writes the note the palette is showing, at the cursor. It
-        // is the key under the thumb and writing notes is what the thumb
-        // should be doing; playback moved to shift with it.
-        //
-        // Shift with it plays, pauses, and carries on from where it paused.
-        // Escape is the way back to the beginning.
-        e.preventDefault();
-        if (e.shiftKey) {
-          void togglePlay();
-        } else {
-          void insertAtSelection(false);
-        }
-        break;
-      case "Enter":
-        // A rest is the same gesture for the same length of silence.
-        e.preventDefault();
-        void insertAtSelection(true);
-        break;
-      case "Escape":
-        // Back to the top, from playing or from paused.
-        if (state.playing || state.pausedAt !== null) stop();
-        else clearSelection();
-        break;
-      // The number row picks what the next note is worth, the way the
-      // palette does: the figures run down the values, with the dotted
-      // ones beside the plain ones they lengthen.
-      case "1": pickDuration("whole", 0); break;
-      case "2": pickDuration("half", 0); break;
-      case "3": pickDuration("half", 1); break;
-      case "4": pickDuration("quarter", 0); break;
-      case "5": pickDuration("quarter", 1); break;
-      case "8": pickDuration("eighth", 0); break;
-      case "9": pickDuration("sixteenth", 0); break;
-      case "0": pickDuration("32nd", 0); break;
-      // And the dot on its own, for a note already written: it lengthens
-      // that note by half, and pressing it again takes it back.
-      case ".": void dotSelection(); break;
-
-      case "c": action("insert-chord"); break;
-      case "j": action("jump"); break;
-      case "m": action("add-measure"); break;
-      case "Tab":
-        // Ends the bar here. Tab is where the hand already is when typing
-        // music in, and it does nothing else in this window.
-        e.preventDefault();
-        action("split-measure");
-        break;
-      case "l": action("set-lyrics"); break;
-      case "F2": e.preventDefault(); toggleFingering(); break;
-      case "t": action("insert-text"); break;
-      case "b": action("beam-join"); break;
-      case "S": action("slur"); break;
-      case "=": action("tie"); break;
-      case "r": action("repeat-bar"); break;
-      case "N": case "i":
-        status("Click the staff to write. Hold shift to select instead.");
-        break;
-      case "u": action("stem-up"); break;
-      case "d": action("stem-down"); break;
-      case "Backspace": e.preventDefault(); action("delete"); break;
-      case "n": action("new"); break;
-      case "o": action("open"); break;
-      case "e": action("save-svg"); break;
-      case "P": action("save-pdf"); break;
-      case "H": action("save-page"); break;
-      case "p": action("print"); break;
-      case "s": action("save"); break;
-      case "f": action("fullscreen"); break;
-      case "F11":
-        e.preventDefault();
-        action("fullscreen");
-        break;
-      case "+": setZoom(state.zoom + 1); break;
-      case "-": setZoom(state.zoom - 1); break;
-    }
+    const bound = boundKeys().get(chordOf(e));
+    if (!bound) return;
+    // Inputs and open dialogs are already out, so there is no default worth
+    // keeping: Tab would move the focus off the music and Backspace would
+    // ask the browser to go back a page.
+    e.preventDefault();
+    bound.run();
   });
 }
 
@@ -7116,11 +7627,17 @@ async function main() {
   try {
     const kept = await (await fetch("/api/settings")).json();
     state.trackBarlines = kept.trackBarlines !== false;
+    state.keys = kept.keys || {};
   } catch (_) {
     // Served without a disk behind it. The default stands.
   }
   markBarlineTick();
+  syncMenuKeys();
 
+  $("#shortcuts-reset").addEventListener("click", async () => {
+    await resetKeys();
+    if (redrawShortcuts) redrawShortcuts();
+  });
   $("#tune-select").addEventListener("change", (e) => selectTune(Number(e.target.value)));
   $("#show-all").addEventListener("change", async (e) => {
     state.showAll = e.target.checked;

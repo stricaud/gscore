@@ -76,7 +76,7 @@
     <button class="menu-title">Edit</button>
     <div class="menu-items">
       <button data-action="undo"><span>Undo</span><kbd>⌘Z</kbd></button>
-      <button data-action="redo"><span>Redo</span><kbd>⇧⌘Z</kbd></button>
+      <button data-action="redo"><span>Redo</span><kbd>⌘⇧Z</kbd></button>
       <hr>
       <button data-action="cut"><span>Cut</span><kbd>⌘X</kbd></button>
       <button data-action="copy"><span>Copy</span><kbd>⌘C</kbd></button>
@@ -122,7 +122,6 @@
           <button data-action="acc-dsharp"><span>Double sharp</span></button>
           <button data-action="acc-dflat"><span>Double flat</span></button>
           <hr>
-          <button data-action="acc-none"><span>None</span></button>
         </div>
       </div>
 
@@ -138,10 +137,10 @@
       <div class="submenu">
         <button class="submenu-title"><span>Slur and tie</span><kbd>▸</kbd></button>
         <div class="menu-items">
-          <button data-action="slur"><span>Slur the passage</span><kbd>S</kbd></button>
+          <button data-action="slur"><span>Slur the passage</span><kbd>⇧S</kbd></button>
           <button data-action="slur-none"><span>Remove the slur</span></button>
           <hr>
-          <button data-action="tie"><span>Tie the notes</span><kbd>=</kbd></button>
+          <button data-action="tie"><span>Tie the notes</span><kbd>⇧T</kbd></button>
           <button data-action="tie-head"><span>Tie this notehead only</span></button>
           <button data-action="tie-none"><span>Remove the tie</span></button>
         </div>
@@ -152,7 +151,7 @@
   <div class="menu" data-menu="insert">
     <button class="menu-title">Insert</button>
     <div class="menu-items">
-      <button data-action="note-input"><span>Writing mode</span><kbd>N</kbd></button>
+      <button data-action="note-input"><span>Writing mode</span><kbd>I</kbd></button>
       <hr>
       <button data-action="insert-note"><span>Note</span></button>
       <button data-action="insert-rest"><span>Rest</span></button>
@@ -372,6 +371,8 @@
   <div class="menu" data-menu="help">
     <button class="menu-title">Help</button>
     <div class="menu-items">
+      <button data-action="shortcuts"><span>Keyboard shortcuts</span></button>
+      <hr>
       <button data-action="report-bug"><span>Report a bug</span></button>
       <button data-action="import-log"><span>Lines that could not be read</span></button>
       <hr>
@@ -714,6 +715,23 @@
      not carry one. So the dialog is mostly about getting hold of one and
      seeing what it will do with this particular score, and only then about
      how to record. -->
+<!-- Every key the editor answers to.
+     The list is built from the table in app.js rather than written out here,
+     so a binding added to the program shows up without anybody remembering
+     to add it. Writing it twice is how a shortcuts window comes to lie. -->
+<dialog id="shortcuts" class="wide">
+  <h2>Keyboard shortcuts</h2>
+  <p class="small">Click <em>Change</em> and press the keys you would rather use.
+     Escape while it is waiting leaves the binding alone.</p>
+  <div id="shortcuts-list" class="shortcuts"></div>
+  <form method="dialog">
+    <div class="ask-buttons">
+      <button value="reset" type="button" id="shortcuts-reset">Reset all</button>
+      <button value="ok" type="submit" class="primary">Done</button>
+    </div>
+  </form>
+</dialog>
+
 <dialog id="record">
   <h2>Export as audio</h2>
   <p class="small">Played through a soundfont — recorded instruments — and written

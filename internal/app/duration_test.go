@@ -37,8 +37,12 @@ func TestADotLengthensTheNote(t *testing.T) {
 		// Two dots add half again and then a quarter: seven sixteenths of a
 		// whole note, not fifteen thirty-seconds.
 		{"quarter", "2", model.Duration{Num: 7, Den: 16}},
-		// And nobody writes a third.
-		{"quarter", "3", model.Duration{Num: 7, Den: 16}},
+		// Three adds an eighth again: fifteen thirty-seconds. Rare, and it
+		// does turn up — Baroque writing uses it — and the model reads up
+		// to three, so this writes up to three.
+		{"quarter", "3", model.Duration{Num: 15, Den: 32}},
+		// A fourth is not written at all, so asking for one gives three.
+		{"quarter", "4", model.Duration{Num: 15, Den: 32}},
 	} {
 		got := dotted(durationNames[c.dur], c.dots)
 		if got.Cmp(c.want) != 0 {
@@ -108,10 +112,25 @@ func TestTheDotLengthensTheNoteItIsAimedAt(t *testing.T) {
 		t.Fatalf("the half came out %s, want %s", got, want)
 	}
 
+	// Again is the second dot, not the way back. The dot goes round — none,
+	// one, two, three, none — because pressing the same button again is how
+	// anybody reaches a double dot, and a toggle meant the only way to write
+	// one was not to.
+	h.post("/api/dot?part=0&measure=0&at=1")
+	if got, want := h.elements(0, 0)[0].Duration(),
+		(model.Duration{Num: 7, Den: 8}); got.Cmp(want) != 0 {
+		t.Fatalf("dotting it twice gave %s, want the double-dotted half", got)
+	}
+	h.post("/api/dot?part=0&measure=0&at=1")
+	if got, want := h.elements(0, 0)[0].Duration(),
+		(model.Duration{Num: 15, Den: 16}); got.Cmp(want) != 0 {
+		t.Fatalf("dotting it three times gave %s, want the triple-dotted half", got)
+	}
+	// And round to where it started.
 	h.post("/api/dot?part=0&measure=0&at=1")
 	if got, want := h.elements(0, 0)[0].Duration(),
 		(model.Duration{Num: 1, Den: 2}); got.Cmp(want) != 0 {
-		t.Errorf("dotting it twice left it %s, want the half it was", got)
+		t.Errorf("a fourth press left it %s, want the half it was", got)
 	}
 }
 

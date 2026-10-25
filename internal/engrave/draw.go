@@ -214,6 +214,29 @@ func (e *engraver) drawMeasure(part *model.Part, b measureBox, x, end float64, s
 		x += sp.NoteBase * 2 * stretch
 	}
 
+	// A rest that is the whole bar is centred in it.
+	//
+	// It was placed where the first note of the bar would have gone, hard
+	// against the clef, with the four beats it lasts as white space to the
+	// right of it. That is not how a bar of rest is engraved, and in the
+	// editor it also put the sign where nobody clicks: the middle of the
+	// bar — which is where you look for it — was the empty part, and a
+	// click there wrote a note instead of picking the rest up. So "I cannot
+	// select a pause" was true of the only place it was natural to try.
+	//
+	// Only p.x moves. The bar is as wide as it was and the music still ends
+	// where it ended, so nothing the skyline or the next bar depends on
+	// changes.
+	if len(items) == 1 && items[0].rest != nil && !items[0].rest.Hidden &&
+		!b.ahead && barIsFull(part, b) {
+		p := items[0]
+		_, right := e.barlineRoom(b.m.RightBarline)
+		mid := (p.x + e.barlineAt(end, right)) / 2
+		if w := smufl.Advance(smufl.RestGlyph(p.value)); mid-w/2 > p.x {
+			p.x = mid - w/2
+		}
+	}
+
 	// A bar marked as a repeat of the one before it is drawn as the sign and
 	// nothing else. Whatever is in it is not printed, because the sign is
 	// what is read; keeping the notes means they can be put back by taking

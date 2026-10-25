@@ -78,13 +78,18 @@ var durationNames = map[string]model.Duration{
 // was written with a dot. The engraver works the other way round, finding
 // the notehead and the dots that spell a duration, so this has only to get
 // the length right.
+// maxWrittenDots is as many dots as a note is given. A third turns up in
+// Baroque music and a fourth is not written at all; the model reads up to
+// three, so this is the same number and the two cannot drift apart.
+const maxWrittenDots = 3
+
 func dotted(d model.Duration, dots string) model.Duration {
 	n, err := strconv.Atoi(dots)
 	if err != nil || n <= 0 {
 		return d
 	}
-	if n > 2 {
-		n = 2 // nobody writes a third dot
+	if n > maxWrittenDots {
+		n = maxWrittenDots
 	}
 	// Each dot adds half of the note again, then a quarter, then an eighth:
 	// the whole thing comes to twice the note less what is left, which is
@@ -195,6 +200,23 @@ func (a *App) handleInsert(w http.ResponseWriter, r *http.Request) {
 
 	if at < 0 || at > len(v.Elements) {
 		at = len(v.Elements)
+	}
+
+	// A bar of rest is what an empty bar is, and writing in it fills it
+	// rather than following it.
+	//
+	// The rest is put there so that an empty bar says "do not play" instead
+	// of "not written yet", and so that it can be picked up and dotted and
+	// taken away like anything else. The moment something is written in the
+	// bar it is no longer empty, and leaving the rest in front of the note
+	// would make every bar start with a bar's worth of silence it never
+	// asked for.
+	if len(v.Elements) == 1 {
+		if r, ok := v.Elements[0].(*model.Rest); ok &&
+			r.Dur.Cmp(p.TimeAt(measIdx).BarDuration()) == 0 {
+			v.Elements = v.Elements[:0]
+			at = 0
+		}
 	}
 
 	// Writing over what is picked up rather than in front of it.
@@ -543,6 +565,8 @@ func (a *App) handleAddMeasure(w http.ResponseWriter, r *http.Request) {
 	for _, p := range a.score.Parts {
 		p.AppendMeasure()
 	}
+	// A bar added is a bar of rest until something is written in it.
+	restEmptyMeasures(a.score)
 	writeJSON(w, map[string]int{"measures": len(a.score.Parts[0].Measures)})
 }
 
@@ -576,6 +600,34 @@ var stemByName = map[string]model.Stem{
 }
 
 // handleStem sets, or clears, the stem direction of the element at the cursor.
+// sharpenBy moves an accidental one step towards the sharps or the flats,
+// coming back to nothing at either end.
+//
+// Pressing + on a plain note sharpens it, pressing it again double-sharpens
+// it, and pressing it once more takes it off: three presses and you are back
+// where you started, which is what makes a key safe to lean on.
+func sharpenBy(a model.Accidental, dir int) model.Accidental {
+	order := []model.Accidental{
+		model.DoubleFlat, model.Flat, model.NoAccidental,
+		model.Sharp, model.DoubleSharp,
+	}
+	// Natural is written rather than implied, so it counts as nothing here:
+	// a natural sharpened is a sharp.
+	at := 2
+	if a != model.Natural {
+		for i, x := range order {
+			if x == a {
+				at = i
+			}
+		}
+	}
+	at += dir
+	if at < 0 || at >= len(order) {
+		return model.NoAccidental
+	}
+	return order[at]
+}
+
 // handleAccidental writes an accidental on what is selected.
 //
 // Choosing a sharp from the palette says what the *next* note will be; a note
@@ -587,11 +639,16 @@ func (a *App) handleAccidental(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	q := r.URL.Query()
-	name := q.Get("accidental")
-	acc, ok := accidentalByName[name]
-	if !ok {
-		http.Error(w, "unknown accidental", http.StatusBadRequest)
-		return
+	cycle := q.Get("cycle")
+
+	var acc model.Accidental
+	if cycle == "" {
+		var ok bool
+		acc, ok = accidentalByName[q.Get("accidental")]
+		if !ok {
+			http.Error(w, "unknown accidental", http.StatusBadRequest)
+			return
+		}
 	}
 
 	notes, err := a.notesOf(q)
@@ -600,13 +657,26 @@ func (a *App) handleAccidental(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	for _, n := range notes {
-		n.Accidental = acc
+		switch {
+		case cycle == "up":
+			n.Accidental = sharpenBy(n.Accidental, 1)
+		case cycle == "down":
+			n.Accidental = sharpenBy(n.Accidental, -1)
+		case n.Accidental == acc:
+			// Asking for the accidental a note already has is asking for it
+			// to go. Anything else means the sharp button has to be read as
+			// "make sure this is sharp", and then nothing undoes it but a
+			// second button that does nothing else.
+			n.Accidental = model.NoAccidental
+		default:
+			n.Accidental = acc
+		}
 		// The written accidental decides how the note sounds. Taking one away
 		// hands that decision back to the key signature.
-		if acc == model.NoAccidental {
+		if n.Accidental == model.NoAccidental {
 			n.Pitch.Alter = n.key.AlterFor(n.Pitch.Step)
 		} else {
-			n.Pitch.Alter = acc.Semitones()
+			n.Pitch.Alter = n.Accidental.Semitones()
 		}
 	}
 	writeJSON(w, map[string]int{"changed": len(notes)})
@@ -1548,6 +1618,218 @@ func (a *App) handleNudge(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, map[string]int{"changed": len(notes)})
+}
+
+// handleShift moves the selected run one place along the music.
+//
+// Ctrl or Cmd with the left and right arrows. The plain arrows move the
+// selection and leave the notes alone, which is the common thing to want; this
+// is the other one. A tuplet, or a shorter note, leaves a bar with room in it
+// that was not there before, and the next thing anybody wants is to walk the
+// following phrase back into that room.
+//
+// Only one element actually moves. Shifting a run right is the same thing as
+// taking the note after it and putting it in front — the run keeps its own
+// order and its own notes, and nothing is copied or rewritten. That is also
+// what makes it work on a selection spanning several bars: whatever is
+// between its ends is untouched, so there is no need for the run to sit
+// inside one bar.
+func (a *App) handleShift(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST required", http.StatusMethodNotAllowed)
+		return
+	}
+	q := r.URL.Query()
+	dir, err := strconv.Atoi(q.Get("dir"))
+	if err != nil || dir == 0 {
+		http.Error(w, "dir says which way to move", http.StatusBadRequest)
+		return
+	}
+	targets, err := parseTargets(q.Get("sel"))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	sort.Slice(targets, func(i, j int) bool {
+		if targets[i].measure != targets[j].measure {
+			return targets[i].measure < targets[j].measure
+		}
+		return targets[i].index < targets[j].index
+	})
+	first, last := targets[0], targets[len(targets)-1]
+	if first.part != last.part {
+		http.Error(w, "a passage moves within one staff", http.StatusBadRequest)
+		return
+	}
+	p, _, err := a.locate(first.part, first.measure)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	// The notes being moved, held by identity: the bars reflow underneath
+	// them and the places the selection named them by are gone afterwards.
+	moving := make([]model.Element, 0, len(targets))
+	for _, t := range targets {
+		if t.measure < 0 || t.measure >= len(p.Measures) {
+			http.Error(w, "the selection is not in the music any more",
+				http.StatusBadRequest)
+			return
+		}
+		v := voiceOf(p, t.measure)
+		if t.index < 0 || t.index >= len(v.Elements) {
+			http.Error(w, "the selection is not in the music any more",
+				http.StatusBadRequest)
+			return
+		}
+		moving = append(moving, v.Elements[t.index])
+	}
+
+	// The one element that moves: whatever is on the side the run is going.
+	var from, to target
+	if dir > 0 {
+		from, err = nextAlong(p, last)
+		to = first
+	} else {
+		from, err = prevAlong(p, first)
+		to = target{part: first.part, measure: last.measure, index: last.index + 1}
+	}
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	fv := voiceOf(p, from.measure)
+	el := fv.Elements[from.index]
+	// A tuplet is a group and moving one member out of it would leave the
+	// figure printed over a note that is somewhere else.
+	if mk := marksOfElement(el); mk != nil && mk.Tuplet != nil {
+		http.Error(w, "the note beside the selection is part of a tuplet",
+			http.StatusBadRequest)
+		return
+	}
+	fv.Elements = append(fv.Elements[:from.index], fv.Elements[from.index+1:]...)
+	// Taking it out shifts everything after it in that bar down one, the
+	// place the run is going included.
+	if to.measure == from.measure && to.index > from.index {
+		to.index--
+	}
+
+	tv := voiceOf(p, to.measure)
+	if to.index > len(tv.Elements) {
+		to.index = len(tv.Elements)
+	}
+	tail := append([]model.Element{}, tv.Elements[to.index:]...)
+	tv.Elements = append(append(tv.Elements[:to.index:to.index], el), tail...)
+
+	// Both bars changed length, and the earlier of the two is where the
+	// reflow has to start from.
+	start := from.measure
+	if to.measure < start {
+		start = to.measure
+	}
+	spill(p, start)
+	refill(p, start)
+
+	// Where the notes ended up, so that what was selected still is.
+	now := make([]string, 0, len(moving))
+	for _, m := range moving {
+		measure, at := findElement(p, start, m)
+		if at <= 0 {
+			continue
+		}
+		now = append(now, fmt.Sprintf("%d:%d:%d", first.part, measure, at-1))
+	}
+	writeJSON(w, map[string]any{"status": "ok", "moved": len(moving), "now": now})
+}
+
+// refill draws music back into a bar left short, which is spill the other way
+// round.
+//
+// Moving a passage across a barline takes an element out of one bar and puts
+// it into the other, so one of the two ends up short however the music is
+// read. The order of the notes is right either way — that is what the move
+// is about — but with the barlines being tracked a bar that is suddenly a
+// beat light looks like the arrow key broke something, when all it did was
+// leave the beat on the far side of the line.
+//
+// Only what fits moves, and only from the bar straight after: this tidies up
+// after a move rather than reflowing the piece. spill is still what handles
+// the other direction, and the two are called together.
+func refill(p *model.Part, from int) {
+	if !TrackBarlines() {
+		return
+	}
+	bar := p.Time.BarDuration()
+	if bar.IsZero() {
+		return
+	}
+	for i := from; i+1 < len(p.Measures); i++ {
+		v := voiceOf(p, i)
+		for {
+			next := voiceOf(p, i+1)
+			if len(next.Elements) == 0 {
+				break
+			}
+			el := next.Elements[0]
+			// A group is printed over its own notes, so taking its first
+			// member over the barline on its own would put the figure in
+			// one bar and the notes it counts in two.
+			if mk := marksOfElement(el); mk != nil && mk.Tuplet != nil {
+				break
+			}
+			if v.Duration().Add(el.Duration()).Cmp(bar) > 0 {
+				break
+			}
+			next.Elements = next.Elements[1:]
+			v.Elements = append(v.Elements, el)
+		}
+		if v.Duration().Cmp(bar) < 0 {
+			// Still short, and the bar after it had nothing that would fit:
+			// there is nothing further back to draw on.
+			return
+		}
+	}
+}
+
+// nextAlong is the element after t in the music, which may be in the bar after.
+func nextAlong(p *model.Part, t target) (target, error) {
+	if v := voiceOf(p, t.measure); t.index+1 < len(v.Elements) {
+		return target{part: t.part, measure: t.measure, index: t.index + 1}, nil
+	}
+	for i := t.measure + 1; i < len(p.Measures); i++ {
+		if len(voiceOf(p, i).Elements) > 0 {
+			return target{part: t.part, measure: i, index: 0}, nil
+		}
+	}
+	return target{}, editError("that is the end of the music")
+}
+
+// prevAlong is the element before t, which may be in the bar before.
+func prevAlong(p *model.Part, t target) (target, error) {
+	if t.index > 0 {
+		return target{part: t.part, measure: t.measure, index: t.index - 1}, nil
+	}
+	for i := t.measure - 1; i >= 0; i-- {
+		if n := len(voiceOf(p, i).Elements); n > 0 {
+			return target{part: t.part, measure: i, index: n - 1}, nil
+		}
+	}
+	return target{}, editError("that is the beginning of the music")
+}
+
+// voiceOf is a bar's first voice, made if the bar has none: an empty bar has
+// no voice at all until something is written into it.
+func voiceOf(p *model.Part, measure int) *model.Voice {
+	m := p.Measures[measure]
+	if len(m.Voices) == 0 {
+		m.Voices = []*model.Voice{{}}
+	}
+	return m.Voices[0]
 }
 
 // clipboard is what was last copied: whole elements, lifted out of the score.
@@ -2858,6 +3140,196 @@ func tupletFit(n int, span model.Duration) (normal int, ok bool) {
 	return 0, false
 }
 
+// restsFor spells a duration as the fewest rests that can be written, and
+// says what it could not spell.
+//
+// Freed time is rarely one notehead: a triplet made out of three eighths
+// gives an eighth back, which is, but one made out of three sixteenths in
+// 6/8 need not be. Taking the largest writable value that fits and going
+// round again spells whatever is left as two or three rests rather than
+// refusing it.
+//
+// Some durations no number of plain rests spells at all. A twenty-fourth of
+// a whole note is one: it is a tuplet's own fraction, and the remainder is
+// returned rather than dropped so that the caller can spell it the way the
+// tuplet spells things.
+func restsFor(d model.Duration) (out []model.Element, left model.Duration) {
+	zero := model.Duration{Num: 0, Den: 1}
+	left = d.Reduced()
+	for left.Cmp(zero) > 0 && len(out) < 8 {
+		best := zero
+		for v := model.DoubleWhole; v <= model.HundredTwentyEighth; v++ {
+			for dots := 0; dots <= maxWrittenDots; dots++ {
+				cand := dotted(v.Duration(), strconv.Itoa(dots))
+				if cand.Cmp(left) <= 0 && cand.Cmp(best) > 0 {
+					best = cand
+				}
+			}
+		}
+		if best.IsZero() {
+			break
+		}
+		out = append(out, &model.Rest{Dur: best})
+		left = left.Sub(best).Reduced()
+	}
+	return out, left
+}
+
+// restsGivenBack spells the time a group gave back, as rests to go after it.
+//
+// Plain rests where a notehead spells the time. Where none does, the rests
+// become members of the group and are written against its ratio instead:
+// shortening one note of a triplet leaves a twenty-fourth of a whole note
+// over, and the only thing that spells a twenty-fourth is a sixteenth read as
+// part of a triplet. Those rests carry the group's marks and so extend it,
+// which is how a group of mixed values is written by hand.
+func restsGivenBack(freed model.Duration, actual, normal int) []model.Element {
+	out, left := restsFor(freed)
+	if left.IsZero() {
+		return out
+	}
+	if actual <= 0 || normal <= 0 {
+		return out // nothing better to offer; the remainder is dropped
+	}
+	// The whole of it, inside the group, rather than part out and part in.
+	inside, over := restsFor(freed.Scale(actual, normal))
+	if !over.IsZero() {
+		return out
+	}
+	for _, el := range inside {
+		setDuration(el, el.Duration().Scale(normal, actual).Reduced())
+		if mk := marksOfElement(el); mk != nil {
+			mk.Tuplet = &model.Tuplet{Actual: actual, Normal: normal}
+		}
+	}
+	return inside
+}
+
+// tupletFromSelection reads a run of notes already written as a group of n.
+//
+// This is the other half of the operation, and the one somebody reaches for
+// after writing a passage out plain and then seeing it was a triplet all
+// along. Asked for on a selection, the single-note form would have thrown
+// the notes away and left n rests in their place — so the answer to "make
+// these three a triplet" was to write them again.
+//
+// Here the notes stay and only their arithmetic changes: each keeps the
+// notehead it has and is played in n-in-the-time-of-normal, which is exactly
+// what the figure printed over them says. The group is then shorter than the
+// notes were, and the time it gives back becomes a rest after it, so the bar
+// still adds up and there is somewhere to move the following notes into.
+//
+// Fewer notes than the group needs is not an error either: a group of three
+// asked for on two eighths is a triplet with its third member still to be
+// written, and it comes in as a rest.
+func tupletFromSelection(p *model.Part, measIdx int, targets []target, n int) (normal, members int, freed model.Duration, err error) {
+	freed = model.Duration{Num: 0, Den: 1}
+	sorted := append([]target{}, targets...)
+	sort.Slice(sorted, func(i, j int) bool { return sorted[i].index < sorted[j].index })
+	for _, t := range sorted {
+		if t.part != sorted[0].part || t.measure != measIdx {
+			return 0, 0, freed, editError("a tuplet is made out of one bar of one staff")
+		}
+	}
+
+	m := p.Measures[measIdx]
+	// The voice the run is in, found the way every other selection finds it:
+	// the first one that has an element where the selection says.
+	var v *model.Voice
+	for _, cand := range m.Voices {
+		if cand != nil && sorted[0].index >= 0 && sorted[0].index < len(cand.Elements) {
+			v = cand
+			break
+		}
+	}
+	if v == nil {
+		return 0, 0, freed, editError("the selection is not in this bar any more")
+	}
+
+	for i, t := range sorted {
+		if t.index < 0 || t.index >= len(v.Elements) {
+			return 0, 0, freed, editError("the selection is not in this bar any more")
+		}
+		// Next to each other. Three notes picked out of a bar with others
+		// between them are not a group, and grouping them would mean
+		// moving the music about rather than reading it differently.
+		if i > 0 && t.index != sorted[i-1].index+1 {
+			return 0, 0, freed, editError("a tuplet is made out of notes next to each other")
+		}
+		if mk := marksOfElement(v.Elements[t.index]); mk != nil && mk.Tuplet != nil {
+			return 0, 0, freed, editError("part of that selection is already in a tuplet")
+		}
+	}
+	if len(sorted) > n {
+		return 0, 0, freed, editError(fmt.Sprintf(
+			"%d notes are selected, which is more than a group of %d",
+			len(sorted), n))
+	}
+
+	normal = tupletNormal(n)
+	first, last := sorted[0].index, sorted[len(sorted)-1].index
+	before := spanOf(v.Elements[first : last+1])
+
+	// The notehead the padding members take: the first one's, which is what
+	// a group written out by hand would use.
+	pad := v.Elements[first].Duration()
+
+	after := model.Duration{Num: 0, Den: 1}
+	for i := first; i <= last; i++ {
+		el := v.Elements[i]
+		each := el.Duration().Scale(normal, n).Reduced()
+		setDuration(el, each)
+		after = after.Add(each)
+		mk := marksOfElement(el)
+		if mk == nil {
+			return 0, 0, freed, editError("that selection cannot carry a tuplet")
+		}
+		mk.Tuplet = &model.Tuplet{
+			Actual: n, Normal: normal,
+			Start: i == first, Stop: false,
+		}
+	}
+
+	extra := make([]model.Element, 0, n-len(sorted))
+	for i := len(sorted); i < n; i++ {
+		each := pad.Scale(normal, n).Reduced()
+		rest := &model.Rest{Dur: each}
+		rest.Marks.Tuplet = &model.Tuplet{Actual: n, Normal: normal}
+		extra = append(extra, rest)
+		after = after.Add(each)
+	}
+	members = n
+
+	// What the group gives back. A duplet — two in the time of three — takes
+	// more time than it was given rather than less, and then there is
+	// nothing to give back and the bar overflows into the next, which is
+	// what every other overfull bar here does.
+	if before.Cmp(after) > 0 {
+		freed = before.Sub(after).Reduced()
+		extra = append(extra, restsGivenBack(freed, n, normal)...)
+	}
+
+	// The group closes on its last member, which is the last of the rests it
+	// was padded with, or the last of the freed rests where those turned out
+	// to belong to the group as well.
+	closeOn := v.Elements[last]
+	for _, el := range extra {
+		mk := marksOfElement(el)
+		if mk == nil || mk.Tuplet == nil {
+			break
+		}
+		closeOn = el
+	}
+	marksOfElement(closeOn).Tuplet.Stop = true
+
+	if len(extra) > 0 {
+		tail := append([]model.Element{}, v.Elements[last+1:]...)
+		v.Elements = append(append(v.Elements[:last+1:last+1], extra...), tail...)
+	}
+	spill(p, measIdx)
+	return normal, members, freed, nil
+}
+
 // handleTuplet turns the note or rest at the cursor into a group of n played
 // in its time, or takes a group back to the single note it was made from.
 //
@@ -2909,6 +3381,25 @@ func (a *App) handleTuplet(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "a group of more than sixteen is not a tuplet", http.StatusBadRequest)
 		return
 	}
+
+	// Several notes picked up: those notes are the group. One note picked
+	// up falls through to the form below, which makes the group out of it —
+	// asking for a triplet on a single quarter still means three notes in
+	// the time of that quarter.
+	if targets, perr := parseTargets(q.Get("sel")); perr == nil && len(targets) > 1 {
+		normal, members, freed, err := tupletFromSelection(p, measIdx, targets, n)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		writeJSON(w, map[string]any{
+			"tuplet": n, "normal": normal, "members": members,
+			"freed": freed.String(), "kept": len(targets),
+			"measure": measIdx, "at": targets[0].index + 1,
+		})
+		return
+	}
+
 	if mk := marksOfElement(v.Elements[idx]); mk != nil && mk.Tuplet != nil {
 		http.Error(w, "that note is already in a tuplet", http.StatusBadRequest)
 		return
@@ -2958,13 +3449,16 @@ func (a *App) handleTuplet(w http.ResponseWriter, r *http.Request) {
 
 // ungroupTuplet takes the group the element at idx belongs to back to one
 // note of the time it filled.
-func ungroupTuplet(v *model.Voice, idx int) int {
-	mk := marksOfElement(v.Elements[idx])
-	if mk == nil || mk.Tuplet == nil {
-		return 0
+// tupletBounds is the whole group the element at idx belongs to, which is
+// however far the tuplet marks run either way.
+func tupletBounds(v *model.Voice, idx int) (first, last int, ok bool) {
+	if idx < 0 || idx >= len(v.Elements) {
+		return 0, 0, false
 	}
-	// The whole group, which is however far the tuplet marks run either way.
-	first, last := idx, idx
+	if mk := marksOfElement(v.Elements[idx]); mk == nil || mk.Tuplet == nil {
+		return 0, 0, false
+	}
+	first, last = idx, idx
 	for first > 0 {
 		m := marksOfElement(v.Elements[first-1])
 		if m == nil || m.Tuplet == nil {
@@ -2986,13 +3480,28 @@ func ungroupTuplet(v *model.Voice, idx int) int {
 		}
 		last++
 	}
+	return first, last, true
+}
 
-	// From nothing-at-all, which is 0/1: the zero value of a Duration has a
-	// zero denominator and adding to it gives 0/0.
+// spanOf is what a run of elements lasts.
+//
+// From nothing-at-all, which is 0/1: the zero value of a Duration has a zero
+// denominator and adding to it gives 0/0.
+func spanOf(els []model.Element) model.Duration {
 	span := model.Duration{Num: 0, Den: 1}
-	for _, el := range v.Elements[first : last+1] {
+	for _, el := range els {
 		span = span.Add(el.Duration())
 	}
+	return span
+}
+
+func ungroupTuplet(v *model.Voice, idx int) int {
+	first, last, ok := tupletBounds(v, idx)
+	if !ok {
+		return 0
+	}
+
+	span := spanOf(v.Elements[first : last+1])
 	kept := cloneElement(v.Elements[first])
 	setDuration(kept, span)
 	if m := marksOfElement(kept); m != nil {
@@ -3157,10 +3666,18 @@ func (a *App) handleDot(w http.ResponseWriter, r *http.Request) {
 			http.StatusBadRequest)
 		return
 	}
+	// Round and round: none, one, two, three, and none again. Pressing the
+	// same button again is how anybody expects to reach a second dot, and
+	// this was a toggle between none and one — so the only way to write a
+	// double-dotted note was not to.
 	plain := value.Duration()
+	want := dots + 1
+	if want > maxWrittenDots {
+		want = 0
+	}
 	next := plain
-	if dots == 0 {
-		next = dotted(plain, "1")
+	if want > 0 {
+		next = dotted(plain, strconv.Itoa(want))
 	}
 	setDuration(el, next)
 
@@ -3168,7 +3685,7 @@ func (a *App) handleDot(w http.ResponseWriter, r *http.Request) {
 	spill(p, measIdx)
 	measure, idx := findElement(p, measIdx, el)
 	writeJSON(w, map[string]any{
-		"dots": map[bool]int{true: 0, false: 1}[dots > 0],
+		"dots": want,
 		"dur":  next.String(), "measure": measure, "at": idx,
 	})
 }
@@ -3236,6 +3753,19 @@ func (a *App) handleDuration(w http.ResponseWriter, r *http.Request) {
 	}
 	var done []moved
 	touched := map[[2]int]bool{}
+	// The tuplet groups a note in the selection belongs to, and what each
+	// one lasted before anything was changed. A group is read against its
+	// own arithmetic, so once its notes are shorter it gives time back and
+	// the bar needs a rest for it — the same thing that happens when the
+	// group is first made.
+	type group struct {
+		part, measure, first, last int
+		actual, normal             int
+		v                          *model.Voice
+		was                        model.Duration
+	}
+	var groups []group
+	seen := map[[4]int]bool{}
 	for _, t := range targets {
 		_, m, err := a.locate(t.part, t.measure)
 		if err != nil {
@@ -3246,17 +3776,73 @@ func (a *App) handleDuration(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			el := v.Elements[t.index]
-			// A note inside a tuplet is written against the group's own
-			// arithmetic, and giving it a plain length would break the
-			// group rather than change the note.
+			// A note inside a tuplet keeps its place in the group: what
+			// changes is the notehead it shows, and the group's figure says
+			// what that notehead is played as. Giving it the plain length
+			// would have made a triplet eighth last an eighth, so the group
+			// no longer added up — which is why this used to refuse, and
+			// why selecting the notes of a triplet and asking for a shorter
+			// one did nothing at all.
 			if mk := marksOfElement(el); mk != nil && mk.Tuplet != nil {
-				continue
+				num, den, ok := mk.Tuplet.Ratio()
+				if !ok {
+					continue
+				}
+				if first, last, ok := tupletBounds(v, t.index); ok {
+					key := [4]int{t.part, t.measure, first, last}
+					if !seen[key] {
+						seen[key] = true
+						groups = append(groups, group{
+							part: t.part, measure: t.measure,
+							first: first, last: last, v: v,
+							actual: num, normal: den,
+							was: spanOf(v.Elements[first : last+1]),
+						})
+					}
+				}
+				setDuration(el, want.Scale(den, num).Reduced())
+			} else {
+				setDuration(el, want)
 			}
-			setDuration(el, want)
 			done = append(done, moved{part: t.part, from: t.measure, el: el})
 			touched[[2]int{t.part, t.measure}] = true
 			break // the first voice that has an element at this index
 		}
+	}
+
+	// What the groups gave back, spelled as rests after each of them. Last
+	// first, so that inserting after one group does not move the next one's
+	// place out from under it.
+	sort.Slice(groups, func(i, j int) bool {
+		if groups[i].measure != groups[j].measure {
+			return groups[i].measure > groups[j].measure
+		}
+		return groups[i].first > groups[j].first
+	})
+	for _, g := range groups {
+		if g.last >= len(g.v.Elements) {
+			continue
+		}
+		freed := g.was.Sub(spanOf(g.v.Elements[g.first : g.last+1])).Reduced()
+		if freed.Cmp(model.Duration{Num: 0, Den: 1}) <= 0 {
+			continue
+		}
+		rests := restsGivenBack(freed, g.actual, g.normal)
+		if len(rests) == 0 {
+			continue
+		}
+		at := g.last + 1
+		tail := append([]model.Element{}, g.v.Elements[at:]...)
+		g.v.Elements = append(append(g.v.Elements[:at:at], rests...), tail...)
+		// Where those rests joined the group, the group now closes on the
+		// last of them instead of on the note it closed on before.
+		if mk := marksOfElement(rests[len(rests)-1]); mk != nil && mk.Tuplet != nil {
+			if was := marksOfElement(g.v.Elements[g.last]); was != nil && was.Tuplet != nil {
+				was.Tuplet.Stop = false
+			}
+			mk.Tuplet.Stop = true
+		}
+		touched[[2]int{g.part, g.measure}] = true
 	}
 	if len(done) == 0 {
 		http.Error(w, "nothing in the selection has a length to change",
@@ -3453,4 +4039,91 @@ func (a *App) handleJoinMeasure(w http.ResponseWriter, r *http.Request) {
 		p.Measures = append(p.Measures[:measIdx+1], p.Measures[measIdx+2:]...)
 	}
 	writeJSON(w, map[string]any{"status": "ok", "measure": measIdx})
+}
+
+// handleClearMeasure empties a bar, leaving the bar itself.
+//
+// Not the same as deleting a passage, which takes the notes out and lets
+// what follows close the gap. A bar picked up as a bar is a container, and
+// emptying it leaves an empty bar of the same length where it was — the
+// barlines on either side of it do not move and nothing after it is
+// renumbered.
+//
+// Every voice of it, because every voice of it is in the bar. The bulk
+// delete works on the first voice only, which is right for a passage picked
+// up note by note and wrong for "take what is in this bar out".
+func (a *App) handleClearMeasure(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST required", http.StatusMethodNotAllowed)
+		return
+	}
+	q := r.URL.Query()
+	partIdx, _ := strconv.Atoi(q.Get("part"))
+	measIdx, _ := strconv.Atoi(q.Get("measure"))
+
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	_, m, err := a.locate(partIdx, measIdx)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	removed := 0
+	for _, v := range m.Voices {
+		if v == nil {
+			continue
+		}
+		removed += len(v.Elements)
+		v.Elements = nil
+	}
+	// One empty voice to write into, so the bar can be typed in again.
+	if len(m.Voices) == 0 {
+		m.Voices = []*model.Voice{{}}
+	} else {
+		m.Voices = m.Voices[:1]
+	}
+	writeJSON(w, map[string]any{"status": "ok", "removed": removed})
+}
+
+// restEmptyMeasures puts a bar's worth of rest into every bar that has
+// nothing in it.
+//
+// A bar with nothing written in it is a bar of silence, and silence is
+// written down: an empty staff says "I have not got to this yet", a whole
+// rest says "do not play". Every engraver draws the second one, and a score
+// that shows neither leaves the reader to guess which it meant.
+//
+// Put in the music rather than drawn over the gap, so that it is a thing
+// like any other: it can be picked up, dotted, moved, and taken out again by
+// anybody who wants the bar left bare.
+//
+// Bars with no meter to measure are left alone. Without one there is no
+// answer to how long the rest should be, and guessing is worse than the gap.
+func restEmptyMeasures(s *model.Score) int {
+	filled := 0
+	for _, p := range s.Parts {
+		for mi, m := range p.Measures {
+			bar := p.TimeAt(mi).BarDuration()
+			if bar.IsZero() {
+				continue
+			}
+			used := false
+			for _, v := range m.Voices {
+				if v != nil && len(v.Elements) > 0 {
+					used = true
+					break
+				}
+			}
+			if used {
+				continue
+			}
+			if len(m.Voices) == 0 {
+				m.Voices = []*model.Voice{{}}
+			}
+			m.Voices[0].Elements = []model.Element{&model.Rest{Dur: bar}}
+			filled++
+		}
+	}
+	return filled
 }

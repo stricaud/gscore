@@ -264,14 +264,42 @@ func TestDrumPadsAreWired(t *testing.T) {
 	}
 }
 
+// TestTheKeyCatcherComesBeforeTheDialogGuard guards the one ordering that
+// makes a key changeable at all.
+//
+// Keys are turned away while a dialog is open, because a note written behind
+// one is a keystroke landing in two places. But the window that asks "press
+// a key" is itself a dialog, so with that guard first nothing could ever be
+// caught and every Change button did nothing.
+func TestTheKeyCatcherComesBeforeTheDialogGuard(t *testing.T) {
+	js := readUI(t, "app.js")
+	start := strings.Index(js, "function setupKeys()")
+	if start < 0 {
+		t.Fatal("app.js has no setupKeys")
+	}
+	body := js[start:]
+	catcher := strings.Index(body, "if (state.catchKey)")
+	guard := strings.Index(body, `querySelector("dialog[open]")`)
+	if catcher < 0 {
+		t.Fatal("nothing catches a key for the shortcuts window")
+	}
+	if guard < 0 {
+		t.Fatal("the open-dialog guard has gone; this test needs updating")
+	}
+	if catcher > guard {
+		t.Error("the open-dialog guard runs first, so the shortcuts window " +
+			"can never catch the key it is asking for")
+	}
+}
+
 // TestDrumLettersAreTestedBeforeTheEditingLetters guards the one thing that
 // makes two sets of single-letter keys possible at once.
 //
 // The pad letters and the editing commands deliberately overlap — both want
 // the keys under the left hand — and they are told apart by where the cursor
-// is. That only works if the drum test runs first: put it after the switch
-// that handles "d" for stem-down and the pads under the left hand never fire,
-// which looks like the shortcuts on the pads being decoration.
+// is. That only works if the drum test runs first: put it after the lookup
+// that finds "d" bound to stem-down and the pads under the left hand never
+// fire, which looks like the shortcuts on the pads being decoration.
 func TestDrumLettersAreTestedBeforeTheEditingLetters(t *testing.T) {
 	js := readUI(t, "app.js")
 
@@ -279,11 +307,11 @@ func TestDrumLettersAreTestedBeforeTheEditingLetters(t *testing.T) {
 	if drum < 0 {
 		t.Fatal("nothing routes a key press to a drum pad")
 	}
-	stem := strings.Index(js, `case "d": action("stem-down")`)
-	if stem < 0 {
-		t.Fatal(`the "d" shortcut has moved; this guard needs updating`)
+	bound := strings.Index(js, "boundKeys().get(chordOf(e))")
+	if bound < 0 {
+		t.Fatal("nothing looks a key press up in the bindings; this guard needs updating")
 	}
-	if drum > stem {
+	if drum > bound {
 		t.Error("the editing letters are handled first, so a pad's letter never reaches the kit")
 	}
 

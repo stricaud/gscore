@@ -157,6 +157,11 @@ func NewBook(scores []*model.Score, filename string) *App {
 	reg := symbol.NewRegistry()
 	ro.Symbols = reg
 
+	// A bar with nothing in it is a bar of silence, here as much as when a
+	// file is opened from the menu later.
+	for _, sc := range scores {
+		restEmptyMeasures(sc)
+	}
 	return &App{
 		score:      s,
 		book:       scores,
@@ -400,9 +405,11 @@ func (a *App) APIRoutes(mux *http.ServeMux) {
 		"/api/deleteselection": a.handleDeleteSelection,
 		"/api/paste":           a.handlePaste,
 		"/api/nudge":           a.handleNudge,
+		"/api/shift":           a.handleShift,
 		"/api/addmeasure":      a.handleAddMeasure,
 		"/api/splitmeasure":    a.handleSplitMeasure,
 		"/api/joinmeasure":     a.handleJoinMeasure,
+		"/api/clearmeasure":    a.handleClearMeasure,
 		"/api/measurerepeat":   a.handleMeasureRepeat,
 		"/api/barline":         a.handleBarline,
 		"/api/beam":            a.handleBeam,

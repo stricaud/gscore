@@ -65,7 +65,9 @@ const PALETTE = [
       { g: "", label: "Flat", tool: "acc", acc: "flat" },
       { g: "", label: "Double sharp", tool: "acc", acc: "double sharp" },
       { g: "", label: "Double flat", tool: "acc", acc: "double flat" },
-      { text: "—", label: "No accidental", tool: "acc", acc: "none" },
+      // No "none" button. Clicking the sharp on a note that is already
+      // sharp takes the sharp off, which is the same thing said where
+      // anybody would look for it.
     ],
   },
   {

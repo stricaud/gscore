@@ -313,12 +313,24 @@ func TestClipboardAndNudge(t *testing.T) {
 	}
 }
 
+// countNotes is how many notes and chords are written, which is what these
+// tests mean when they say a score is empty.
+//
+// It counted every element, rests included, which was the same number while
+// a bar with nothing in it held nothing. A bar with nothing in it holds a
+// bar of rest now — that is what an empty bar is on paper — so "nothing
+// written" and "no elements" have parted company.
 func countNotes(s *model.Score) int {
 	n := 0
 	for _, p := range s.Parts {
 		for _, m := range p.Measures {
 			for _, v := range m.Voices {
-				n += len(v.Elements)
+				for _, el := range v.Elements {
+					switch el.(type) {
+					case *model.Note, *model.Chord:
+						n++
+					}
+				}
 			}
 		}
 	}

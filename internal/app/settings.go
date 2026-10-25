@@ -50,6 +50,15 @@ type settings struct {
 	// for a page nobody looks at, and this is how they stop.
 	NoScorePDF bool `json:"noScorePDF,omitempty"`
 
+	// Keys is the keyboard bindings the person has changed, as the name of
+	// the command against the keystroke they want for it.
+	//
+	// Only the changes. The defaults live in the editor beside the commands
+	// they run, which is the only place they can be kept honest, and a copy
+	// of them here would be a second list to go stale — and would freeze
+	// somebody's bindings to whatever gscore did the day they first ran it.
+	Keys map[string]string `json:"keys,omitempty"`
+
 	// LooseBarlines stops gscore moving notes across a barline to make the
 	// bars add up.
 	//
@@ -218,6 +227,19 @@ func (a *App) handleSettings(w http.ResponseWriter, r *http.Request) {
 		if v, ok := r.URL.Query()["trackBarlines"]; ok && len(v) > 0 {
 			s.LooseBarlines = v[0] == "0"
 		}
+		if v, ok := r.URL.Query()["keys"]; ok && len(v) > 0 {
+			// The whole set each time, so taking a binding back to its
+			// default is sending a set without it. Unreadable means a
+			// request gscore did not send, and is left alone rather than
+			// quietly emptying somebody's bindings.
+			var keys map[string]string
+			if err := json.Unmarshal([]byte(v[0]), &keys); err == nil {
+				if len(keys) == 0 {
+					keys = nil
+				}
+				s.Keys = keys
+			}
+		}
 		// A failure to write is not a failure to set: saveSettings has
 		// already kept it for this session, and in the browser there is no
 		// disk to keep it on at all. Reporting that as an error would be an
@@ -237,6 +259,7 @@ func (a *App) handleSettings(w http.ResponseWriter, r *http.Request) {
 		"stored":           loadSettings().PlaybackFont,
 		"scorePDF":         SaveScorePDF(),
 		"trackBarlines":    TrackBarlines(),
+		"keys":             loadSettings().Keys,
 	})
 }
 

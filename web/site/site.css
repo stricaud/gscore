@@ -1,0 +1,360 @@
+/*
+ * site.css - the gscore web site: landing page, scores, documentation.
+ * gscore - a musical score editor
+ *
+ * (C) Copyright 2026 Sebastien Tricaud
+ *
+ * Permission is hereby granted, free of charge, under the terms of the MIT
+ * licence; see the LICENSE file at the root of this repository.
+ *
+ * One idea runs through this: anything that is *content* sits on paper.
+ * Music on paper, prose on paper, the page itself out of the way behind it.
+ * That is what printed music looks like and it is what the program is for.
+ */
+
+:root {
+  --ink: #15171c;
+  --page: #0e1014;
+  --page-2: #171a21;
+  --paper: #fbfaf7;
+  --line: #2a2f3a;
+  --text: #d9dde6;
+  --dim: #99a1b0;
+  --accent: #f0b429;
+  --accent-ink: #231a05;
+  --lit: #d94f2b;
+  --radius: 10px;
+  --wide: 1080px;
+  --font: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --serif: Georgia, "Iowan Old Style", "Palatino Linotype", Palatino, serif;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+/*
+ * The music font. gscore writes the engraved scores as SVG that names
+ * Bravura and nothing else — the page each one came from declared the face
+ * itself, but the front page lifts only the drawing out of that page, so the
+ * declaration has to live here instead.
+ */
+@font-face {
+  font-family: "Bravura";
+  src: url("font.otf") format("opentype");
+  font-display: block;
+}
+
+* { box-sizing: border-box; }
+
+html { -webkit-text-size-adjust: 100%; }
+
+body {
+  margin: 0;
+  background: var(--page);
+  color: var(--text);
+  font-family: var(--font);
+  font-size: 17px;
+  line-height: 1.6;
+}
+
+a { color: var(--accent); }
+a:hover { color: #ffd36b; }
+
+code { font-family: var(--mono); font-size: 0.92em; }
+
+/* ---- the bar across the top ------------------------------------------- */
+
+.top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  max-width: var(--wide);
+  margin: 0 auto;
+  padding: 18px 16px;
+}
+
+.brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  font-weight: 700;
+  font-size: 1.25rem;
+  letter-spacing: -0.01em;
+  color: var(--text);
+  text-decoration: none;
+}
+.brand img { display: block; }
+
+.top nav {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  flex-wrap: wrap;
+}
+.top nav a { color: var(--dim); text-decoration: none; }
+.top nav a:hover { color: var(--text); }
+
+.cta,
+.button,
+button.play,
+button.primary {
+  display: inline-block;
+  padding: 9px 16px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--page-2);
+  color: var(--text) !important;
+  font: inherit;
+  text-decoration: none;
+  cursor: pointer;
+}
+.cta:hover, .button:hover, button.play:hover, button.primary:hover {
+  border-color: var(--accent);
+}
+button.primary, .cta {
+  background: var(--accent);
+  color: var(--accent-ink) !important;
+  border-color: var(--accent);
+  font-weight: 600;
+}
+.button.ghost { background: none; }
+
+main { max-width: var(--wide); margin: 0 auto; padding: 0 16px 64px; }
+
+/* ---- the hero ---------------------------------------------------------- */
+
+.hero { padding: 24px 0 8px; }
+
+h1 {
+  font-size: clamp(2.1rem, 6vw, 3.6rem);
+  line-height: 1.08;
+  letter-spacing: -0.025em;
+  margin: 0 0 14px;
+}
+
+.lead {
+  font-size: clamp(1.05rem, 2.4vw, 1.3rem);
+  color: var(--dim);
+  max-width: 44ch;
+  margin: 0 0 28px;
+}
+.lead em { color: var(--text); font-style: italic; }
+
+.player {
+  background: var(--page-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.tabs {
+  display: flex;
+  gap: 2px;
+  padding: 10px 10px 0;
+  flex-wrap: wrap;
+}
+.tabs button {
+  border: 1px solid transparent;
+  border-bottom: none;
+  border-radius: 8px 8px 0 0;
+  background: none;
+  color: var(--dim);
+  font: inherit;
+  padding: 8px 14px;
+  cursor: pointer;
+}
+.tabs button[aria-pressed="true"] {
+  background: var(--paper);
+  color: var(--ink);
+  font-weight: 600;
+}
+.tabs button:hover { color: var(--text); }
+.tabs button[aria-pressed="true"]:hover { color: var(--ink); }
+
+/* The music itself, on paper. */
+.stage {
+  background: var(--paper);
+  color: var(--ink);
+  padding: 18px 18px 10px;
+}
+.stage .by {
+  margin: 0 0 6px;
+  font-family: var(--serif);
+  font-style: italic;
+  color: #5a5f6a;
+  font-size: 0.95rem;
+}
+.stage .note {
+  margin: 4px 0 0;
+  color: #6b7280;
+  font-size: 0.85rem;
+}
+.paper { overflow-x: auto; }
+.paper svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  min-width: 540px;
+}
+
+/* What is sounding, as it sounds. */
+#barbox { fill: var(--accent); opacity: 0; transition: opacity 0.12s; }
+.stage .lit { fill: var(--lit); }
+
+/* ---- transport --------------------------------------------------------- */
+
+.transport {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  flex-wrap: wrap;
+  padding: 14px 18px;
+  border-top: 1px solid var(--line);
+}
+button.play { min-width: 92px; font-weight: 600; }
+
+.knob { display: inline-flex; align-items: center; gap: 8px; color: var(--dim); font-size: 0.92rem; }
+.knob input[type="range"] { width: 120px; accent-color: var(--accent); }
+.knob output { min-width: 4.5em; }
+.knob select {
+  background: var(--page);
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 6px 8px;
+  font: inherit;
+}
+
+/* Gilbert keeps time, because why would he not. */
+.gilbert { margin-left: auto; opacity: 0.85; }
+body.playing .gilbert { animation: bob 0.55s ease-in-out infinite alternate; }
+@keyframes bob {
+  from { transform: translateY(0) rotate(-4deg); }
+  to { transform: translateY(-7px) rotate(4deg); }
+}
+@media (prefers-reduced-motion: reduce) {
+  body.playing .gilbert { animation: none; }
+}
+
+/* ---- sharing ----------------------------------------------------------- */
+
+.share {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 14px 18px 18px;
+  border-top: 1px solid var(--line);
+}
+.share .fine, .share #said { flex-basis: 100%; margin: 4px 0 0; }
+#said { color: var(--accent); font-size: 0.92rem; min-height: 1.4em; word-break: break-all; }
+#said.said { animation: flash 0.3s; }
+@keyframes flash { from { opacity: 0.2; } to { opacity: 1; } }
+
+.fine { color: var(--dim); font-size: 0.86rem; margin: 10px 0 0; }
+.fine code { color: var(--text); }
+
+/* ---- the rest of the page ---------------------------------------------- */
+
+.points {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 26px;
+  margin: 56px 0;
+}
+.points h2 { font-size: 1.15rem; margin: 0 0 8px; }
+.points p { color: var(--dim); margin: 0; }
+
+section h2 { letter-spacing: -0.015em; }
+
+.formats { margin: 56px 0; }
+.formats > p { color: var(--dim); max-width: 60ch; }
+
+ul.grid {
+  list-style: none;
+  padding: 0;
+  margin: 22px 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 12px;
+}
+ul.grid li {
+  background: var(--page-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+}
+ul.grid b { display: block; }
+ul.grid span { color: var(--dim); font-size: 0.88rem; }
+
+.get { margin: 56px 0 0; }
+.downloads { display: flex; gap: 10px; flex-wrap: wrap; margin: 18px 0; }
+.downloads small { color: var(--dim); }
+
+footer {
+  border-top: 1px solid var(--line);
+  padding: 28px 16px 56px;
+  color: var(--dim);
+  font-size: 0.9rem;
+}
+footer p { max-width: var(--wide); margin: 0 auto 6px; }
+
+/* ---- documentation and the score gallery ------------------------------- */
+
+.sheet {
+  background: var(--paper);
+  color: var(--ink);
+  border-radius: var(--radius);
+  padding: 40px clamp(20px, 5vw, 56px);
+  margin: 16px 0 48px;
+}
+.sheet a { color: #9a6b00; }
+.sheet h1 { font-size: clamp(1.8rem, 4vw, 2.6rem); }
+.sheet h1, .sheet h2, .sheet h3 { letter-spacing: -0.015em; }
+.sheet h2 { margin-top: 1.9em; }
+.sheet p, .sheet li { max-width: 72ch; }
+.sheet blockquote {
+  margin: 1.4em 0;
+  padding: 2px 0 2px 18px;
+  border-left: 3px solid #e0ddd4;
+  color: #4c525e;
+}
+.sheet pre {
+  background: #f1efe9;
+  border: 1px solid #e3e0d7;
+  border-radius: 8px;
+  padding: 14px 16px;
+  overflow-x: auto;
+}
+.sheet code { background: #f1efe9; padding: 1px 5px; border-radius: 4px; }
+.sheet pre code { background: none; padding: 0; }
+.sheet table { border-collapse: collapse; width: 100%; margin: 1.4em 0; display: block; overflow-x: auto; }
+.sheet th, .sheet td { border: 1px solid #e3e0d7; padding: 8px 11px; text-align: left; vertical-align: top; }
+.sheet th { background: #f1efe9; }
+.sheet hr { border: none; border-top: 1px solid #e3e0d7; margin: 2.4em 0; }
+
+.index { list-style: none; padding: 0; display: grid; gap: 14px; }
+.index li {
+  background: var(--page-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 16px 18px;
+}
+.index h3 { margin: 0 0 4px; font-size: 1.05rem; }
+.index p { margin: 0; color: var(--dim); font-size: 0.92rem; }
+.index .ways { margin-top: 10px; display: flex; gap: 8px; flex-wrap: wrap; }
+.index .ways a {
+  font-size: 0.82rem;
+  padding: 4px 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  text-decoration: none;
+  color: var(--dim);
+}
+.index .ways a:hover { border-color: var(--accent); color: var(--accent); }
+
+@media (max-width: 640px) {
+  body { font-size: 16px; }
+  .transport { gap: 12px; }
+  .knob input[type="range"] { width: 90px; }
+}

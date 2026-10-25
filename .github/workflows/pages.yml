@@ -1,8 +1,12 @@
-# Build gscore as a static page and publish it to GitHub Pages.
+# Build the gscore web site and publish it to GitHub Pages.
 #
-# The whole program compiles to WebAssembly, so what lands at
-# https://stricaud.github.io/gscore/ is the same editor as the desktop build,
-# running entirely in the browser with no server behind it.
+# What lands at https://stricaud.github.io/gscore/ :
+#
+#   /          the front page, with music in it that plays and can be shared
+#   /app/      the editor — the whole program compiled to WebAssembly, the
+#              same one as the desktop build, with no server behind it
+#   /scores/   every sample, engraved by gscore, in every format it writes
+#   /docs/     the markdown in docs/, as pages
 #
 # Pages must be set to "GitHub Actions" as its source, once, in the
 # repository's Settings → Pages.
@@ -50,38 +54,84 @@ jobs:
           go vet ./...
           go test ./...
 
-      - name: Build the page
+      - name: Build the site
         run: sh web/build.sh web/dist
 
       - name: Check what was built
         run: |
           set -eu
-          for f in index.html gscore.wasm wasm_exec.js boot.js font.otf; do
+          # The front page, the editor, and the pieces that make each work.
+          for f in index.html site.css hero.js share.js font.otf \
+                   app/index.html app/gscore.wasm app/wasm_exec.js \
+                   app/boot.js app/share.js app/app.js \
+                   docs/index.html scores/index.html; do
             test -s "web/dist/$f" || { echo "missing or empty: $f" >&2; exit 1; }
           done
-          # Every file the page asks for has to be beside it. A page that
-          # loads a script which is not there fails in the browser and
-          # nowhere else, so it is checked here instead.
-          missing=0
-          for ref in $(grep -oE '(src|href)="[^"/][^":]*"' web/dist/index.html \
-                       | sed -E 's/.*="([^"]*)"/\1/' | sort -u); do
-            if [ ! -e "web/dist/$ref" ]; then
-              echo "index.html refers to $ref, which was not built" >&2
-              missing=1
-            fi
+          # A score page per sample, with the exports the gallery offers.
+          for abc in samples/*.abc; do
+            id=$(basename "$abc" .abc)
+            for ext in html pdf mid musicxml ly abc; do
+              test -s "web/dist/scores/$id.$ext" \
+                || { echo "missing: scores/$id.$ext" >&2; exit 1; }
+            done
           done
-          [ "$missing" -eq 0 ] || exit 1
+
+          # Every file every page asks for has to be beside it. A page that
+          # loads a script which is not there fails in the browser and
+          # nowhere else, so it is checked here instead — across the whole
+          # site, not only the front page.
+          python3 - <<'PY'
+          import os, re, sys
+          root = "web/dist"
+          pat = re.compile(r'(?:src|href)="([^"#?][^"]*?)"')
+          missing = []
+          checked = 0
+          for dirpath, _, files in os.walk(root):
+              for f in files:
+                  if not f.endswith(".html"):
+                      continue
+                  page = os.path.join(dirpath, f)
+                  html = open(page, encoding="utf-8", errors="replace").read()
+                  for ref in set(pat.findall(html)):
+                      if ref.startswith(("http://", "https://", "data:", "mailto:", "//")):
+                          continue
+                      checked += 1
+                      target = os.path.normpath(os.path.join(dirpath, ref.split("?")[0]))
+                      if not os.path.exists(target) and \
+                         not os.path.exists(target.rstrip("/") + "/index.html"):
+                          missing.append("%s refers to %s" % (os.path.relpath(page, root), ref))
+          print("checked %d references across the site" % checked)
+          for m in sorted(set(missing)):
+              print("  " + m, file=sys.stderr)
+          sys.exit(1 if missing else 0)
+          PY
+
+          # The front page carries the music itself: the engraved drawing and
+          # the performance that goes with it, one of each per sample. If the
+          # substitution ever silently did nothing, the page would still look
+          # fine here and be empty in a browser.
+          pieces=$(grep -c '<div class="piece"' web/dist/index.html)
+          want=$(ls samples/*.abc | wc -l | tr -d ' ')
+          [ "$pieces" = "$want" ] || {
+            echo "the front page holds $pieces scores, and there are $want samples" >&2
+            exit 1; }
+          grep -q 'class="sound"' web/dist/index.html || {
+            echo "the front page has no performance data in it" >&2; exit 1; }
+          grep -q 'class="gscore-score"' web/dist/index.html || {
+            echo "the front page has no engraved music in it" >&2; exit 1; }
 
           # The site is published under a path, not at the root of a domain,
           # so an asset asked for as "/font.otf" is looked for on the domain
           # root and is not there. Requests the WebAssembly core answers are
           # fine absolute — the shim intercepts those before they go out —
           # but a file the browser loads itself must be relative.
-          if grep -nE '(url\(|src=|href=)"?/[a-zA-Z]' web/dist/style.css web/dist/index.html; then
+          if grep -nE '(url\(|src=|href=)"?/[a-zA-Z]' \
+               web/dist/site.css web/dist/index.html \
+               web/dist/app/style.css web/dist/app/index.html; then
             echo "absolute asset path above: it will 404 under /gscore/" >&2
             exit 1
           fi
-          echo "wasm: $(du -h web/dist/gscore.wasm | cut -f1)"
+          echo "editor: $(du -h web/dist/app/gscore.wasm | cut -f1)"
 
       - uses: actions/configure-pages@v5
         with:

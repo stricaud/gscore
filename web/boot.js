@@ -65,13 +65,42 @@
     return new Response(res.body, { status: res.status, headers });
   };
 
+  // A score carried in the address bar, put into the core before the
+  // interface asks it for one.
+  //
+  // This is the other half of what the front page's share button does. The
+  // part of a URL after the # never leaves the browser, so a shared score
+  // was never uploaded anywhere and there is nothing to fetch here: the
+  // notes are in the link, and they go straight in through the same /api/open
+  // the file dialog uses.
+  async function openShared() {
+    if (!window.gscoreShare) return;
+    let abc;
+    try {
+      abc = await window.gscoreShare.fromLocation();
+    } catch (_) {
+      return; // a fragment that is not a score, which is most of them
+    }
+    if (!abc) return;
+    try {
+      await window.fetch("/api/open?name=shared.abc", {
+        method: "POST",
+        body: abc,
+      });
+    } catch (err) {
+      console.error("could not open the shared score:", err);
+    }
+  }
+
   // The desktop build opens files through the system dialog; a page cannot, so
   // the hidden file input does the work and app.js already falls back to it.
   window.gscoreReady = function () {
     document.body.classList.add("wasm");
     const el = document.getElementById("status");
     if (el) el.textContent = "Ready";
-    coreReady();
+    // The interface waits on this promise before asking for a score, so the
+    // shared one has to be in place before it resolves.
+    openShared().finally(coreReady);
   };
 
   async function start() {

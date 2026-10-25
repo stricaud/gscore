@@ -401,7 +401,7 @@ debian: soundfonts
 
 # ── the web page ────────────────────────────────────────────────────────────
 
-## web: the static page
+## web: the whole web site — front page, editor, scores, docs
 web:
 	@sh web/build.sh $(BUILD)/web
 

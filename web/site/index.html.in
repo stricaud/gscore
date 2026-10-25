@@ -1,0 +1,179 @@
+<!doctype html>
+<!--
+  The gscore landing page.
+
+  Built by web/build.sh, which engraves the scores with gscore itself and
+  drops them into the placeholders below. What you see is the program's own
+  output, not a picture of it.
+
+  Keep the placeholder names out of the prose here: they are substituted
+  everywhere they appear, comments included, and a comment that named one
+  had a copy of every score pasted into it.
+
+  (C) Copyright 2026 Sebastien Tricaud. MIT licence; see LICENSE.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>gscore — music you can send to anyone</title>
+<meta name="description" content="A free, MIT-licensed music score editor. Write music, hear it, and share it as a link that holds the notes themselves — no account, no upload, no server.">
+<link rel="icon" href="icon.png">
+<link rel="stylesheet" href="site.css">
+</head>
+<body>
+
+<header class="top">
+  <a class="brand" href="./"><img src="gilbert.svg" alt="" width="28" height="28"> gscore</a>
+  <nav>
+    <a href="scores/">Scores</a>
+    <a href="docs/">Docs</a>
+    <a href="https://github.com/stricaud/gscore">Source</a>
+    <a class="cta" href="app/">Open the editor</a>
+  </nav>
+</header>
+
+<main>
+
+<section class="hero">
+  <h1>Music you can send to&nbsp;anyone.</h1>
+  <p class="lead">
+    No account. No upload. No server at all — a gscore link <em>is</em> the
+    music. Press play, change it, then copy the link and paste it to someone.
+  </p>
+
+  <div class="player">
+    <div id="pieces" class="tabs" role="group" aria-label="Choose a piece">@TABS@</div>
+
+    <div class="stage">
+      <p class="by"><span id="by"></span></p>
+      @PIECES@
+      <p class="note" id="note"></p>
+    </div>
+
+    <div class="transport">
+      <button id="play" class="play" aria-label="Play">Play</button>
+
+      <label class="knob">
+        <span>Speed</span>
+        <input id="speed" type="range" min="0.5" max="1.75" step="0.05" value="1">
+        <output id="speedsaid">normal</output>
+      </label>
+
+      <label class="knob">
+        <span>Sound</span>
+        <select id="voice">
+          <option value="">as written</option>
+          <option value="flute">flute</option>
+          <option value="reed">reed</option>
+          <option value="brass">brass</option>
+          <option value="bowed">strings</option>
+          <option value="plucked">plucked</option>
+          <option value="tuned">bells</option>
+          <option value="sustained">organ</option>
+        </select>
+      </label>
+
+      <img class="gilbert" src="gilbert.svg" alt="" width="44" height="44">
+    </div>
+
+    <div class="share">
+      <button id="copy" class="primary">Copy the link</button>
+      <a id="open" class="button" href="app/">Open it in the editor</a>
+      <a id="file" class="button" href="scores/" download>Download the page</a>
+      <p id="said" role="status"></p>
+      <p class="fine">
+        The link carries the notes themselves — <span id="size"></span> after the
+        <code>#</code>, which browsers never send to a server. There is nothing
+        stored anywhere, nothing to expire, and nothing to take down.
+      </p>
+    </div>
+  </div>
+</section>
+
+<section class="points">
+  <article>
+    <h2>Free, and yours</h2>
+    <p>
+      MIT licensed, all of it. No subscription, no tier that unlocks playback,
+      no watermark on the parts you print. Your scores are files on your
+      machine in a format that is written down, and a plain-text one at that.
+    </p>
+  </article>
+  <article>
+    <h2>It opens for the other person</h2>
+    <p>
+      Send a link and they get the music, engraved and playable, in whatever
+      browser they already have — no install, no sign-up, nothing to agree to.
+      Or send one self-contained HTML file that works with no internet at all,
+      for as long as they keep it.
+    </p>
+  </article>
+  <article>
+    <h2>The same program everywhere</h2>
+    <p>
+      macOS, Windows and Linux run the same engraver as this page does — the
+      core is compiled to WebAssembly here and to a native binary there. The
+      music you are looking at was engraved by it.
+    </p>
+  </article>
+</section>
+
+<section class="formats">
+  <h2>One piece, every way out of it</h2>
+  <p>
+    Sharing is not only a link. gscore writes what the person at the other end
+    can actually open, whatever they use:
+  </p>
+  <ul class="grid">
+    <li><b>PDF</b><span>to print, or to email a part</span></li>
+    <li><b>MusicXML</b><span>for Sibelius, Dorico, MuseScore</span></li>
+    <li><b>LilyPond</b><span>for anyone who sets music by hand</span></li>
+    <li><b>MIDI</b><span>for a sequencer or a keyboard</span></li>
+    <li><b>FLAC</b><span>an actual recording, through real instruments</span></li>
+    <li><b>SVG &amp; HTML</b><span>for a web page, like this one</span></li>
+  </ul>
+  <p>
+    And it <em>reads</em> ABC, MusicXML, MuseScore and NoteWorthy Composer
+    files — including old ones, with their mistakes logged rather than
+    refused. <a href="scores/">See the sample scores</a> for every format of
+    each piece.
+  </p>
+</section>
+
+<section class="get">
+  <h2>Get it</h2>
+  <p>Version @VERSION@. Each download plays real instruments the first time it opens — the soundfont is inside.</p>
+  <div class="downloads">
+    <a class="button" href="https://github.com/stricaud/gscore/releases/latest">macOS <small>.dmg</small></a>
+    <a class="button" href="https://github.com/stricaud/gscore/releases/latest">Windows <small>installer</small></a>
+    <a class="button" href="https://github.com/stricaud/gscore/releases/latest">Linux <small>.tar.gz / .deb</small></a>
+    <a class="button ghost" href="app/">or just use it here</a>
+  </div>
+  <p class="fine">
+    The macOS and Windows builds are signed by nobody, because a certificate is
+    an annual fee and this is a free program; the release notes say which button
+    to press the first time.
+  </p>
+</section>
+
+</main>
+
+<footer>
+  <p>
+    gscore @VERSION@ — written in C and GTK+ from 2001 to 2005, rewritten in Go
+    for 2026. MIT licensed.
+    <a href="https://github.com/stricaud/gscore">Source</a> ·
+    <a href="docs/">Documentation</a> ·
+    <a href="scores/">Scores</a>
+  </p>
+  <p class="fine">
+    Music set in Bravura (SIL Open Font License). The sample pieces are public
+    domain.
+  </p>
+</footer>
+
+<script src="share.js"></script>
+<script src="hero.js"></script>
+</body>
+</html>

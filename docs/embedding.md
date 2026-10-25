@@ -16,7 +16,7 @@ open http://localhost:8000/samples/embed.html
 
 It has to be served rather than opened as a file, because WebAssembly will not
 start from a `file://` URL. Pointing the frames at a published copy such as
-`https://stricaud.github.io/gscore/` needs no build at all.
+`https://stricaud.github.io/gscore/app/` needs no build at all.
 
 One thing to watch: `score=` is resolved against the **gscore page**, not
 against your page. The sample reaches back out with `../../samples/…` for
@@ -25,7 +25,7 @@ exactly that reason; an absolute URL avoids the question.
 ## The short version
 
 ```html
-<iframe src="https://stricaud.github.io/gscore/?player=1&score=tune.abc"
+<iframe src="https://stricaud.github.io/gscore/app/?player=1&score=tune.abc"
         width="100%" height="220" style="border:0"></iframe>
 ```
 
@@ -116,7 +116,7 @@ and one frame, with `tune=N` choosing which to show.
 ## Hosting it yourself
 
 ```sh
-make web            # builds into build/web
+make web            # builds the site into build/web; the editor is in app/
 ```
 
 That directory is the whole thing: an `index.html`, a stylesheet, the

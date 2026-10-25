@@ -127,7 +127,14 @@ func DefaultSpacings() Spacings {
 		AfterBarline:    0.8,
 		BetweenMeasures: 0.6,
 
-		StaffGap:  10,
+		// Seven, which is what MuseScore sets a grand staff to and close to
+		// what Gould gives for one. Ten was a guess, and it put a pianist's
+		// two staves half as far apart again as any printed edition: the
+		// brace stretched, the barlines joining the staves ran on and on,
+		// and a page held less music than it should. This is a floor, not
+		// the answer — the gap below opens as far as the music between the
+		// staves actually needs.
+		StaffGap:  7,
 		SystemGap: 5,
 
 		Margin: 4,

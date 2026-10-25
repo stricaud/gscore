@@ -417,7 +417,7 @@ const (
 )
 
 // slurAt handles a slur or a tie opening or closing at one element.
-func (e *engraver) slurAt(m *model.Marks, p *placed) {
+func (e *engraver) slurAt(part *model.Part, m *model.Marks, p *placed) {
 	if m == nil {
 		return
 	}
@@ -452,6 +452,19 @@ func (e *engraver) slurAt(m *model.Marks, p *placed) {
 	// already open and did nothing, and then the close took that one away —
 	// so a phrase slurred bar by bar came out with its first slur drawn and
 	// the rest missing. Four whole notes joined by three slurs showed one.
+	// An appoggiatura's slur starts on the small note and stops on this
+	// one, so it has to be opened before the closing below or the stop
+	// finds nothing open and the curve is never drawn.
+	if open.slur == nil {
+		if gx, gstep, ok := e.graceSlurAnchor(part, p); ok {
+			gy := e.y + stepY(float64(gstep))
+			open.slur = &openSpan{
+				x: gx, y: gy, rel: gy - e.y, above: true,
+				lowest: gstep, highest: gstep,
+			}
+		}
+	}
+
 	if m.SlurStop && open.slur != nil {
 		sl := open.slur
 		// Away from the stems of the notes it covers. A tie between them

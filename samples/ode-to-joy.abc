@@ -1,0 +1,17 @@
+% Ode to Joy — the theme from the fourth movement of Beethoven's ninth
+% symphony, first performed in Vienna in May 1824. Public domain.
+%
+% Eight bars, one voice, nothing clever: it is here because everybody
+% recognises it the moment it starts playing, which is what a sample on a
+% web page is for.
+X:1
+T:Ode to Joy
+C:Ludwig van Beethoven
+O:Symphony No. 9 in D minor, fourth movement (1824)
+M:4/4
+L:1/4
+Q:1/4=108
+K:C
+%%MIDI program 40
+E E F G | G F E D | C C D E | E3/2 D/2 D2 |
+E E F G | G F E D | C C D E | D3/2 C/2 C2 |]

@@ -532,7 +532,7 @@ func (r *reader) staff(doc *document, id string) error {
 		doc.staves[id] = st
 		doc.order = append(doc.order, id)
 	}
-	return r.children(func(e xml.StartElement) error {
+	err := r.children(func(e xml.StartElement) error {
 		switch e.Name.Local {
 		case "Measure":
 			return r.measure(doc, st)
@@ -542,6 +542,96 @@ func (r *reader) staff(doc *document, id string) error {
 			return r.dec.Skip()
 		}
 	})
+	if err != nil {
+		return err
+	}
+	closeTies(st.measures)
+	return nil
+}
+
+/*
+ * Ties
+ */
+
+// closeTies joins each tie to the note it runs to.
+//
+// MuseScore writes a tie on the note it starts from and writes nothing at
+// all on the note it reaches: the end is simply wherever the next note of
+// that pitch in that voice falls, barline or no barline. Read literally,
+// every tie opened and none ever shut — a Goldberg Variations came in with
+// six hundred and eighty-five ties open and no stops, and the engraver drew
+// each of them running off to the end of its system. A page of that looks
+// like slurs that never finish.
+//
+// A tie that reaches nothing is dropped rather than left hanging, because a
+// curve to nowhere is worse than no curve.
+func closeTies(measures []*model.Measure) {
+	// A voice carries on across the barline but is stored per bar, so the
+	// voices are walked by index to get one run of music at a time.
+	most := 0
+	for _, m := range measures {
+		if n := len(m.Voices); n > most {
+			most = n
+		}
+	}
+	for v := 0; v < most; v++ {
+		var seq []model.Element
+		for _, m := range measures {
+			if v < len(m.Voices) && m.Voices[v] != nil {
+				seq = append(seq, m.Voices[v].Elements...)
+			}
+		}
+		closeTieRun(seq)
+	}
+}
+
+// closeTieRun marks the far end of every tie in one run of a voice.
+func closeTieRun(seq []model.Element) {
+	// Only ever adding a stop, never taking a start away. A tie whose note
+	// is not there — the last note of an excerpt, a tie across a repeat —
+	// is left as the file wrote it, because guessing that a file is wrong
+	// is how an importer loses music somebody meant.
+	for i, el := range seq {
+		notes, whole := tieNotes(el)
+		for _, n := range notes {
+			if !n.TieStart && !whole {
+				continue
+			}
+			if to := tieTarget(seq, i+1, n.Pitch); to != nil {
+				to.TieStop = true
+			}
+		}
+	}
+}
+
+// tieNotes is the noteheads of an element, and whether the element itself
+// carries a tie covering all of them.
+func tieNotes(el model.Element) ([]*model.Note, bool) {
+	switch v := el.(type) {
+	case *model.Note:
+		return []*model.Note{v}, false
+	case *model.Chord:
+		return v.Notes, v.TieStart
+	}
+	return nil, false
+}
+
+// tieTarget is the notehead a tie starting at pitch runs to.
+//
+// The very next element, and no further: a tie joins one note to the note
+// after it. Anything else — a rest, a different pitch — means the tie has
+// nowhere to go, which is a file saying something it does not mean.
+func tieTarget(seq []model.Element, from int, pitch model.Pitch) *model.Note {
+	if from >= len(seq) {
+		return nil
+	}
+	notes, _ := tieNotes(seq[from])
+	for _, n := range notes {
+		if n.Pitch == pitch {
+			return n
+		}
+	}
+	return nil
 }
 
 // transposeOf finds the transposition of whichever part owns a staff. The
@@ -652,6 +742,34 @@ func (r *reader) measure(doc *document, st *msStaff) error {
 				return err
 			}
 			m.Voices = append(m.Voices, vs.v)
+			return nil
+		case "tick":
+			n, err := r.number()
+			if err != nil {
+				return err
+			}
+			// Where the voices of a bar come from in MuseScore 2 and
+			// earlier. Instead of wrapping each in <voice>, it writes them
+			// one after another inside the bar and rewinds the write
+			// position with <tick> before each. Read straight through, the
+			// second voice was laid end to end after the first and the bar
+			// came out holding twice the music it should — which is what
+			// put the two staves of a piano out of step with each other,
+			// and why a bar of three-four could hold five notes.
+			if loose != nil {
+				r.closeVoice(loose)
+				m.Voices = append(m.Voices, loose.v)
+			}
+			loose = newVoice(m)
+			// A voice that comes in part way through the bar is spaced to
+			// its entry by a rest that takes room without being printed.
+			// MuseScore leaves those rests out: the voice below is already
+			// holding that beat and a second rest on top of it would only
+			// be something else to read.
+			if d, ok := tickDuration(n); ok {
+				loose.v.Elements = append(loose.v.Elements,
+					&model.Rest{Dur: d, Hidden: true})
+			}
 			return nil
 		case "startRepeat":
 			startRepeat = true
@@ -1111,12 +1229,38 @@ func tempoWords(s string) string {
 	if i := strings.IndexByte(s, '='); i >= 0 {
 		s = s[:i]
 	}
+	s = dropMusicSymbols(s)
 	s = strings.Trim(strings.TrimSpace(s), "()[]")
 	// What is left of "♩ = 150" once the note symbol is gone is nothing.
 	if strings.Trim(s, " .,-") == "" {
 		return ""
 	}
 	return strings.TrimSpace(s)
+}
+
+// dropMusicSymbols removes note symbols from a line of words.
+//
+// MuseScore writes a metronome mark as text, and the note in it is a real
+// character: "𝅘𝅥 = 72" begins with U+1D15F, from Unicode's Musical Symbols
+// block. gscore draws its own metronome mark from the numbers, in the music
+// font, so the character is not wanted — and worse than not wanted, because
+// the words beside a tempo are set in a text font, and no text font has a
+// glyph for it. It came out as the empty box that means a font was asked for
+// a character it does not have.
+//
+// Two ranges go: Unicode's musical symbols, and the private-use area where
+// SMuFL lives, which is where a file that embeds Bravura's own codepoints
+// puts them.
+func dropMusicSymbols(s string) string {
+	return strings.Map(func(r rune) rune {
+		switch {
+		case r >= 0x1D100 && r <= 0x1D1FF: // Musical Symbols
+			return -1
+		case r >= 0xE000 && r <= 0xF8FF: // private use: SMuFL
+			return -1
+		}
+		return r
+	}, s)
 }
 
 func (r *reader) dynamic(vs *voiceState) error {
@@ -1541,6 +1685,27 @@ func (r *reader) chord(st *msStaff, vs *voiceState) error {
 			return r.lyrics(ch)
 		case "Spanner":
 			return r.chordSpanner(ch, attr(c, "type"))
+		case "Slur", "Tie":
+			// How MuseScore 1 and 2 wrote a slur: an empty element on the
+			// chord at each end, naming the slur by id, with a definition
+			// of the same id standing in the bar. MuseScore 3 replaced it
+			// with the <Spanner> above, which is the only form this reader
+			// understood — so every slur in a file written before 2019 was
+			// dropped here without a word. The ends are all that is needed:
+			// which notes they fall on is what a slur is.
+			kind := attr(c, "type")
+			if err := r.dec.Skip(); err != nil {
+				return err
+			}
+			if c.Name.Local == "Slur" {
+				switch kind {
+				case "start":
+					ch.marks.SlurStart = true
+				case "stop":
+					ch.marks.SlurStop = true
+				}
+			}
+			return nil
 		case "StemDirection":
 			s, err := r.text()
 			switch s {
@@ -1594,9 +1759,19 @@ func (r *reader) chord(st *msStaff, vs *voiceState) error {
 		}
 		vs.grace.Slashed = vs.grace.Slashed || ch.slashed
 		written := r.writtenValue(ch.kind, ch.dots)
+		first := len(vs.grace.Notes)
 		for _, n := range ch.notes {
 			n.Dur = written
 			vs.grace.Notes = append(vs.grace.Notes, n)
+		}
+		// A slur that begins on a grace note — an appoggiatura leaning into
+		// the note it decorates — is the commonest slur in this music, and
+		// the marks on a grace chord were going out with the chord itself.
+		// They move to the grace note, which is where the curve starts.
+		if ch.marks.SlurStart || ch.marks.SlurStop {
+			n := vs.grace.Notes[first]
+			n.Marks.SlurStart = n.Marks.SlurStart || ch.marks.SlurStart
+			n.Marks.SlurStop = n.Marks.SlurStop || ch.marks.SlurStop
 		}
 		return nil
 	}
@@ -2225,4 +2400,18 @@ var headKinds = map[string]model.NoteheadKind{
 	"triangle": model.HeadTriangle, "triangle-down": model.HeadTriangle,
 	"diamond": model.HeadDiamond,
 	"slash":   model.HeadSlash,
+}
+
+// msTicksPerQuarter is how MuseScore divides a quarter note.
+const msTicksPerQuarter = 480
+
+// tickDuration turns a position in a bar into the silence before it.
+func tickDuration(ticks int) (model.Duration, bool) {
+	if ticks <= 0 {
+		return model.Duration{}, false
+	}
+	// Ticks count quarter notes; a Duration counts whole ones.
+	return model.Duration{
+		Num: ticks, Den: msTicksPerQuarter * 4,
+	}.Reduced(), true
 }

@@ -278,3 +278,46 @@ func (e *engraver) graceLedgerLines(x, headWidth float64, step int) {
 		draw(st)
 	}
 }
+
+// graceSlurAnchor is where a slur that begins on a grace note starts.
+//
+// MuseScore writes an appoggiatura as a grace note slurred into the note it
+// leans on, and it is the commonest slur in keyboard music of the period.
+// The curve has to begin at the small notehead rather than at the note it
+// decorates, or it is drawn backwards — from the main note to itself.
+//
+// The geometry is drawGrace's, worked out the same way from the same layout,
+// because the two have to agree: a curve that starts half a space from the
+// notehead it belongs to is worse than no curve.
+func (e *engraver) graceSlurAnchor(part *model.Part, p *placed) (x float64, step int, ok bool) {
+	m := p.marks()
+	if m == nil || m.Grace == nil || len(m.Grace.Notes) == 0 {
+		return 0, 0, false
+	}
+	// Whichever of the group carries the mark: a group of three leaning into
+	// one note is slurred from the first of them, but nothing says it must
+	// be, and the file is the authority.
+	i := -1
+	for k, n := range m.Grace.Notes {
+		if n.Marks.SlurStart {
+			i = k
+			break
+		}
+	}
+	if i < 0 {
+		return 0, 0, false
+	}
+
+	var el model.Element
+	switch {
+	case p.note != nil:
+		el = p.note
+	case p.chord != nil:
+		el = p.chord
+	}
+	lay := graceLayout(m.Grace)
+	head := smufl.Advance("noteheadBlack") * graceScale
+	left := p.x - e.accidentalLead(el) - lay.width
+	return left + lay.heads[i] + head/2,
+		StaffStep(part.Clef, m.Grace.Notes[i].Pitch), true
+}

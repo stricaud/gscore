@@ -523,6 +523,10 @@ type engraver struct {
 	opt   Options
 	score *model.Score
 	lay   *Layout
+	// titleFrom and titleTo bracket the title block's own entries in
+	// lay.Texts, so they can be put back on the canvas once its width is
+	// known. See centreTitleBlock.
+	titleFrom, titleTo int
 	// room is how much space each system's ink actually took above its
 	// staff, measured on a previous pass and keyed by the system's first
 	// bar. Empty on the first pass, when there is nothing to go on but the
@@ -699,6 +703,30 @@ func (e *engraver) run() {
 	}
 	if e.lay.Width == 0 {
 		e.lay.Width = e.opt.LineWidth + 2*sp.Margin
+	}
+	e.centreTitleBlock()
+}
+
+// centreTitleBlock puts the title and the credit on the canvas that was
+// actually drawn.
+//
+// The block is laid out first, before a note is placed, so it has nothing to
+// go on but Options.LineWidth. In Strip mode that is not the width of
+// anything: the music runs as far as it runs and the canvas is trimmed to
+// it. A short piece came out with its title off to the right of centre and
+// its composer hanging past the edge, cut off mid-name.
+//
+// In a paginated score the canvas is LineWidth plus the margins, so every
+// sum below gives back exactly where the text already was.
+func (e *engraver) centreTitleBlock() {
+	sp := e.opt.Spacings
+	for i := e.titleFrom; i < e.titleTo && i < len(e.lay.Texts); i++ {
+		switch e.lay.Texts[i].Anchor {
+		case "middle":
+			e.lay.Texts[i].X = e.lay.Width / 2
+		case "end":
+			e.lay.Texts[i].X = e.lay.Width - sp.Margin
+		}
 	}
 }
 
@@ -1224,17 +1252,31 @@ func topOf(c model.Clef, el model.Element) (step int, stemUp bool, ok bool) {
 func (e *engraver) titleBlock() {
 	sp := e.opt.Spacings
 	centre := sp.Margin + e.opt.LineWidth/2
-	if e.score.Identity.Title != "" {
+	e.titleFrom = len(e.lay.Texts)
+	defer func() { e.titleTo = len(e.lay.Texts) }()
+	// A title runs to several lines as often as a credit does — a work, a
+	// movement and a catalogue number, which is how a file written by hand
+	// in another program arrives. They were drawn as one string and the
+	// cursor moved by one line, so every line after the first was drawn on
+	// top of the line beneath it and the subtitle landed in the middle of
+	// the title.
+	for _, line := range strings.Split(e.score.Identity.Title, "\n") {
+		if line = strings.TrimSpace(line); line == "" {
+			continue
+		}
 		e.y += 3
 		e.lay.Texts = append(e.lay.Texts, Text{
-			S: e.score.Identity.Title, X: centre, Y: e.y,
+			S: line, X: centre, Y: e.y,
 			Size: 2.6, Anchor: "middle", Bold: true,
 		})
 		e.y += 1.6
 	}
-	if e.score.Identity.Subtitle != "" {
+	for _, line := range strings.Split(e.score.Identity.Subtitle, "\n") {
+		if line = strings.TrimSpace(line); line == "" {
+			continue
+		}
 		e.lay.Texts = append(e.lay.Texts, Text{
-			S: e.score.Identity.Subtitle, X: centre, Y: e.y,
+			S: line, X: centre, Y: e.y,
 			Size: 1.5, Anchor: "middle", Italic: true,
 		})
 		e.y += 1.6

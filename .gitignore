@@ -1,4 +1,7 @@
 /build/
+# A bare `go build` at the root leaves the binary here, beside the source.
+# The Makefile puts its own in build/, which is already ignored.
+/gscore
 .DS_Store
 /gscore_windows_amd64.syso
 /web/dist/

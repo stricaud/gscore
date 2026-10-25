@@ -81,7 +81,9 @@ trap 'rm -rf "$tmp"' EXIT
 # out again — it never opens a window — and the native window wraps
 # WebKitGTK on Linux, whose headers a build machine has no reason to carry.
 # With cgo on, the site could only be built on a desktop.
-CGO_ENABLED=0 go build -trimpath -o "$tmp/gscore" "$root"
+CGO_ENABLED=0 go build -trimpath \
+    -ldflags="-X github.com/stricaud/gscore/internal/version.Version=$version" \
+    -o "$tmp/gscore" "$root"
 
 for src in "$root"/samples/*; do
     case "$src" in

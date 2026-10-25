@@ -115,7 +115,7 @@ func DefaultSpacings() Spacings {
 		// of sixteenths above the staff is drawn with one unbroken line
 		// through all of it instead of a line under each note. The floor
 		// has to clear a ledger line; the test beside this says so.
-		MinNote:      2.0,
+		MinNote: 2.0,
 
 		BeforeAccidental:   0.4,
 		AccidentalToNote:   0.25,

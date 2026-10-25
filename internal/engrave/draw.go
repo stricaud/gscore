@@ -845,6 +845,48 @@ func (e *engraver) setStemDirections(items []*placed, t model.TimeSignature) {
 			break
 		}
 	}
+	// Which voice is actually the upper one.
+	//
+	// Normally the first, which is what the numbering means and what the
+	// rule above assumes. Not always: a part may write the held note as the
+	// second voice and the moving line as the first, and then the first
+	// voice is the lower one. Altes ends that way — the left hand holds an
+	// E and a G in its second voice while its first plays a triplet on the
+	// C below — and stems forced up by number sent the triplet's beam over
+	// the top of the chord it is written under, where the original prints
+	// it below the notes, as anyone would.
+	//
+	// Only where the inversion is plain: every note of the one voice below
+	// every note of the other. Voices that cross or share a pitch are not a
+	// case of the numbering being the wrong way round, and the numbering is
+	// what tells the reader which line is which.
+	inverted := false
+	if multi {
+		lo := map[int][2]int{} // voice -> lowest, highest step
+		for _, p := range items {
+			if p.rest != nil {
+				continue
+			}
+			r, ok := lo[p.voice]
+			if !ok {
+				lo[p.voice] = [2]int{p.lo, p.hi}
+				continue
+			}
+			if p.lo < r[0] {
+				r[0] = p.lo
+			}
+			if p.hi > r[1] {
+				r[1] = p.hi
+			}
+			lo[p.voice] = r
+		}
+		if a, ok := lo[0]; ok {
+			if b, ok := lo[1]; ok && a[1] < b[0] {
+				inverted = true
+			}
+		}
+	}
+
 	byVoice := func(p *placed) int {
 		// Unless the score itself asked for a direction, which still wins.
 		if m := p.marks(); m != nil && m.Stem == model.StemUp {
@@ -852,7 +894,11 @@ func (e *engraver) setStemDirections(items []*placed, t model.TimeSignature) {
 		} else if m != nil && m.Stem == model.StemDown {
 			return -1
 		}
-		if p.voice%2 == 0 {
+		up := p.voice%2 == 0
+		if inverted {
+			up = !up
+		}
+		if up {
 			return 1
 		}
 		return -1
@@ -1759,11 +1805,31 @@ func (e *engraver) separateColumn(col []*placed) {
 	if len(voices) < 2 {
 		return
 	}
-	sort.Ints(voices)
+	// Down the stack by where the voices actually sit, highest first, with
+	// their numbering only to break a tie.
+	//
+	// Not by the numbering itself, which is what this did. The first voice
+	// is usually the upper one and then the two orders agree — but a part
+	// may write the held note as its second voice and the moving line as
+	// its first, and Altes ends that way: the left hand holds an E and a G
+	// while the voice numbered before them plays a triplet on the C below.
+	// Read in number order, the C was taken for the upper note and the held
+	// chord for the lower, the two were found to clash when a third apart
+	// clears perfectly well, and the chord was pushed a notehead to the
+	// left of the note it sounds with.
+	sort.SliceStable(voices, func(a, b int) bool {
+		ra, rb := byVoice[voices[a]], byVoice[voices[b]]
+		if ra.hi != rb.hi {
+			return ra.hi > rb.hi
+		}
+		if ra.lo != rb.lo {
+			return ra.lo > rb.lo
+		}
+		return voices[a] < voices[b]
+	})
 
 	// Down the stack, each voice against the one above it. A larger step is
-	// higher on the staff, so the voice above is the one with the larger
-	// numbers.
+	// higher on the staff.
 	for i := 1; i < len(voices); i++ {
 		above, below := byVoice[voices[i-1]], byVoice[voices[i]]
 		if above.lo-below.hi > 1 {

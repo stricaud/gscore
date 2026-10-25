@@ -1601,7 +1601,19 @@ func (e *engraver) voiceShift(clef model.Clef, col slot) float64 {
 	if len(voices) < 2 {
 		return 0
 	}
-	sort.Ints(voices)
+	// Highest first, by where the voices sit rather than by their numbering:
+	// separateColumn moves them by that order, and the room booked here has
+	// to be booked for the same thing it does.
+	sort.SliceStable(voices, func(a, b int) bool {
+		ra, rb := byVoice[voices[a]], byVoice[voices[b]]
+		if ra.hi != rb.hi {
+			return ra.hi > rb.hi
+		}
+		if ra.lo != rb.lo {
+			return ra.lo > rb.lo
+		}
+		return voices[a] < voices[b]
+	})
 	for i := 1; i < len(voices); i++ {
 		if byVoice[voices[i-1]].lo-byVoice[voices[i]].hi <= 1 {
 			return widest

@@ -964,9 +964,20 @@ const (
 // Only the kinds that are written under a staff: the dynamics, the hairpins
 // that run between them, and an octave line below. The trill's wave, the
 // volta and the rehearsal letters go above and are counted there.
+//
+// Bar by bar, and the worst bar wins. The three bands stack: a hairpin runs
+// under the dynamics line and an octave line under that, so where all three
+// are written at once the staff needs room for all three. Where they are not,
+// it does not — and asking the question once over the whole stretch answered
+// "a dynamic somewhere, a hairpin somewhere, an octave line somewhere", which
+// over a long stretch is always yes to everything. The continuous strip is
+// one system however long the piece is, so a single hairpin in bar 90 pushed
+// the staves apart for all 131 bars of the Altes and left a hand's width of
+// nothing under the opening.
 func marksBelow(p *model.Part, start, end int) float64 {
-	var dyn, hair, oct bool
+	worst := 0.0
 	for mi := start; mi < end && mi < len(p.Measures); mi++ {
+		var dyn, hair, oct bool
 		for _, v := range p.Measures[mi].Voices {
 			for _, el := range v.Elements {
 				m := marksOf(el)
@@ -984,18 +995,21 @@ func marksBelow(p *model.Part, start, end int) float64 {
 				}
 			}
 		}
+		room := 0.0
+		if dyn {
+			room += dynamicBand
+		}
+		if hair {
+			room += hairpinBand
+		}
+		if oct {
+			room += octaveBelow
+		}
+		if room > worst {
+			worst = room
+		}
 	}
-	room := 0.0
-	if dyn {
-		room += dynamicBand
-	}
-	if hair {
-		room += hairpinBand
-	}
-	if oct {
-		room += octaveBelow
-	}
-	return room
+	return worst
 }
 
 // staffClearance is the air left between what one staff's music reaches down
@@ -1988,11 +2002,27 @@ func (e *engraver) drawSystem(parts []*model.Part, boxes [][]measureBox,
 			// ledger lines over the lower staff and a dynamic under the
 			// upper one meet in the middle, and then nothing on the page
 			// says which staff either belongs to.
-			_, below := e.staffReach(parts[i], start, end)
-			below += marksBelow(parts[i], start, end)
-			above, _ := e.staffReach(parts[i+1], start, end)
-			if need := below + above + staffClearance; gap < need {
-				gap = need
+			//
+			// Bar by bar, and the worst bar sets the gap. Two staves are
+			// straight lines, so they have to be far enough apart for the
+			// worst place along them — but the worst place is one place.
+			// Asking for the whole stretch at once took the deepest thing
+			// under the upper staff, the highest thing over the lower one
+			// and the room for the marks between them, each found wherever
+			// in the piece it happened to be, and added them up as though
+			// all three were at the same moment. In the continuous strip,
+			// where the whole piece is one system, that is a hundred and
+			// thirty bars of worst cases summed: the Altes opened with the
+			// pianist's two staves a hand's width apart and nothing at all
+			// in between. The deepest note under the right hand is at bar
+			// 62 and the highest under the left at bar 83.
+			for mi := start; mi < end && mi < len(parts[i].Measures); mi++ {
+				_, below := e.staffReach(parts[i], mi, mi+1)
+				below += marksBelow(parts[i], mi, mi+1)
+				above, _ := e.staffReach(parts[i+1], mi, mi+1)
+				if need := below + above + staffClearance; gap < need {
+					gap = need
+				}
 			}
 		}
 		return gap

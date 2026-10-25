@@ -6,7 +6,7 @@ abc/boite-musique.abc e698ae3d84f796ec 514
 abc/decoration.abc c1c6eea6d301c988 32
 abc/pitch.abc 6de715b685da879f 236
 abc/sunshine.abc 29b39313b40cf0ff 136
-samples/altes-opening.abc d7e8538171c6ff6d 344
+samples/altes-opening.abc bd7f2c51d6553df5 344
 samples/boite-musique.abc e698ae3d84f796ec 514
 suite/01a-Pitches-Pitches.musicxml ac9b5a16d2ed23a9 555
 suite/01b-Pitches-Intervals.musicxml 10c7ac11bad1da6c 412
@@ -118,7 +118,7 @@ suite/41j-PartNameDisplay-Multiple-DisplayText-Children.musicxml 03714a78934d725
 suite/41k-PartName-Print.musicxml f02000eaf2e248dc 16
 suite/41l-GroupNameDisplay-Override.musicxml 394e1a5af4372582 58
 suite/42a-MultiVoice-TwoVoicesOnStaff-Lyrics.musicxml 426c5ef33400fbea 54
-suite/42b-MultiVoice-MidMeasureClefChange.musicxml cb4868bcf9a87d60 187
+suite/42b-MultiVoice-MidMeasureClefChange.musicxml 7ed10c96fa5fb480 187
 suite/43a-PianoStaff.musicxml 16c72234de1b1475 104
 suite/43b-MultiStaff-DifferentKeys.musicxml c7f770a0ac961810 108
 suite/43c-MultiStaff-DifferentKeysAfterBackup.musicxml c7f770a0ac961810 108
@@ -175,7 +175,7 @@ suite/71a-Chordnames.musicxml 57947be98a66b974 28
 suite/71b-Chordnames-Kinds.musicxml f513f56558e11f76 82
 suite/71c-ChordsFrets.musicxml 57947be98a66b974 28
 suite/71d-ChordsFrets-Multistaff.musicxml 19f288a61c99b55d 134
-suite/71e-TabStaves.musicxml 6d2820dec47b0b9f 419
+suite/71e-TabStaves.musicxml b6fd015e2a0b3685 419
 suite/71f-AllChordTypes.musicxml 221b9913aab8b576 140
 suite/71g-MultipleChordnames.musicxml c0151ea01beaeca9 15
 suite/72a-TransposingInstruments.musicxml ddef15a1e349fb76 87

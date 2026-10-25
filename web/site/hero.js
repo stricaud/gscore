@@ -71,16 +71,90 @@
 
   function start(piece, autoplay) {
     if (!frame) {
+      showLoader();
       frame = document.createElement("iframe");
       frame.className = "editor";
       frame.title = "gscore";
       frame.setAttribute("allow", "autoplay");
       stage.appendChild(frame);
       document.body.classList.add("live");
-      say("Starting gscore — the whole program, in this page.");
     }
     frame.src = editorURL(piece, autoplay);
   }
+
+  /* ---- waiting for it ------------------------------------------------ */
+
+  /*
+   * Seventeen megabytes is a few seconds on a good line and rather longer on
+   * a bad one, and a page that sits there doing nothing during them looks
+   * broken. So Gilbert comes out and waits with you.
+   *
+   * The bar is honest about being a guess: nothing here can see how much of
+   * the editor has arrived, because it is fetched by the page inside the
+   * frame. It eases towards nearly-full and stops there, and the editor
+   * itself finishes it — it posts "ready" to this page once the score is
+   * drawn, which is the moment that actually matters.
+   */
+  const WAITING = [
+    "Unpacking the engraver…",
+    "Counting the staff lines…",
+    "Sharpening the quills…",
+    "Teaching Gilbert the tune…",
+    "Almost there…",
+  ];
+
+  let loader = null;
+  let loaderTimers = [];
+
+  function showLoader() {
+    if (loader) return;
+    loader = document.createElement("div");
+    loader.className = "loading";
+    loader.innerHTML =
+      '<div class="gilbert"><img src="gilbert.svg" alt="" width="72" height="72"></div>' +
+      '<p class="loading-says">' + WAITING[0] + "</p>" +
+      '<div class="loading-bar"><i></i></div>' +
+      '<p class="loading-fine">gscore itself, not a player pretending to be it.</p>';
+    stage.appendChild(loader);
+
+    const fill = loader.querySelector(".loading-bar i");
+    const says = loader.querySelector(".loading-says");
+
+    // Towards 92% and no further, in steps that get smaller: quick at first,
+    // so it is plain that something is happening, then patient.
+    let at = 0;
+    let step = 0;
+    loaderTimers.push(setInterval(() => {
+      at += (92 - at) * 0.12;
+      fill.style.width = at.toFixed(1) + "%";
+    }, 220));
+    loaderTimers.push(setInterval(() => {
+      step = Math.min(step + 1, WAITING.length - 1);
+      says.textContent = WAITING[step];
+    }, 2600));
+  }
+
+  function hideLoader() {
+    if (!loader) return;
+    loaderTimers.forEach(clearInterval);
+    loaderTimers = [];
+    const fill = loader.querySelector(".loading-bar i");
+    if (fill) fill.style.width = "100%";
+    loader.classList.add("done");
+    const going = loader;
+    loader = null;
+    // Long enough to see the bar reach the end, which is the point of a bar.
+    setTimeout(() => going.remove(), 420);
+  }
+
+  // The editor says when it is up. Nothing else can: the frame's load event
+  // fires when its HTML arrives, which is long before the program has.
+  window.addEventListener("message", (e) => {
+    if (e.data && e.data.gscore === "ready") {
+      hideLoader();
+      say("gscore is running in this page — the whole program.");
+    }
+  });
 
   function say(words) {
     const el = $("#said");

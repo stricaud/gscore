@@ -367,3 +367,100 @@ footer p { max-width: var(--wide); margin: 0 auto 6px; }
   .transport { gap: 12px; }
   .knob input[type="range"] { width: 90px; }
 }
+
+/* ---- waiting for the editor -------------------------------------------- */
+
+/*
+ * Seventeen megabytes take a moment, and a page doing nothing during them
+ * reads as a page that has broken. Gilbert waits with you: he bobs, his
+ * shadow breathes under him, and a bar fills. The bar is a guess — the
+ * download happens inside the frame, where this page cannot see it — so it
+ * eases towards nearly-full and the editor finishes it off when it is
+ * genuinely up.
+ */
+.loading {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  background: var(--paper);
+  z-index: 3;
+  transition: opacity 0.4s;
+}
+.loading.done { opacity: 0; pointer-events: none; }
+
+.loading .gilbert {
+  position: relative;
+  width: 72px;
+  height: 84px;
+}
+.loading .gilbert img {
+  display: block;
+  animation: gilbert-hop 1.1s cubic-bezier(0.3, 0, 0.4, 1) infinite;
+  transform-origin: 50% 100%;
+}
+/* Up, over, and a squash on the way down, which is what makes it read as
+   weight rather than as a picture sliding about. */
+@keyframes gilbert-hop {
+  0%   { transform: translateY(0) scale(1, 1) rotate(-4deg); }
+  30%  { transform: translateY(-16px) scale(0.97, 1.04) rotate(3deg); }
+  55%  { transform: translateY(-18px) scale(0.98, 1.03) rotate(5deg); }
+  80%  { transform: translateY(0) scale(1.07, 0.92) rotate(-2deg); }
+  100% { transform: translateY(0) scale(1, 1) rotate(-4deg); }
+}
+/* The shadow is the other half of the weight: it shrinks and darkens as he
+   comes down and spreads as he goes up. */
+.loading .gilbert::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  bottom: -2px;
+  width: 54px;
+  height: 7px;
+  margin-left: -27px;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.22);
+  animation: gilbert-shadow 1.1s cubic-bezier(0.3, 0, 0.4, 1) infinite;
+}
+@keyframes gilbert-shadow {
+  0%, 100% { transform: scale(1); opacity: 0.22; }
+  45%      { transform: scale(0.72); opacity: 0.1; }
+  80%      { transform: scale(1.12); opacity: 0.28; }
+}
+
+.loading-says {
+  margin: 0;
+  font-family: var(--serif);
+  font-style: italic;
+  color: #5a5f6a;
+  font-size: 0.95rem;
+}
+.loading-bar {
+  width: min(260px, 60%);
+  height: 6px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.09);
+  overflow: hidden;
+}
+.loading-bar i {
+  display: block;
+  width: 0;
+  height: 100%;
+  border-radius: 999px;
+  background: var(--accent);
+  transition: width 0.25s ease-out;
+}
+.loading-fine {
+  margin: 0;
+  color: #8a8f99;
+  font-size: 0.78rem;
+}
+
+/* Somebody who would rather things held still gets a page that holds still. */
+@media (prefers-reduced-motion: reduce) {
+  .loading .gilbert img,
+  .loading .gilbert::after { animation: none; }
+}

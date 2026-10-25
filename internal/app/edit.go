@@ -3372,3 +3372,85 @@ func (a *App) handleSplitMeasure(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, map[string]any{"status": "ok", "measure": measIdx + 1})
 }
+
+// handleJoinMeasure takes a barline away, making the bar and the one after it
+// into one bar.
+//
+// Taking a barline away is not the same as hiding one: an invisible barline
+// still ends a bar, and the bars on either side of it are still counted
+// separately and still have to add up on their own. This is the other thing,
+// and the undoing of "Barline here" — the two bars become one, everything
+// after it is renumbered, and nothing is moved.
+//
+// Nothing is reflowed afterwards, with the barlines kept to the meter or
+// not. Joining two full bars makes one that is twice as long, and that is
+// what was asked for; pushing the second half straight back out again would
+// make the menu entry look as though it had done nothing.
+func (a *App) handleJoinMeasure(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST required", http.StatusMethodNotAllowed)
+		return
+	}
+	measIdx, err := strconv.Atoi(r.URL.Query().Get("measure"))
+	if err != nil || measIdx < 0 {
+		http.Error(w, "which barline?", http.StatusBadRequest)
+		return
+	}
+
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	last := true
+	for _, p := range a.score.Parts {
+		if measIdx+1 < len(p.Measures) {
+			last = false
+		}
+	}
+	if last {
+		http.Error(w, "that is the last barline in the piece, and a piece ends somewhere",
+			http.StatusBadRequest)
+		return
+	}
+
+	// A change of key or meter written at that barline would end up in the
+	// middle of the joined bar, where it means something else. Better to say
+	// so than to move it somewhere it was never written.
+	for _, p := range a.score.Parts {
+		if measIdx+1 >= len(p.Measures) {
+			continue
+		}
+		switch next := p.Measures[measIdx+1]; {
+		case next.Key != nil:
+			http.Error(w, "the key changes at that barline; take the key change away first",
+				http.StatusBadRequest)
+			return
+		case next.Time != nil:
+			http.Error(w, "the meter changes at that barline; take the meter change away first",
+				http.StatusBadRequest)
+			return
+		}
+	}
+
+	for _, p := range a.score.Parts {
+		if measIdx+1 >= len(p.Measures) {
+			continue
+		}
+		cur, next := p.Measures[measIdx], p.Measures[measIdx+1]
+		for i, v := range next.Voices {
+			for len(cur.Voices) <= i {
+				cur.Voices = append(cur.Voices, &model.Voice{})
+			}
+			cur.Voices[i].Elements = append(cur.Voices[i].Elements, v.Elements...)
+		}
+		// What closed the second bar now closes the joined one.
+		cur.RightBarline = next.RightBarline
+		if cur.Ending == nil {
+			cur.Ending = next.Ending
+		}
+		if next.Tempo != nil && cur.Tempo == nil {
+			cur.Tempo = next.Tempo
+		}
+		p.Measures = append(p.Measures[:measIdx+1], p.Measures[measIdx+2:]...)
+	}
+	writeJSON(w, map[string]any{"status": "ok", "measure": measIdx})
+}

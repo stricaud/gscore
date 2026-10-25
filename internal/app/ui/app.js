@@ -4041,9 +4041,25 @@ async function openBarlinePicker(bar) {
       { value: "repeat-end", label: "Close repeat" },
       { value: "repeat-both", label: "Close then open" },
       { value: "none", label: "Invisible" },
+      // Not a way of drawing it: a way of not having it. Invisible still
+      // ends a bar and still counts as one; this makes the two bars one.
+      { value: "remove", label: "Remove it — join the two bars" },
     ],
   });
   if (v === null) return;
+
+  if (v === "remove") {
+    const res = await fetch("/api/joinmeasure?measure=" + bar.measure,
+                            { method: "POST" });
+    if (!res.ok) {
+      status("Could not remove it: " + (await res.text()).trim());
+      return;
+    }
+    clearSelection();
+    await refreshScore();
+    status(`Measures ${bar.measure + 1} and ${bar.measure + 2} are now one`);
+    return;
+  }
 
   const p = new URLSearchParams({
     part: String(bar.part), measure: String(bar.measure), style: v,

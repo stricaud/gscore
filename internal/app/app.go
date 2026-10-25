@@ -402,6 +402,7 @@ func (a *App) APIRoutes(mux *http.ServeMux) {
 		"/api/nudge":           a.handleNudge,
 		"/api/addmeasure":      a.handleAddMeasure,
 		"/api/splitmeasure":    a.handleSplitMeasure,
+		"/api/joinmeasure":     a.handleJoinMeasure,
 		"/api/measurerepeat":   a.handleMeasureRepeat,
 		"/api/barline":         a.handleBarline,
 		"/api/beam":            a.handleBeam,

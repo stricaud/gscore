@@ -374,6 +374,12 @@ func (e *exporter) element(el model.Element) string {
 	var b strings.Builder
 
 	if m != nil {
+		// A change of clef, in ABC's own inline field, written in front of
+		// the note it takes effect on — which is where the score prints it,
+		// wherever in the bar that falls.
+		if m.Clef != nil {
+			b.WriteString("[K:clef=" + clefText(*m.Clef) + "]")
+		}
 		b.WriteString(e.graceText(m.Grace))
 		b.WriteString(decorationsText(m))
 		if m.Chord != nil && m.Chord.Root != "" {

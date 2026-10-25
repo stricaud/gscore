@@ -104,6 +104,9 @@ func describeScore(s *model.Score) []string {
 			if m.Tempo != nil {
 				out = append(out, fmt.Sprintf("%s tempo %d", at, m.Tempo.BPM))
 			}
+			if m.Clef != nil {
+				out = append(out, fmt.Sprintf("%s clef %v", at, *m.Clef))
+			}
 			for vi, v := range m.Voices {
 				for _, el := range v.Elements {
 					out = append(out, at+fmt.Sprintf(" v%d ", vi)+describeElement(el))
@@ -157,6 +160,9 @@ func describeElement(el model.Element) string {
 	}
 	if m.Beam != model.BeamAuto {
 		fmt.Fprintf(&b, " beam=%v", m.Beam)
+	}
+	if m.Clef != nil {
+		fmt.Fprintf(&b, " clef=%v", *m.Clef)
 	}
 	if m.Grace != nil {
 		fmt.Fprintf(&b, " grace×%d", len(m.Grace.Notes))

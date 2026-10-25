@@ -211,6 +211,17 @@ type Measure struct {
 	Key  *KeySignature
 	Time *TimeSignature
 
+	// Clef, when set, changes the clef from this measure on.
+	//
+	// A staff is not one clef. A pianist's right hand drops into the bass
+	// for a phrase and comes back; a cello part climbs into the tenor clef
+	// and down again. The sign is drawn where it changes and everything
+	// after it is read against it, which is why this cannot live on the
+	// part alone — and why a score that keeps one clef per staff draws the
+	// notes of those passages an octave and a half away from where they
+	// belong, if it draws them at all.
+	Clef *Clef
+
 	// Tempo, when set, is a new speed written over this bar and held until
 	// the next one says otherwise.
 	//
@@ -381,6 +392,18 @@ func (p *Part) KeyAt(index int) KeySignature {
 		}
 	}
 	return k
+}
+
+// ClefAt is the clef in force at a bar, following any change written in an
+// earlier one.
+func (p *Part) ClefAt(index int) Clef {
+	c := p.Clef
+	for i := 0; i <= index && i < len(p.Measures); i++ {
+		if p.Measures[i].Clef != nil {
+			c = *p.Measures[i].Clef
+		}
+	}
+	return c
 }
 
 // TempoAt is the speed in force at a bar, following any change written in an

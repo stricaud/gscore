@@ -928,6 +928,19 @@ func (p *parser) fieldKey(value string) error {
 		if !ok {
 			return p.errf("K: unknown clef %q", name)
 		}
+		if p.started() {
+			// A clef named once the music has started is a change of clef
+			// from there on — ABC's own way of writing one, and it may be
+			// written between two notes as readily as between two bars,
+			// which is where a score actually changes clef: Altes moves the
+			// right hand into the bass after a rest, in the middle of a bar,
+			// four times in two bars. Set on the staff instead, it was the
+			// clef the staff had been in all along, and every note before it
+			// was drawn an octave and a half out.
+			cc := c
+			p.pending.Clef = &cc
+			return nil
+		}
 		p.clef = c
 		if p.cur != nil {
 			p.cur.Clef = c
@@ -1321,6 +1334,9 @@ func (p *parser) applyPending(m *model.Marks) {
 	}
 	if p.pending.Trill != nil {
 		m.Trill = p.pending.Trill
+	}
+	if p.pending.Clef != nil {
+		m.Clef = p.pending.Clef
 	}
 	if p.pending.Tremolo != nil {
 		m.Tremolo = p.pending.Tremolo

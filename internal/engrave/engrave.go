@@ -449,6 +449,25 @@ var clefPitchOffset = map[model.Clef]int{
 	model.Percussion: 4,
 }
 
+// clefChangeScale is how large a clef written inside a line is drawn, against
+// the one at the head of a system, and clefChangeSize is the type size that
+// comes to — in staff spaces, which is what a glyph's Size is measured in.
+//
+// Smaller, as every printed score draws it: the clef at the head of a staff
+// tells you what the staff is, and one in the middle of a bar reminds you
+// that it has changed. Drawn full size it reads as the start of something.
+//
+// Both, and not one used for both, because they are different quantities. A
+// scale multiplies a width; a size is a height in spaces. Passing the scale
+// where the size belonged asked for a clef four fifths of a staff space
+// tall, which is a fifth of its proper height — on the page, a speck beside
+// the rest it follows, which is why the clef changes at bars 70 to 73 could
+// not be seen even though every one of them was drawn.
+const (
+	clefChangeScale = 0.8
+	clefChangeSize  = 4 * clefChangeScale
+)
+
 // clefRefStep is the staff step the clef glyph's own origin sits on.
 var clefRefStep = map[model.Clef]float64{
 	model.Treble:     2, // the G line
@@ -723,8 +742,10 @@ type signatureChange struct {
 	key     *model.KeySignature
 	from    model.KeySignature
 	time    *model.TimeSignature
+	clef    *model.Clef
 	hasKey  bool
 	hasTime bool
+	hasClef bool
 }
 
 func (e *engraver) run() {
@@ -925,16 +946,17 @@ func (e *engraver) musicAbove(parts []*model.Part, start, end int) float64 {
 	p := parts[0]
 	highest := staffHeight * 2 // the top line, in staff steps
 	for mi := start; mi < end && mi < len(p.Measures); mi++ {
+		clef := p.ClefAt(mi)
 		for _, v := range p.Measures[mi].Voices {
 			for _, el := range v.Elements {
 				switch n := el.(type) {
 				case *model.Note:
-					if st := StaffStep(p.Clef, n.Pitch); st > highest {
+					if st := StaffStep(clef, n.Pitch); st > highest {
 						highest = st
 					}
 				case *model.Chord:
 					for _, cn := range n.Notes {
-						if st := StaffStep(p.Clef, cn.Pitch); st > highest {
+						if st := StaffStep(clef, cn.Pitch); st > highest {
 							highest = st
 						}
 					}
@@ -1040,15 +1062,16 @@ func (e *engraver) staffReach(p *model.Part, start, end int) (above, below float
 		if len(p.Measures[mi].Voices) > 1 {
 			stemOut = stemLength
 		}
+		clef := p.ClefAt(mi)
 		for _, v := range p.Measures[mi].Voices {
 			for _, el := range v.Elements {
 				var steps []int
 				switch n := el.(type) {
 				case *model.Note:
-					steps = []int{StaffStep(p.Clef, n.Pitch)}
+					steps = []int{StaffStep(clef, n.Pitch)}
 				case *model.Chord:
 					for _, cn := range n.Notes {
-						steps = append(steps, StaffStep(p.Clef, cn.Pitch))
+						steps = append(steps, StaffStep(clef, cn.Pitch))
 					}
 				}
 				for _, st := range steps {
@@ -1134,8 +1157,12 @@ func (e *engraver) layout() {
 	byPart := make(map[*model.Part][]measureBox, len(all))
 	for _, p := range all {
 		var rows []measureBox
+		clef := p.Clef
 		for mi, m := range p.Measures {
-			e.clef = p.Clef
+			if m.Clef != nil {
+				clef = *m.Clef
+			}
+			e.clef = clef
 			ch, w := e.signatureAt(p, mi)
 			b := e.measureBox(p, m, mi)
 			b.index = mi
@@ -1263,10 +1290,11 @@ func (e *engraver) overhang() float64 {
 	stemUp := false
 
 	for _, p := range e.score.Parts {
-		for _, m := range p.Measures {
+		for mi, m := range p.Measures {
+			clef := p.ClefAt(mi)
 			for _, v := range m.Voices {
 				for _, el := range v.Elements {
-					step, up, ok := topOf(p.Clef, el)
+					step, up, ok := topOf(clef, el)
 					if !ok {
 						continue
 					}
@@ -1527,6 +1555,17 @@ func (e *engraver) keySignatureWidth(k model.KeySignature) float64 {
 }
 
 // measureBox computes an ideal and a minimum width for a measure, and claims
+// clefLead is the room a change of clef needs in front of the note it is
+// written before, and zero where there is none.
+func (e *engraver) clefLead(el model.Element) float64 {
+	m := marksOf(el)
+	if m == nil || m.Clef == nil || e.opt.HideClef {
+		return 0
+	}
+	glyph, _ := smufl.ClefGlyph(*m.Clef)
+	return smufl.Advance(glyph)*clefChangeScale + e.opt.Spacings.ClefAfter
+}
+
 // voiceShift is the room a column needs for a notehead that has to step
 // aside, and zero where none does.
 //
@@ -1596,7 +1635,7 @@ func (e *engraver) measureBox(p *model.Part, m *model.Measure, index int) measur
 			entries = append(entries, entry{
 				at:   at,
 				v:    voiced{el: el, voice: vi},
-				lead: e.accidentalLead(el) + graceLead(el),
+				lead: e.accidentalLead(el) + graceLead(el) + e.clefLead(el),
 				room: flags[i],
 			})
 			at = at.Add(el.Duration())
@@ -1688,10 +1727,19 @@ func (e *engraver) signatureAt(p *model.Part, index int) (signatureChange, float
 	sp := e.opt.Spacings
 	w := 0.0
 
+	// The clef comes first, because everything after it is read against it.
+	if m.Clef != nil && !e.opt.HideClef && p.Tab == nil {
+		ch.clef, ch.hasClef = m.Clef, true
+		glyph, _ := smufl.ClefGlyph(*m.Clef)
+		// Smaller than the one at the head of a system, the way a change of
+		// clef inside a line is always printed: it is a reminder of what to
+		// read by, not the start of a staff.
+		w += smufl.Advance(glyph)*clefChangeScale + sp.ClefAfter
+	}
 	if m.Key != nil {
 		ch.key, ch.hasKey = m.Key, true
 		ch.from = p.KeyAt(index - 1)
-		naturals, accidentals := keyChangeSteps(p.Clef, ch.from, *m.Key)
+		naturals, accidentals := keyChangeSteps(p.ClefAt(index), ch.from, *m.Key)
 		for range naturals {
 			w += smufl.Advance("accidentalNatural") + sp.BetweenKeyAccidentals
 		}
@@ -2096,7 +2144,7 @@ func (e *engraver) drawSystem(parts []*model.Part, boxes [][]measureBox,
 	}
 
 	for pi, p := range parts {
-		e.clef = p.Clef
+		e.clef = p.ClefAt(start)
 		// How this staff is ruled: five lines of pitches, or one line per
 		// string with the frets written on them.
 		e.lines, e.lineGap = partLines(p), partGap(p)

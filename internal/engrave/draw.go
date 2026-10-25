@@ -158,8 +158,15 @@ func (e *engraver) drawMeasure(part *model.Part, b measureBox, x, end float64, s
 	sp := e.opt.Spacings
 	start := x
 
-	// A key or meter change is written at the head of the bar it takes effect
-	// in, before any of its music.
+	// The clef this bar is read against. A staff is not one clef: a hand
+	// drops into the bass for a phrase and comes back, and every notehead
+	// after the sign is placed by it.
+	if b.m.Clef != nil {
+		e.clef = *b.m.Clef
+	}
+
+	// A clef, key or meter change is written at the head of the bar it takes
+	// effect in, before any of its music.
 	if b.prefix > 0 {
 		x = e.drawSignatureChange(part, b, x)
 	}
@@ -172,9 +179,28 @@ func (e *engraver) drawMeasure(part *model.Part, b measureBox, x, end float64, s
 		// Everything that starts at this moment, whatever voice it is in,
 		// at the same x. That is what makes two lines of music on one staff
 		// read as two lines rather than as one long one.
+		// A clef written in the middle of a bar: the sign goes in front of
+		// the note it belongs to, and everything from there on is read
+		// against it. The room for it was booked by clefLead.
+		for _, v := range s.elems {
+			m := marksOf(v.el)
+			if m == nil || m.Clef == nil || e.opt.HideClef {
+				continue
+			}
+			e.clef = *m.Clef
+			name, _ := smufl.ClefGlyph(e.clef)
+			w := smufl.Advance(name) * clefChangeScale
+			e.lay.Glyphs = append(e.lay.Glyphs, Glyph{
+				Name: name, X: x - w - e.opt.Spacings.ClefAfter,
+				Y:    e.y + stepY(clefRefStep[e.clef]),
+				Size: clefChangeSize,
+			})
+			break
+		}
+
 		col := make([]*placed, 0, len(s.elems))
 		for _, v := range s.elems {
-			p := e.placedOf(part.Clef, v.el, s.at)
+			p := e.placedOf(e.clef, v.el, s.at)
 			p.x, p.index, p.width = x, v.index, s.width*stretch
 			p.voice = v.voice
 			items = append(items, p)
@@ -205,7 +231,7 @@ func (e *engraver) drawMeasure(part *model.Part, b measureBox, x, end float64, s
 		e.lay.Hits = append(e.lay.Hits, Hit{
 			Part: e.partIndex, Measure: b.index,
 			XMin: start, XMax: x, StaffTop: e.y, StaffHeight: e.staffH(),
-			Clef:   part.Clef.String(),
+			Clef:   e.clef.String(),
 			Fifths: part.KeyAt(b.index).Fifths,
 			Full:   barIsFull(part, b),
 		})
@@ -243,7 +269,7 @@ func (e *engraver) drawMeasure(part *model.Part, b measureBox, x, end float64, s
 		Part: e.partIndex, Measure: b.index,
 		XMin: start, XMax: x, StaffTop: e.y,
 		StaffHeight: e.staffH(),
-		Clef:        part.Clef.String(),
+		Clef:        e.clef.String(),
 		KeyChange:   b.m.Key != nil,
 		TimeChange:  b.m.Time != nil,
 		Fifths:      part.KeyAt(b.index).Fifths,
@@ -335,8 +361,20 @@ func (e *engraver) drawSignatureChange(part *model.Part, b measureBox, x float64
 	sp := e.opt.Spacings
 	x += sp.ClefBefore
 
+	// The clef first: it says what everything after it is read against, so
+	// it is written before the key that follows it.
+	if b.change.hasClef {
+		name, _ := smufl.ClefGlyph(*b.change.clef)
+		e.lay.Glyphs = append(e.lay.Glyphs, Glyph{
+			Name: name, X: x,
+			Y:    e.y + stepY(clefRefStep[*b.change.clef]),
+			Size: clefChangeSize,
+		})
+		x += smufl.Advance(name)*clefChangeScale + sp.ClefAfter
+	}
+
 	if b.change.hasKey {
-		naturals, accidentals := keyChangeSteps(part.Clef, b.change.from, *b.change.key)
+		naturals, accidentals := keyChangeSteps(part.ClefAt(b.index), b.change.from, *b.change.key)
 		for _, step := range naturals {
 			e.lay.Glyphs = append(e.lay.Glyphs, Glyph{
 				Name: "accidentalNatural", X: x, Y: e.y + stepY(float64(step)),

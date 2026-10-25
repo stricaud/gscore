@@ -9,7 +9,10 @@
 % meter and tempo change in this file came out of that file and has been
 % compared back against it note for note. The title, the composer's name and
 % the opening tempo are corrected against the original 1888 edition, which is
-% the source of truth where the two disagree. Six later tempo marks are the
+% the source of truth where the two disagree and which is the S: field below:
+%
+%   https://ks15.imslp.org/files/imglnks/usimg/d/da/IMSLP293070-PMLP475553-Altes_Fl_10_ed_psc.pdf
+% Six later tempo marks are the
 % transcription's and do not match what the scan appears to say; they are
 % listed in the note that came with this file and are left as they were
 % rather than guessed at. "Solo." is put back because the original prints it;
@@ -24,6 +27,7 @@ T:10me Solo pour la Flûte
 T:Op. 36
 C:Henry Altès
 C:from the transcription by Rainer Marwan (2025)
+S:Millereau, Paris, 1888 (plate M. 546) — https://ks15.imslp.org/files/imglnks/usimg/d/da/IMSLP293070-PMLP475553-Altes_Fl_10_ed_psc.pdf
 %%score 1 {2 3}
 M:3/4
 L:1/8
@@ -82,8 +86,8 @@ C4 !emphasis!C2 & [F,A,]4 [F,A,]2 | !emphasis!=B,6- & [F,-G,-]6 | B, z !fermata!
 z6 | z6 | z6 || [K:Ab] [M:6/8] z !staccato!!pp!([CE] !staccato![CE]) [CE]3 |
 [B,D]6 | z !staccato!([B,D] !staccato![B,D]) B,3 | [A,C]6 | B,3 !pp!B,3 & F,3 _F,3 |
 B,3 !emphasis![B,E]3 & E,3 z | z !staccato!!pp!([CE] !staccato![CE]) [CE]3 | z2 !emphasis!A- A/2 z/4 (G/4 e2) | z !staccato!([B,E] !staccato![B,E]) [B,E]3 |
-z2 !emphasis!!nobeam!B- !beamcont!B/2 z/4 !beamcont!(A/4 e2) | z2 =E,, !emphasis!=B,,3 | z2 z3/4 (=E/4 !emphasis!G3) | z2 =D,, =A,,3 |
-z2 z3/4 (=D/4 !emphasis!F3) | !crescendo(![G,C]3 !crescendo)![A,_C]3 & _E,3 E,3 | !fermata!!mf![G,B,]2 !fermata!z z2 z & E,2 | z6 |
+z2 !emphasis!!nobeam!B- !beamcont!B/2 z/4 !beamcont!(A/4 e2) | z2 [K:clef=bass]=E,, !emphasis!=B,,3 | z2 z3/4 [K:clef=treble](=E/4 !emphasis!G3) | z2 [K:clef=bass]=D,, =A,,3 |
+z2 z3/4 [K:clef=treble](=D/4 !emphasis!F3) | !crescendo(![G,C]3 !crescendo)![A,_C]3 & _E,3 E,3 | !fermata!!mf![G,B,]2 !fermata!z z2 z & E,2 | z6 |
 z6 | z3 z2 !pp!E- | E3- E2 E- | E E3 E2- |
 E C2- !fermata!C3 |] [K:C] [M:C|] z4 !emphasis!_B,2 !emphasis![B,D]2 & !emphasis![D,F,]2 !emphasis!F,2 | !emphasis![_B,DF]2 !emphasis![DF_B]2 !emphasis![FBd]4 | z4 !emphasis!B,2 !emphasis![B,D]2 & [D,F,G,]2 [F,G,]2 |
 !emphasis![B,DF]2 !emphasis![B,DFG]2 !emphasis![DFGB]2 !emphasis![FGBd]2 & !emphasis!G,2 | !emphasis![EGc]4 !mf![CEG]4 | [G,CE]4 [G,C]4 | [A,C]8 |

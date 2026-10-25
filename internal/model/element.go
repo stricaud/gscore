@@ -356,6 +356,15 @@ type Marks struct {
 	// Tremolo repeats the note for its written length.
 	Tremolo *Tremolo
 
+	// Clef, when set, changes the clef from this element on.
+	//
+	// On the element and not on the measure, because that is where a change
+	// of clef actually happens: a pianist's right hand plays a few beats,
+	// drops into the bass for a phrase and comes back, all inside one bar,
+	// and the sign is printed in the middle of the bar where the hand moves.
+	// Altes writes four of them in two bars that way.
+	Clef *Clef
+
 	// Stem overrides the direction the engraver would otherwise choose.
 	Stem Stem
 

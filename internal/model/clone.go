@@ -66,6 +66,10 @@ func (m *Measure) Clone() *Measure {
 		k := *m.Key
 		out.Key = &k
 	}
+	if m.Clef != nil {
+		c := *m.Clef
+		out.Clef = &c
+	}
 	if m.Time != nil {
 		t := *m.Time
 		out.Time = &t

@@ -1022,7 +1022,7 @@ func (r *reader) voiceElement(doc *document, st *msStaff, vs *voiceState, e xml.
 		r.endOctave(st)
 		return nil
 	case "Clef":
-		return r.clef(st)
+		return r.clef(st, vs)
 	case "KeySig":
 		return r.keySig(vs.m)
 	case "TimeSig":
@@ -1082,7 +1082,7 @@ func (r *reader) endOctave(st *msStaff) {
 	}
 }
 
-func (r *reader) clef(st *msStaff) error {
+func (r *reader) clef(st *msStaff, vs *voiceState) error {
 	name := ""
 	err := r.children(func(c xml.StartElement) error {
 		switch c.Name.Local {
@@ -1107,8 +1107,7 @@ func (r *reader) clef(st *msStaff) error {
 		return nil
 	}
 	// Only a clef in the first bar is the clef the staff starts in. One
-	// written later is a change, and gscore carries one clef per staff, so
-	// it has nowhere to live.
+	// written later is a change of clef from that point on.
 	//
 	// This used to take the first <Clef> it met wherever it was. A piano's
 	// right hand that dips into the bass once, forty bars in, had that F
@@ -1117,8 +1116,15 @@ func (r *reader) clef(st *msStaff) error {
 	// in sight to explain it. What the part actually begins in is in the
 	// instrument definition, which had already been read correctly.
 	if st.clefSet || len(st.measures) > 0 {
-		if k != st.clef {
-			r.report("a change to the %s clef partway through a staff is not shown", name)
+		// Where it happens, which is where MuseScore writes it: before the
+		// note at that tick, which may be anywhere in the bar. Altes puts
+		// four of them in two bars, so that the right hand can take a
+		// phrase in the bass and come back without a ledger line in sight.
+		if vs != nil {
+			clef := k
+			vs.pending = append(vs.pending, func(m *model.Marks) {
+				m.Clef = &clef
+			})
 		}
 		return nil
 	}

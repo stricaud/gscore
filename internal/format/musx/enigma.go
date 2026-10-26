@@ -14,7 +14,9 @@ import (
 	"bytes"
 	"encoding/xml"
 	"fmt"
+	"regexp"
 	"sort"
+	"strings"
 
 	"github.com/stricaud/gscore/internal/model"
 )
@@ -58,13 +60,48 @@ type document struct {
 		Bars   []measSpec  `xml:"measSpec"`
 		Frames []frameSpec `xml:"frameSpec"`
 		Used   []instUsed  `xml:"instUsed"`
+		Blocks []textBlock `xml:"textBlock"`
+		Artics []articDef  `xml:"articDef"`
 	} `xml:"others"`
 	Details struct {
-		Holds []gfhold `xml:"gfhold"`
+		Holds  []gfhold      `xml:"gfhold"`
+		Artics []articAssign `xml:"articAssign"`
 	} `xml:"details"`
 	Entries struct {
 		Entries []entry `xml:"entry"`
 	} `xml:"entries"`
+	Texts struct {
+		Blocks []blockText `xml:"blockText"`
+	} `xml:"texts"`
+}
+
+// A staff's name is three lookups away from the staff: staffSpec names a
+// textBlock, the textBlock names a line of raw text, and the raw text is
+// Finale's own markup with the words somewhere inside it.
+type textBlock struct {
+	Cmper  int    `xml:"cmper,attr"`
+	Part   string `xml:"part,attr"`
+	TextID int    `xml:"textID"`
+}
+
+type blockText struct {
+	Number int    `xml:"number,attr"`
+	Text   string `xml:",chardata"`
+}
+
+// articDef is one kind of articulation mark, identified by the character it
+// is drawn with in Finale's music font.
+type articDef struct {
+	Cmper    int    `xml:"cmper,attr"`
+	Part     string `xml:"part,attr"`
+	CharMain int    `xml:"charMain"`
+}
+
+// articAssign puts one of those on one entry.
+type articAssign struct {
+	Entry    int    `xml:"entnum,attr"`
+	Part     string `xml:"part,attr"`
+	ArticDef int    `xml:"articDef"`
 }
 
 // Part and Shared mark the copies Finale keeps for each extracted part. The
@@ -75,6 +112,16 @@ type staffSpec struct {
 	Part        string `xml:"part,attr"`
 	StaffLines  int    `xml:"staffLines"`
 	DefaultClef int    `xml:"defaultClef"`
+	FullName    int    `xml:"fullName"`
+	AbbrvName   int    `xml:"abbrvName"`
+	// How far the staff is written from where it sounds, as a diatonic
+	// interval and a number of sharps added to the key signature — which is
+	// how a player's part is described rather than how a tuner describes
+	// it. A B flat clarinet is one step up and two sharps.
+	Transposition struct {
+		Interval int `xml:"keysig>interval"`
+		Adjust   int `xml:"keysig>adjust"`
+	} `xml:"transposition"`
 }
 
 type measSpec struct {
@@ -126,6 +173,10 @@ type enigNote struct {
 	// HarmAlt is what is done to it by hand, in semitones, on top of
 	// whatever the key signature already says about that step.
 	HarmAlt int `xml:"harmAlt"`
+	// A tie is a property of the notehead, not of the entry, so a chord may
+	// hold one note while the others move.
+	TieStart *struct{} `xml:"tieStart"`
+	TieEnd   *struct{} `xml:"tieEnd"`
 }
 
 // reader turns one EnigmaXML document into a score, and remembers what it
@@ -133,6 +184,10 @@ type enigNote struct {
 type reader struct {
 	doc     document
 	skipped map[string]int
+	// The articulations on each entry, and what each kind of articulation
+	// is drawn with.
+	artics    map[int][]int
+	articChar map[int]int
 }
 
 func (r *reader) skip(what string) { r.skipped[what]++ }
@@ -186,14 +241,38 @@ func read(data []byte, meta metadata) (*model.Score, []string, error) {
 		}
 	}
 
+	// The articulations, by the entry they are attached to.
+	artics := map[int][]int{}
+	for _, a := range rd.doc.Details.Artics {
+		if a.Part == "" {
+			artics[a.Entry] = append(artics[a.Entry], a.ArticDef)
+		}
+	}
+	rd.artics = artics
+	rd.articChar = map[int]int{}
+	for _, d := range rd.doc.Others.Artics {
+		if d.Part == "" {
+			rd.articChar[d.Cmper] = d.CharMain
+		}
+	}
+
 	for _, staffID := range staves {
+		spec := specs[staffID]
 		part := &model.Part{
+			Name:       rd.text(spec.FullName),
 			Instrument: model.AcousticGrandPiano,
 			Clef:       model.Treble,
 			Key:        keyOf(bars[0], rd),
 			Time:       meterOf(bars[0], rd),
+			Transpose:  transpositionOf(spec),
 		}
-		if s, ok := specs[staffID]; ok && s.StaffLines != 0 && s.StaffLines != 5 {
+		// The name is also the best guess at what the staff is: Finale
+		// identifies its instruments by a code of its own, and the word
+		// over the staff is what a reader has to go on anyway.
+		if inst, ok := instrumentNamed(part.Name); ok {
+			part.Instrument = inst
+		}
+		if spec.StaffLines != 0 && spec.StaffLines != 5 {
 			rd.skip("staves ruled with something other than five lines")
 		}
 		// The clef of the first bar is the staff's clef; a change partway
@@ -216,8 +295,19 @@ func read(data []byte, meta metadata) (*model.Score, []string, error) {
 					m.Voices[0].Elements = rd.frame(frames[h.Frame1], entries, bar)
 				}
 			}
+			// A bar with nothing in it is a bar of rest. Finale writes no
+			// entries for one and draws the rest itself — and the
+			// documentation says as much: completely empty measures may
+			// omit their hold. Left empty here they came out as blank bars
+			// in the middle of the music, which is not what the part says.
+			if len(m.Voices[0].Elements) == 0 {
+				m.Voices[0].Elements = []model.Element{
+					&model.Rest{Dur: barDuration(bar)},
+				}
+			}
 			part.Measures = append(part.Measures, m)
 		}
+		rd.pairTies(part)
 		score.Parts = append(score.Parts, part)
 	}
 
@@ -249,9 +339,9 @@ var unread = map[string]string{
 	// piece uses one, and counting those would report two thousand chord
 	// diagrams in a mass that has none — so only the records that put
 	// something into this score are counted.
+	// Articulations and ties are read, so they are not in this list.
 	"smartShape":        "slurs, hairpins and the other lines drawn over the music",
 	"measExprAssign":    "expressions: the dynamics, the tempo words and the directions",
-	"articAssign":       "articulation marks on the notes",
 	"chordAssign":       "chord symbols",
 	"tupletDef":         "tuplets",
 	"staffGroup":        "the braces and brackets joining staves together",
@@ -377,7 +467,9 @@ func (r *reader) element(e *entry, bar measSpec) model.Element {
 		return nil
 	}
 	if e.IsNote == nil || len(e.Notes) == 0 {
-		return &model.Rest{Dur: dur}
+		rest := &model.Rest{Dur: dur}
+		r.articulate(&rest.Marks, e.Num)
+		return rest
 	}
 	if len(e.Notes) > 15 {
 		r.skip("entries with more noteheads than Finale allows")
@@ -389,13 +481,18 @@ func (r *reader) element(e *entry, bar measSpec) model.Element {
 		notes = append(notes, r.note(n, dur, key))
 	}
 	if len(notes) == 1 {
+		r.articulate(&notes[0].Marks, e.Num)
 		return notes[0]
 	}
 	// Lowest first, which is the order everything downstream expects.
 	sort.Slice(notes, func(a, b int) bool {
 		return notes[a].Pitch.MIDI() < notes[b].Pitch.MIDI()
 	})
-	return &model.Chord{Notes: notes, Dur: dur}
+	chord := &model.Chord{Notes: notes, Dur: dur}
+	// A tie belongs to the notehead and is already on it; an articulation
+	// belongs to the entry, so on a chord it belongs to the chord.
+	r.articulate(&chord.Marks, e.Num)
+	return chord
 }
 
 // note turns one notehead into a pitch.
@@ -419,7 +516,48 @@ func (r *reader) note(n enigNote, dur model.Duration, key model.KeySignature) *m
 	if n.HarmAlt != 0 {
 		out.Accidental = accidentalFor(n.HarmAlt, r)
 	}
+	// A tie is written on the notehead it leaves and on the one it arrives
+	// at, which is how gscore holds it too.
+	out.TieStart = n.TieStart != nil
+	out.TieStop = n.TieEnd != nil
 	return out
+}
+
+// articulate puts an entry's articulation marks on what was made of it.
+//
+// Finale names each kind of mark by the character it is drawn with in its
+// own music font, so a staccato is a full stop and a marcato is a caret —
+// the glyph is the identity. These are the characters of the font Finale has
+// shipped with since the beginning; a document whose articulations have been
+// redrawn by hand would need its own reading, and says so.
+func (r *reader) articulate(m *model.Marks, entry int) {
+	for _, def := range r.artics[entry] {
+		char, ok := r.articChar[def]
+		if !ok {
+			r.skip("articulation marks of a kind this file defines itself")
+			continue
+		}
+		switch char {
+		case '.':
+			m.AddArticulation(model.Staccato)
+		case '>':
+			m.AddArticulation(model.Accent)
+		case '^':
+			m.AddArticulation(model.Marcato)
+		case 'v':
+			m.AddArticulation(model.MarcatoDown)
+		case '-':
+			m.AddArticulation(model.Tenuto)
+		case 'U':
+			m.AddArticulation(model.DownBow)
+		case 'V':
+			m.AddArticulation(model.UpBow)
+		case 'u':
+			m.AddArticulation(model.Fermata)
+		default:
+			r.skip("articulation marks gscore has no name for")
+		}
+	}
 }
 
 func accidentalFor(alt int, r *reader) model.Accidental {
@@ -569,4 +707,206 @@ func sortedKeys(m map[string]int) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// text resolves a staff's name: a textBlock cmper, which names a line of raw
+// text, which is Finale's markup with the words somewhere inside it.
+//
+//	^fontid(2)^size(14)^nfx(0)Clarinette en Sib
+//
+// The tags say what it is set in, which gscore decides for itself, so what
+// is wanted is everything that is not a tag.
+func (r *reader) text(block int) string {
+	if block == 0 {
+		return ""
+	}
+	id := 0
+	for _, b := range r.doc.Others.Blocks {
+		if b.Part == "" && b.Cmper == block {
+			id = b.TextID
+			break
+		}
+	}
+	if id == 0 {
+		return ""
+	}
+	for _, t := range r.doc.Texts.Blocks {
+		if t.Number == id {
+			return strings.TrimSpace(enigmaTags.ReplaceAllString(t.Text, ""))
+		}
+	}
+	return ""
+}
+
+// enigmaTags matches Finale's inline markup: a caret, a word, and what it
+// takes in brackets.
+var enigmaTags = regexp.MustCompile(`\^[A-Za-z]+\([^)]*\)|\^[A-Za-z]+`)
+
+// transpositionOf reads how far a staff is written from where it sounds.
+//
+// Finale says it the way a player's part is described rather than the way a
+// tuner would: so many scale steps up, and so many sharps added to the key
+// signature. A B flat clarinet is one step up and two sharps; a baritone
+// saxophone is twelve steps — an octave and a sixth — and three sharps.
+//
+// The semitones come from the sharps: each sharp is a fifth, and seven
+// fifths wrap round to the same note a semitone at a time, so the interval
+// within the octave is the number of sharps times seven. The octaves come
+// from the steps.
+func transpositionOf(s staffSpec) model.Transposition {
+	interval, adjust := s.Transposition.Interval, s.Transposition.Adjust
+	if interval == 0 && adjust == 0 {
+		return model.Transposition{}
+	}
+	// Written above sounding, so the staff sounds below what is written and
+	// every part of this is negative.
+	return model.Transposition{
+		Diatonic:     -mod(interval, 7),
+		Chromatic:    -mod(adjust*7, 12),
+		OctaveChange: -floorDiv(interval, 7),
+	}
+}
+
+// barDuration is how much time a bar holds, for the rest that fills an empty
+// one.
+func barDuration(bar measSpec) model.Duration {
+	if bar.Beats > 0 && bar.DivBeat > 0 {
+		return model.Duration{Num: bar.Beats * bar.DivBeat, Den: eduWhole}.Reduced()
+	}
+	return model.Duration{Num: 1, Den: 1}
+}
+
+// instrumentNamed guesses the instrument from the word written over the
+// staff.
+//
+// Finale identifies its instruments by a code of its own — a UUID per entry
+// in its library — and the library is not in the file. The name is what is
+// left, and it is what a reader has to go on anyway. French names are tried
+// as well as English ones: the files this was written against are French,
+// and a saxophone that plays back as a piano is a worse answer than a guess.
+func instrumentNamed(name string) (model.Instrument, bool) {
+	if name == "" {
+		return 0, false
+	}
+	plain := strings.ToLower(strings.TrimSpace(name))
+	for from, to := range map[string]string{
+		"é": "e", "è": "e", "ê": "e", "û": "u", "ù": "u", "ô": "o", "î": "i", "à": "a", "ç": "c",
+	} {
+		plain = strings.ReplaceAll(plain, from, to)
+	}
+	if inst, ok := model.InstrumentFromName(plain); ok {
+		return inst, true
+	}
+	// The common band and orchestra names, in French and in the shapes
+	// people actually write them in.
+	for _, alias := range []struct {
+		match string
+		inst  model.Instrument
+	}{
+		{"flute", model.Flute},
+		{"piccolo", model.Piccolo},
+		{"hautbois", model.Oboe},
+		{"oboe", model.Oboe},
+		{"clarinette basse", model.Clarinet},
+		{"clarinette", model.Clarinet},
+		{"clarinet", model.Clarinet},
+		{"basson", model.Bassoon},
+		{"bassoon", model.Bassoon},
+		{"soprano sax", model.SopranoSax},
+		{"alto sax", model.AltoSax},
+		{"tenor sax", model.TenorSax},
+		{"baritone sax", model.BaritoneSax},
+		{"saxophone soprano", model.SopranoSax},
+		{"saxophone alto", model.AltoSax},
+		{"saxophone tenor", model.TenorSax},
+		{"saxophone baryton", model.BaritoneSax},
+		{"trompette", model.Trumpet},
+		{"trumpet", model.Trumpet},
+		{"cor", model.FrenchHorn},
+		{"horn", model.FrenchHorn},
+		{"trombone", model.Trombone},
+		{"tuba", model.Tuba},
+		{"violon", model.Violin},
+		{"violin", model.Violin},
+		{"alto", model.Viola},
+		{"viola", model.Viola},
+		{"violoncelle", model.Cello},
+		{"cello", model.Cello},
+		{"contrebasse", model.Contrabass},
+		{"timbales", model.Timpani},
+		{"timpani", model.Timpani},
+		{"orgue", model.ChurchOrgan},
+		{"piano", model.AcousticGrandPiano},
+	} {
+		if strings.Contains(plain, alias.match) {
+			return alias.inst, true
+		}
+	}
+	return 0, false
+}
+
+// pairTies joins each tied note to the note it is held into, and takes away
+// the ties that go nowhere.
+//
+// Finale marks the note a tie leaves, and only sometimes the note it arrives
+// at: in the score this was written against, ninety notes start a tie and
+// thirty-five end one. The rest rely on the reader to find the note of the
+// same pitch that follows — and following it means leaving the bar, because
+// a bar's notes are their own linked list and a tie over a barline points
+// out of it.
+//
+// Left to itself the engraver ties a note to the next note of that pitch
+// wherever it is, so an unpaired tie came out as a curve sweeping across
+// whole systems — which is what the flute part looked like before this: a
+// line of music with slurs drawn over five bars at a time.
+func (r *reader) pairTies(p *model.Part) {
+	// Every note and chord of the staff in reading order, bars and all.
+	var line []model.Element
+	for _, m := range p.Measures {
+		if len(m.Voices) == 0 {
+			continue
+		}
+		for _, el := range m.Voices[0].Elements {
+			switch el.(type) {
+			case *model.Note, *model.Chord:
+				line = append(line, el)
+			}
+		}
+	}
+
+	heads := func(el model.Element) []*model.Note {
+		switch e := el.(type) {
+		case *model.Note:
+			return []*model.Note{e}
+		case *model.Chord:
+			return e.Notes
+		}
+		return nil
+	}
+
+	for i, el := range line {
+		var next []*model.Note
+		if i+1 < len(line) {
+			next = heads(line[i+1])
+		}
+		for _, n := range heads(el) {
+			if !n.TieStart {
+				continue
+			}
+			tied := false
+			for _, m := range next {
+				if m.Pitch == n.Pitch {
+					m.TieStop = true
+					tied = true
+					break
+				}
+			}
+			if !tied {
+				// A tie into nothing is not a tie. Saying so beats drawing
+				// one across the page.
+				n.TieStart = false
+				r.skip("ties whose note is not held into the one after it")
+			}
+		}
+	}
 }

@@ -55,6 +55,7 @@ const (
 	SopranoSax         Instrument = 64
 	AltoSax            Instrument = 65
 	TenorSax           Instrument = 66
+	BaritoneSax        Instrument = 67
 	Oboe               Instrument = 68
 	EnglishHorn        Instrument = 69
 	Bassoon            Instrument = 70
@@ -79,7 +80,8 @@ var instrumentNames = map[Instrument]string{
 	StringEnsemble: "strings", ChoirAahs: "choir", VoiceOohs: "voice",
 	Trumpet: "trumpet", Trombone: "trombone", Tuba: "tuba",
 	FrenchHorn: "french horn", SopranoSax: "soprano sax", AltoSax: "alto sax",
-	TenorSax: "tenor sax", Oboe: "oboe", EnglishHorn: "english horn",
+	TenorSax: "tenor sax", BaritoneSax: "baritone sax",
+	Oboe: "oboe", EnglishHorn: "english horn",
 	Bassoon: "bassoon", Clarinet: "clarinet", Piccolo: "piccolo",
 	Flute: "flute", Recorder: "recorder", PanFlute: "pan flute",
 	Ocarina: "ocarina",

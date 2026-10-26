@@ -571,6 +571,32 @@ func (e *engraver) slurAt(part *model.Part, m *model.Marks, p *placed) {
 	//
 	// Held for the staff and not for the voice: see allVoices.
 	tied := e.staffSpans(e.partIndex, allVoices)
+
+	// A tie that is never closed is closed on the note after it.
+	//
+	// Nothing stops one otherwise: an open tie is drawn to the margin at
+	// every line break and picked up again on the next system, so a tie
+	// whose other half is missing is drawn across the rest of the piece. It
+	// happens whenever a file says a note is held and does not say into
+	// what — Finale leaves the mark on a note whose neighbour has changed
+	// pitch — and the page then shows a curve sweeping over five bars
+	// instead of the one short tie that was meant.
+	//
+	// So the following note ends it, whatever it is. A tie between two
+	// different pitches is odd notation, but it is one curve between two
+	// notes and it says what the file said; a line to the end of the system
+	// says nothing and hides the music under it.
+	//
+	// What is open before this element, so that a tie this element itself
+	// opens is not closed by it.
+	var closable []int
+	for step, t := range tied.ties {
+		if t.voice == p.voice {
+			closable = append(closable, step)
+		}
+	}
+	sort.Ints(closable)
+
 	for _, h := range e.tiedHeads(p, m) {
 		if h.stop {
 			if t, ok := tied.ties[h.step]; ok {
@@ -586,9 +612,24 @@ func (e *engraver) slurAt(part *model.Part, m *model.Marks, p *placed) {
 				tied.ties[h.step] = &openSpan{
 					x: x, y: e.y + stepY(float64(h.step)),
 					rel: stepY(float64(h.step)), above: h.above,
+					voice: p.voice,
 				}
 			}
 		}
+	}
+
+	// Whatever was open before this element and is open still was not
+	// closed by it: this is the note it is tied to.
+	for _, step := range closable {
+		t, ok := tied.ties[step]
+		if !ok || t.x < 0 {
+			continue // closed above, or waiting to resume after a break
+		}
+		if t.x == x {
+			continue // opened by this element, on another notehead
+		}
+		e.drawTieOrSlur(t, x, e.y+stepY(float64(step)), tieLift, false)
+		delete(tied.ties, step)
 	}
 }
 

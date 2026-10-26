@@ -126,8 +126,15 @@ const enigmaSample = `<?xml version="1.0" encoding="UTF-8"?>
   <others>
     <instUsed cmper="0" inci="0"><inst>2</inst></instUsed>
     <instUsed cmper="0" inci="1"><inst>1</inst></instUsed>
-    <staffSpec cmper="1"><staffLines>5</staffLines></staffSpec>
-    <staffSpec cmper="2"><staffLines>5</staffLines></staffSpec>
+    <staffSpec cmper="1"><staffLines>5</staffLines><fullName>10</fullName></staffSpec>
+    <staffSpec cmper="2">
+      <staffLines>5</staffLines>
+      <fullName>8</fullName>
+      <transposition><keysig><interval>1</interval><adjust>2</adjust></keysig></transposition>
+    </staffSpec>
+    <textBlock cmper="8"><textID>22</textID></textBlock>
+    <textBlock cmper="10"><textID>24</textID></textBlock>
+    <articDef cmper="5"><charMain>94</charMain><charAlt>118</charAlt></articDef>
     <measSpec cmper="1"><beats>2</beats><divbeat>1536</divbeat><barline>normal</barline></measSpec>
     <measSpec cmper="2"><beats>2</beats><divbeat>1536</divbeat><barline>final</barline></measSpec>
     <measSpec cmper="1" part="1" shared="true"><beats>9</beats><divbeat>99</divbeat></measSpec>
@@ -137,6 +144,7 @@ const enigmaSample = `<?xml version="1.0" encoding="UTF-8"?>
     <smartShape cmper="1"><shapeType>slur</shapeType></smartShape>
   </others>
   <details>
+    <articAssign entnum="2" inci="0"><articDef>5</articDef></articAssign>
     <gfhold cmper1="2" cmper2="1"><clefID>0</clefID><frame1>1</frame1></gfhold>
     <gfhold cmper1="2" cmper2="2"><clefID>0</clefID><frame1>2</frame1></gfhold>
     <gfhold cmper1="1" cmper2="1"><clefID>3</clefID><frame1>3</frame1></gfhold>
@@ -144,7 +152,7 @@ const enigmaSample = `<?xml version="1.0" encoding="UTF-8"?>
   <entries>
     <entry entnum="1" prev="0" next="2">
       <dura>1536</dura><numNotes>1</numNotes><isValid/><isNote/>
-      <note id="1"><harmLev>0</harmLev><harmAlt>0</harmAlt></note>
+      <note id="1"><harmLev>0</harmLev><harmAlt>0</harmAlt><tieStart/></note>
     </entry>
     <entry entnum="2" prev="1" next="3">
       <dura>512</dura><numNotes>1</numNotes><isValid/><isNote/>
@@ -152,7 +160,7 @@ const enigmaSample = `<?xml version="1.0" encoding="UTF-8"?>
     </entry>
     <entry entnum="3" prev="2" next="0">
       <dura>512</dura><numNotes>1</numNotes><isValid/><isNote/>
-      <note id="1"><harmLev>-1</harmLev><harmAlt>-1</harmAlt></note>
+      <note id="1"><harmLev>-1</harmLev><harmAlt>-1</harmAlt><tieStart/></note>
     </entry>
     <entry entnum="4" prev="0" next="0">
       <dura>3072</dura><numNotes>0</numNotes><isValid/><floatRest/>
@@ -163,6 +171,10 @@ const enigmaSample = `<?xml version="1.0" encoding="UTF-8"?>
       <note id="2"><harmLev>-3</harmLev><harmAlt>0</harmAlt></note>
     </entry>
   </entries>
+  <texts>
+    <blockText number="22">^fontid(2)^size(14)^nfx(0)Clarinette en Sib</blockText>
+    <blockText number="24">^fontid(2)^size(14)^nfx(0)Baritone Sax</blockText>
+  </texts>
 </finale>`
 
 func read1(t *testing.T, data []byte) *model.Score {
@@ -361,5 +373,145 @@ func TestWhatIsNotAFinaleFile(t *testing.T) {
 		t.Error("a zip with no score in it was read as a score")
 	} else if !strings.Contains(err.Error(), "score.dat") {
 		t.Errorf("it said %q, which does not say what is missing", err)
+	}
+}
+
+// The word over the staff, out of Finale's markup.
+func TestTheStaffNames(t *testing.T) {
+	score := read1(t, fixture(t, enigmaSample))
+	if got := score.Parts[0].Name; got != "Clarinette en Sib" {
+		t.Errorf("the top staff is called %q", got)
+	}
+	if got := score.Parts[1].Name; got != "Baritone Sax" {
+		t.Errorf("the lower staff is called %q", got)
+	}
+}
+
+// And what the name says the instrument is.
+//
+// Finale identifies its instruments by a code of its own, which is not in
+// the file, so the name is what there is — and a saxophone that plays back
+// as a piano is a worse answer than a guess. French names count: the scores
+// this was written against are French.
+func TestTheInstrumentIsGuessedFromTheName(t *testing.T) {
+	score := read1(t, fixture(t, enigmaSample))
+	if got := score.Parts[0].Instrument; got != model.Clarinet {
+		t.Errorf("Clarinette en Sib came out as %v", got)
+	}
+	if got := score.Parts[1].Instrument; got != model.BaritoneSax {
+		t.Errorf("Baritone Sax came out as %v", got)
+	}
+}
+
+// How far a staff is written from where it sounds.
+//
+// Finale says it as a player's part is described — so many scale steps up,
+// so many sharps added to the key — and the sharps are what give the
+// semitones: each one is a fifth, and the fifths wrap round the octave a
+// semitone at a time. One step and two sharps is a B flat clarinet.
+func TestTheTransposition(t *testing.T) {
+	score := read1(t, fixture(t, enigmaSample))
+	got := score.Parts[0].Transpose
+	want := model.TranspositionFor(model.Clarinet)
+	if got != want {
+		t.Errorf("the clarinet transposes %+v, want %+v", got, want)
+	}
+	if score.Parts[1].Transpose != (model.Transposition{}) {
+		t.Errorf("the untransposed staff came out transposed: %+v", score.Parts[1].Transpose)
+	}
+}
+
+// A tie is kept when the note is actually held into the next one, and taken
+// away when it is not.
+//
+// Finale leaves a tie mark on a note whose neighbour has since changed
+// pitch, and simply does not draw it. gscore draws a tie to the next note of
+// that pitch wherever it is, so a stale mark came out as a curve sweeping
+// across whole systems — which is what the flute part looked like.
+func TestTiesThatGoNowhereAreNotDrawn(t *testing.T) {
+	score := read1(t, fixture(t, enigmaSample))
+	bar := score.Parts[0].Measures[0].Voices[0].Elements
+
+	// Middle C tied to a C sharp an octave up: not the same note, so not a
+	// tie.
+	if bar[0].(*model.Note).TieStart {
+		t.Error("a tie was kept to a note of a different pitch")
+	}
+	// And the one at the end of the bar, whose next bar holds a rest.
+	if bar[2].(*model.Note).TieStart {
+		t.Error("a tie was kept into a bar with no note to hold it")
+	}
+}
+
+func TestATieThatLandsIsKept(t *testing.T) {
+	// Two of the same note in a row, the first tied into the second.
+	const tied = `<?xml version="1.0" encoding="UTF-8"?>
+<finale version="27.4" xmlns="http://www.makemusic.com/2012/finale">
+  <others>
+    <instUsed cmper="0" inci="0"><inst>1</inst></instUsed>
+    <staffSpec cmper="1"><staffLines>5</staffLines></staffSpec>
+    <measSpec cmper="1"><beats>4</beats><divbeat>1024</divbeat></measSpec>
+    <frameSpec cmper="1" inci="0"><startEntry>1</startEntry><endEntry>2</endEntry></frameSpec>
+  </others>
+  <details><gfhold cmper1="1" cmper2="1"><clefID>0</clefID><frame1>1</frame1></gfhold></details>
+  <entries>
+    <entry entnum="1" prev="0" next="2">
+      <dura>2048</dura><numNotes>1</numNotes><isValid/><isNote/>
+      <note id="1"><harmLev>4</harmLev><harmAlt>0</harmAlt><tieStart/></note>
+    </entry>
+    <entry entnum="2" prev="1" next="0">
+      <dura>2048</dura><numNotes>1</numNotes><isValid/><isNote/>
+      <note id="1"><harmLev>4</harmLev><harmAlt>0</harmAlt></note>
+    </entry>
+  </entries>
+</finale>`
+
+	score := read1(t, fixture(t, tied))
+	els := score.Parts[0].Measures[0].Voices[0].Elements
+	if len(els) != 2 {
+		t.Fatalf("%d notes, want two", len(els))
+	}
+	if !els[0].(*model.Note).TieStart {
+		t.Error("the first note does not start the tie")
+	}
+	// The note it is held into has to say so, or nothing closes the curve.
+	if !els[1].(*model.Note).TieStop {
+		t.Error("the second note does not end it")
+	}
+}
+
+// Finale names each articulation by the character it draws it with.
+func TestArticulationsComeThrough(t *testing.T) {
+	score := read1(t, fixture(t, enigmaSample))
+	// The caret, char 94, on the second note.
+	second := score.Parts[0].Measures[0].Voices[0].Elements[1].(*model.Note)
+	if !second.HasArticulation(model.Marcato) {
+		t.Errorf("the marcato is not on the note: %v", second.Articulations)
+	}
+	first := score.Parts[0].Measures[0].Voices[0].Elements[0].(*model.Note)
+	if len(first.Articulations) != 0 {
+		t.Errorf("a note with no articulation has %v", first.Articulations)
+	}
+}
+
+// A bar Finale leaves empty is a bar of rest, not a blank bar.
+//
+// Finale writes no entries for one and draws the rest itself; the
+// documentation says completely empty measures may omit their hold
+// altogether. Left empty they came out as gaps in the middle of the music.
+func TestAnEmptyBarIsABarOfRest(t *testing.T) {
+	score := read1(t, fixture(t, enigmaSample))
+	// The lower staff has music in its first bar and nothing in its second.
+	els := score.Parts[1].Measures[1].Voices[0].Elements
+	if len(els) != 1 {
+		t.Fatalf("the empty bar holds %d things, want one rest", len(els))
+	}
+	rest, ok := els[0].(*model.Rest)
+	if !ok {
+		t.Fatalf("it holds a %T", els[0])
+	}
+	// Six eight: three quarters of a whole note.
+	if want := (model.Duration{Num: 3, Den: 4}); rest.Dur.Cmp(want) != 0 {
+		t.Errorf("the rest lasts %v, want a bar of six eight", rest.Dur)
 	}
 }

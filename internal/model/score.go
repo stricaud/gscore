@@ -653,6 +653,9 @@ func TranspositionFor(i Instrument) Transposition {
 	case TenorSax:
 		// In B-flat, a major ninth below.
 		return Transposition{Diatonic: -1, Chromatic: -2, OctaveChange: -1}
+	case BaritoneSax:
+		// In E-flat, an octave and a major sixth below.
+		return Transposition{Diatonic: -5, Chromatic: -9, OctaveChange: -1}
 	case FrenchHorn, EnglishHorn:
 		// In F: a perfect fifth below.
 		return Transposition{Diatonic: -4, Chromatic: -7}

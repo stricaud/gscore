@@ -726,6 +726,11 @@ type openSpan struct {
 	y     float64
 	above bool
 
+	// voice is the line of music it belongs to. Ties are kept for the staff
+	// rather than for the voice — see allVoices — so a tie waiting to be
+	// closed has to know which voice's next note is the one that closes it.
+	voice int
+
 	// up and down count the stems of the notes a slur covers, including the
 	// ones it starts and ends on.
 	//

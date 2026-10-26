@@ -6,7 +6,7 @@ abc/boite-musique.abc eabfc14e979c9985 514
 abc/decoration.abc c1c6eea6d301c988 32
 abc/pitch.abc 3041e2426fc05ef5 236
 abc/sunshine.abc 29b39313b40cf0ff 136
-samples/altes-10e-solo.abc 1731f7ca57f8f55a 12337
+samples/altes-10e-solo.abc c485ad91d397078b 12337
 samples/boite-musique.abc eabfc14e979c9985 514
 suite/01a-Pitches-Pitches.musicxml ac9b5a16d2ed23a9 555
 suite/01b-Pitches-Intervals.musicxml 10c7ac11bad1da6c 412
@@ -97,9 +97,9 @@ suite/33e-Spanners-OctaveShifts-InvalidSize.musicxml a6a26e93b45bed66 29
 suite/33f-Trill-EndingOnGraceNote.musicxml 1db7c289896f4863 120
 suite/33g-Slur-ChordedNotes.musicxml ef2f8126bf143549 23
 suite/33h-Spanners-Glissando.musicxml 616de9fc292ddbd4 56
-suite/33i-Ties-NotEnded.musicxml 65e5ee6a55f69ab0 22
+suite/33i-Ties-NotEnded.musicxml 4e3515703cd81d7d 22
 suite/33j-Beams-Tremolos.musicxml 7b48c606840d2745 54
-suite/33k-Tie-Types.musicxml c43a73b884411126 63
+suite/33k-Tie-Types.musicxml e425cae79cc12a14 63
 suite/34a-Print-Object-Spanners.musicxml 4d0cb557c75e6229 120
 suite/34b-Colors.musicxml e63e6c20e543d69a 266
 suite/34c-Font-Size.musicxml 1e3ff41e69f79382 195

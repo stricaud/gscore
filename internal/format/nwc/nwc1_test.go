@@ -322,3 +322,224 @@ func TestTheOpeningClefIsTheStaffsClef(t *testing.T) {
 			st.part.Clef)
 	}
 }
+
+// Position 0 is the middle line of the staff, which is what says the 1.70
+// reading is right rather than merely fitted.
+//
+// The letters came out right with the wrong constant and the octaves did
+// not: Für Elise opened on the correct E, an octave below where it is
+// written. The middle line is the one position whose pitch is a fact about
+// the clef rather than about the piece.
+func TestTheMiddleLineInSeventy(t *testing.T) {
+	for _, tc := range []struct {
+		clef   model.Clef
+		step   model.Step
+		octave int
+	}{
+		{model.Treble, model.StepB, 4}, // B above middle C
+		{model.Bass, model.StepD, 3},   // D below it
+	} {
+		// Position 0, as a 1.70 note record carries it.
+		b := []byte{8, 0, 0, 0x04, 0, 0x21, 0, 0, 1, 0x00, 5, 0, 0}
+		st := &staffState{part: &model.Part{Clef: tc.clef}}
+		w := &walker{b: b, version: 170}
+		if err := w.object(st); err != nil {
+			t.Fatalf("%v: %v", tc.clef, err)
+		}
+		st.closeMeasure(model.BarSingle)
+		var got *model.Note
+		for _, m := range st.part.Measures {
+			for _, v := range m.Voices {
+				for _, el := range v.Elements {
+					if n, ok := el.(*model.Note); ok {
+						got = n
+					}
+				}
+			}
+		}
+		if got == nil {
+			t.Fatalf("%v: no note read", tc.clef)
+		}
+		if got.Pitch.Step != tc.step || got.Pitch.Octave != tc.octave {
+			t.Errorf("%v: position 0 is %v%d, want the middle line %v%d",
+				tc.clef, got.Pitch.Step, got.Pitch.Octave, tc.step, tc.octave)
+		}
+	}
+}
+
+// The speed the file names, rather than the default.
+//
+// The value was read and thrown away, so every score opened at a hundred
+// and twenty whatever it said. Für Elise is marked Poco Moto, sixty-nine to
+// the quarter — which NoteWorthy shows as 138 to the eighth, the same speed
+// said the other way round.
+func TestTheTempoIsRead(t *testing.T) {
+	// A tempo object of 69, as the file carries it.
+	b := []byte{6, 0, 0, 0xf1, 0x08, 69, 0, 0, 0, 'P', 'o', 'c', 'o', 0}
+	st := &staffState{part: &model.Part{Clef: model.Treble}}
+	w := &walker{b: b, version: 170}
+	if err := w.object(st); err != nil {
+		t.Fatalf("%v", err)
+	}
+	if w.tempo != 69 {
+		t.Errorf("the tempo came out as %d, want 69", w.tempo)
+	}
+
+	// And a value that cannot be a speed is not taken for one.
+	w2 := &walker{b: []byte{6, 0, 0, 0, 0, 0, 0, 0, 0, 0}, version: 170}
+	if err := w2.object(&staffState{part: &model.Part{}}); err != nil {
+		t.Fatalf("%v", err)
+	}
+	if w2.tempo != 0 {
+		t.Errorf("a tempo of zero was taken as %d", w2.tempo)
+	}
+}
+
+// A record marked 5 is four bytes long, whatever its type byte says.
+//
+// 1.70 writes these between the music — as a 255, as a 254, and as a 1 that
+// is not a key signature. Reading that last one as the thirteen-byte key
+// signature its type claims took the walk through a barline and into the
+// middle of a fingering mark, and Für Elise stopped at bar seventy-one.
+func TestAMarkedRecordIsFourBytes(t *testing.T) {
+	for _, objType := range []byte{1, 254, 255} {
+		// The record, then a barline that must still be found after it.
+		b := []byte{objType, 5, 0, 0, 2, 0, 0, 0, 1}
+		st := &staffState{part: &model.Part{Clef: model.Treble}}
+		w := &walker{b: b, version: 170}
+		for i := 0; i < 2; i++ {
+			if err := w.object(st); err != nil {
+				t.Fatalf("type %d, object %d: %v", objType, i+1, err)
+			}
+		}
+		if w.i != len(b) {
+			t.Errorf("type %d: the two records came to %d bytes, want %d",
+				objType, w.i, len(b))
+		}
+	}
+
+	// And in 1.75 the same bytes are read as the type says, since nothing
+	// there writes them.
+	b := []byte{1, 5, 0, 0, 2, 0, 0, 0, 1, 0, 0, 0, 0}
+	w := &walker{b: b, version: 175}
+	if err := w.object(&staffState{part: &model.Part{}}); err != nil {
+		t.Fatalf("%v", err)
+	}
+	if w.i != 13 {
+		t.Errorf("a 1.75 key signature came to %d bytes, want 13", w.i)
+	}
+}
+
+// A 1.70 chord is a note-sized record with four bytes after it.
+//
+// Thirteen for the record and four for whatever counts the noteheads above
+// it: left unread, the walk came out two bytes short at the next chord and
+// the left hand of Für Elise was lost a third of the way through.
+func TestAChordInSeventyIsSeventeenBytes(t *testing.T) {
+	chord := []byte{0x0a, 0, 0, 0x04, 0, 0x21, 0, 0x02, 0, 0xfb, 0x1d, 0, 0, 0, 0, 2, 0}
+	b := append(chord, 2, 0, 0, 0, 1) // a barline after it
+
+	st := &staffState{part: &model.Part{Clef: model.Treble}}
+	w := &walker{b: b, version: 170}
+	for i := 0; i < 2; i++ {
+		if err := w.object(st); err != nil {
+			t.Fatalf("object %d: %v", i+1, err)
+		}
+	}
+	if w.i != len(b) {
+		t.Errorf("the chord and the barline came to %d bytes, want %d", w.i, len(b))
+	}
+	if w.flatChords != 1 {
+		t.Errorf("%d chords were counted as read flat, want one", w.flatChords)
+	}
+	// The note it carries is on the page, rather than the chord being
+	// dropped for having no noteheads the reader could find.
+	st.closeMeasure(model.BarSingle)
+	notes := 0
+	for _, m := range st.part.Measures {
+		for _, v := range m.Voices {
+			notes += len(v.Elements)
+		}
+	}
+	if notes == 0 {
+		t.Error("the chord put nothing on the page")
+	}
+}
+
+// A slur is a span written on every note it covers.
+//
+// Not a mark on its two ends: bit one of the byte says the note is joined
+// to the one after it and bit two to the one before, so the opening of Für
+// Elise reads 01, 03, 03, 03, 03, 03, 03, 03, 02 — a slur beginning,
+// carrying over seven notes and ending on the ninth, which is exactly the
+// phrase mark printed over it. Nothing read this byte before, so no score
+// opened in gscore had a slur in it at all.
+func TestASlurIsASpan(t *testing.T) {
+	note := func(slur byte) []byte {
+		return []byte{8, 0, 0, 0x04, 0, 0x21, 0, 0, slur, 0xfd, 5, 0, 0}
+	}
+	// Begins, carries, ends.
+	var b []byte
+	for _, s := range []byte{0x01, 0x03, 0x02} {
+		b = append(b, note(s)...)
+	}
+
+	st := &staffState{part: &model.Part{Clef: model.Treble}}
+	w := &walker{b: b, version: 170}
+	for i := 0; i < 3; i++ {
+		if err := w.object(st); err != nil {
+			t.Fatalf("object %d: %v", i+1, err)
+		}
+	}
+	st.closeMeasure(model.BarSingle)
+
+	var notes []*model.Note
+	for _, m := range st.part.Measures {
+		for _, v := range m.Voices {
+			for _, el := range v.Elements {
+				if n, ok := el.(*model.Note); ok {
+					notes = append(notes, n)
+				}
+			}
+		}
+	}
+	if len(notes) != 3 {
+		t.Fatalf("%d notes read", len(notes))
+	}
+	if !notes[0].SlurStart || notes[0].SlurStop {
+		t.Error("the first note does not begin the slur")
+	}
+	if notes[1].SlurStart || notes[1].SlurStop {
+		t.Error("the note in the middle was taken for an end of it")
+	}
+	if !notes[2].SlurStop || notes[2].SlurStart {
+		t.Error("the last note does not end the slur")
+	}
+}
+
+// And only in 1.70, where that is what the byte means.
+//
+// A 1.75 score leaves it zero on all but a handful of notes and a 2.0 one
+// writes 01, 80 and 81 in it. Read as a span, a 2.0 score came out with
+// nearly six hundred slurs that begin and never end — drawn to the margin
+// of every system after them.
+func TestTheSlurByteIsNotReadInLaterVersions(t *testing.T) {
+	b := []byte{8, 0, 0, 0x04, 0, 0x21, 0, 0, 0x01, 0xfd, 5}
+	for _, version := range []int{175, 200} {
+		st := &staffState{part: &model.Part{Clef: model.Treble}}
+		w := &walker{b: b, version: version}
+		if err := w.object(st); err != nil {
+			t.Fatalf("version %d: %v", version, err)
+		}
+		st.closeMeasure(model.BarSingle)
+		for _, m := range st.part.Measures {
+			for _, v := range m.Voices {
+				for _, el := range v.Elements {
+					if n, ok := el.(*model.Note); ok && (n.SlurStart || n.SlurStop) {
+						t.Errorf("version %d: a slur was read out of a byte that does not mean one", version)
+					}
+				}
+			}
+		}
+	}
+}

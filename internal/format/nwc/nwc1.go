@@ -39,6 +39,11 @@ type walker struct {
 	// are not the same size in every one: a note is ten bytes of value in
 	// 1.70 and eight in 1.75.
 	version int
+	// tempo is the first metronome mark met, which is the piece's.
+	tempo int
+	// flatChords counts the chords read as a single note, which is what a
+	// 1.70 chord comes to until the rest of its noteheads are found.
+	flatChords int
 }
 
 func (w *walker) remaining() int { return len(w.b) - w.i }
@@ -143,6 +148,11 @@ type noteValue struct {
 	triplet  bool
 	step     int
 	acc      model.Accidental
+	// slurFrom and slurTo say this note is joined by a slur to the one
+	// before it and to the one after it. A note in the middle of a phrase
+	// has both; the note a slur begins on has only the second.
+	slurFrom bool
+	slurTo   bool
 }
 
 func (w *walker) noteValue() (noteValue, error) {
@@ -157,6 +167,27 @@ func (w *walker) noteValue() (noteValue, error) {
 	}
 	durByte, stem := raw[0], raw[2]
 	artic, position, accidental := raw[4], raw[6], raw[7]
+
+	// The slur is a span written on every note it covers, rather than a
+	// mark on its two ends: bit one says the note is joined to the one
+	// after it and bit two to the one before. So the opening of Für
+	// Elise reads 01, 03, 03, 03, 03, 03, 03, 03, 02 — a slur beginning,
+	// carrying over seven notes and ending on the ninth, which is exactly
+	// the phrase mark printed over it.
+	//
+	// Nothing read this byte before, so no score opened in gscore has ever
+	// had a slur in it.
+	//
+	// 1.70 only, because the byte is not the same thing everywhere. A 1.75
+	// score leaves it zero on all but a handful of notes, and a 2.0 one
+	// writes 01, 80 and 81 in it — read as a span that would be hundreds
+	// of slurs that begin and never end, drawn across the page to the
+	// margin of every system after them. What this byte means in those
+	// versions is still to be found out.
+	if w.version > 0 && w.version < 175 {
+		nv.slurTo = raw[5]&0x01 != 0
+		nv.slurFrom = raw[5]&0x02 != 0
+	}
 
 	// One extra byte follows when the accidental byte says so.
 	if accidental&0x40 == 0x40 {
@@ -192,15 +223,17 @@ func (w *walker) noteValue() (noteValue, error) {
 	// The position is signed and counted from the middle line, as in NWCTXT.
 	nv.step = int(int8(position)) + 4
 	if w.version > 0 && w.version < 175 {
-		// 1.70 counts the other way: downwards from the top line rather
-		// than upwards from the middle, so the same byte names a note
-		// three steps lower and on the other side of the staff.
+		// 1.70 counts the other way: downwards from the middle line where
+		// 1.75 counts upwards. Everything else about the byte is the same,
+		// so the reading is the same with the sign turned round.
 		//
 		// Checked against the piece itself. Beethoven's Albumblatt opens
-		// E, D sharp, E, D sharp, E, B, D natural, C, and the eight bytes
-		// are -3, -2, -3, -2, -3, 0, -2, -1: every one of them lands with
-		// this reading and none of them with the other.
-		nv.step = -int(int8(position)) - 3
+		// E, D sharp, E, D sharp, E, B, D natural, C — in the fifth octave
+		// bar the B — and the eight bytes are -3, -2, -3, -2, -3, 0, -2,
+		// -1. Position 0 lands on the middle line of the staff, which is
+		// what says the reading is right rather than merely fitted: B
+		// above middle C in the treble, D below it in the bass.
+		nv.step = -int(int8(position)) + 4
 	}
 	nv.acc = nwc1Accidentals[accidental&0x07]
 	return nv, nil
@@ -462,6 +495,9 @@ func parseNWC1(raw []byte, version int) (*model.Score, error) {
 	// Whatever the file did not say about what plays each staff, its own
 	// names usually do.
 	nameInstruments(score)
+	if w.tempo > 0 {
+		score.Tempo = model.Tempo{BPM: w.tempo, Unit: model.Duration{Num: 1, Den: 4}}
+	}
 	// A 1.70 score is read in part, and says so.
 	//
 	// The notes themselves are right — Beethoven's Albumblatt opens E, D
@@ -475,6 +511,12 @@ func parseNWC1(raw []byte, version int) (*model.Score, error) {
 	// Said out loud rather than left to be discovered. Notes that are
 	// quietly wrong are worse than notes that are missing, because nothing
 	// about the page says anything happened.
+	if w.flatChords > 0 {
+		lost = append(lost, fmt.Sprintf(
+			"%d chords were read as the one note they are written on: a 1.70 "+
+				"chord keeps its other noteheads somewhere this reader has "+
+				"not found", w.flatChords))
+	}
 	if version > 0 && version < 175 && len(score.Parts) > 0 {
 		lost = append([]string{
 			"this is a NoteWorthy 1.70 file, which gscore reads only in part: " +
@@ -514,14 +556,18 @@ type PartialError struct {
 
 func (e *PartialError) Error() string {
 	if e.Cause == nil && len(e.Lost) > 0 {
-		n := e.LostStaves
-		if n == 0 {
-			n = len(e.Lost)
-		}
-		if n == 1 {
+		switch n := e.LostStaves; {
+		case n == 0:
+			// Every staff came through; the list holds remarks about the
+			// file rather than staves it lost. Saying "two staves could
+			// not be read" of a score with both its staves on the page is
+			// worse than saying nothing.
+			return "nwc: some of this file was not read"
+		case n == 1:
 			return "nwc: one staff could not be read in full"
+		default:
+			return fmt.Sprintf("nwc: %d staves could not be read in full", n)
 		}
-		return fmt.Sprintf("nwc: %d staves could not be read in full", n)
 	}
 	return fmt.Sprintf("nwc: read %d of %d staves (%v)", e.Staves, e.Total, e.Cause)
 }
@@ -736,8 +782,24 @@ func (w *walker) object(st *staffState) error {
 	if err != nil {
 		return err
 	}
-	if err := w.skip(2); err != nil { // object flags
+	flags, ferr := w.u8()
+	if ferr != nil {
+		return ferr
+	}
+	if err := w.skip(1); err != nil { // the second flag byte
 		return err
+	}
+
+	// A record marked 5 is four bytes long and holds nothing else.
+	//
+	// Whatever the type byte says. 1.70 writes these between the music —
+	// as a 255, as a 254, and as a 1 that is not a key signature — and
+	// reading the last of those as the thirteen-byte key signature its
+	// type claims took the walk through a barline and into the middle of a
+	// fingering mark. The mark the record carries is the length, not the
+	// type.
+	if flags == 5 && w.version > 0 && w.version < 175 {
+		return w.skip(1)
 	}
 
 	switch objType {
@@ -832,8 +894,20 @@ func (w *walker) object(st *staffState) error {
 		if err := w.skip(2); err != nil {
 			return err
 		}
-		if _, err := w.u16(); err != nil { // tempo value
-			return err
+		bpm, terr := w.u16()
+		if terr != nil {
+			return terr
+		}
+		// The first one is the piece's speed. The value was read and
+		// thrown away before, so every score opened at a hundred and
+		// twenty whatever it said: Für Elise is marked Poco Moto, sixty-
+		// nine to the quarter, and arrived as a march.
+		//
+		// Counted in quarters, which is what gscore counts in. NoteWorthy
+		// shows the same mark as 138 to the eighth, which is the same
+		// speed said the other way round.
+		if w.tempo == 0 && bpm >= 20 && bpm <= 400 {
+			w.tempo = bpm
 		}
 		if err := w.skip(2); err != nil { // base, pad
 			return err
@@ -885,6 +959,11 @@ func (w *walker) object(st *staffState) error {
 		}
 		n.TieStart = nv.tie
 		n.Tuplet = tupletMark(nv.triplet)
+		// A slur belongs to its two ends. The file marks every note under
+		// it, so the ends are the note that is joined onward without being
+		// joined back, and the note that is joined back without going on.
+		n.SlurStart = nv.slurTo && !nv.slurFrom
+		n.SlurStop = nv.slurFrom && !nv.slurTo
 		if st.pendingDynamic != model.DynamicNone {
 			n.Dynamic = st.pendingDynamic
 			st.pendingDynamic = model.DynamicNone
@@ -898,6 +977,46 @@ func (w *walker) object(st *staffState) error {
 		st.add(n)
 
 	case 10: // chord
+		// A chord opens with the same block a note carries, and in 1.70
+		// that block is ten bytes rather than eight — just as a note's is,
+		// and so is each notehead after it. Changing one without the other
+		// is worse than changing neither: with a ten-byte opening and
+		// eight-byte noteheads every chord came out two bytes short for
+		// each note in it, and four more bars were lost than gained.
+		if w.version > 0 && w.version < 175 {
+			// A 1.70 chord is one record the size of a note — thirteen
+			// bytes, the same ten-byte block and no list of noteheads
+			// after it. Where the rest of the chord is kept is not known;
+			// read as a 1.75 chord the walk loses its place and four bars
+			// with it, and read as nothing at all the note was simply
+			// missing from the page.
+			//
+			// So the note it carries is read and the chord above it is
+			// not. The melody is there and its harmony is not, which is
+			// said in the log rather than left to be noticed.
+			nv, cerr := w.noteValue()
+			if cerr != nil {
+				return cerr
+			}
+			if err := w.skip(2); err != nil {
+				return err
+			}
+			n := &model.Note{
+				Pitch:      pitchFor(st.part, nv.step, nv.acc),
+				Dur:        nv.dur,
+				Accidental: nv.acc,
+			}
+			n.TieStart = nv.tie
+			n.Tuplet = tupletMark(nv.triplet)
+			st.add(n)
+			w.flatChords++
+			// And four bytes after the record: a count of the noteheads
+			// above this one, by the look of it, though where those are
+			// written is still not known. Left unread they put the walk
+			// two bytes out at the next chord and the staff was lost a
+			// third of the way through.
+			return w.skip(4)
+		}
 		if err := w.skip(8); err != nil { // the same shape a note carries
 			return err
 		}

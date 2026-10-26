@@ -441,14 +441,68 @@ func TestAMarkedRecordIsFourBytes(t *testing.T) {
 	}
 }
 
-// A 1.70 chord is a note-sized record with four bytes after it.
+// A 1.70 chord is a note-sized record with four bytes after it, and its
+// noteheads follow it as ordinary notes.
 //
-// Thirteen for the record and four for whatever counts the noteheads above
-// it: left unread, the walk came out two bytes short at the next chord and
-// the left hand of Für Elise was lost a third of the way through.
+// Thirteen bytes for the record and four more, the third of which says how
+// many noteheads it has. The count was skipped and the noteheads were read
+// as notes of their own, so a chord of three became three notes in a row
+// and took three times the time. Für Elise came out with bars holding two
+// and three bars of music — the right hand's chords in bar 66 printed as
+// four quarter notes — and since the two hands lost different amounts, they
+// pulled apart: the left hand raced through its bar while the right was
+// still in the bar they share.
 func TestAChordInSeventyIsSeventeenBytes(t *testing.T) {
+	// A chord of two, and the two notes that are its noteheads.
 	chord := []byte{0x0a, 0, 0, 0x04, 0, 0x21, 0, 0x02, 0, 0xfb, 0x1d, 0, 0, 0, 0, 2, 0}
-	b := append(chord, 2, 0, 0, 0, 1) // a barline after it
+	note := func(pos byte) []byte {
+		return []byte{8, 0, 0, 0x04, 0, 0x21, 0, 0, 0, pos, 0x1d, 0, 0}
+	}
+	b := append(chord, note(0xfb)...)
+	b = append(b, note(0xfe)...)
+	b = append(b, 2, 0, 0, 0, 1) // a barline after them
+
+	st := &staffState{part: &model.Part{Clef: model.Treble}}
+	w := &walker{b: b, version: 170}
+	for i := 0; i < 4; i++ {
+		if err := w.object(st); err != nil {
+			t.Fatalf("object %d: %v", i+1, err)
+		}
+	}
+	if w.i != len(b) {
+		t.Errorf("the records came to %d bytes, want %d", w.i, len(b))
+	}
+
+	els := st.part.Measures[0].Voices[0].Elements
+	if len(els) != 1 {
+		t.Fatalf("%d things in the bar, want the one chord", len(els))
+	}
+	ch, ok := els[0].(*model.Chord)
+	if !ok {
+		t.Fatalf("the bar holds a %T, want a chord", els[0])
+	}
+	if len(ch.Notes) != 2 {
+		t.Errorf("the chord has %d noteheads, want the two it said it had", len(ch.Notes))
+	}
+	// Two notes sounding together last as long as one of them, which is the
+	// whole point: read as two notes in a row the bar held twice the time.
+	if want := (model.Duration{Num: 1, Den: 16}); ch.Duration().Cmp(want) != 0 {
+		t.Errorf("the chord lasts %v, want %v", ch.Duration(), want)
+	}
+	if w.flatChords != 0 {
+		t.Errorf("%d chords were given up on, want none", w.flatChords)
+	}
+}
+
+// A chord whose count is not a count is not followed off the page.
+//
+// The reader believed the file for years and had nothing to fall back on;
+// a count of nought or of two hundred would have swallowed the notes after
+// it. The value block the chord carries is one of its own noteheads, so
+// there is always one real note to keep.
+func TestAChordWithNoUsableCountKeepsItsNote(t *testing.T) {
+	chord := []byte{0x0a, 0, 0, 0x04, 0, 0x21, 0, 0x02, 0, 0xfb, 0x1d, 0, 0, 0, 0, 99, 0}
+	b := append(chord, 2, 0, 0, 0, 1)
 
 	st := &staffState{part: &model.Part{Clef: model.Treble}}
 	w := &walker{b: b, version: 170}
@@ -461,19 +515,14 @@ func TestAChordInSeventyIsSeventeenBytes(t *testing.T) {
 		t.Errorf("the chord and the barline came to %d bytes, want %d", w.i, len(b))
 	}
 	if w.flatChords != 1 {
-		t.Errorf("%d chords were counted as read flat, want one", w.flatChords)
+		t.Errorf("%d chords were counted as given up on, want one", w.flatChords)
 	}
-	// The note it carries is on the page, rather than the chord being
-	// dropped for having no noteheads the reader could find.
-	st.closeMeasure(model.BarSingle)
-	notes := 0
-	for _, m := range st.part.Measures {
-		for _, v := range m.Voices {
-			notes += len(v.Elements)
-		}
+	els := st.part.Measures[0].Voices[0].Elements
+	if len(els) != 1 {
+		t.Fatalf("%d things in the bar, want the one note kept", len(els))
 	}
-	if notes == 0 {
-		t.Error("the chord put nothing on the page")
+	if _, ok := els[0].(*model.Note); !ok {
+		t.Errorf("the bar holds a %T, want the note the chord carried", els[0])
 	}
 }
 

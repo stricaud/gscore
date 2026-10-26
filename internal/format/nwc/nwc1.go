@@ -41,8 +41,9 @@ type walker struct {
 	version int
 	// tempo is the first metronome mark met, which is the piece's.
 	tempo int
-	// flatChords counts the chords read as a single note, which is what a
-	// 1.70 chord comes to until the rest of its noteheads are found.
+	// flatChords counts the chords whose notehead count was not one this
+	// reader could use, and which therefore came to the single note their
+	// record carries.
 	flatChords int
 }
 
@@ -168,6 +169,7 @@ type noteValue struct {
 	tie      bool
 	staccato bool
 	accent   bool
+	triplet  bool
 	step     int
 	acc      model.Accidental
 	// slurFrom and slurTo say this note is joined by a slur to the one
@@ -187,7 +189,7 @@ func (w *walker) noteValue() (noteValue, error) {
 		}
 		raw[i] = c
 	}
-	durByte := raw[0]
+	durByte, stem := raw[0], raw[2]
 	artic, position, accidental := raw[4], raw[6], raw[7]
 
 	// The slur is a span written on every note it covers, rather than a
@@ -233,28 +235,31 @@ func (w *walker) noteValue() (noteValue, error) {
 	nv.staccato = artic&artStaccato != 0
 	nv.accent = artic&artAccent != 0
 
-	// Byte two is the beam and the stem, and no part of it is a triplet.
+	// Byte two is the beam, the stem and the triplet, two bits each.
 	//
-	// Bit 0x20 was read as one. It is not: the low nibble is the note's
-	// place in its beam — 0 unbeamed, 1 beginning, 2 continuing, 3 ending,
-	// which is exactly what the opening of Fur Elise writes over its two
-	// beamed groups — and 0x10 and 0x20 are the two stem directions, which
-	// is why half the notes in every file carried the bit. The treble of
-	// Fur Elise is 0x2n throughout and the bass 0x1n, and the piece has no
-	// triplet anywhere in it.
+	// Bits 0 and 1 are the note's place in its beam — 0 unbeamed, 1
+	// beginning, 2 continuing, 3 ending, which is what the opening of Für
+	// Elise writes over its two beamed groups. Bits 2 and 3 are its place
+	// in its triplet, counted the same way and 0 when it is in none. The
+	// rest of the byte is the stem.
 	//
-	// So every one of those notes was played at two thirds of its length.
-	// It is what made the first bars sound wrong: the six sixteenths of
-	// bar one became six twenty-fourths, the bar held a quarter of the
-	// time it should and the rest of it was silence. Dropping the rule
-	// takes the bars that add up across the corpus from 45.6% to 61.0%.
+	// Bit 0x20 was read as the triplet before, and it is part of the stem:
+	// half the notes in every file carry it, so half the notes in every
+	// file were played at two thirds of their length. The treble of Für
+	// Elise is 0x2n throughout and the bass 0x1n. It is what made the
+	// opening sound wrong — the six sixteenths of bar one became six
+	// twenty-fourths, so the bar held a quarter of the time it should and
+	// the rest of it was silence.
 	//
-	// There is no triplet flag in this record. Every bit of all eight
-	// bytes was tried against the same measurement and not one of them
-	// improves on reading no triplets at all, so a triplet reads as three
-	// plain notes that overfill their bar. Where it is written is still to
-	// be found: the two bytes a 1.70 note carries past the eight, or an
-	// object of its own.
+	// The flag is in bits 2 and 3, and Für Elise does have triplets:
+	// forty-five notes carry them, in one unbroken run of 1, 2, 3 repeated
+	// fifteen times, which is the five bars of triplet sixteenths before
+	// the theme comes back. Nothing else in the piece is in a triplet and
+	// nothing else in it carries the bits.
+	if (stem>>2)&3 != 0 {
+		nv.dur = nv.dur.Scale(2, 3)
+		nv.triplet = true
+	}
 
 	// The position is signed and counted from the middle line, as in NWCTXT.
 	nv.step = int(int8(position)) + 4
@@ -550,9 +555,8 @@ func parseNWC1(raw []byte, version int) (*model.Score, error) {
 	// about the page says anything happened.
 	if w.flatChords > 0 {
 		lost = append(lost, fmt.Sprintf(
-			"%d chords were read as the one note they are written on: a 1.70 "+
-				"chord keeps its other noteheads somewhere this reader has "+
-				"not found", w.flatChords))
+			"%d chords did not say how many notes they have, and were read as "+
+				"the one note their record carries", w.flatChords))
 	}
 	if version > 0 && version < 175 && len(score.Parts) > 0 {
 		lost = append([]string{
@@ -774,6 +778,12 @@ type staffState struct {
 	// pendingDynamic waits for the next note, since NoteWorthy writes the
 	// marking as an object of its own just before what it applies to.
 	pendingDynamic model.Dynamic
+	// chord is the chord being gathered and chordLeft how many of its
+	// noteheads are still to come. A 1.70 chord is a record that says how
+	// many notes it has and then lets them follow as ordinary note
+	// records, so the notes after one belong to it rather than to the bar.
+	chord     *model.Chord
+	chordLeft int
 }
 
 func (s *staffState) ensure() {
@@ -784,10 +794,51 @@ func (s *staffState) ensure() {
 
 func (s *staffState) add(el model.Element) {
 	s.ensure()
+	// A note while a chord is open is one of its noteheads.
+	if s.chordLeft > 0 {
+		if n, ok := el.(*model.Note); ok {
+			s.chord.Notes = append(s.chord.Notes, n)
+			s.chordLeft--
+			if s.chordLeft == 0 {
+				s.chord = nil
+			}
+			return
+		}
+		// Anything else means the noteheads are not where the chord said
+		// they would be, and the chord is as finished as it is going to be.
+		s.endChord()
+	}
 	s.meas.Voices[0].Elements = append(s.meas.Voices[0].Elements, el)
 }
 
+// openChord starts a chord of n noteheads, which the next n note records
+// fill. The chord takes its place in the bar now, so that the notes landing
+// in it do not have to be put back in order afterwards.
+func (s *staffState) openChord(ch *model.Chord, n int) {
+	s.endChord()
+	s.ensure()
+	s.meas.Voices[0].Elements = append(s.meas.Voices[0].Elements, ch)
+	s.chord, s.chordLeft = ch, n
+}
+
+// endChord stops waiting for noteheads. One that never got any is taken back
+// out of the bar: an empty chord is a thing the engraver would have to draw
+// nothing for, in a space nothing else may use.
+func (s *staffState) endChord() {
+	if s.chord == nil {
+		return
+	}
+	if len(s.chord.Notes) == 0 && s.meas != nil {
+		els := s.meas.Voices[0].Elements
+		if len(els) > 0 && els[len(els)-1] == model.Element(s.chord) {
+			s.meas.Voices[0].Elements = els[:len(els)-1]
+		}
+	}
+	s.chord, s.chordLeft = nil, 0
+}
+
 func (s *staffState) closeMeasure(style model.BarlineStyle) {
+	s.endChord()
 	if s.meas == nil {
 		return
 	}
@@ -984,7 +1035,9 @@ func (w *walker) object(st *staffState) error {
 			}
 		}
 		if objType == 9 {
-			st.add(&model.Rest{Dur: nv.dur})
+			r := &model.Rest{Dur: nv.dur}
+			r.Tuplet = tupletMark(nv.triplet)
+			st.add(r)
 			return nil
 		}
 		n := &model.Note{
@@ -993,6 +1046,7 @@ func (w *walker) object(st *staffState) error {
 			Accidental: nv.acc,
 		}
 		n.TieStart = nv.tie
+		n.Tuplet = tupletMark(nv.triplet)
 		// A slur belongs to its two ends. The file marks every note under
 		// it, so the ends are the note that is joined onward without being
 		// joined back, and the note that is joined back without going on.
@@ -1018,16 +1072,24 @@ func (w *walker) object(st *staffState) error {
 		// eight-byte noteheads every chord came out two bytes short for
 		// each note in it, and four more bars were lost than gained.
 		if w.version > 0 && w.version < 175 {
-			// A 1.70 chord is one record the size of a note — thirteen
-			// bytes, the same ten-byte block and no list of noteheads
-			// after it. Where the rest of the chord is kept is not known;
-			// read as a 1.75 chord the walk loses its place and four bars
-			// with it, and read as nothing at all the note was simply
-			// missing from the page.
+			// A 1.70 chord does not carry its noteheads: it says how many
+			// it has and lets them follow as ordinary note records.
 			//
-			// So the note it carries is read and the chord above it is
-			// not. The melody is there and its harmony is not, which is
-			// said in the log rather than left to be noticed.
+			// The record is the size of a note — the same eight-byte value
+			// block and two-byte tail — and then four bytes more, the
+			// third of which is the count. Its own value block is not an
+			// extra note. It repeats one of the noteheads that follow: in
+			// all eighty-one chords of Für Elise the pitch it carries is
+			// one of theirs and every notehead has its duration.
+			//
+			// Read as a note of its own with the noteheads behind it as
+			// notes of their own, a three-note chord became three notes in
+			// a row and took three times the time. That is what pulled the
+			// hands of Für Elise apart: from the first chord in bar 25 the
+			// left hand had bars holding two and three bars of music, so
+			// it ran through them while the right hand was still in the
+			// bar they share — the staves of a NoteWorthy score keep the
+			// same barlines, and ours no longer did.
 			nv, cerr := w.noteValue()
 			if cerr != nil {
 				return cerr
@@ -1035,20 +1097,34 @@ func (w *walker) object(st *staffState) error {
 			if err := w.skip(2); err != nil {
 				return err
 			}
-			n := &model.Note{
-				Pitch:      pitchFor(st.part, nv.step, nv.acc),
-				Dur:        nv.dur,
-				Accidental: nv.acc,
+			tail := make([]byte, 4)
+			for i := range tail {
+				c, terr := w.u8()
+				if terr != nil {
+					return terr
+				}
+				tail[i] = c
 			}
-			n.TieStart = nv.tie
-			st.add(n)
-			w.flatChords++
-			// And four bytes after the record: a count of the noteheads
-			// above this one, by the look of it, though where those are
-			// written is still not known. Left unread they put the walk
-			// two bytes out at the next chord and the staff was lost a
-			// third of the way through.
-			return w.skip(4)
+			count := int(tail[2])
+			if count < 1 || count > 8 {
+				// Not a count this reader understands. The value block is
+				// one real notehead, so the melody is kept and the harmony
+				// above it is not — which the log says out loud.
+				n := &model.Note{
+					Pitch:      pitchFor(st.part, nv.step, nv.acc),
+					Dur:        nv.dur,
+					Accidental: nv.acc,
+				}
+				n.TieStart = nv.tie
+				n.Tuplet = tupletMark(nv.triplet)
+				st.add(n)
+				w.flatChords++
+				return nil
+			}
+			ch := &model.Chord{Dur: nv.dur}
+			ch.Tuplet = tupletMark(nv.triplet)
+			st.openChord(ch, count)
+			return nil
 		}
 		if err := w.skip(8); err != nil { // the same shape a note carries
 			return err

@@ -501,6 +501,10 @@ func (p *parser) finish() (*model.Score, error) {
 	for _, part := range p.score.Parts {
 		linkTies(part)
 	}
+	// A staff with a bar off writes one whole rest whatever the meter, in
+	// this format as in the binary one, and a whole note of silence in a
+	// three-four bar would hold the bar open for three bars' worth of time.
+	fitBarRests(p.score)
 	return p.score, nil
 }
 

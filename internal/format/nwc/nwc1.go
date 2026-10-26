@@ -114,12 +114,35 @@ var nwc1Durations = map[byte]model.Duration{
 }
 
 // Bits in the articulation byte.
+//
+// The dot is 0x04. It was read as 0x01 and the double dot as 0x02, and both
+// were wrong: 0x01 is not set on a single note anywhere in the corpus, so no
+// dotted note in any file was ever lengthened, and 0x02 is something else
+// again — read as a double dot it turned two hundred and twenty-one plain
+// notes in Fur Elise into double-dotted ones.
+//
+// Found by asking the files. A bar is right when its notes add up to its
+// meter, and that is a question a reader can ask itself without knowing the
+// music: across seventeen published scores and eight thousand bars, 0x04 as
+// the dot takes the bars that add up from 61.5% to 73.8%, and no other bit of
+// the byte comes near it. 0x01 and 0x02 both make it worse.
+//
+// The tie at 0x10 is confirmed the same way, by what the music does rather
+// than by what adds up: a tie joins two notes of the same pitch, and 94.1% of
+// the notes carrying 0x10 are followed by a note of the same pitch where
+// notes in general are followed by one 21.2% of the time. Fur Elise sets it
+// on no note at all, which is why it comes out with no ties in it — the file
+// has slurs, which are the byte spanners.go reads, and no ties.
+//
+// What 0x02 and 0x08 mean is still unknown, and so is the double dot: no bit
+// of the record behaves like one. A double-dotted note therefore reads as a
+// single-dotted one, which is a bar that does not add up rather than a note
+// in the wrong place.
 const (
-	artDotted    = 0x01
-	artDblDotted = 0x02
-	artTie       = 0x10
-	artStaccato  = 0x20
-	artAccent    = 0x40
+	artDotted   = 0x04
+	artTie      = 0x10
+	artStaccato = 0x20
+	artAccent   = 0x40
 )
 
 // nwc1Accidentals maps the low bits of the accidental byte.
@@ -145,7 +168,6 @@ type noteValue struct {
 	tie      bool
 	staccato bool
 	accent   bool
-	triplet  bool
 	step     int
 	acc      model.Accidental
 	// slurFrom and slurTo say this note is joined by a slur to the one
@@ -165,7 +187,7 @@ func (w *walker) noteValue() (noteValue, error) {
 		}
 		raw[i] = c
 	}
-	durByte, stem := raw[0], raw[2]
+	durByte := raw[0]
 	artic, position, accidental := raw[4], raw[6], raw[7]
 
 	// The slur is a span written on every note it covers, rather than a
@@ -204,21 +226,35 @@ func (w *walker) noteValue() (noteValue, error) {
 	}
 	nv.dur = d
 
-	switch {
-	case artic&artDblDotted != 0:
-		nv.dur, nv.dots = nv.dur.Scale(7, 4), 2
-	case artic&artDotted != 0:
+	if artic&artDotted != 0 {
 		nv.dur, nv.dots = nv.dur.Scale(3, 2), 1
 	}
 	nv.tie = artic&artTie != 0
 	nv.staccato = artic&artStaccato != 0
 	nv.accent = artic&artAccent != 0
 
-	// The stem byte carries the triplet flag.
-	if stem&0x20 != 0 {
-		nv.dur = nv.dur.Scale(2, 3)
-		nv.triplet = true
-	}
+	// Byte two is the beam and the stem, and no part of it is a triplet.
+	//
+	// Bit 0x20 was read as one. It is not: the low nibble is the note's
+	// place in its beam — 0 unbeamed, 1 beginning, 2 continuing, 3 ending,
+	// which is exactly what the opening of Fur Elise writes over its two
+	// beamed groups — and 0x10 and 0x20 are the two stem directions, which
+	// is why half the notes in every file carried the bit. The treble of
+	// Fur Elise is 0x2n throughout and the bass 0x1n, and the piece has no
+	// triplet anywhere in it.
+	//
+	// So every one of those notes was played at two thirds of its length.
+	// It is what made the first bars sound wrong: the six sixteenths of
+	// bar one became six twenty-fourths, the bar held a quarter of the
+	// time it should and the rest of it was silence. Dropping the rule
+	// takes the bars that add up across the corpus from 45.6% to 61.0%.
+	//
+	// There is no triplet flag in this record. Every bit of all eight
+	// bytes was tried against the same measurement and not one of them
+	// improves on reading no triplets at all, so a triplet reads as three
+	// plain notes that overfill their bar. Where it is written is still to
+	// be found: the two bytes a 1.70 note carries past the eight, or an
+	// object of its own.
 
 	// The position is signed and counted from the middle line, as in NWCTXT.
 	nv.step = int(int8(position)) + 4
@@ -495,6 +531,7 @@ func parseNWC1(raw []byte, version int) (*model.Score, error) {
 	// Whatever the file did not say about what plays each staff, its own
 	// names usually do.
 	nameInstruments(score)
+	fitBarRests(score)
 	if w.tempo > 0 {
 		score.Tempo = model.Tempo{BPM: w.tempo, Unit: model.Duration{Num: 1, Den: 4}}
 	}
@@ -947,9 +984,7 @@ func (w *walker) object(st *staffState) error {
 			}
 		}
 		if objType == 9 {
-			r := &model.Rest{Dur: nv.dur}
-			r.Tuplet = tupletMark(nv.triplet)
-			st.add(r)
+			st.add(&model.Rest{Dur: nv.dur})
 			return nil
 		}
 		n := &model.Note{
@@ -958,7 +993,6 @@ func (w *walker) object(st *staffState) error {
 			Accidental: nv.acc,
 		}
 		n.TieStart = nv.tie
-		n.Tuplet = tupletMark(nv.triplet)
 		// A slur belongs to its two ends. The file marks every note under
 		// it, so the ends are the note that is joined onward without being
 		// joined back, and the note that is joined back without going on.
@@ -1007,7 +1041,6 @@ func (w *walker) object(st *staffState) error {
 				Accidental: nv.acc,
 			}
 			n.TieStart = nv.tie
-			n.Tuplet = tupletMark(nv.triplet)
 			st.add(n)
 			w.flatChords++
 			// And four bytes after the record: a count of the noteheads
@@ -1038,7 +1071,6 @@ func (w *walker) object(st *staffState) error {
 			}
 			if i == 0 {
 				ch.Dur = nv.dur
-				ch.Tuplet = tupletMark(nv.triplet)
 			}
 			n := &model.Note{
 				Pitch:      pitchFor(st.part, nv.step, nv.acc),
@@ -1331,4 +1363,42 @@ func countStaffLines(lines []string) int {
 		}
 	}
 	return n
+}
+
+// fitBarRests gives a bar of silence the length of its bar.
+//
+// A staff that is silent for a bar is written as one whole rest, whatever the
+// meter — which is how a bar rest is printed, and NoteWorthy stores what it
+// prints. In three eight that rest says one whole note where the bar is three
+// eighths of one, and since a bar lasts as long as the longest thing in it,
+// the bar then lasted eight times too long: in Fur Elise the six notes of the
+// opening were followed by two and a half seconds of nothing while the left
+// hand's empty bar ran its course.
+//
+// The staves of a NoteWorthy score share their barlines, so a whole rest in a
+// short bar cannot mean a whole note of silence — it would put every staff
+// after it out of step with the one it is in. It means the staff has this bar
+// off, and that is what it is read as.
+//
+// Only a bar with nothing else in it, and only a rest longer than the bar, so
+// this can shorten a bar of silence and nothing else. Across the corpus it
+// takes the bars that add up from 73.8% to 87.7%, and three movements of the
+// Requiem from under two thirds to very nearly all.
+func fitBarRests(score *model.Score) {
+	for _, p := range score.Parts {
+		for i, m := range p.Measures {
+			if len(m.Voices) != 1 || len(m.Voices[0].Elements) != 1 {
+				continue
+			}
+			r, ok := m.Voices[0].Elements[0].(*model.Rest)
+			if !ok {
+				continue
+			}
+			bar := p.TimeAt(i).BarDuration()
+			if bar.IsZero() || r.Dur.Cmp(bar) <= 0 {
+				continue
+			}
+			r.Dur = bar
+		}
+	}
 }

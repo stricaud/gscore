@@ -554,3 +554,130 @@ func TestTheSlurByteIsNotReadInLaterVersions(t *testing.T) {
 		}
 	}
 }
+
+// A note's length is what the file says it is.
+//
+// Bit 0x20 of the beam-and-stem byte was read as a triplet flag. It is the
+// stem direction, and half the notes in every file carry it, so half the
+// notes in every file were played at two thirds of their length. In Für
+// Elise the six sixteenths of the first bar became six twenty-fourths: the
+// bar held a quarter of the time it should and the rest of it was silence,
+// which is what "the playback is weird, listen to the first 3 measures"
+// sounded like.
+func TestTheStemByteIsNotATriplet(t *testing.T) {
+	// A sixteenth with 0x21 in byte two — stem one way, first of a beam,
+	// which is what Für Elise's opening E is.
+	b := []byte{8, 0, 0, 0x04, 0, 0x21, 0, 0, 1, 0xfd, 5, 0, 0}
+	st := &staffState{part: &model.Part{Clef: model.Treble}}
+	w := &walker{b: b, version: 170}
+	if err := w.object(st); err != nil {
+		t.Fatalf("%v", err)
+	}
+	n := firstNoteIn(t, st)
+	if want := (model.Duration{Num: 1, Den: 16}); n.Dur.Cmp(want) != 0 {
+		t.Errorf("the note is %v long, want the %v it is written as", n.Dur, want)
+	}
+	if n.Tuplet != nil {
+		t.Error("it came out in a tuplet")
+	}
+}
+
+// The augmentation dot is bit 0x04 of the articulation byte.
+//
+// It was read as 0x01, which is set on no note in any of the seventeen
+// published scores this reader was tried against — so no dotted note
+// anywhere was ever given its dot, and every bar holding one came out short.
+// 0x02 was read as a double dot and is something else again: as a double dot
+// it lengthened two hundred and twenty-one plain notes in Für Elise alone.
+func TestTheDotIsBitFour(t *testing.T) {
+	note := func(artic byte) []byte {
+		return []byte{8, 0, 0, 0x03, 0, 0, 0, artic, 0, 0, 5, 0, 0}
+	}
+	for _, tc := range []struct {
+		artic byte
+		want  model.Duration
+		what  string
+	}{
+		{0x00, model.Duration{Num: 1, Den: 8}, "a plain eighth"},
+		{0x04, model.Duration{Num: 3, Den: 16}, "a dotted eighth"},
+		// The two bits that used to be the dot and the double dot mean
+		// something this reader has not worked out, and neither of them
+		// lengthens a note.
+		{0x01, model.Duration{Num: 1, Den: 8}, "0x01, which is not the dot"},
+		{0x02, model.Duration{Num: 1, Den: 8}, "0x02, which is not the double dot"},
+	} {
+		st := &staffState{part: &model.Part{Clef: model.Treble}}
+		w := &walker{b: note(tc.artic), version: 170}
+		if err := w.object(st); err != nil {
+			t.Fatalf("articulation 0x%02X: %v", tc.artic, err)
+		}
+		n := firstNoteIn(t, st)
+		if n.Dur.Cmp(tc.want) != 0 {
+			t.Errorf("articulation 0x%02X is %v, want %v (%s)",
+				tc.artic, n.Dur, tc.want, tc.what)
+		}
+	}
+}
+
+// A bar of silence lasts one bar.
+//
+// A staff with nothing to play writes one whole rest, whatever the meter,
+// because that is how a bar rest is printed. Read as a whole note, Für
+// Elise's left hand made its empty bars eight times too long — the six notes
+// of the opening were followed by two and a half seconds of nothing — and
+// the staves of a NoteWorthy score share their barlines, so a whole note of
+// silence in a three-eight bar is not something the file can mean.
+func TestABarOfSilenceLastsOneBar(t *testing.T) {
+	rest := func(d model.Duration) *model.Measure {
+		return &model.Measure{Voices: []*model.Voice{{
+			Elements: []model.Element{&model.Rest{Dur: d}},
+		}}}
+	}
+	whole := model.Duration{Num: 1, Den: 1}
+	bar := model.Duration{Num: 3, Den: 8}
+	full := &model.Measure{Voices: []*model.Voice{{Elements: []model.Element{
+		&model.Rest{Dur: whole},
+		&model.Note{Pitch: model.Pitch{Step: model.StepA, Octave: 4}, Dur: whole},
+	}}}}
+	p := &model.Part{
+		Clef: model.Treble,
+		Time: model.TimeSignature{Beats: 3, BeatValue: 8},
+		Measures: []*model.Measure{
+			rest(whole),                          // the empty bar
+			rest(model.Duration{Num: 1, Den: 8}), // a rest that fits, left alone
+			full,                                 // not alone in its bar, left alone
+		},
+	}
+	score := &model.Score{Parts: []*model.Part{p}}
+
+	fitBarRests(score)
+
+	if got := p.Measures[0].Voices[0].Elements[0].Duration(); got.Cmp(bar) != 0 {
+		t.Errorf("the empty bar is %v long, want the %v its meter says", got, bar)
+	}
+	if got := p.Measures[1].Voices[0].Elements[0].Duration(); got.Cmp(model.Duration{Num: 1, Den: 8}) != 0 {
+		t.Errorf("a rest that fits its bar was changed to %v", got)
+	}
+	if got := p.Measures[2].Voices[0].Elements[0].Duration(); got.Cmp(whole) != 0 {
+		t.Errorf("a rest with a note beside it was changed to %v", got)
+	}
+}
+
+// firstNoteIn is the first note a staff read. The bar it is in is still open
+// — a bar is closed by the barline object that ends it — so it is closed
+// here before the measures are looked through.
+func firstNoteIn(t *testing.T, st *staffState) *model.Note {
+	t.Helper()
+	st.closeMeasure(model.BarSingle)
+	for _, m := range st.part.Measures {
+		for _, v := range m.Voices {
+			for _, el := range v.Elements {
+				if n, ok := el.(*model.Note); ok {
+					return n
+				}
+			}
+		}
+	}
+	t.Fatal("no note was read")
+	return nil
+}

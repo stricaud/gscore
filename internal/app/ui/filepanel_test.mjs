@@ -9,11 +9,16 @@
  *
  * Choosing a file on a phone.
  *
- * accept is a list of extensions, and iOS reads it by turning each one into
- * a type it knows. It knows none of gscore's: .mscz, .gscore, .abc, .nwctxt
- * and .sf2 are nobody's registered type, so the Files panel opened on an
- * iPhone with every score greyed out. Reported as "I want to open a
- * musescore4 score from my phone and I am not allowed to select it".
+ * accept is a list of extensions, and it was a guess at what gscore reads
+ * made in the one place that does not know: the browser. iOS turns it into
+ * types the system has heard of and has heard of none of gscore's, so the
+ * Files panel opened on an iPhone with every score greyed out. On a desktop
+ * it greyed out a Finale file somebody wanted to try. Reported twice: "I want
+ * to open a musescore4 score from my phone and I am not allowed to select
+ * it", and "I want to open ~/Downloads/....musx and I cannot even choose it".
+ *
+ * So there is no filter anywhere now, and the importers — which are where
+ * the knowledge is — say what they cannot read and what to do about it.
  */
 
 import { readFileSync } from "node:fs";
@@ -45,8 +50,7 @@ function load(navigator) {
       return inputs.filter((i) => i.accept !== undefined);
     },
   };
-  const body = grab("onAppleTouch") + "\n" + grab("freeTheFilePanels") +
-    "\nreturn { onAppleTouch, freeTheFilePanels };";
+  const body = grab("freeTheFilePanels") + "\nreturn { freeTheFilePanels };";
   const api = new Function("navigator", "document", body)(navigator, document);
   return { inputs, ...api };
 }
@@ -76,23 +80,24 @@ test("an iPhone can reach every file in the panel", () => {
   }
 });
 
-test("an iPad is an iPhone here, whatever it calls itself", () => {
-  const { inputs, onAppleTouch, freeTheFilePanels } = load(IPADOS);
-  assert.ok(onAppleTouch(), "an iPad reporting itself as a Macintosh was missed");
+test("an iPad is the same, whatever it calls itself", () => {
+  const { inputs, freeTheFilePanels } = load(IPADOS);
   freeTheFilePanels();
   assert.equal(inputs[0].accept, undefined);
 });
 
-test("a desktop keeps its filter, which is useful there", () => {
-  const { inputs, onAppleTouch, freeTheFilePanels } = load(MAC);
-  assert.equal(onAppleTouch(), false);
+test("a desktop can reach every file too", () => {
+  // A Finale file in Downloads was greyed out here, which is the same wall
+  // in a different place: the browser deciding what gscore can read.
+  const { inputs, freeTheFilePanels } = load(MAC);
   freeTheFilePanels();
-  assert.ok(inputs[0].accept.includes(".mscz"));
-  assert.ok(inputs[1].accept.includes(".sf2"));
+  for (const input of inputs) {
+    assert.equal(input.accept, undefined);
+  }
 });
 
-test("a browser that says nothing at all is left alone", () => {
+test("a browser that says nothing at all is freed as well", () => {
   const { inputs, freeTheFilePanels } = load({});
   freeTheFilePanels();
-  assert.ok(inputs[0].accept.includes(".gscore"));
+  assert.equal(inputs[0].accept, undefined);
 });

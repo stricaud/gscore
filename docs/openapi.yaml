@@ -163,7 +163,7 @@ paths:
         - name: name
           in: query
           required: true
-          description: The filename, for its extension. `.abc`, `.gscore`, `.mscz`, `.mscx`, `.musicxml`, `.xml`, `.mxl`, `.nwctxt`, `.nwc`.
+          description: The filename, for its extension. `.abc`, `.gscore`, `.mscz`, `.mscx`, `.musicxml`, `.xml`, `.mxl`, `.nwctxt`, `.nwc`, `.musx`.
           schema: { type: string }
       requestBody:
         required: true

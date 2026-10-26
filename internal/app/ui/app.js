@@ -5480,29 +5480,22 @@ async function openScore() {
   $("#file-input").click();
 }
 
-// onAppleTouch says whether this is an iPhone or an iPad.
+// freeTheFilePanels lets a file be chosen.
 //
-// Asked for one reason only: what a file panel there will let you choose.
-function onAppleTouch() {
-  const ua = navigator.userAgent || "";
-  if (/iPhone|iPad|iPod/.test(ua)) return true;
-  // An iPad has called itself a Macintosh since iPadOS 13. The touch screen
-  // is what gives it away — a desktop Safari reports no touch points.
-  return /Macintosh/.test(ua) && (navigator.maxTouchPoints || 0) > 1;
-}
-
-// freeTheFilePanels lets an iPhone choose a score.
+// accept is a list of extensions, and it was a guess at what gscore reads
+// made in the one place that does not know: the browser. It was wrong twice.
+// On iOS the list is turned into types the system has heard of, and it has
+// heard of none of ours — .mscz, .gscore, .abc, .nwctxt and .sf2 are nobody's
+// registered type — so the Files panel opened with every score greyed out and
+// an iPhone could not open a score at all. On a desktop it is a filter, which
+// is pleasant until the file you want is a kind gscore has just learned to
+// read, or one you want to try: a .musx sitting in Downloads, greyed out,
+// with nothing to say why.
 //
-// accept is a list of extensions, and iOS reads it by turning each one into
-// a type it has heard of. It has heard of none of these: .mscz, .gscore,
-// .abc, .nwctxt and .sf2 are nobody's registered type, so the Files panel
-// opened with every score in it greyed out — the file was right there and
-// could not be tapped. On a desktop the list is a convenience, filtering a
-// folder down to the music in it; on a phone it is a wall, so on a phone it
-// goes. What is actually readable is decided by the importers when the file
-// arrives, and always was: the panel was never the thing enforcing it.
+// So the panel offers everything and the importers answer. They are where
+// the knowledge is, they say what they cannot read and why — "export it from
+// Finale as MusicXML" — and a sentence beats a file that cannot be clicked.
 function freeTheFilePanels() {
-  if (!onAppleTouch()) return;
   document.querySelectorAll('input[type="file"][accept]')
     .forEach((input) => input.removeAttribute("accept"));
 }

@@ -139,7 +139,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate,
     /// from the plist, so the panel offers exactly what will open.
     private static var readableTypes: [UTType] {
         ["gscore", "abc", "mscz", "mscx", "musicxml", "mxl", "xml",
-         "nwc", "nwctxt"].compactMap { UTType(filenameExtension: $0) }
+         "nwc", "nwctxt", "musx"].compactMap { UTType(filenameExtension: $0) }
     }
 
     private func open(path: String) {

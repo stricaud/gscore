@@ -110,7 +110,7 @@ var (
 // scoreFile says whether a file in samples/ is a score gscore can read.
 func scoreFile(name string) bool {
 	switch strings.ToLower(filepath.Ext(name)) {
-	case ".abc", ".mxl", ".musicxml", ".xml", ".mscz", ".mscx", ".nwctxt", ".gscore":
+	case ".abc", ".mxl", ".musicxml", ".xml", ".mscz", ".mscx", ".nwctxt", ".musx", ".gscore":
 		return true
 	}
 	return false

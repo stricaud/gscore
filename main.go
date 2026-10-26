@@ -44,6 +44,7 @@ import (
 	_ "github.com/stricaud/gscore/internal/format/lilypond"
 	_ "github.com/stricaud/gscore/internal/format/musescore"
 	_ "github.com/stricaud/gscore/internal/format/musicxml"
+	_ "github.com/stricaud/gscore/internal/format/musx"
 	_ "github.com/stricaud/gscore/internal/format/nwc"
 )
 

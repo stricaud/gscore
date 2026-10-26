@@ -100,20 +100,81 @@ func matches(exts []string, ext string) bool {
 	return false
 }
 
+// otherPrograms names the formats gscore cannot read, and whose they are.
+//
+// "no importer registered for .musx" is true and useless: somebody holding a
+// Finale file learns from it that gscore said no, and nothing about what to
+// do next. Every program here writes MusicXML, which gscore reads well, so
+// there is always an answer — and it is one sentence, so it may as well be
+// given.
+//
+// A format is listed here only when it is a real notation program's own
+// file. Anything else falls through to the general answer, which says what
+// gscore does read.
+var otherPrograms = map[string]string{
+	// .musx is read — see internal/format/musx. This is the older binary
+	// one, from Finale 2012 and before, which is a different format again.
+	".mus":    "Finale",
+	".sib":    "Sibelius",
+	".dorico": "Dorico",
+	".cap":    "capella",
+	".capx":   "capella",
+	".sgu":    "Band-in-a-Box",
+	".mgu":    "Band-in-a-Box",
+	".ove":    "Overture",
+	".ly":     "LilyPond",
+}
+
+// Readable lists every extension that can be opened, in reading order.
+func Readable() []string {
+	mu.RLock()
+	defer mu.RUnlock()
+	var out []string
+	seen := map[string]bool{}
+	for _, i := range importers {
+		for _, e := range i.Extensions() {
+			if e = strings.ToLower(e); !seen[e] {
+				seen[e] = true
+				out = append(out, e)
+			}
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
 // ImporterFor returns the importer claiming a filename's extension.
+//
+// What it says when there is none is the whole of what a reader is told
+// about a file gscore will not open, so it is written to be read by one.
 func ImporterFor(filename string) (Importer, error) {
 	ext := strings.ToLower(filepath.Ext(filename))
 	if ext == "" {
-		return nil, fmt.Errorf("format: %q has no extension to identify it by", filename)
+		return nil, fmt.Errorf("%q has no extension, so there is no telling what is in it",
+			filepath.Base(filename))
 	}
 	mu.RLock()
-	defer mu.RUnlock()
 	for _, i := range importers {
 		if matches(i.Extensions(), ext) {
+			mu.RUnlock()
 			return i, nil
 		}
 	}
-	return nil, fmt.Errorf("format: no importer registered for %q", ext)
+	mu.RUnlock()
+
+	if whose, ok := otherPrograms[ext]; ok {
+		return nil, fmt.Errorf(
+			"%q is %s's own format, which gscore cannot read — "+
+				"export it from %s as MusicXML and open that",
+			filepath.Base(filename), whose, whose)
+	}
+	if ext == ".pdf" {
+		return nil, fmt.Errorf(
+			"%q is a picture of a score rather than a score, and gscore cannot read the music back out of one",
+			filepath.Base(filename))
+	}
+	return nil, fmt.Errorf("nothing here reads %s files — gscore opens %s",
+		ext, strings.Join(Readable(), ", "))
 }
 
 // ExporterFor returns the exporter claiming a filename's extension.

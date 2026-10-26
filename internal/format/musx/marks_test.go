@@ -12,6 +12,7 @@ package musx
 
 import (
 	"bytes"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -197,4 +198,121 @@ func TestAnExpressionThatIsNotADynamicIsReported(t *testing.T) {
 	if !found {
 		t.Errorf("the log says %v, with nothing about the tempo mark", partial.Details())
 	}
+}
+
+/*
+ * Where a note is, and which note it is.
+ *
+ * Two things about a Finale note are not what they look like, and both are
+ * invisible in a piece in C major played by instruments that do not
+ * transpose — which is the only kind of file this reader had been tried
+ * against.
+ */
+
+// harmLev counts from the tonic of the key, not from middle C.
+//
+// Read from middle C whatever the key, every note of every piece that is not
+// in C came out wrong by the distance from C to its tonic — a fourth in G, a
+// fifth in F — with the music itself intact, because every note moved
+// together. Jingle Bells in G arrived with its guitar playing an F chord
+// under a chord symbol saying C.
+func TestHarmLevCountsFromTheTonic(t *testing.T) {
+	for _, tc := range []struct {
+		fifths int
+		mode   model.Mode
+		lev    int
+		want   string
+	}{
+		// C major: the tonic is middle C, which is the old reading.
+		{0, model.Major, 0, "C4"},
+		{0, model.Major, 7, "C5"},
+		{0, model.Major, -1, "B3"},
+		// G major: harmLev 0 is the G above middle C.
+		{1, model.Major, 0, "G4"},
+		// Three steps up from G is the C above it.
+		{1, model.Major, 3, "C5"},
+		{1, model.Major, -1, "F4"},
+		// F major: the tonic is the F above middle C.
+		{-1, model.Major, 0, "F4"},
+		// D major.
+		{2, model.Major, 0, "D4"},
+		// A minor shares its signature with C major and counts from A.
+		{0, model.Minor, 0, "A4"},
+	} {
+		key := model.KeySignature{Fifths: tc.fifths, Mode: tc.mode}
+		idx := tc.lev + tonicStep(key)
+		got := fmt.Sprintf("%v%d", model.Step(mod(idx, 7)), 4+floorDiv(idx, 7))
+		if got != tc.want {
+			t.Errorf("%d fifths %v, harmLev %d: %s, want %s",
+				tc.fifths, tc.mode, tc.lev, got, tc.want)
+		}
+	}
+}
+
+// What Finale stores is the note that sounds, and a transposing staff shows
+// another one.
+//
+// A clarinet's staff holds the note the player reads, and everything after
+// the importer — the page, the key signature over it, the transposition, the
+// playback — is built on that. Stored as it sounds, the part printed concert
+// pitch against the wrong signature and a player reading it would be a tone
+// out.
+func TestATransposingStaffIsWrittenAsItIsRead(t *testing.T) {
+	// A B flat clarinet: it reads a tone above what it sounds.
+	clarinet := model.Transposition{Diatonic: -1, Chromatic: -2}
+	for _, tc := range []struct {
+		sounds model.Pitch
+		want   string
+	}{
+		// The note the instrument is named after: read C, sound B flat.
+		{model.Pitch{Step: model.StepB, Octave: 3, Alter: -1}, "C4"},
+		{model.Pitch{Step: model.StepC, Octave: 4}, "D4"},
+		{model.Pitch{Step: model.StepC, Octave: 5, Alter: 1}, "D5#"},
+	} {
+		got := asWritten(tc.sounds, clarinet)
+		if s := spell(got); s != tc.want {
+			t.Errorf("sounding %s is written %s, want %s", spell(tc.sounds), s, tc.want)
+		}
+		// And it really does sound what Finale said: written plus the
+		// transposition is the note back again.
+		if sounds := got.MIDI() + clarinet.Chromatic; sounds != tc.sounds.MIDI() {
+			t.Errorf("%s sounds MIDI %d, want %d", spell(got), sounds, tc.sounds.MIDI())
+		}
+	}
+
+	// A soprano recorder: written an octave below what it sounds.
+	recorder := model.Transposition{OctaveChange: 1}
+	if got := spell(asWritten(model.Pitch{Step: model.StepC, Octave: 6}, recorder)); got != "C5" {
+		t.Errorf("the recorder's sounding C6 is written %s, want C5", got)
+	}
+
+	// A staff that does not transpose is left exactly as it is.
+	plain := model.Pitch{Step: model.StepF, Octave: 4, Alter: 1}
+	if got := asWritten(plain, model.Transposition{}); got != plain {
+		t.Errorf("a plain staff turned %s into %s", spell(plain), spell(got))
+	}
+}
+
+// And the staff reads in the key its transposition puts it in.
+func TestATransposingStaffReadsInItsOwnKey(t *testing.T) {
+	var spec staffSpec
+	spec.Transposition.Adjust = 2 // a B flat clarinet
+	if got := writtenKey(model.KeySignature{Fifths: 0}, spec).Fifths; got != 2 {
+		t.Errorf("a clarinet in a piece in C reads in %d sharps, want 2", got)
+	}
+	if got := writtenKey(model.KeySignature{Fifths: -1}, spec).Fifths; got != 1 {
+		t.Errorf("a clarinet in a piece in F reads in %d sharps, want 1", got)
+	}
+}
+
+// spell writes a pitch the way the tests above say it.
+func spell(p model.Pitch) string {
+	out := fmt.Sprintf("%v%d", p.Step, p.Octave)
+	switch {
+	case p.Alter > 0:
+		out += "#"
+	case p.Alter < 0:
+		out += "b"
+	}
+	return out
 }

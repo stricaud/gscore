@@ -63,13 +63,22 @@ type document struct {
 		Blocks     []textBlock        `xml:"textBlock"`
 		Artics     []articDef         `xml:"articDef"`
 		Shapes     []smartShape       `xml:"smartShape"`
+		Suffixes   []chordSuffixPart  `xml:"chordSuffix"`
+		Styles     []staffStyle       `xml:"staffStyle"`
+		StyleUsed  []staffStyleAssign `xml:"staffStyleAssign"`
+		PercNotes  []percussionNote   `xml:"percussionNoteInfo"`
 		Exprs      []textExprDef      `xml:"textExprDef"`
 		ExprPlaces []measExprAssign   `xml:"measExprAssign"`
 		Categories []markingsCategory `xml:"markingsCategory"`
 	} `xml:"others"`
 	Details struct {
-		Holds  []gfhold      `xml:"gfhold"`
-		Artics []articAssign `xml:"articAssign"`
+		Holds  []gfhold         `xml:"gfhold"`
+		Artics []articAssign    `xml:"articAssign"`
+		Chords []chordAssign    `xml:"chordAssign"`
+		Perc   []percussionCode `xml:"percussionNoteCode"`
+		// A group is kept with the other records that name two things at
+		// once rather than with the staves themselves.
+		Groups []staffGroup `xml:"staffGroup"`
 	} `xml:"details"`
 	Entries struct {
 		Entries []entry `xml:"entry"`
@@ -133,6 +142,94 @@ type endPoint struct {
 	Entry int `xml:"entryNum"`
 }
 
+// chordAssign is a chord symbol written over one bar of one staff.
+//
+// The root is a scale degree rather than a letter — 0 is the tonic, which is
+// the same counting harmLev uses — so the symbol only means anything once
+// the key is known. The quality is a number naming a row of chordSuffix
+// records, which spell it out one character at a time.
+type chordAssign struct {
+	Staff int    `xml:"cmper1,attr"`
+	Meas  int    `xml:"cmper2,attr"`
+	Part  string `xml:"part,attr"`
+
+	RootScaleNum int       `xml:"rootScaleNum"`
+	RootAlter    int       `xml:"rootAlter"`
+	RootLower    *struct{} `xml:"rootLowerCase"`
+	Suffix       int       `xml:"suffix"`
+	BassScaleNum int       `xml:"bassScaleNum"`
+	BassAlter    int       `xml:"bassAlter"`
+	BassLower    *struct{} `xml:"bassLowerCase"`
+	ShowAltBass  *struct{} `xml:"showAltBass"`
+	HideRoot     *struct{} `xml:"hideRoot"`
+	// HorzEdu is how far into the bar it is written, which is how two
+	// chords in one bar are told apart.
+	HorzEdu int `xml:"horzEdu"`
+}
+
+// chordSuffixPart is one character of a chord's quality.
+//
+// Finale keeps the suffix as a row of these — "m" then "7", or a 6 raised
+// above a 9 — each with the font it is drawn in. A number is held as the
+// number; anything else is the code of a character.
+type chordSuffixPart struct {
+	Cmper    int       `xml:"cmper,attr"`
+	Inci     int       `xml:"inci,attr"`
+	Part     string    `xml:"part,attr"`
+	Value    int       `xml:"suffix"`
+	IsNumber *struct{} `xml:"isNumber"`
+}
+
+// staffStyle is a way of writing a staff that is not notes: slashes for a
+// rhythm part, a bar repeat sign, a staff left blank.
+type staffStyle struct {
+	Cmper int    `xml:"cmper,attr"`
+	Part  string `xml:"part,attr"`
+	Alt   string `xml:"altNotation"`
+}
+
+// staffStyleAssign puts one of those over a run of bars of one staff.
+type staffStyleAssign struct {
+	Staff     int    `xml:"cmper,attr"`
+	Part      string `xml:"part,attr"`
+	Style     int    `xml:"style"`
+	StartMeas int    `xml:"startMeas"`
+	EndMeas   int    `xml:"endMeas"`
+}
+
+// percussionNote is one row of a percussion layout: an instrument, the line
+// it is written on, and the notehead it is drawn with.
+type percussionNote struct {
+	Cmper    int    `xml:"cmper,attr"`
+	Part     string `xml:"part,attr"`
+	NoteType int    `xml:"percNoteType"`
+	HarmLev  int    `xml:"harmLev"`
+	// Closed is the filled notehead, as a character of the music font —
+	// which is SMuFL, so the number says what the shape is.
+	Closed int `xml:"closedNotehead"`
+}
+
+// percussionCode says which instrument a note on a drum staff is.
+type percussionCode struct {
+	Entry int    `xml:"entnum,attr"`
+	Part  string `xml:"part,attr"`
+	Note  int    `xml:"noteID"`
+	Code  int    `xml:"noteCode"`
+}
+
+// staffGroup joins staves that belong together: the two hands of a piano,
+// the woodwind of a band.
+type staffGroup struct {
+	Part      string `xml:"part,attr"`
+	StartInst int    `xml:"startInst"`
+	EndInst   int    `xml:"endInst"`
+	FullName  int    `xml:"fullID"`
+	Bracket   struct {
+		ID int `xml:"id"`
+	} `xml:"bracket"`
+	BarlineStyle string `xml:"groupBarlineStyle"`
+}
+
 // textExprDef is one expression as the document defines it — the dynamic
 // "ff" itself rather than any of the places it is written.
 //
@@ -172,9 +269,13 @@ type markingsCategory struct {
 // score's own copy carries neither, and taking the lot would give every bar
 // several times over.
 type staffSpec struct {
-	Cmper       int    `xml:"cmper,attr"`
-	Part        string `xml:"part,attr"`
-	StaffLines  int    `xml:"staffLines"`
+	Cmper      int    `xml:"cmper,attr"`
+	Part       string `xml:"part,attr"`
+	StaffLines int    `xml:"staffLines"`
+	// Notation says a staff is not written as pitches: a drum staff says
+	// "percussion", and what its notes mean is a position on the staff
+	// rather than a note of the scale.
+	Notation    string `xml:"notationStyle"`
 	DefaultClef int    `xml:"defaultClef"`
 	FullName    int    `xml:"fullName"`
 	AbbrvName   int    `xml:"abbrvName"`
@@ -231,11 +332,17 @@ type entry struct {
 }
 
 type enigNote struct {
-	// HarmLev is the note's place on the scale, counted in steps from
-	// middle C: 0 is middle C, 7 the octave above it, -1 the B below.
+	// HarmLev is the note's place on the scale, counted in steps from the
+	// tonic of the key: 0 is the tonic in the octave that starts at middle
+	// C, 7 the octave above it, -1 the step below. In C major that is
+	// middle C itself, which is why reading it as middle C always was
+	// right until a piece in another key came along — see tonicStep.
 	HarmLev int `xml:"harmLev"`
 	// HarmAlt is what is done to it by hand, in semitones, on top of
 	// whatever the key signature already says about that step.
+	//
+	// Both describe the note as it sounds. A transposing staff shows
+	// another note, which asWritten works out.
 	HarmAlt int `xml:"harmAlt"`
 	// A tie is a property of the notehead, not of the entry, so a chord may
 	// hold one note while the others move.
@@ -260,8 +367,16 @@ type reader struct {
 	// by the entry it came from, which is how a slur names its ends.
 	places  map[[2]int][]place
 	byEntry map[int]*model.Marks
-	// Which staff and bar are being read, since an element does not know.
+	// Which staff and bar are being read, since an element does not know,
+	// and how that staff transposes — what Finale stores is the note that
+	// sounds, and a transposing staff shows another one.
 	atStaff, atBar int
+	transpose      model.Transposition
+	// percussion says the staff being read is a drum staff, where a note
+	// is a place on the staff rather than a pitch.
+	percussion bool
+	// perc is the instrument each note is, by the entry it belongs to.
+	perc map[int]int
 }
 
 // place is one element of one bar: how far into the bar it starts, in EDUs,
@@ -292,6 +407,7 @@ func read(data []byte, meta metadata) (*model.Score, []string, error) {
 		skipped: map[string]int{},
 		places:  map[[2]int][]place{},
 		byEntry: map[int]*model.Marks{},
+		perc:    map[int]int{},
 	}
 	if err := xml.Unmarshal(data, &rd.doc); err != nil {
 		return nil, nil, fmt.Errorf("musx: the score inside is not readable: %w", err)
@@ -347,6 +463,11 @@ func read(data []byte, meta metadata) (*model.Score, []string, error) {
 		}
 	}
 	rd.artics = artics
+	for _, p := range rd.doc.Details.Perc {
+		if p.Part == "" {
+			rd.perc[p.Entry] = p.Code
+		}
+	}
 	rd.articChar = map[int]int{}
 	for _, d := range rd.doc.Others.Artics {
 		if d.Part == "" {
@@ -356,13 +477,15 @@ func read(data []byte, meta metadata) (*model.Score, []string, error) {
 
 	for _, staffID := range staves {
 		spec := specs[staffID]
+		rd.transpose = transpositionOf(spec)
+		rd.percussion = spec.Notation == "percussion"
 		part := &model.Part{
 			Name:       rd.text(spec.FullName),
 			Instrument: model.AcousticGrandPiano,
 			Clef:       model.Treble,
-			Key:        keyOf(bars[0], rd),
+			Key:        writtenKey(keyOf(bars[0], rd), spec),
 			Time:       meterOf(bars[0], rd),
-			Transpose:  transpositionOf(spec),
+			Transpose:  rd.transpose,
 		}
 		// The name is also the best guess at what the staff is: Finale
 		// identifies its instruments by a code of its own, and the word
@@ -415,6 +538,11 @@ func read(data []byte, meta metadata) (*model.Score, []string, error) {
 	// The marks Finale keeps away from the music, put back on it.
 	rd.expressions()
 	rd.shapes()
+	rd.chordSymbols(score)
+	rd.staffGroups(score, staves)
+	// Last, because it replaces what is in the bars it covers and keeps
+	// the chord symbol that was put there a moment ago.
+	rd.slashStaves(score, staves)
 
 	// And everything in the file this reader never looks at, which is most
 	// of what Finale writes. Counted from the document rather than from
@@ -448,9 +576,9 @@ var unread = map[string]string{
 	// are not in this list. What is left of those — a tempo word, an
 	// ottava — is counted where it is passed over, which says how many
 	// were left rather than how many the file holds.
-	"chordAssign":       "chord symbols",
-	"tupletDef":         "tuplets",
-	"staffGroup":        "the braces and brackets joining staves together",
+
+	"tupletDef": "tuplets",
+
 	"pageTextAssign":    "text blocks standing on the page",
 	"repeatBack":        "repeats and their endings",
 	"backRepeatBar":     "repeats and their endings",
@@ -602,7 +730,13 @@ func (r *reader) element(e *entry, bar measSpec) model.Element {
 	key := keyOf(bar, r)
 	notes := make([]*model.Note, 0, len(e.Notes))
 	for _, n := range e.Notes {
-		notes = append(notes, r.note(n, dur, key))
+		note := r.note(n, dur, key)
+		if r.percussion {
+			// Which instrument it is decides how it is drawn: a cross for
+			// a cymbal, a plain head for a drum.
+			note.Head = r.headFor(r.perc[e.Num], n.HarmLev)
+		}
+		notes = append(notes, note)
 	}
 	if len(notes) == 1 {
 		r.articulate(&notes[0].Marks, e.Num)
@@ -626,16 +760,47 @@ func (r *reader) element(e *entry, bar measSpec) model.Element {
 // above the key signature, so it gives both how the note sounds and whether
 // an accidental is printed in front of it.
 func (r *reader) note(n enigNote, dur model.Duration, key model.KeySignature) *model.Note {
-	step := model.Step(mod(n.HarmLev, 7))
-	octave := 4 + floorDiv(n.HarmLev, 7)
+	// harmLev counts from the tonic of the key, and the tonic is not always
+	// middle C.
+	//
+	// Read from middle C whatever the key, every note of every piece that
+	// is not in C came out wrong by the distance from C to its tonic — a
+	// fourth in G, a fifth in F — with the music itself intact, since every
+	// note moved together. Jingle Bells in G arrived with its guitar
+	// playing F under a chord symbol saying C.
+	//
+	// It is also why this was not noticed: the Rossini that went through
+	// this reader before is in C major, where the tonic is middle C and the
+	// old reading is the right one.
+	if r.percussion {
+		// A drum staff has no key and no transposition: what the number
+		// says is which line the note is written on. Read as a pitch it
+		// came out a sixth above the staff, where Finale draws it on the
+		// top line.
+		idx := n.HarmLev - percussionOctave
+		return &model.Note{
+			Pitch: model.Pitch{
+				Step:   model.Step(mod(idx, 7)),
+				Octave: 4 + floorDiv(idx, 7),
+			},
+			Dur: dur,
+		}
+	}
+
+	idx := n.HarmLev + tonicStep(key)
+	sounds := model.Pitch{
+		Step:   model.Step(mod(idx, 7)),
+		Octave: 4 + floorDiv(idx, 7),
+	}
+	sounds.Alter = key.AlterFor(sounds.Step) + n.HarmAlt
 
 	out := &model.Note{
-		Pitch: model.Pitch{
-			Step:   step,
-			Octave: octave,
-			Alter:  key.AlterFor(step) + n.HarmAlt,
-		},
-		Dur: dur,
+		// What Finale keeps is the note as it sounds. A clarinet's staff
+		// holds the note the player reads, which is another note entirely,
+		// and everything downstream — the page, the transposition, the
+		// playback — is built on the written one.
+		Pitch: asWritten(sounds, r.transpose),
+		Dur:   dur,
 	}
 	if n.HarmAlt != 0 {
 		out.Accidental = accidentalFor(n.HarmAlt, r)
@@ -1186,4 +1351,419 @@ func (r *reader) shapes() {
 			r.skip("lines over the music other than slurs and hairpins")
 		}
 	}
+}
+
+/*
+ * Where harmLev counts from, and what it counts
+ *
+ * Two things about a Finale note are not what they look like. It is written
+ * down as a displacement from the tonic of the key rather than from middle
+ * C, and the note it describes is the one that sounds rather than the one on
+ * the staff. Both are invisible in a piece in C major played by instruments
+ * that do not transpose, which is exactly the kind of file this reader was
+ * built against.
+ */
+
+// tonicStep is how far the key's tonic is above middle C, in diatonic steps.
+//
+// A fifth up the circle is four steps up the scale, which is all this is: C
+// is 0, G is 4, D is 1, F is 3. A minor key counts from its own tonic, five
+// steps above the major one that shares its signature.
+func tonicStep(key model.KeySignature) int {
+	step := mod(4*key.Fifths, 7)
+	if key.Mode == model.Minor {
+		step = mod(step+5, 7)
+	}
+	return step
+}
+
+// asWritten turns the note that sounds into the note on the staff.
+//
+// A transposition says what a staff sounds against what it shows — sounding
+// is written plus the interval — so the written note is the sounding one
+// with that interval taken back off. The diatonic part decides which line
+// the note sits on and the chromatic part decides its accidental, and they
+// are not the same number: a B flat clarinet reads a step up and sounds two
+// semitones down.
+func asWritten(sounds model.Pitch, t model.Transposition) model.Pitch {
+	if t == (model.Transposition{}) {
+		return sounds
+	}
+	idx := sounds.DiatonicIndex() - (t.Diatonic + 7*t.OctaveChange)
+	out := model.Pitch{
+		Step:   model.Step(mod(idx, 7)),
+		Octave: 4 + floorDiv(idx, 7),
+	}
+	// Whatever accidental makes the written note sound like the one Finale
+	// wrote down, which is the one thing that must not be guessed at.
+	plain := model.Pitch{Step: out.Step, Octave: out.Octave}
+	out.Alter = sounds.MIDI() - (t.Chromatic + 12*t.OctaveChange) - plain.MIDI()
+	return out
+}
+
+// writtenKey is the key signature a transposing staff reads from.
+//
+// Finale keeps the number of fifths the written key is away from the one the
+// piece sounds in: a B flat clarinet in a piece in C major reads in D, two
+// sharps. Left as the concert key, the staff printed the right notes against
+// the wrong signature and every one of them wanted an accidental.
+func writtenKey(key model.KeySignature, s staffSpec) model.KeySignature {
+	key.Fifths += s.Transposition.Adjust
+	return key
+}
+
+/*
+ * The chord symbols
+ *
+ * A chart's chords are not notes and are not text. Finale keeps the root as
+ * a scale degree — 0 is the tonic, the same counting harmLev uses — and the
+ * quality as a row of characters in a library, so a symbol only means
+ * anything once the key is known and the row is spelled out.
+ */
+
+// chordSymbols writes the chords over the staves they belong to.
+func (r *reader) chordSymbols(score *model.Score) {
+	// The quality of each chord, spelled once rather than per bar.
+	quality := map[int]string{}
+	parts := map[int][]chordSuffixPart{}
+	for _, p := range r.doc.Others.Suffixes {
+		if p.Part == "" {
+			parts[p.Cmper] = append(parts[p.Cmper], p)
+		}
+	}
+	for cmper, ps := range parts {
+		sort.Slice(ps, func(a, b int) bool { return ps[a].Inci < ps[b].Inci })
+		quality[cmper] = suffixText(ps)
+	}
+
+	for _, c := range r.doc.Details.Chords {
+		if c.Part != "" {
+			continue
+		}
+		mk := r.at(c.Staff, c.Meas, c.HorzEdu)
+		if mk == nil {
+			r.skip("chord symbols over a bar this reader found nothing in")
+			continue
+		}
+		key := r.keyAt(c.Meas)
+		sym := &model.ChordSymbol{
+			Root:    degreeName(key, c.RootScaleNum, c.RootAlter, c.RootLower != nil),
+			Quality: quality[c.Suffix],
+		}
+		if c.ShowAltBass != nil {
+			sym.Bass = degreeName(key, c.BassScaleNum, c.BassAlter, c.BassLower != nil)
+		}
+		if c.HideRoot != nil {
+			sym.Root = ""
+		}
+		if sym.Root == "" && sym.Quality == "" && sym.Bass == "" {
+			continue
+		}
+		mk.Chord = sym
+	}
+}
+
+// degreeName spells a scale degree as a chord root: the letter the key gives
+// it, and whatever the symbol does to it on top.
+func degreeName(key model.KeySignature, degree, alter int, lower bool) string {
+	step := model.Step(mod(degree+tonicStep(key), 7))
+	name := step.String()
+	if lower {
+		name = strings.ToLower(name)
+	}
+	switch n := key.AlterFor(step) + alter; {
+	case n > 0:
+		name += strings.Repeat("#", n)
+	case n < 0:
+		name += strings.Repeat("b", -n)
+	}
+	return name
+}
+
+// suffixText spells a chord's quality out of the characters Finale draws it
+// with.
+//
+// A number is the number. Anything else is a character code, and the ones
+// worth knowing are the four that are not letters: the symbols Finale's
+// chord font puts where another program would write "maj", "dim", "m" and
+// "+". A code that means nothing here is left out rather than printed as
+// whatever letter happens to share its number, which would turn a triangle
+// into a capital D.
+func suffixText(parts []chordSuffixPart) string {
+	var b strings.Builder
+	for _, p := range parts {
+		switch {
+		case p.IsNumber != nil:
+			b.WriteString(itoa(p.Value))
+		case p.Value >= ' ' && p.Value <= '~':
+			b.WriteByte(byte(p.Value))
+		default:
+			if s, ok := chordFontSymbols[p.Value]; ok {
+				b.WriteString(s)
+			}
+		}
+	}
+	return b.String()
+}
+
+// chordFontSymbols are the characters of Finale's chord font that stand for
+// something rather than spelling it.
+var chordFontSymbols = map[int]string{
+	0xE870: "°", // diminished
+	0xE871: "ø", // half-diminished
+	0xE872: "Δ", // major seventh
+	0xE873: "-", // minor
+	0xE874: "+", // augmented
+	0x2206: "Δ", // the same triangle, where the font uses the increment sign
+	0x00B0: "°",
+	0x00F8: "ø",
+	0x2205: "ø",
+}
+
+// itoa is strconv without the import, which this package does not otherwise
+// need.
+func itoa(n int) string {
+	if n == 0 {
+		return "0"
+	}
+	neg := n < 0
+	if neg {
+		n = -n
+	}
+	var b [20]byte
+	i := len(b)
+	for n > 0 {
+		i--
+		b[i] = byte('0' + n%10)
+		n /= 10
+	}
+	if neg {
+		i--
+		b[i] = '-'
+	}
+	return string(b[i:])
+}
+
+// keyAt is the key a bar is in, by the bar's own number.
+func (r *reader) keyAt(meas int) model.KeySignature {
+	for _, b := range r.doc.Others.Bars {
+		if b.Part == "" && b.Cmper == meas {
+			return keyOf(b, r)
+		}
+	}
+	return model.KeySignature{}
+}
+
+/*
+ * The staves that belong together
+ *
+ * A score is not a stack of unrelated lines. The two hands of a piano are
+ * one instrument and are drawn with a brace and their barlines joined; the
+ * woodwind of a band are several and are drawn with a bracket. Finale keeps
+ * that as a group over a range of staves, with the name on the group rather
+ * than on either staff — which is why the piano's two staves in Jingle Bells
+ * came out with no names at all.
+ */
+
+// staffGroups joins the staves that Finale says belong together.
+//
+// order is the staves as they were read, since a group names the staves by
+// their own numbers and the score knows them by their place on the page.
+func (r *reader) staffGroups(score *model.Score, order []int) {
+	place := map[int]int{}
+	for i, staffID := range order {
+		place[staffID] = i
+	}
+	for _, g := range r.doc.Details.Groups {
+		if g.Part != "" {
+			continue
+		}
+		first, ok := place[g.StartInst]
+		last, ok2 := place[g.EndInst]
+		if !ok || !ok2 || last < first {
+			r.skip("groups over staves this reader did not read")
+			continue
+		}
+		name := r.text(g.FullName)
+		group := model.StaffGroup{
+			First:  first,
+			Last:   last,
+			Symbol: groupSymbol(g.Bracket.ID),
+			// "group" is Finale's name for barlines drawn through the gap,
+			// which is what says "play these together".
+			Barlines: g.BarlineStyle == "group",
+			Name:     name,
+		}
+		score.Groups = append(score.Groups, group)
+		// The name belongs to the group, and the staves under it have
+		// none: Finale writes "Pianoforte" once, against the brace, and
+		// leaves both of its staves unlabelled. gscore draws the brace but
+		// not the group's name, so the name goes on the first staff of the
+		// group — once, where the brace begins — rather than on every
+		// staff, which would say it twice down the side of one instrument.
+		if name != "" && first < len(score.Parts) && score.Parts[first].Name == "" {
+			score.Parts[first].Name = name
+		}
+	}
+}
+
+// groupSymbol turns Finale's bracket number into what is drawn down the left
+// of the staves.
+//
+// Finale numbers its bracket shapes and a brace is one of them. The ones
+// that matter are the curly brace an instrument of two staves gets and the
+// straight bracket a family of instruments gets; everything else is drawn as
+// a plain line, which says they belong together without saying how.
+func groupSymbol(id int) model.GroupSymbol {
+	switch id {
+	case 3: // the piano brace
+		return model.GroupBrace
+	case 0:
+		return model.GroupLine
+	}
+	return model.GroupBracket
+}
+
+/*
+ * Drum staves and rhythm staves
+ *
+ * Neither is written in pitches. A drum staff puts an instrument on a line
+ * and draws it with a notehead that says which instrument it is; a rhythm
+ * staff draws a slash a beat and keeps the chord symbols above. Finale holds
+ * both as something other than the notes — a percussion layout, a staff
+ * style — and read as notes they are nonsense on the page: a wall of chords
+ * where the guitar should have slashes, and drum beats a sixth above the
+ * staff they belong on.
+ */
+
+// percussionOctave is how far a drum staff's numbers sit from the lines
+// gscore draws them on.
+//
+// Finale and gscore both put a percussion staff's notes by diatonic step,
+// and they disagree by an octave about where middle C is on one. Fixed
+// against the file: Jingle Bells writes its cymbal as 11, and Finale prints
+// it on the top line, which is where 4 lands here.
+const percussionOctave = 7
+
+// headFor is the notehead a drum note is drawn with.
+//
+// The layout rows say it as a character of the music font, and the font is
+// SMuFL, so the number is the shape: a plain black head, a cross for a
+// cymbal, a diamond for a bell.
+func (r *reader) headFor(code, harmLev int) model.NoteheadKind {
+	for _, p := range r.doc.Others.PercNotes {
+		if p.Part != "" || p.NoteType != code || p.HarmLev != harmLev {
+			continue
+		}
+		if head, ok := smuflHeads[p.Closed]; ok {
+			return head
+		}
+	}
+	return model.HeadNormal
+}
+
+// smuflHeads are the noteheads a percussion layout names, by their place in
+// the music font.
+var smuflHeads = map[int]model.NoteheadKind{
+	0xE0A4: model.HeadNormal,   // noteheadBlack
+	0xE0A3: model.HeadNormal,   // noteheadHalf
+	0xE0A9: model.HeadX,        // noteheadXBlack
+	0xE0A8: model.HeadX,        // noteheadXHalf
+	0xE0B3: model.HeadCircleX,  // noteheadCircleX
+	0xE0DB: model.HeadDiamond,  // noteheadDiamondBlack
+	0xE0DA: model.HeadDiamond,  // noteheadDiamondHalf
+	0xE0BE: model.HeadTriangle, // noteheadTriangleUpBlack
+	0xE0BD: model.HeadTriangle, // noteheadTriangleUpHalf
+}
+
+// middleLine is the pitch that sits on a staff's middle line, which is where
+// a rhythm slash is drawn whatever the music under it was.
+var middleLine = map[model.Clef]model.Pitch{
+	model.Treble:     {Step: model.StepB, Octave: 4},
+	model.Bass:       {Step: model.StepD, Octave: 3},
+	model.Alto:       {Step: model.StepC, Octave: 4},
+	model.Tenor:      {Step: model.StepA, Octave: 3},
+	model.Percussion: {Step: model.StepC, Octave: 4},
+}
+
+// slashStaves replaces the notes of a rhythm staff with the slashes Finale
+// draws instead of them.
+//
+// A guitar part written this way holds a chord voicing that is never printed
+// — Finale hides it and draws a slash a beat, with the chord symbol above —
+// and reading those notes put a stack of five noteheads on every beat of
+// Jingle Bells, dragging the staff's whole range down with it.
+//
+// The voicing is not kept. A slash is one note and a chord is five, and the
+// bar cannot hold both; what is printed is what Finale prints, and the log
+// says the harmony behind it was let go.
+func (r *reader) slashStaves(score *model.Score, order []int) {
+	slashes := map[int]bool{}
+	for _, st := range r.doc.Others.Styles {
+		if st.Part == "" && st.Alt == "slashBeats" {
+			slashes[st.Cmper] = true
+		}
+	}
+	place := map[int]int{}
+	for i, staffID := range order {
+		place[staffID] = i
+	}
+
+	for _, a := range r.doc.Others.StyleUsed {
+		if a.Part != "" || !slashes[a.Style] {
+			continue
+		}
+		at, ok := place[a.Staff]
+		if !ok || at >= len(score.Parts) {
+			continue
+		}
+		part := score.Parts[at]
+		for i := a.StartMeas - 1; i < a.EndMeas && i < len(part.Measures); i++ {
+			if i < 0 {
+				continue
+			}
+			m := part.Measures[i]
+			if len(m.Voices) == 0 {
+				continue
+			}
+			beats := part.TimeAt(i)
+			if beats.Beats <= 0 || beats.BeatValue <= 0 {
+				continue
+			}
+			var out []model.Element
+			for b := 0; b < beats.Beats; b++ {
+				out = append(out, &model.Note{
+					Pitch: middleLine[part.ClefAt(i)],
+					Dur:   model.Duration{Num: 1, Den: beats.BeatValue},
+					Head:  model.HeadSlash,
+				})
+			}
+			// What stood above the bar belongs to the bar, not to the
+			// notes that were in it: the chord symbol goes on the first
+			// slash so it is still printed.
+			if first := firstMarks(m); first != nil {
+				if mk := marksOf(out[0]); mk != nil {
+					mk.Chord = first.Chord
+					mk.Dynamic = first.Dynamic
+				}
+			}
+			m.Voices[0].Elements = out
+			for _, v := range m.Voices[1:] {
+				v.Elements = nil
+			}
+			r.skip("bars written as slashes, whose chord voicing is not kept")
+		}
+	}
+}
+
+// firstMarks is what is written on the first thing in a bar.
+func firstMarks(m *model.Measure) *model.Marks {
+	for _, v := range m.Voices {
+		for _, el := range v.Elements {
+			if mk := marksOf(el); mk != nil {
+				return mk
+			}
+		}
+	}
+	return nil
 }

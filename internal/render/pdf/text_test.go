@@ -93,3 +93,38 @@ func TestTheSignCountsTowardsTheWidth(t *testing.T) {
 			"sign was not counted", withFlat, plain)
 	}
 }
+
+// Punctuation a word processor puts into words.
+//
+// The reading faces are encoded in WinAnsi, and what it has not got it
+// prints as a question mark. A lyric typed anywhere but a plain text editor
+// carries a curly apostrophe, so "ev-'ry dream gone" came out of a song
+// sheet as "ev-?ry dream gone" — a question mark in the middle of a word,
+// which is the one thing on a page nobody can read past.
+func TestTypographicPunctuationIsSetAsPlainPunctuation(t *testing.T) {
+	for _, tc := range []struct {
+		in   rune
+		want rune
+		what string
+	}{
+		{'’', '\'', "a curly apostrophe"},
+		{'‘', '\'', "an opening curly quote"},
+		{'“', '"', "an opening double quote"},
+		{'”', '"', "a closing double quote"},
+		{'–', '-', "an en dash"},
+		{'—', '-', "an em dash"},
+		{' ', ' ', "a non-breaking space"},
+		// What the faces can already set is left exactly as it is.
+		{'a', 'a', "a letter"},
+		{'\'', '\'', "a plain apostrophe"},
+		{'-', '-', "a hyphen"},
+		// And a character with no plain equivalent is not guessed at: that
+		// is a font's job, not a substitution's.
+		{'д', 'д', "a letter of another alphabet"},
+		{'♭', '♭', "a flat, which is set from the music face"},
+	} {
+		if got := plainly(tc.in); got != tc.want {
+			t.Errorf("%s (%q) is set as %q, want %q", tc.what, tc.in, got, tc.want)
+		}
+	}
+}

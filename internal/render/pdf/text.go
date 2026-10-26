@@ -32,6 +32,32 @@ import (
 // general fallback for every character the standard faces lack: a Cyrillic
 // title is a different problem and wants a different font, not Bravura.
 
+// plainly turns a character the reading faces cannot set into the nearest
+// one they can.
+//
+// The standard faces are encoded in WinAnsi, and what it has not got it
+// prints as a question mark. Most of what a score contains is inside it, but
+// the punctuation a word processor puts into words is not: a lyric typed
+// anywhere but a plain text editor carries a curly apostrophe, and "ev-'ry
+// dream gone" came out of a song sheet as "ev-?ry dream gone".
+//
+// Only the marks that stand for an ordinary one. A character with no plain
+// equivalent — a Cyrillic title, a Japanese one — is a different problem and
+// wants a font, not a substitution.
+func plainly(c rune) rune {
+	switch c {
+	case '\u2018', '\u2019', '\u02bc': // the curly quotes and the modifier
+		return '\''
+	case '\u201c', '\u201d':
+		return '"'
+	case '\u2013', '\u2014', '\u2212': // en dash, em dash, minus
+		return '-'
+	case '\u00a0', '\u2009', '\u200a': // the spaces that are not one
+		return ' '
+	}
+	return c
+}
+
 // musicSign maps a character to the SMuFL glyph that stands for it.
 func musicSign(r rune) (string, bool) {
 	switch r {
@@ -80,7 +106,7 @@ func (r *renderer) split(line string, f *pdf.Font, size pdf.Point) []run {
 	for _, c := range line {
 		name, ok := musicSign(c)
 		if !ok {
-			plain = append(plain, c)
+			plain = append(plain, plainly(c))
 			continue
 		}
 		g, have := smufl.Glyph(name)

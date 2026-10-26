@@ -13,6 +13,8 @@ package engrave
 import (
 	"math"
 
+	"github.com/stricaud/gscore/internal/smufl"
+
 	"github.com/stricaud/gscore/internal/model"
 )
 
@@ -41,8 +43,18 @@ const (
 	// chordGap is the air between the music and the chord symbols over it,
 	// where the music reaches up past the staff.
 	chordGap = 0.8
-	// chordAccidentalSize is the type a sharp or a flat in a root is set in.
-	chordAccidentalSize = 1.5
+	// chordCapHeight is how tall a capital stands above the baseline, as a
+	// fraction of the type size. Times Bold's own, which is the face a PDF
+	// with nothing embedded in it sets this text in.
+	chordCapHeight = 0.662
+	// chordAccidentalHeight is how tall the sharp or flat of a root is
+	// drawn, against the capital it follows.
+	//
+	// Larger than the letters around it, not smaller. A staff accidental is
+	// a thin glyph with a small bowl, and set at the size of the type it
+	// sits between it reads as a speck: the flat of "A♭-6" came out no
+	// bigger than the hyphen after it.
+	chordAccidentalHeight = 1.05
 
 	// frameWidth and frameHeight are the fingering diagram's size.
 	frameWidth  = 4.0
@@ -194,15 +206,205 @@ func (e *engraver) placeChords(sky *skyline, x0, x1 float64) {
 	}
 }
 
-// chordWidth is roughly how wide a written chord symbol is, for the outline.
+// chordWidth is how wide a written chord symbol is, for the outline.
 func chordWidth(c *model.ChordSymbol) float64 {
 	if c == nil {
 		return 0
 	}
+	_, w := chordPieces(c)
 	if c.Frame != nil && frameWidth > 0 {
-		return math.Max(frameWidth, textWidth(c.Text+c.Root+c.Quality+c.Bass, chordSize))
+		return math.Max(frameWidth, w)
 	}
-	return textWidth(c.Text+c.Root+c.Quality+c.Bass, chordSize)
+	return w
+}
+
+/*
+ * Setting a chord symbol
+ *
+ * One place works out where every piece of it goes, because the drawing and
+ * the measuring have to agree: a symbol measured narrower than it is drawn
+ * is a symbol the next one is allowed to sit on top of.
+ *
+ * The widths are real ones. textWidth averages over ordinary words — mostly
+ * lowercase, where a letter is about half the type size — and a chord symbol
+ * is nothing like ordinary words: it is a bold capital, which is half as
+ * wide again, followed by digits and little else. Advanced by the average,
+ * the quality was set across the root it belongs to: "G7" came out with the
+ * seven sitting on the G's shoulder, which is what was reported.
+ */
+
+// chordCharWidth is how wide each character of a chord symbol is, as a
+// fraction of the type size.
+//
+// Times Bold's own widths, which is the face a PDF with nothing embedded in
+// it uses and close enough to what a browser puts up for the same text.
+var chordCharWidth = map[rune]float64{
+	'A': 0.722, 'B': 0.667, 'C': 0.722, 'D': 0.722, 'E': 0.667,
+	'F': 0.611, 'G': 0.778, 'N': 0.722, 'C' + 32: 0.444,
+	'b': 0.556, '#': 0.500, '/': 0.278, '+': 0.570, '-': 0.333,
+	'0': 0.500, '1': 0.500, '2': 0.500, '3': 0.500, '4': 0.500,
+	'5': 0.500, '6': 0.500, '7': 0.500, '8': 0.500, '9': 0.500,
+	'm': 0.889, 'a': 0.500, 'j': 0.333, 's': 0.389, 'u': 0.556,
+	'o': 0.500, 'd': 0.556, 'i': 0.278, 'n': 0.556, '(': 0.333,
+	')': 0.333, '°': 0.400, 'ø': 0.500, 'Δ': 0.612, ' ': 0.250,
+}
+
+// chordTextWidth is how far a stretch of a chord symbol moves the pen.
+func chordTextWidth(s string, size float64) float64 {
+	w := 0.0
+	for _, r := range s {
+		if v, ok := chordCharWidth[r]; ok {
+			w += v
+		} else {
+			w += 0.5
+		}
+	}
+	return w * size
+}
+
+/*
+ * Setting the sharps and flats of a chord name
+ *
+ * An accidental is not type and does not behave like it. It is a staff glyph
+ * drawn about the note it alters, so where its ink falls is a fact about the
+ * shape: a flat hangs its bowl below that point and throws its ascender well
+ * above, while a sharp is symmetric about it. Given one size and one height,
+ * they land in different places and stand to different heights — and a row
+ * of chord symbols set that way has a ragged top edge, which is most of what
+ * makes it hard to read at a glance.
+ *
+ * So each is sized by how tall its own ink is and placed by where its own
+ * ink ends, and they all finish level with the capital they follow. Nothing
+ * in a chord symbol rises above its root.
+ */
+
+// accidentalInk is how far each accidental's ink reaches above and below the
+// point it is drawn about, in staff spaces at its natural size — a SMuFL em
+// of four spaces. Bravura's own bounding boxes.
+var accidentalInk = map[string][2]float64{
+	"accidentalFlat":        {1.868, -0.672},
+	"accidentalDoubleFlat":  {1.868, -0.672},
+	"accidentalSharp":       {1.400, -1.400},
+	"accidentalNatural":     {1.400, -1.400},
+	"accidentalDoubleSharp": {0.400, -0.400},
+}
+
+// accidentalSize is the size one is drawn at, chosen so that every kind of
+// accidental stands the same height: a sharp's ink is taller than a flat's,
+// so set at one size the sharp of "F♯7" would tower over the flat of "B♭7"
+// in the bar beside it.
+func accidentalSize(glyph string) float64 {
+	ink, ok := accidentalInk[glyph]
+	if !ok {
+		return chordAccidentalHeight * chordCapHeight * chordSize
+	}
+	height := ink[0] - ink[1] // the ink, in spaces at natural size
+	return chordAccidentalHeight * chordCapHeight * chordSize / height * 4
+}
+
+// accidentalRise is how far above the baseline it is drawn about, so that
+// its ink finishes level with the top of the capital before it.
+func accidentalRise(glyph string) float64 {
+	top := chordCapHeight * chordSize
+	ink, ok := accidentalInk[glyph]
+	if !ok {
+		return chordSize * 0.28
+	}
+	return top - ink[0]*accidentalSize(glyph)/4
+}
+
+// accidentalAdvance is how far it moves the pen along: the font's own width
+// for it, at the size it is set in.
+//
+// A glyph drawn at size 4 is drawn at its natural size, so its advance
+// scales from there — the same arithmetic a clef change uses. Guessed at
+// instead, as seven tenths of the type size, the sign stood too far from the
+// letter it belongs to and the quality after it further still.
+func accidentalAdvance(glyph string) float64 {
+	return smufl.Advance(glyph) * accidentalSize(glyph) / 4
+}
+
+// chordPieceGap is the air between one piece of a symbol and the next, as a
+// fraction of the root's type size.
+//
+// Every join needs it, the one between a letter and its accidental most of
+// all: a SMuFL glyph is drawn from its own left edge, so a flat set at the
+// end of the letter's width begins exactly where the letter stops and the
+// two touch. "B♭7" printed with the flat against the B's bowl.
+const chordPieceGap = 0.12
+
+// chordPiece is one part of a symbol: a stretch of text, or the glyph of an
+// accidental, placed from the symbol's left edge.
+type chordPiece struct {
+	text  string
+	glyph string
+	x     float64
+	dy    float64 // above the baseline
+	size  float64
+}
+
+// chordPieces lays a symbol out left to right, and says how wide it came to.
+func chordPieces(c *model.ChordSymbol) ([]chordPiece, float64) {
+	if c == nil {
+		return nil, 0
+	}
+	if c.Text != "" {
+		w := chordTextWidth(c.Text, chordSize)
+		return []chordPiece{{text: c.Text, size: chordSize}}, w
+	}
+
+	var out []chordPiece
+	x := 0.0
+	root, acc := splitRoot(c.Root)
+	if root != "" {
+		out = append(out, chordPiece{text: root, x: x, size: chordSize})
+		x += chordTextWidth(root, chordSize)
+	}
+	if acc != "" {
+		// A flat or a sharp in a chord name is the musical sign — not the
+		// letter b, which is what a program that uses plain text ends up
+		// printing.
+		if len(out) > 0 {
+			x += chordPieceGap * chordSize
+		}
+		glyph := accidentalGlyphFor(acc)
+		out = append(out, chordPiece{
+			glyph: glyph, x: x,
+			dy: accidentalRise(glyph), size: accidentalSize(glyph),
+		})
+		x += accidentalAdvance(glyph)
+	}
+	if c.Quality != "" {
+		if len(out) > 0 {
+			x += chordPieceGap * chordSize
+		}
+		out = append(out, chordPiece{
+			// Raised so that its top is the root's top: set higher, the
+			// smaller type floated above the letter it belongs to and the
+			// eye had three different heights to follow along a line of
+			// chords.
+			text: c.Quality, x: x,
+			dy:   chordCapHeight * (chordSize - chordQualitySize),
+			size: chordQualitySize,
+		})
+		x += chordTextWidth(c.Quality, chordQualitySize)
+	}
+	if c.Bass != "" {
+		bass, bacc := splitRoot(c.Bass)
+		x += chordPieceGap * chordSize
+		out = append(out, chordPiece{text: "/" + bass, x: x, size: chordSize})
+		x += chordTextWidth("/"+bass, chordSize)
+		if bacc != "" {
+			x += chordPieceGap * chordSize
+			glyph := accidentalGlyphFor(bacc)
+			out = append(out, chordPiece{
+				glyph: glyph, x: x,
+				dy: accidentalRise(glyph), size: accidentalSize(glyph),
+			})
+			x += accidentalAdvance(glyph)
+		}
+	}
+	return out, x
 }
 
 // drawChordSymbol writes the chord over a note, at the height it was given.
@@ -210,58 +412,20 @@ func (e *engraver) drawChordSymbol(c *model.ChordSymbol, x, y float64) {
 	if c == nil {
 		return
 	}
-
-	if c.Text != "" {
-		e.lay.Texts = append(e.lay.Texts, Text{
-			S: c.Text, X: x, Y: y, Size: chordSize, Anchor: "start", Bold: true,
-		})
-		if c.Frame != nil {
-			e.drawChordFrame(c.Frame, x, y-chordSize-frameRise)
-		}
-		return
-	}
-
-	// The root, then the quality smaller and raised, then the bass note.
-	cx := x
-	root, acc := splitRoot(c.Root)
-	e.lay.Texts = append(e.lay.Texts, Text{
-		S: root, X: cx, Y: y, Size: chordSize, Anchor: "start", Bold: true,
-	})
-	cx += textWidth(root, chordSize)
-
-	if acc != "" {
-		// A flat or a sharp in a chord name is the musical sign, set small
-		// and raised — not the letter b, which is what a program that uses
-		// plain text ends up printing.
-		e.lay.Glyphs = append(e.lay.Glyphs, Glyph{
-			Name: accidentalGlyphFor(acc), X: cx, Y: y - chordSize*0.28,
-			Size: chordAccidentalSize,
-		})
-		cx += chordAccidentalSize * 0.7
-	}
-
-	if c.Quality != "" {
-		e.lay.Texts = append(e.lay.Texts, Text{
-			S: c.Quality, X: cx, Y: y - chordSize*0.3,
-			Size: chordQualitySize, Anchor: "start", Bold: true,
-		})
-		cx += textWidth(c.Quality, chordQualitySize)
-	}
-
-	if c.Bass != "" {
-		bass, bacc := splitRoot(c.Bass)
-		e.lay.Texts = append(e.lay.Texts, Text{
-			S: "/" + bass, X: cx, Y: y, Size: chordSize, Anchor: "start", Bold: true,
-		})
-		cx += textWidth("/"+bass, chordSize)
-		if bacc != "" {
+	pieces, _ := chordPieces(c)
+	for _, p := range pieces {
+		switch {
+		case p.glyph != "":
 			e.lay.Glyphs = append(e.lay.Glyphs, Glyph{
-				Name: accidentalGlyphFor(bacc), X: cx, Y: y - chordSize*0.28,
-				Size: chordAccidentalSize,
+				Name: p.glyph, X: x + p.x, Y: y - p.dy, Size: p.size,
+			})
+		default:
+			e.lay.Texts = append(e.lay.Texts, Text{
+				S: p.text, X: x + p.x, Y: y - p.dy, Size: p.size,
+				Anchor: "start", Bold: true,
 			})
 		}
 	}
-
 	if c.Frame != nil {
 		e.drawChordFrame(c.Frame, x, y-chordSize-frameRise)
 	}

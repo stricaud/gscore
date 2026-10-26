@@ -475,6 +475,9 @@ const (
 	// written, and lyricLine the distance from one verse to the next.
 	lyricDrop = 6.2
 	lyricLine = 2.2
+	// lyricGap is the room left between one syllable and the next, which is
+	// also where the hyphen of a split word goes.
+	lyricGap = 0.7
 	// lyricSize is the type size words are set at, in staff spaces.
 	lyricSize = 1.75
 )
@@ -1793,6 +1796,13 @@ func (e *engraver) measureBox(p *model.Part, m *model.Measure, index int) measur
 	// one voice is simply the note's own length and lays out exactly as it
 	// always did. A half note over two quarters spans two columns and is
 	// given the room of both.
+	// The words, before the columns are measured: a syllable is centred
+	// under its notehead, so what two of them need is half of each and a
+	// gap between — which is a wider thing than any note.
+	words := make([]float64, len(box.slots))
+	for i := range box.slots {
+		words[i] = lyricRoom(box.slots[i])
+	}
 	for i := range box.slots {
 		col := &box.slots[i]
 		span := model.Duration{Num: 0, Den: 1}
@@ -1811,8 +1821,30 @@ func (e *engraver) measureBox(p *model.Part, m *model.Measure, index int) measur
 			least = math.Max(least, col.width)
 		}
 		col.width = math.Max(e.spanWidth(span, col.elems), col.width)
+		// A sung bar is spaced by its words where they are wider than its
+		// notes. Spaced by the notes alone, "Our lit-tle dream cas-tle"
+		// came out as one black word: eight syllables over eight eighth
+		// notes, each syllable three times the width of the note under it.
+		//
+		// In the minimum as well as the ideal, because the minimum is what
+		// a system squeezed for room comes down to, and syllables that
+		// overlap are not a tighter setting of the music but an unreadable
+		// one.
+		if next := 0.0; words[i] > 0 || (i+1 < len(words) && words[i+1] > 0) {
+			if i+1 < len(words) {
+				next = words[i+1]
+			}
+			need := (words[i]+next)/2 + lyricGap
+			col.width = math.Max(col.width, need)
+			least = math.Max(least, need)
+		}
 		box.ideal += col.lead + col.width
 		box.minimum += col.lead + least
+	}
+	// The last syllable of a bar needs its own half before the barline.
+	if n := len(words); n > 0 && words[n-1] > 0 {
+		box.ideal += words[n-1]/2 + lyricGap
+		box.minimum += words[n-1]/2 + lyricGap
 	}
 	if empty {
 		// An empty measure still needs room to be clicked into.
@@ -2706,4 +2738,38 @@ func (e *engraver) repeatDots(x float64) {
 			Name: "augmentationDot", X: x, Y: e.y + stepY(step),
 		})
 	}
+}
+
+// lyricRoom is how wide the words under one column are.
+//
+// The widest syllable of the widest verse, since they are drawn one above
+// another and all centred on the same notehead. A hyphen goes between two
+// halves of a word and is drawn in the gap, which is what lyricGap leaves.
+func lyricRoom(col slot) float64 {
+	out := 0.0
+	for _, v := range col.elems {
+		mk := marksOfElement(v.el)
+		if mk == nil {
+			continue
+		}
+		for _, ly := range mk.Lyrics {
+			if w := textWidth(ly.Text, lyricSize); w > out {
+				out = w
+			}
+		}
+	}
+	return out
+}
+
+// marksOfElement is what a note, a chord or a rest carries.
+func marksOfElement(el model.Element) *model.Marks {
+	switch e := el.(type) {
+	case *model.Note:
+		return &e.Marks
+	case *model.Chord:
+		return &e.Marks
+	case *model.Rest:
+		return &e.Marks
+	}
+	return nil
 }

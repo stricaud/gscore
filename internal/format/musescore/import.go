@@ -1361,8 +1361,15 @@ func (r *reader) harmony(vs *voiceState) error {
 	root, bass := 0, 0
 	haveRoot, haveBass := false, false
 	name, text := "", ""
-	err := r.children(func(c xml.StartElement) error {
+	var fields func(c xml.StartElement) error
+	fields = func(c xml.StartElement) error {
 		switch c.Name.Local {
+		case "harmonyInfo":
+			// MuseScore 4.4 put the chord's own fields a level deeper, in
+			// a wrapper of their own. Read as furniture and skipped, every
+			// chord symbol in a file written by it came back empty — a
+			// lead sheet with its chords gone and nothing to say so.
+			return r.children(fields)
 		case "root":
 			n, err := r.number()
 			root, haveRoot = n, true
@@ -1382,8 +1389,8 @@ func (r *reader) harmony(vs *voiceState) error {
 		default:
 			return r.dec.Skip()
 		}
-	})
-	if err != nil {
+	}
+	if err := r.children(fields); err != nil {
 		return err
 	}
 	sym := &model.ChordSymbol{Quality: name}

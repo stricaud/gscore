@@ -242,27 +242,35 @@ func TestTheNotesAndTheirPitches(t *testing.T) {
 	if v, dots, ok := first.Dur.Written(); !ok || v != model.Quarter || dots != 1 {
 		t.Errorf("the first note is %v with %d dots", v, dots)
 	}
-	// harmLev counts scale steps from middle C, so 0 is middle C itself.
-	if first.Pitch.Step != model.StepC || first.Pitch.Octave != 4 {
-		t.Errorf("the first note is %v%d, want middle C", first.Pitch.Step, first.Pitch.Octave)
+	// This staff is the fixture's B flat clarinet, and what Finale stores is
+	// the note that sounds. harmLev 0 in a piece in C major is middle C
+	// sounding, and the player reads the D above it.
+	if first.Pitch.Step != model.StepD || first.Pitch.Octave != 4 {
+		t.Errorf("the first note is %v%d, want the D a clarinet reads to sound middle C",
+			first.Pitch.Step, first.Pitch.Octave)
 	}
 
-	// Seven steps up is the C above, and harmAlt sharpens it.
+	// Seven steps up is the C above, sharpened by harmAlt — read as D sharp.
 	second := top[1].(*model.Note)
-	if second.Pitch.Step != model.StepC || second.Pitch.Octave != 5 || second.Pitch.Alter != 1 {
-		t.Errorf("the second note is %v%d alter %d, want C sharp above middle C",
+	if second.Pitch.Step != model.StepD || second.Pitch.Octave != 5 || second.Pitch.Alter != 1 {
+		t.Errorf("the second note is %v%d alter %d, want the D sharp that sounds C sharp",
 			second.Pitch.Step, second.Pitch.Octave, second.Pitch.Alter)
 	}
 	if second.Accidental != model.Sharp {
 		t.Errorf("the sharp is not written on it: %v", second.Accidental)
 	}
 
-	// One step below middle C is the B under it, flattened — and the octave
-	// has to go down with it, which is the arithmetic a modulo gets wrong.
+	// One step below middle C is the B under it, flattened — which is the
+	// note the instrument is named after, and the player reads a plain C.
 	third := top[2].(*model.Note)
-	if third.Pitch.Step != model.StepB || third.Pitch.Octave != 3 || third.Pitch.Alter != -1 {
-		t.Errorf("the third note is %v%d alter %d, want B flat below middle C",
+	if third.Pitch.Step != model.StepC || third.Pitch.Octave != 4 || third.Pitch.Alter != 0 {
+		t.Errorf("the third note is %v%d alter %d, want the C that sounds B flat",
 			third.Pitch.Step, third.Pitch.Octave, third.Pitch.Alter)
+	}
+	// And the staff reads in the key the transposition puts it in: two
+	// sharps where the piece sounds in C.
+	if got := score.Parts[0].Key.Fifths; got != 2 {
+		t.Errorf("the clarinet's staff is in %d sharps, want the 2 it reads in", got)
 	}
 
 	// An entry with no notes in it is a rest, and a bar of six eight is

@@ -40,6 +40,17 @@
 
   const realFetch = window.fetch.bind(window);
 
+  // The version mark the page put on this script, to put on the core too.
+  //
+  // The editor and the core are one program in two files, and a browser that
+  // keeps one and fetches the other has half of each. index.html stamps every
+  // script with the version it was built with; taking the same stamp from
+  // here puts it on the WebAssembly as well, so the pair is always from one
+  // build. Read now rather than inside start(), because currentScript is only
+  // this script while this script is being run.
+  const stamp = (document.currentScript && document.currentScript.src &&
+                 new URL(document.currentScript.src, location.href).search) || "";
+
   window.fetch = async function (input, init) {
     const url = typeof input === "string" ? input : input.url;
     const path = url.startsWith("http") ? new URL(url).pathname + new URL(url).search : url;
@@ -110,7 +121,7 @@
     if (el) el.textContent = "Loading gscore…";
 
     const go = new Go();
-    const resp = await realFetch("gscore.wasm");
+    const resp = await realFetch("gscore.wasm" + stamp);
     // Streaming compilation avoids holding the whole module twice, but not
     // every host serves wasm with the right type, so fall back.
     let result;

@@ -7877,16 +7877,6 @@ async function main() {
   setupStripHover();
   setupDrawing();
   markMode();
-  // What was remembered from last time.
-  try {
-    const kept = await (await fetch("/api/settings")).json();
-    state.trackBarlines = kept.trackBarlines !== false;
-    state.keys = kept.keys || {};
-  } catch (_) {
-    // Served without a disk behind it. The default stands.
-  }
-  markBarlineTick();
-  syncMenuKeys();
 
   $("#shortcuts-reset").addEventListener("click", async () => {
     await resetKeys();
@@ -7915,6 +7905,23 @@ async function main() {
     status("Starting…");
     await window.gscoreCoreReady;
   }
+
+  // What was remembered from last time.
+  //
+  // After the core is up, not before. Asked earlier, this request found no
+  // core to answer it and went out to the network instead, where the host
+  // that serves the page has no /api/settings and says 404 — so on the web
+  // nothing was ever remembered between visits, and the only sign of it was
+  // a line in the browser's console.
+  try {
+    const kept = await (await fetch("/api/settings")).json();
+    state.trackBarlines = kept.trackBarlines !== false;
+    state.keys = kept.keys || {};
+  } catch (_) {
+    // Served without a disk behind it. The default stands.
+  }
+  markBarlineTick();
+  syncMenuKeys();
 
   if (opt.score) {
     await loadFromURL(opt.score);

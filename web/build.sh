@@ -66,11 +66,29 @@ cp "$root/internal/smufl/data/Bravura.otf" "$out/app/font.otf"
 # The page differs from the application's only in loading the runtime and the
 # core before the interface. share.js comes first because boot.js reads a
 # score out of the address bar with it.
+#
+# Every script and stylesheet then carries the version it was built with.
+#
+# Without it a browser that has been here before serves itself yesterday's
+# app.js against today's core, and the two are one program split in half:
+# the editor asks the core for something it did not used to do, or does not
+# ask for what it now can. That is not a failure anybody can read — the page
+# comes up, the menus work, and one thing in it quietly does not — and the
+# only way out is knowing to empty the cache, which is not something to ask
+# of someone opening a web page. Reported as "it works, but I have to kill
+# the cache".
+#
+# A query string is enough: the file on disk is unchanged and any host
+# serves it, while the address is new for every release, so the browser
+# fetches the whole set together or keeps the whole set together.
 sed -e 's|<script src="app.js"></script>|<script src="wasm_exec.js"></script>\
 <script src="share.js"></script>\
 <script src="boot.js"></script>\
 <script src="app.js"></script>|' \
-    "$root/internal/app/ui/index.html" > "$out/app/index.html"
+    "$root/internal/app/ui/index.html" \
+  | sed -E -e "s|(<script src=\"[A-Za-z0-9_.-]+\.js)\"|\1?v=$version\"|g" \
+           -e "s|(<link rel=\"stylesheet\" href=\"[A-Za-z0-9_.-]+\.css)\"|\1?v=$version\"|g" \
+  > "$out/app/index.html"
 
 # ── the scores, set by gscore itself ────────────────────────────────────────
 

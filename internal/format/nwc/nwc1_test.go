@@ -455,8 +455,10 @@ func TestAMarkedRecordIsFourBytes(t *testing.T) {
 func TestAChordInSeventyIsSeventeenBytes(t *testing.T) {
 	// A chord of two, and the two notes that are its noteheads.
 	chord := []byte{0x0a, 0, 0, 0x04, 0, 0x21, 0, 0x02, 0, 0xfb, 0x1d, 0, 0, 0, 0, 2, 0}
+	// 0x40 in the articulation byte is what says a note is a notehead of
+	// the chord before it rather than a note of its own.
 	note := func(pos byte) []byte {
-		return []byte{8, 0, 0, 0x04, 0, 0x21, 0, 0, 0, pos, 0x1d, 0, 0}
+		return []byte{8, 0, 0, 0x04, 0, 0x21, 0, 0x40, 0, pos, 0x1d, 0, 0}
 	}
 	b := append(chord, note(0xfb)...)
 	b = append(b, note(0xfe)...)
@@ -729,4 +731,80 @@ func firstNoteIn(t *testing.T, st *staffState) *model.Note {
 	}
 	t.Fatal("no note was read")
 	return nil
+}
+
+// A chord takes only the notes that say they are its noteheads.
+//
+// The count is read from the file and could be read wrongly; without this a
+// chord of two that said three would have eaten the note after it, and the
+// bar would come out short with a melody note missing from the middle of it
+// — invisible on the page until it is played.
+func TestAChordDoesNotSwallowTheNoteAfterIt(t *testing.T) {
+	// A chord claiming three noteheads, with only two that say so.
+	chord := []byte{0x0a, 0, 0, 0x04, 0, 0x21, 0, 0x02, 0, 0xfb, 0x1d, 0, 0, 0, 0, 3, 0}
+	head := func(pos byte) []byte {
+		return []byte{8, 0, 0, 0x04, 0, 0x21, 0, 0x40, 0, pos, 0x1d, 0, 0}
+	}
+	plain := []byte{8, 0, 0, 0x04, 0, 0x21, 0, 0, 0, 0xfe, 0x1d, 0, 0}
+	b := append(chord, head(0xfb)...)
+	b = append(b, head(0xf8)...)
+	b = append(b, plain...)
+	b = append(b, 2, 0, 0, 0, 1)
+
+	st := &staffState{part: &model.Part{Clef: model.Treble}}
+	w := &walker{b: b, version: 170}
+	for i := 0; i < 5; i++ {
+		if err := w.object(st); err != nil {
+			t.Fatalf("object %d: %v", i+1, err)
+		}
+	}
+	els := st.part.Measures[0].Voices[0].Elements
+	if len(els) != 2 {
+		t.Fatalf("%d things in the bar, want the chord and the note after it", len(els))
+	}
+	ch, ok := els[0].(*model.Chord)
+	if !ok {
+		t.Fatalf("the first is a %T, want the chord", els[0])
+	}
+	if len(ch.Notes) != 2 {
+		t.Errorf("the chord took %d noteheads, want the two that said they were its", len(ch.Notes))
+	}
+	if _, ok := els[1].(*model.Note); !ok {
+		t.Errorf("the second is a %T, want the note the chord did not own", els[1])
+	}
+}
+
+// The staccato is bit 0x02 of the articulation byte.
+//
+// It was read as 0x20. NoteWorthy prints a dot under every note of Für
+// Elise's left hand through the middle of the piece and every one of them
+// carries 0x02; 0x20 is on twenty notes in the whole piece.
+func TestTheStaccatoIsBitOne(t *testing.T) {
+	note := func(artic byte) []byte {
+		return []byte{8, 0, 0, 0x04, 0, 0x21, 0, artic, 0, 0, 5, 0, 0}
+	}
+	for _, tc := range []struct {
+		artic byte
+		want  bool
+	}{
+		{0x02, true},
+		{0x00, false},
+		{0x20, false},
+	} {
+		st := &staffState{part: &model.Part{Clef: model.Treble}}
+		w := &walker{b: note(tc.artic), version: 170}
+		if err := w.object(st); err != nil {
+			t.Fatalf("articulation 0x%02X: %v", tc.artic, err)
+		}
+		n := firstNoteIn(t, st)
+		got := false
+		for _, a := range n.Articulations {
+			if a == model.Staccato {
+				got = true
+			}
+		}
+		if got != tc.want {
+			t.Errorf("articulation 0x%02X: staccato %v, want %v", tc.artic, got, tc.want)
+		}
+	}
 }

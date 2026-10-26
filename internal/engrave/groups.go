@@ -434,10 +434,58 @@ func (e *engraver) numberWidth(mi, start int) float64 {
 	if e.opt.Mode != Strip && mi != start {
 		return 0
 	}
-	if mi+1 <= 1 {
+	if e.barNumber(mi) <= 1 {
 		return 0
 	}
-	return textWidth(itoa(mi+1), measureNumberSize) + 0.6
+	return textWidth(itoa(e.barNumber(mi)), measureNumberSize) + 0.6
+}
+
+// barNumber is the number printed over a bar.
+//
+// Bar one is the first full bar, so a piece that opens with a pickup has it
+// as its second: an anacrusis is not counted, which is how every edition
+// numbers one and what NoteWorthy's own ruler shows. Numbered from the first
+// bar whatever it held, Für Elise ran one ahead of the file it came from all
+// the way to the last page — the bar NoteWorthy calls 65 was printed as 66,
+// which is the kind of difference that only shows when two people are
+// reading from different copies and one of them says "from bar sixty-five".
+func (e *engraver) barNumber(mi int) int {
+	if e.pickup {
+		return mi
+	}
+	return mi + 1
+}
+
+// opensWithPickup reports whether the piece opens with an anacrusis: a first
+// bar shorter than its meter, with a full bar after it.
+//
+// Both halves matter. Short on its own is not enough — a bar still being
+// typed into is short, and so is every bar of a piece whose meter gscore has
+// read wrongly or not at all. Two of the MusicXML suite's rhythm cases open
+// with a bar that is short by their own meter and go on being short, and
+// renumbering those would have moved every number on the page because the
+// reader could not count. A pickup is short and then whole, which is the
+// one shape that means somebody began before the first beat.
+func opensWithPickup(s *model.Score) bool {
+	if s == nil || s.MeasureCount() < 2 {
+		return false
+	}
+	bar := model.Duration{}
+	for _, p := range s.Parts {
+		if len(p.Measures) == 0 {
+			continue
+		}
+		bar = p.TimeAt(0).BarDuration()
+		break
+	}
+	if bar.IsZero() {
+		return false
+	}
+	opening := s.MeasureDuration(0)
+	if opening.IsZero() || opening.Cmp(bar) >= 0 {
+		return false
+	}
+	return s.MeasureDuration(1).Cmp(bar) == 0
 }
 
 func (e *engraver) drawMeasureNumbers(columns []float64, start, end int) {
@@ -460,11 +508,11 @@ func (e *engraver) drawMeasureNumbers(columns []float64, start, end int) {
 		})
 	}
 	if e.opt.Mode != Strip {
-		write(start+1, columns[0])
+		write(e.barNumber(start), columns[0])
 		return
 	}
 	for mi := start; mi < end && mi-start < len(columns); mi++ {
-		write(mi+1, columns[mi-start])
+		write(e.barNumber(mi), columns[mi-start])
 	}
 }
 

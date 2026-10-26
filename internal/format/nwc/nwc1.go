@@ -135,15 +135,30 @@ var nwc1Durations = map[byte]model.Duration{
 // on no note at all, which is why it comes out with no ties in it — the file
 // has slurs, which are the byte spanners.go reads, and no ties.
 //
-// What 0x02 and 0x08 mean is still unknown, and so is the double dot: no bit
+// The staccato is 0x02 and was read as 0x20, which put the dot on twenty
+// notes of Für Elise that have none and left the hundred and eighty-two that
+// have one without it. NoteWorthy prints a staccato dot under every note of
+// the left hand through the middle of the piece, and 0x02 is the bit those
+// notes carry.
+//
+// 0x40 is not an accent, which is what it was read as. It says the note is a
+// notehead of the chord before it: in Für Elise it is set on all one hundred
+// and ninety-two chord noteheads and on none of the six hundred and forty-
+// five other notes, with no exception either way. Read as an accent it put
+// one on every note of every chord in the piece.
+//
+// What 0x08 and 0x20 mean is still unknown, and so is the double dot: no bit
 // of the record behaves like one. A double-dotted note therefore reads as a
 // single-dotted one, which is a bar that does not add up rather than a note
-// in the wrong place.
+// in the wrong place. An accented note reads as a plain one for the same
+// reason — a mark gscore invents is worse than a mark it leaves out.
 const (
+	artStaccato = 0x02
 	artDotted   = 0x04
 	artTie      = 0x10
-	artStaccato = 0x20
-	artAccent   = 0x40
+	// artChordNote marks a notehead of the chord record before it, which is
+	// how a chord keeps its notes together — see the chord in object().
+	artChordNote = 0x40
 )
 
 // nwc1Accidentals maps the low bits of the accidental byte.
@@ -168,10 +183,12 @@ type noteValue struct {
 	dots     int
 	tie      bool
 	staccato bool
-	accent   bool
-	triplet  bool
-	step     int
-	acc      model.Accidental
+	// chordNote says this note is one of the noteheads of the chord record
+	// before it, rather than a note of its own in the bar.
+	chordNote bool
+	triplet   bool
+	step      int
+	acc       model.Accidental
 	// slurFrom and slurTo say this note is joined by a slur to the one
 	// before it and to the one after it. A note in the middle of a phrase
 	// has both; the note a slur begins on has only the second.
@@ -233,7 +250,7 @@ func (w *walker) noteValue() (noteValue, error) {
 	}
 	nv.tie = artic&artTie != 0
 	nv.staccato = artic&artStaccato != 0
-	nv.accent = artic&artAccent != 0
+	nv.chordNote = artic&artChordNote != 0
 
 	// Byte two is the beam, the stem and the triplet, two bits each.
 	//
@@ -1059,8 +1076,12 @@ func (w *walker) object(st *staffState) error {
 		if nv.staccato {
 			n.AddArticulation(model.Staccato)
 		}
-		if nv.accent {
-			n.AddArticulation(model.Accent)
+		// A chord that is still waiting for noteheads gets this one only if
+		// the note says it is one. A count this reader read wrongly would
+		// otherwise swallow the melody behind the chord, which is the kind
+		// of mistake that is invisible on the page until the bar is played.
+		if st.chordLeft > 0 && !nv.chordNote {
+			st.endChord()
 		}
 		st.add(n)
 

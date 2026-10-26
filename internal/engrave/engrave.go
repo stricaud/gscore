@@ -606,8 +606,9 @@ func Engrave(s *model.Score, opt Options) *Layout {
 
 func engraveWith(s *model.Score, opt Options, room map[int]need) *Layout {
 	e := &engraver{opt: opt, score: s, room: room,
-		spans: map[[2]int]*openSpans{},
-		lay:   &Layout{Refs: map[int]RefPos{}, defaults: opt.Defaults}}
+		pickup: opensWithPickup(s),
+		spans:  map[[2]int]*openSpans{},
+		lay:    &Layout{Refs: map[int]RefPos{}, defaults: opt.Defaults}}
 	e.run()
 	return e.lay
 }
@@ -615,7 +616,10 @@ func engraveWith(s *model.Score, opt Options, room map[int]need) *Layout {
 type engraver struct {
 	opt   Options
 	score *model.Score
-	lay   *Layout
+	// pickup says the piece opens with an anacrusis, so that the bar after
+	// it is bar one — see barNumber.
+	pickup bool
+	lay    *Layout
 	// titleFrom and titleTo bracket the title block's own entries in
 	// lay.Texts, so they can be put back on the canvas once its width is
 	// known. See centreTitleBlock.

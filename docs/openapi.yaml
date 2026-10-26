@@ -1,0 +1,2165 @@
+# openapi.yaml
+# gscore - a musical score editor
+#
+# (C) Copyright 2026 Sebastien Tricaud
+#
+# Permission is hereby granted, free of charge, under the terms of the MIT
+# licence; see the LICENSE file at the root of this repository.
+#
+# Every route the editor's own server answers, which is the whole program:
+# the browser in front of it has no music in it at all. Anything the
+# interface can do, this can be asked to do, and the score comes back as a
+# PDF, a MIDI file, a web page, SVG, FLAC, or any format gscore writes.
+#
+# api_test.go checks this file against the server's route table, so a route
+# added to the program without a line here is a failing test rather than a
+# document that quietly fell behind.
+
+openapi: 3.1.0
+
+info:
+  title: gscore
+  version: 0.1.4
+  summary: Write, edit and export musical scores over HTTP.
+  description: |
+    gscore is one program with two faces. The editor you click is a page
+    served by this API, and it keeps no music of its own: every note written,
+    every mark placed and every export comes through the routes below. So
+    anything that can be done by hand can be done by a script, and what comes
+    out is the same engraving either way.
+
+    A running gscore serves this description at `/openapi.yaml`, so the API
+    of the build in front of you can be read from the build itself.
+
+    ## One score at a time
+
+    The server holds a single open score — the document in the window. There
+    are no score ids and no sessions: a request acts on what is open. Run one
+    gscore per score you want to work on, with `gscore -headless -port N`.
+
+    ## Piloting it
+
+        POST /api/new                     an empty score, with one staff on it
+        POST /api/insert?part=0&measure=0&at=-1&step=4&dur=quarter&kind=note
+        POST /api/insert?part=0&measure=0&at=-1&step=6&dur=quarter&kind=note
+        POST /api/beam?beam=join&sel=0:0:0,0:0:1
+        GET  /api/pdf                     the engraving
+
+    `at=-1` means "after whatever is there", which is how a melody is written
+    by repeating one call: a bar that fills sends the next note into the bar
+    after it and says where it went. Every edit is undoable, in the same
+    stack the editor's Undo uses.
+
+    A new score already has a staff, so `/api/addstaff` is for the second one
+    and after — and it numbers from zero, so the staff it adds to a new score
+    is `part=1`.
+
+    ## Saying where in the music
+
+    Most editing routes name a place in one of two ways:
+
+    * `part`, `measure`, `at` — one element. `part` and `measure` count from
+      zero; `at` counts from one and names the element *before* the cursor,
+      which is where the editor leaves it after writing a note. `at=-1` or
+      `at=0` means the last element of the bar.
+    * `sel` — a list of elements, as `staff:measure:index` triples separated
+      by commas, counting from zero: `0:0:0,0:0:1,0:1:0`. This is how a
+      command reaches everything inside a dragged rectangle. Where a route
+      takes both, `sel` wins.
+
+    ## Pitch
+
+    `step` is a position on the staff, not a MIDI note: 0 is the bottom line,
+    each step is the next line or space up, and negative steps go below. What
+    note that is depends on the clef, which is what makes the same number
+    right for a flute and a cello. Accidentals are written separately.
+
+    ## Errors
+
+    A refused request answers `400` with one line of plain text saying what
+    was wrong — "no such measure", "a tie joins two notes". Nothing is a
+    machine-readable code: the line is written to be read.
+
+servers:
+  - url: http://127.0.0.1:8080
+    description: gscore -headless -port 8080
+
+tags:
+  - name: score
+    description: The document — opening it, saving it, what is in it.
+  - name: export
+    description: Getting the music out, as paper, sound or another program's file.
+  - name: write
+    description: Notes, rests and what they are made of.
+  - name: marks
+    description: What is written on and around the notes.
+  - name: structure
+    description: Bars, staves, keys, meters and the shape of the piece.
+  - name: render
+    description: Drawing the score, and finding out where the drawing put things.
+  - name: play
+    description: "Sound: MIDI, the synthesizer, and the soundfonts behind it."
+  - name: app
+    description: The program itself — undo, settings, files it has opened.
+
+paths:
+  # ── itself ────────────────────────────────────────────────────────────────
+
+  /openapi.yaml:
+    get:
+      tags: [app]
+      summary: This description, from the program it describes
+      description: |
+        The same file as `docs/openapi.yaml` in the repository, embedded in
+        the binary rather than copied, so the two cannot drift apart. Fetch
+        it from a running gscore and you have the API of that build —
+        including whether it is a version that has the route you are about
+        to call.
+      responses:
+        "200":
+          description: The spec.
+          content:
+            application/yaml:
+              schema: { type: string }
+
+  # ── the document ──────────────────────────────────────────────────────────
+
+  /api/info:
+    get:
+      tags: [score]
+      summary: Everything about the open score
+      description: |
+        The one route worth polling. It says what the score is called, whether
+        it has unsaved work, what staves it has and how many bars each holds,
+        where the cursor is, and which formats this build can write.
+      responses:
+        "200":
+          description: The score as the editor sees it.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Info" }
+
+  /api/new:
+    post:
+      tags: [score]
+      summary: Start an empty score
+      description: One empty staff, in C major and four four. Any history is forgotten with the score it belonged to.
+      responses:
+        "200": { $ref: "#/components/responses/Status" }
+
+  /api/open:
+    post:
+      tags: [score]
+      summary: Open a score sent in the request body
+      description: |
+        The bytes of a file, with its name in the query so the right importer
+        is chosen. This is how the browser opens a file it has no path for,
+        and how a script opens one without the server needing to see the disk.
+
+        A file written with mistakes in it is read as far as it can be and
+        what could not be read is reported in `info.log`, never refused
+        wholesale.
+      parameters:
+        - name: name
+          in: query
+          required: true
+          description: The filename, for its extension. `.abc`, `.gscore`, `.mscz`, `.mscx`, `.musicxml`, `.xml`, `.mxl`, `.nwctxt`, `.nwc`.
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema: { type: string, format: binary }
+      responses:
+        "200":
+          description: Opened.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string }
+                  filename: { type: string }
+                  tunes:
+                    type: integer
+                    description: How many pieces were in it; a tune book holds many.
+        "400": { $ref: "#/components/responses/Error" }
+
+  /api/openpath:
+    post:
+      tags: [score]
+      summary: Open a score by path
+      description: Only on this machine. A browser somewhere else is refused.
+      parameters:
+        - name: path
+          in: query
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Opened.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string }
+                  filename: { type: string }
+        "400": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+
+  /api/save:
+    post:
+      tags: [score]
+      summary: Write the score to disk
+      description: |
+        With a path, saves there. Without one, opens the platform's own save
+        panel; where there is no panel it answers `needPath` with a suggested
+        name rather than failing. Saving a `.gscore` clears the unsaved flag —
+        exporting a PDF does not, because a drawing of the score is not the
+        score.
+      parameters:
+        - name: path
+          in: query
+          description: Where to write it. Required unless the server is local.
+          schema: { type: string }
+        - name: as
+          in: query
+          description: An extension for the suggested name when a panel is shown.
+          schema: { type: string }
+        - name: pdf
+          in: query
+          description: "`0` writes a .gscore with no PDF of itself in front of the music."
+          schema: { type: string, enum: ["0", "1"] }
+      responses:
+        "200":
+          description: Saved, cancelled, or asking where to put it.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string }
+                  path: { type: string }
+                  cancelled: { type: boolean }
+                  needPath: { type: boolean }
+                  suggested: { type: string }
+        "400": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+
+  /api/pickfile:
+    post:
+      tags: [score]
+      summary: Ask the platform for a file to open
+      parameters:
+        - name: symbols
+          in: query
+          description: Offer symbol packs rather than scores.
+          schema: { type: string }
+      responses:
+        "200":
+          description: What was chosen, or that nothing was.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string }
+                  filename: { type: string }
+                  cancelled: { type: boolean }
+
+  /api/recent:
+    post:
+      tags: [app]
+      summary: The files opened before
+      parameters:
+        - name: clear
+          in: query
+          description: "`1` forgets them."
+          schema: { type: string }
+      responses:
+        "200":
+          description: The list, most recent first.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  files: { type: array, items: { type: string } }
+
+  /api/tune:
+    post:
+      tags: [score]
+      summary: Choose which piece of a tune book is open
+      parameters:
+        - name: i
+          in: query
+          required: true
+          description: Its number in the book, from zero.
+          schema: { type: integer }
+      responses:
+        "200":
+          description: Which one is current now.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string }
+                  current: { type: integer }
+
+  /api/header:
+    post:
+      tags: [score]
+      summary: Title, subtitle, composer and copyright
+      parameters:
+        - { name: title, in: query, schema: { type: string } }
+        - { name: subtitle, in: query, schema: { type: string } }
+        - { name: composer, in: query, schema: { type: string } }
+        - { name: copyright, in: query, schema: { type: string } }
+      responses:
+        "200": { $ref: "#/components/responses/Status" }
+
+  # ── getting the music out ─────────────────────────────────────────────────
+
+  /api/pdf:
+    get:
+      tags: [export]
+      summary: The score as a PDF
+      description: |
+        Engraved onto paper, each piece fitted to its own page size. This is
+        the same drawing the program prints.
+      parameters:
+        - name: what
+          in: query
+          description: |
+            `book` sets every piece of a tune book one after another; `parts`
+            adds a part for each staff after the full score. Neither, and it
+            is the open score alone.
+          schema: { type: string, enum: [book, parts] }
+        - name: paper
+          in: query
+          schema: { type: string, enum: [a4, letter], default: a4 }
+        - name: orientation
+          in: query
+          description: A full score of twelve staves is wider than it is tall.
+          schema: { type: string, enum: [portrait, landscape], default: portrait }
+        - name: space
+          in: query
+          description: The staff space in points — the size of the type. 3 to 20.
+          schema: { type: number, minimum: 3, maximum: 20 }
+        - name: numbers
+          in: query
+          description: "`0` leaves out the bar numbers."
+          schema: { type: string, enum: ["0", "1"] }
+        - name: pagenumbers
+          in: query
+          description: "`0` leaves out the page numbers."
+          schema: { type: string, enum: ["0", "1"] }
+      responses:
+        "200":
+          description: The PDF.
+          content:
+            application/pdf:
+              schema: { type: string, format: binary }
+        "500": { $ref: "#/components/responses/Error" }
+
+  /api/convert:
+    get:
+      tags: [export]
+      summary: The score in another program's format
+      description: |
+        The exporters a built gscore carries: `abc`, `gscore`, `ly`
+        (LilyPond), `musicxml`, `xml`, `mxl` (compressed MusicXML). An
+        extension nothing claims is refused by name, which is the quickest
+        way to ask what a particular build can write.
+
+        Note that `formats` in `/api/info` is a different list: the formats
+        that can be *opened*, by name.
+      parameters:
+        - name: as
+          in: query
+          required: true
+          description: The extension, with or without its dot.
+          schema:
+            type: string
+            enum: [abc, gscore, ly, musicxml, xml, mxl]
+      responses:
+        "200":
+          description: The score, written out.
+          content:
+            text/plain:
+              schema: { type: string }
+        "400": { $ref: "#/components/responses/Error" }
+
+  /api/page:
+    get:
+      tags: [export]
+      summary: The score as a web page that plays itself
+      description: |
+        One HTML file with the engraving and the music in it, which opens in
+        any browser with nothing to install and nothing to fetch.
+      parameters:
+        - name: mode
+          in: query
+          schema: { type: string, enum: [page, strip] }
+        - name: space
+          in: query
+          schema: { type: number }
+        - name: font
+          in: query
+          description: Where the page should fetch its music font, rather than carrying it.
+          schema: { type: string }
+        - name: script
+          in: query
+          description: Likewise for its player.
+          schema: { type: string }
+        - name: play
+          in: query
+          description: "`0` leaves the player out, giving a page that only shows."
+          schema: { type: string, enum: ["0", "1"] }
+      responses:
+        "200":
+          description: The page.
+          content:
+            text/html:
+              schema: { type: string }
+
+  /api/midi:
+    get:
+      tags: [export, play]
+      summary: The performance as a standard MIDI file
+      responses:
+        "200":
+          description: The MIDI file.
+          content:
+            audio/midi:
+              schema: { type: string, format: binary }
+
+  /api/record:
+    get:
+      tags: [export, play]
+      summary: The performance as audio
+      description: Played through the synthesizer and written out as FLAC.
+      parameters:
+        - name: font
+          in: query
+          description: Which soundfont to play it with.
+          schema: { type: string }
+        - name: assign
+          in: query
+          description: Per-staff instrument assignment.
+          schema: { type: string }
+        - name: rate
+          in: query
+          schema: { type: integer, default: 44100 }
+        - name: gain
+          in: query
+          schema: { type: number }
+        - name: tail
+          in: query
+          description: Seconds of silence after the last note, for the reverb to end in.
+          schema: { type: number }
+        - name: reverb
+          in: query
+          schema: { type: string, enum: ["0", "1"] }
+        - name: normalize
+          in: query
+          schema: { type: string, enum: ["0", "1"] }
+      responses:
+        "200":
+          description: The recording.
+          content:
+            audio/flac:
+              schema: { type: string, format: binary }
+        "400": { $ref: "#/components/responses/Error" }
+
+  /score.svg:
+    get:
+      tags: [export, render]
+      summary: The score as SVG
+      parameters:
+        - name: mode
+          in: query
+          description: "`strip` is the editing view, one long system; `page` is paper."
+          schema: { type: string, enum: [strip, page] }
+        - name: space
+          in: query
+          schema: { type: number }
+        - name: width
+          in: query
+          schema: { type: number }
+        - name: tune
+          in: query
+          description: Which piece of a tune book to draw.
+          schema: { type: integer }
+      responses:
+        "200":
+          description: The drawing.
+          content:
+            image/svg+xml:
+              schema: { type: string }
+
+  /print:
+    get:
+      tags: [export]
+      summary: A printable page, for the browser's own print dialog
+      parameters:
+        - name: what
+          in: query
+          schema: { type: string, enum: [book, parts] }
+      responses:
+        "200":
+          description: The page.
+          content:
+            text/html:
+              schema: { type: string }
+
+  /api/exportsymbols:
+    post:
+      tags: [export]
+      summary: The symbol pack, as a zip
+      parameters:
+        - { name: path, in: query, schema: { type: string } }
+        - { name: dialog, in: query, schema: { type: string } }
+      responses:
+        "200":
+          description: The pack, or where it was written.
+          content:
+            application/zip:
+              schema: { type: string, format: binary }
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string }
+                  path: { type: string }
+                  symbols: { type: integer }
+                  cancelled: { type: boolean }
+                  needPath: { type: boolean }
+                  suggested: { type: string }
+
+  # ── writing notes ─────────────────────────────────────────────────────────
+
+  /api/insert:
+    post:
+      tags: [write]
+      summary: Write a note or a rest
+      description: |
+        The one call a melody is made of. A bar that is already full sends
+        what is written next into the bar after it, making one if there is
+        none, and the answer says where the note actually landed.
+      parameters:
+        - $ref: "#/components/parameters/part"
+        - $ref: "#/components/parameters/measure"
+        - name: at
+          in: query
+          description: Where in the bar. `-1` appends, which is how a tune is typed.
+          schema: { type: integer, default: -1 }
+        - $ref: "#/components/parameters/step"
+        - name: dur
+          in: query
+          required: true
+          schema: { $ref: "#/components/schemas/NoteValue" }
+        - name: kind
+          in: query
+          schema: { type: string, enum: [note, rest], default: note }
+        - name: dots
+          in: query
+          schema: { type: integer, minimum: 0, maximum: 3 }
+        - name: accidental
+          in: query
+          schema: { $ref: "#/components/schemas/Accidental" }
+        - name: drum
+          in: query
+          description: On a drum staff, which drum — its MIDI key — rather than where the click landed.
+          schema: { type: integer }
+        - name: replace
+          in: query
+          description: "`1` writes over what is at `at` instead of before it."
+          schema: { type: string, enum: ["0", "1"] }
+      responses:
+        "200":
+          description: Where it went.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string }
+                  measure: { type: integer }
+                  at: { type: integer }
+                  index: { type: integer }
+                  rest: { type: boolean }
+                  replaced: { type: boolean }
+        "400": { $ref: "#/components/responses/Error" }
+
+  /api/addpitch:
+    post:
+      tags: [write]
+      summary: Add a notehead to a note, making a chord
+      parameters:
+        - $ref: "#/components/parameters/part"
+        - $ref: "#/components/parameters/measure"
+        - name: index
+          in: query
+          required: true
+          description: The element in the bar, counting from zero.
+          schema: { type: integer }
+        - $ref: "#/components/parameters/step"
+        - name: accidental
+          in: query
+          schema: { $ref: "#/components/schemas/Accidental" }
+      responses:
+        "200": { $ref: "#/components/responses/Status" }
+        "400": { $ref: "#/components/responses/Error" }
+
+  /api/delete:
+    post:
+      tags: [write]
+      summary: Take out one element
+      parameters:
+        - $ref: "#/components/parameters/part"
+        - $ref: "#/components/parameters/measure"
+        - $ref: "#/components/parameters/at"
+      responses:
+        "200": { $ref: "#/components/responses/Status" }
+        "400": { $ref: "#/components/responses/Error" }
+
+  /api/deleteselection:
+    post:
+      tags: [write]
+      summary: Take out everything selected
+      parameters:
+        - $ref: "#/components/parameters/sel"
+      responses:
+        "200":
+          description: How many went.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties: { removed: { type: integer } }
+        "400": { $ref: "#/components/responses/Error" }
+
+  /api/copy:
+    post:
+      tags: [write]
+      summary: Copy a selection to the clipboard
+      parameters:
+        - $ref: "#/components/parameters/sel"
+      responses:
+        "200":
+          description: How many notes were taken.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties: { copied: { type: integer } }
+        "400": { $ref: "#/components/responses/Error" }
+
+  /api/paste:
+    post:
+      tags: [write]
+      summary: Put the clipboard down
+      description: |
+        What is pasted takes the place of what was there rather than shoving
+        it along. The bar after the last one can be pasted into: it is made
+        on the way, as writing a note there makes it.
+      parameters:
+        - $ref: "#/components/parameters/part"
+        - $ref: "#/components/parameters/measure"
+        - $ref: "#/components/parameters/at"
+        - name: insert
+          in: query
+          description: "`1` pushes what is there along instead of replacing it."
+          schema: { type: string, enum: ["0", "1"] }
+      responses:
+        "200":
+          description: Where it landed.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  pasted: { type: integer }
+                  measure: { type: integer }
+                  at: { type: integer }
+        "400": { $ref: "#/components/responses/Error" }
+
+  /api/nudge:
+    post:
+      tags: [write]
+      summary: Move notes up or down the staff
+      parameters:
+        - $ref: "#/components/parameters/part"
+        - $ref: "#/components/parameters/measure"
+        - $ref: "#/components/parameters/at"
+        - $ref: "#/components/parameters/sel"
+        - name: steps
+          in: query
+          required: true
+          description: Staff steps, positive up. 7 is an octave.
+          schema: { type: integer }
+      responses:
+        "200": { $ref: "#/components/responses/Changed" }
+        "400": { $ref: "#/components/responses/Error" }
+
+  /api/shift:
+    post:
+      tags: [write]
+      summary: Move notes earlier or later in the bar
+      parameters:
+        - $ref: "#/components/parameters/sel"
+        - name: dir
+          in: query
+          required: true
+          schema: { type: string, enum: ["-1", "1"] }
+      responses:
+        "200":
+          description: What moved.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string }
+                  moved: { type: integer }
+                  now: { type: integer }
+        "400": { $ref: "#/components/responses/Error" }
+
+  /api/duration:
+    post:
+      tags: [write]
+      summary: Change how long notes last
+      parameters:
+        - $ref: "#/components/parameters/sel"
+        - name: value
+          in: query
+          required: true
+          schema: { $ref: "#/components/schemas/NoteValue" }
+        - name: dots
+          in: query
+          schema: { type: integer, minimum: 0, maximum: 3 }
+      responses:
+        "200":
+          description: What they are now.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string }
+                  changed: { type: integer }
+                  now: { type: string }
+        "400": { $ref: "#/components/responses/Error" }
+
+  /api/dot:
+    post:
+      tags: [write]
+      summary: Dot a note — again for two dots, three, then none
+      parameters:
+        - $ref: "#/components/parameters/part"
+        - $ref: "#/components/parameters/measure"
+        - $ref: "#/components/parameters/at"
+      responses:
+        "200":
+          description: What it is now.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  measure: { type: integer }
+                  at: { type: integer }
+                  dots: { type: integer }
+                  dur: { type: string }
+        "400": { $ref: "#/components/responses/Error" }
+
+  /api/accidental:
+    post:
+      tags: [write]
+      summary: Write an accidental, or take one off
+      description: |
+        Asking for the accidental a note already has takes it off, so each
+        button is its own undo. The written accidental decides how the note
+        sounds; with none, the key signature decides.
+      parameters:
+        - $ref: "#/components/parameters/part"
+        - $ref: "#/components/parameters/measure"
+        - $ref: "#/components/parameters/at"
+        - $ref: "#/components/parameters/sel"
+        - name: accidental
+          in: query
+          schema: { $ref: "#/components/schemas/Accidental" }
+        - name: cycle
+          in: query
+          description: A step sharper or flatter, instead of naming one.
+          schema: { type: string, enum: [up, down] }
+      responses:
+        "200": { $ref: "#/components/responses/Changed" }
+        "400": { $ref: "#/components/responses/Error" }
+
+  /api/tuplet:
+    post:
+      tags: [write]
+      summary: Make a tuplet of the selection, or free one
+      parameters:
+        - $ref: "#/components/parameters/part"
+        - $ref: "#/components/parameters/measure"
+        - $ref: "#/components/parameters/at"
+        - $ref: "#/components/parameters/sel"
+        - name: n
+          in: query
+          description: How many in the time of how many fewer — 3 for a triplet. `0` frees it.
+          schema: { type: integer }
+      responses:
+        "200":
+          description: What was made or freed.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  tuplet: { type: integer }
+                  members: { type: integer }
+                  normal: { type: integer }
+                  measure: { type: integer }
+                  at: { type: integer }
+                  freed: { type: integer }
+                  kept: { type: integer }
+                  removed: { type: integer }
+        "400": { $ref: "#/components/responses/Error" }
+
+  /api/tremolo:
+    post:
+      tags: [marks]
+      summary: Slashes through the stem, or between two notes
+      parameters:
+        - $ref: "#/components/parameters/part"
+        - $ref: "#/components/parameters/measure"
+        - $ref: "#/components/parameters/at"
+        - $ref: "#/components/parameters/sel"
+        - name: strokes
+          in: query
+          schema: { type: integer, minimum: 0, maximum: 5 }
+        - name: buzz
+          in: query
+          schema: { type: string, enum: ["0", "1"] }
+        - name: pair
+          in: query
+          description: Between two notes rather than on one.
+          schema: { type: string, enum: ["0", "1"] }
+      responses:
+        "200": { $ref: "#/components/responses/Changed" }
+        "400": { $ref: "#/components/responses/Error" }
+
+  # ── marks on the notes ────────────────────────────────────────────────────
+
+  /api/beam:
+    post:
+      tags: [marks]
+      summary: Beam notes together, break a beam, or leave it to the engraver
+      description: |
+        `join` makes the selection one group. `start` opens a group at the
+        note, which is how a beam is broken without taking that note off the
+        beam — the engraver closes the group before it. `break` takes the
+        selection off any beam. `auto` hands the decision back.
+      parameters:
+        - $ref: "#/components/parameters/part"
+        - $ref: "#/components/parameters/measure"
+        - $ref: "#/components/parameters/at"
+        - $ref: "#/components/parameters/sel"
+        - name: beam
+          in: query
+          schema: { type: string, enum: [join, start, break, none, auto], default: join }
+      responses:
+        "200": { $ref: "#/components/responses/Changed" }
+        "400": { $ref: "#/components/responses/Error" }
+
+  /api/slur:
+    post:
+      tags: [marks]
+      summary: Arc a slur over a passage
+      parameters:
+        - $ref: "#/components/parameters/part"
+        - $ref: "#/components/parameters/measure"
+        - $ref: "#/components/parameters/at"
+        - $ref: "#/components/parameters/sel"
+        - name: slur
+          in: query
+          description: "`none` takes it off. Anything else draws one, and needs two notes or more."
+          schema: { type: string }
+      responses:
+        "200": { $ref: "#/components/responses/Changed" }
+        "400": { $ref: "#/components/responses/Error" }
+
+  /api/tie:
+    post:
+      tags: [marks]
+      summary: Hold a note into the next one
+      description: |
+        One note is enough to say it: the note it runs to is the one that
+        follows, across the barline if that is where it is. A chord is tied
+        notehead by notehead — `step` names one, no step at all means all of
+        them.
+      parameters:
+        - $ref: "#/components/parameters/part"
+        - $ref: "#/components/parameters/measure"
+        - $ref: "#/components/parameters/at"
+        - $ref: "#/components/parameters/sel"
+        - name: tie
+          in: query
+          schema: { type: string, enum: [on, none], default: on }
+        - name: step
+          in: query
+          description: One notehead of a chord.
+          schema: { type: integer }
+      responses:
+        "200": { $ref: "#/components/responses/Changed" }
+        "400": { $ref: "#/components/responses/Error" }
+
+  /api/stem:
+    post:
+      tags: [marks]
+      summary: Which way the stems point
+      parameters:
+        - $ref: "#/components/parameters/part"
+        - $ref: "#/components/parameters/measure"
+        - $ref: "#/components/parameters/at"
+        - $ref: "#/components/parameters/sel"
+        - name: stem
+          in: query
+          schema: { type: string, enum: [auto, up, down] }
+      responses:
+        "200": { $ref: "#/components/responses/Changed" }
+        "400": { $ref: "#/components/responses/Error" }
+
+  /api/articulation:
+    post:
+      tags: [marks]
+      summary: A staccato dot, an accent, a fermata
+      parameters:
+        - $ref: "#/components/parameters/part"
+        - $ref: "#/components/parameters/measure"
+        - $ref: "#/components/parameters/at"
+        - $ref: "#/components/parameters/sel"
+        - name: articulation
+          in: query
+          schema:
+            type: string
+            enum: [none, staccato, staccatissimo, accent, tenuto, marcato, marcato down, fermata, up-bow, down-bow]
+      responses:
+        "200": { $ref: "#/components/responses/Changed" }
+        "400": { $ref: "#/components/responses/Error" }
+
+  /api/dynamic:
+    post:
+      tags: [marks]
+      summary: A dynamic under the staff
+      parameters:
+        - $ref: "#/components/parameters/part"
+        - $ref: "#/components/parameters/measure"
+        - $ref: "#/components/parameters/at"
+        - $ref: "#/components/parameters/sel"
+        - name: dynamic
+          in: query
+          schema:
+            type: string
+            enum: [none, niente, pppp, ppp, pp, p, mp, mf, f, ff, fff, ffff, sfz, sf, fp, rfz]
+      responses:
+        "200": { $ref: "#/components/responses/Changed" }
+        "400": { $ref: "#/components/responses/Error" }
+
+  /api/hairpin:
+    post:
+      tags: [marks]
+      summary: A swell over a passage
+      description: "Needs a range: a hairpin that opens and closes in the same place draws nothing."
+      parameters:
+        - $ref: "#/components/parameters/part"
+        - $ref: "#/components/parameters/measure"
+        - $ref: "#/components/parameters/at"
+        - $ref: "#/components/parameters/sel"
+        - name: hairpin
+          in: query
+          schema: { type: string, enum: [none, cresc, crescendo, dim, diminuendo, decrescendo] }
+      responses:
+        "200": { $ref: "#/components/responses/Changed" }
+        "400": { $ref: "#/components/responses/Error" }
+
+  /api/octave:
+    post:
+      tags: [marks]
+      summary: An octave line over or under a passage
+      parameters:
+        - $ref: "#/components/parameters/part"
+        - $ref: "#/components/parameters/measure"
+        - $ref: "#/components/parameters/at"
+        - $ref: "#/components/parameters/sel"
+        - name: octave
+          in: query
+          schema: { type: string, enum: [none, 8va, 8vb, 15ma, 15mb, "1", "-1", "2", "-2", up, down] }
+      responses:
+        "200": { $ref: "#/components/responses/Changed" }
+        "400": { $ref: "#/components/responses/Error" }
+
+  /api/text:
+    post:
+      tags: [marks]
+      summary: Words on a note
+      parameters:
+        - $ref: "#/components/parameters/part"
+        - $ref: "#/components/parameters/measure"
+        - $ref: "#/components/parameters/at"
+        - $ref: "#/components/parameters/sel"
+        - { name: text, in: query, required: true, schema: { type: string } }
+        - { name: placement, in: query, schema: { type: string, enum: [above, below] } }
+        - { name: italic, in: query, schema: { type: string, enum: ["0", "1"] } }
+        - { name: bold, in: query, schema: { type: string, enum: ["0", "1"] } }
+      responses:
+        "200":
+          description: What was written.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string }
+                  text: { type: string }
+        "400": { $ref: "#/components/responses/Error" }
+
+  /api/lyrics:
+    post:
+      tags: [marks]
+      summary: A line of words under a staff
+      description: Syllables are split across the notes of the staff, one verse at a time.
+      parameters:
+        - $ref: "#/components/parameters/part"
+        - { name: text, in: query, required: true, schema: { type: string } }
+        - { name: verse, in: query, schema: { type: integer, default: 0 } }
+      responses:
+        "200":
+          description: How much landed.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  set: { type: integer }
+                  notes: { type: integer }
+                  syllables: { type: integer }
+        "400": { $ref: "#/components/responses/Error" }
+
+  /api/getlyrics:
+    get:
+      tags: [marks]
+      summary: The words under a staff, as one line
+      parameters:
+        - $ref: "#/components/parameters/part"
+        - { name: verse, in: query, schema: { type: integer } }
+      responses:
+        "200":
+          description: The verse.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  text: { type: string }
+                  verse: { type: integer }
+                  verses: { type: integer }
+                  notes: { type: integer }
+
+  /api/chordsymbol:
+    post:
+      tags: [marks]
+      summary: A chord name over a note, with its fingering
+      parameters:
+        - $ref: "#/components/parameters/part"
+        - $ref: "#/components/parameters/measure"
+        - $ref: "#/components/parameters/at"
+        - $ref: "#/components/parameters/sel"
+        - name: chord
+          in: query
+          description: As a musician writes it — `Em6`, `Bb7`, `C/G`, `N.C.`
+          schema: { type: string }
+        - { name: frame, in: query, description: "A fret diagram, as a string of frets.", schema: { type: string } }
+        - { name: firstfret, in: query, schema: { type: integer } }
+        - { name: barre, in: query, schema: { type: string } }
+        - { name: name, in: query, schema: { type: string } }
+      responses:
+        "200":
+          description: What was written.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string }
+                  chord: { type: string }
+        "400": { $ref: "#/components/responses/Error" }
+
+  /api/chordfingering:
+    get:
+      tags: [marks]
+      summary: The frets for a chord name
+      parameters:
+        - { name: chord, in: query, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: The shape, if one is known.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  chord: { type: string }
+                  found: { type: boolean }
+                  frets: { type: string }
+
+  /api/chordpreview:
+    get:
+      tags: [marks, render]
+      summary: A chord diagram, drawn
+      parameters:
+        - { name: chord, in: query, schema: { type: string } }
+        - { name: name, in: query, schema: { type: string } }
+        - { name: frame, in: query, schema: { type: string } }
+        - { name: firstfret, in: query, schema: { type: integer } }
+        - { name: barre, in: query, schema: { type: string } }
+        - { name: space, in: query, schema: { type: number } }
+      responses:
+        "200":
+          description: The diagram.
+          content:
+            image/svg+xml:
+              schema: { type: string }
+
+  /api/insertsymbol:
+    post:
+      tags: [marks]
+      summary: Put a symbol from the pack into the music
+      parameters:
+        - $ref: "#/components/parameters/part"
+        - $ref: "#/components/parameters/measure"
+        - $ref: "#/components/parameters/at"
+        - { name: name, in: query, required: true, schema: { type: string } }
+        - { name: attach, in: query, description: "Attach it to the element rather than standing it in the bar.", schema: { type: string } }
+        - { name: placement, in: query, schema: { type: string, enum: [above, below] } }
+      responses:
+        "200": { $ref: "#/components/responses/Status" }
+        "400": { $ref: "#/components/responses/Error" }
+
+  /api/movesymbol:
+    post:
+      tags: [marks]
+      summary: Nudge a symbol off where it was placed
+      parameters:
+        - $ref: "#/components/parameters/part"
+        - $ref: "#/components/parameters/measure"
+        - $ref: "#/components/parameters/at"
+        - { name: name, in: query, schema: { type: string } }
+        - { name: dx, in: query, description: "Staff spaces.", schema: { type: number } }
+        - { name: dy, in: query, schema: { type: number } }
+        - { name: absolute, in: query, description: "`1` sets the offset rather than adding to it.", schema: { type: string } }
+      responses:
+        "200":
+          description: Whether it moved.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties: { moved: { type: boolean } }
+        "400": { $ref: "#/components/responses/Error" }
+
+  # ── the shape of the piece ────────────────────────────────────────────────
+
+  /api/addmeasure:
+    post:
+      tags: [structure]
+      summary: Add a bar to every staff
+      responses:
+        "200":
+          description: How many bars there are now.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties: { measures: { type: integer } }
+
+  /api/splitmeasure:
+    post:
+      tags: [structure]
+      summary: Cut a bar in two at a note
+      parameters:
+        - $ref: "#/components/parameters/part"
+        - $ref: "#/components/parameters/measure"
+        - $ref: "#/components/parameters/at"
+      responses:
+        "200":
+          description: Where the cut fell.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string }
+                  measure: { type: integer }
+        "400": { $ref: "#/components/responses/Error" }
+
+  /api/joinmeasure:
+    post:
+      tags: [structure]
+      summary: Join a bar to the one after it
+      parameters:
+        - $ref: "#/components/parameters/measure"
+      responses:
+        "200":
+          description: The joined bar.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string }
+                  measure: { type: integer }
+        "400": { $ref: "#/components/responses/Error" }
+
+  /api/clearmeasure:
+    post:
+      tags: [structure]
+      summary: Empty a bar
+      parameters:
+        - $ref: "#/components/parameters/part"
+        - $ref: "#/components/parameters/measure"
+      responses:
+        "200":
+          description: How much went.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string }
+                  removed: { type: integer }
+        "400": { $ref: "#/components/responses/Error" }
+
+  /api/measurerepeat:
+    post:
+      tags: [structure]
+      summary: Write a bar as "play the last one again"
+      parameters:
+        - $ref: "#/components/parameters/part"
+        - $ref: "#/components/parameters/measure"
+        - { name: bars, in: query, description: "One or two bars repeated.", schema: { type: integer, enum: [0, 1, 2] } }
+      responses:
+        "200":
+          description: What was written.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string }
+                  bars: { type: integer }
+        "400": { $ref: "#/components/responses/Error" }
+
+  /api/barline:
+    post:
+      tags: [structure]
+      summary: The line that closes a bar
+      parameters:
+        - $ref: "#/components/parameters/part"
+        - $ref: "#/components/parameters/measure"
+        - name: style
+          in: query
+          required: true
+          schema:
+            type: string
+            enum: [single, double, final, repeat-start, repeat-end, repeat-both, none]
+      responses:
+        "200": { $ref: "#/components/responses/Status" }
+        "400": { $ref: "#/components/responses/Error" }
+
+  /api/ending:
+    post:
+      tags: [structure]
+      summary: A volta bracket over bars — first time, second time
+      parameters:
+        - { name: measure, in: query, required: true, schema: { type: integer } }
+        - { name: to, in: query, description: "The last bar it covers.", schema: { type: integer } }
+        - { name: numbers, in: query, description: "Which times it is played: `1`, `2`, `1,2`.", schema: { type: string } }
+        - { name: ending, in: query, description: "`none` takes it away.", schema: { type: string } }
+        - { name: open, in: query, description: "A bracket with no hook at the end.", schema: { type: string } }
+      responses:
+        "200": { $ref: "#/components/responses/Changed" }
+        "400": { $ref: "#/components/responses/Error" }
+
+  /api/jump:
+    post:
+      tags: [structure]
+      summary: A sign or a direction — segno, coda, D.C., D.S. al fine
+      parameters:
+        - { name: measure, in: query, schema: { type: integer } }
+        - name: sign
+          in: query
+          description: A mark at the bar.
+          schema: { type: string, enum: [none, segno, coda, fine, tocoda] }
+        - name: jump
+          in: query
+          description: A direction at the end of the bar.
+          schema:
+            type: string
+            enum: [none, dc, dc-fine, dc-coda, ds, ds-fine, ds-coda]
+      responses:
+        "200": { $ref: "#/components/responses/Changed" }
+        "400": { $ref: "#/components/responses/Error" }
+
+  /api/marker:
+    post:
+      tags: [structure]
+      summary: A rehearsal mark over a bar
+      parameters:
+        - { name: measure, in: query, schema: { type: integer } }
+        - { name: text, in: query, description: "Empty takes it away.", schema: { type: string } }
+      responses:
+        "200":
+          description: What is there now.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string }
+                  measure: { type: integer }
+                  text: { type: string }
+        "400": { $ref: "#/components/responses/Error" }
+
+  /api/setkey:
+    post:
+      tags: [structure]
+      summary: The key signature, for the piece or from a bar on
+      parameters:
+        - $ref: "#/components/parameters/part"
+        - name: fifths
+          in: query
+          required: true
+          description: Sharps positive, flats negative. 1 is G major, -3 is E flat.
+          schema: { type: integer, minimum: -7, maximum: 7 }
+        - name: at
+          in: query
+          description: The bar the change begins at. Without one it is the score's own key.
+          schema: { type: integer }
+        - name: remove
+          in: query
+          description: "`1` takes a change away rather than writing one."
+          schema: { type: string }
+      responses:
+        "200":
+          description: Where it was written.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string }
+                  measure: { type: integer }
+                  where: { type: string }
+                  removed: { type: boolean }
+        "400": { $ref: "#/components/responses/Error" }
+
+  /api/tempo:
+    post:
+      tags: [structure, play]
+      summary: A metronome mark
+      description: |
+        A number alone says nothing: 120 in 6/8 is a different speed
+        depending on whether it counts quarters or dotted quarters, so the
+        beat is named with it.
+      parameters:
+        - { name: bpm, in: query, required: true, schema: { type: integer } }
+        - name: unit
+          in: query
+          description: The beat it counts.
+          schema: { $ref: "#/components/schemas/NoteValue" }
+        - { name: dotted, in: query, schema: { type: string, enum: ["0", "1"] } }
+        - { name: text, in: query, description: "Words beside it — Allegro.", schema: { type: string } }
+        - { name: parens, in: query, schema: { type: string, enum: ["0", "1"] } }
+        - { name: measure, in: query, description: "A change partway through.", schema: { type: integer } }
+        - { name: remove, in: query, schema: { type: string } }
+      responses:
+        "200":
+          description: What it is now.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string }
+                  bpm: { type: integer }
+                  measure: { type: integer }
+        "400": { $ref: "#/components/responses/Error" }
+
+  /api/addstaff:
+    post:
+      tags: [structure]
+      summary: Add a staff
+      description: |
+        The key and the meter come from the score, not from nothing, and the
+        clef and the transposition follow from the instrument — a new staff
+        in C major under a piece in five flats would be wrong on sight.
+      parameters:
+        - name: instrument
+          in: query
+          description: A name — `flute`, `cello` — or a MIDI program number. `/api/instruments` lists them.
+          schema: { type: string }
+        - name: clef
+          in: query
+          schema: { type: string, enum: [treble, bass, alto, tenor, percussion] }
+        - { name: name, in: query, description: "What to call it on the page.", schema: { type: string } }
+        - { name: at, in: query, description: "Where among the staves to put it.", schema: { type: integer } }
+      responses:
+        "200":
+          description: Where it went.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string }
+                  staves: { type: integer }
+                  at: { type: integer }
+        "400": { $ref: "#/components/responses/Error" }
+
+  /api/removestaff:
+    post:
+      tags: [structure]
+      summary: Take a staff out
+      parameters:
+        - $ref: "#/components/parameters/part"
+      responses:
+        "200":
+          description: How many are left.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string }
+                  staves: { type: integer }
+        "400": { $ref: "#/components/responses/Error" }
+
+  /api/movestaff:
+    post:
+      tags: [structure]
+      summary: Move a staff up or down the score
+      parameters:
+        - $ref: "#/components/parameters/part"
+        - { name: to, in: query, required: true, schema: { type: integer } }
+      responses:
+        "200":
+          description: Where it is now.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string }
+                  at: { type: integer }
+        "400": { $ref: "#/components/responses/Error" }
+
+  /api/staff:
+    post:
+      tags: [structure]
+      summary: Change a staff — its name, instrument, clef, meter, transposition
+      parameters:
+        - $ref: "#/components/parameters/part"
+        - { name: name, in: query, schema: { type: string } }
+        - { name: instrument, in: query, schema: { type: string } }
+        - { name: clef, in: query, schema: { type: string, enum: [treble, bass, alto, tenor, percussion] } }
+        - { name: time, in: query, description: "A meter, as `4/4` or `6/8`.", schema: { type: string } }
+        - { name: at, in: query, description: "The bar a meter change begins at.", schema: { type: integer } }
+        - { name: transpose, in: query, description: "Semitones below what is written.", schema: { type: integer } }
+        - { name: hidden, in: query, description: "Out of the drawing, still in the score.", schema: { type: string, enum: ["0", "1"] } }
+      responses:
+        "200":
+          description: What changed.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string }
+                  changed: { type: string }
+        "400": { $ref: "#/components/responses/Error" }
+
+  /api/group:
+    post:
+      tags: [structure]
+      summary: Brace or bracket a run of staves together
+      parameters:
+        - { name: first, in: query, required: true, schema: { type: integer } }
+        - { name: last, in: query, required: true, schema: { type: integer } }
+        - { name: symbol, in: query, schema: { type: string, enum: [brace, line, none] } }
+        - { name: name, in: query, schema: { type: string } }
+        - { name: barlines, in: query, description: "Run the barlines through the gaps.", schema: { type: string, enum: ["0", "1"] } }
+      responses:
+        "200":
+          description: The groups now in the score.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string }
+                  groups: { type: integer }
+        "400": { $ref: "#/components/responses/Error" }
+
+  # ── drawing, and where the drawing put things ─────────────────────────────
+
+  /api/layout:
+    get:
+      tags: [render]
+      summary: How big the drawing is
+      responses:
+        "200":
+          description: In staff spaces.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  width: { type: number }
+                  height: { type: number }
+
+  /api/hits:
+    get:
+      tags: [render]
+      summary: Where everything landed on the page
+      description: |
+        The engraver is the only thing that knows where a note went, and this
+        is it saying so: one region per bar, with every element's position in
+        staff spaces, plus the barlines, the dynamics, the hairpins, the tempo
+        marks and the bands over each bar. A click becomes a place in the
+        music by looking it up here.
+      parameters:
+        - name: mode
+          in: query
+          schema: { type: string, enum: [strip, page] }
+      responses:
+        "200":
+          description: The map.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Hits" }
+
+  /api/playback:
+    get:
+      tags: [play, render]
+      summary: The performance as a list of sounds
+      description: Every note with the moment it sounds and how long it lasts, after repeats, ties and jumps have been worked out.
+      responses:
+        "200":
+          description: The timeline.
+          content:
+            application/json:
+              schema: { type: object }
+
+  /font.otf:
+    get:
+      tags: [render]
+      summary: The music font the drawing uses
+      responses:
+        "200":
+          description: The font.
+          content:
+            font/otf:
+              schema: { type: string, format: binary }
+
+  /symbol.png:
+    get:
+      tags: [render]
+      summary: One symbol from the pack, as an image
+      parameters:
+        - { name: name, in: query, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: The symbol.
+          content:
+            image/png:
+              schema: { type: string, format: binary }
+
+  /keysig.svg:
+    get:
+      tags: [render]
+      summary: A key signature, drawn on its own
+      description: "For a picker: the sharps and flats as they will appear, rather than the words \"D major\"."
+      parameters:
+        - { name: fifths, in: query, schema: { type: integer, minimum: -7, maximum: 7 } }
+        - { name: from, in: query, description: "The signature being changed from, so the naturals that cancel it are drawn.", schema: { type: integer } }
+        - { name: clef, in: query, schema: { type: string, enum: [treble, bass, alto, tenor, percussion] } }
+        - { name: space, in: query, schema: { type: number } }
+      responses:
+        "200":
+          description: The drawing.
+          content:
+            image/svg+xml:
+              schema: { type: string }
+
+  /timesig.svg:
+    get:
+      tags: [render]
+      summary: A time signature, drawn on its own
+      parameters:
+        - { name: meter, in: query, description: "As `4/4`, `6/8`, `c` or `c|`.", schema: { type: string } }
+        - { name: space, in: query, schema: { type: number } }
+      responses:
+        "200":
+          description: The drawing.
+          content:
+            image/svg+xml:
+              schema: { type: string }
+
+  /api/keysignatures:
+    get:
+      tags: [structure]
+      summary: Every key signature, with its name
+      responses:
+        "200":
+          description: The list.
+          content:
+            application/json:
+              schema: { type: array, items: { type: object } }
+
+  /api/instruments:
+    get:
+      tags: [structure]
+      summary: Every instrument a staff can be
+      responses:
+        "200":
+          description: The list, with the clef and transposition each implies.
+          content:
+            application/json:
+              schema: { type: array, items: { type: object } }
+
+  /api/percussion:
+    get:
+      tags: [structure]
+      summary: The drums of a kit, and which line each sits on
+      parameters:
+        - { name: kit, in: query, schema: { type: string } }
+      responses:
+        "200":
+          description: The kit.
+          content:
+            application/json:
+              schema: { type: object }
+
+  /api/symbols:
+    post:
+      tags: [render]
+      summary: The symbol pack this score carries
+      responses:
+        "200":
+          description: The symbols, by name.
+          content:
+            application/json:
+              schema: { type: object }
+
+  /api/importsymbols:
+    post:
+      tags: [render]
+      summary: Add symbols from a pack
+      parameters:
+        - { name: path, in: query, schema: { type: string } }
+      requestBody:
+        content:
+          application/octet-stream:
+            schema: { type: string, format: binary }
+      responses:
+        "200":
+          description: What came in.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string }
+                  added: { type: integer }
+                  replaced: { type: integer }
+        "400": { $ref: "#/components/responses/Error" }
+
+  /api/symbolimport:
+    post:
+      tags: [render]
+      summary: Add one symbol from an image
+      description: An XPM, PNG, GIF or JPEG sent in the body, traced into a symbol the engraver can draw.
+      requestBody:
+        content:
+          application/octet-stream:
+            schema: { type: string, format: binary }
+      responses:
+        "200":
+          description: The symbol.
+          content:
+            application/json:
+              schema: { type: object }
+        "400": { $ref: "#/components/responses/Error" }
+
+  # ── sound ─────────────────────────────────────────────────────────────────
+
+  /api/play/start:
+    post:
+      tags: [play]
+      summary: Begin playing, and get a handle to pull audio from
+      description: |
+        The synthesizer runs here and the audio is fetched in chunks, so a
+        browser with no soundfont of its own can still play the score.
+      parameters:
+        - { name: from, in: query, description: "The moment to start at, in seconds.", schema: { type: number } }
+      responses:
+        "200":
+          description: The stream.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id: { type: string }
+                  rate: { type: integer }
+                  chunk: { type: integer }
+                  duration: { type: number }
+                  font: { type: string }
+        "400": { $ref: "#/components/responses/Error" }
+
+  /api/play/chunk:
+    get:
+      tags: [play]
+      summary: The next piece of audio
+      parameters:
+        - { name: id, in: query, required: true, schema: { type: string } }
+        - { name: frames, in: query, schema: { type: integer } }
+      responses:
+        "200":
+          description: Raw samples.
+          content:
+            application/octet-stream:
+              schema: { type: string, format: binary }
+        "400": { $ref: "#/components/responses/Error" }
+
+  /api/play/stop:
+    post:
+      tags: [play]
+      summary: Stop playing
+      parameters:
+        - { name: id, in: query, schema: { type: string } }
+      responses:
+        "200": { $ref: "#/components/responses/Status" }
+
+  /api/soundfonts:
+    get:
+      tags: [play]
+      summary: The soundfonts available, and which is in use
+      parameters:
+        - { name: font, in: query, description: "Choose one.", schema: { type: string } }
+        - { name: assign, in: query, description: "Assign a staff to a voice in it.", schema: { type: string } }
+      responses:
+        "200":
+          description: What there is.
+          content:
+            application/json:
+              schema: { type: object }
+
+  /api/soundfont/fetch:
+    post:
+      tags: [play]
+      summary: Download a soundfont
+      parameters:
+        - { name: url, in: query, schema: { type: string } }
+        - { name: id, in: query, schema: { type: string } }
+        - { name: name, in: query, schema: { type: string } }
+      responses:
+        "200":
+          description: The font that arrived.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string }
+                  font: { type: string }
+        "400": { $ref: "#/components/responses/Error" }
+
+  /api/soundfont/pick:
+    post:
+      tags: [play]
+      summary: Choose a soundfont from the disk, through a panel
+      responses:
+        "200":
+          description: What was chosen.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string }
+                  font: { type: string }
+                  cancelled: { type: boolean }
+                  unavailable: { type: boolean }
+
+  /api/soundfont/load:
+    post:
+      tags: [play]
+      summary: Take a soundfont sent in the body
+      parameters:
+        - { name: name, in: query, schema: { type: string } }
+      requestBody:
+        content:
+          application/octet-stream:
+            schema: { type: string, format: binary }
+      responses:
+        "200":
+          description: The font.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string }
+                  font: { type: string }
+        "400": { $ref: "#/components/responses/Error" }
+
+  /api/soundfont/presets:
+    get:
+      tags: [play]
+      summary: The voices inside a soundfont
+      parameters:
+        - { name: font, in: query, schema: { type: string } }
+      responses:
+        "200":
+          description: The presets.
+          content:
+            application/json:
+              schema: { type: array, items: { type: object } }
+
+  /api/soundfont/collection:
+    get:
+      tags: [play]
+      summary: The catalogue of soundfonts that can be downloaded
+      responses:
+        "200":
+          description: The catalogue.
+          content:
+            application/json:
+              schema: { type: object }
+
+  # ── the program itself ────────────────────────────────────────────────────
+
+  /api/undo:
+    post:
+      tags: [app]
+      summary: Take back the last edit
+      responses:
+        "200": { $ref: "#/components/responses/UndoState" }
+
+  /api/redo:
+    post:
+      tags: [app]
+      summary: Do it again
+      responses:
+        "200": { $ref: "#/components/responses/UndoState" }
+
+  /api/cursor:
+    post:
+      tags: [app]
+      summary: Remember where the writing cursor is
+      description: Saved with the file, so opening it again puts the cursor back.
+      parameters:
+        - $ref: "#/components/parameters/part"
+        - $ref: "#/components/parameters/measure"
+        - $ref: "#/components/parameters/at"
+        - $ref: "#/components/parameters/step"
+      responses:
+        "200": { $ref: "#/components/responses/Status" }
+
+  /api/view:
+    post:
+      tags: [app]
+      summary: What the drawing shows — staff names, bar numbers
+      parameters:
+        - { name: names, in: query, schema: { type: string, enum: ["0", "1"] } }
+        - { name: numbers, in: query, schema: { type: string, enum: ["0", "1"] } }
+      responses:
+        "200":
+          description: What it shows now.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string }
+                  names: { type: boolean }
+                  numbers: { type: boolean }
+                  changed: { type: boolean }
+
+  /api/settings:
+    post:
+      tags: [app]
+      summary: The program's own settings
+      description: Keyboard shortcuts, the playback soundfont, whether a .gscore carries a PDF of itself.
+      responses:
+        "200":
+          description: The settings.
+          content:
+            application/json:
+              schema: { type: object }
+
+  /api/openbrowser:
+    post:
+      tags: [app]
+      summary: Open a path or a URL in the platform's browser
+      parameters:
+        - { name: path, in: query, required: true, schema: { type: string } }
+      responses:
+        "200": { $ref: "#/components/responses/Status" }
+
+components:
+  parameters:
+    part:
+      name: part
+      in: query
+      description: The staff, counting from zero.
+      schema: { type: integer, default: 0 }
+    measure:
+      name: measure
+      in: query
+      description: The bar, counting from zero.
+      schema: { type: integer, default: 0 }
+    at:
+      name: at
+      in: query
+      description: |
+        Which element in the bar, counting from one and naming the one before
+        the cursor. `0` or a number past the end means the last one.
+      schema: { type: integer }
+    sel:
+      name: sel
+      in: query
+      description: |
+        Several elements at once, as `staff:measure:index` triples separated
+        by commas and counting from zero — `0:0:0,0:0:1`. Where a route takes
+        this and `part`/`measure`/`at`, this wins.
+      schema: { type: string }
+    step:
+      name: step
+      in: query
+      description: |
+        A position on the staff: 0 is the bottom line, each step the next line
+        or space up, negative below. The clef decides what note that is.
+      schema: { type: integer }
+
+  responses:
+    Status:
+      description: Done.
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              status: { type: string, examples: [ok] }
+    Changed:
+      description: How many things it applied to.
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              changed: { type: integer }
+    UndoState:
+      description: What can be taken back now.
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              status: { type: string }
+              canUndo: { type: boolean }
+              canRedo: { type: boolean }
+              tune: { type: integer }
+    Error:
+      description: |
+        Refused, with one line of plain text saying why — written to be read
+        rather than matched against.
+      content:
+        text/plain:
+          schema: { type: string, examples: ["no such measure"] }
+
+  schemas:
+    NoteValue:
+      type: string
+      description: How long a note lasts, before any dots.
+      enum:
+        - double whole
+        - whole
+        - half
+        - quarter
+        - eighth
+        - sixteenth
+        - thirty-second
+        - sixty-fourth
+        - hundred-twenty-eighth
+
+    Accidental:
+      type: string
+      enum: [none, natural, sharp, flat, double sharp, double flat]
+
+    Info:
+      type: object
+      properties:
+        version: { type: string }
+        filename: { type: string }
+        unsaved:
+          type: boolean
+          description: Edited since it was last written out.
+        title: { type: string }
+        subtitle: { type: string }
+        composer: { type: string }
+        tempo: { type: integer }
+        tempoUnit: { $ref: "#/components/schemas/NoteValue" }
+        tempoDotted: { type: boolean }
+        tempoText: { type: string }
+        tempoParens: { type: boolean }
+        tempoChanges:
+          type: object
+          description: Speeds written partway through, keyed by the bar they start at.
+          additionalProperties:
+            type: object
+            properties:
+              bpm: { type: integer }
+              unit: { type: string }
+              dotted: { type: boolean }
+              text: { type: string }
+              parens: { type: boolean }
+        formats:
+          type: array
+          description: |
+            The formats that can be opened, by name — "ABC", "MuseScore",
+            "MusicXML", "NoteWorthy", "gscore". Not the ones that can be
+            written: for those, see /api/convert.
+          items: { type: string }
+        tunes:
+          type: array
+          description: The pieces in a tune book, listed only when there is more than one.
+          items:
+            type: object
+            properties:
+              index: { type: integer }
+              title: { type: string }
+        canUndo: { type: boolean }
+        canRedo: { type: boolean }
+        current:
+          type: integer
+          description: Which piece of a tune book is open.
+        native:
+          type: boolean
+          description: Running inside the desktop application.
+        local:
+          type: boolean
+          description: The browser is on this machine, so paths may be used.
+        inBrowser:
+          type: boolean
+          description: The core is the page itself, as WebAssembly, with no disk behind it.
+        warning:
+          type: string
+          description: One line about the file that was opened.
+        log:
+          type: array
+          description: Everything in the file that could not be read, line by line.
+          items: { type: string }
+        cursor:
+          type: object
+          properties:
+            part: { type: integer }
+            measure: { type: integer }
+            at: { type: integer }
+            step: { type: integer }
+        parts:
+          type: array
+          items:
+            type: object
+            properties:
+              name: { type: string }
+              instrument: { type: string }
+              clef: { type: string }
+              key: { type: string }
+              time: { type: string }
+              measures: { type: integer }
+              notes: { type: integer }
+              transposeSemitones:
+                type: integer
+                description: How far below what is written this staff sounds.
+              hidden: { type: boolean }
+
+    Hits:
+      type: object
+      description: Where the engraver put everything, in staff spaces.
+      properties:
+        page: { type: object }
+        strip: { type: object }
+        staffHeight: { type: number }
+        hits:
+          type: array
+          description: One per drawn bar.
+          items:
+            type: object
+            properties:
+              part: { type: integer }
+              measure: { type: integer }
+              x0: { type: number }
+              x1: { type: number }
+              staffTop:
+                type: number
+                description: The y of the staff's top line.
+              staffHeight: { type: number }
+              clef: { type: string }
+              fifths: { type: integer }
+              keyChange: { type: boolean }
+              timeChange: { type: boolean }
+              full:
+                type: boolean
+                description: The bar already holds as much time as its meter allows.
+              elements:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    ref: { type: integer }
+                    index: { type: integer }
+                    x: { type: number }
+                    y:
+                      type: number
+                      description: The topmost notehead.
+                    y2:
+                      type: number
+                      description: The lowest; they differ only for a chord.
+                    width: { type: number }
+                    at:
+                      type: number
+                      description: Where in the bar it begins, as a fraction — time, not distance.
+                    steps:
+                      type: array
+                      description: The staff steps of its noteheads, lowest first.
+                      items: { type: integer }
+                    kind: { type: string, enum: [note, chord, rest, symbol] }
+                    chord: { type: string }
+                    chordFrets: { type: string }
+        barlines: { type: array, items: { type: object } }
+        headers: { type: array, items: { type: object } }
+        strips:
+          type: array
+          description: The band over each bar, which is how a whole bar is picked up.
+          items: { type: object }
+        dynamics: { type: array, items: { type: object } }
+        hairpins: { type: array, items: { type: object } }
+        tempos: { type: array, items: { type: object } }

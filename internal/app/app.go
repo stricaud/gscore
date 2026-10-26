@@ -38,6 +38,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/stricaud/gscore/docs"
 	"github.com/stricaud/gscore/internal/brand"
 	"github.com/stricaud/gscore/internal/desktop"
 	"github.com/stricaud/gscore/internal/engrave"
@@ -334,6 +335,9 @@ func (a *App) routes(mux *http.ServeMux) {
 func (a *App) APIRoutes(mux *http.ServeMux) {
 	// Reading: drawings, descriptions, and the pickers. Nothing here changes
 	// the music, so nothing here needs to be undoable.
+	// What all of this is, for whoever is driving it: the description of
+	// every route below, served by the server it describes.
+	mux.HandleFunc("/openapi.yaml", a.handleOpenAPI)
 	mux.HandleFunc("/score.svg", a.handleSVG)
 	mux.HandleFunc("/font.otf", a.handleFont)
 	mux.HandleFunc("/symbol.png", a.handleSymbolPNG)
@@ -485,6 +489,21 @@ func (a *App) handleSVG(w http.ResponseWriter, r *http.Request) {
 	if err := svg.Render(w, lay, ropt); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
+}
+
+// handleOpenAPI serves the description of this API.
+//
+// The same file as docs/openapi.yaml — embedded, not copied, so the document
+// a reader opens in the repository and the one a running gscore hands out
+// cannot say different things. api_test.go holds it to the route table, so
+// what is served here describes what is actually here.
+func (a *App) handleOpenAPI(w http.ResponseWriter, r *http.Request) {
+	// The media type OpenAPI asks for, registered as application/yaml.
+	w.Header().Set("Content-Type", "application/yaml; charset=utf-8")
+	// Read from a machine somewhere else as often as from this one, and a
+	// description nobody can fetch is no description.
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Write(docs.OpenAPI)
 }
 
 func (a *App) handleFont(w http.ResponseWriter, r *http.Request) {

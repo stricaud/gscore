@@ -35,6 +35,10 @@ import (
 type walker struct {
 	b []byte
 	i int
+	// version is the file's own, as major*100+minor, because the records
+	// are not the same size in every one: a note is ten bytes of value in
+	// 1.70 and eight in 1.75.
+	version int
 }
 
 func (w *walker) remaining() int { return len(w.b) - w.i }
@@ -187,6 +191,17 @@ func (w *walker) noteValue() (noteValue, error) {
 
 	// The position is signed and counted from the middle line, as in NWCTXT.
 	nv.step = int(int8(position)) + 4
+	if w.version > 0 && w.version < 175 {
+		// 1.70 counts the other way: downwards from the top line rather
+		// than upwards from the middle, so the same byte names a note
+		// three steps lower and on the other side of the staff.
+		//
+		// Checked against the piece itself. Beethoven's Albumblatt opens
+		// E, D sharp, E, D sharp, E, B, D natural, C, and the eight bytes
+		// are -3, -2, -3, -2, -3, 0, -2, -1: every one of them lands with
+		// this reading and none of them with the other.
+		nv.step = -int(int8(position)) - 3
+	}
 	nv.acc = nwc1Accidentals[accidental&0x07]
 	return nv, nil
 }
@@ -202,7 +217,7 @@ func (w *walker) noteValue() (noteValue, error) {
 // 200 for a 2.0 one. One number because the layout changed at 1.75 and again
 // at 2.0, and comparing against the minor number alone put 2.0 before both.
 func parseNWC1(raw []byte, version int) (*model.Score, error) {
-	w := &walker{b: raw}
+	w := &walker{b: raw, version: version}
 
 	// Header, as nwc.posa describes it.
 	if _, err := w.cstring(); err != nil { // vendor
@@ -342,17 +357,32 @@ func parseNWC1(raw []byte, version int) (*model.Score, error) {
 			searched = true
 		}
 		at := w.i
+		found := at
 		part, err := w.staff(version)
 		if err != nil {
-			// Lose this staff, not the rest of the score — and look for the
-			// next one past this staff's own header. Past the whole of it:
-			// a search beginning one byte in finds "st violins" where the
-			// name was "1st violins", four printable strings again, and
-			// reads the same broken staff for ever.
-			w.i = at
-			w.pastStaffHeader()
+			// Say what went wrong, keep whatever music the staff gave up
+			// before it did, and look for the next staff past this one's
+			// own header. Past the whole of it: a search beginning one byte
+			// in finds "st violins" where the name was "1st violins", four
+			// printable strings again, and reads the same broken staff for
+			// ever.
+			kept := ""
+			if part != nil && countElements(part) > 0 {
+				kept = fmt.Sprintf(", keeping the %d bars read before that",
+					len(part.Measures))
+			}
+			// From where it went wrong, not from where it began: the walk
+			// is already most of the way through this staff's music, and
+			// starting again at the header searches that staff's own
+			// settings and finds four printable strings in them.
+			if !w.atStaffHeader() {
+				w.pastStaffHeader()
+			}
 			if w.findStaffHeader() {
-				lost = append(lost, fmt.Sprintf("staff %d: %v", i+1, err))
+				lost = append(lost, fmt.Sprintf("staff %d: %v%s", i+1, err, kept))
+				if part != nil && countElements(part) > 0 {
+					score.Parts = append(score.Parts, part)
+				}
 				continue
 			}
 		}
@@ -365,8 +395,9 @@ func parseNWC1(raw []byte, version int) (*model.Score, error) {
 				nameInstruments(score)
 				return score, &PartialError{
 					Staves: len(score.Parts), Total: staffCount,
-					Cause: fmt.Errorf("staff %d: %w", i+1, err),
-					Lost:  lost,
+					Cause:      fmt.Errorf("staff %d: %w", i+1, err),
+					Lost:       lost,
+					LostStaves: countStaffLines(lost),
 				}
 			}
 			return nil, fmt.Errorf("nwc: staff %d: %w", i+1, err)
@@ -388,8 +419,9 @@ func parseNWC1(raw []byte, version int) (*model.Score, error) {
 			if len(score.Parts) > 0 {
 				return score, &PartialError{
 					Staves: len(score.Parts), Total: staffCount,
-					Cause: fmt.Errorf("staff %d: the file stops making sense here", i+1),
-					Lost:  lost,
+					Cause:      fmt.Errorf("staff %d: the file stops making sense here", i+1),
+					Lost:       lost,
+					LostStaves: countStaffLines(lost),
 				}
 			}
 			return nil, fmt.Errorf("nwc: staff %d: the file stops making sense here", i+1)
@@ -410,6 +442,17 @@ func parseNWC1(raw []byte, version int) (*model.Score, error) {
 		// it is far more likely to be four printable strings the object
 		// stream made by accident — a staff called "d" — than a real one.
 		if (searched || len(lost) > 0) && countElements(part) == 0 {
+			// Four printable strings in a row is a weak shape and an
+			// object stream makes one by accident here and there. Finding
+			// one with no music behind it means the search stopped too
+			// early, not that the staff is empty — so it goes on looking
+			// from past this one rather than giving up the staff's turn.
+			w.i = found
+			w.pastStaffHeader()
+			if w.findStaffHeader() {
+				i--
+				continue
+			}
 			lost = append(lost, fmt.Sprintf(
 				"staff %d: nothing readable where the next staff should be", i+1))
 			continue
@@ -419,11 +462,35 @@ func parseNWC1(raw []byte, version int) (*model.Score, error) {
 	// Whatever the file did not say about what plays each staff, its own
 	// names usually do.
 	nameInstruments(score)
+	// A 1.70 score is read in part, and says so.
+	//
+	// The notes themselves are right — Beethoven's Albumblatt opens E, D
+	// sharp, E, D sharp, E, B, D natural, C, and that is what comes out,
+	// natural sign and all. What is not right is how far it gets: an
+	// object type this reader does not know turns up partway through a
+	// staff, and the records before it are read with sizes worked out from
+	// one file. A staff that stopped early may have gone astray a little
+	// before it stopped.
+	//
+	// Said out loud rather than left to be discovered. Notes that are
+	// quietly wrong are worse than notes that are missing, because nothing
+	// about the page says anything happened.
+	if version > 0 && version < 175 && len(score.Parts) > 0 {
+		lost = append([]string{
+			"this is a NoteWorthy 1.70 file, which gscore reads only in part: " +
+				"the opening of each staff is right, but a staff that stopped " +
+				"early may be wrong for some bars before it stopped",
+		}, lost...)
+	}
+
 	// Every staff that was gone around is named, even though the score came
 	// back whole: a staff missing from the page without a word about it is
 	// the one thing this reader must never do.
 	if len(lost) > 0 {
-		return score, &PartialError{Staves: len(score.Parts), Total: staffCount, Lost: lost}
+		return score, &PartialError{
+			Staves: len(score.Parts), Total: staffCount,
+			Lost: lost, LostStaves: countStaffLines(lost),
+		}
 	}
 	return score, nil
 }
@@ -434,19 +501,27 @@ type PartialError struct {
 	Staves int
 	Total  int
 	Cause  error
-	// Lost names the staves the walk could not read and went around. One
-	// line each: a staff skipped without a word is the thing this whole
-	// reader is written not to do, and finding the next staff made it
-	// newly possible to skip one and carry on as if nothing had happened.
+	// Lost names the staves the walk could not read in full, one line
+	// each, and anything else the reader of this file should know. A staff
+	// skipped without a word is the thing this whole reader is written not
+	// to do, and finding the next staff made it newly possible to skip one
+	// and carry on as if nothing had happened.
 	Lost []string
+	// LostStaves is how many of those lines are about a staff, since the
+	// list also carries remarks about the file as a whole.
+	LostStaves int
 }
 
 func (e *PartialError) Error() string {
 	if e.Cause == nil && len(e.Lost) > 0 {
-		if len(e.Lost) == 1 {
-			return "nwc: one staff could not be read"
+		n := e.LostStaves
+		if n == 0 {
+			n = len(e.Lost)
 		}
-		return fmt.Sprintf("nwc: %d staves could not be read", len(e.Lost))
+		if n == 1 {
+			return "nwc: one staff could not be read in full"
+		}
+		return fmt.Sprintf("nwc: %d staves could not be read in full", n)
 	}
 	return fmt.Sprintf("nwc: read %d of %d staves (%v)", e.Staves, e.Total, e.Cause)
 }
@@ -553,13 +628,20 @@ func (w *walker) staff(version int) (*model.Part, error) {
 	}
 	st := &staffState{part: part}
 	for i := 0; i < objectCount; i++ {
-		if w.remaining() > 0 && w.b[w.i] == 0xFF {
+		if w.remaining() > 0 && w.b[w.i] == 0xFF && w.endOfObjects() {
 			// A marker closes the list early; the count a staff reports is
 			// not always the number of objects it really stores.
 			break
 		}
 		if err := w.object(st); err != nil {
-			return nil, fmt.Errorf("object %d of %d: %w", i+1, objectCount, err)
+			// Keep what was read. A staff that goes wrong at object five
+			// hundred has four hundred and ninety-nine objects of music in
+			// it, and throwing those away to report a clean failure is the
+			// opposite of what this reader is for: the file is somebody's
+			// piece, and most of it is right there.
+			st.closeMeasure(model.BarFinal)
+			linkTies(part)
+			return part, fmt.Errorf("object %d of %d: %w", i+1, objectCount, err)
 		}
 	}
 	st.closeMeasure(model.BarFinal)
@@ -602,7 +684,10 @@ func (w *walker) lyrics(lines int) error {
 
 type staffState struct {
 	part *model.Part
-	meas *model.Measure
+	// clefSet says the staff's opening clef has been read, so that a clef
+	// change partway through does not become the staff's own.
+	clefSet bool
+	meas    *model.Measure
 	// pendingDynamic waits for the next note, since NoteWorthy writes the
 	// marking as an object of its own just before what it applies to.
 	pendingDynamic model.Dynamic
@@ -664,8 +749,15 @@ func (w *walker) object(st *staffState) error {
 		if _, err := w.u16(); err != nil { // octave shift
 			return err
 		}
-		if clef, ok := nwc1Clefs[c]; ok {
+		if clef, ok := nwc1Clefs[c]; ok && !st.clefSet {
+			// The first one only. A staff that changes clef partway — the
+			// left hand of a piano piece going up into the treble for a
+			// while — writes another of these, and taking the last one
+			// made the whole staff treble from its first bar. gscore keeps
+			// one clef per staff, so the one it opens with is the one that
+			// belongs to it.
 			st.part.Clef = clef
+			st.clefSet = true
 		}
 
 	case 1: // key signature
@@ -769,6 +861,17 @@ func (w *walker) object(st *staffState) error {
 		if err != nil {
 			return err
 		}
+		// A 1.70 note carries two bytes more than a 1.75 one — and a 1.70
+		// rest does not, which is the kind of thing only the file can tell
+		// you. Read as eight, every note left two bytes of itself behind
+		// and the walk was two further out of step with each one; read as
+		// ten for rests as well, every rest ate the two bytes after it and
+		// the time signature arrived as 8/0.
+		if objType == 8 && w.version > 0 && w.version < 175 {
+			if err := w.skip(2); err != nil {
+				return err
+			}
+		}
 		if objType == 9 {
 			r := &model.Rest{Dur: nv.dur}
 			r.Tuplet = tupletMark(nv.triplet)
@@ -850,6 +953,16 @@ func (w *walker) object(st *staffState) error {
 		return err
 	case 18: // rest chord
 		return w.skip(8 + 2)
+
+	case 254, 255:
+		// A 1.70 score writes one of these here and there inside a staff.
+		// What they are for is not known — nothing in the music changes
+		// when they are stepped over — but they are counted among the
+		// staff's objects and both are one byte long, and the reader used
+		// to take the 0xFF for the end of the staff: a hundred-bar piano
+		// piece stopped at bar twenty-one, where the first one happened to
+		// be.
+		return w.skip(1)
 
 	default:
 		return fmt.Errorf("unknown object type %d", objType)
@@ -997,9 +1110,13 @@ func (w *walker) lyrics2() error {
 }
 
 // staffSearch is how far past the end of one staff the next one is looked
-// for: far enough for the tail a miscounted object stream leaves, and short
-// enough that the search cannot cross a staff's worth of music.
-const staffSearch = 4096
+// for.
+//
+// A staff's worth of music, and then some: when a staff stops early the next
+// one is however far away the rest of its music is, and in Für Elise that is
+// four and a half thousand bytes. Searching only as far as a tail would
+// reach found nothing and the left hand of the piece was never read.
+const staffSearch = 1 << 20
 
 // atStaffHeader says whether the walk is standing on the start of a staff.
 //
@@ -1058,6 +1175,40 @@ func countElements(p *model.Part) int {
 	for _, m := range p.Measures {
 		for _, v := range m.Voices {
 			n += len(v.Elements)
+		}
+	}
+	return n
+}
+
+// endOfObjects says whether the 0xFF the walk is standing on closes the
+// staff's object list, rather than being a byte inside it.
+//
+// A staff's list can end before its count is used up, and 0xFF is what ends
+// it — but 0xFF also occurs inside the list, and treating every one as the
+// end stopped a hundred-bar piano piece after twenty-one bars. What tells
+// them apart is what comes next: at the end of a staff there is another
+// staff, or nothing at all.
+func (w *walker) endOfObjects() bool {
+	probe := &walker{b: w.b, i: w.i, version: w.version}
+	// Past the marker and the byte that follows it, which is where the next
+	// staff's name begins when one does.
+	if err := probe.skip(2); err != nil {
+		return true // nothing left: this is certainly the end
+	}
+	if probe.remaining() < 32 {
+		return true
+	}
+	return probe.atStaffHeader()
+}
+
+// countStaffLines is how many of the lines are about one staff rather than
+// about the file as a whole, so that "three staves could not be read" counts
+// staves and not remarks.
+func countStaffLines(lines []string) int {
+	n := 0
+	for _, l := range lines {
+		if len(l) >= 6 && l[:6] == "staff " {
+			n++
 		}
 	}
 	return n

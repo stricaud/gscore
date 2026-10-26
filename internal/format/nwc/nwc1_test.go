@@ -10,7 +10,11 @@
 
 package nwc
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/stricaud/gscore/internal/model"
+)
 
 // The header of a binary NoteWorthy file, and the two places it moves.
 //
@@ -176,7 +180,7 @@ func TestEveryLostStaffIsNamed(t *testing.T) {
 	if len(e.Details()) != 2 {
 		t.Errorf("Details() gives %v", e.Details())
 	}
-	if got := e.Error(); got != "nwc: 2 staves could not be read" {
+	if got := e.Error(); got != "nwc: 2 staves could not be read in full" {
 		t.Errorf("it says %q", got)
 	}
 
@@ -192,3 +196,129 @@ var errBadStaff = fmtError("staff 8: the file stops making sense here")
 type fmtError string
 
 func (e fmtError) Error() string { return string(e) }
+
+// A staff that goes wrong partway keeps the music it read.
+//
+// Throwing away four hundred objects of music to report a clean failure is
+// the opposite of what this reader is for: the file is somebody's piece, and
+// most of it is right there. Beethoven's Albumblatt — Für Elise — gave up
+// nothing at all before this and gives up thirty-six bars now, with a line
+// in the log saying where it stopped and why.
+func TestAPartlyReadStaffIsKept(t *testing.T) {
+	e := &PartialError{Staves: 1, Total: 2, Lost: []string{
+		"staff 1: object 472 of 1020: unknown object type 21, keeping the 36 bars read before that",
+	}}
+	if got := e.Error(); got != "nwc: one staff could not be read in full" {
+		t.Errorf("it says %q", got)
+	}
+	// The detail has to say both halves: what went wrong, and what was kept.
+	d := e.Details()[0]
+	for _, want := range []string{"object 472 of 1020", "keeping the 36 bars"} {
+		if !contains(d, want) {
+			t.Errorf("%q does not mention %q", d, want)
+		}
+	}
+}
+
+func contains(s, sub string) bool {
+	for i := 0; i+len(sub) <= len(s); i++ {
+		if s[i:i+len(sub)] == sub {
+			return true
+		}
+	}
+	return false
+}
+
+// A 1.70 note is thirteen bytes and a 1.70 rest is eleven.
+//
+// Which is the kind of thing only the file can tell you. Reading notes as
+// eight bytes of value left two bytes of every note behind and the walk was
+// two further out of step with each one — Für Elise came out as F, G sharp
+// where it is E, D sharp. Reading rests as ten instead ate the two bytes
+// after every rest, and the time signature arrived as 8/0 instead of 3/8.
+func TestNoteAndRestSizesInSeventy(t *testing.T) {
+	// The opening of Beethoven's Albumblatt: an E and a D sharp, each a
+	// sixteenth, as the file stores them.
+	note := func(pos byte, acc byte) []byte {
+		return []byte{8, 0, 0, 0x04, 0, 0x21, 0, 0, 1, pos, acc, 0, 0}
+	}
+	b := append(note(0xfd, 5), note(0xfe, 0)...)
+	// A barline after them, which is what must be found if the sizes are
+	// right.
+	b = append(b, 2, 0, 0, 0, 1)
+
+	st := &staffState{part: &model.Part{Clef: model.Treble}}
+	w := &walker{b: b, version: 170}
+	for i := 0; i < 3; i++ {
+		if err := w.object(st); err != nil {
+			t.Fatalf("object %d: %v", i+1, err)
+		}
+	}
+	if w.i != len(b) {
+		t.Errorf("the three objects came to %d bytes, want %d", w.i, len(b))
+	}
+
+	var notes []*model.Note
+	for _, m := range st.part.Measures {
+		for _, v := range m.Voices {
+			for _, el := range v.Elements {
+				if n, ok := el.(*model.Note); ok {
+					notes = append(notes, n)
+				}
+			}
+		}
+	}
+	if len(notes) != 2 {
+		t.Fatalf("%d notes read", len(notes))
+	}
+	// E, then D sharp: the position byte counts downwards in 1.70.
+	if notes[0].Pitch.Step != model.StepE {
+		t.Errorf("the first note is %v, want E", notes[0].Pitch.Step)
+	}
+	if notes[1].Pitch.Step != model.StepD || notes[1].Accidental != model.Sharp {
+		t.Errorf("the second note is %v%v, want D sharp",
+			notes[1].Pitch.Step, notes[1].Accidental)
+	}
+	if notes[0].Pitch.Octave != notes[1].Pitch.Octave {
+		t.Errorf("they came out in different octaves: %d and %d",
+			notes[0].Pitch.Octave, notes[1].Pitch.Octave)
+	}
+}
+
+// And a 1.75 note is still eight bytes of value, which is what the Requiem
+// files are read with.
+func TestASeventyFiveNoteIsUnchanged(t *testing.T) {
+	b := []byte{8, 0, 0, 0x04, 0, 0x21, 0, 0, 1, 0xfd, 5}
+	st := &staffState{part: &model.Part{Clef: model.Treble}}
+	w := &walker{b: b, version: 175}
+	if err := w.object(st); err != nil {
+		t.Fatalf("%v", err)
+	}
+	if w.i != len(b) {
+		t.Errorf("a 1.75 note came to %d bytes, want %d", w.i, len(b))
+	}
+}
+
+// The clef a staff opens with is the staff's clef.
+//
+// A staff that changes clef partway — the left hand of a piano piece going
+// up into the treble for a while — writes another clef object, and taking
+// the last one made the whole staff treble from its first bar. Für Elise's
+// left hand came out in the treble clef, an octave and a half from where it
+// is written.
+func TestTheOpeningClefIsTheStaffsClef(t *testing.T) {
+	clef := func(n byte) []byte { return []byte{0, 0, 0, n, 0, 0, 0} }
+	b := append(clef(1), clef(0)...) // bass, then treble partway through
+
+	st := &staffState{part: &model.Part{Clef: model.Treble}}
+	w := &walker{b: b, version: 170}
+	for i := 0; i < 2; i++ {
+		if err := w.object(st); err != nil {
+			t.Fatalf("object %d: %v", i+1, err)
+		}
+	}
+	if st.part.Clef != model.Bass {
+		t.Errorf("the staff came out in the %v clef, want the bass it opened with",
+			st.part.Clef)
+	}
+}

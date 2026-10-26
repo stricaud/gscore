@@ -274,3 +274,26 @@ func TestSignNamesRoundTrip(t *testing.T) {
 		t.Error("a name that is not a sign was accepted")
 	}
 }
+
+// |: 1 2 [1. 3 :][2. 4 ] |: 5 6 [1. 7 :][2. 8 ] — two repeated sections,
+// each with its own first and second time bars.
+//
+// The second section was played once and through its second ending: the
+// count of times through was carried over from the first section instead of
+// starting again, and by then it already said "second time". Für Elise has
+// exactly this shape, and the repeat at bar 23 was dropped — the bar itself
+// never played, the music running straight on through the second ending.
+func TestPlayOrderWithTwoSectionsOfEndings(t *testing.T) {
+	s := bars(8)
+	s.bar(2).Ending = &Ending{Numbers: []int{1}, Start: true, Stop: true}
+	s.bar(2).RightBarline = BarRepeatEnd
+	s.bar(3).Ending = &Ending{Numbers: []int{2}, Start: true, Stop: true, Open: true}
+	s.bar(3).RightBarline = BarRepeatStart
+	s.bar(6).Ending = &Ending{Numbers: []int{1}, Start: true, Stop: true}
+	s.bar(6).RightBarline = BarRepeatEnd
+	s.bar(7).Ending = &Ending{Numbers: []int{2}, Start: true, Stop: true, Open: true}
+
+	if got, want := order(s), "1 2 3 1 2 4 5 6 7 5 6 8"; got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}

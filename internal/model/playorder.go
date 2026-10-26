@@ -120,8 +120,19 @@ func (s *Score) PlayOrder() []int {
 
 		switch d.closing[i] {
 		case BarRepeatStart:
-			// The repeat opens at the next bar.
+			// The repeat opens at the next bar, and its own count starts
+			// there: pass is which time through *this* section it is.
+			//
+			// It was left where the section before had got to, and the
+			// count is only put back by a closing repeat that has already
+			// sent you round — which the second time through never reaches,
+			// because skipping the first ending skips the barline at the
+			// end of it. So a piece with two repeated sections arrived at
+			// the second one still counting two, took its second ending
+			// straight away and never went round at all. In Für Elise that
+			// is bar 23 unplayed and the repeat at bar 24 silently dropped.
 			back = i + 1
+			pass = 1
 			i++
 		case BarRepeatEnd, BarRepeatBoth:
 			if taken[i] == 0 {

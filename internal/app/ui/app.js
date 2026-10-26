@@ -2082,6 +2082,7 @@ async function loadHits() {
   const d = await res.json();
   state.hits = d.hits || [];
   state.dynamics = d.dynamics || [];
+  state.chordMarks = d.chords || [];
   state.tempos = d.tempos || [];
   state.hairpins = d.hairpins || [];
   state.barlines = d.barlines || [];
@@ -2104,6 +2105,23 @@ function dynamicAt(x, y) {
     if (x >= d.x - 0.4 && x <= d.x + d.width + 0.4 &&
         y >= d.y - 0.4 && y <= d.y + d.height + 0.4) {
       return d;
+    }
+  }
+  return null;
+}
+
+// chordSymbolAt finds the chord symbol a click landed on.
+//
+// The box comes from the engraver for the same reason a dynamic's does: the
+// symbols of a staff are written on one line above all of its music, as far
+// up as the highest note pushed them, and nothing else knows where that
+// turned out to be. A click on "C7" used to find the empty air above the
+// notes and, with a note tool in hand, write a note into it.
+function chordSymbolAt(x, y) {
+  for (const c of state.chordMarks || []) {
+    if (x >= c.x - 0.4 && x <= c.x + c.width + 0.4 &&
+        y >= c.y - 0.4 && y <= c.y + c.height + 0.4) {
+      return c;
     }
   }
   return null;
@@ -2393,6 +2411,13 @@ function setupCanvasClicks() {
       return;
     }
 
+    // The chord symbols are up there too.
+    const chord = chordSymbolAt(x, y);
+    if (chord) {
+      selectChordSymbol(chord);
+      return;
+    }
+
     // The swells run under the staff with the dynamics. Tested after them
     // because a hairpin is wide and a dynamic sitting on one of its ends
     // would otherwise be unreachable.
@@ -2656,6 +2681,31 @@ function selectDynamic(d) {
   status(`${d.name} \u2014 press Backspace to take it away`);
 }
 
+// selectChordSymbol picks up a chord written over the music.
+//
+// What is selected is the symbol, not the note under it: Backspace takes the
+// chord away and leaves the music alone, and Enter opens it for changing
+// with what is there already in the box. Which is what somebody who clicked
+// a chord meant by either of them.
+function selectChordSymbol(c) {
+  state.multi = [];
+  state.anchor = state.focus = null;
+  // Which element in the bar holds it, because a bar can hold more than
+  // one: "F7 Bb7" over two halves of a bar are two symbols, and changing
+  // the second must not rewrite the first.
+  let at = 1;
+  const target = refTarget(c.ref);
+  if (target) at = Number(target.split(":")[2]) + 1;
+
+  state.selection = {
+    part: c.part, measure: c.measure, ref: c.ref,
+    at, step: 0, chordSymbol: c.name || c.frets || "chord",
+  };
+  markSelection();
+  status(`${state.selection.chordSymbol} \u2014 press Enter to change it, ` +
+         `Backspace to take it away`);
+}
+
 // selectTempo picks up a tempo marking.
 //
 // What is selected is the marking, so Backspace takes the change away and
@@ -2916,6 +2966,14 @@ async function deleteSelected() {
     status(`Bar ${atBar + 1} carries on at the tempo before it`);
     return;
   }
+  // A chord symbol was picked up by clicking it, so it is the chord that
+  // goes and not the note holding it up.
+  if (state.selection?.chordSymbol && !state.multi.length) {
+    const was = state.selection.chordSymbol;
+    await markChord({ chord: "none" }, `${was} removed`);
+    if (state.selection) state.selection.chordSymbol = null;
+    return;
+  }
   // A dynamic was picked up by clicking it, so it is the dynamic that goes.
   if (state.selection?.dynamic && !state.multi.length) {
     const was = state.selection.dynamic;
@@ -3087,6 +3145,17 @@ function markSelection() {
     if (d) {
       svg.insertBefore(
         selectionRect(d.x - 0.4, d.y - 0.4, d.width + 0.8, d.height + 0.8, z),
+        svg.firstChild);
+      return;
+    }
+  }
+
+  if (sel.chordSymbol) {
+    const c = (state.chordMarks || []).find(
+      (x) => x.part === sel.part && x.measure === sel.measure && x.ref === sel.ref);
+    if (c) {
+      svg.insertBefore(
+        selectionRect(c.x - 0.4, c.y - 0.4, c.width + 0.8, c.height + 0.8, z),
         svg.firstChild);
       return;
     }
@@ -6905,7 +6974,14 @@ const KEY_BINDINGS = [
     run: () => void insertAtSelection(false) },
   { id: "write-rest", keys: "Enter", group: "Writing",
     label: "Write a rest of the same length",
-    run: () => void insertAtSelection(true) },
+    // A chord symbol picked up by clicking it is what Enter is about:
+    // opening it for changing, with what is there already in the box. The
+    // status line says so when one is selected, and nothing else is: a
+    // rest written under a symbol somebody has just pointed at is not what
+    // the key was pressed for.
+    run: () => void (state.selection?.chordSymbol
+      ? chordSymbolDialog()
+      : insertAtSelection(true)) },
   { id: "chord-note", keys: "Mod+Space", group: "Writing",
     label: "Add another notehead to the note just written",
     run: () => void chordAtCursor() },

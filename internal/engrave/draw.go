@@ -281,7 +281,7 @@ func (e *engraver) drawMeasure(part *model.Part, b measureBox, x, end float64, s
 			e.slurAt(part, m, p)
 			e.drawLyrics(m, p)
 			e.drawTexts(m, p)
-			e.waitChord(m.Chord, p.x)
+			e.waitChord(m.Chord, p.x, b.index, p.index)
 		}
 	}
 

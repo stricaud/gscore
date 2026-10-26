@@ -50,6 +50,7 @@ func (a *App) handleHits(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{
 		"hits":        lay.Hits,
 		"dynamics":    lay.Dynamics,
+		"chords":      lay.Chords,
 		"tempos":      lay.Tempos,
 		"hairpins":    lay.Hairpins,
 		"barlines":    lay.Barlines,

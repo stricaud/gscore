@@ -156,6 +156,9 @@ func chordHeight(c *model.ChordSymbol) float64 {
 type pendingChord struct {
 	c *model.ChordSymbol
 	x float64
+	// Which element it belongs to, so that what is drawn can be pointed at
+	// afterwards.
+	part, measure, ref int
 }
 
 // waitChord holds a chord symbol back until the staff is drawn.
@@ -165,11 +168,13 @@ type pendingChord struct {
 // music: a staff whose notes stay between the lines has room at two and a
 // half spaces, and one with a run of notes three ledger lines up has not —
 // which is how "Am7" came to be printed across its own notehead.
-func (e *engraver) waitChord(c *model.ChordSymbol, x float64) {
+func (e *engraver) waitChord(c *model.ChordSymbol, x float64, measure, ref int) {
 	if c == nil {
 		return
 	}
-	e.chordRow = append(e.chordRow, pendingChord{c: c, x: x})
+	e.chordRow = append(e.chordRow, pendingChord{
+		c: c, x: x, part: e.partIndex, measure: measure, ref: ref,
+	})
 }
 
 // placeChords writes the staff's chord symbols, all on one line, above
@@ -202,7 +207,15 @@ func (e *engraver) placeChords(sky *skyline, x0, x1 float64) {
 		if p.c.Frame != nil {
 			top -= frameRise + frameHeight
 		}
-		sky.add(p.x, p.x+w, top, y+chordSize*0.25)
+		bottom := y + chordSize*0.25
+		sky.add(p.x, p.x+w, top, bottom)
+		// Where it landed, so the editor can point at it. The same box the
+		// outline uses, since that is the room the symbol occupies.
+		e.lay.Chords = append(e.lay.Chords, ChordPos{
+			Part: p.part, Measure: p.measure, Ref: p.ref,
+			X: p.x, Y: top, Width: w, Height: bottom - top,
+			Name: p.c.String(), Frets: p.c.Frame.Spell(),
+		})
 	}
 }
 

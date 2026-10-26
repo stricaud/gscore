@@ -193,6 +193,31 @@ type Layout struct {
 	// click under the staff found nothing, because everything it knew how to
 	// find was on the staff.
 	Dynamics []DynamicPos `json:"dynamics"`
+	// Chords are the chord symbols' boxes, for the same reason: a symbol is
+	// written on a line of its own above the staff, as far up as that
+	// stretch of music pushed it, and the editor cannot point at one it
+	// cannot find. Without this a click on "C7" found the empty air above
+	// the notes, and the only way to change a chord was to select the bar
+	// under it and know that was how.
+	Chords []ChordPos `json:"chords"`
+}
+
+// ChordPos is one chord symbol's box on the page, in staff spaces.
+type ChordPos struct {
+	Part    int `json:"part"`
+	Measure int `json:"measure"`
+	// Ref is the element it is written on, the same number the editor uses
+	// to reach that element for anything else.
+	Ref int `json:"ref"`
+	// The box it occupies: x and y are its top left corner.
+	X      float64 `json:"x"`
+	Y      float64 `json:"y"`
+	Width  float64 `json:"width"`
+	Height float64 `json:"height"`
+	// Name is the symbol as it is written, and Frets its fingering where it
+	// has one, so the editor can offer what is there when it is changed.
+	Name  string `json:"name"`
+	Frets string `json:"frets,omitempty"`
 }
 
 // HairpinPos is one swell's box on the page, in staff spaces.

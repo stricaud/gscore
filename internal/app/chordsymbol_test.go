@@ -11,6 +11,7 @@
 package app
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -155,4 +156,104 @@ func TestThePickerDrawsTheChord(t *testing.T) {
 	if len(withFrame) <= len(svg) {
 		t.Error("the diagram added nothing to the picture")
 	}
+}
+
+// A chord symbol can be pointed at.
+//
+// It is written on a line of its own above the staff, as far up as the
+// highest note of that stretch of music pushed it, and nothing but the
+// engraver knows where that turned out to be. Without its box the editor
+// could write a chord and then had no way to reach it: a click on "C7"
+// found the empty air above the notes and, with a note tool in hand, wrote
+// a note into it. The only way to change one was to select the bar under
+// it and know that was how.
+func TestAChordSymbolCanBePointedAt(t *testing.T) {
+	h := newHarness(t)
+	h.note(0, 0, 6, "quarter")
+	h.note(0, 0, 8, "quarter")
+	h.post("/api/chordsymbol?part=0&measure=0&at=1&chord=Am7")
+
+	boxes := h.chordBoxes()
+	if len(boxes) != 1 {
+		t.Fatalf("%d chord symbols have a box, want one", len(boxes))
+	}
+	b := boxes[0]
+	if b["name"] != "Am7" {
+		t.Errorf("the box is for %q, want Am7", b["name"])
+	}
+	if w, hgt := b["width"].(float64), b["height"].(float64); w <= 0 || hgt <= 0 {
+		t.Errorf("the box is %vx%v, which cannot be clicked", w, hgt)
+	}
+	// Above the staff, which is where the symbol is drawn.
+	hits := h.hits()
+	if len(hits) == 0 {
+		t.Fatal("no measures")
+	}
+	if top := hits[0]["staffTop"].(float64); b["y"].(float64) >= top {
+		t.Errorf("the box is at y=%v, below the staff's top at %v", b["y"], top)
+	}
+}
+
+// Two chords in one bar are two symbols, each pointing at its own note.
+//
+// "F7 Bb7" over the two halves of a bar is the ordinary way a chart is
+// written, and a box that named only the bar would change the first chord
+// whichever of them was clicked.
+func TestTwoChordsInABarAreTwoSymbols(t *testing.T) {
+	h := newHarness(t)
+	for i := 0; i < 4; i++ {
+		h.note(0, 0, 4+i, "quarter")
+	}
+	h.post("/api/chordsymbol?part=0&measure=0&at=1&chord=F7")
+	h.post("/api/chordsymbol?part=0&measure=0&at=3&chord=Bb7")
+
+	boxes := h.chordBoxes()
+	if len(boxes) != 2 {
+		t.Fatalf("%d boxes, want one for each chord", len(boxes))
+	}
+	first, second := boxes[0], boxes[1]
+	if first["name"] != "F7" || second["name"] != "Bb7" {
+		t.Errorf("the boxes are for %q and %q, want F7 and Bb7",
+			first["name"], second["name"])
+	}
+	// Each names the element it is written on, which is how the editor
+	// changes one without touching the other.
+	if first["ref"] == second["ref"] {
+		t.Errorf("both symbols name element %v", first["ref"])
+	}
+	// And they do not sit on top of each other.
+	if left, right := first["x"].(float64)+first["width"].(float64),
+		second["x"].(float64); left > right {
+		t.Errorf("F7 ends at %.2f and Bb7 starts at %.2f", left, right)
+	}
+}
+
+// chordBoxes is what the editor is told about the chord symbols on the page.
+func (h *harness) chordBoxes() []map[string]any {
+	h.t.Helper()
+	var out []map[string]any
+	for _, c := range h.layoutField("chords") {
+		out = append(out, c)
+	}
+	return out
+}
+
+// hits is the same for the measures.
+func (h *harness) hits() []map[string]any { return h.layoutField("hits") }
+
+// layoutField reads one list out of the drawing the editor asks for.
+func (h *harness) layoutField(name string) []map[string]any {
+	h.t.Helper()
+	var d map[string]any
+	if err := json.Unmarshal([]byte(h.get("/api/hits?mode=strip")), &d); err != nil {
+		h.t.Fatalf("hits: %v", err)
+	}
+	list, _ := d[name].([]any)
+	var out []map[string]any
+	for _, v := range list {
+		if m, ok := v.(map[string]any); ok {
+			out = append(out, m)
+		}
+	}
+	return out
 }

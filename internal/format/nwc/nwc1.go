@@ -147,15 +147,20 @@ var nwc1Durations = map[byte]model.Duration{
 // five other notes, with no exception either way. Read as an accent it put
 // one on every note of every chord in the piece.
 //
-// What 0x08 and 0x20 mean is still unknown, and so is the double dot: no bit
-// of the record behaves like one. A double-dotted note therefore reads as a
-// single-dotted one, which is a bar that does not add up rather than a note
-// in the wrong place. An accented note reads as a plain one for the same
-// reason — a mark gscore invents is worse than a mark it leaves out.
+// The accent is 0x20, which the staccato had taken. NoteWorthy prints a ">"
+// over the dotted note in bar 25 of Für Elise and over its twin in bar 26,
+// and those two are the notes carrying 0x24 — the accent with the dot.
+// Twenty notes in the piece have it.
+//
+// What 0x08 means is still unknown, and so is the double dot: no bit of the
+// record behaves like one. A double-dotted note therefore reads as a single-
+// dotted one, which is a bar that does not add up rather than a note in the
+// wrong place.
 const (
 	artStaccato = 0x02
 	artDotted   = 0x04
 	artTie      = 0x10
+	artAccent   = 0x20
 	// artChordNote marks a notehead of the chord record before it, which is
 	// how a chord keeps its notes together — see the chord in object().
 	artChordNote = 0x40
@@ -183,6 +188,10 @@ type noteValue struct {
 	dots     int
 	tie      bool
 	staccato bool
+	accent   bool
+	// grace says the note is written small before the note it ornaments
+	// and takes none of the bar's time.
+	grace bool
 	// chordNote says this note is one of the noteheads of the chord record
 	// before it, rather than a note of its own in the bar.
 	chordNote bool
@@ -228,6 +237,16 @@ func (w *walker) noteValue() (noteValue, error) {
 	if w.version > 0 && w.version < 175 {
 		nv.slurTo = raw[5]&0x01 != 0
 		nv.slurFrom = raw[5]&0x02 != 0
+		// And 0x20 of the same byte is a grace note, which takes no time
+		// in the bar it is written in.
+		//
+		// Three notes in Für Elise have it — the two the piece leans into
+		// bar 25 with and the one before the run in bar 28 — and those two
+		// bars were the only two left in the piece whose notes did not add
+		// up to their meter, each by exactly the grace notes in it. Read as
+		// notes of their own they were an eighth of music that is not
+		// there, played on the beat and pushing everything after them late.
+		nv.grace = raw[5]&0x20 != 0
 	}
 
 	// One extra byte follows when the accidental byte says so.
@@ -250,6 +269,7 @@ func (w *walker) noteValue() (noteValue, error) {
 	}
 	nv.tie = artic&artTie != 0
 	nv.staccato = artic&artStaccato != 0
+	nv.accent = artic&artAccent != 0
 	nv.chordNote = artic&artChordNote != 0
 
 	// Byte two is the beam, the stem and the triplet, two bits each.
@@ -801,6 +821,15 @@ type staffState struct {
 	// records, so the notes after one belong to it rather than to the bar.
 	chord     *model.Chord
 	chordLeft int
+	// grace holds the small notes read so far, which belong to the next
+	// note rather than to the bar. They are kept across a barline: a piece
+	// that leans into a downbeat writes them at the end of the bar before.
+	grace []*model.Note
+	// ending is the volta bracket of the bar before, and endingBar which
+	// bar that was, so that a bar carrying the same number goes on with it
+	// instead of opening another.
+	ending    *model.Ending
+	endingBar int
 }
 
 func (s *staffState) ensure() {
@@ -854,10 +883,37 @@ func (s *staffState) endChord() {
 	s.chord, s.chordLeft = nil, 0
 }
 
+// openEnding marks the bar now being read as part of a volta bracket.
+//
+// NoteWorthy writes the ending on every bar the bracket covers rather than
+// once at its head, so each bar closes its own bracket and a bar that
+// carries the same number as the one before it goes on with it. Left to
+// close at the next structural barline instead, the "2." of Für Elise's
+// second repeat ran from bar 24 to the last bar of the piece — seventy bars
+// under one bracket.
+func (s *staffState) openEnding(n int) {
+	s.ensure()
+	here := len(s.part.Measures)
+	e := &model.Ending{Numbers: []int{n}, Start: true, Stop: true}
+	if s.ending != nil && s.endingBar == here-1 &&
+		len(s.ending.Numbers) == 1 && s.ending.Numbers[0] == n {
+		s.ending.Stop, s.ending.Open = false, false
+		e.Start = false
+	}
+	s.meas.Ending = e
+	s.ending, s.endingBar = e, here
+}
+
 func (s *staffState) closeMeasure(style model.BarlineStyle) {
 	s.endChord()
 	if s.meas == nil {
 		return
+	}
+	// Nothing to go back for: a bracket that ends where the music carries
+	// on is written without its closing hook.
+	if e := s.meas.Ending; e != nil && e.Stop &&
+		style != model.BarRepeatEnd && style != model.BarRepeatBoth {
+		e.Open = true
 	}
 	s.meas.RightBarline = style
 	s.part.Measures = append(s.part.Measures, s.meas)
@@ -960,7 +1016,24 @@ func (w *walker) object(st *staffState) error {
 		st.closeMeasure(s)
 
 	case 3: // ending
-		return w.skip(2)
+		// A volta bracket — the "1." and "2." over the bars either side of
+		// a repeat. The record is five bytes and the fourth is the number;
+		// Für Elise writes it at the head of bars 8 and 9 and again at 23
+		// and 24, in both staves, which is where NoteWorthy prints them.
+		//
+		// Read as two bytes of nothing before, the brackets were simply
+		// missing from the page, and the repeat played the first ending
+		// twice over instead of taking the second.
+		n, err := w.u8()
+		if err != nil {
+			return err
+		}
+		if err := w.skip(1); err != nil {
+			return err
+		}
+		if n >= 1 && n <= 8 {
+			st.openEnding(int(n))
+		}
 
 	case 4: // instrument patch
 		// nwc1.posa leaves the eight bytes undescribed; the General MIDI
@@ -1076,6 +1149,28 @@ func (w *walker) object(st *staffState) error {
 		if nv.staccato {
 			n.AddArticulation(model.Staccato)
 		}
+		if nv.accent {
+			n.AddArticulation(model.Accent)
+		}
+		if nv.grace {
+			st.grace = append(st.grace, n)
+			return nil
+		}
+		if len(st.grace) > 0 {
+			n.Grace = &model.GraceGroup{Notes: st.grace}
+			// A slur that begins on a small note belongs to the phrase the
+			// note it ornaments is in. Left where it was it would be lost,
+			// since the engraver draws spans along the bar and the small
+			// notes are not in it — and the note that closed the slur
+			// would be closing one that never opened.
+			for _, g := range st.grace {
+				if g.SlurStart && !n.SlurStop {
+					n.SlurStart = true
+				}
+				g.SlurStart, g.SlurStop = false, false
+			}
+			st.grace = nil
+		}
 		// A chord that is still waiting for noteheads gets this one only if
 		// the note says it is one. A count this reader read wrongly would
 		// otherwise swallow the melody behind the chord, which is the kind
@@ -1144,6 +1239,16 @@ func (w *walker) object(st *staffState) error {
 			}
 			ch := &model.Chord{Dur: nv.dur}
 			ch.Tuplet = tupletMark(nv.triplet)
+			// The marks are written on the chord's own record, not on the
+			// noteheads that follow it, and belong to the chord as a whole:
+			// NoteWorthy prints one staccato dot under a chord, not one
+			// under each of its notes.
+			if nv.staccato {
+				ch.AddArticulation(model.Staccato)
+			}
+			if nv.accent {
+				ch.AddArticulation(model.Accent)
+			}
 			st.openChord(ch, count)
 			return nil
 		}

@@ -808,3 +808,121 @@ func TestTheStaccatoIsBitOne(t *testing.T) {
 		}
 	}
 }
+
+// A small note takes none of the bar's time.
+//
+// Bit 0x20 of the slur byte says the note is a grace note. Für Elise has
+// three — the two it leans into bar 25 with and the one before the run in
+// bar 28 — and read as notes of their own they were an eighth of music that
+// is not in the bar, played on the beat and pushing everything after them
+// late. Those two bars were the last in the piece whose notes did not add up
+// to their meter, each by exactly the grace notes in it.
+func TestAGraceNoteTakesNoTime(t *testing.T) {
+	note := func(dur, slur, pos byte) []byte {
+		return []byte{8, 0, 0, dur, 0, 0x21, 0, 0, slur, pos, 5, 0, 0}
+	}
+	// Two small sixteenths, then the quarter they lean into.
+	b := append(note(0x04, 0x20, 0x03), note(0x04, 0x20, 0x01)...)
+	b = append(b, note(0x02, 0x00, 0xff)...)
+	b = append(b, 2, 0, 0, 0, 1)
+
+	st := &staffState{part: &model.Part{
+		Clef: model.Treble, Time: model.TimeSignature{Beats: 1, BeatValue: 4},
+	}}
+	w := &walker{b: b, version: 170}
+	for i := 0; i < 4; i++ {
+		if err := w.object(st); err != nil {
+			t.Fatalf("object %d: %v", i+1, err)
+		}
+	}
+
+	els := st.part.Measures[0].Voices[0].Elements
+	if len(els) != 1 {
+		t.Fatalf("%d things in the bar, want the one note the small ones belong to", len(els))
+	}
+	n, ok := els[0].(*model.Note)
+	if !ok {
+		t.Fatalf("the bar holds a %T, want a note", els[0])
+	}
+	if n.Grace == nil || len(n.Grace.Notes) != 2 {
+		t.Fatalf("the note carries %v grace notes, want two", n.Grace)
+	}
+	// The bar is a quarter long, not three sixteenths more than that.
+	if got, want := st.part.Measures[0].Voices[0].Duration(), (model.Duration{Num: 1, Den: 4}); got.Cmp(want) != 0 {
+		t.Errorf("the bar holds %v, want the %v its meter says", got, want)
+	}
+}
+
+// The accent is bit 0x20 of the articulation byte.
+//
+// NoteWorthy prints a ">" over the dotted note in bar 25 of Für Elise and
+// over its twin in bar 26, and those are the notes carrying 0x24 — the
+// accent together with the dot.
+func TestTheAccentIsBitFive(t *testing.T) {
+	b := []byte{8, 0, 0, 0x04, 0, 0x21, 0, 0x24, 0, 0, 5, 0, 0}
+	st := &staffState{part: &model.Part{Clef: model.Treble}}
+	w := &walker{b: b, version: 170}
+	if err := w.object(st); err != nil {
+		t.Fatalf("%v", err)
+	}
+	n := firstNoteIn(t, st)
+	accent := false
+	for _, a := range n.Articulations {
+		if a == model.Accent {
+			accent = true
+		}
+	}
+	if !accent {
+		t.Errorf("the note came out with %v, want an accent", n.Articulations)
+	}
+	// 0x24 is the accent with the dot, so the note is lengthened as well.
+	if want := (model.Duration{Num: 3, Den: 32}); n.Dur.Cmp(want) != 0 {
+		t.Errorf("the note is %v long, want the dotted %v", n.Dur, want)
+	}
+}
+
+// The volta brackets are read, one bar at a time.
+//
+// NoteWorthy writes the ending on every bar a bracket covers rather than
+// once at its head, so a bar carrying the same number as the one before it
+// goes on with that bracket and every other bar closes its own. Closing them
+// at the next structural barline instead ran Für Elise's second bracket from
+// bar 24 to the end of the piece.
+func TestTheVoltaBracketsAreRead(t *testing.T) {
+	ending := func(n byte) []byte { return []byte{3, 0, 0, n, 0} }
+	note := []byte{8, 0, 0, 0x02, 0, 0, 0, 0, 0, 0, 5, 0, 0}
+	// Bar one is ending one and closes on a repeat; bar two is ending two
+	// and the music goes on from it.
+	b := append(ending(1), note...)
+	b = append(b, 2, 0, 0, 7, 2) // repeat end
+	b = append(b, ending(2)...)
+	b = append(b, note...)
+	b = append(b, 2, 0, 0, 0, 1) // a plain barline
+
+	st := &staffState{part: &model.Part{Clef: model.Treble}}
+	w := &walker{b: b, version: 170}
+	for i := 0; i < 6; i++ {
+		if err := w.object(st); err != nil {
+			t.Fatalf("object %d: %v", i+1, err)
+		}
+	}
+	if len(st.part.Measures) != 2 {
+		t.Fatalf("%d bars, want two", len(st.part.Measures))
+	}
+	first, second := st.part.Measures[0].Ending, st.part.Measures[1].Ending
+	if first == nil || second == nil {
+		t.Fatalf("the brackets are %v and %v, want both", first, second)
+	}
+	if len(first.Numbers) != 1 || first.Numbers[0] != 1 || !first.Start || !first.Stop {
+		t.Errorf("the first bracket is %+v, want a closed 1.", first)
+	}
+	if first.Open {
+		t.Error("the first bracket has no hook, and it ends on the repeat")
+	}
+	if len(second.Numbers) != 1 || second.Numbers[0] != 2 || !second.Start || !second.Stop {
+		t.Errorf("the second bracket is %+v, want a closed 2.", second)
+	}
+	if !second.Open {
+		t.Error("the second bracket has a hook, and there is nothing to go back for")
+	}
+}

@@ -610,14 +610,19 @@ func TestMeasureRepeatPlays(t *testing.T) {
 	}
 }
 
-// A hidden staff leaves the drawing but not the score, and still sounds.
+// A hidden staff leaves the drawing and the performance, but not the score.
+//
+// Putting a staff away is how you get the rest of the orchestra out of the
+// way while you work on one line, and hearing the parts you have just put
+// away is no help at all. The music is untouched: the staff is still in the
+// score with everything written on it, and the bars keep their length.
 func TestHidingAStaff(t *testing.T) {
 	h := newHarness(t)
 	h.post("/api/addstaff?instrument=flute&clef=treble")
 	h.note(0, 0, 2, "quarter")
 	h.note(1, 0, 4, "quarter")
 
-	before := len(buildPlayback(h.app.score).Events)
+	before := buildPlayback(h.app.score)
 	h.post("/api/staff?part=1&hidden=1")
 
 	lay := engrave.Engrave(h.app.score, engrave.DefaultOptions())
@@ -631,8 +636,44 @@ func TestHidingAStaff(t *testing.T) {
 	if len(h.app.score.Parts) != 2 {
 		t.Error("hiding a staff removed it from the score")
 	}
+
+	after := buildPlayback(h.app.score)
+	for _, e := range after.Events {
+		if e.Part == 1 {
+			t.Fatal("the hidden staff is still being played")
+		}
+	}
+	if len(after.Events) != len(before.Events)-1 {
+		t.Errorf("%d notes sound where %d did, and one staff of one note was put away",
+			len(after.Events), len(before.Events))
+	}
+	// The one that is left is the staff still on the page, and it is where
+	// it was: hiding a staff does not move the music.
+	if len(after.Events) > 0 && after.Events[0].Start != before.Events[0].Start {
+		t.Errorf("the visible staff now starts at %v, not %v",
+			after.Events[0].Start, before.Events[0].Start)
+	}
+	// And the bars are as long as they were, so nothing shifts when a staff
+	// goes out of sight.
+	if after.Duration != before.Duration {
+		t.Errorf("the piece is now %.3fs long, was %.3fs", after.Duration, before.Duration)
+	}
+}
+
+// What a hidden staff holds comes back when it does.
+func TestUnhidingAStaffBringsItBack(t *testing.T) {
+	h := newHarness(t)
+	h.post("/api/addstaff?instrument=flute&clef=treble")
+	h.note(0, 0, 2, "quarter")
+	h.note(1, 0, 4, "quarter")
+
+	before := len(buildPlayback(h.app.score).Events)
+	h.post("/api/staff?part=1&hidden=1")
+	h.post("/api/staff?part=1&hidden=0")
+
 	if after := len(buildPlayback(h.app.score).Events); after != before {
-		t.Errorf("a hidden staff stopped sounding: %d -> %d", before, after)
+		t.Errorf("%d notes sound after the staff came back, want the %d there were",
+			after, before)
 	}
 }
 

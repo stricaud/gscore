@@ -56,12 +56,16 @@ const eduWhole = 4096
 
 type document struct {
 	Others struct {
-		Staves []staffSpec `xml:"staffSpec"`
-		Bars   []measSpec  `xml:"measSpec"`
-		Frames []frameSpec `xml:"frameSpec"`
-		Used   []instUsed  `xml:"instUsed"`
-		Blocks []textBlock `xml:"textBlock"`
-		Artics []articDef  `xml:"articDef"`
+		Staves     []staffSpec        `xml:"staffSpec"`
+		Bars       []measSpec         `xml:"measSpec"`
+		Frames     []frameSpec        `xml:"frameSpec"`
+		Used       []instUsed         `xml:"instUsed"`
+		Blocks     []textBlock        `xml:"textBlock"`
+		Artics     []articDef         `xml:"articDef"`
+		Shapes     []smartShape       `xml:"smartShape"`
+		Exprs      []textExprDef      `xml:"textExprDef"`
+		ExprPlaces []measExprAssign   `xml:"measExprAssign"`
+		Categories []markingsCategory `xml:"markingsCategory"`
 	} `xml:"others"`
 	Details struct {
 		Holds  []gfhold      `xml:"gfhold"`
@@ -102,6 +106,66 @@ type articAssign struct {
 	Entry    int    `xml:"entnum,attr"`
 	Part     string `xml:"part,attr"`
 	ArticDef int    `xml:"articDef"`
+}
+
+// smartShape is a line drawn over the music: a slur, a hairpin, an ottava.
+//
+// Finale keeps them away from the notes, in a list of their own with each
+// end naming where it lands. A slur is entry-based and names the entry; a
+// hairpin is attached to a beat and names a position in the bar, in EDUs.
+// Both name the staff and the measure.
+type smartShape struct {
+	Cmper      int       `xml:"cmper,attr"`
+	Part       string    `xml:"part,attr"`
+	ShapeType  string    `xml:"shapeType"`
+	EntryBased *struct{} `xml:"entryBased"`
+	Hidden     *struct{} `xml:"hidden"`
+	Start      endPoint  `xml:"startTermSeg>endPt"`
+	End        endPoint  `xml:"endTermSeg>endPt"`
+}
+
+// endPoint is where one end of a shape lands: inst is the staff, meas the
+// measure, and then either the entry it hangs on or a position in the bar.
+type endPoint struct {
+	Inst  int `xml:"inst"`
+	Meas  int `xml:"meas"`
+	Edu   int `xml:"edu"`
+	Entry int `xml:"entryNum"`
+}
+
+// textExprDef is one expression as the document defines it — the dynamic
+// "ff" itself rather than any of the places it is written.
+//
+// The mark is drawn as a character of Finale's music font, which is of no
+// use to anybody else: "ë" is fortississimo only if you have Maestro and
+// know its layout. What the definition also carries is what the mark does,
+// and that reads the same everywhere — playType "amplitude" with a velocity
+// in value, which is the dynamic said in numbers.
+type textExprDef struct {
+	Cmper    int    `xml:"cmper,attr"`
+	Part     string `xml:"part,attr"`
+	Category int    `xml:"categoryID"`
+	PlayType string `xml:"playType"`
+	Value    int    `xml:"value"`
+	Desc     string `xml:"descStr"`
+}
+
+// measExprAssign is one expression written at one place in the music: which
+// bar, which staff, and how far into the bar.
+type measExprAssign struct {
+	Meas   int    `xml:"cmper,attr"`
+	Part   string `xml:"part,attr"`
+	Expr   int    `xml:"textExprID"`
+	Staff  int    `xml:"staffAssign"`
+	EduOff int    `xml:"horzEduOff"`
+}
+
+// markingsCategory says what a group of expressions is for, which is how a
+// dynamic is told from a tempo mark or a rehearsal direction.
+type markingsCategory struct {
+	Cmper int    `xml:"cmper,attr"`
+	Part  string `xml:"part,attr"`
+	Type  string `xml:"categoryType"`
 }
 
 // Part and Shared mark the copies Finale keeps for each extracted part. The
@@ -188,13 +252,47 @@ type reader struct {
 	// is drawn with.
 	artics    map[int][]int
 	articChar map[int]int
+
+	// Where every element landed, so that the marks Finale keeps apart
+	// from the music can be put back onto it afterwards. places is keyed
+	// by staff and bar and holds the elements in the order they are
+	// played, with how far into the bar each one starts; byEntry finds one
+	// by the entry it came from, which is how a slur names its ends.
+	places  map[[2]int][]place
+	byEntry map[int]*model.Marks
+	// Which staff and bar are being read, since an element does not know.
+	atStaff, atBar int
+}
+
+// place is one element of one bar: how far into the bar it starts, in EDUs,
+// and what can be written on it.
+type place struct {
+	edu   int
+	marks *model.Marks
+}
+
+// marksOf is what a note, a chord or a rest can carry.
+func marksOf(el model.Element) *model.Marks {
+	switch e := el.(type) {
+	case *model.Note:
+		return &e.Marks
+	case *model.Chord:
+		return &e.Marks
+	case *model.Rest:
+		return &e.Marks
+	}
+	return nil
 }
 
 func (r *reader) skip(what string) { r.skipped[what]++ }
 
 // read parses the XML and builds the score.
 func read(data []byte, meta metadata) (*model.Score, []string, error) {
-	rd := &reader{skipped: map[string]int{}}
+	rd := &reader{
+		skipped: map[string]int{},
+		places:  map[[2]int][]place{},
+		byEntry: map[int]*model.Marks{},
+	}
 	if err := xml.Unmarshal(data, &rd.doc); err != nil {
 		return nil, nil, fmt.Errorf("musx: the score inside is not readable: %w", err)
 	}
@@ -287,6 +385,7 @@ func read(data []byte, meta metadata) (*model.Score, []string, error) {
 				Voices:       []*model.Voice{{}},
 				RightBarline: barlineOf(bar.Barline, rd),
 			}
+			rd.atStaff, rd.atBar = staffID, bar.Cmper
 			if h, ok := holds[[2]int{staffID, bar.Cmper}]; ok {
 				if h.Frame2 != 0 || h.Frame3 != 0 || h.Frame4 != 0 {
 					rd.skip("second, third and fourth voices on a staff")
@@ -301,15 +400,21 @@ func read(data []byte, meta metadata) (*model.Score, []string, error) {
 			// omit their hold. Left empty here they came out as blank bars
 			// in the middle of the music, which is not what the part says.
 			if len(m.Voices[0].Elements) == 0 {
-				m.Voices[0].Elements = []model.Element{
-					&model.Rest{Dur: barDuration(bar)},
-				}
+				rest := &model.Rest{Dur: barDuration(bar)}
+				m.Voices[0].Elements = []model.Element{rest}
+				// A bar of rest can still carry a dynamic for what comes
+				// after it, so it is remembered like anything else.
+				rd.put(0, 0, rest)
 			}
 			part.Measures = append(part.Measures, m)
 		}
 		rd.pairTies(part)
 		score.Parts = append(score.Parts, part)
 	}
+
+	// The marks Finale keeps away from the music, put back on it.
+	rd.expressions()
+	rd.shapes()
 
 	// And everything in the file this reader never looks at, which is most
 	// of what Finale writes. Counted from the document rather than from
@@ -339,9 +444,10 @@ var unread = map[string]string{
 	// piece uses one, and counting those would report two thousand chord
 	// diagrams in a mass that has none — so only the records that put
 	// something into this score are counted.
-	// Articulations and ties are read, so they are not in this list.
-	"smartShape":        "slurs, hairpins and the other lines drawn over the music",
-	"measExprAssign":    "expressions: the dynamics, the tempo words and the directions",
+	// Articulations, ties, slurs, hairpins and dynamics are read, so they
+	// are not in this list. What is left of those — a tempo word, an
+	// ottava — is counted where it is passed over, which says how many
+	// were left rather than how many the file holds.
 	"chordAssign":       "chord symbols",
 	"tupletDef":         "tuplets",
 	"staffGroup":        "the braces and brackets joining staves together",
@@ -442,6 +548,9 @@ func (r *reader) staffOrder() []int {
 func (r *reader) frame(f frameSpec, entries map[int]*entry, bar measSpec) []model.Element {
 	var out []model.Element
 	seen := map[int]bool{}
+	// How far into the bar the next entry starts. Finale measures it in
+	// EDUs, which is what a smart shape and an expression are placed by.
+	at := 0
 	for num := f.StartEntry; num != 0; {
 		e, ok := entries[num]
 		if !ok || seen[num] {
@@ -450,13 +559,28 @@ func (r *reader) frame(f frameSpec, entries map[int]*entry, bar measSpec) []mode
 		seen[num] = true
 		if el := r.element(e, bar); el != nil {
 			out = append(out, el)
+			r.put(at, e.Num, el)
 		}
+		at += e.Dura
 		if num == f.EndEntry {
 			break
 		}
 		num = e.Next
 	}
 	return out
+}
+
+// put remembers where an element landed.
+func (r *reader) put(edu, entryNum int, el model.Element) {
+	mk := marksOf(el)
+	if mk == nil {
+		return
+	}
+	key := [2]int{r.atStaff, r.atBar}
+	r.places[key] = append(r.places[key], place{edu: edu, marks: mk})
+	if entryNum != 0 {
+		r.byEntry[entryNum] = mk
+	}
 }
 
 // element turns one entry into a note, a chord or a rest.
@@ -907,6 +1031,159 @@ func (r *reader) pairTies(p *model.Part) {
 				n.TieStart = false
 				r.skip("ties whose note is not held into the one after it")
 			}
+		}
+	}
+}
+
+/*
+ * The marks Finale keeps apart from the notes
+ *
+ * A dynamic, a slur and a hairpin are not written on the note in a Finale
+ * file. They are rows in lists of their own, and each one says where it
+ * lands: a staff, a bar, and either an entry or a position in the bar
+ * measured in EDUs. Nothing in the music points back at them, so they are
+ * read last, once every note is in place and can be found again.
+ */
+
+// at finds what is written on the music at a point in a bar.
+//
+// The element starting exactly there, or else the last one starting before
+// it — which is what "under this beat" means when the mark is placed
+// between two notes.
+func (r *reader) at(staff, bar, edu int) *model.Marks {
+	ps := r.places[[2]int{staff, bar}]
+	if len(ps) == 0 {
+		return nil
+	}
+	best := ps[0]
+	for _, p := range ps {
+		if p.edu > edu {
+			break
+		}
+		best = p
+	}
+	return best.marks
+}
+
+// finaleDynamics is Finale's own ladder of velocities, which is how a
+// dynamic is written down in a way that can be read without its font.
+//
+// The mark itself is a character of Maestro — "ë" for fortississimo — and
+// reading that would mean carrying a table of one font's layout and being
+// wrong for every document that uses another. The velocity says the same
+// thing in a number: Finale's defaults climb in thirteens, and a document
+// that has been edited still lands nearest the rung it means.
+var finaleDynamics = []struct {
+	velocity int
+	dynamic  model.Dynamic
+}{
+	{10, model.PPPP}, {23, model.PPP}, {36, model.PP}, {49, model.Piano},
+	{62, model.MP}, {75, model.MF}, {88, model.Forte}, {101, model.FF},
+	{114, model.FFF}, {127, model.FFFF},
+}
+
+// dynamicFor turns a velocity into the dynamic nearest it.
+func dynamicFor(velocity int) model.Dynamic {
+	best, by := model.DynamicNone, 0
+	for _, d := range finaleDynamics {
+		gap := velocity - d.velocity
+		if gap < 0 {
+			gap = -gap
+		}
+		if best == model.DynamicNone || gap < by {
+			best, by = d.dynamic, gap
+		}
+	}
+	return best
+}
+
+// expressions writes the dynamics onto the notes they stand over.
+func (r *reader) expressions() {
+	dynamics := map[int]bool{}
+	for _, c := range r.doc.Others.Categories {
+		if c.Part == "" && c.Type == "dynamics" {
+			dynamics[c.Cmper] = true
+		}
+	}
+	defs := map[int]textExprDef{}
+	for _, d := range r.doc.Others.Exprs {
+		if d.Part == "" {
+			defs[d.Cmper] = d
+		}
+	}
+	for _, a := range r.doc.Others.ExprPlaces {
+		if a.Part != "" {
+			continue
+		}
+		def, ok := defs[a.Expr]
+		switch {
+		case !ok:
+			r.skip("expressions whose definition is missing from the file")
+			continue
+		case !dynamics[def.Category] || def.PlayType != "amplitude":
+			// A tempo word, a rehearsal direction, a technique: read as
+			// text they would all be guesses about where they belong.
+			r.skip("expressions other than dynamics: tempo words and directions")
+			continue
+		case a.Staff <= 0:
+			// Written against a list of staves rather than one of them.
+			r.skip("dynamics written across a group of staves at once")
+			continue
+		}
+		mk := r.at(a.Staff, a.Meas, a.EduOff)
+		if mk == nil {
+			r.skip("dynamics on a bar this reader found nothing in")
+			continue
+		}
+		if d := dynamicFor(def.Value); d != model.DynamicNone {
+			mk.Dynamic = d
+		}
+	}
+}
+
+// shapes draws the slurs and hairpins back over the music.
+func (r *reader) shapes() {
+	for _, sh := range r.doc.Others.Shapes {
+		if sh.Part != "" || sh.Hidden != nil {
+			continue
+		}
+		switch {
+		case strings.Contains(strings.ToLower(sh.ShapeType), "slur"):
+			// A slur hangs on its two entries, which is the one kind of
+			// shape that says exactly which notes it joins.
+			from, to := r.byEntry[sh.Start.Entry], r.byEntry[sh.End.Entry]
+			if from == nil || to == nil {
+				r.skip("slurs whose notes are not in the part this reader built")
+				continue
+			}
+			if from == to {
+				// A slur from a note to itself is nothing to draw, and
+				// both ends on one note would be a curve over no music.
+				continue
+			}
+			from.SlurStart = true
+			to.SlurStop = true
+		case sh.ShapeType == "cresc", sh.ShapeType == "decresc":
+			kind := model.Crescendo
+			if sh.ShapeType == "decresc" {
+				kind = model.Diminuendo
+			}
+			from := r.at(sh.Start.Inst, sh.Start.Meas, sh.Start.Edu)
+			to := r.at(sh.End.Inst, sh.End.Meas, sh.End.Edu)
+			if from == nil || to == nil {
+				r.skip("hairpins over a bar this reader found nothing in")
+				continue
+			}
+			if from == to {
+				from.Hairpin = &model.Hairpin{Kind: kind, Start: true, Stop: true}
+				continue
+			}
+			from.Hairpin = &model.Hairpin{Kind: kind, Start: true}
+			to.Hairpin = &model.Hairpin{Kind: kind, Stop: true}
+		default:
+			// Ottavas, trills, glissandi, bracketed lines: each needs its
+			// own reading and none of them is a guess worth making.
+			r.skip("lines over the music other than slurs and hairpins")
 		}
 	}
 }

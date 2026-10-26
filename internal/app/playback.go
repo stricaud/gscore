@@ -230,6 +230,20 @@ func buildPlayback(s *model.Score) Playback {
 	out.Duration = total
 
 	for pi, p := range s.Parts {
+		// A staff that is not on the page is not in the performance.
+		//
+		// Hiding one is how you get the rest of the orchestra out of the
+		// way while you work on the strings, and hearing the parts you
+		// have just put away is no help at all. The bars keep their
+		// length — the timeline is worked out from every staff, hidden or
+		// not — so the music does not shift under you when a staff goes
+		// out of sight and come back when it returns.
+		//
+		// pi stays the staff's own number, so the cursor and the
+		// highlighting still land on the right notehead.
+		if p.Hidden {
+			continue
+		}
 		// A tie means the two notes sound as one, so a tied-to note extends
 		// the event already running rather than starting another.
 		open := map[int]int{} // midi -> index in out.Events

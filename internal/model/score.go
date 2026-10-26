@@ -318,11 +318,14 @@ type Part struct {
 	// is heard. Everything stored in Measures is written pitch.
 	Transpose Transposition
 
-	// Hidden leaves the staff out of the drawing without taking it out of
-	// the score. A conductor working on the strings does not want the rest of
-	// the orchestra in the way, and a part still has to sound while it is out
-	// of sight — so this is a decision about the page and not about the
-	// music, and playback ignores it.
+	// Hidden takes the staff off the page and out of what is played. A
+	// conductor working on the strings does not want the rest of the
+	// orchestra in the way, on the page or in the ear, so a staff that has
+	// been put away is silent until it comes back.
+	//
+	// It is still in the score: the bars keep their length, whatever is
+	// written on a hidden staff is still there to come back to, and
+	// nothing about the music is changed by looking away from it.
 	Hidden bool
 
 	// Tab writes this part as tablature instead of on a staff of pitches:

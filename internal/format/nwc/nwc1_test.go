@@ -173,15 +173,25 @@ func TestFindingTheNextStaff(t *testing.T) {
 // this reader must not do, and going round a broken staff made it newly
 // possible to drop one and carry on as if nothing had happened.
 func TestEveryLostStaffIsNamed(t *testing.T) {
-	e := &PartialError{Staves: 5, Total: 9, Lost: []string{
+	lost := []string{
 		"staff 6: object 15 of 524: unknown object type 115",
 		"staff 7: the file ends before it",
-	}}
+	}
+	e := &PartialError{Staves: 5, Total: 9, Lost: lost, LostStaves: countStaffLines(lost)}
 	if len(e.Details()) != 2 {
 		t.Errorf("Details() gives %v", e.Details())
 	}
 	if got := e.Error(); got != "nwc: 2 staves could not be read in full" {
 		t.Errorf("it says %q", got)
+	}
+
+	// A remark about the file is not a staff that was lost: a score with
+	// both its staves on the page must not be reported as having lost two.
+	e2 := &PartialError{Staves: 2, Total: 2,
+		Lost:       []string{"81 chords were read as the one note they are written on"},
+		LostStaves: 0}
+	if got := e2.Error(); got != "nwc: some of this file was not read" {
+		t.Errorf("a remark was counted as a lost staff: %q", got)
 	}
 
 	// With a cause as well, both are told.
@@ -205,9 +215,10 @@ func (e fmtError) Error() string { return string(e) }
 // nothing at all before this and gives up thirty-six bars now, with a line
 // in the log saying where it stopped and why.
 func TestAPartlyReadStaffIsKept(t *testing.T) {
-	e := &PartialError{Staves: 1, Total: 2, Lost: []string{
+	lost := []string{
 		"staff 1: object 472 of 1020: unknown object type 21, keeping the 36 bars read before that",
-	}}
+	}
+	e := &PartialError{Staves: 1, Total: 2, Lost: lost, LostStaves: countStaffLines(lost)}
 	if got := e.Error(); got != "nwc: one staff could not be read in full" {
 		t.Errorf("it says %q", got)
 	}

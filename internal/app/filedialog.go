@@ -237,7 +237,9 @@ func (a *App) handleSave(w http.ResponseWriter, r *http.Request) {
 	path := r.URL.Query().Get("path")
 	if path == "" {
 		if !a.local && !a.native {
-			http.Error(w, "say where to save it", http.StatusBadRequest)
+			// Nowhere to write to, so the document is the answer and the
+			// browser's own panel asks where it goes.
+			a.sendDocument(w, r)
 			return
 		}
 		var err error
@@ -267,10 +269,6 @@ func (a *App) handleSave(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	a.mu.RLock()
-	score, symbols := a.score, a.symbols
-	a.mu.RUnlock()
-
 	f, err := os.Create(path)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -278,102 +276,25 @@ func (a *App) handleSave(w http.ResponseWriter, r *http.Request) {
 	}
 	defer f.Close()
 
-	// A drawing is not a score format, so it is not in the registry; it is
-	// handled here because "save this as a PDF" is an obvious thing to ask,
-	// and the obvious thing to do with a finished score.
-	switch strings.ToLower(filepath.Ext(path)) {
-	case ".svg":
-		if err := a.renderTo(f, r); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		writeJSON(w, map[string]string{"status": "ok", "path": path})
-		return
-	case ".html", ".htm":
-		if err := a.renderPage(f, r); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		writeJSON(w, map[string]string{"status": "ok", "path": path})
-		return
-	case ".pdf":
-		if err := a.renderPDF(f, r); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		writeJSON(w, map[string]string{"status": "ok", "path": path})
-		return
-	case ".flac":
-		// A recording, which is the one export that needs something gscore
-		// does not carry: the instruments themselves.
-		a.mu.RLock()
-		score := a.score
-		a.mu.RUnlock()
-		if err := recordFLAC(f, score, readRecording(r.URL.Query())); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		writeJSON(w, map[string]string{"status": "ok", "path": path})
-		return
-	case ".mid", ".midi":
-		// Nor is a performance. This is the music as it is played rather
-		// than as it is written, which is what another program wants when
-		// it is going to make a sound out of it.
-		a.mu.RLock()
-		err := MIDIFile(f, a.score)
-		a.mu.RUnlock()
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		writeJSON(w, map[string]string{"status": "ok", "path": path})
+	if err := a.writeDocument(f, filepath.Ext(path), r); err != nil {
+		http.Error(w, err.Error(), statusFor(err))
 		return
 	}
-
-	if strings.EqualFold(filepath.Ext(path), ".gscore") {
-		// The one format that can carry the drawings gets handed them, and
-		// a PDF of the score in front of them unless that was turned off.
-		// Renamed .pdf, the same file opens in anything that reads one.
-		var preview []byte
-		// The setting decides unless this one save says otherwise.
-		want := SaveScorePDF()
-		if v := r.URL.Query().Get("pdf"); v != "" {
-			want = v != "0"
-		}
-		if want {
-			var buf bytes.Buffer
-			if err := a.renderPDF(&buf, r); err != nil {
-				http.Error(w, err.Error(), http.StatusInternalServerError)
-				return
-			}
-			preview = buf.Bytes()
-		}
-		if err := gscorefmt.WriteWithPDF(f, score, symbols, preview); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-	} else {
-		exp, err := format.ExporterFor(path)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		if err := exp.Export(f, score); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
+	if !savesTheScore(filepath.Ext(path)) {
+		// A drawing or a recording of the score is not the score, and
+		// writing one leaves the edits still unsaved. It is not a file to
+		// reopen either, so it is not remembered.
+		writeJSON(w, map[string]string{"status": "ok", "path": path})
+		return
 	}
 
 	a.mu.Lock()
 	a.filename = path
 	// What is on disk is what is in hand, so there is nothing to warn about
-	// on the way out. Here and not above: a PDF or a recording of the score
-	// is not the score, and writing one leaves the edits still unsaved.
+	// on the way out.
 	a.unsaved = false
 	a.mu.Unlock()
-	// A score saved is a score to be reopened. The drawings and recordings
-	// that came out of gscore are not, and they return above without
-	// reaching this.
+	// A score saved is a score to be reopened.
 	a.remember(path)
 	writeJSON(w, map[string]string{"status": "ok", "path": path})
 }
@@ -770,7 +691,11 @@ func (a *App) handleConvert(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	// Sniffed rather than declared. Two of the formats gscore writes are
+	// zips — a .gscore and a compressed MusicXML — and announced as text
+	// they arrive broken: anything that reads the answer as text replaces
+	// every byte that is not valid UTF-8, which is most of a zip.
+	w.Header().Set("Content-Type", http.DetectContentType(buf.Bytes()))
 	w.Header().Set("Content-Disposition",
 		fmt.Sprintf("attachment; filename=%q", name+"."+ext))
 	w.Write(buf.Bytes())
@@ -809,4 +734,131 @@ func (a *App) handlePage(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Disposition",
 		fmt.Sprintf("attachment; filename=%q", name+".html"))
 	w.Write(buf.Bytes())
+}
+
+/*
+ * What a saved document holds
+ *
+ * There are two ways of asking for one — a file on a disk and a download in
+ * a browser — and they must not differ, because they are the same document.
+ * So both come from writeDocument, and neither knows about the other.
+ *
+ * The difference is not academic. A .gscore carries the drawings used in the
+ * score and a PDF of the page, and the one the format registry writes
+ * carries neither: a page saving through the registry would hand somebody a
+ * file with their symbols missing from it and nothing to say so.
+ */
+
+// writeDocument writes the score out in the format an extension names.
+func (a *App) writeDocument(out io.Writer, ext string, r *http.Request) error {
+	// A drawing is not a score format, so it is not in the registry; it is
+	// handled here because "save this as a PDF" is an obvious thing to ask,
+	// and the obvious thing to do with a finished score.
+	switch strings.ToLower(ext) {
+	case ".svg":
+		return a.renderTo(out, r)
+	case ".html", ".htm":
+		return a.renderPage(out, r)
+	case ".pdf":
+		return a.renderPDF(out, r)
+	case ".flac":
+		// A recording, which is the one export that needs something gscore
+		// does not carry: the instruments themselves.
+		a.mu.RLock()
+		score := a.score
+		a.mu.RUnlock()
+		return recordFLAC(out, score, readRecording(r.URL.Query()))
+	case ".mid", ".midi":
+		// Nor is a performance. This is the music as it is played rather
+		// than as it is written, which is what another program wants when
+		// it is going to make a sound out of it.
+		a.mu.RLock()
+		score := a.score
+		a.mu.RUnlock()
+		return MIDIFile(out, score)
+	}
+
+	a.mu.RLock()
+	score, symbols := a.score, a.symbols
+	a.mu.RUnlock()
+
+	if strings.EqualFold(ext, ".gscore") {
+		// The one format that can carry the drawings gets handed them, and
+		// a PDF of the score in front of them unless that was turned off.
+		// Renamed .pdf, the same file opens in anything that reads one.
+		var preview []byte
+		// The setting decides unless this one save says otherwise.
+		want := SaveScorePDF()
+		if v := r.URL.Query().Get("pdf"); v != "" {
+			want = v != "0"
+		}
+		if want {
+			var buf bytes.Buffer
+			if err := a.renderPDF(&buf, r); err != nil {
+				return err
+			}
+			preview = buf.Bytes()
+		}
+		return gscorefmt.WriteWithPDF(out, score, symbols, preview)
+	}
+
+	exp, err := format.ExporterFor("score" + ext)
+	if err != nil {
+		return unwritable{err}
+	}
+	return exp.Export(out, score)
+}
+
+// sendDocument hands the document back for the browser to keep.
+//
+// A page has no disk, so every save there is a save-as and the panel that
+// asks where it goes belongs to the browser. What it gets is byte for byte
+// what the desktop would have written.
+func (a *App) sendDocument(w http.ResponseWriter, r *http.Request) {
+	ext := "." + strings.TrimPrefix(r.URL.Query().Get("as"), ".")
+	if ext == "." {
+		ext = ".gscore"
+	}
+	name := a.suggestedBase() + ext
+
+	var buf bytes.Buffer
+	if err := a.writeDocument(&buf, ext, r); err != nil {
+		http.Error(w, err.Error(), statusFor(err))
+		return
+	}
+	// Sniffed rather than declared: half of what comes through here is a
+	// zip and half is text, and a zip announced as text arrives broken.
+	w.Header().Set("Content-Type", http.DetectContentType(buf.Bytes()))
+	w.Header().Set("Content-Disposition",
+		fmt.Sprintf("attachment; filename=%q", name))
+	w.Write(buf.Bytes())
+
+	if savesTheScore(ext) {
+		a.mu.Lock()
+		a.unsaved = false
+		a.mu.Unlock()
+	}
+}
+
+// savesTheScore says whether writing this is saving the music or taking a
+// picture of it. A drawing, a recording and a performance are not the
+// document, and writing one leaves the edits still unsaved.
+func savesTheScore(ext string) bool {
+	switch strings.ToLower(ext) {
+	case ".svg", ".html", ".htm", ".pdf", ".flac", ".mid", ".midi":
+		return false
+	}
+	return true
+}
+
+// unwritable marks a format gscore does not write, which is something the
+// caller asked for rather than something that went wrong inside.
+type unwritable struct{ error }
+
+func statusFor(err error) int {
+	var u unwritable
+	if errors.As(err, &u) {
+		return http.StatusBadRequest
+	}
+	return http.StatusInternalServerError
 }

@@ -51,6 +51,15 @@
           <button data-action="save-svg"><span>SVG…</span><kbd>E</kbd></button>
           <button data-action="save-page"><span>Web page…</span><kbd>⇧H</kbd></button>
           <button data-action="save-midi"><span>MIDI…</span></button>
+          <!-- Out to another notation program. MusicXML is what they all
+               read: MuseScore, Finale, Sibelius, Dorico. The compressed
+               one is the same thing zipped, which is what MuseScore writes
+               itself and what to hand it for a large score. -->
+          <button data-action="save-musicxml"><span>MusicXML…</span></button>
+          <button data-action="save-mxl"><span>MusicXML, compressed…</span></button>
+          <!-- Out to the tunebooks. ABC is a line of text per tune and the
+               format every session and folk collection is kept in. -->
+          <button data-action="save-abc"><span>ABC…</span></button>
           <!-- Out to the best engraving there is. What comes back is source,
                not a picture: it can be edited, and LilyPond sets it. -->
           <button data-action="save-lilypond"><span>LilyPond…</span></button>

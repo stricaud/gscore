@@ -424,6 +424,15 @@ async function action(name) {
     case "save-midi":
       await exportMIDI();
       break;
+    case "save-musicxml":
+      await exportAs("musicxml", "application/vnd.recordare.musicxml+xml", "MusicXML");
+      break;
+    case "save-mxl":
+      await exportAs("mxl", "application/vnd.recordare.musicxml", "compressed MusicXML");
+      break;
+    case "save-abc":
+      await exportAs("abc", "text/vnd.abc", "ABC");
+      break;
     case "save-lilypond":
       await exportAs("ly", "text/plain", "LilyPond");
       break;
@@ -1130,6 +1139,25 @@ async function exportPage() {
 // On this machine the server writes the file through a save panel; served
 // to a browser it comes back and the browser downloads it. The same two
 // paths every export takes.
+// keepFile hands an answer to the browser to put somewhere.
+//
+// The name comes from the server when it sent one, because the server is
+// what knows the score's title and the format it just wrote.
+async function keepFile(res, fallbackName) {
+  const blob = await res.blob();
+  let name = fallbackName;
+  const told = res.headers.get("content-disposition") || "";
+  const m = told.match(/filename="?([^";]+)"?/);
+  if (m) name = m[1];
+
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = name;
+  a.click();
+  URL.revokeObjectURL(a.href);
+  return name;
+}
+
 async function exportAs(ext, type, what) {
   if (state.info?.local) {
     const p = new URLSearchParams({ as: ext });
@@ -1147,12 +1175,11 @@ async function exportAs(ext, type, what) {
     status("Could not export: " + (await res.text()).trim());
     return;
   }
-  const blob = new Blob([await res.text()], { type });
-  const a = document.createElement("a");
-  a.href = URL.createObjectURL(blob);
-  a.download = (state.info?.title || "score").replace(/[^\w-]+/g, "-") + "." + ext;
-  a.click();
-  URL.revokeObjectURL(a.href);
+  // The bytes as they are. Read as text, a .gscore and a compressed
+  // MusicXML — both zips — come out with every byte that is not valid
+  // UTF-8 replaced, which is a file nothing can open.
+  await keepFile(res,
+    (state.info?.title || "score").replace(/[^\w-]+/g, "-") + "." + ext);
   status("Exported " + what);
 }
 
@@ -3860,6 +3887,23 @@ async function exportSymbolPack() {
 // found and understood before the first one could be trusted.
 async function saveScore(ask) {
   const here = state.info?.filename || "";
+
+  // Nowhere to write to: the file comes back and the browser asks where it
+  // goes, so saving in a page is always a save-as. The bytes are the ones
+  // the desktop would have written — the drawings and the PDF of the page
+  // are in there, which the plain exporter does not carry.
+  if (!state.info?.local && !state.info?.native) {
+    const res = await fetch("/api/save", { method: "POST" });
+    if (!res.ok) {
+      status("Could not save: " + (await res.text()).trim());
+      return;
+    }
+    const name = await keepFile(res, "score.gscore");
+    await loadInfo();
+    status("Saved " + name);
+    return;
+  }
+
   if (!ask && here) {
     const back = await fetch("/api/save?path=" + encodeURIComponent(here),
                              { method: "POST" });

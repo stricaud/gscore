@@ -211,12 +211,22 @@ paths:
   /api/save:
     post:
       tags: [score]
-      summary: Write the score to disk
+      summary: Write the score out
       description: |
         With a path, saves there. Without one, opens the platform's own save
         panel; where there is no panel it answers `needPath` with a suggested
-        name rather than failing. Saving a `.gscore` clears the unsaved flag —
-        exporting a PDF does not, because a drawing of the score is not the
+        name rather than failing.
+
+        Where there is no disk at all — gscore served over a network, or
+        compiled into a page — there is nowhere to put a file and nothing to
+        name, so the document itself comes back with a `Content-Disposition`
+        for the browser to keep. That makes every save in a page a save-as.
+        The bytes are the ones a file would have held: a `.gscore` written
+        this way carries the drawings and the PDF of the page, which the
+        plain `/api/convert` export does not.
+
+        Saving the score clears the unsaved flag — exporting a PDF, a
+        recording or a MIDI file does not, because none of those is the
         score.
       parameters:
         - name: path
@@ -225,7 +235,10 @@ paths:
           schema: { type: string }
         - name: as
           in: query
-          description: An extension for the suggested name when a panel is shown.
+          description: |
+            The format to write. Names the suggested file when a panel is
+            shown, and chooses the format outright when the document is
+            handed back instead.
           schema: { type: string }
         - name: pdf
           in: query
@@ -233,7 +246,9 @@ paths:
           schema: { type: string, enum: ["0", "1"] }
       responses:
         "200":
-          description: Saved, cancelled, or asking where to put it.
+          description: |
+            Saved, cancelled, or asking where to put it — and, where there is
+            no disk, the document itself.
           content:
             application/json:
               schema:
@@ -244,6 +259,8 @@ paths:
                   cancelled: { type: boolean }
                   needPath: { type: boolean }
                   suggested: { type: string }
+            application/octet-stream:
+              schema: { type: string, format: binary }
         "400": { $ref: "#/components/responses/Error" }
         "403": { $ref: "#/components/responses/Error" }
 

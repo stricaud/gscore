@@ -512,6 +512,8 @@ async function action(name) {
     case "tie-head": await setTie("on", true); break;
     case "tie-none": await setTie("none", false); break;
 
+    case "harmonics": await openHarmonics(); break;
+
     case "beam-join": await mark("beam", { beam: "join" }, "Beamed together"); break;
     case "beam-here": await beamOrBreak(); break;
     case "beam-break": await mark("beam", { beam: "break" }, "Beam broken"); break;
@@ -2986,6 +2988,9 @@ async function refreshScore() {
 // but the rectangle is what the eye reads.
 function markSelection() {
   rememberCursor();
+  // The harmonics panel follows what is picked up, so that writing a chord
+  // and looking at it are the same gesture.
+  if (state.harm?.open && !state.harm.following) void refreshHarmonics();
   const svg = currentSVG();
   if (!svg) return;
   svg.querySelectorAll("rect.selection").forEach((r) => r.remove());
@@ -6105,6 +6110,19 @@ function follow(pb) {
     const shown = Math.max(0, Math.min(now, total));
     $("#clock").textContent = clock(shown);
 
+    // And the harmonics panel, if it is open: while the music is playing
+    // the moment it shows is wherever the cursor has got to. Asked at most
+    // a few times a second — the answer cannot change faster than the notes
+    // do, and the panel is read rather than watched.
+    if (state.harm?.open) {
+      state.harm.following = true;
+      state.harm.at = shown;
+      if (performance.now() - harmAsked > 200) {
+        harmAsked = performance.now();
+        void refreshHarmonics();
+      }
+    }
+
     // Where the cursor is, from the clock rather than from any one staff.
     const pt = cursorAt(pb.measures, shown);
     if (pt) {
@@ -6362,6 +6380,12 @@ function silence() {
   svg?.querySelectorAll(".playing").forEach((n) => n.classList.remove("playing"));
   current = new Set();
   state.playing = false;
+  // The harmonics panel goes back to following what is picked up: with
+  // nothing playing, the moment it should show is the one being written.
+  if (state.harm) {
+    state.harm.following = false;
+    if (state.harm.open) void refreshHarmonics();
+  }
   $("#play-btn").classList.remove("active");
 }
 
@@ -8038,3 +8062,181 @@ function announceToParent() {
 }
 
 main();
+
+/* ---------- harmonics ---------- */
+
+// What is sounding at one moment, and whether its partials agree.
+//
+// Not a picture of the loudspeaker. A spectrum taken off the audio shows the
+// soundfont — its samples, its filters, its reverb — and gives a different
+// answer for the same chord played on another instrument. The question a
+// composer is asking when they ask whether a chord works is about the notes:
+// every one of them carries a series of partials, and whether the chord is
+// smooth or rough depends on whether those partials land on each other,
+// stand clear, or land close enough to beat. All of that is arithmetic on
+// the written pitches, so it answers before you press play and answers the
+// same way every time.
+
+// harmColours are the colours the notes are told apart by, which also tint
+// the partials belonging to each. Chosen to stay distinct for the most
+// common kinds of colour blindness, since the whole panel is read by colour.
+const harmColours = ["#2f6fb3", "#d1702f", "#3f8f5a", "#9a4fa3", "#b03a4a", "#7a6a3a"];
+
+// state.harm is what the panel is showing and whether it is open.
+state.harm = { open: false, at: 0, following: false };
+
+// harmAsked is when the panel last asked, so that playing does not ask sixty
+// times a second for an answer that changes when the notes do.
+let harmAsked = 0;
+
+async function openHarmonics() {
+  const dlg = $("#harmonics");
+  if (!dlg) return;
+  state.harm.open = true;
+  if (!dlg.open) dlg.showModal();
+  dlg.addEventListener("close", () => { state.harm.open = false; }, { once: true });
+  await refreshHarmonics();
+}
+
+// refreshHarmonics asks the core what is sounding and draws the answer.
+//
+// The moment is named by the note that is picked up rather than by a time:
+// the editor knows which notehead that is and nothing about the clock, and
+// the core has the timeline. While the music is playing the time wins,
+// because then the moment is wherever the cursor has got to.
+async function refreshHarmonics() {
+  if (!state.harm.open) return;
+  const p = new URLSearchParams();
+  if (state.harm.following) {
+    p.set("at", String(state.harm.at));
+  } else if (state.selection?.ref) {
+    p.set("ref", String(state.selection.ref));
+  } else if (state.selection) {
+    p.set("measure", String(state.selection.measure));
+  } else {
+    p.set("at", "0");
+  }
+
+  let d;
+  try {
+    const res = await fetch("/api/harmonics?" + p.toString());
+    if (!res.ok) return;
+    d = await res.json();
+  } catch (_) {
+    return; // the panel is a reader, not an editor: a failed read is nothing
+  }
+  drawHarmonics(d);
+}
+
+function drawHarmonics(d) {
+  const words = $("#harm-words");
+  const number = $("#harm-number");
+  const fill = $("#harm-fill");
+  if (words) words.textContent = d.verdict || "";
+  if (number) number.textContent = (d.roughness || 0).toFixed(2);
+  if (fill) {
+    // The bar runs to one semitone's worth of roughness, which is where the
+    // words stop being about a chord and start being about two notes
+    // arguing. Past that it is full.
+    fill.style.width = Math.min(100, (d.roughness || 0) * 100) + "%";
+  }
+
+  const where = $("#harm-where");
+  if (where) {
+    const names = (d.notes || []).map((n, i) =>
+      `<em style="color:${harmColours[i % harmColours.length]}">${n.name}</em>`);
+    where.innerHTML = names.length
+      ? `At ${(d.at || 0).toFixed(2)}s: ${names.join(" ")}`
+      : `At ${(d.at || 0).toFixed(2)}s: nothing sounding`;
+  }
+
+  drawSpectrum(d);
+  drawIntervals(d);
+}
+
+// drawSpectrum draws every partial as a line on a log frequency axis.
+//
+// Logarithmic because that is how pitch works: an octave is a doubling
+// wherever it falls, so on a log axis every octave is the same width and the
+// partials of a note are evenly spread rather than crowded at the bottom.
+// The lines are drawn tallest first so a quiet partial is never hidden
+// behind a loud one at the same place — which is exactly where the
+// interesting ones are.
+function drawSpectrum(d) {
+  const box = $("#harm-spectrum");
+  if (!box) return;
+  const partials = d.partials || [];
+  if (!partials.length) {
+    box.innerHTML = `<p class="small">Nothing is sounding there.</p>`;
+    return;
+  }
+
+  const W = 560, H = 150, pad = 22;
+  const lo = Math.log2(Math.min(...partials.map((p) => p.freq)) * 0.9);
+  const hi = Math.log2(Math.max(...partials.map((p) => p.freq)) * 1.1);
+  const x = (f) => pad + (Math.log2(f) - lo) / (hi - lo) * (W - pad * 2);
+  const y = (a) => H - pad - a * (H - pad * 2);
+
+  const parts = [];
+  // The octave gridlines, so the eye has something to measure against.
+  for (let f = 27.5; f < 20000; f *= 2) {
+    if (Math.log2(f) < lo || Math.log2(f) > hi) continue;
+    parts.push(`<line class="harm-grid" x1="${x(f).toFixed(1)}" y1="${pad - 6}" ` +
+      `x2="${x(f).toFixed(1)}" y2="${H - pad}"/>`);
+    parts.push(`<text class="harm-tick" x="${x(f).toFixed(1)}" y="${H - pad + 11}">` +
+      `${f < 1000 ? Math.round(f) : (f / 1000).toFixed(1) + "k"}</text>`);
+  }
+
+  for (const p of [...partials].sort((a, b) => b.amp - a.amp)) {
+    const colour = harmColours[p.note % harmColours.length];
+    parts.push(`<line class="harm-partial" stroke="${colour}" ` +
+      `x1="${x(p.freq).toFixed(1)}" y1="${(H - pad).toFixed(1)}" ` +
+      `x2="${x(p.freq).toFixed(1)}" y2="${y(p.amp).toFixed(1)}"/>`);
+  }
+
+  // Where two notes' partials meet, which is what consonance is made of.
+  for (const c of d.coincident || []) {
+    parts.push(`<circle class="harm-meet" cx="${x(c.freq).toFixed(1)}" ` +
+      `cy="${(pad - 4).toFixed(1)}" r="3"/>`);
+  }
+
+  box.innerHTML = `<svg viewBox="0 0 ${W} ${H}" class="harm-svg" ` +
+    `role="img" aria-label="The partials of the sounding notes">${parts.join("")}</svg>`;
+
+  const legend = $("#harm-legend");
+  if (legend) {
+    const met = (d.coincident || []).length;
+    legend.textContent = met === 0
+      ? "No partials meet: nothing is reinforcing anything."
+      : met === 1
+        ? "One pair of partials meets (circled)."
+        : `${met} pairs of partials meet (circled).`;
+  }
+}
+
+// drawIntervals lists what is between each pair of notes, and how far equal
+// temperament has moved it from the ratio it is named after.
+function drawIntervals(d) {
+  const table = $("#harm-intervals");
+  if (!table) return;
+  const rows = d.intervals || [];
+  if (!rows.length) {
+    table.innerHTML = "";
+    return;
+  }
+  const name = (i) => {
+    const n = (d.notes || [])[i];
+    const colour = harmColours[i % harmColours.length];
+    return `<span style="color:${colour}">${n ? n.name : "?"}</span>`;
+  };
+  table.innerHTML =
+    `<tr><th>Notes</th><th>Interval</th><th>Just</th><th>Tempered by</th></tr>` +
+    rows.map((iv) => {
+      // Two cents is nothing; fifteen is a third on a piano, and audible as
+      // a slow beat. Saying which is which is the point of the column.
+      const off = Math.abs(iv.cents) < 5 ? "harm-near" : "harm-far";
+      return `<tr><td>${name(iv.a)}–${name(iv.b)}</td><td>${iv.name}</td>` +
+        `<td>${iv.ratio}</td>` +
+        `<td class="${off}">${iv.cents >= 0 ? "+" : ""}${iv.cents.toFixed(1)}¢</td></tr>`;
+    }).join("");
+}

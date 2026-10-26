@@ -368,6 +368,13 @@
     </div>
   </div>
 
+  <div class="menu" data-menu="analysis">
+    <button class="menu-title">Analysis</button>
+    <div class="menu-items">
+      <button data-action="harmonics"><span>Harmonics…</span></button>
+    </div>
+  </div>
+
   <div class="menu" data-menu="help">
     <button class="menu-title">Help</button>
     <div class="menu-items">
@@ -502,6 +509,38 @@
   every one of its 287 symbols was an XPM file, a grid of characters anyone
   could edit. The grid is the same; only the editor is new.
 -->
+<!-- What is sounding at one moment, and whether its partials agree.
+     Worked out from the written notes rather than from the audio: a
+     spectrum off the loudspeaker shows the soundfont, and the question
+     being asked is about the chord. -->
+<dialog id="harmonics">
+  <h2>Harmonics</h2>
+  <p class="small" id="harm-where">Pick a note, or play, and this follows it.</p>
+
+  <div id="harm-verdict"><span id="harm-words">—</span>
+    <span id="harm-bar"><i id="harm-fill"></i></span>
+    <b id="harm-number">0.00</b>
+  </div>
+
+  <div id="harm-spectrum"></div>
+  <p class="small" id="harm-legend"></p>
+
+  <table id="harm-intervals"></table>
+
+  <p class="small">
+    Each note carries a series of partials above it. Where two notes'
+    partials land together they reinforce; where they land close but not
+    together they beat, and that is roughness — measured here in semitones,
+    so 1 is as rough as two notes a semitone apart. The cents say how far
+    equal temperament has bent each interval from the whole-number ratio it
+    is named after.
+  </p>
+
+  <form method="dialog" class="ask-buttons">
+    <button value="close" type="submit">Close</button>
+  </form>
+</dialog>
+
 <dialog id="draw">
   <h2>Draw a symbol</h2>
   <div class="draw-row">

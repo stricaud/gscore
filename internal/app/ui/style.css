@@ -1387,3 +1387,46 @@ dialog.wide { max-width: 640px; }
 .shortcut.shadowed span { color: var(--muted); }
 .shortcut.shadowed kbd { opacity: .45; text-decoration: line-through; }
 .shortcut.catching kbd { background: var(--accent); color: #fff; }
+
+/* ---- harmonics ---- */
+
+#harmonics { max-width: 640px; }
+
+/* The verdict, as words and as a bar: the words are read first and the bar
+   is what makes two chords comparable at a glance. */
+#harm-verdict {
+  display: flex; align-items: center; gap: 10px;
+  margin: 10px 0 14px;
+}
+#harm-words { flex: 1; }
+#harm-bar {
+  width: 140px; height: 8px; border-radius: 4px;
+  background: var(--line); overflow: hidden;
+}
+#harm-fill {
+  display: block; height: 100%; width: 0;
+  /* Smooth to rough, left to right. The colour is the same information as
+     the width, for anybody reading the bar rather than the number. */
+  background: linear-gradient(90deg, #3f8f5a, #d1702f, #b03a4a);
+  background-size: 140px 100%;
+}
+#harm-number { font-variant-numeric: tabular-nums; min-width: 3em; text-align: right; }
+
+#harm-spectrum { margin: 6px 0; }
+.harm-svg { width: 100%; height: auto; display: block; }
+.harm-partial { stroke-width: 2; stroke-linecap: round; opacity: .85; }
+.harm-grid { stroke: var(--line); stroke-width: 1; }
+.harm-tick { fill: var(--muted); font-size: 9px; text-anchor: middle; }
+.harm-meet { fill: var(--ink); }
+
+#harm-intervals { width: 100%; border-collapse: collapse; margin: 10px 0; }
+#harm-intervals th {
+  text-align: left; font-weight: 600; font-size: 12px;
+  color: var(--muted); border-bottom: 1px solid var(--line); padding: 3px 6px;
+}
+#harm-intervals td { padding: 3px 6px; font-size: 13px; }
+#harm-intervals td.harm-near { color: var(--muted); }
+/* Fifteen cents is a tempered third, and audible as a slow beat; this is
+   what makes it stand out from the two cents of a fifth. */
+#harm-intervals td.harm-far { font-weight: 600; }
+#harm-intervals td:last-child { text-align: right; font-variant-numeric: tabular-nums; }

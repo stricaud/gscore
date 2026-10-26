@@ -364,6 +364,7 @@ func (a *App) APIRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/layout", a.handleLayout)
 	mux.HandleFunc("/api/hits", a.handleHits)
 	mux.HandleFunc("/api/playback", a.handlePlayback)
+	mux.HandleFunc("/api/harmonics", a.handleHarmonics)
 	mux.HandleFunc("/api/keysignatures", a.handleKeySignatures)
 	mux.HandleFunc("/api/chordpreview", a.handleChordPreview)
 	mux.HandleFunc("/api/chordfingering", a.handleChordFingering)

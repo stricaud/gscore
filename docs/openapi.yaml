@@ -1554,6 +1554,62 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Hits" }
 
+  /api/harmonics:
+    get:
+      tags: [play, score]
+      summary: What the harmony at one moment is made of
+      description: |
+        The notes sounding at a moment, the partials each of them carries,
+        where those partials meet, how far equal temperament has bent each
+        interval from the ratio it is named after, and how rough the result
+        is.
+
+        Worked out from the written notes, not from the audio: a spectrum
+        taken off the sound shows the soundfont — its samples, its filters,
+        its reverb — and gives a different answer for the same chord on
+        another instrument. The question this answers is about the notes, so
+        it answers before anything is played and answers the same way every
+        time.
+
+        `roughness` is in semitones: 1 is exactly as rough as two notes a
+        semitone apart in the middle of the staff, averaged over the
+        intervals in the chord. A fifth is about 0.19, a major third 0.49,
+        a major triad 0.39.
+      parameters:
+        - name: at
+          in: query
+          description: The moment, in seconds along the performance.
+          schema: { type: number, default: 0 }
+        - name: ref
+          in: query
+          description: |
+            A notehead, named the way the engraver numbers them. The moment
+            is when that note sounds — "what else is playing when this note
+            does", which is the question somebody writing a chord is asking.
+            Wins over `at`.
+          schema: { type: integer }
+        - name: measure
+          in: query
+          description: A bar, counting from zero; the moment is where it begins.
+          schema: { type: integer }
+        - name: partials
+          in: query
+          description: How far up each note's series to look, 1 to 32.
+          schema: { type: integer, default: 8, minimum: 1, maximum: 32 }
+        - name: rolloff
+          in: query
+          description: |
+            How fast the partials get quieter going up, as the power the
+            harmonic number is raised to. 1 is the textbook sawtooth; a
+            flute is steeper and a reed shallower.
+          schema: { type: number, default: 1 }
+      responses:
+        "200":
+          description: The harmony at that moment.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Harmonics" }
+
   /api/playback:
     get:
       tags: [play, render]
@@ -2100,6 +2156,77 @@ components:
                 type: integer
                 description: How far below what is written this staff sounds.
               hidden: { type: boolean }
+
+    Harmonics:
+      type: object
+      properties:
+        at: { type: number, description: The moment this describes, in seconds. }
+        duration: { type: number, description: How long the whole performance is. }
+        verdict:
+          type: string
+          description: The roughness in words, for reading at a glance.
+        roughness:
+          type: number
+          description: |
+            How much the partials grate against each other, in semitones:
+            1 is as rough as two notes a semitone apart, averaged over the
+            intervals in the chord. Loudness is deliberately left out — a
+            quiet minor second is still a minor second.
+        staves:
+          type: array
+          description: What each staff is called, for labelling.
+          items: { type: string }
+        notes:
+          type: array
+          description: What is sounding, as it sounds — a clarinet's written C arrives here as the B flat heard.
+          items:
+            type: object
+            properties:
+              midi: { type: integer }
+              name: { type: string }
+              freq: { type: number }
+              part: { type: integer }
+              velocity: { type: integer }
+              ref: { type: integer, description: The notehead it came from. }
+        partials:
+          type: array
+          description: Every note's harmonic series, as far up as asked for.
+          items:
+            type: object
+            properties:
+              note: { type: integer, description: Which of the notes it belongs to. }
+              n: { type: integer, description: Which harmonic — 1 is the note itself. }
+              freq: { type: number }
+              amp: { type: number }
+        coincident:
+          type: array
+          description: |
+            Partials of different notes landing together, nearest first.
+            This is what consonance is made of: a fifth is smooth because
+            the third harmonic of the lower note is the second of the upper.
+          items:
+            type: object
+            properties:
+              a: { type: integer }
+              b: { type: integer }
+              na: { type: integer }
+              nb: { type: integer }
+              freq: { type: number }
+              cents: { type: number }
+              beats: { type: number, description: How many times a second they beat. }
+        intervals:
+          type: array
+          items:
+            type: object
+            properties:
+              a: { type: integer }
+              b: { type: integer }
+              semitones: { type: integer }
+              name: { type: string }
+              ratio: { type: string, description: The whole-number ratio the interval is named after. }
+              cents:
+                type: number
+                description: How far the tempered interval is from the just one; positive is wider.
 
     Hits:
       type: object

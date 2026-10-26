@@ -2066,3 +2066,132 @@ func TestPlaybackFollowsAJump(t *testing.T) {
 		}
 	}
 }
+
+// What is sounding at one moment, and whether its partials agree.
+//
+// The question a composer asks of a chord — does this work — has an answer
+// in the notes rather than in the loudspeaker: every note carries a series
+// of partials, and whether the chord is smooth or rough depends on where
+// those partials fall. This is that answer, through the door the panel uses.
+func TestTheHarmonyAtAMoment(t *testing.T) {
+	h := newHarness(t)
+	// A C major triad, written as a chord on one staff.
+	h.post("/api/insert?part=0&measure=0&at=-1&step=-2&dur=whole&kind=note") // C4
+	h.post("/api/addpitch?part=0&measure=0&index=0&step=0")                  // E4
+	h.post("/api/addpitch?part=0&measure=0&index=0&step=2")                  // G4
+
+	var got struct {
+		Notes []struct {
+			Name string  `json:"name"`
+			Freq float64 `json:"freq"`
+		} `json:"notes"`
+		Intervals []struct {
+			Name  string  `json:"name"`
+			Ratio string  `json:"ratio"`
+			Cents float64 `json:"cents"`
+		} `json:"intervals"`
+		Coincident []struct {
+			NA int `json:"na"`
+			NB int `json:"nb"`
+		} `json:"coincident"`
+		Roughness float64 `json:"roughness"`
+		Verdict   string  `json:"verdict"`
+	}
+	if err := json.Unmarshal([]byte(h.get("/api/harmonics?measure=0")), &got); err != nil {
+		t.Fatalf("harmonics: %v", err)
+	}
+
+	if len(got.Notes) != 3 {
+		t.Fatalf("%d notes sounding, want the three of the chord", len(got.Notes))
+	}
+	if got.Notes[0].Name != "C4" {
+		t.Errorf("the lowest note is %q", got.Notes[0].Name)
+	}
+	if math.Abs(got.Notes[0].Freq-261.626) > 0.01 {
+		t.Errorf("middle C sounds at %.3f Hz", got.Notes[0].Freq)
+	}
+
+	// Three notes make three intervals, and the thirds are the ones equal
+	// temperament has moved.
+	if len(got.Intervals) != 3 {
+		t.Fatalf("%d intervals between three notes", len(got.Intervals))
+	}
+	for _, iv := range got.Intervals {
+		switch iv.Name {
+		case "major third":
+			if iv.Ratio != "5:4" || math.Abs(iv.Cents-13.69) > 0.1 {
+				t.Errorf("the major third is %s, %+.2f cents from just", iv.Ratio, iv.Cents)
+			}
+		case "perfect fifth":
+			if math.Abs(iv.Cents+1.96) > 0.1 {
+				t.Errorf("the fifth is %+.2f cents from just", iv.Cents)
+			}
+		}
+	}
+
+	// A triad is a consonance: it has partials in common and it is nowhere
+	// near as rough as a semitone, which is the unit.
+	if len(got.Coincident) == 0 {
+		t.Error("nothing coincides in a major triad")
+	}
+	if got.Roughness <= 0 || got.Roughness >= 1 {
+		t.Errorf("a major triad measures %.3f semitones of roughness", got.Roughness)
+	}
+	if got.Verdict == "" {
+		t.Error("no verdict was given")
+	}
+}
+
+// Asking about a note gives the moment that note sounds, which is what the
+// panel asks when a notehead is picked up.
+func TestTheHarmonyWhenANoteSounds(t *testing.T) {
+	h := newHarness(t)
+	h.note(0, 0, 0, "quarter")
+	h.note(0, 0, 2, "quarter")
+	h.note(0, 0, 4, "quarter")
+
+	opt := engrave.DefaultOptions()
+	opt.Mode = engrave.Strip
+	lay := engrave.Engrave(h.app.score, opt)
+	if len(lay.Hits) == 0 || len(lay.Hits[0].Elements) < 3 {
+		t.Fatal("the bar did not come out with its notes in it")
+	}
+	third := lay.Hits[0].Elements[2].Ref
+
+	var got struct {
+		At    float64 `json:"at"`
+		Notes []struct {
+			Name string `json:"name"`
+		} `json:"notes"`
+	}
+	path := "/api/harmonics?ref=" + itoa(third)
+	if err := json.Unmarshal([]byte(h.get(path)), &got); err != nil {
+		t.Fatalf("harmonics: %v", err)
+	}
+	// One note at a time: these are written one after another, not together.
+	if len(got.Notes) != 1 {
+		t.Fatalf("%d notes sounding at the third note of a melody", len(got.Notes))
+	}
+	if got.At <= 0 {
+		t.Errorf("the third note sounds at %.2fs, which is the start of the piece", got.At)
+	}
+}
+
+// Silence is not an error.
+func TestTheHarmonyOfNothing(t *testing.T) {
+	h := newHarness(t)
+	var got struct {
+		Notes     []any   `json:"notes"`
+		Roughness float64 `json:"roughness"`
+		Verdict   string  `json:"verdict"`
+	}
+	if err := json.Unmarshal([]byte(h.get("/api/harmonics?at=99")), &got); err != nil {
+		t.Fatalf("harmonics: %v", err)
+	}
+	if len(got.Notes) != 0 || got.Roughness != 0 {
+		t.Errorf("%d notes and %.2f roughness in an empty score", len(got.Notes), got.Roughness)
+	}
+	if got.Verdict == "" {
+		t.Error("silence got no verdict")
+	}
+}

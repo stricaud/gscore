@@ -61,10 +61,14 @@ func Import(r io.Reader) (*model.Score, error) {
 		if text, ok := findNWCTXT(raw); ok {
 			data = text
 		} else {
-			return parseNWC1(raw, minor)
+			// Both halves of the version, as one number to compare.
+			//
+			// The reader used to be handed the minor number alone, so a 2.0
+			// file — major 2, minor 0 — looked older than a 1.75 one and
+			// was read with the layout of a version from before 1995. It
+			// parsed its header and then lost its way in the first staff.
+			return parseNWC1(raw, major*100+minor)
 		}
-		_ = minor
-		_ = major
 	}
 
 	p := &parser{score: &model.Score{

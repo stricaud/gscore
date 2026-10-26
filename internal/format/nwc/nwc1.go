@@ -196,7 +196,12 @@ func (w *walker) noteValue() (noteValue, error) {
  */
 
 // parseNWC1 reads an inflated 1.7x score.
-func parseNWC1(raw []byte, minor int) (*model.Score, error) {
+// parseNWC1 reads the object stream a score before 2.75 is stored as.
+//
+// version is the file's own, as major*100+minor: 175 for a 1.75 score and
+// 200 for a 2.0 one. One number because the layout changed at 1.75 and again
+// at 2.0, and comparing against the minor number alone put 2.0 before both.
+func parseNWC1(raw []byte, version int) (*model.Score, error) {
 	w := &walker{b: raw}
 
 	// Header, as nwc.posa describes it.
@@ -243,30 +248,26 @@ func parseNWC1(raw []byte, minor int) (*model.Score, error) {
 	}
 	score.Identity = model.Identity{Title: title, Composer: author, Copyright: copyright1}
 
-	// Page setup.
-	for i := 0; i < 2; i++ { // print options, paper
-		if _, err := w.cstring(); err != nil {
-			return nil, err
-		}
-	}
-	if err := w.skip(4); err != nil {
+	// The page setup, the print settings and the fonts, which are all
+	// discarded — and are the part of the header that moves.
+	//
+	// Between the title block and the fonts sit the print options, the
+	// paper, the margins and a block of print settings, and every one of
+	// those has changed size at some point in the format's life. A 1.75
+	// score has thirty-eight bytes of print settings; a 2.0 score has
+	// thirty-nine and an extra string before them. Counted with a constant,
+	// a file from the other version lands in the middle of a font name and
+	// every byte after it is nonsense — "expected the score marker 0xFF but
+	// found 0x54", which is the T of Times New Roman.
+	//
+	// So the fonts are found rather than counted to. Twelve typefaces, four
+	// bytes of style after each, and the score marker immediately after the
+	// twelfth: that shape is specific enough to recognise, and recognising
+	// it is the one way to be right about a version nobody wrote down.
+	// findSetup is the same trick findNWCTXT uses on a newer file, for the
+	// same reason.
+	if err := w.findFonts(); err != nil {
 		return nil, err
-	}
-	if _, err := w.cstring(); err != nil { // margins
-		return nil, err
-	}
-
-	// Print settings, staff size, then the twelve fonts a 1.7x score carries.
-	if err := w.skip(38); err != nil {
-		return nil, err
-	}
-	for i := 0; i < 12; i++ {
-		if _, err := w.cstring(); err != nil { // typeface
-			return nil, err
-		}
-		if err := w.skip(4); err != nil { // style, size, pad, charset
-			return nil, err
-		}
 	}
 
 	marker, err := w.u8()
@@ -281,6 +282,21 @@ func parseNWC1(raw []byte, minor int) (*model.Score, error) {
 	if err := w.skip(3); err != nil { // 2 pad, layering
 		return nil, err
 	}
+	// A second marker, in the versions that write one.
+	//
+	// 1.75 goes straight from the layering byte to the staff count; 2.0 puts
+	// another 0xFF in between. Taken for the low byte of the count it made a
+	// five-staff score claim to have one thousand five hundred and thirty-
+	// five staves, which is at least a complaint you can read.
+	//
+	// Safe to test for: the count is a staff count, and 0xFF as its low byte
+	// would be a score of at least 255 staves, which the check below refuses
+	// anyway.
+	if b, err := w.peek(); err == nil && b == 0xFF {
+		if err := w.skip(1); err != nil {
+			return nil, err
+		}
+	}
 	staffCount, err := w.u16()
 	if err != nil {
 		return nil, err
@@ -289,8 +305,57 @@ func parseNWC1(raw []byte, minor int) (*model.Score, error) {
 		return nil, fmt.Errorf("nwc: %d staves, which cannot be right", staffCount)
 	}
 
+	// Staves that could not be read, to tell the reader about afterwards.
+	var lost []string
+
 	for i := 0; i < staffCount; i++ {
-		part, err := w.staff(minor)
+		// Land on the staff before reading it.
+		//
+		// A staff ends where the next one begins, and nearly always the
+		// walk arrives there exactly. Nearly: one staff in the Rossi left a
+		// thirty-five byte tail behind — two records the object count did
+		// not admit to — and the staff after it was then read from the
+		// middle of that tail and came out as wreckage, along with every
+		// staff after it.
+		//
+		// A staff header is four printable strings in a row, which is a
+		// shape the middle of an object stream does not often make. So when
+		// the walk is not standing on one, it looks for the next one within
+		// a short distance rather than reading nonsense. The same search
+		// picks the walk up again after a staff that failed halfway, which
+		// is how a file with one bad staff now gives up only that staff
+		// instead of everything after it.
+		searched := false
+		if i > 0 && !w.atStaffHeader() {
+			if !w.findStaffHeader() {
+				// Nothing left that looks like a staff. The ones the file
+				// promised and did not deliver are named rather than
+				// quietly forgotten: a score that comes back four staves
+				// short while saying nothing is the failure this reader
+				// exists to avoid.
+				for n := i; n < staffCount; n++ {
+					lost = append(lost, fmt.Sprintf(
+						"staff %d: the file ends before it", n+1))
+				}
+				break
+			}
+			searched = true
+		}
+		at := w.i
+		part, err := w.staff(version)
+		if err != nil {
+			// Lose this staff, not the rest of the score — and look for the
+			// next one past this staff's own header. Past the whole of it:
+			// a search beginning one byte in finds "st violins" where the
+			// name was "1st violins", four printable strings again, and
+			// reads the same broken staff for ever.
+			w.i = at
+			w.pastStaffHeader()
+			if w.findStaffHeader() {
+				lost = append(lost, fmt.Sprintf("staff %d: %v", i+1, err))
+				continue
+			}
+		}
 		if err != nil {
 			// nwc1.posa warns that the walk can resume a byte out of step
 			// after a Text or Tempo object, which then loses the rest of the
@@ -301,6 +366,7 @@ func parseNWC1(raw []byte, minor int) (*model.Score, error) {
 				return score, &PartialError{
 					Staves: len(score.Parts), Total: staffCount,
 					Cause: fmt.Errorf("staff %d: %w", i+1, err),
+					Lost:  lost,
 				}
 			}
 			return nil, fmt.Errorf("nwc: staff %d: %w", i+1, err)
@@ -310,20 +376,55 @@ func parseNWC1(raw []byte, minor int) (*model.Score, error) {
 		// note data as text. Everything after that point is wreckage, and
 		// appending it puts staves on the page that are not in the file.
 		if !looksLikeText(part.Name) {
+			// Lost the place: look for the next staff rather than stopping
+			// here, starting past this one's header.
+			w.i = at
+			w.pastStaffHeader()
+			if w.findStaffHeader() {
+				lost = append(lost, fmt.Sprintf("staff %d: its name is not text, so the walk had lost its place", i+1))
+				continue
+			}
 			nameInstruments(score)
 			if len(score.Parts) > 0 {
 				return score, &PartialError{
 					Staves: len(score.Parts), Total: staffCount,
 					Cause: fmt.Errorf("staff %d: the file stops making sense here", i+1),
+					Lost:  lost,
 				}
 			}
 			return nil, fmt.Errorf("nwc: staff %d: the file stops making sense here", i+1)
+		}
+		// A staff found by searching has to have music in it.
+		//
+		// Four printable strings is a weak shape, and an object stream
+		// makes one here and there by accident — a staff called "d" with
+		// nothing in it, which is not a staff at all. Where the walk
+		// arrived exactly, an empty staff is believed, because an empty
+		// staff is a thing somebody can write; where it had to go looking,
+		// nothing found means nothing was there.
+		// Once anything has gone wrong, a staff has to prove itself.
+		//
+		// Before the first failure the file is believed: an empty staff is
+		// a thing somebody can write. After one, the walk's idea of where
+		// it is has been wrong at least once, and a staff with no music in
+		// it is far more likely to be four printable strings the object
+		// stream made by accident — a staff called "d" — than a real one.
+		if (searched || len(lost) > 0) && countElements(part) == 0 {
+			lost = append(lost, fmt.Sprintf(
+				"staff %d: nothing readable where the next staff should be", i+1))
+			continue
 		}
 		score.Parts = append(score.Parts, part)
 	}
 	// Whatever the file did not say about what plays each staff, its own
 	// names usually do.
 	nameInstruments(score)
+	// Every staff that was gone around is named, even though the score came
+	// back whole: a staff missing from the page without a word about it is
+	// the one thing this reader must never do.
+	if len(lost) > 0 {
+		return score, &PartialError{Staves: len(score.Parts), Total: staffCount, Lost: lost}
+	}
 	return score, nil
 }
 
@@ -333,9 +434,20 @@ type PartialError struct {
 	Staves int
 	Total  int
 	Cause  error
+	// Lost names the staves the walk could not read and went around. One
+	// line each: a staff skipped without a word is the thing this whole
+	// reader is written not to do, and finding the next staff made it
+	// newly possible to skip one and carry on as if nothing had happened.
+	Lost []string
 }
 
 func (e *PartialError) Error() string {
+	if e.Cause == nil && len(e.Lost) > 0 {
+		if len(e.Lost) == 1 {
+			return "nwc: one staff could not be read"
+		}
+		return fmt.Sprintf("nwc: %d staves could not be read", len(e.Lost))
+	}
 	return fmt.Sprintf("nwc: read %d of %d staves (%v)", e.Staves, e.Total, e.Cause)
 }
 
@@ -345,9 +457,15 @@ func (e *PartialError) Unwrap() error { return e.Cause }
 func (e *PartialError) Partial() {}
 
 // Details implements format.Partial.
-func (e *PartialError) Details() []string { return []string{e.Error()} }
+func (e *PartialError) Details() []string {
+	out := make([]string, 0, len(e.Lost)+1)
+	if e.Cause != nil {
+		out = append(out, e.Error())
+	}
+	return append(out, e.Lost...)
+}
 
-func (w *walker) staff(minor int) (*model.Part, error) {
+func (w *walker) staff(version int) (*model.Part, error) {
 	name, err := w.cstring()
 	if err != nil {
 		return nil, err
@@ -355,11 +473,20 @@ func (w *walker) staff(minor int) (*model.Part, error) {
 	if _, err := w.cstring(); err != nil { // group
 		return nil, err
 	}
+	if version >= 200 {
+		// 2.0 names the instrument and the sound it plays with, where 1.75
+		// had only the staff's own name and its group.
+		for i := 0; i < 2; i++ {
+			if _, err := w.cstring(); err != nil {
+				return nil, err
+			}
+		}
+	}
 
 	if err := w.skip(15 + 2 + 2); err != nil { // settings, upper, lower
 		return nil, err
 	}
-	if minor >= 75 {
+	if version >= 175 {
 		if err := w.skip(1); err != nil { // staff lines
 			return nil, err
 		}
@@ -367,17 +494,40 @@ func (w *walker) staff(minor int) (*model.Part, error) {
 	if err := w.skip(4 + 1 + 1 + 1 + 4); err != nil {
 		return nil, err
 	}
+	if version >= 200 {
+		// Ten more bytes of staff settings than 1.75 keeps. 2.0 gave the
+		// staff a few more things to remember about itself — what it plays
+		// through, how it is laid out — and they sit here.
+		if err := w.skip(10); err != nil {
+			return nil, err
+		}
+	}
 
 	lyricLines, err := w.u16()
 	if err != nil {
 		return nil, err
 	}
-	if _, err := w.u16(); err != nil { // lyric flags
-		return nil, err
+
+	// The word after the line count belongs to the lyrics, not to the staff.
+	//
+	// 1.75 writes it either way. 2.0 writes it only when there are lyrics to
+	// describe, so on a staff with none — the piano under a song, which is
+	// most staves in most songs — reading it anyway took the object count
+	// for it and then found a count of zero in the two bytes after. The
+	// staff came out empty, and the one after it began in the middle of
+	// this one's music.
+	if lyricLines > 0 || version < 200 {
+		if _, err := w.u16(); err != nil { // lyric options
+			return nil, err
+		}
 	}
 
 	if lyricLines > 0 {
-		if err := w.lyrics(lyricLines); err != nil {
+		if version >= 200 {
+			if err := w.lyrics2(); err != nil {
+				return nil, err
+			}
+		} else if err := w.lyrics(lyricLines); err != nil {
 			return nil, err
 		}
 	}
@@ -386,8 +536,10 @@ func (w *walker) staff(minor int) (*model.Part, error) {
 	if err != nil {
 		return nil, err
 	}
-	// A staff says it holds two more objects than it stores. Getting this
-	// wrong runs the object loop past the end of the staff.
+	// A 1.7x staff says it holds two more objects than it stores. Getting
+	// this wrong runs the object loop past the end of the staff — and 2.0
+	// counts them honestly, so taking two off there leaves the last two
+	// unread and the staff after it starting in the middle of this one.
 	objectCount -= 2
 	if objectCount < 0 {
 		objectCount = 0
@@ -721,4 +873,192 @@ func pitchFor(p *model.Part, step int, acc model.Accidental) model.Pitch {
 		pitch.Alter = p.Key.AlterFor(pitch.Step)
 	}
 	return pitch
+}
+
+// fontBlockSearch is how far past the title block the fonts are looked for.
+//
+// They are about ninety bytes along in every file met so far; this is room
+// for a version that puts a good deal more in between, and small enough that
+// the search cannot wander into the music.
+const fontBlockSearch = 512
+
+// findFonts moves the walk to just past the twelve font records.
+//
+// It tries each offset in turn and keeps the first that fits the shape:
+// twelve NUL-terminated typefaces, four bytes after each, and then the 0xFF
+// that opens the score. Twelve strings in a row ending exactly on a marker is
+// not a coincidence anything else in the header produces.
+func (w *walker) findFonts() error {
+	start := w.i
+	limit := start + fontBlockSearch
+	if limit > len(w.b) {
+		limit = len(w.b)
+	}
+	for at := start; at < limit; at++ {
+		probe := &walker{b: w.b, i: at}
+		if !probe.looksLikeFonts() {
+			continue
+		}
+		w.i = probe.i
+		return nil
+	}
+	return fmt.Errorf("nwc: the twelve fonts are not where any version puts them, " +
+		"so the rest of the header cannot be trusted")
+}
+
+// How many fonts a score carries, which is not the same in every version:
+// 1.70 keeps ten and 1.75 and 2.0 keep twelve. So they are read until the
+// score marker turns up rather than counted, with a floor and a ceiling to
+// keep the search honest.
+const (
+	minFonts = 8
+	maxFonts = 24
+)
+
+// looksLikeFonts reads font records until the score marker, and reports
+// whether that is what it found.
+func (w *walker) looksLikeFonts() bool {
+	for n := 0; n <= maxFonts; n++ {
+		if w.i >= len(w.b) {
+			return false
+		}
+		if w.b[w.i] == 0xFF {
+			// The marker that ends the list: this was a font block if
+			// enough of one came before it.
+			return n >= minFonts
+		}
+		name, err := w.cstring()
+		if err != nil {
+			return false
+		}
+		// A typeface is a short printable name. Checking it keeps the
+		// search from accepting a run of empty strings in a pad field,
+		// which is the one other place a dozen NULs sit together.
+		if !looksLikeTypeface(name) {
+			return false
+		}
+		if err := w.skip(4); err != nil {
+			return false
+		}
+	}
+	return false
+}
+
+// looksLikeTypeface says whether a string could be the name of a font.
+func looksLikeTypeface(s string) bool {
+	if len(s) == 0 || len(s) > 63 {
+		return false
+	}
+	for _, r := range s {
+		if r < 0x20 || r > 0x7E {
+			return false
+		}
+	}
+	return true
+}
+
+// peek is the next byte without taking it.
+func (w *walker) peek() (byte, error) {
+	if w.i >= len(w.b) {
+		return 0, fmt.Errorf("nwc: the file stops making sense here")
+	}
+	return w.b[w.i], nil
+}
+
+// lyrics2 walks the lyric block of a 2.0 score.
+//
+// 1.75 stores the words in whole 256-byte pages and says how many; 2.0 says
+// how long the block is and how much of it is used, which is both tidier and
+// a different shape entirely. Read as pages, the length came out as a page
+// count of zero — "unknown lyric block size 0x00" — and the staff was lost
+// there, with its music still unread behind it.
+//
+// All of the lines live in the one block, so there is one of these however
+// many verses the staff carries.
+func (w *walker) lyrics2() error {
+	room, err := w.u16() // how long the block is
+	if err != nil {
+		return err
+	}
+	if _, err := w.u16(); err != nil { // how much of it is words
+		return err
+	}
+	if err := w.skip(2); err != nil {
+		return err
+	}
+	if room > 1<<20 {
+		return fmt.Errorf("a lyric block of %d bytes, which cannot be right", room)
+	}
+	if err := w.skip(int(room)); err != nil {
+		return err
+	}
+	// Two bytes close the block, as one closes a 1.75 one.
+	return w.skip(2)
+}
+
+// staffSearch is how far past the end of one staff the next one is looked
+// for: far enough for the tail a miscounted object stream leaves, and short
+// enough that the search cannot cross a staff's worth of music.
+const staffSearch = 4096
+
+// atStaffHeader says whether the walk is standing on the start of a staff.
+//
+// Four printable strings in a row — the name, the group, the instrument and
+// the sound — and then bytes that are not another string. It is a weak
+// signature taken alone and a strong one taken here, where the alternative
+// is reading an object stream as text.
+func (w *walker) atStaffHeader() bool {
+	probe := &walker{b: w.b, i: w.i}
+	for n := 0; n < 4; n++ {
+		s, err := probe.cstring()
+		if err != nil {
+			return false
+		}
+		if n == 0 && (s == "" || !looksLikeText(s)) {
+			return false
+		}
+		if len(s) > 48 || (s != "" && !looksLikeText(s)) {
+			return false
+		}
+	}
+	// A staff has a good deal more in it than its four names.
+	return probe.remaining() > 32
+}
+
+// findStaffHeader moves the walk to the next staff header, and says whether
+// it found one.
+func (w *walker) findStaffHeader() bool {
+	limit := w.i + staffSearch
+	if limit > len(w.b) {
+		limit = len(w.b)
+	}
+	for at := w.i; at < limit; at++ {
+		probe := &walker{b: w.b, i: at}
+		if probe.atStaffHeader() {
+			w.i = at
+			return true
+		}
+	}
+	return false
+}
+
+// pastStaffHeader steps over a staff's four names, so that a search for the
+// next staff cannot find this one again a byte further on.
+func (w *walker) pastStaffHeader() {
+	for n := 0; n < 4; n++ {
+		if _, err := w.cstring(); err != nil {
+			return
+		}
+	}
+}
+
+// countElements is how much music a staff holds, across its voices.
+func countElements(p *model.Part) int {
+	n := 0
+	for _, m := range p.Measures {
+		for _, v := range m.Voices {
+			n += len(v.Elements)
+		}
+	}
+	return n
 }

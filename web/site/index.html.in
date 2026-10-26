@@ -113,9 +113,9 @@
     <li><b>SVG &amp; HTML</b><span>for a web page, like this one</span></li>
   </ul>
   <p>
-    And it <em>reads</em> ABC, MusicXML, MuseScore and NoteWorthy Composer
-    files — including old ones, with their mistakes logged rather than
-    refused. <a href="scores/">See the sample scores</a> for every format of
+    And it <em>reads</em> ABC, MusicXML, MuseScore, Finale and NoteWorthy
+    Composer files — including old ones, with their mistakes logged rather
+    than refused. <a href="scores/">See the sample scores</a> for every format of
     each piece.
   </p>
 </section>

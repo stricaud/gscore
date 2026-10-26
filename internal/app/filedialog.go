@@ -43,6 +43,19 @@ import (
 // errNoDialog says the platform has no usable file chooser.
 var errNoDialog = errors.New("no native file dialog available here")
 
+// closed reports that a dialog was shut by the person rather than failing
+// to appear, which is the difference between doing nothing and saying so.
+//
+// Both zenity and kdialog answer 1 for a panel the person closed. Anything
+// else is the panel not working — no display to open it on, a missing
+// library, a tool that will not start — and that has to be reported, because
+// the caller's answer to a dialog it cannot have is to offer the browser's
+// own file picker instead. Answered as a cancellation it offers nothing.
+func closed(err error) bool {
+	var exit *exec.ExitError
+	return errors.As(err, &exit) && exit.ExitCode() == 1
+}
+
 // pickFile shows the system's open dialog and returns the chosen path.
 func pickFile() (string, error) {
 	switch runtime.GOOS {
@@ -85,10 +98,25 @@ func pickFile() (string, error) {
 				cmd = exec.Command(path, "--getopenfilename", start)
 			}
 			out, err := cmd.Output()
-			if err != nil {
-				return "", nil // cancelled
+			if err == nil {
+				return strings.TrimSpace(string(out)), nil
 			}
-			return strings.TrimSpace(string(out)), nil
+			// Closing the dialog and failing to open one look the same from
+			// here: both come back with nothing and a status that is not
+			// zero. Reading every one of them as a cancellation is what
+			// made File > Open do nothing at all on a machine where the
+			// dialog could not start — no score, no message, no sign that
+			// anything had been asked for. "It does not show or do
+			// anything, not even an error."
+			//
+			// The exit code tells them apart. Both tools answer 1 when the
+			// person closes the panel and something else when they could
+			// not show one — zenity says 255 — and a tool that cannot be
+			// started at all never gets a code.
+			if closed(err) {
+				return "", nil
+			}
+			return "", fmt.Errorf("%s could not open a file dialog: %w", tool, err)
 		}
 		return "", errNoDialog
 

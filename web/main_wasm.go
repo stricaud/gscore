@@ -33,12 +33,18 @@ import (
 	"github.com/stricaud/gscore/internal/model"
 	"github.com/stricaud/gscore/internal/version"
 
-	// The importers register themselves, exactly as in the desktop build.
+	// The importers register themselves, exactly as in the desktop build —
+	// and this list has to be that one. An importer left out here is a
+	// format the web app cannot open while the desktop can, and it does
+	// not announce itself: the page simply says it does not read that kind
+	// of file. Finale files were missing from it for exactly that long.
+	// formats_test.go holds the two lists to each other.
 	_ "github.com/stricaud/gscore/internal/format/abc"
 	_ "github.com/stricaud/gscore/internal/format/gscore"
 	_ "github.com/stricaud/gscore/internal/format/lilypond"
 	_ "github.com/stricaud/gscore/internal/format/musescore"
 	_ "github.com/stricaud/gscore/internal/format/musicxml"
+	_ "github.com/stricaud/gscore/internal/format/musx"
 	_ "github.com/stricaud/gscore/internal/format/nwc"
 )
 

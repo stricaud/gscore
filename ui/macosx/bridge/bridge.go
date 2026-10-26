@@ -37,11 +37,19 @@ import (
 	"github.com/stricaud/gscore/internal/app"
 	"github.com/stricaud/gscore/internal/model"
 
-	// The importers register themselves, exactly as in the other builds.
+	// The importers register themselves, exactly as in the other builds —
+	// and "exactly" is the whole of it. This list is gscore's idea of what
+	// it can read, written out a third time, and a format missing from one
+	// copy is a format that build cannot open while the others can. The
+	// application said "nothing here reads .musx files" about a file the
+	// same program opened from the command line. builds_test.go in
+	// internal/format holds the three lists to each other.
 	_ "github.com/stricaud/gscore/internal/format/abc"
 	_ "github.com/stricaud/gscore/internal/format/gscore"
+	_ "github.com/stricaud/gscore/internal/format/lilypond"
 	_ "github.com/stricaud/gscore/internal/format/musescore"
 	_ "github.com/stricaud/gscore/internal/format/musicxml"
+	_ "github.com/stricaud/gscore/internal/format/musx"
 	_ "github.com/stricaud/gscore/internal/format/nwc"
 )
 

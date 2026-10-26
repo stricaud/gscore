@@ -5478,8 +5478,22 @@ async function openScore() {
         status("Opened " + d.filename);
         return;
       }
+      // A file that was chosen and could not be read is not the same as
+      // there being no panel to choose it with, and only one of them is
+      // answered by offering another panel.
+      //
+      // Both fell through here, and in the application window the fallback
+      // does nothing at all — there is no file panel behind the hidden
+      // input, which is the whole reason the system is asked for a dialog.
+      // So picking a Finale file told the person nothing: the panel closed,
+      // no score arrived, and the status line still read "Choose a score…".
+      // The server had said why in the answer that was thrown away.
+      if (res.status !== 501) {
+        status("Could not open: " + ((await res.text()).trim() || res.statusText));
+        return;
+      }
     } catch (_) {
-      /* fall through to the browser picker */
+      /* no answer at all: the browser picker is the next thing to try */
     }
   }
   $("#file-input").click();
@@ -5511,11 +5525,26 @@ function setupFileInput() {
     await openFile(e.target.files[0]);
     e.target.value = "";
   });
-  const wrap = $("#canvas-wrap");
-  wrap.addEventListener("dragover", (e) => e.preventDefault());
-  wrap.addEventListener("drop", async (e) => {
+
+  // A score dropped anywhere on the page opens, because a score dropped
+  // anywhere on the page must not be followed.
+  //
+  // This listened on the canvas alone, and what a browser does with a file
+  // dropped on a page it has not been told about is open the file. Dropping
+  // a score on the toolbar, on the menus, or in the margin beside the music
+  // took the editor away to it — and from a page served over https the
+  // browser then refused the file:// it had just been sent to: "Security
+  // Error: Content at https://stricaud.github.io/gscore/app/ may not load
+  // or link to file:///". The score did not open and the editor was gone.
+  //
+  // The window takes it instead, so there is nowhere on the page that is
+  // not handled. preventDefault on dragover is what says the page will
+  // deal with the drop; without it the drop never arrives.
+  window.addEventListener("dragover", (e) => e.preventDefault());
+  window.addEventListener("drop", async (e) => {
     e.preventDefault();
-    await openFile(e.dataTransfer.files[0]);
+    const file = e.dataTransfer?.files?.[0];
+    if (file) await openFile(file);
   });
 }
 

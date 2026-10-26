@@ -5480,7 +5480,35 @@ async function openScore() {
   $("#file-input").click();
 }
 
+// onAppleTouch says whether this is an iPhone or an iPad.
+//
+// Asked for one reason only: what a file panel there will let you choose.
+function onAppleTouch() {
+  const ua = navigator.userAgent || "";
+  if (/iPhone|iPad|iPod/.test(ua)) return true;
+  // An iPad has called itself a Macintosh since iPadOS 13. The touch screen
+  // is what gives it away — a desktop Safari reports no touch points.
+  return /Macintosh/.test(ua) && (navigator.maxTouchPoints || 0) > 1;
+}
+
+// freeTheFilePanels lets an iPhone choose a score.
+//
+// accept is a list of extensions, and iOS reads it by turning each one into
+// a type it has heard of. It has heard of none of these: .mscz, .gscore,
+// .abc, .nwctxt and .sf2 are nobody's registered type, so the Files panel
+// opened with every score in it greyed out — the file was right there and
+// could not be tapped. On a desktop the list is a convenience, filtering a
+// folder down to the music in it; on a phone it is a wall, so on a phone it
+// goes. What is actually readable is decided by the importers when the file
+// arrives, and always was: the panel was never the thing enforcing it.
+function freeTheFilePanels() {
+  if (!onAppleTouch()) return;
+  document.querySelectorAll('input[type="file"][accept]')
+    .forEach((input) => input.removeAttribute("accept"));
+}
+
 function setupFileInput() {
+  freeTheFilePanels();
   $("#file-input").addEventListener("change", async (e) => {
     await openFile(e.target.files[0]);
     e.target.value = "";

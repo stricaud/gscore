@@ -52,6 +52,8 @@ type walker struct {
 	// printed is the staff just read saying it is one of the staves on the
 	// page, rather than one that is only played.
 	printed bool
+	// sounds is the instrument the staff just read plays through, or -1.
+	sounds int
 	// layerWithNext is the staff just read asking to be printed on the
 	// same staff as the one after it. It lives here rather than on the
 	// part because it is a thing about the file, not about the music: once
@@ -525,6 +527,7 @@ func parseNWC1(raw []byte, version int) (*model.Score, error) {
 	var groups []string
 	braces := map[*model.Part]int{}
 	printed := map[*model.Part]bool{}
+	sounds := map[*model.Part]int{}
 
 	// The count is a floor, not a ceiling.
 	//
@@ -623,6 +626,7 @@ func parseNWC1(raw []byte, version int) (*model.Score, error) {
 					// Hand" — which breaks halfway down — lost its claim to
 					// be a printed staff and was taken off the page.
 					braces[part] = w.brace
+					sounds[part] = w.sounds
 					if w.printed {
 						printed[part] = true
 					}
@@ -707,6 +711,7 @@ func parseNWC1(raw []byte, version int) (*model.Score, error) {
 		// Held against the part rather than its index, because merging the
 		// layers below drops staves and moves the rest up.
 		braces[part] = w.brace
+		sounds[part] = w.sounds
 		if w.printed {
 			printed[part] = true
 		}
@@ -719,7 +724,7 @@ func parseNWC1(raw []byte, version int) (*model.Score, error) {
 	for _, p := range score.Parts {
 		closeDanglingSpans(p)
 	}
-	score.Groups = staffGroups(score.Parts, groups, braces)
+	score.Groups = staffGroups(score.Parts, groups, braces, sounds)
 	// Whatever the file did not say about what plays each staff, its own
 	// names usually do.
 	nameInstruments(score)
@@ -883,6 +888,16 @@ func (w *walker) staff(version int) (*model.Part, error) {
 	w.layerWithNext = false
 	if d.layerByte > 0 && settings+d.layerByte < len(w.b) {
 		w.layerWithNext = w.b[settings+d.layerByte] != 0
+	}
+
+	// What the staff sounds as, which is a word eleven bytes into the
+	// settings in every version. It is not used as an instrument here —
+	// the names usually say that better — but as the one thing that tells
+	// a pair of staves belonging to one player from a pair that merely sit
+	// next to each other under the same heading.
+	w.sounds = -1
+	if settings+12 < len(w.b) {
+		w.sounds = int(binary.LittleEndian.Uint16(w.b[settings+11:]))
 	}
 
 	// Whether the staff is printed at all.
@@ -2582,7 +2597,7 @@ const nwcDefaultGroup = "Standard"
 //
 // A brace for two staves and a bracket for more: two staves under one name
 // are one player's hands, and more than two are a section.
-func staffGroups(parts []*model.Part, groups []string, braces map[*model.Part]int) []model.StaffGroup {
+func staffGroups(parts []*model.Part, groups []string, braces, sounds map[*model.Part]int) []model.StaffGroup {
 	if len(groups) != len(parts) {
 		return nil
 	}
@@ -2594,7 +2609,12 @@ func staffGroups(parts []*model.Part, groups []string, braces map[*model.Part]in
 				First: first, Last: last, Name: name,
 				Symbol: model.GroupBracket,
 			}
-			if last-first == 1 {
+			// A brace is for one player's two staves, so the two have to
+			// be one instrument. The Mozart files its brass and its
+			// timpani under one heading called "Percussion", and two
+			// staves under one name was enough to brace them together as
+			// though a drummer were playing the horns.
+			if last-first == 1 && sounds[parts[first]] == sounds[parts[last]] {
 				g.Symbol, g.Barlines = model.GroupBrace, true
 			}
 			out = append(out, g)
@@ -2609,6 +2629,19 @@ func staffGroups(parts []*model.Part, groups []string, braces map[*model.Part]in
 			continue
 		}
 		if g := groups[i]; g != "" {
+			// The same name again is the same group, not a new one.
+			//
+			// A file may write the group on its first staff and leave it
+			// off the rest, which is how NoteWorthy writes a grand staff,
+			// or write it on every staff of the group, which is how the
+			// Mozart does: four staves called "Voice", three called
+			// "Strings", and so on. Taken as a new group each time, every
+			// group was one staff long and nothing was drawn beside any of
+			// them — eleven staves up the page with no bracket to say
+			// which belonged together.
+			if g == name && first >= 0 {
+				continue
+			}
 			flush(i - 1)
 			name, first = g, i
 			continue

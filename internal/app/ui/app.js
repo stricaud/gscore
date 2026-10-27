@@ -6358,6 +6358,99 @@ function hit(ev, start, master) {
 
 // sound plays one event. Everything it makes stops by itself and is collected
 // in `voices` so that pressing stop can cut it short.
+/* ---------- playing without a soundfont ---------- */
+
+// Served over a network there are no soundfonts to play through — they are
+// files on somebody's machine — so the page builds the sound itself out of
+// oscillators. One note is a handful of Web Audio nodes, and that is fine
+// for a song and hopeless for a symphony: Beethoven's ninth is a hundred
+// and thirty-two thousand notes and fifty-seven minutes long, and building
+// all of it before the first note sounds means half a million nodes made up
+// front. The browser either refuses or takes so long that the music has
+// gone past by the time it starts.
+//
+// So the notes are built a few seconds ahead of the music and topped up as
+// it goes, and the handles on the ones that have finished are let go. There
+// are a few dozen nodes in hand at any moment rather than half a million,
+// whatever the piece.
+
+// scheduleAhead is how far in front of the music the notes are built, in
+// seconds, and scheduleEvery how often that window moves forward.
+//
+// Two seconds is far more than the quarter of a second it takes to top up,
+// so a browser busy with something else still has the next notes ready; and
+// it is short enough that stopping is immediate, since nothing beyond it
+// has been built.
+const scheduleAhead = 2;
+const scheduleEvery = 250;
+
+let scheduleTimer = null;
+
+// stopScheduling drops whatever was still to be built. What has already
+// been scheduled is silenced separately, with everything else.
+function stopScheduling() {
+  if (scheduleTimer) clearInterval(scheduleTimer);
+  scheduleTimer = null;
+}
+
+function scheduleOscillators(events, from, t0, master) {
+  stopScheduling();
+
+  // In the order they are played, so that moving the window forward is a
+  // walk rather than a search. Only what is still to be heard: everything
+  // over before we came in is nothing to build.
+  const todo = events
+    .filter((e) => e.start + e.dur > from)
+    .sort((a, b) => a.start - b.start);
+  if (!todo.length) return;
+
+  // The longest note in the piece, which is how long after building one it
+  // may still be ringing — and so how long its handle has to be kept.
+  let longest = 0;
+  for (const e of todo) {
+    if (e.dur > longest) longest = e.dur;
+  }
+
+  let next = 0;
+  // Where the built notes reach to, so that handles on the ones that have
+  // certainly finished can be let go rather than held for the whole piece.
+  let marks = [];
+
+  const tick = () => {
+    // The music's own clock: where the piece has got to, plus the window.
+    const until = audio.currentTime - t0 + from + scheduleAhead;
+    while (next < todo.length && todo[next].start <= until) {
+      const ev = todo[next++];
+      if (ev.start >= from) {
+        sound(ev, t0 + ev.start - from, master);
+      } else {
+        // A note already ringing when we come in: taken up part way, for
+        // what is left of it, rather than struck again.
+        sound({ ...ev, dur: ev.start + ev.dur - from }, t0, master);
+      }
+    }
+
+    marks.push({ at: audio.currentTime, upto: voices.length });
+    // Anything built longer ago than the longest note can last is over.
+    const safe = audio.currentTime - longest - scheduleAhead - 1;
+    let done = 0;
+    while (marks.length && marks[0].at < safe) {
+      done = marks[0].upto;
+      marks.shift();
+    }
+    if (done > 0) {
+      voices = voices.slice(done);
+      marks = marks.map((m) => ({ at: m.at, upto: m.upto - done }));
+    }
+
+    if (next >= todo.length) stopScheduling();
+  };
+
+  tick();
+  // A piece short enough to build in one go needs nothing to tick over it.
+  if (next < todo.length) scheduleTimer = setInterval(tick, scheduleEvery);
+}
+
 function sound(ev, start, master) {
   if (ev.drum) {
     hit(ev, start, master);
@@ -6607,17 +6700,7 @@ async function playNow(opts) {
   master.gain.value = 1;
   if (!(await startLive(from, master, t0))) {
     master.gain.value = 0.22; // keep simultaneous notes from clipping
-    for (const ev of pb.events) {
-      const end = ev.start + ev.dur;
-      if (end <= from) continue; // already over by the time we start
-      if (ev.start >= from) {
-        sound(ev, t0 + ev.start - from, master);
-        continue;
-      }
-      // A note already ringing when we come in: take it up part way, for
-      // what is left of it, rather than striking it again.
-      sound({ ...ev, dur: end - from }, t0, master);
-    }
+    scheduleOscillators(pb.events, from, t0, master);
   }
 
   state.playing = true;
@@ -7100,6 +7183,9 @@ function silence() {
   if (rafID) cancelAnimationFrame(rafID);
   rafID = null;
   endLive();
+  // Nothing more is to be built. Without this the window went on filling
+  // itself after the music had been stopped, and the piece played on.
+  stopScheduling();
   for (const v of voices) {
     try {
       v.stop();

@@ -355,12 +355,14 @@ func TestTheCursorIsPlacedAgainstItsOwnTune(t *testing.T) {
 func TestPlayFollowsTheTuneOnScreen(t *testing.T) {
 	js := readUI(t, "app.js")
 
-	body := functionBody(js, "async function play(opts)")
+	// playNow, because play itself is now the wrapper that says what it is
+	// doing while a symphony is got ready. The choosing is still one place.
+	body := functionBody(js, "async function playNow(opts)")
 	if body == "" {
-		t.Fatal("could not find play in app.js")
+		t.Fatal("could not find playNow in app.js")
 	}
 	if !strings.Contains(body, "visibleTune") {
-		t.Error("play does not look at which tune is on screen: in a book it would play the first")
+		t.Error("playNow does not look at which tune is on screen: in a book it would play the first")
 	}
 	if !strings.Contains(js, "function visibleTune") {
 		t.Error("visibleTune is used and not defined")
@@ -369,7 +371,7 @@ func TestPlayFollowsTheTuneOnScreen(t *testing.T) {
 	// does, so it has to win: clicking a note in one tune and scrolling to
 	// another should still play the note that was clicked.
 	if !strings.Contains(body, "hasSelection()") {
-		t.Error("play does not let a selection override the tune on screen")
+		t.Error("playNow does not let a selection override the tune on screen")
 	}
 }
 

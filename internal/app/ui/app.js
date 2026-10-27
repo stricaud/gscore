@@ -47,6 +47,10 @@ const state = {
   selection: null,
 
   hits: [],
+  // How big the engraved score is, in staff spaces, and which stretch of it
+  // is in the page — null when the whole of it is. See drawWindow.
+  size: null,
+  drawn: null,
   tool: { duration: "quarter", dots: 0, accidental: "none", rest: false, drum: null },
   // The kit, once fetched. A score without a drum staff never asks for it.
   kit: null,
@@ -742,7 +746,13 @@ function markMode() {
 
 /* ---------- score ---------- */
 
-function scoreURL(opts = {}) {
+// viewParams says which picture is being asked about: which tune, how big a
+// staff space is, strip or pages, how wide a system may be.
+//
+// Shared, because two routes answer questions about the same picture — what
+// it looks like and how big it is — and a size that belongs to a different
+// picture sends the editor to the wrong place in the music.
+function viewParams(opts = {}) {
   const p = new URLSearchParams({ space: String(opts.space ?? state.zoom) });
   if (opts.tune !== undefined) p.set("tune", String(opts.tune));
   // Always say which, rather than naming the strip and letting silence mean
@@ -752,21 +762,378 @@ function scoreURL(opts = {}) {
   const mode = opts.mode ?? state.mode;
   p.set("mode", mode === "strip" ? "strip" : "page");
   if (opts.width) p.set("width", String(opts.width));
+  return p;
+}
+
+function scoreURL(opts = {}) {
+  const p = viewParams(opts);
+  // A stretch of the score rather than all of it. See drawWindow.
+  const w = opts.window;
+  if (w) {
+    p.set("x0", w.x0.toFixed(2));
+    p.set("y0", w.y0.toFixed(2));
+    p.set("x1", w.x1.toFixed(2));
+    p.set("y1", w.y1.toFixed(2));
+  }
   p.set("_", String(Date.now()));
   return "/score.svg?" + p.toString();
 }
 
+/* ---------- drawing a long score a screenful at a time ---------- */
+
+// A browser is given the shapes it can see, and a screenful either way, and
+// not the rest.
+//
+// A big orchestral score is not a big picture, it is a great many small
+// ones: Beethoven's ninth is fifty-three staves of two and a half thousand
+// bars and comes to nine hundred thousand shapes. Handed all of them, the
+// browser spends seconds laying them out, keeps hundreds of megabytes, and
+// then walks the lot on every repaint to work out what is on screen — so
+// scrolling stutters and playing stops dead while it catches up. It is the
+// same problem a list widget has with a million rows, and the same answer:
+// put the rows you can see in the page and fetch the others as they come
+// into view.
+//
+// A score that fits is drawn whole and nothing below does anything, which
+// is every ordinary one.
+
+// drawPad is how far beyond the view to draw, as a fraction of the view: a
+// screenful past each edge, so that ordinary scrolling never reaches the end
+// of what is drawn before the next stretch has arrived.
+const drawPad = 1.0;
+
+// drawSlack is how much of that margin may be used up before the next
+// stretch is fetched. A quarter of a screen in hand is enough to cover the
+// fetch, and redrawing at a quarter rather than at the edge means a scroll
+// of one screenful costs one fetch rather than several.
+const drawSlack = 0.25;
+
+// windowArea is how much music goes in the page at once, in square staff
+// spaces.
+//
+// In the score's own units rather than in screenfuls, because what a browser
+// minds is how many shapes it is holding, and that is a property of the
+// music and not of how far it is zoomed in. Measured in screenfuls the same
+// score wanted cutting up differently at every zoom, and the seam moved
+// about with it.
+//
+// Beethoven's ninth comes to about thirty-five square spaces per shape, so
+// this is some fifteen thousand of them — comfortable for a browser, and
+// about a twentieth of one per cent of that score. A flute study is a third
+// of it and is handed over whole.
+const windowArea = 550000;
+
+// viewBox is the stretch of the score on screen, in staff spaces.
+function viewBox() {
+  const wrap = $("#canvas-wrap");
+  if (!wrap) return null;
+  const z = state.zoom || 8;
+  let x0 = 0, y0 = 0;
+  const svg = currentSVG();
+  if (svg) {
+    // Measured against the drawing rather than from the scroll offsets,
+    // because the paper is inset from the edge of the panel and the drawing
+    // is where the coordinates in it are measured from.
+    const wr = wrap.getBoundingClientRect();
+    const sr = svg.getBoundingClientRect();
+    x0 = (wr.left - sr.left) / z;
+    y0 = (wr.top - sr.top) / z;
+  }
+  return {
+    x0, y0,
+    x1: x0 + wrap.clientWidth / z,
+    y1: y0 + wrap.clientHeight / z,
+  };
+}
+
+// drawWindow is the stretch to draw, or null to draw the whole score.
+function drawWindow(size) {
+  const vis = viewBox();
+  if (!vis || !size || !(size.width > 0) || !(size.height > 0)) return null;
+  const viewW = vis.x1 - vis.x0;
+  const viewH = vis.y1 - vis.y0;
+  if (!(viewW > 0) || !(viewH > 0)) return null;
+
+  // It all fits, so ask for all of it: an ordinary score is drawn exactly
+  // as it was before any of this, in one request, and never fetched again
+  // for being scrolled.
+  if (size.width * size.height <= windowArea) return null;
+
+  // The stretch in view, with a screenful of margin on each side.
+  let x0 = Math.max(0, vis.x0 - viewW * drawPad);
+  let x1 = Math.min(size.width, vis.x1 + viewW * drawPad);
+  let y0 = Math.max(0, vis.y0 - viewH * drawPad);
+  let y1 = Math.min(size.height, vis.y1 + viewH * drawPad);
+
+  // Then as much more of a side as the budget allows, the shorter one
+  // first.
+  //
+  // A side taken whole is a side that never fetches anything again, which
+  // is worth paying for: the editing strip is one system running the length
+  // of the piece and only as tall as the orchestra, so the whole height is
+  // a column of a few thousand more shapes — and scrolling down the staves
+  // while the music plays stops waiting altogether. It used to stop the
+  // playing for a second or two at every step, and leave a band of blank
+  // paper under the last staff it had drawn.
+  const takeY = () => {
+    if (size.height * (x1 - x0) > windowArea) return;
+    y0 = 0;
+    y1 = size.height;
+  };
+  const takeX = () => {
+    if (size.width * (y1 - y0) > windowArea) return;
+    x0 = 0;
+    x1 = size.width;
+  };
+  if (size.height <= size.width) {
+    takeY();
+    takeX();
+  } else {
+    takeX();
+    takeY();
+  }
+  return { x0, y0, x1, y1 };
+}
+
+// stillCovered says whether what is drawn still has the view comfortably
+// inside it, allowing for the edges of the score, where there is nothing
+// more to draw.
+function stillCovered(drawn, size) {
+  const vis = viewBox();
+  if (!vis || !drawn || !size) return true;
+  const sx = (vis.x1 - vis.x0) * drawSlack;
+  const sy = (vis.y1 - vis.y0) * drawSlack;
+  return (drawn.x0 <= 0 || vis.x0 - sx >= drawn.x0) &&
+         (drawn.y0 <= 0 || vis.y0 - sy >= drawn.y0) &&
+         (drawn.x1 >= size.width || vis.x1 + sx <= drawn.x1) &&
+         (drawn.y1 >= size.height || vis.y1 + sy <= drawn.y1);
+}
+
+// loadSize asks how big the engraved score is, in staff spaces, for the view
+// being shown. It is what decides whether the score needs this at all.
+async function loadSize() {
+  try {
+    const res = await fetch("/api/layout?" + viewParams().toString());
+    if (!res.ok) return null;
+    const d = await res.json();
+    if (!(d.width > 0) || !(d.height > 0)) return null;
+    return d;
+  } catch (_) {
+    // Served without the route behind it. The whole score is drawn, as
+    // before.
+    return null;
+  }
+}
+
+// One fetch at a time, and one more queued if the view moves while it is in
+// the air. Scrolling asks far more often than the answers come back, and a
+// pile of them arriving out of order would draw the wrong stretch last.
+let windowFetch = false;
+let windowAgain = false;
+
+// redrawWindow draws the stretch of the score that is now in view.
+async function redrawWindow() {
+  if (windowFetch) {
+    windowAgain = true;
+    return;
+  }
+  windowFetch = true;
+  try {
+    const win = drawWindow(state.size);
+    const res = await fetch(scoreURL(win ? { window: win } : {}));
+    if (!res.ok) return;
+    const text = await res.text();
+    $("#canvas").innerHTML = text;
+    state.drawn = win;
+    // The cursor and the selection were shapes in the drawing that has just
+    // been replaced, so they go back on. The writing cursor notices for
+    // itself that it has been taken off the page.
+    markSelection();
+    drawSprints();
+  } finally {
+    windowFetch = false;
+    if (windowAgain) {
+      windowAgain = false;
+      void redrawWindow();
+    }
+  }
+}
+
+/* ---------- the end of a staff ---------- */
+
+// A score opens at its beginning, the way a document does. Somebody who
+// opened it to carry on writing wants the end of a staff, and on a score of
+// fifty-three staves the end of *which* staff is a real question — so there
+// is one of these per staff, down the left of the music, and it says which.
+//
+// Stuck to the edge of the panel rather than drawn into the margin of the
+// score, so that they are still reachable after the view has moved along.
+
+// sprintRows is one entry per staff on the page: where it is, and what it
+// is called.
+function sprintRows() {
+  const seen = new Map();
+  for (const h of state.hits || []) {
+    if (seen.has(h.part)) continue;
+    seen.set(h.part, {
+      part: h.part,
+      top: h.staffTop,
+      height: staffHeightOf(h),
+      name: (state.info?.parts || [])[h.part]?.name || `Staff ${h.part + 1}`,
+    });
+  }
+  return [...seen.values()].sort((a, b) => a.top - b.top);
+}
+
+// What is on the page now, so that scrolling only moves the buttons rather
+// than building them again.
+let sprintKey = "";
+
+function drawSprints() {
+  const box = $("#staff-sprints");
+  if (!box) return;
+  const wrap = $("#canvas-wrap");
+  const svg = currentSVG();
+  // Only where there is somewhere to sprint to. A score that already fits
+  // across the panel has its end on screen, and a row of buttons pointing
+  // at it would be furniture.
+  const far = wrap && (state.size?.width || 0) * state.zoom > wrap.clientWidth * 1.5;
+  // And only at the beginning of the staff.
+  //
+  // They are a way of leaving the start: once the view has moved along,
+  // they are pointing at where you already are and are in front of the
+  // music. Scrolling back to the beginning brings them back.
+  const atStart = wrap && wrap.scrollLeft <= 16;
+  if (!wrap || !svg || !far || !atStart || state.mode !== "strip" || state.readOnly) {
+    box.hidden = true;
+    box.textContent = "";
+    sprintKey = "";
+    return;
+  }
+  box.hidden = false;
+
+  const rows = sprintRows();
+  const key = rows.map((r) => r.part + "@" + r.top.toFixed(2)).join(",");
+  if (key !== sprintKey) {
+    sprintKey = key;
+    box.textContent = "";
+    for (const r of rows) {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "staff-sprint";
+      b.dataset.name = r.name;
+      const what = "Continue editing " + r.name;
+      b.title = what;
+      b.setAttribute("aria-label", what);
+      // An arrow with a wall at the end of it: go as far as this goes.
+      b.textContent = "⇥";
+      b.addEventListener("click", () => void sprintToStaffEnd(r.part));
+      box.appendChild(b);
+    }
+  }
+  placeSprints(rows, box, svg, wrap);
+}
+
+// placeSprints puts each button beside its own staff, and takes away the
+// ones whose staff has scrolled off the panel.
+function placeSprints(rows, box, svg, wrap) {
+  const z = state.zoom;
+  const here = box.getBoundingClientRect();
+  const drawing = svg.getBoundingClientRect();
+  const tall = wrap.clientHeight;
+  const kids = box.children;
+  for (let i = 0; i < rows.length && i < kids.length; i++) {
+    const mid = drawing.top - here.top + (rows[i].top + rows[i].height / 2) * z;
+    const el = kids[i];
+    el.hidden = mid < 2 || mid > tall - 10;
+    el.style.top = (mid - 10) + "px";
+  }
+}
+
+// sprintToStaffEnd goes to the last bar of one staff and leaves the cursor
+// ready to write in it.
+async function sprintToStaffEnd(part) {
+  let last = null;
+  for (const h of state.hits || []) {
+    if (h.part !== part) continue;
+    if (!last || h.measure > last.measure) last = h;
+  }
+  const name = (state.info?.parts || [])[part]?.name || `Staff ${part + 1}`;
+  if (!last) {
+    status("There is nothing on " + name + " to go to");
+    return;
+  }
+  // After the last thing written in the bar, which is where carrying on
+  // starts. The middle line, having no reason to be anywhere else.
+  state.selection = {
+    part, measure: last.measure,
+    at: (last.elements || []).length,
+    step: 4, ref: null, replace: false,
+  };
+  markSelection();
+
+  const box = {
+    x0: last.x0, x1: last.x1,
+    top: last.staffTop, bottom: last.staffTop + staffHeightOf(last),
+  };
+  await glideTo(box);
+  // The view has moved a long way, so the stretch of score under it is a
+  // different one. Waiting for the glide to finish first means one fetch
+  // rather than one for every frame of it.
+  if (state.drawn && !stillCovered(state.drawn, state.size)) await redrawWindow();
+  flashMeasure(box);
+  status(`${name}: measure ${last.measure + 1}`);
+}
+
+// setupVirtualDraw fetches the next stretch as the view approaches the edge
+// of what is drawn.
+function setupVirtualDraw() {
+  const wrap = $("#canvas-wrap");
+  if (!wrap) return;
+  let frame = 0;
+  const check = () => {
+    frame = 0;
+    // The buttons are pinned to the panel and their staves are not, so they
+    // move whenever the view does.
+    drawSprints();
+    if (!state.drawn) return; // the whole score is in the page
+    if (stillCovered(state.drawn, state.size)) return;
+    void redrawWindow();
+  };
+  const ask = () => {
+    if (!frame) frame = requestAnimationFrame(check);
+  };
+  wrap.addEventListener("scroll", ask, { passive: true });
+  window.addEventListener("resize", ask);
+}
+
 async function drawScore() {
   if (state.showAll && (state.info?.tunes || []).length > 1) {
+    // A book is drawn whole, one tune after another. Saying so matters:
+    // with a window still recorded from the single-tune view, the next
+    // scroll would fetch one tune's stretch and put it in place of the
+    // book.
+    state.drawn = null;
     await drawBook();
     return;
   }
-  const res = await fetch(scoreURL());
+  // How big it is, which is what says whether it has to be drawn a
+  // screenful at a time at all.
+  state.size = await loadSize();
+  const win = drawWindow(state.size);
+  const res = await fetch(scoreURL(win ? { window: win } : {}));
   if (!res.ok) {
     status("Could not draw the score");
     return;
   }
   $("#canvas").innerHTML = await res.text();
+  state.drawn = win;
+  drawSprints();
+  if (win) {
+    // The first stretch was worked out before there was a drawing to
+    // measure against, so the view is checked once now that there is one.
+    if (!stillCovered(state.drawn, state.size)) void redrawWindow();
+  }
 }
 
 // drawBook puts every score in the file on screen, one under another.
@@ -964,6 +1331,8 @@ async function reload() {
     await drawScore();
     await loadHits();
     placeCursorOnOpen();
+    // The sprints come from the hit regions, which are only just here.
+    drawSprints();
   } finally {
     idle();
   }
@@ -4962,13 +5331,15 @@ async function markerDialog() {
   status(v === "" ? "Mark removed" : "Mark " + v);
 }
 
-// nextMarkerLetter guesses what comes next by counting what is drawn.
+// nextMarkerLetter is what comes after the marks already written.
+//
+// Counted in the score rather than on the page. It used to count the single
+// capital letters in the drawing, which worked while the whole score was
+// drawn and stopped working when a long one began to be drawn a screenful
+// at a time: the marks already written are mostly not on the page, so it
+// offered A again and again.
 function nextMarkerLetter() {
-  const svg = currentSVG();
-  let n = 0;
-  svg?.querySelectorAll("text.t").forEach((t) => {
-    if (/^[A-Z]$/.test(t.textContent.trim())) n++;
-  });
+  const n = state.info?.markers ?? 0;
   return String.fromCharCode(65 + Math.min(25, n));
 }
 
@@ -6114,7 +6485,25 @@ function scrollToTop() {
 // are working on, hearing the piece from the top again is rarely what you
 // wanted. Shift with the space bar still goes back to the beginning, and so
 // does playing with nothing selected.
+// play says what it is doing while it gets ready.
+//
+// Working out a performance and handing the first of it to the sound card
+// takes a moment on a big score — a second or two on a symphony — and in
+// that moment nothing happens at all, which is indistinguishable from the
+// button not having worked. Gilbert waits a quarter of a second before
+// appearing, so a score that starts at once never shows him.
 async function play(opts) {
+  busy("Getting ready to play…");
+  try {
+    return await playNow(opts);
+  } finally {
+    // Before the first sound rather than after the piece: what follows this
+    // is scheduled, not waited on.
+    idle();
+  }
+}
+
+async function playNow(opts) {
   if (state.playing) stop();
 
   // Where a pause left off, if this is carrying on from one. Nothing about
@@ -6405,13 +6794,18 @@ function soundingAt(when, at) {
 //
 // Built the first time it is asked for, because a score that is never played
 // should not pay for it.
-function refIndex(svg) {
+function refIndex() {
   let map = null;
+  let made = null;
   const none = [];
   return (ref) => {
+    const svg = currentSVG();
     if (!svg) return none;
-    if (!map) {
+    // Made again when the drawing is: a long score is drawn a screenful at
+    // a time and the whole of it is replaced as the music moves along.
+    if (!map || made !== svg) {
       map = new Map();
+      made = svg;
       for (const n of svg.querySelectorAll("[data-ref]")) {
         const k = n.getAttribute("data-ref");
         const got = map.get(k);
@@ -6427,7 +6821,6 @@ function refIndex(svg) {
 // engraver and the playback builder number elements identically, so an
 // event's ref finds its glyph directly.
 function follow(pb) {
-  const svg = currentSVG();
   const total = pb.duration;
   // The events filed by the second they start in, and how long the longest
   // note in the piece lasts.
@@ -6441,7 +6834,11 @@ function follow(pb) {
   const when = eventIndex(pb.events);
   // And the glyphs filed by the number the engraver gave them, so that
   // lighting one up is a lookup rather than a search of the whole drawing.
-  const byRef = refIndex(svg);
+  // It finds the drawing for itself each time: a long score is drawn a
+  // screenful at a time, so the drawing is replaced underneath playback as
+  // it moves along, and a list made from the one that has gone points at
+  // nothing.
+  const byRef = refIndex();
 
   const tick = () => {
     const now = (performance.now() - playStart) / 1000;
@@ -8229,6 +8626,7 @@ async function main() {
   setupFullscreen();
   setupCanvasClicks();
   setupStripHover();
+  setupVirtualDraw();
   setupDrawing();
   markMode();
 

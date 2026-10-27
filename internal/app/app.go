@@ -28,6 +28,7 @@ import (
 	"fmt"
 	"html"
 	"io"
+	"math"
 	"net"
 	"net/http"
 	"os"
@@ -503,7 +504,14 @@ func (a *App) layout(score *model.Score, opt engrave.Options) *engrave.Layout {
 	return lay
 }
 
-func (a *App) handleSVG(w http.ResponseWriter, r *http.Request) {
+// viewOptions reads the view a request is asking about: which score of a
+// book, how big a staff space is, whether it is a strip or pages, and how
+// wide a system may be.
+//
+// One reading of it, because two routes answer questions about the same
+// picture — what it looks like and how big it is — and an editor told a size
+// that belongs to a different picture scrolls to the wrong place.
+func (a *App) viewOptions(r *http.Request) (*model.Score, engrave.Options, svg.Options) {
 	a.mu.RLock()
 	score := a.score
 	if v := r.URL.Query().Get("tune"); v != "" {
@@ -513,6 +521,7 @@ func (a *App) handleSVG(w http.ResponseWriter, r *http.Request) {
 	}
 	eopt := a.engraveOpt
 	ropt := a.renderOpt
+	ropt.Symbols = a.symbols
 	a.mu.RUnlock()
 
 	if v := r.URL.Query().Get("space"); v != "" {
@@ -531,10 +540,20 @@ func (a *App) handleSVG(w http.ResponseWriter, r *http.Request) {
 			eopt.LineWidth = f
 		}
 	}
+	return score, eopt, ropt
+}
 
-	a.mu.RLock()
-	ropt.Symbols = a.symbols
-	a.mu.RUnlock()
+func (a *App) handleSVG(w http.ResponseWriter, r *http.Request) {
+	score, eopt, ropt := a.viewOptions(r)
+
+	// What part of it to draw.
+	//
+	// The editor asks for the stretch it is showing plus a screenful either
+	// way, rather than for the whole score, because a browser handed nine
+	// hundred thousand shapes stutters at every scroll. Everything else —
+	// printing, a PDF, a page somebody is given — asks for all of it and
+	// gets all of it.
+	ropt.Window = windowOf(r)
 
 	lay := a.layout(score, eopt)
 	w.Header().Set("Content-Type", "image/svg+xml")
@@ -542,6 +561,53 @@ func (a *App) handleSVG(w http.ResponseWriter, r *http.Request) {
 	if err := svg.Render(w, lay, ropt); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
+}
+
+// markerCount is how many bars carry a rehearsal mark.
+//
+// One per bar, not one per staff: a mark is written on every staff of the
+// bar it belongs to, because "from letter B" has to mean the same bar to
+// everybody.
+func markerCount(s *model.Score) int {
+	n := 0
+	for i := 0; i < s.MeasureCount(); i++ {
+		for _, p := range s.Parts {
+			if i < len(p.Measures) && strings.TrimSpace(p.Measures[i].Marker) != "" {
+				n++
+				break
+			}
+		}
+	}
+	return n
+}
+
+// windowOf reads the part of the score a request is asking to be drawn, in
+// staff spaces, or nil where it asks for the whole of it.
+//
+// All four corners or none: three of them is a request this cannot make
+// sense of, and guessing at the fourth would quietly draw the wrong stretch
+// of music.
+func windowOf(r *http.Request) *svg.Box {
+	q := r.URL.Query()
+	n := func(k string) (float64, bool) {
+		v := q.Get(k)
+		if v == "" {
+			return 0, false
+		}
+		f, err := strconv.ParseFloat(v, 64)
+		if err != nil || math.IsNaN(f) || math.IsInf(f, 0) {
+			return 0, false
+		}
+		return f, true
+	}
+	x0, ok0 := n("x0")
+	y0, ok1 := n("y0")
+	x1, ok2 := n("x1")
+	y1, ok3 := n("y1")
+	if !ok0 || !ok1 || !ok2 || !ok3 || x1 <= x0 || y1 <= y0 {
+		return nil
+	}
+	return &svg.Box{X0: x0, Y0: y0, X1: x1, Y1: y1}
 }
 
 // handleOpenAPI serves the description of this API.
@@ -580,6 +646,14 @@ type info struct {
 	// it will do rather than looking the same whether it will do it or not.
 	CanUndo bool `json:"canUndo"`
 	CanRedo bool `json:"canRedo"`
+	// Markers is how many rehearsal marks the score carries, so the editor
+	// can offer the next letter when one is written.
+	//
+	// Counted here rather than by looking at the drawing, which is how it
+	// was done: a long score is drawn a screenful at a time, so the letters
+	// already written are mostly not on the page, and counting what was
+	// drawn offered A over and over.
+	Markers int  `json:"markers"`
 	Current int  `json:"current"`
 	Native  bool `json:"native"`
 	Local   bool `json:"local"`
@@ -674,6 +748,7 @@ func (a *App) handleInfo(w http.ResponseWriter, r *http.Request) {
 		Composer:  a.score.Identity.Composer,
 		Tempo:     a.score.Tempo.BPM,
 	}
+	out.Markers = markerCount(a.score)
 	out.Cursor = a.cursorInfo()
 	out.TempoUnit, out.TempoDotted = beatName(a.score.Tempo.Unit)
 	out.TempoText = a.score.Tempo.Text
@@ -841,11 +916,15 @@ func (a *App) handleOpen(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{"status": "ok", "filename": name, "tunes": len(scores)})
 }
 
-// handleLayout reports the engraved size, which the canvas uses to size itself.
+// handleLayout reports the engraved size, which the canvas uses to size
+// itself and to work out which part of a long score it is looking at.
+//
+// For the view the request asks about, not for whatever the application was
+// last set to: a strip and a page of the same music are nothing like the
+// same shape, and a size from the wrong one sends the editor to the wrong
+// place in the music.
 func (a *App) handleLayout(w http.ResponseWriter, r *http.Request) {
-	a.mu.RLock()
-	score, eopt := a.score, a.engraveOpt
-	a.mu.RUnlock()
+	score, eopt, _ := a.viewOptions(r)
 	lay := a.layout(score, eopt)
 	writeJSON(w, map[string]float64{"width": lay.Width, "height": lay.Height})
 }
@@ -1018,28 +1097,28 @@ func writeJSON(w http.ResponseWriter, v any) {
 // cursorInfo is where the writing cursor should be when the score opens.
 //
 // Where it was left, if the file said — a .gscore records it. A file from
-// anywhere else does not, and then the answer is the end of the first staff:
-// a new score has nothing in it and the cursor belongs at the start, and a
-// piece somebody opens to add to is a piece they want to carry on writing.
+// anywhere else does not, and then the answer is the first bar.
+//
+// It used to be the last bar, on the reasoning that a piece somebody opens
+// to add to is a piece they want to carry on writing. That is true of a
+// twelve-bar tune and wrong about everything else: open a symphony and the
+// page is at bar two thousand six hundred, which is nowhere anybody asked
+// to be and a long way back from where they wanted to start reading. A
+// score opens at its beginning, like any other document. Carrying on from
+// the end is a thing somebody asks for, and the staff sprints in the editor
+// are how they ask — one per staff, because on a score of fifty-three the
+// end of which staff is a real question.
+//
 // Either way there is a cursor on the page from the moment it opens, which
 // is the difference between an editor and a viewer.
 func (a *App) cursorInfo() cursorInfo {
 	if c := a.score.Cursor; c != nil && c.Part < len(a.score.Parts) {
 		return cursorInfo{Part: c.Part, Measure: c.Measure, At: c.At, Step: c.Step}
 	}
-	if len(a.score.Parts) == 0 {
+	if len(a.score.Parts) == 0 || len(a.score.Parts[0].Measures) == 0 {
 		return cursorInfo{}
 	}
-	p := a.score.Parts[0]
-	last := len(p.Measures) - 1
-	if last < 0 {
-		return cursorInfo{}
-	}
-	at := 0
-	if len(p.Measures[last].Voices) > 0 {
-		at = len(p.Measures[last].Voices[0].Elements)
-	}
-	return cursorInfo{Measure: last, At: at, Step: middleStaffStep}
+	return cursorInfo{Measure: 0, At: 0, Step: middleStaffStep}
 }
 
 // middleStaffStep is the middle line, which is where a cursor with no reason

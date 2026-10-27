@@ -124,3 +124,48 @@ test("the page has him and the stylesheet puts him over it", () => {
   assert.ok(/prefers-reduced-motion[\s\S]*?#busy-logo\s*\{\s*animation:\s*none/.test(css),
     "the mascot keeps moving for somebody who asked not to be moved about");
 });
+
+/*
+ * And where a score opens.
+ *
+ * It used to open at the last bar, on the reasoning that a piece somebody
+ * opens to add to is a piece they want to carry on writing. That is true of
+ * a twelve-bar tune and wrong about everything else: open a symphony and
+ * the page is at bar two thousand six hundred, which is nowhere anybody
+ * asked to be. A score opens at its beginning, like any other document, and
+ * the sprints are how somebody asks for the end of a staff.
+ */
+test("there is one sprint per staff, and it says which staff", () => {
+  const fn = src.match(/^function drawSprints\(\)[\s\S]*?^}/m)[0];
+  assert.ok(fn.includes("sprintRows("), "the sprints are not built from the staves");
+  assert.ok(fn.includes("Continue editing "),
+    "a sprint does not say what it is for");
+  assert.ok(/state\.mode !== "strip"/.test(fn),
+    "sprints are offered on the paginated view, where there is no end to run to");
+  assert.ok(/clientWidth \* 1\.5/.test(fn),
+    "a score whose end is already on screen still gets a row of buttons");
+  // They are a way of leaving the start, so once the view has moved along
+  // they are pointing at where you already are and are in front of the
+  // music.
+  assert.ok(/scrollLeft <= \d+/.test(fn),
+    "the sprints stay on the page after the view has moved along the staff");
+});
+
+test("play says it is getting ready, and lets go before the first sound", () => {
+  const fn = src.match(/^async function play\(opts\)[\s\S]*?^}/m)[0];
+  assert.ok(fn.includes("busy("), "nothing is said while a symphony is prepared");
+  assert.ok(/finally\s*\{[\s\S]*?idle\(\)/.test(fn),
+    "Gilbert is left over the music once it starts playing");
+  assert.ok(fn.includes("playNow("),
+    "the preparation is not wrapped, so an early return strands the mascot");
+});
+
+test("a sprint goes to the last bar of its own staff and leaves the cursor in it", () => {
+  const fn = src.match(/^async function sprintToStaffEnd\([\s\S]*?^}/m)[0];
+  assert.ok(/h\.part !== part/.test(fn), "it does not look at one staff in particular");
+  assert.ok(/h\.measure > last\.measure/.test(fn), "it does not find the last bar");
+  assert.ok(/at: \(last\.elements \|\| \[\]\)\.length/.test(fn),
+    "the cursor does not land after the last thing written");
+  assert.ok(fn.includes("glideTo("), "it jumps rather than travels");
+  assert.ok(fn.includes("flashMeasure("), "it arrives without saying where");
+});

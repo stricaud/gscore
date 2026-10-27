@@ -510,6 +510,25 @@ paths:
           in: query
           description: Which piece of a tune book to draw.
           schema: { type: integer }
+        - name: x0
+          in: query
+          description: >-
+            With y0, x1 and y1: draw only the stretch of the score inside this
+            box, in staff spaces. All four or none — three of them cannot be
+            made sense of. The drawing keeps the full width and height of the
+            whole score either way, so a coordinate in it means the same
+            thing whichever was asked for. It is how the editor shows a score
+            too big to put in a browser all at once.
+          schema: { type: number }
+        - name: y0
+          in: query
+          schema: { type: number }
+        - name: x1
+          in: query
+          schema: { type: number }
+        - name: y1
+          in: query
+          schema: { type: number }
       responses:
         "200":
           description: The drawing.
@@ -1539,6 +1558,24 @@ paths:
     get:
       tags: [render]
       summary: How big the drawing is
+      description: >-
+        For the view asked about, not for whatever the application was last
+        set to: a strip and a page of the same music are nothing like the
+        same shape. The editor asks before drawing, because the size is what
+        says whether a score has to be drawn a screenful at a time.
+      parameters:
+        - name: mode
+          in: query
+          schema: { type: string, enum: [strip, page] }
+        - name: space
+          in: query
+          schema: { type: number }
+        - name: width
+          in: query
+          schema: { type: number }
+        - name: tune
+          in: query
+          schema: { type: integer }
       responses:
         "200":
           description: In staff spaces.

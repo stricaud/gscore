@@ -561,6 +561,72 @@ body.native #menubar { padding-left: 12px; }
 #chord-opts label { display: flex; align-items: center; gap: 6px; }
 #chord-form .small { margin: 4px 0 10px; }
 
+/* The staff sprints: one small arrow per staff, down the left of the music.
+   A score opens at its beginning, and this is how somebody who meant to
+   carry on writing gets to the end of the staff they are writing in — which
+   on a score of fifty-three staves is a real question.
+
+   Stuck to the left edge of the panel rather than drawn into the music, so
+   that they are still there after the view has moved along, and so that they
+   do not move with it. The box itself has no size: it is somewhere for the
+   buttons to be positioned from. */
+#staff-sprints {
+  position: sticky;
+  top: 0;
+  left: 0;
+  width: 0;
+  height: 0;
+  z-index: 5;
+}
+
+.staff-sprint {
+  position: absolute;
+  left: 4px;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  height: 20px;
+  padding: 0 6px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--panel) 86%, transparent);
+  color: var(--muted);
+  font: inherit;
+  font-size: 11px;
+  line-height: 1;
+  cursor: pointer;
+  /* Out of the way until it is wanted: fifty-three of these down the side of
+     the music would be more of the page than the music is. They are only
+     ever on screen at the beginning of the staff, where there is nothing
+     written yet to be covered up. */
+  opacity: 0.5;
+  white-space: nowrap;
+  max-width: 24px;
+  overflow: hidden;
+  transition: max-width .12s ease, opacity .12s ease;
+}
+
+/* Hovered or reached by the keyboard, it opens out and says which staff. */
+.staff-sprint:hover,
+.staff-sprint:focus-visible {
+  opacity: 1;
+  max-width: 190px;
+  color: var(--ink);
+  border-color: var(--accent);
+}
+
+.staff-sprint[hidden] { display: none; }
+
+.staff-sprint::after {
+  content: attr(data-name);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .staff-sprint { transition: none; }
+}
+
 /* Gilbert again, over the whole window while a score is being read and laid
    out. Not a dialog: there is nothing to answer and nothing to cancel, and a
    <dialog> would take the keyboard away from a window that is about to want

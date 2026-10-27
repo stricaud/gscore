@@ -429,6 +429,10 @@
   </aside>
 
   <main id="canvas-wrap">
+    <!-- One per staff, down the left of the music: the end of that staff,
+         which is where somebody who opened a score to add to it is going.
+         The score itself opens at the beginning, the way a document does. -->
+    <div id="staff-sprints" role="group" aria-label="Go to the end of a staff"></div>
     <div id="canvas"></div>
     <div id="empty-hint" hidden>
       <p>A new score.</p>

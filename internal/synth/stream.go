@@ -99,13 +99,79 @@ func NewStream(song midi.Song, fonts map[int]*Font, fallback *Font, opt Options,
 		byFont[f] = append(byFont[f], n)
 	}
 	for f, notes := range byFont {
-		g, err := newGroup(f, notes, opt, from)
-		if err != nil {
-			return nil, err
+		// And again by how many staves a synthesizer can keep apart, which
+		// is sixteen because that is all MIDI has.
+		for _, share := range splitForChannels(notes) {
+			g, err := newGroup(f, share, opt, from)
+			if err != nil {
+				return nil, err
+			}
+			st.groups = append(st.groups, g)
 		}
-		st.groups = append(st.groups, g)
 	}
 	return st, nil
+}
+
+// melodicChannels is how many staves one synthesizer can play apart.
+//
+// MIDI has sixteen channels and the tenth is the drum kit's, so fifteen are
+// left for everything else.
+const melodicChannels = 15
+
+// splitForChannels divides a font's notes between as many synthesizers as it
+// takes to give every staff a channel of its own.
+//
+// A channel carries one instrument, and two staves sharing one play through
+// whichever of them set the program last — so Beethoven's ninth, which has
+// fifty-two staves, put the first violins on a trombone's channel and they
+// came out sounding like a trombone. Sharing costs more than the sound: a
+// note-off is a channel and a key, so two staves on one channel playing the
+// same note cut each other short.
+//
+// Drums are not divided. Percussion is told apart by which key it is rather
+// than by which channel, so every drum staff can share the tenth.
+func splitForChannels(notes []midi.Note) [][]midi.Note {
+	// Which synthesizer each staff belongs to, in the order the staves come.
+	var order []int
+	seen := map[int]bool{}
+	drum := map[int]bool{}
+	for _, n := range notes {
+		if !seen[n.Part] {
+			seen[n.Part] = true
+			order = append(order, n.Part)
+		}
+		if n.Drum > 0 {
+			drum[n.Part] = true
+		}
+	}
+	sort.Ints(order)
+
+	group := map[int]int{}
+	at, used := 0, 0
+	for _, p := range order {
+		if drum[p] {
+			// Wherever it goes it lands on the tenth channel, so it does
+			// not use one up.
+			group[p] = at
+			continue
+		}
+		if used == melodicChannels {
+			at++
+			used = 0
+		}
+		group[p] = at
+		used++
+	}
+	if at == 0 {
+		return [][]midi.Note{notes}
+	}
+
+	out := make([][]midi.Note, at+1)
+	for _, n := range notes {
+		g := group[n.Part]
+		out[g] = append(out[g], n)
+	}
+	return out
 }
 
 func newGroup(f *Font, notes []midi.Note, opt Options, from float64) (*voiceGroup, error) {

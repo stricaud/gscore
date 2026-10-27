@@ -25,6 +25,7 @@ import (
 	"image"
 	"image/png"
 	"io"
+	"math"
 	"strings"
 
 	"github.com/stricaud/gscore/internal/engrave"
@@ -50,7 +51,52 @@ type Options struct {
 	// Interactive adds the class and data attributes the editor uses for hit
 	// testing.
 	Interactive bool
+
+	// Window draws only the part of the score that reaches into a box,
+	// leaving the rest out. Nil draws the whole of it.
+	//
+	// It is for a score too big to put on a page all at once. Beethoven's
+	// ninth is fifty-three staves of two and a half thousand bars, which
+	// comes to nine hundred thousand shapes: a browser handed all of them
+	// spends seconds laying them out and then stutters at every scroll,
+	// because every repaint walks the lot to work out what is on screen.
+	// Drawn a screenful at a time it is a few thousand.
+	//
+	// The drawing keeps its full width and height either way, so a
+	// coordinate means the same thing whether the whole score was written
+	// or a window of it. Nothing that reads the drawing has to know.
+	Window *Box
 }
+
+// Box is a rectangle in staff spaces.
+type Box struct{ X0, Y0, X1, Y1 float64 }
+
+// touches says whether a shape's own box reaches into the window.
+//
+// Generously: a box that only grazes the edge is drawn. The cost of drawing
+// one shape too many is one shape, and the cost of leaving one out is a gap
+// in the music.
+func (b *Box) touches(x0, y0, x1, y1 float64) bool {
+	if b == nil {
+		return true
+	}
+	if x1 < x0 {
+		x0, x1 = x1, x0
+	}
+	if y1 < y0 {
+		y0, y1 = y1, y0
+	}
+	return x1 >= b.X0 && x0 <= b.X1 && y1 >= b.Y0 && y0 <= b.Y1
+}
+
+// glyphSlack is how far a glyph may reach beyond the point it is drawn at,
+// in staff spaces, for deciding whether it is in the window.
+//
+// The tallest in the font is a clef at about two and a half spaces either
+// way; six is comfortably past anything, and being generous here costs a
+// handful of shapes at the edge of a window that is a screenful wider than
+// the screen anyway.
+const glyphSlack = 6
 
 // DefaultOptions returns a sensible rendering setup.
 func DefaultOptions() Options {
@@ -80,7 +126,12 @@ func Render(w io.Writer, lay *engrave.Layout, opt Options) error {
 	fmt.Fprintf(&b, `path.curve{fill:none;stroke:#000;}`+"\n")
 	b.WriteString("</style>\n")
 
+	win := opt.Window
+
 	for _, ln := range lay.Lines {
+		if !win.touches(ln.X1, ln.Y1, ln.X2, ln.Y2) {
+			continue
+		}
 		dash := ""
 		if ln.Dash > 0 {
 			dash = fmt.Sprintf(` stroke-dasharray="%.2f %.2f"`, ln.Dash*s, ln.Dash*s*0.8)
@@ -90,6 +141,9 @@ func Render(w io.Writer, lay *engrave.Layout, opt Options) error {
 	}
 
 	for _, q := range lay.Quads {
+		if !win.touches(spread(q.X[:], q.Y[:])) {
+			continue
+		}
 		b.WriteString(`<polygon fill="#000" points="`)
 		for i := range q.X {
 			if i > 0 {
@@ -101,6 +155,9 @@ func Render(w io.Writer, lay *engrave.Layout, opt Options) error {
 	}
 
 	for _, c := range lay.Circles {
+		if !win.touches(c.X-c.Radius, c.Y-c.Radius, c.X+c.Radius, c.Y+c.Radius) {
+			continue
+		}
 		if c.Filled {
 			fmt.Fprintf(&b, `<circle cx="%.2f" cy="%.2f" r="%.2f" fill="#000"/>`+"\n",
 				c.X*s, c.Y*s, c.Radius*s)
@@ -112,11 +169,21 @@ func Render(w io.Writer, lay *engrave.Layout, opt Options) error {
 	}
 
 	for _, c := range lay.Curves {
+		// A quadratic stays inside the box of its ends and its control
+		// point, so that box is a safe outline and a cheap one.
+		if !win.touches(
+			math.Min(c.X1, math.Min(c.X2, c.CX)), math.Min(c.Y1, math.Min(c.Y2, c.CY)),
+			math.Max(c.X1, math.Max(c.X2, c.CX)), math.Max(c.Y1, math.Max(c.Y2, c.CY))) {
+			continue
+		}
 		fmt.Fprintf(&b, `<path class="curve" d="M %.2f %.2f Q %.2f %.2f %.2f %.2f" stroke-width="%.2f"/>`+"\n",
 			c.X1*s, c.Y1*s, c.CX*s, c.CY*s, c.X2*s, c.Y2*s, c.Thickness*s)
 	}
 
 	for _, g := range lay.Glyphs {
+		if !win.touches(g.X-glyphSlack, g.Y-glyphSlack, g.X+glyphSlack, g.Y+glyphSlack) {
+			continue
+		}
 		r, ok := smufl.Glyph(g.Name)
 		if !ok {
 			// Not in the font, so it is one of the user's own symbols.
@@ -142,6 +209,13 @@ func Render(w io.Writer, lay *engrave.Layout, opt Options) error {
 	}
 
 	for _, t := range lay.Texts {
+		// Written from its baseline, and from either end of it or its
+		// middle depending on the anchor, so the box is the widest the
+		// word could be in any of those.
+		if w := float64(len(t.S)) * t.Size; !win.touches(
+			t.X-w, t.Y-t.Size*2, t.X+w, t.Y+t.Size) {
+			continue
+		}
 		anchor := t.Anchor
 		if anchor == "" {
 			anchor = "start"
@@ -160,6 +234,22 @@ func Render(w io.Writer, lay *engrave.Layout, opt Options) error {
 	b.WriteString("</svg>\n")
 	_, err := io.WriteString(w, b.String())
 	return err
+}
+
+// spread is the box a run of points covers.
+func spread(xs, ys []float64) (x0, y0, x1, y1 float64) {
+	if len(xs) == 0 || len(ys) == 0 {
+		return 0, 0, 0, 0
+	}
+	x0, x1 = xs[0], xs[0]
+	y0, y1 = ys[0], ys[0]
+	for i := range xs {
+		x0, x1 = math.Min(x0, xs[i]), math.Max(x1, xs[i])
+	}
+	for i := range ys {
+		y0, y1 = math.Min(y0, ys[i]), math.Max(y1, ys[i])
+	}
+	return x0, y0, x1, y1
 }
 
 // drawSymbol places one hand-drawn symbol.

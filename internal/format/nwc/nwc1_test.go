@@ -1954,3 +1954,127 @@ func TestASlurEndsOnTheNoteAfterTheLastJoinedOne(t *testing.T) {
 	}
 
 }
+
+// A note taken off the page leaves behind what it was holding for its
+// neighbours.
+//
+// A slur, a wedge, an octave bracket, a change of clef and the words beside
+// the music all belong to the line rather than to the note; the note is only
+// where they are written down. Two layers playing the same thing print one
+// notehead, and the copy is replaced by a rest nobody sees — but replaced by
+// a bare one, the mark that closes a slur went with it, and the engraver
+// holds a slur open per line until something closes it. One in Danse Macabre
+// opened at bar 168 and was still open at bar 317.
+func TestASilencedNoteLeavesItsMarksBehind(t *testing.T) {
+	quarter := model.Duration{Num: 1, Den: 4}
+	note := func(pitch model.Pitch) *model.Note {
+		return &model.Note{Pitch: pitch, Dur: quarter}
+	}
+	g4 := model.Pitch{Step: model.StepG, Octave: 4}
+
+	// Both layers play G4 twice. The second note of the lower layer closes
+	// a slur, so the copy that is hidden must keep that.
+	upper := &model.Part{Measures: []*model.Measure{{Voices: []*model.Voice{{
+		Elements: []model.Element{note(g4), note(g4)},
+	}}}}}
+	a, b := note(g4), note(g4)
+	a.SlurStart = true
+	b.SlurStop = true
+	lower := &model.Part{Measures: []*model.Measure{{Voices: []*model.Voice{{
+		Elements: []model.Element{a, b},
+	}}}}}
+
+	out, _ := mergeLayers([]*model.Part{upper, lower}, []bool{true, false}, []string{"", ""})
+	if len(out) != 1 {
+		t.Fatalf("%d staves came back", len(out))
+	}
+	// Whatever is left on the page, the slur still has both its ends.
+	starts, stops := 0, 0
+	for _, v := range out[0].Measures[0].Voices {
+		for _, e := range v.Elements {
+			m := marksOf(e)
+			if m.SlurStart {
+				starts++
+			}
+			if m.SlurStop {
+				stops++
+			}
+		}
+	}
+	if starts != 1 || stops != 1 {
+		t.Errorf("the slur came back with %d starts and %d stops, want one of each", starts, stops)
+	}
+
+	// And the line holding them is not thrown away for being silent.
+	for _, v := range out[0].Measures[0].Voices {
+		for _, e := range v.Elements {
+			if marksOf(e).SlurStop {
+				return
+			}
+		}
+	}
+	t.Error("the line that closes the slur was dropped as empty")
+}
+
+// A spanner the file never ends is ended anyway.
+//
+// NoteWorthy marks where a slur or a wedge begins and leaves the far end to
+// be worked out from where the run of marks stops — so a staff that runs out
+// mid-phrase, or a second mark that opens before the first has closed,
+// leaves one hanging. An open spanner is drawn to the right margin of its
+// system and of every system after it: Danse Macabre had a slur from bar 168
+// that was still open at 317, and a wedge from 494 that reached the last bar
+// of the piece.
+//
+// Checked per voice, because that is how a spanner is held open while
+// drawing: a mark left in one line is never closed by another.
+func TestASpannerTheFileNeverEndsIsEndedAnyway(t *testing.T) {
+	quarter := model.Duration{Num: 1, Den: 4}
+	note := func() *model.Note {
+		return &model.Note{Pitch: model.Pitch{Step: model.StepG, Octave: 4}, Dur: quarter}
+	}
+
+	// A slur and a wedge that open and are never closed, and a second slur
+	// that opens while the first is still going.
+	a, b, c, d := note(), note(), note(), note()
+	a.SlurStart = true
+	a.Hairpin = &model.Hairpin{Kind: model.Crescendo, Start: true}
+	c.SlurStart = true
+	p := &model.Part{Measures: []*model.Measure{{Voices: []*model.Voice{{
+		Elements: []model.Element{a, b, c, d},
+	}}}}}
+
+	closeDanglingSpans(p)
+
+	els := p.Measures[0].Voices[0].Elements
+	// The two slurs meet on one note, which ends the first and begins the
+	// second — how a run of slurs over one phrase is written.
+	if !marksOf(els[2]).SlurStop || !marksOf(els[2]).SlurStart {
+		t.Error("the first slur was left open when the second began")
+	}
+	// The second ends on the last note there is.
+	if !marksOf(els[3]).SlurStop {
+		t.Error("the last slur runs off the end of the staff")
+	}
+	// And so does the wedge.
+	stopped := false
+	for _, e := range els {
+		if h := marksOf(e).Hairpin; h != nil && h.Stop {
+			stopped = true
+		}
+	}
+	if !stopped {
+		t.Error("the wedge runs off the end of the staff")
+	}
+
+	// A spanner that opens on the very last note covers that note alone.
+	only := note()
+	only.Hairpin = &model.Hairpin{Kind: model.Diminuendo, Start: true}
+	one := &model.Part{Measures: []*model.Measure{{Voices: []*model.Voice{{
+		Elements: []model.Element{note(), only},
+	}}}}}
+	closeDanglingSpans(one)
+	if h := only.Hairpin; h == nil || !h.Start || !h.Stop {
+		t.Errorf("a wedge on the last note came back as %+v, want both ends on it", h)
+	}
+}

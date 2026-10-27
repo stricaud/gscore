@@ -694,6 +694,12 @@ func parseNWC1(raw []byte, version int) (*model.Score, error) {
 		groups = append(groups, w.group)
 	}
 	score.Parts, groups = mergeLayers(score.Parts, shares, groups)
+	// Again, now the layers are one staff. A spanner is held open per line
+	// while drawing, and merging moves lines about: one closed on its own
+	// staff can come back open on the staff it is merged into.
+	for _, p := range score.Parts {
+		closeDanglingSpans(p)
+	}
 	score.Groups = staffGroups(score.Parts, groups)
 	// Whatever the file did not say about what plays each staff, its own
 	// names usually do.
@@ -982,11 +988,13 @@ func (w *walker) staff(version int) (*model.Part, error) {
 			// piece, and most of it is right there.
 			st.closeMeasure(model.BarFinal)
 			linkTies(part)
+			closeDanglingSpans(part)
 			return part, fmt.Errorf("object %d of %d at byte %d: %w", i+1, objectCount, w.i, err)
 		}
 	}
 	st.closeMeasure(model.BarFinal)
 	linkTies(part)
+	closeDanglingSpans(part)
 	return part, nil
 }
 
@@ -1704,6 +1712,14 @@ func (w *walker) objectBody(st *staffState) error {
 			r := &model.Rest{Dur: nv.dur}
 			r.Tuplet = tupletMark(nv.triplet)
 			r.Beam = beamMark(nv.beam)
+			// A rest reads the slur bit like anything else, so a phrase
+			// mark that does not carry over it ends there. Skipped, the
+			// run stayed open across whatever silence followed: a layer of
+			// Danse Macabre that plays one chord at bar 494 and then rests
+			// held its slur to bar 666.
+			if w.version >= 175 {
+				st.slurRun(&r.Marks, nv.slurTo)
+			}
 			st.add(r)
 			return nil
 		}
@@ -2528,12 +2544,18 @@ func layerOnto(p, q *model.Part) {
 			to.Time = m.Time
 		}
 		for _, v := range m.Voices {
-			if !hasVoice(to, v) {
+			// A line that only repeats one already here adds no notehead
+			// to the page — but if it is carrying a slur, a wedge or a
+			// change of clef, dropping it drops those too, and a slur
+			// whose end goes missing is drawn on to the end of the piece.
+			// Kept, its notes become hidden rests below and the marks stay
+			// where they were written.
+			if !hasVoice(to, v) || voiceHoldsMarks(v) {
 				to.Voices = append(to.Voices, v)
 			}
 		}
 		hideUnisons(to)
-		dropSilentVoices(to)
+		emptySilentVoices(to)
 		hideCoveredRests(to)
 	}
 }
@@ -2580,17 +2602,25 @@ func hideCoveredRests(m *model.Measure) {
 	}
 }
 
-// dropSilentVoices takes away the lines that only rest, in a bar where
-// another line plays.
+// emptySilentVoices clears the lines that only rest, in a bar where another
+// line plays, leaving the line itself where it was.
 //
-// A layer that is silent for a bar is silent on the page too: NoteWorthy
-// prints the bar's notes and nothing else. Kept, the left hand of Danse
-// Macabre had a whole-bar rest sitting in the middle of its semiquavers from
-// bar five on — the other layer saying nothing, at length.
+// Cleared rather than taken out. Taking it out moves every line below it up
+// one, and a line that is voice one in the bar where a slur opens and voice
+// nought in the bar where it closes is two different lines as far as the
+// drawing is concerned: the slur opens and is never closed. In Danse Macabre
+// the left hand's second layer is slurred from bar 494 to 497 and the first
+// layer rests through 495, and that one bar of silence turned a four-bar
+// phrase mark into one that ran to the end of the piece.
 //
-// Only where the bar has something else to show. A bar in which every line
-// rests keeps its rest, because a bar has to hold something.
-func dropSilentVoices(m *model.Measure) {
+// Cleared rather than left with its rests hidden, because a bar of hidden
+// rests still asks for the room to put them in: left in, they spread this
+// piece over eight pages more than it needs.
+//
+// A bar in which every line rests keeps its rest, because a bar has to hold
+// something. So does a line carrying a slur, a wedge or a change of clef for
+// the music around it.
+func emptySilentVoices(m *model.Measure) {
 	plays := false
 	for _, v := range m.Voices {
 		if voicePlays(v) {
@@ -2601,13 +2631,155 @@ func dropSilentVoices(m *model.Measure) {
 	if !plays {
 		return
 	}
-	kept := m.Voices[:0]
 	for _, v := range m.Voices {
-		if voicePlays(v) {
-			kept = append(kept, v)
+		if !voicePlays(v) && !voiceHoldsMarks(v) {
+			v.Elements = nil
 		}
 	}
-	m.Voices = kept
+}
+
+// closeDanglingSpans ends the slurs and wedges a staff ran out before
+// closing.
+//
+// The file marks where a thing begins and leaves the end to be worked out,
+// so a staff that stops mid-phrase leaves one open — and an open spanner is
+// drawn to the right margin of its system and of every system after it, to
+// the end of the piece. Danse Macabre had a slur like that from bar 168 to
+// 317 and three wedges running hundreds of bars.
+//
+// Ended on the last note the line has, which is what the page shows anyway.
+// Per voice, because that is how a spanner is held open while drawing: a
+// mark left in one line is never closed by another.
+func closeDanglingSpans(p *model.Part) {
+	most := 0
+	for _, m := range p.Measures {
+		if len(m.Voices) > most {
+			most = len(m.Voices)
+		}
+	}
+	for vi := 0; vi < most; vi++ {
+		var slurAt, wedgeAt *model.Marks
+		var wedge model.HairpinKind
+		var last *model.Marks
+		// close ends whatever is open on the note before a new one starts,
+		// and at the end of the line.
+		closeWedge := func(on *model.Marks) {
+			if wedgeAt == nil || on == nil {
+				return
+			}
+			// A wedge that opens on the last note there is covers that note
+			// and no more, which the model says with both ends on it.
+			if on == wedgeAt {
+				wedgeAt.Hairpin.Stop = true
+				wedgeAt = nil
+				return
+			}
+			if on.Hairpin == nil {
+				on.Hairpin = &model.Hairpin{Kind: wedge, Stop: true}
+			} else {
+				on.Hairpin.Stop = true
+			}
+			wedgeAt = nil
+		}
+		for _, m := range p.Measures {
+			if vi >= len(m.Voices) {
+				continue
+			}
+			for _, e := range m.Voices[vi].Elements {
+				mk := marksOf(e)
+				if mk == nil {
+					continue
+				}
+				if mk.SlurStop {
+					slurAt = nil
+				}
+				if mk.SlurStart {
+					// A second slur where the first never ended: they meet
+					// on this note, which ends the one before it and begins
+					// the one after — which is how a run of slurs over one
+					// phrase is written, and what the engraver expects.
+					if slurAt != nil && mk != slurAt {
+						mk.SlurStop = true
+					}
+					slurAt = mk
+				}
+				if h := mk.Hairpin; h != nil {
+					if h.Stop {
+						wedgeAt = nil
+					}
+					if h.Start {
+						// A second wedge where the first never ended: the
+						// first ends on the note before this one.
+						closeWedge(last)
+						wedgeAt, wedge = mk, h.Kind
+					}
+				}
+				last = mk
+			}
+		}
+		if slurAt != nil && last != nil {
+			// Likewise a slur: over the one note if that is all it reached.
+			last.SlurStop = true
+		}
+		closeWedge(last)
+	}
+}
+
+// holdsASpan says whether an element is one end of something that reaches
+// across the music, and so cannot be moved to another line on its own.
+func holdsASpan(el model.Element) bool {
+	m := marksOf(el)
+	if m == nil {
+		return false
+	}
+	return m.SlurStart || m.SlurStop || m.TieStart ||
+		m.Hairpin != nil || m.Octave != nil || m.Trill != nil
+}
+
+// mergeMarks moves onto a notehead what the copy of it was carrying.
+//
+// The words beside the music, a change of clef and a dynamic belong to the
+// line rather than to the note; the note is only where they are written
+// down. Two layers playing the same thing are one notehead, so whichever of
+// them wrote the mark, it belongs to that one.
+//
+// Not the ends of a slur or a wedge, which cannot be moved on their own —
+// an element carrying one of those is not hidden in the first place. Nor the
+// articulations or the beam, which are already on the notehead that stays.
+func mergeMarks(to, from *model.Marks) {
+	if to == nil || from == nil {
+		return
+	}
+	if to.Clef == nil {
+		to.Clef = from.Clef
+	}
+	if to.Dynamic == model.DynamicNone {
+		to.Dynamic = from.Dynamic
+	}
+	to.Texts = append(to.Texts, from.Texts...)
+}
+
+// holdsAMark says whether a rest is carrying something for the line it is
+// in, so that taking it off the page would take that with it.
+func holdsAMark(el model.Element) bool {
+	m := marksOf(el)
+	if m == nil {
+		return false
+	}
+	return m.SlurStart || m.SlurStop || m.TieStart || m.Hairpin != nil ||
+		m.Octave != nil || m.Trill != nil || m.Clef != nil ||
+		m.Dynamic != model.DynamicNone || len(m.Texts) > 0
+}
+
+// voiceHoldsMarks says whether a line of rests is carrying anything for the
+// music around it, which a line of plain silence is not.
+func voiceHoldsMarks(v *model.Voice) bool {
+	for _, e := range v.Elements {
+		if holdsAMark(e) {
+			return true
+		}
+	}
+	return false
 }
 
 // voicePlays says whether a line has anything in it but rests.
@@ -2680,22 +2852,38 @@ func hideUnisons(m *model.Measure) {
 	if len(m.Voices) < 2 {
 		return
 	}
-	// What each voice holds, by the moment it holds it.
-	type at struct {
-		from model.Duration
-		key  string
-	}
-	seen := map[string]bool{}
+	// The notehead kept for each thing played, by the moment it is played.
+	kept := map[string]*model.Marks{}
 	mark := func(v *model.Voice, record bool) {
 		now := model.Duration{Num: 0, Den: 1}
 		for i, e := range v.Elements {
 			d := e.Duration()
 			if _, isRest := e.(*model.Rest); !isRest {
-				k := at{now, elementKey(e)}
-				id := fmt.Sprintf("%v|%s", k.from, k.key)
-				if record {
-					seen[id] = true
-				} else if seen[id] {
+				id := fmt.Sprintf("%v|%s", now, elementKey(e))
+				switch {
+				case record:
+					if _, seen := kept[id]; !seen {
+						kept[id] = marksOf(e)
+					}
+				case kept[id] != nil:
+					// A notehead holding one end of a slur or a wedge is
+					// printed, copy or not. Both ends are written in the
+					// same line, and hiding one of them moves it to the
+					// line that keeps the notehead while the other stays
+					// where it was: the slur then has an end in each and
+					// closes in neither. One in Danse Macabre opened at
+					// bar 168 and ran to 317 that way.
+					//
+					// An extra notehead where two layers meet under a
+					// phrase mark is a smaller thing than a slur drawn
+					// across half the piece.
+					if holdsASpan(e) {
+						break
+					}
+					// The copy goes, and what it was carrying — the words,
+					// a change of clef, a dynamic — goes to the notehead
+					// that stays.
+					mergeMarks(kept[id], marksOf(e))
 					v.Elements[i] = &model.Rest{Dur: d, Hidden: true}
 				}
 			}

@@ -2,6 +2,7 @@ package engrave
 
 import (
 	"math"
+	"strings"
 	"testing"
 
 	"github.com/stricaud/gscore/internal/model"
@@ -684,5 +685,106 @@ func TestTitleClearsHighNotes(t *testing.T) {
 	if high.Height <= low.Height {
 		t.Errorf("a high passage gave height %.1f, no more than the low one at %.1f",
 			high.Height, low.Height)
+	}
+}
+
+// A tuplet that is counted and not written puts nothing on the page.
+//
+// A measured tremolo is six sixteenths in the time of four, and the strokes
+// through its stem are how that is written: the figure and the bracket are
+// turned off in the file. Drawn anyway, every tremolo in the cellos of
+// Beethoven's ninth carried a bracketed 6 over it, two to a bar.
+func TestAHiddenTupletDrawsNothingButStillTakesItsTime(t *testing.T) {
+	count := func(hidden bool) (figures int, els int) {
+		s := model.NewScore()
+		p := s.Parts[0]
+		m := p.Measures[0]
+		for i := 0; i < 3; i++ {
+			n := &model.Note{Pitch: model.Pitch{Step: 0, Octave: 4},
+				Dur: model.Duration{Num: 1, Den: 8}}
+			n.Tuplet = &model.Tuplet{
+				Actual: 3, Normal: 2,
+				Start: i == 0, Stop: i == 2, Hidden: hidden,
+			}
+			m.Voices[0].Elements = append(m.Voices[0].Elements, n)
+		}
+		lay := Engrave(s, DefaultOptions())
+		for _, tx := range lay.Texts {
+			if tx.S == "3" {
+				figures++
+			}
+		}
+		return figures, len(m.Voices[0].Elements)
+	}
+
+	shown, n := count(false)
+	if shown == 0 {
+		t.Fatal("an ordinary triplet wrote no figure over itself")
+	}
+	if n != 3 {
+		t.Fatalf("%d notes in the bar", n)
+	}
+	if hiddenFigures, _ := count(true); hiddenFigures != 0 {
+		t.Errorf("a tuplet the file says not to write wrote %d figures", hiddenFigures)
+	}
+}
+
+// A tremolo's slashes clear the notehead they belong to, and the stem grows
+// to hold them.
+//
+// They sit along the stem between the head and whatever is at the other end
+// of it. Measured from the head the stem starts at, a chord put them a
+// space above the *bottom* note, which on a chord of any width is on top of
+// the top one — and the cellos of Beethoven's ninth are octave chords with
+// a measured tremolo on every one of them.
+func TestATremolosSlashesClearTheNoteheadAndTheStemMakesRoom(t *testing.T) {
+	// An octave chord, stem up, with three strokes through it.
+	s := model.NewScore()
+	m := s.Parts[0].Measures[0]
+	c := &model.Chord{Dur: model.Duration{Num: 1, Den: 4}, Notes: []*model.Note{
+		{Pitch: model.Pitch{Step: 0, Octave: 3}},
+		{Pitch: model.Pitch{Step: 0, Octave: 4}},
+	}}
+	c.Marks.Tremolo = &model.Tremolo{Strokes: 3}
+	m.Voices[0].Elements = []model.Element{c}
+
+	lay := Engrave(s, DefaultOptions())
+
+	var slash *Glyph
+	for i := range lay.Glyphs {
+		if strings.HasPrefix(lay.Glyphs[i].Name, "tremolo") {
+			slash = &lay.Glyphs[i]
+		}
+	}
+	if slash == nil {
+		t.Fatal("the tremolo drew no slashes at all")
+	}
+	// Every notehead of the chord, and the stem.
+	top := math.Inf(1)
+	for _, g := range lay.Glyphs {
+		if strings.HasPrefix(g.Name, "notehead") && g.Y < top {
+			top = g.Y
+		}
+	}
+	if math.IsInf(top, 1) {
+		t.Fatal("no noteheads were drawn")
+	}
+	var stemTop = math.Inf(1)
+	for _, ln := range lay.Lines {
+		if ln.X1 == ln.X2 && math.Min(ln.Y1, ln.Y2) < stemTop {
+			stemTop = math.Min(ln.Y1, ln.Y2)
+		}
+	}
+
+	// Above the topmost notehead, not merely above the one the stem grows
+	// from. y grows downward.
+	if slash.Y >= top-0.5 {
+		t.Errorf("the slashes are at %.2f and the top notehead at %.2f: they are "+
+			"drawn on it rather than above it", slash.Y, top)
+	}
+	// And inside the stem, which has grown to hold them.
+	if slash.Y <= stemTop {
+		t.Errorf("the slashes are at %.2f and the stem ends at %.2f: they hang off "+
+			"the end of it", slash.Y, stemTop)
 	}
 }

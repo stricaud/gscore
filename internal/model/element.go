@@ -208,6 +208,20 @@ type SymbolMark struct {
 // Duration.Written reports exactly that. The written value is recovered by
 // scaling the sounding duration back up by Actual/Normal.
 type Tuplet struct {
+	// Hidden leaves the figure and the bracket off the page, though the
+	// notes still take their tuplet time.
+	//
+	// A tuplet is usually written to be read: three in the time of two,
+	// with a 3 over them. Sometimes it is only arithmetic. A measured
+	// tremolo — a dotted quarter with strokes through its stem, meaning
+	// "repeat this note at sixteenths" — is six sixteenths in the time of
+	// four, and the strokes are how that is written down. The tuplet is
+	// there in the file because the arithmetic is there; it is not there to
+	// be drawn, and MuseScore says so. Drawn anyway, every tremolo in
+	// Beethoven's ninth carried a bracketed 6 over it that is in no printed
+	// score of the piece.
+	Hidden bool
+
 	Actual, Normal int
 	// Start and Stop bracket the group, for the number and bracket drawn
 	// over it.

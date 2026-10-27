@@ -178,6 +178,7 @@ func NewBook(scores []*model.Score, filename string) *App {
 	// The continuous strip is gscore's own view and the one it was built
 	// around; pagination is for printing. The editor opens in the strip.
 	eo.Mode = engrave.Strip
+	eo.ShowPartNames = nameTheStaves(s)
 
 	reg := symbol.NewRegistry()
 	ro.Symbols = reg
@@ -829,10 +830,27 @@ func keyText(k model.KeySignature) string {
 // else's music back over the file just opened. Clearing it here, where the
 // document is replaced, is why opening a file by any of the three routes
 // cannot forget to.
+// nameTheStaves says whether a score's staves should be labelled on the page.
+//
+// More than one staff and the names go on. On a score of fifty-three,
+// "which line is the first violins" is not a question anybody should answer
+// by counting down from the top — and the editor is where that question is
+// asked most, since it is where the music is being worked on.
+//
+// A single-staff piece is the one case where the name says nothing: there is
+// no other staff to tell it from, and the word only pushes the music right.
+func nameTheStaves(s *model.Score) bool {
+	return s != nil && len(s.Parts) > 1
+}
+
 func (a *App) setBook(scores []*model.Score, filename string, err error) {
 	a.book = scores
 	a.current = 0
 	a.score = scores[0]
+	// A newly opened score decides this for itself, the way it decides its
+	// own clefs and its own key: a quartet opened after a solo gets its
+	// staves named.
+	a.engraveOpt.ShowPartNames = nameTheStaves(a.score)
 	a.filename = filename
 	a.warning, a.importLog = readProblems(err)
 	a.forgetHistory()

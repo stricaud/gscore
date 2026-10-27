@@ -1616,8 +1616,14 @@ func voltaNumbers(label string) []int {
  * Tuplets
  */
 
+// noTupletNumber is MuseScore's "do not write the figure over this group".
+//
+// The field counts up through what may be written there — the number, then
+// the ratio — and ends at nothing at all.
+const noTupletNumber = 2
+
 func (r *reader) tuplet(vs *voiceState) error {
-	actual, normal := 0, 0
+	actual, normal, number := 0, 0, 0
 	err := r.children(func(c xml.StartElement) error {
 		switch c.Name.Local {
 		case "actualNotes":
@@ -1628,6 +1634,16 @@ func (r *reader) tuplet(vs *voiceState) error {
 			n, err := r.number()
 			normal = n
 			return err
+		case "numberType":
+			// Whether the group is written as a tuplet at all, or is only
+			// counted as one. A measured tremolo is six sixteenths in the
+			// time of four and is written with strokes through the stem,
+			// so the 6 and its bracket are turned off — and drawing them
+			// anyway put a bracketed 6 over every tremolo in Beethoven's
+			// ninth.
+			n, err := r.number()
+			number = n
+			return err
 		default:
 			return r.dec.Skip()
 		}
@@ -1635,7 +1651,10 @@ func (r *reader) tuplet(vs *voiceState) error {
 	if err != nil || actual <= 0 || normal <= 0 {
 		return err
 	}
-	vs.tuplet = &model.Tuplet{Actual: actual, Normal: normal}
+	vs.tuplet = &model.Tuplet{
+		Actual: actual, Normal: normal,
+		Hidden: number == noTupletNumber,
+	}
 	vs.opens = true
 	vs.inTuplet = nil
 	return nil

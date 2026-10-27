@@ -1625,7 +1625,29 @@ async function exportMIDI() {
 //
 // Enough that a slow render or a busy moment in the browser cannot open a
 // gap you would hear, short enough that stopping does not throw much away.
-const liveAhead = 3;
+//
+// Three was enough for a quartet and nowhere near enough for an orchestra.
+// Rendering fifty-two staves runs at about five times real time on this
+// machine and perhaps twice that slowly in the page, where the core is
+// WebAssembly and shares the one thread with drawing the score and moving
+// the cursor — so every time the view fetched the next stretch of music,
+// the rendering stopped for as long as that took and the three seconds ran
+// out. The music stopped, caught up, and went on, every few seconds.
+const liveAhead = 12;
+
+// How many chunks to render in one go before letting the page breathe.
+//
+// Filling twelve seconds of orchestra is several seconds of work, and doing
+// it in one pass would hold the only thread there is for all of it: the
+// cursor would stand still and the window would not answer. Two at a time
+// with a moment in between fills the buffer about as fast and leaves the
+// page usable while it does.
+const liveBurst = 2;
+
+// And how soon to come back: at once while there is catching up to do,
+// otherwise at the pace the music is consumed.
+const livePumpSoon = 30;
+const livePumpIdle = 250;
 
 // startLive asks the server to play the score through a soundfont and
 // schedules what comes back.
@@ -1671,7 +1693,10 @@ async function startLive(from, master, t0) {
 async function pumpLive() {
   const mine = live;
   if (!mine || mine.ended) return;
-  while (mine === live && !mine.ended && mine.at - audio.currentTime < liveAhead) {
+  let made = 0;
+  while (mine === live && !mine.ended && made < liveBurst &&
+         mine.at - audio.currentTime < liveAhead) {
+    made++;
     let res;
     try {
       res = await fetch("/api/play/chunk?id=" + encodeURIComponent(mine.id));
@@ -1707,7 +1732,10 @@ async function pumpLive() {
     voices.push(src);
   }
   if (mine === live && !mine.ended) {
-    mine.timer = setTimeout(pumpLive, 250);
+    // Still short of the buffer it wants, so straight back to it; otherwise
+    // at the pace the music is being listened to.
+    const behind = mine.at - audio.currentTime < liveAhead;
+    mine.timer = setTimeout(pumpLive, behind ? livePumpSoon : livePumpIdle);
   }
 }
 

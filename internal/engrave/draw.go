@@ -526,6 +526,11 @@ func (e *engraver) drawTuplets(items []*placed, t model.TimeSignature) {
 
 // drawTuplet writes one group's figure and, where it is wanted, its bracket.
 func (e *engraver) drawTuplet(group []*placed, tp *model.Tuplet, beam map[*placed]int) {
+	if tp.Hidden {
+		// Counted, not written: the notes keep their tuplet time and
+		// nothing is drawn over them. See model.Tuplet.
+		return
+	}
 	first, last := group[0], group[len(group)-1]
 
 	// The figure goes on the side the stems point, clear of the beam.
@@ -1065,12 +1070,27 @@ func (e *engraver) drawSingleStem(p *placed) {
 		sx = p.x + d.StemThickness/2
 		y1, y2 = hiY, e.stemEnd(loY, up)
 	}
+	// Which notehead the slashes have to clear: the far one.
+	//
+	// A stem grows out of the nearest notehead of the chord and runs past
+	// the rest of them, so for a stem up it is the topmost head that stands
+	// between the slashes and the room above. Measured from the one the
+	// stem starts at, a chord a fifth wide put its slashes a space and a
+	// bit above the bottom note — which is on top of the top note. The
+	// cellos of Beethoven's ninth are octave chords throughout.
+	clear := hiY
+	if !up {
+		clear = loY
+	}
+	// Before the stem is drawn and before the flag is hung on the end of
+	// it, because both go where the end goes.
+	y2 = e.roomForTremolo(p, clear, y2, up)
 	e.lay.Lines = append(e.lay.Lines, Line{X1: sx, Y1: y1, X2: sx, Y2: y2, Thickness: d.StemThickness})
 
 	if g := smufl.FlagGlyph(p.value, up); g != "" {
 		e.lay.Glyphs = append(e.lay.Glyphs, Glyph{Name: g, X: sx, Y: y2})
 	}
-	e.drawTremolo(p, sx, y1, y2)
+	e.drawTremolo(p, sx, clear, y2)
 }
 
 // drawWholeNoteTremolos draws the pairs that have no stems.
@@ -1124,6 +1144,50 @@ const (
 	// run into a flag or a beam.
 	tremoloFromEnd = 0.9
 )
+
+// roomForTremolo lengthens a stem until the slashes on it have somewhere to
+// go.
+//
+// They sit along the stem, clear of the notehead at one end and of the flag
+// or beam at the other, and a stem of the ordinary length leaves about a
+// space and a half between those two. Three strokes are nearly two spaces
+// tall. So they were pushed up against the notehead and read as part of it
+// rather than as a mark on the stem — which is what the cellos of
+// Beethoven's ninth look like for most of the first movement, since every
+// one of their notes carries a measured tremolo.
+//
+// Lengthening the stem is what every engraver does about it: Gould gives
+// the rule in Behind Bars and LilyPond does the same in stem-tremolo.cc.
+// Only ever lengthens, so a stem that already reaches the middle line of
+// the staff keeps whatever it had.
+func (e *engraver) roomForTremolo(p *placed, head, end float64, up bool) float64 {
+	m := p.marks()
+	if m == nil || m.Tremolo == nil || m.Tremolo.Paired() {
+		return end
+	}
+	want := tremoloFromHead + tremoloRun(m.Tremolo) + tremoloFromEnd
+	if up {
+		if to := head - want; to < end {
+			return to
+		}
+		return end
+	}
+	if to := head + want; to > end {
+		return to
+	}
+	return end
+}
+
+// tremoloRun is how much of the stem a run of slashes takes up, in staff
+// spaces: half a space each, and a little for the thickness of the outer
+// two.
+func tremoloRun(t *model.Tremolo) float64 {
+	n := t.Beams()
+	if n < 1 {
+		n = 1
+	}
+	return 0.5*float64(n) + 0.35
+}
 
 // drawTremolo draws the slashes that stand for a repeated note.
 //

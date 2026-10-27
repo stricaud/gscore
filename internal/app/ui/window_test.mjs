@@ -7,22 +7,28 @@
  * Permission is hereby granted, free of charge, under the terms of the MIT
  * licence; see the LICENSE file at the root of this repository.
  *
- * Drawing a long score a screenful at a time.
+ * Drawing a long score a piece at a time.
  *
  * A big orchestral score is not a big picture, it is a great many small
  * ones: Beethoven's ninth is fifty-three staves of two and a half thousand
  * bars and comes to nine hundred thousand shapes. Handed all of them a
  * browser spends seconds laying them out and then walks the lot on every
- * repaint, so scrolling stutters and playing stops dead while it catches up.
- * It is the problem a list widget has with a million rows, and the answer is
- * the same: put what can be seen in the page and fetch the rest as it comes
- * into view.
+ * repaint, so scrolling stutters and playing stops dead while it catches
+ * up. It is the problem a list widget has with a million rows, and the
+ * answer is the same: put what can be seen in the page and fetch the rest
+ * as it comes into view.
  *
- * Three things have to hold. An ordinary score must be drawn whole, exactly
- * as before, and must never be fetched again for being scrolled. A long one
- * must always have the view well inside what is drawn, so that scrolling
- * never reaches a blank edge. And a scroll right across the piece must cost
- * a few fetches rather than one per frame.
+ * It is done by pieces inside one drawing rather than by replacing what is
+ * in view, because replacing it meant parsing everything on screen again
+ * every few seconds of scrolling — and sweeping away the cursor, the
+ * selection and the lit noteheads with it. Moving along now adds the piece
+ * ahead and drops the one left behind.
+ *
+ * Four things have to hold. An ordinary score must be drawn whole, as
+ * before, and never fetched again for being scrolled. A long one must
+ * always have the view covered, at either end and in the middle. Moving
+ * along must cost one piece, not all of them. And no piece may be big
+ * enough to be the problem this is here to solve.
  */
 
 import { readFileSync } from "node:fs";
@@ -38,240 +44,248 @@ const grab = (name, kind = "function") => {
   if (!m) throw new Error("app.js has no " + name);
   return m[0];
 };
+const constant = (name) => {
+  const m = src.match(new RegExp("^const " + name + " = (\\d+(?:\\.\\d+)?);", "m"));
+  if (!m) throw new Error("app.js has no " + name);
+  return Number(m[1]);
+};
 
-// The editor's geometry, with a panel of a given size scrolled to a given
-// place over a drawing of a given size. Everything is in CSS pixels, as the
-// browser reports it, and the functions under test turn it into staff
-// spaces.
-function editor({ view = { w: 1400, h: 900 }, size, zoom = 8 } = {}) {
+const windowArea = constant("windowArea");
+const tilePad = constant("tilePad");
+const tileKeep = constant("tileKeep");
+
+// The editor's geometry: a panel of a given size scrolled to a given place
+// over a drawing of a given size, in CSS pixels as the browser reports it.
+function editor({ view = { w: 1400, h: 900 }, zoom = 8 } = {}) {
   const scroll = { x: 0, y: 0 };
-  const state = { zoom, size, drawn: null };
+  const state = { zoom };
   const wrap = {
     clientWidth: view.w,
     clientHeight: view.h,
     getBoundingClientRect: () => ({ left: 0, top: 0, width: view.w, height: view.h }),
   };
-  // The drawing sits under the panel and moves up and left as it scrolls.
-  const svg = {
-    getBoundingClientRect: () => ({ left: -scroll.x, top: -scroll.y }),
-  };
-  const asked = [];
+  const svg = { getBoundingClientRect: () => ({ left: -scroll.x, top: -scroll.y }) };
   const scope = {
     state, Math,
     $: (sel) => (sel === "#canvas-wrap" ? wrap : null),
     currentSVG: () => svg,
-    drawPad: 1.0,
-    drawSlack: 0.25,
-    windowArea: 550000,
+    windowArea, tilePad, tileKeep,
   };
-  const body = grab("viewBox") + "\n" + grab("drawWindow") + "\n" + grab("stillCovered") +
-    "\nreturn { viewBox, drawWindow, stillCovered };";
+  const names = ["viewBox", "tilePlan", "tileBox", "tileRange"];
+  const body = names.map((n) => grab(n)).join("\n") +
+    "\nreturn { " + names.join(", ") + " };";
   const api = new Function(...Object.keys(scope), body)(...Object.values(scope));
-  return {
-    ...api, state, scroll, asked,
-    scrollTo(x, y) { scroll.x = x; scroll.y = y; },
-  };
+  return { ...api, state, scrollTo(x, y) { scroll.x = x; scroll.y = y; } };
 }
 
 // Beethoven's ninth as the editor's strip: forty thousand staff spaces of
 // music across and fifty-three staves down.
 const symphony = { width: 40830, height: 748 };
-// And an ordinary song, which fits on screen twice over.
+// The same score as pages: a page wide and the length of the music.
+const pages = { width: 128, height: 248591 };
+// An ordinary song, which fits on screen twice over.
 const song = { width: 120, height: 90 };
-// A flute study: three thousand staff spaces of one stave, which is wide but
-// is only a few screenfuls of music and nothing a browser minds.
+// A flute study: wide, because the strip is always wide, but only a few
+// screenfuls of music and nothing a browser minds.
 const study = { width: 3198, height: 89 };
 
 test("the constants are the ones these tests assume", () => {
-  assert.equal(grab("drawPad", "const"), "const drawPad = 1.0;");
-  assert.equal(grab("drawSlack", "const"), "const drawSlack = 0.25;");
   assert.equal(grab("windowArea", "const"), "const windowArea = 550000;");
+  assert.equal(grab("tilePad", "const"), "const tilePad = 1;");
+  assert.equal(grab("tileKeep", "const"), "const tileKeep = 3;");
 });
 
-test("a score that is merely wide is still drawn whole", () => {
-  // The editing strip is one long system, so every score is wide. What
-  // decides is how much music there is, not how far across the page it
-  // goes: a flute study is a third of the budget and a browser does not
-  // mind it, and windowing it would only mean fetching again on every
-  // scroll.
-  const t = editor({ size: study });
-  assert.equal(t.drawWindow(study), null,
-    "a study was cut into windows it does not need");
-  // The symphony, which is a hundred times as much music, is not.
-  const big = editor({ size: symphony });
-  assert.ok(big.drawWindow(symphony), "the symphony was handed over whole");
+test("a score small enough is drawn whole and never cut up", () => {
+  const t = editor();
+  assert.equal(t.tilePlan(song), null, "an ordinary score was cut into pieces");
+  // Wide is not the same as big: the strip makes every score wide.
+  assert.equal(t.tilePlan(study), null, "a study was cut into pieces it does not need");
+  // And nothing at all to go on is nothing to cut up.
+  assert.equal(t.tilePlan(null), null);
+  assert.equal(t.tilePlan({ width: 0, height: 0 }), null);
 });
 
-test("a score that fits is drawn whole and never redrawn", () => {
-  const t = editor({ size: song });
-  assert.equal(t.drawWindow(song), null,
-    "an ordinary score was cut into windows");
-  // And nothing watches it: with nothing drawn as a window there is nothing
-  // for a scroll to invalidate.
-  assert.equal(t.stillCovered(null, song), true);
+test("the strip is cut across its length, with every staff in each piece", () => {
+  const t = editor();
+  const plan = t.tilePlan(symphony);
+  assert.ok(plan, "the symphony was handed over whole");
+  assert.equal(plan.downTheLength, false, "the strip was cut down its depth");
+  const box = t.tileBox(plan, symphony, 7);
+  assert.equal(box.y0, 0, "a piece does not start at the top staff");
+  assert.equal(box.y1, symphony.height, "a piece stops short of the bottom staff");
+  assert.ok(box.x1 > box.x0, "a piece covers no music at all");
 });
 
-test("a score with no size behind it is drawn whole", () => {
-  // Served by something without the route, or before the first answer.
-  const t = editor({ size: null });
-  assert.equal(t.drawWindow(null), null);
-  assert.equal(t.drawWindow({ width: 0, height: 0 }), null);
+test("pages are cut down their length, with the whole width in each piece", () => {
+  const t = editor();
+  const plan = t.tilePlan(pages);
+  assert.ok(plan, "a paginated symphony was handed over whole");
+  assert.equal(plan.downTheLength, true, "pages were cut across their width");
+  const box = t.tileBox(plan, pages, 3);
+  assert.equal(box.x0, 0);
+  assert.equal(box.x1, pages.width);
 });
 
-test("the window round the view is a screenful past each edge of the long side", () => {
-  const t = editor({ size: symphony });
-  t.scrollTo(16000, 1600); // in pixels, so 2000 x 200 staff spaces
-  const vis = t.viewBox();
-  assert.equal(vis.x0, 2000);
-  assert.equal(vis.y0, 200);
-  assert.equal(vis.x1, 2000 + 1400 / 8);
-  const box = t.drawWindow(symphony);
-  const w = vis.x1 - vis.x0;
-  assert.ok(Math.abs(box.x0 - (vis.x0 - w)) < 1e-9, "no margin to the left");
-  assert.ok(Math.abs(box.x1 - (vis.x1 + w)) < 1e-9, "no margin to the right");
-});
-
-test("the short side is taken whole, so moving along it fetches nothing", () => {
-  // The editing strip is one system running the length of the piece and
-  // only as tall as the orchestra, so the whole height is a column of a few
-  // thousand more shapes. Worth it: scrolling down the staves while the
-  // music plays used to stop the playing at every step, and leave a band of
-  // blank paper under the last staff it had drawn.
-  const t = editor({ size: symphony });
-  t.scrollTo(16000, 0);
-  const box = t.drawWindow(symphony);
-  assert.equal(box.y0, 0, "the column does not start at the top staff");
-  assert.equal(box.y1, symphony.height, "the column stops short of the bottom staff");
-
-  // And scrolling all the way down it asks for nothing.
-  const drawn = box;
-  for (let y = 0; y <= symphony.height * 8; y += 40) {
-    t.scrollTo(16000, y);
-    assert.equal(t.stillCovered(drawn, symphony), true,
-      "scrolling down the staves wanted a fetch, at y = " + y);
-  }
-});
-
-test("a paginated score is the same rule the other way up", () => {
-  // Pages are a page wide and as long as the music, so it is the width that
-  // is taken whole and the length that is drawn a piece at a time.
-  const pages = { width: 128, height: 248591 };
-  const t = editor({ size: pages });
-  t.scrollTo(0, 800000);
-  const box = t.drawWindow(pages);
-  assert.equal(box.x0, 0, "the window does not reach the left margin");
-  assert.equal(box.x1, pages.width, "the window stops short of the right margin");
-  assert.ok(box.y0 > 0 && box.y1 < pages.height, "the length was not windowed");
-});
-
-test("the window is clipped to the score, not off the end of it", () => {
-  const t = editor({ size: symphony });
-  t.scrollTo(0, 0);
-  const box = t.drawWindow(symphony);
-  assert.equal(box.x0, 0, "the window began before the music");
-  assert.equal(box.y0, 0);
-  t.scrollTo(symphony.width * 8, symphony.height * 8);
-  const end = t.drawWindow(symphony);
-  assert.equal(end.x1, symphony.width, "the window ran past the end of the music");
-  assert.equal(end.y1, symphony.height);
-});
-
-test("the view stays well inside what is drawn until it has moved a long way", () => {
-  const t = editor({ size: symphony });
-  t.scrollTo(16000, 0);
-  const drawn = t.drawWindow(symphony);
-  assert.equal(t.stillCovered(drawn, symphony), true, "it wanted redrawing at once");
-
-  // A quarter of a screen of movement is still covered; most of a screenful
-  // is not, and that is when the next stretch is fetched.
-  t.scrollTo(16000 + 1400 * 0.2, 0);
-  assert.equal(t.stillCovered(drawn, symphony), true,
-    "a small scroll threw the drawing away");
-  t.scrollTo(16000 + 1400 * 0.8, 0);
-  assert.equal(t.stillCovered(drawn, symphony), false,
-    "the view was about to run off the edge of what is drawn");
-});
-
-test("at the end of the score there is nothing more to fetch", () => {
-  const t = editor({ size: symphony });
-  t.scrollTo(symphony.width * 8, 0);
-  const drawn = t.drawWindow(symphony);
-  // Scrolled hard against the right-hand end: the window cannot reach any
-  // further, so being near its edge must not ask for it again for ever.
-  assert.equal(t.stillCovered(drawn, symphony), true,
-    "the end of the score asks to be redrawn on every frame");
-});
-
-test("scrolling the whole way across costs a handful of fetches, not one a frame", () => {
-  const t = editor({ size: symphony });
-  let drawn = t.drawWindow(symphony);
-  let fetches = 1;
-  // A frame at a time, at a brisk reading pace, the whole length of the
-  // piece.
-  const stepPx = 40;
-  for (let x = 0; x <= symphony.width * 8; x += stepPx) {
-    t.scrollTo(x, 0);
-    if (!t.stillCovered(drawn, symphony)) {
-      drawn = t.drawWindow(symphony);
-      fetches++;
-      assert.equal(t.stillCovered(drawn, symphony), true,
-        "a fresh window did not cover the view it was fetched for, at x=" + x);
+test("no piece is big enough to be the problem this is here to solve", () => {
+  for (const [name, size] of [["strip", symphony], ["pages", pages]]) {
+    for (const zoom of [5, 8, 16, 26]) {
+      const t = editor({ zoom });
+      const plan = t.tilePlan(size);
+      if (!plan) continue;
+      const area = plan.span * plan.across;
+      assert.ok(area <= windowArea + 1,
+        `${name} at zoom ${zoom}: a piece holds ${Math.round(area)} square ` +
+        `spaces of music, and the budget is ${windowArea}`);
     }
   }
-  // What matters is how far the view moves between fetches: a screenful
-  // either side, redrawn with a quarter of it still in hand, means roughly
-  // three quarters of a screen of scrolling buys one fetch. Anything near
-  // one per frame would be the old problem in a new place.
-  const travelled = symphony.width * 8;
-  const perFetch = travelled / fetches;
-  assert.ok(perFetch > 1400 * 0.5,
-    `a fetch every ${Math.round(perFetch)} pixels, which is less than half a screen`);
-  assert.ok(fetches > 10, "the whole piece was covered without refetching at all");
 });
 
-test("the drawing asks the server for the stretch, and for the whole thing otherwise", () => {
-  const fn = grab("scoreURL");
-  assert.ok(fn.includes("opts.window"), "scoreURL cannot ask for a stretch");
-  for (const k of ["x0", "y0", "x1", "y1"]) {
-    assert.ok(fn.includes(`"${k}"`), "scoreURL does not send " + k);
+test("the pieces drawn cover the view, wherever it is", () => {
+  const t = editor();
+  const plan = t.tilePlan(symphony);
+  const endPx = symphony.width * t.state.zoom;
+  for (const x of [0, 100, endPx / 3, endPx / 2, endPx - 1400, endPx]) {
+    t.scrollTo(x, 0);
+    const vis = t.viewBox();
+    const r = t.tileRange(plan, symphony, tilePad);
+    const first = t.tileBox(plan, symphony, r.lo);
+    const last = t.tileBox(plan, symphony, r.hi);
+    assert.ok(first.x0 <= vis.x0 + 1e-9,
+      `at x=${Math.round(x)} the first piece starts at ${first.x0} and the view at ${vis.x0}`);
+    assert.ok(last.x1 >= Math.min(symphony.width, vis.x1) - 1e-9,
+      `at x=${Math.round(x)} the last piece ends at ${last.x1} and the view at ${vis.x1}`);
+    assert.ok(r.lo >= 0, "a piece before the beginning of the score");
+    assert.ok(t.tileBox(plan, symphony, r.hi).x1 <= symphony.width + 1e-9,
+      "a piece past the end of the score");
   }
-  const draw = grab("drawScore");
-  assert.ok(draw.includes("loadSize("), "drawScore never finds out how big the score is");
-  assert.ok(draw.includes("drawWindow("), "drawScore never works out which stretch to draw");
-  const redraw = grab("redrawWindow");
-  assert.ok(redraw.includes("markSelection("),
-    "replacing the drawing loses the selection and the cursor");
 });
 
-test("a tune book turns the windowing off", () => {
-  // A book is drawn whole, one tune after another, by a different path. A
-  // window left recorded from the single-tune view would have the next
-  // scroll fetch one tune's stretch and put it in place of the book.
+test("there is a screenful of music drawn beyond each edge of the view", () => {
+  const t = editor();
+  const plan = t.tilePlan(symphony);
+  t.scrollTo(symphony.width * 4, 0); // well inside the piece
+  const vis = t.viewBox();
+  const r = t.tileRange(plan, symphony, tilePad);
+  const first = t.tileBox(plan, symphony, r.lo);
+  const last = t.tileBox(plan, symphony, r.hi);
+  const screen = vis.x1 - vis.x0;
+  assert.ok(vis.x0 - first.x0 >= screen - plan.span,
+    "there is less than a screenful drawn behind the view");
+  assert.ok(last.x1 - vis.x1 >= screen - plan.span,
+    "there is less than a screenful drawn ahead of the view");
+});
+
+test("moving along costs a piece, not a drawing", () => {
+  const t = editor();
+  const plan = t.tilePlan(symphony);
+  const endPx = symphony.width * t.state.zoom;
+  let have = new Set();
+  let added = 0, biggestStep = 0, first = true;
+
+  for (let x = 0; x <= endPx; x += 60) { // a frame at a time, briskly
+    t.scrollTo(x, 0);
+    const want = t.tileRange(plan, symphony, tilePad);
+    let step = 0;
+    for (let i = want.lo; i <= want.hi; i++) {
+      if (!have.has(i)) {
+        have.add(i);
+        added++;
+        step++;
+      }
+    }
+    // The first pass fills the view and its margins; every one after it is
+    // a frame of scrolling, and that is what must be cheap.
+    if (!first && step > biggestStep) biggestStep = step;
+    first = false;
+    // What is far enough behind to let go of.
+    const keep = t.tileRange(plan, symphony, tileKeep);
+    for (const i of [...have]) {
+      if (i < keep.lo || i > keep.hi) have.delete(i);
+    }
+    assert.ok(have.size < 12,
+      `${have.size} pieces are on the page at once, at x=${x}`);
+  }
+
+  const all = Math.ceil(symphony.width / plan.span);
+  assert.ok(added >= all, "the whole piece was covered without drawing all of it");
+  assert.ok(added < all * 1.5,
+    `${added} pieces were drawn for a score that is ${all} pieces long; ` +
+    `they are being dropped and fetched again`);
+  assert.equal(biggestStep, 1,
+    `a single frame of scrolling asked for ${biggestStep} pieces`);
+});
+
+test("a piece already behind is kept a while before it is let go", () => {
+  // Scrolling back a little should not have to fetch what was just there.
+  const t = editor();
+  const plan = t.tilePlan(symphony);
+  t.scrollTo(symphony.width * 4, 0);
+  const want = t.tileRange(plan, symphony, tilePad);
+  const keep = t.tileRange(plan, symphony, tileKeep);
+  assert.ok(keep.lo < want.lo, "nothing behind the view is kept");
+  assert.ok(keep.hi > want.hi, "nothing ahead of the view is kept");
+});
+
+test("the drawing is one <svg> with the pieces inside it", () => {
+  const draw = grab("drawScore");
+  assert.ok(draw.includes("tilePlan("), "drawScore never works out how to cut the score up");
+  assert.ok(draw.includes("tileHome"), "there is nowhere for the pieces to go");
+  assert.ok(/class", "tiles"/.test(draw),
+    "the pieces are not kept together, so one arriving late is drawn over the cursor");
+  assert.ok(draw.includes("ensureTiles("), "nothing puts the first pieces on the page");
+
+  const show = grab("showTile");
+  assert.ok(show.includes("innerHTML"),
+    "a piece is not put into the drawing that is already there");
+  assert.ok(!show.includes("$(\"#canvas\")"),
+    "a piece replaces the whole canvas, which is what this is here to stop");
+});
+
+test("the piece ahead is asked for before it is wanted", () => {
+  const fn = grab("ensureTiles");
+  assert.ok(/want\.lo - 1, want\.hi \+ 1/.test(fn),
+    "nothing is fetched beyond what is drawn, so arriving at it waits for it");
+  assert.ok(fn.includes("fetchTile("), "the piece ahead is not fetched");
+
+  // And one piece is asked for once, however many times it is wanted.
+  const fetchOne = grab("fetchTile");
+  assert.ok(/tileText\.get\(i\)/.test(fetchOne),
+    "a piece in the air is asked for again by the next pass over it");
+});
+
+test("the empty drawing really is empty", () => {
+  // The <svg> the pieces go inside is asked for with a window nothing is
+  // in. The coordinates are sent to the hundredth of a space, so a window
+  // thinner than that rounds to nothing — and a window of no width at all
+  // is read by the server as no window, which answers with the whole
+  // score. Fifty-six megabytes of it, silently, on every open.
+  const draw = grab("drawScore");
+  const m = draw.match(/window:\s*(\{[^}]*\})/);
+  assert.ok(m, "drawScore no longer asks for an empty drawing");
+  const box = new Function("return " + m[1])();
+
+  const state = { zoom: 8, mode: "strip" };
+  const scope = { state, URLSearchParams, Date, Math };
+  const api = new Function(...Object.keys(scope),
+    grab("viewParams") + "\n" + grab("scoreURL") + "\nreturn { scoreURL };"
+  )(...Object.values(scope));
+  const q = new URLSearchParams(api.scoreURL({ window: box }).split("?")[1]);
+
+  for (const [a, b] of [["x0", "x1"], ["y0", "y1"]]) {
+    assert.ok(q.get(a) !== null && q.get(b) !== null,
+      "the empty drawing asks for no window at all");
+    assert.notEqual(q.get(a), q.get(b),
+      `the window is sent as ${a}=${q.get(a)} ${b}=${q.get(b)}, which is no ` +
+      `window, and the whole score comes back`);
+  }
+  // And nothing is in it: off the edge of the music rather than inside it.
+  assert.ok(box.x1 <= 0 && box.y1 <= 0,
+    "the empty drawing's window reaches into the score, so it is not empty");
+});
+
+test("a tune book is not cut up", () => {
   const fn = grab("drawScore");
   const book = fn.slice(0, fn.indexOf("await drawBook()"));
-  assert.ok(/state\.drawn\s*=\s*null/.test(book),
-    "drawScore goes off to draw the book still thinking it has a window");
-});
-
-test("playback finds the drawing again after it has been replaced", () => {
-  // A long score is drawn a screenful at a time, so the drawing is replaced
-  // underneath playback as the music moves along. A list of shapes made
-  // from the drawing that has gone points at nothing, and the notes stop
-  // lighting up halfway through the piece.
-  const fn = grab("refIndex");
-  assert.ok(fn.includes("currentSVG()"),
-    "refIndex holds on to one drawing for ever");
-  assert.ok(/made\s*!==\s*svg/.test(fn),
-    "refIndex never notices that the drawing has changed");
-  const follow = src.match(/^function follow\(pb\)[\s\S]*?^}/m)[0];
-  assert.ok(follow.includes("refIndex()"),
-    "follow still hands refIndex a drawing that will go stale");
-});
-
-test("only one fetch is in the air at a time", () => {
-  // Scrolling asks far more often than the answers come back, and answers
-  // arriving out of order would leave the wrong stretch drawn last.
-  const fn = grab("redrawWindow");
-  assert.ok(fn.includes("windowFetch"), "nothing stops the fetches piling up");
-  assert.ok(fn.includes("windowAgain"), "a move made during a fetch is forgotten");
+  assert.ok(/state\.tiles\s*=\s*null/.test(book) && book.includes("forgetTiles()"),
+    "drawScore goes off to draw the book still thinking it has pieces to place");
 });

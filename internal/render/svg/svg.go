@@ -52,6 +52,16 @@ type Options struct {
 	// testing.
 	Interactive bool
 
+	// Fragment writes the shapes alone, with no <svg> around them and no
+	// stylesheet: a piece to be put inside a drawing that is already there.
+	//
+	// It is how a long score is drawn a piece at a time without rebuilding
+	// what is already on the page. The editor keeps one drawing the size of
+	// the whole score and fills it with these, adding one at the edge it is
+	// moving towards and dropping the one it has left behind, so scrolling
+	// costs one piece rather than everything in view.
+	Fragment bool
+
 	// Window draws only the part of the score that reaches into a box,
 	// leaving the rest out. Nil draws the whole of it.
 	//
@@ -108,24 +118,12 @@ func Render(w io.Writer, lay *engrave.Layout, opt Options) error {
 	var b strings.Builder
 	s := opt.StaffSpace
 
-	width, height := lay.Width*s, lay.Height*s
-	fmt.Fprintf(&b, `<svg xmlns="http://www.w3.org/2000/svg" width="%.1f" height="%.1f" `+
-		`viewBox="0 0 %.1f %.1f" class="gscore-score">`+"\n", width, height, width, height)
-
-	b.WriteString("<style>\n")
-	if opt.EmbedFont {
-		// The font travels with the file so the score renders the same
-		// wherever it is opened, with nothing to install.
-		fmt.Fprintf(&b, `@font-face{font-family:"%s";src:url("data:font/otf;base64,%s") format("opentype");}`+"\n",
-			smufl.FontFamily, base64.StdEncoding.EncodeToString(smufl.FontData()))
+	if !opt.Fragment {
+		width, height := lay.Width*s, lay.Height*s
+		fmt.Fprintf(&b, `<svg xmlns="http://www.w3.org/2000/svg" width="%.1f" height="%.1f" `+
+			`viewBox="0 0 %.1f %.1f" class="gscore-score">`+"\n", width, height, width, height)
+		writeStyle(&b, opt, s)
 	}
-	fmt.Fprintf(&b, `.gscore-score{background:#fff;}`+"\n")
-	fmt.Fprintf(&b, `.g{font-family:"%s";font-size:%.3fpx;fill:#000;}`+"\n", smufl.FontFamily, 4*s)
-	fmt.Fprintf(&b, `.t{font-family:Georgia,"Times New Roman",serif;fill:#000;}`+"\n")
-	fmt.Fprintf(&b, `line{stroke:#000;stroke-linecap:butt;}`+"\n")
-	fmt.Fprintf(&b, `path.curve{fill:none;stroke:#000;}`+"\n")
-	b.WriteString("</style>\n")
-
 	win := opt.Window
 
 	for _, ln := range lay.Lines {
@@ -231,9 +229,28 @@ func Render(w io.Writer, lay *engrave.Layout, opt Options) error {
 			t.X*s, t.Y*s, t.Size*s, anchor, style, html.EscapeString(t.S))
 	}
 
-	b.WriteString("</svg>\n")
+	if !opt.Fragment {
+		b.WriteString("</svg>\n")
+	}
 	_, err := io.WriteString(w, b.String())
 	return err
+}
+
+// writeStyle writes the rules the shapes are drawn under.
+func writeStyle(b *strings.Builder, opt Options, s float64) {
+	b.WriteString("<style>\n")
+	if opt.EmbedFont {
+		// The font travels with the file so the score renders the same
+		// wherever it is opened, with nothing to install.
+		fmt.Fprintf(b, `@font-face{font-family:"%s";src:url("data:font/otf;base64,%s") format("opentype");}`+"\n",
+			smufl.FontFamily, base64.StdEncoding.EncodeToString(smufl.FontData()))
+	}
+	fmt.Fprintf(b, `.gscore-score{background:#fff;}`+"\n")
+	fmt.Fprintf(b, `.g{font-family:"%s";font-size:%.3fpx;fill:#000;}`+"\n", smufl.FontFamily, 4*s)
+	fmt.Fprintf(b, `.t{font-family:Georgia,"Times New Roman",serif;fill:#000;}`+"\n")
+	fmt.Fprintf(b, `line{stroke:#000;stroke-linecap:butt;}`+"\n")
+	fmt.Fprintf(b, `path.curve{fill:none;stroke:#000;}`+"\n")
+	b.WriteString("</style>\n")
 }
 
 // spread is the box a run of points covers.

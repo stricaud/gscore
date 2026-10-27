@@ -108,3 +108,45 @@ func TestBeamsAreFilledQuads(t *testing.T) {
 		t.Error("the beam is not filled")
 	}
 }
+
+// A fragment is the shapes alone, to go inside a drawing already on the page.
+//
+// It is how a long score is drawn a piece at a time: the editor keeps one
+// <svg> the size of the whole score and fills it with these, adding the
+// piece ahead and dropping the one behind. Wrapped in its own <svg> a piece
+// cannot be put inside anything, and carrying its own stylesheet would be
+// the same rules over again for every piece on the page.
+func TestAFragmentIsTheShapesAlone(t *testing.T) {
+	lay := &engrave.Layout{
+		Width: 40, Height: 10,
+		Lines:  []engrave.Line{{X1: 1, Y1: 1, X2: 9, Y2: 1, Thickness: 0.1}},
+		Glyphs: []engrave.Glyph{{Name: "noteheadBlack", X: 5, Y: 5}},
+	}
+	opt := Options{StaffSpace: 8}
+
+	var whole strings.Builder
+	if err := Render(&whole, lay, opt); err != nil {
+		t.Fatal(err)
+	}
+	opt.Fragment = true
+	var part strings.Builder
+	if err := Render(&part, lay, opt); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, s := range []string{"<svg", "</svg>", "<style>"} {
+		if strings.Contains(part.String(), s) {
+			t.Errorf("a fragment carries %s, so it cannot go inside a drawing", s)
+		}
+		if !strings.Contains(whole.String(), s) {
+			t.Errorf("a whole drawing has no %s", s)
+		}
+	}
+	// The same shapes either way: a fragment is the same picture without
+	// the paper round it.
+	for _, s := range []string{"<line", "<text"} {
+		if !strings.Contains(part.String(), s) {
+			t.Errorf("a fragment left out its %s", s)
+		}
+	}
+}

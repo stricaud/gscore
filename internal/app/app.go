@@ -555,6 +555,9 @@ func (a *App) handleSVG(w http.ResponseWriter, r *http.Request) {
 	// printing, a PDF, a page somebody is given — asks for all of it and
 	// gets all of it.
 	ropt.Window = windowOf(r)
+	// And whether to write the shapes alone, to be put inside a drawing the
+	// editor already has. See svg.Options.Fragment.
+	ropt.Fragment = r.URL.Query().Get("frag") == "1"
 
 	lay := a.layout(score, eopt)
 	w.Header().Set("Content-Type", "image/svg+xml")

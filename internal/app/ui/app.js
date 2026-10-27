@@ -49,10 +49,11 @@ const state = {
   hits: [],
   // The performance, kept until the music changes. See playbackData.
   playback: null,
-  // How big the engraved score is, in staff spaces, and which stretch of it
-  // is in the page — null when the whole of it is. See drawWindow.
+  // How big the engraved score is, in staff spaces, and how it is cut into
+  // pieces — null when the whole of it goes in the page at once. See
+  // tilePlan.
   size: null,
-  drawn: null,
+  tiles: null,
   tool: { duration: "quarter", dots: 0, accidental: "none", rest: false, drum: null },
   // The kit, once fetched. A score without a drum staff never asks for it.
   kit: null,
@@ -161,11 +162,22 @@ async function paletteAction(item) {
   }
   // An ending is a bracket over whole bars, so it acts on the measure the
   // cursor is in rather than on the note.
-  // A drum is a tool, like a note value: it says what the next click writes.
+  // A drum means two things depending on what is in front of you, exactly
+  // as a note value and an accidental do. With the cursor on a drum staff
+  // it is that drum, there, now; with nothing to write on it is a decision
+  // about the next note. It used to be only the second of those, so
+  // choosing the snare and then having to go and click the staff was two
+  // gestures for one note — and the second of them a click on five lines
+  // that name instruments rather than pitches, which is the guessing the
+  // drum list is here to replace.
   if (item.drum !== undefined) {
     state.tool.drum = item.drum;
     state.tool.rest = false;
     markPaletteTool((label) => label === item.label);
+    if (state.selection && isDrumStaff(state.selection.part)) {
+      await insertAtSelection(false);
+      return;
+    }
     status(item.label + " — click the drum staff to write it");
     return;
   }
@@ -769,7 +781,8 @@ function viewParams(opts = {}) {
 
 function scoreURL(opts = {}) {
   const p = viewParams(opts);
-  // A stretch of the score rather than all of it. See drawWindow.
+  // A stretch of the score rather than all of it, and whether to send the
+  // shapes alone to go inside a drawing the page already has. See tilePlan.
   const w = opts.window;
   if (w) {
     p.set("x0", w.x0.toFixed(2));
@@ -777,6 +790,7 @@ function scoreURL(opts = {}) {
     p.set("x1", w.x1.toFixed(2));
     p.set("y1", w.y1.toFixed(2));
   }
+  if (opts.fragment) p.set("frag", "1");
   p.set("_", String(Date.now()));
   return "/score.svg?" + p.toString();
 }
@@ -848,71 +862,84 @@ function viewBox() {
   };
 }
 
-// drawWindow is the stretch to draw, or null to draw the whole score.
-function drawWindow(size) {
+// The drawing is one <svg> the size of the whole score, filled with pieces.
+//
+// A piece is a stretch of the long side — a few bars of the strip, a page or
+// two of the paginated view — drawn as a <g> and put inside the drawing that
+// is already there. Moving along adds the piece ahead and drops the one left
+// behind, so a scroll costs one piece rather than everything in view, and
+// the cursor, the selection and the lit noteheads are not swept away and
+// rebuilt every time the view moves.
+//
+// Rebuilding the lot was the first way this worked and it showed: every few
+// seconds of scrolling the whole of what was on screen was thrown away and
+// parsed again.
+
+// tilePad is how far beyond the view to keep drawn, in screenfuls. One
+// either way means an ordinary scroll never reaches an edge that is not
+// already there.
+const tilePad = 1;
+
+// tileKeep is how far beyond that to keep a piece before dropping it.
+// Scrolling back a little should not have to fetch what was just there.
+const tileKeep = 3;
+
+// tilePlan says how the score is cut up, or null to draw the whole of it in
+// one piece — which is every ordinary score.
+//
+// Along the long side, because that is the one being windowed: the editing
+// strip is cut across its length and a paginated score down its length. The
+// short side is taken whole, so moving along it never fetches anything.
+function tilePlan(size) {
   const vis = viewBox();
   if (!vis || !size || !(size.width > 0) || !(size.height > 0)) return null;
   const viewW = vis.x1 - vis.x0;
   const viewH = vis.y1 - vis.y0;
   if (!(viewW > 0) || !(viewH > 0)) return null;
-
-  // It all fits, so ask for all of it: an ordinary score is drawn exactly
-  // as it was before any of this, in one request, and never fetched again
-  // for being scrolled.
   if (size.width * size.height <= windowArea) return null;
 
-  // The stretch in view, with a screenful of margin on each side.
-  let x0 = Math.max(0, vis.x0 - viewW * drawPad);
-  let x1 = Math.min(size.width, vis.x1 + viewW * drawPad);
-  let y0 = Math.max(0, vis.y0 - viewH * drawPad);
-  let y1 = Math.min(size.height, vis.y1 + viewH * drawPad);
+  // Which side to cut, and how much of the other side one piece may hold
+  // before it is too much to hand a browser at once.
+  const downTheLength = size.height > size.width;
+  const across = downTheLength ? size.width : size.height;
+  const view = downTheLength ? viewH : viewW;
 
-  // Then as much more of a side as the budget allows, the shorter one
-  // first.
-  //
-  // A side taken whole is a side that never fetches anything again, which
-  // is worth paying for: the editing strip is one system running the length
-  // of the piece and only as tall as the orchestra, so the whole height is
-  // a column of a few thousand more shapes — and scrolling down the staves
-  // while the music plays stops waiting altogether. It used to stop the
-  // playing for a second or two at every step, and leave a band of blank
-  // paper under the last staff it had drawn.
-  const takeY = () => {
-    if (size.height * (x1 - x0) > windowArea) return;
-    y0 = 0;
-    y1 = size.height;
-  };
-  const takeX = () => {
-    if (size.width * (y1 - y0) > windowArea) return;
-    x0 = 0;
-    x1 = size.width;
-  };
-  if (size.height <= size.width) {
-    takeY();
-    takeX();
-  } else {
-    takeX();
-    takeY();
-  }
-  return { x0, y0, x1, y1 };
+  // A piece is a screenful of the long side, or less where the short side
+  // is so deep that a screenful of both would be too much at once.
+  let span = view;
+  if (across > 0 && span * across > windowArea) span = windowArea / across;
+  if (!(span > 0)) return null;
+
+  return { downTheLength, span, across, view };
 }
 
-// stillCovered says whether what is drawn still has the view comfortably
-// inside it, allowing for the edges of the score, where there is nothing
-// more to draw.
-function stillCovered(drawn, size) {
+// tileBox is the stretch of score one piece covers.
+function tileBox(plan, size, i) {
+  const a = i * plan.span;
+  const b = a + plan.span;
+  if (plan.downTheLength) {
+    return { x0: 0, y0: a, x1: size.width, y1: Math.min(size.height, b) };
+  }
+  return { x0: a, y0: 0, x1: Math.min(size.width, b), y1: size.height };
+}
+
+// tileRange is the pieces covering the view with a margin round it, in
+// screenfuls.
+function tileRange(plan, size, margin) {
   const vis = viewBox();
-  if (!vis || !drawn || !size) return true;
-  const sx = (vis.x1 - vis.x0) * drawSlack;
-  const sy = (vis.y1 - vis.y0) * drawSlack;
-  return (drawn.x0 <= 0 || vis.x0 - sx >= drawn.x0) &&
-         (drawn.y0 <= 0 || vis.y0 - sy >= drawn.y0) &&
-         (drawn.x1 >= size.width || vis.x1 + sx <= drawn.x1) &&
-         (drawn.y1 >= size.height || vis.y1 + sy <= drawn.y1);
+  if (!vis) return null;
+  const from = plan.downTheLength ? vis.y0 : vis.x0;
+  const to = plan.downTheLength ? vis.y1 : vis.x1;
+  const pad = plan.view * margin;
+  const end = plan.downTheLength ? size.height : size.width;
+  const lo = Math.max(0, Math.floor((from - pad) / plan.span));
+  const hi = Math.min(Math.ceil(end / plan.span) - 1,
+                      Math.floor((to + pad) / plan.span));
+  return { lo, hi };
 }
 
 // loadSize asks how big the engraved score is, in staff spaces, for the view
-// being shown. It is what decides whether the score needs this at all.
+// being shown. It is what decides whether the score needs any of this.
 async function loadSize() {
   try {
     const res = await fetch("/api/layout?" + viewParams().toString());
@@ -927,37 +954,86 @@ async function loadSize() {
   }
 }
 
-// One fetch at a time, and one more queued if the view moves while it is in
-// the air. Scrolling asks far more often than the answers come back, and a
-// pile of them arriving out of order would draw the wrong stretch last.
-let windowFetch = false;
-let windowAgain = false;
+// The pieces on the page, and the ones already asked for.
+//
+// tileText holds what has come back but may not be on the page yet: the
+// piece ahead is asked for before it is wanted, so that arriving at it costs
+// only the drawing of it.
+let tileEls = new Map();
+let tileText = new Map();
+let tileHome = null;
 
-// redrawWindow draws the stretch of the score that is now in view.
-async function redrawWindow() {
-  if (windowFetch) {
-    windowAgain = true;
-    return;
+// forgetTiles throws the drawing away, which is what a new score, a new
+// zoom or a new view needs.
+function forgetTiles() {
+  tileEls = new Map();
+  tileText = new Map();
+  tileHome = null;
+}
+
+// fetchTile asks for one piece, once. The answer is kept, so asking for it
+// again while it is in the air waits for the same one.
+function fetchTile(plan, size, i) {
+  const got = tileText.get(i);
+  if (got) return got;
+  const box = tileBox(plan, size, i);
+  const p = fetch(scoreURL({ window: box, fragment: true }))
+    .then((res) => (res.ok ? res.text() : ""))
+    .catch(() => "");
+  tileText.set(i, p);
+  return p;
+}
+
+// showTile puts one piece on the page.
+async function showTile(plan, size, i) {
+  if (tileEls.has(i)) return;
+  // Claimed before it is awaited, so two passes over the same piece do not
+  // both draw it.
+  tileEls.set(i, null);
+  const text = await fetchTile(plan, size, i);
+  if (!tileHome || !tileHome.isConnected) return; // the drawing has gone
+  if (tileEls.get(i) !== null) return;            // forgotten while we waited
+  const g = document.createElementNS("http://www.w3.org/2000/svg", "g");
+  g.setAttribute("data-tile", String(i));
+  g.innerHTML = text;
+  tileHome.appendChild(g);
+  tileEls.set(i, g);
+}
+
+// ensureTiles draws what the view needs, drops what it has left well behind,
+// and asks for what it is about to want.
+async function ensureTiles() {
+  const plan = state.tiles;
+  const size = state.size;
+  if (!plan || !size || !tileHome) return;
+
+  const want = tileRange(plan, size, tilePad);
+  if (!want) return;
+
+  // Away from the middle outwards, so that what is under the eye arrives
+  // first when several are missing at once.
+  const mid = Math.round((want.lo + want.hi) / 2);
+  const order = [];
+  for (let i = want.lo; i <= want.hi; i++) order.push(i);
+  order.sort((a, b) => Math.abs(a - mid) - Math.abs(b - mid));
+  for (const i of order) await showTile(plan, size, i);
+
+  // What is far enough behind to be worth the room it takes.
+  const keep = tileRange(plan, size, tileKeep);
+  for (const [i, g] of [...tileEls]) {
+    if (keep && i >= keep.lo && i <= keep.hi) continue;
+    if (g) g.remove();
+    tileEls.delete(i);
+    tileText.delete(i);
   }
-  windowFetch = true;
-  try {
-    const win = drawWindow(state.size);
-    const res = await fetch(scoreURL(win ? { window: win } : {}));
-    if (!res.ok) return;
-    const text = await res.text();
-    $("#canvas").innerHTML = text;
-    state.drawn = win;
-    // The cursor and the selection were shapes in the drawing that has just
-    // been replaced, so they go back on. The writing cursor notices for
-    // itself that it has been taken off the page.
-    markSelection();
-    drawSprints();
-  } finally {
-    windowFetch = false;
-    if (windowAgain) {
-      windowAgain = false;
-      void redrawWindow();
-    }
+
+  // And the next one along each way, fetched but not drawn, so that
+  // reaching it is only the drawing of it.
+  for (const i of [want.lo - 1, want.hi + 1]) {
+    if (i < 0 || tileText.has(i)) continue;
+    const end = plan.downTheLength ? size.height : size.width;
+    if (i * plan.span >= end) continue;
+    void fetchTile(plan, size, i);
   }
 }
 
@@ -1079,10 +1155,10 @@ async function sprintToStaffEnd(part) {
     top: last.staffTop, bottom: last.staffTop + staffHeightOf(last),
   };
   await glideTo(box);
-  // The view has moved a long way, so the stretch of score under it is a
-  // different one. Waiting for the glide to finish first means one fetch
-  // rather than one for every frame of it.
-  if (state.drawn && !stillCovered(state.drawn, state.size)) await redrawWindow();
+  // The view has moved a long way, so the pieces under it are different
+  // ones. Waiting for the glide to finish first means asking once rather
+  // than once for every frame of it.
+  await ensureTiles();
   flashMeasure(box);
   status(`${name}: measure ${last.measure + 1}`);
 }
@@ -1098,9 +1174,8 @@ function setupVirtualDraw() {
     // The buttons are pinned to the panel and their staves are not, so they
     // move whenever the view does.
     drawSprints();
-    if (!state.drawn) return; // the whole score is in the page
-    if (stillCovered(state.drawn, state.size)) return;
-    void redrawWindow();
+    if (!state.tiles) return; // the whole score is in the page
+    void ensureTiles();
   };
   const ask = () => {
     if (!frame) frame = requestAnimationFrame(check);
@@ -1111,31 +1186,60 @@ function setupVirtualDraw() {
 
 async function drawScore() {
   if (state.showAll && (state.info?.tunes || []).length > 1) {
-    // A book is drawn whole, one tune after another. Saying so matters:
-    // with a window still recorded from the single-tune view, the next
-    // scroll would fetch one tune's stretch and put it in place of the
-    // book.
-    state.drawn = null;
+    // A book is drawn whole, one tune after another, by its own path.
+    // Saying so matters: a tiling left over from the single-tune view
+    // would have the next scroll put one tune's piece into the book.
+    state.tiles = null;
+    forgetTiles();
     await drawBook();
     return;
   }
-  // How big it is, which is what says whether it has to be drawn a
-  // screenful at a time at all.
+  // How big it is, which is what says whether it has to be drawn a piece
+  // at a time at all.
   state.size = await loadSize();
-  const win = drawWindow(state.size);
-  const res = await fetch(scoreURL(win ? { window: win } : {}));
-  if (!res.ok) {
+  state.tiles = tilePlan(state.size);
+  forgetTiles();
+
+  if (!state.tiles) {
+    // Small enough to hand over whole, which is every ordinary score.
+    const res = await fetch(scoreURL());
+    if (!res.ok) {
+      status("Could not draw the score");
+      return;
+    }
+    $("#canvas").innerHTML = await res.text();
+    drawSprints();
+    return;
+  }
+
+  // The drawing itself, the size of the whole score and empty: a window off
+  // the edge of the music, which nothing is in, so what comes back is the
+  // <svg> and the rules the shapes are drawn under and nothing else. The
+  // pieces go inside it.
+  //
+  // Off the edge rather than a sliver at the origin, because the
+  // coordinates are sent to the hundredth of a space and a sliver thinner
+  // than that rounds to nothing at all — which the server reads as no
+  // window, and answers with the whole score. Fifty-six megabytes of it.
+  const shell = await fetch(scoreURL({
+    window: { x0: -2, y0: -2, x1: -1, y1: -1 },
+  }));
+  if (!shell.ok) {
     status("Could not draw the score");
     return;
   }
-  $("#canvas").innerHTML = await res.text();
-  state.drawn = win;
+  $("#canvas").innerHTML = await shell.text();
+  const svg = currentSVG();
+  if (!svg) return;
+  // First, so that everything put in afterwards — the selection, the
+  // cursor, the lit noteheads — is drawn over the music rather than under
+  // it, and so that a piece arriving later does not jump in front of them.
+  tileHome = document.createElementNS("http://www.w3.org/2000/svg", "g");
+  tileHome.setAttribute("class", "tiles");
+  svg.appendChild(tileHome);
+
+  await ensureTiles();
   drawSprints();
-  if (win) {
-    // The first stretch was worked out before there was a drawing to
-    // measure against, so the view is checked once now that there is one.
-    if (!stillCovered(state.drawn, state.size)) void redrawWindow();
-  }
 }
 
 // drawBook puts every score in the file on screen, one under another.
@@ -3620,6 +3724,9 @@ async function refreshScore() {
 // but the rectangle is what the eye reads.
 function markSelection() {
   rememberCursor();
+  // The drum pads belong to the staff the cursor is on, and the cursor has
+  // just moved.
+  showDrumPad();
   // The harmonics panel follows what is picked up, so that writing a chord
   // and looking at it are the same gesture.
   if (state.harm?.open && !state.harm.following) void refreshHarmonics();
@@ -5687,7 +5794,7 @@ function renderDrumPads() {
     keys.append(midi);
 
     pad.append(head, name, keys);
-    pad.addEventListener("click", () => pickDrum(d.key, true));
+    pad.addEventListener("click", () => void hitPad(d.key));
     grid.append(pad);
   }
 
@@ -5703,19 +5810,42 @@ function renderDrumPads() {
   }
   const chosen = state.kit.kits.find((k) => k.id === state.kit.kit);
   $("#drumpad-note").textContent = chosen ? chosen.description : "";
-  $("#drumpad").hidden = false;
+  showDrumPad();
 }
 
-// pickDrum chooses what the next note written on a drum staff will be.
-function pickDrum(key, say) {
+// showDrumPad puts the pads up when the cursor is on a drum staff and takes
+// them away when it is not.
+//
+// They used to be up for the whole of any score with a drum staff anywhere
+// in it. On an orchestral score that means a kit under the music the whole
+// time, for one staff out of fifty — and most of the time the cursor is
+// nowhere near it. A drum kit is for writing drums on.
+function showDrumPad() {
+  const pad = $("#drumpad");
+  if (!pad) return;
+  pad.hidden = !(state.kit && !state.readOnly &&
+                 isDrumStaff(state.selection?.part));
+}
+
+// hitPad writes a pad's drum at the cursor.
+//
+// A pad used to only choose a drum, and the drum then had to be written by
+// clicking the staff as well: two gestures for one note, and the second of
+// them a click on five lines that name instruments rather than pitches —
+// which is exactly the guessing the pads are here to replace. A pad is a
+// drum. Pressing it writes it, the way its letter already does.
+async function hitPad(key) {
+  pickDrum(key);
+  await insertAtSelection(false);
+}
+
+// pickDrum chooses what the next note written on a drum staff will be, and
+// lights the pad that says so.
+function pickDrum(key) {
   state.tool.drum = key;
   state.tool.rest = false;
   for (const pad of $$("#drumpad .pad")) {
     pad.classList.toggle("on", Number(pad.dataset.drum) === key);
-  }
-  if (say) {
-    const d = (state.kit?.pads || []).find((p) => p.key === key);
-    status((d ? d.name : "Drum") + " — click the drum staff to write it");
   }
 }
 
@@ -5730,8 +5860,7 @@ function drumPadForKey(letter) {
 async function typeDrum(letter) {
   const pad = drumPadForKey(letter);
   if (!pad) return false;
-  pickDrum(pad.key, false);
-  await insertAtSelection(false);
+  await hitPad(pad.key);
   return true;
 }
 

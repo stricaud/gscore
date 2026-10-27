@@ -529,6 +529,16 @@ paths:
         - name: y1
           in: query
           schema: { type: number }
+        - name: frag
+          in: query
+          description: >-
+            `1` writes the shapes alone, with no `<svg>` around them and no
+            stylesheet: a piece to be put inside a drawing that is already
+            there. The editor keeps one drawing the size of the whole score
+            and fills it with these, adding the piece ahead and dropping the
+            one behind, so scrolling a long score costs one piece rather
+            than everything in view.
+          schema: { type: string, enum: ["0", "1"] }
       responses:
         "200":
           description: The drawing.

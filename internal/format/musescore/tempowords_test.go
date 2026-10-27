@@ -7,9 +7,9 @@ import "testing"
 // for one. It was drawn as an empty box.
 func TestANoteSymbolIsNotLeftInTheTempoWords(t *testing.T) {
 	cases := []struct{ in, want string }{
-		{"\U0001D15F = 72 ", ""},             // the Goldberg file, exactly
-		{"\U0001D15F. = 90", ""},             // dotted
-		{" = 108", ""},                 // Bravura's own codepoint
+		{"\U0001D15F = 72 ", ""}, // the Goldberg file, exactly
+		{"\U0001D15F. = 90", ""}, // dotted
+		{" = 108", ""},          // Bravura's own codepoint
 		{"Andante \U0001D15F = 72", "Andante"},
 		{"Allegro", "Allegro"},
 		{"(Aria)", "Aria"},

@@ -432,6 +432,28 @@ func (p *parser) closeMeasure(style model.BarlineStyle) {
 	p.meas = nil
 }
 
+// beamMark turns the file's two beam bits into what the engraver draws.
+//
+// NoteWorthy spells its beamed groups out note by note rather than leaving
+// them to be worked out from the meter, which is the only way a group like
+// the three quavers in bar 119 of Danse Macabre can be written down at all:
+// nothing about 2/4 says to beam three of them together.
+func beamMark(b byte) model.Beam {
+	switch b {
+	case 1:
+		return model.BeamStart
+	case 2:
+		return model.BeamContinue
+	case 3:
+		return model.BeamStop
+	}
+	// Nothing written means no beam, not "work it out": NoteWorthy spells
+	// every group it draws, so a note it says nothing about is a note with
+	// a flag. Vocal music is mostly these — a syllable to a note, and no
+	// beams over the words.
+	return model.BeamNone
+}
+
 func tupletMark(triplet bool) *model.Tuplet {
 	if !triplet {
 		return nil
@@ -537,4 +559,52 @@ func linkTies(part *model.Part) {
 			}
 		}
 	}
+}
+
+// The pieces a NoteWorthy octave bracket is drawn from: a dash, repeated in
+// a music font, and the hook that turns down towards the staff at the end.
+const (
+	octaveDash = '\xF2'
+	octaveHook = 'w'
+)
+
+// octaveAmount reads an octave line's opening word, in octaves.
+//
+// NoteWorthy has no ottava of its own. A staff author writes "8va" over the
+// music and draws the bracket after it with dashes, so the word is the only
+// thing that says a line has begun and what it means.
+func octaveAmount(text string) (int, bool) {
+	switch strings.ToLower(strings.TrimSpace(text)) {
+	case "8va":
+		return 1, true
+	case "8vb", "8ba":
+		return -1, true
+	case "15ma":
+		return 2, true
+	case "15mb":
+		return -2, true
+	}
+	return 0, false
+}
+
+// octaveDashes reports whether a run of symbols is a stretch of the bracket,
+// and whether it is the stretch that finishes it.
+func octaveDashes(text string) (dashes, ends bool) {
+	n := 0
+	for _, c := range text {
+		if c == octaveDash {
+			n++
+		}
+	}
+	if n < 3 {
+		return false, false
+	}
+	return true, strings.HasSuffix(text, string(octaveHook))
+}
+
+// nwc1Hairpins is which way a dynamic variance points, for the two styles
+// that are drawn as a wedge. The rest are written as words.
+var nwc1Hairpins = map[byte]model.HairpinKind{
+	0: model.Crescendo,
+	1: model.Diminuendo,
 }

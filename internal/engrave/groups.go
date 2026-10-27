@@ -123,7 +123,15 @@ func (e *engraver) labelWidth(parts []*model.Part, first bool) float64 {
 		if !first {
 			label = abbreviate(label)
 		}
-		if w := textWidth(label, nameSize); w > widest {
+		w := textWidth(label, nameSize)
+		if g.Symbol == model.GroupBrace {
+			// A brace stands a space or two out to the left of its staves
+			// and the name goes outside that, not across it. A bracket is
+			// a line and needs no such allowance, which is why only the
+			// braces widen the margin.
+			w += braceWidth(1e9)
+		}
+		if w > widest {
 			widest = w
 		}
 	}
@@ -190,8 +198,19 @@ func (e *engraver) drawGroups(parts []*model.Part, left float64, tops []float64,
 			if !first {
 				label = abbreviate(label)
 			}
+			// Clear of the symbol, not clear of the staves. A bracket is a
+			// line and takes no room worth the name; a brace stands a space
+			// or two out to its left, and the word "Piano" written to the
+			// staves was written across the brace.
+			// Clear of the symbol, not clear of the staves: the word
+			// "Piano" beside a grand staff used to be written across the
+			// brace it labels.
+			at := x - groupGap
+			if g.Symbol == model.GroupBrace {
+				at = x - 0.4 - braceWidth(bottom-top) - groupGap*0.5
+			}
 			e.lay.Texts = append(e.lay.Texts, Text{
-				S: label, X: x - groupGap, Y: (top+bottom)/2 + nameSize*0.35,
+				S: label, X: at, Y: (top+bottom)/2 + nameSize*0.35,
 				Size: nameSize, Anchor: "end",
 			})
 		}
@@ -563,6 +582,19 @@ func (e *engraver) drawnAt(staff int) (int, bool) {
 // A brace is two mirrored S-curves: a tip at each end curling towards the
 // staves, and a cusp in the middle pointing away from them. Four quadratics
 // draw it at any height.
+// braceWidth is how far a brace's cusp stands out to the left of the staves
+// it joins.
+//
+// A brace joining more staves is drawn a little wider, within reason, the way
+// a larger brace in a font is not a scaled-up small one.
+func braceWidth(h float64) float64 {
+	w := 1.05 + h*0.022
+	if w > 1.9 {
+		return 1.9
+	}
+	return w
+}
+
 func (e *engraver) drawBrace(x, top, bottom float64) {
 	h := bottom - top
 	if h <= 0 {
@@ -570,13 +602,7 @@ func (e *engraver) drawBrace(x, top, bottom float64) {
 	}
 	mid := (top + bottom) / 2
 
-	// How far the cusp stands out, and how fat the arms get in the middle.
-	// A brace joining more staves is drawn a little wider, within reason,
-	// the way a larger brace in a font is not a scaled-up small one.
-	w := 1.05 + h*0.022
-	if w > 1.9 {
-		w = 1.9
-	}
+	w := braceWidth(h)
 	fat := 0.42 + h*0.009
 	if fat > 0.72 {
 		fat = 0.72

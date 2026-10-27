@@ -4159,8 +4159,15 @@ function ask({ title, label, value = "", note = "", options = null, search = fal
     };
     dlg.addEventListener("close", done);
     dlg.showModal();
-    // Ready to type, which is the point of a one-question dialog.
-    setTimeout(() => (useFilter ? filter : useList ? select : input).focus(), 0);
+    // Ready to type, which is the point of a one-question dialog — and for
+    // a box that opens with something in it, ready to type *over*. The Go
+    // to measure box opens at the bar you are standing in, and nobody
+    // wants to delete that before typing the one they want.
+    setTimeout(() => {
+      const el = useFilter ? filter : useList ? select : input;
+      el.focus();
+      if (el === input && input.value) input.select();
+    }, 0);
   });
 }
 

@@ -337,7 +337,12 @@ func buildPlayback(s *model.Score) Playback {
 					d := el.Duration().Float() * secondsPerWhole
 					mk := marksOf(el)
 					if mk != nil && mk.Octave != nil && mk.Octave.Start {
+						// A bracket over notes that are at pitch already
+						// says where the music is, not where to move it.
 						shift = mk.Octave.Amount
+						if mk.Octave.SoundsAsWritten {
+							shift = 0
+						}
 					}
 					if mk != nil && mk.Trill != nil && mk.Trill.Start {
 						trilling = true

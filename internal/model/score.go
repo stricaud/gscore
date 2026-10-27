@@ -404,15 +404,54 @@ func (p *Part) KeyAt(index int) KeySignature {
 }
 
 // ClefAt is the clef in force at a bar, following any change written in an
-// earlier one.
+// earlier one — at the head of a bar or inside it.
+//
+// Inside counts. A hand that drops into the bass partway through a bar is
+// still in the bass at the next barline, and a clef read only from the heads
+// of bars forgot that at every one: the music after such a change was placed
+// against the clef the staff last opened a bar with, which in Danse Macabre
+// put the left hand's chords nine to sixteen steps above a staff that is
+// eight steps tall, on towers of ledger lines.
 func (p *Part) ClefAt(index int) Clef {
 	c := p.Clef
 	for i := 0; i <= index && i < len(p.Measures); i++ {
-		if p.Measures[i].Clef != nil {
-			c = *p.Measures[i].Clef
+		m := p.Measures[i]
+		if m.Clef != nil {
+			c = *m.Clef
+		}
+		// A change written inside this bar takes effect after it, so it
+		// belongs to the bars that follow rather than to this one.
+		if i == index {
+			break
+		}
+		if last, ok := lastClefIn(m); ok {
+			c = last
 		}
 	}
 	return c
+}
+
+// lastClefIn is the final change of clef written inside a bar, if any.
+//
+// By when it happens rather than by which voice holds it: two lines on one
+// staff can each move the clef, and the one that counts at the barline is
+// whichever moved it last.
+func lastClefIn(m *Measure) (Clef, bool) {
+	var found Clef
+	var at Duration
+	ok := false
+	for _, v := range m.Voices {
+		now := Duration{0, 1}
+		for _, e := range v.Elements {
+			if mk := marksOf(e); mk != nil && mk.Clef != nil {
+				if !ok || now.Cmp(at) >= 0 {
+					found, at, ok = *mk.Clef, now, true
+				}
+			}
+			now = now.Add(e.Duration())
+		}
+	}
+	return found, ok
 }
 
 // TempoAt is the speed in force at a bar, following any change written in an

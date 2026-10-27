@@ -681,6 +681,19 @@ func (t *Tremolo) Repeat() Duration {
 type OctaveShift struct {
 	Amount      int
 	Start, Stop bool
+	// SoundsAsWritten says the notes under the line are already at the
+	// pitch they are played at, so the bracket is drawn and nothing is
+	// transposed.
+	//
+	// A written ottava means "play these an octave up". This one means
+	// "these are already up there, and the bracket says where they are".
+	// NoteWorthy has no ottava of its own, so a staff author draws one by
+	// typing "8va" and a row of dashes over notes that are at pitch
+	// already — the staff that sounds carries the same pitches as the
+	// staff that is printed, which is how that is known. Taken for a
+	// written ottava, half of Danse Macabre would play an octave above
+	// what anybody wrote.
+	SoundsAsWritten bool
 }
 
 // Label spells the line the way it is printed over the music.
@@ -850,4 +863,18 @@ func (m *Measure) Ordered() []Voiced {
 		return out[i].At.Cmp(out[j].At) < 0
 	})
 	return out
+}
+
+// marksOf is the marks an element carries, if it is the kind that carries
+// any.
+func marksOf(el Element) *Marks {
+	switch e := el.(type) {
+	case *Note:
+		return &e.Marks
+	case *Chord:
+		return &e.Marks
+	case *Rest:
+		return &e.Marks
+	}
+	return nil
 }

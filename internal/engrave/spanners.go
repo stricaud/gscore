@@ -325,7 +325,11 @@ func (e *engraver) drawOctave(o *openSpan, to float64, complete bool) {
 	// octave line is written exactly where the music is already high. What
 	// that stretch holds is not known until the staff is finished.
 	e.wait(waitingMark{
-		x0: o.x, x1: to, height: octaveBand, gap: 0.5,
+		// Further off the music than most marks. The line is the outermost
+		// thing over a passage that is already high, and half a space from
+		// the words under it — "sempre più rinforzando" at bar 149 of
+		// Danse Macabre — read as part of them.
+		x0: o.x, x1: to, height: octaveBand, gap: 0.9,
 		below: !above, rank: rankOctave,
 		draw: func(edge float64) {
 			// place gives the edge nearest the staff; the line sits at the

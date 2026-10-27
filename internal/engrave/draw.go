@@ -42,10 +42,22 @@ type placed struct {
 
 	step   int // staff step of a note, or the outer note of a chord
 	lo, hi int // a chord's range; equal to step for a single note
-	value  model.NoteValue
-	dots   int
-	start  model.Duration // position from the start of the measure
-	width  float64
+	// clef is the one this element was placed against, which is the one in
+	// force where it stands rather than the one the bar happens to end in.
+	//
+	// The columns of a bar are placed as the walk reaches them, so a clef
+	// written partway through moves everything after it and nothing
+	// before. The noteheads were drawn in a second pass afterwards, from
+	// whatever clef that bar had finished in — so in a bar that changes
+	// clef, every note before the change was drawn against the clef that
+	// comes after it, while its own stem was drawn against the right one.
+	// Bar 149 of Danse Macabre came out as four noteheads on one staff
+	// with a stem hanging in the air a sixth above them.
+	clef  model.Clef
+	value model.NoteValue
+	dots  int
+	start model.Duration // position from the start of the measure
+	width float64
 
 	// stemDir is the direction this note's stem is really drawn in: 1 up,
 	// -1 down, 0 before it has been settled.
@@ -65,7 +77,7 @@ type placed struct {
 // about an element the spacing decides rather than reads, and the spacing has
 // to be able to ask these same questions before it can decide it.
 func (e *engraver) placedOf(clef model.Clef, el model.Element, at model.Duration) *placed {
-	p := &placed{start: at}
+	p := &placed{start: at, clef: clef}
 	switch el := el.(type) {
 	case *model.Note:
 		p.note = el
@@ -190,8 +202,15 @@ func (e *engraver) drawMeasure(part *model.Part, b measureBox, x, end float64, s
 			e.clef = *m.Clef
 			name, _ := smufl.ClefGlyph(e.clef)
 			w := smufl.Advance(name) * clefChangeScale
+			// In front of the accidental as well as the note. A sharp
+			// stands to the left of the notehead it belongs to, in the
+			// same place the clef was being drawn, and the two were
+			// printed on top of each other — which is what the left hand
+			// of Danse Macabre at bar 149 looked like. clefLead books the
+			// room for both, so there is somewhere to put it.
 			e.lay.Glyphs = append(e.lay.Glyphs, Glyph{
-				Name: name, X: x - w - e.opt.Spacings.ClefAfter,
+				Name: name,
+				X:    x - e.accidentalLead(v.el) - w - e.opt.Spacings.ClefAfter,
 				Y:    e.y + stepY(clefRefStep[e.clef]),
 				Size: clefChangeSize,
 			})
@@ -316,7 +335,7 @@ func (e *engraver) drawMeasure(part *model.Part, b measureBox, x, end float64, s
 			y = e.y + stepY(float64(p.hi))
 			y2 = e.y + stepY(float64(p.lo))
 			for _, n := range p.chord.Notes {
-				steps = append(steps, e.noteStep(e.clef, n))
+				steps = append(steps, e.noteStep(p.clef, n))
 			}
 		case p.rest == nil:
 			kind = "symbol"
@@ -694,7 +713,7 @@ func (e *engraver) drawChordHeads(p *placed) {
 
 	steps := make([]int, len(ch.Notes))
 	for i, n := range ch.Notes {
-		steps[i] = e.noteStep(e.clef, n)
+		steps[i] = e.noteStep(p.clef, n)
 	}
 	shifted := displacedHeads(steps, up)
 

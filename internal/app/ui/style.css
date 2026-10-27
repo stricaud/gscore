@@ -861,6 +861,16 @@ body.player #canvas text.g[data-ref] { cursor: default; }
   gap: 8px;
   margin-top: 14px;
 }
+/* Enter presses a form's first submit button, so the one it should press is
+   written first and put back where it belongs here.
+ *
+ * It used to be Cancel: the Go to measure dialog took a number, Enter, and
+ * did nothing at all, because what Enter had pressed was Cancel. Every
+ * dialog in the program that asks a question behaved the same way. */
+.ask-buttons button[value="remove"] { order: 1; }
+.ask-buttons button[value="cancel"] { order: 2; }
+.ask-buttons button.primary { order: 3; }
+
 .ask-buttons button {
   font: inherit;
   padding: 5px 16px;

@@ -579,29 +579,31 @@ func TestASlurIsASpan(t *testing.T) {
 	}
 }
 
-// And only in 1.70, where that is what the byte means.
+// Bit one of that byte is the slur from 1.75 too; the rest of it is not.
 //
-// A 1.75 score leaves it zero on all but a handful of notes and a 2.0 one
-// writes 01, 80 and 81 in it. Read as a span, a 2.0 score came out with
-// nearly six hundred slurs that begin and never end — drawn to the margin
-// of every system after them.
-func TestTheSlurByteIsNotReadInLaterVersions(t *testing.T) {
-	b := []byte{8, 0, 0, 0x04, 0, 0x21, 0, 0, 0x01, 0xfd, 5}
-	for _, version := range []int{175, 200} {
+// A 2.0 file writes 0x80 in the same byte, and read as part of a span that
+// was nearly six hundred slurs beginning and never ending, drawn to the
+// margin of every system after them. So only bit one is taken, and the far
+// end is worked out from where the run of them stops.
+func TestOnlyBitOneOfThatByteIsASlur(t *testing.T) {
+	slurred := []byte{8, 0, 0, 0x04, 0, 0x21, 0, 0, 0x01, 0xfd, 5}
+	other := []byte{8, 0, 0, 0x04, 0, 0x21, 0, 0, 0x80, 0xfd, 5}
+	opens := func(b []byte, version int) bool {
 		st := &staffState{part: &model.Part{Clef: model.Treble}}
 		w := &walker{b: b, version: version}
 		if err := w.object(st); err != nil {
 			t.Fatalf("version %d: %v", version, err)
 		}
 		st.closeMeasure(model.BarSingle)
-		for _, m := range st.part.Measures {
-			for _, v := range m.Voices {
-				for _, el := range v.Elements {
-					if n, ok := el.(*model.Note); ok && (n.SlurStart || n.SlurStop) {
-						t.Errorf("version %d: a slur was read out of a byte that does not mean one", version)
-					}
-				}
-			}
+		n := st.part.Measures[0].Voices[0].Elements[0].(*model.Note)
+		return n.SlurStart
+	}
+	for _, version := range []int{175, 200, 205} {
+		if !opens(slurred, version) {
+			t.Errorf("version %d does not read the slur", version)
+		}
+		if opens(other, version) {
+			t.Errorf("version %d read a slur out of the bit that is not one", version)
 		}
 	}
 }
@@ -925,4 +927,1030 @@ func TestTheVoltaBracketsAreRead(t *testing.T) {
 	if !second.Open {
 		t.Error("the second bracket has a hook, and there is nothing to go back for")
 	}
+}
+
+/*
+ * NoteWorthy 2.5
+ *
+ * A version this reader had not met. Its header is 2.0's with things added
+ * to it, and each of them moved everything after it: the file would not open
+ * at all, reporting one thousand two hundred and eighty staves, which is
+ * what a five-staff score looks like when the count is read one byte early.
+ */
+
+// The staff count is found rather than counted to.
+//
+// 1.75 goes straight from the layering byte to the count, 2.0 puts a second
+// 0xFF marker in between, and 2.5 adds a zero byte after that. A count's low
+// byte is never zero — a score has at least one staff — so a zero there is
+// padding whatever version wrote it.
+func TestTheStaffCountIsFoundPastWhateverPadsIt(t *testing.T) {
+	for _, tc := range []struct {
+		what  string
+		bytes []byte
+	}{
+		{"1.75, straight to the count", []byte{0x05, 0x00}},
+		{"2.0, a second marker", []byte{0xFF, 0x05, 0x00}},
+		{"2.5, a marker and a zero", []byte{0xFF, 0x00, 0x05, 0x00}},
+		{"and however many zeros a later one writes", []byte{0xFF, 0x00, 0x00, 0x05, 0x00}},
+	} {
+		w := &walker{b: append(tc.bytes, make([]byte, 64)...)}
+		if b, err := w.peek(); err == nil && b == 0xFF {
+			_ = w.skip(1)
+		}
+		for {
+			b, err := w.peek()
+			if err != nil || b != 0x00 {
+				break
+			}
+			_ = w.skip(1)
+		}
+		n, err := w.u16()
+		if err != nil || n != 5 {
+			t.Errorf("%s: %d staves, want 5", tc.what, n)
+		}
+	}
+}
+
+// A 2.5 staff header carries one string more than a 2.0 one: the layer it
+// belongs to.
+//
+// "Hidden" and "Display" are how one instrument is written twice, a staff
+// that sounds and a staff that is printed. Counted as four strings the walk
+// ended a string early, and the score came out as staves called "Hidden"
+// with no music in them.
+func TestATwentyFiveStaffHeaderHasFiveNames(t *testing.T) {
+	header := func(names ...string) []byte {
+		var out []byte
+		for _, n := range names {
+			out = append(out, []byte(n)...)
+			out = append(out, 0)
+		}
+		return append(out, make([]byte, 128)...)
+	}
+
+	w := &walker{b: header("Piano RH1 Sounding", "", "", "Acoustic Grand Piano", "Hidden"),
+		version: 205}
+	p, err := w.staff(205)
+	if err != nil {
+		t.Fatalf("%v", err)
+	}
+	if p.Name != "Piano RH1 Sounding" {
+		t.Errorf("the staff is called %q", p.Name)
+	}
+	// The layer's name was read as part of the header, so the walk is past
+	// all five: a 2.0 reading would have stopped before "Hidden" and left
+	// it to be taken for the next staff.
+	if got := w.i; got <= len("Piano RH1 Sounding\x00\x00\x00Acoustic Grand Piano\x00Hidden") {
+		t.Errorf("the walk stopped at %d, before the end of the five names", got)
+	}
+}
+
+// A 2.5 instrument patch is nineteen bytes of payload, not eight.
+//
+// The last eight of them are the ladder of velocities a dynamic plays at.
+// Read as eight, the walk came out eleven bytes short at the first patch of
+// the piece and read the next object from the middle of this one: "unknown
+// object type 56", which is no type at all but the 0x38 inside a patch.
+func TestATwentyFivePatchIsLonger(t *testing.T) {
+	// Copied from the ottava mark over bar 76 of Danse Macabre: eight
+	// bytes, the words the mark draws, one byte, and the ladder of
+	// velocities a dynamic plays at.
+	patch := []byte{
+		4, 0, 1, // type and its flags
+		0xF2, 0x01, 0x01, 0, 0, 0, 0x01, 0x00, // eight
+		'8', 0x00, // the words
+		0x0C,
+		0x19, 0x23, 0x2D, 0x37, 0x44, 0x50, 0x5C, 0x6C, // the ladder
+	}
+	// A barline after it, which is what must be found if the size is right.
+	b := append(patch, 2, 0, 0, 0, 1)
+
+	st := &staffState{part: &model.Part{Clef: model.Treble}}
+	w := &walker{b: b, version: 205}
+	for i := 0; i < 2; i++ {
+		if err := w.object(st); err != nil {
+			t.Fatalf("object %d: %v", i+1, err)
+		}
+	}
+	if w.i != len(b) {
+		t.Errorf("the patch and the barline came to %d bytes, want %d", w.i, len(b))
+	}
+
+	// And a 2.0 patch is still the eight it always was.
+	short := []byte{4, 0, 0, 0, 8, 0, 0, 4, 0, 0, 0}
+	short = append(short, 2, 0, 0, 0, 1)
+	w = &walker{b: short, version: 200}
+	st = &staffState{part: &model.Part{Clef: model.Treble}}
+	for i := 0; i < 2; i++ {
+		if err := w.object(st); err != nil {
+			t.Fatalf("2.0 object %d: %v", i+1, err)
+		}
+	}
+	if w.i != len(short) {
+		t.Errorf("a 2.0 patch and barline came to %d bytes, want %d", w.i, len(short))
+	}
+}
+
+// A bit in an object's third byte makes its record three bytes longer.
+//
+// Barlines come in two sizes in a 2.5 file and the bit is what tells them
+// apart. Read at the plain size, the walk came off the rails a third of the
+// way down the first staff of Danse Macabre and read the music after it as a
+// run of clefs.
+func TestTheWideBitMakesARecordLonger(t *testing.T) {
+	// Two barlines and a clef, the first barline plain and the second wide.
+	b := []byte{
+		2, 0, 0x08, 0, 0,
+		2, 0, 0x20, 0, 0, 1, 0xFE, 5,
+		0, 0, 0, 1, 0, 0, 0,
+	}
+	w := &walker{b: b, version: 205}
+	st := &staffState{part: &model.Part{Clef: model.Treble}}
+	for i := 0; i < 3; i++ {
+		if err := w.object(st); err != nil {
+			t.Fatalf("object %d: %v", i+1, err)
+		}
+	}
+	if w.i != len(b) {
+		t.Errorf("the three records came to %d bytes, want %d", w.i, len(b))
+	}
+
+	// And the same bit means nothing to the versions before 2.5, whose
+	// barlines are five bytes whatever is in that byte.
+	w = &walker{b: b, version: 200}
+	st = &staffState{part: &model.Part{Clef: model.Treble}}
+	if err := w.object(st); err != nil {
+		t.Fatalf("%v", err)
+	}
+	if w.i != 5 {
+		t.Errorf("a 2.0 barline came to %d bytes, want 5", w.i)
+	}
+}
+
+// From 2.0 only the bottom half of the duration byte says how long a note is.
+//
+// Danse Macabre writes 0x11 for a half note. Read whole, that is no duration
+// this reader knows and the staff stopped there — two thirds of the way down
+// the first one, with four hundred bars still to come.
+func TestTheDurationByteCarriesFlagsOfItsOwn(t *testing.T) {
+	// A note: three bytes of header, then the value block.
+	note := func(dur byte) []byte {
+		return []byte{8, 0, 0, dur, 0, 0x10, 0, 0, 0, 5, 5}
+	}
+	w := &walker{b: note(0x11), version: 205}
+	st := &staffState{part: &model.Part{Clef: model.Treble}}
+	if err := w.object(st); err != nil {
+		t.Fatalf("%v", err)
+	}
+	st.closeMeasure(model.BarFinal)
+	half := model.Duration{Num: 1, Den: 2}
+	got := st.part.Measures
+	if len(got) == 0 || len(got[0].Voices) == 0 || len(got[0].Voices[0].Elements) == 0 {
+		t.Fatalf("no note came out")
+	}
+	n, ok := got[0].Voices[0].Elements[0].(*model.Note)
+	if !ok {
+		t.Fatalf("the element is a %T", got[0].Voices[0].Elements[0])
+	}
+	if n.Dur.Cmp(half) != 0 {
+		t.Errorf("0x11 reads as %v, want the %v its bottom four bits say", n.Dur, half)
+	}
+}
+
+// A staff is named for somebody to read, so its name starts with something
+// printable.
+//
+// Four printable strings in a row is how a staff header is recognised, and an
+// object stream makes that shape by accident here and there. Every accident
+// in Danse Macabre is called "\t", and read as staves they added three to an
+// eight-staff score — one of them carrying three hundred and ninety-three
+// bars of the staff it was found inside.
+func TestAStaffCalledNothingIsNotAStaff(t *testing.T) {
+	header := func(name string) []byte {
+		b := append([]byte(name), 0)
+		for i := 0; i < 3; i++ {
+			b = append(b, 0)
+		}
+		return append(b, make([]byte, 160)...)
+	}
+	if (&walker{b: header("\t")}).atStaffHeader() {
+		t.Error("a staff called \\t was taken for a real one")
+	}
+	if !(&walker{b: header("Piano LH2")}).atStaffHeader() {
+		t.Error("a staff with an ordinary name was not recognised")
+	}
+	// A name that opens with a digit is ordinary.
+	if !(&walker{b: header("1st violins")}).atStaffHeader() {
+		t.Error("a staff called 1st violins was not recognised")
+	}
+}
+
+// The search for a staff stops at the first place that makes the header
+// shape, and a stray byte or two in front of the name makes that shape too.
+//
+// Danse Macabre's fifth staff was found two bytes early and came back called
+// "0øPiano RH1 Display". The name is only the half of it: everything in a
+// staff is measured from where its header begins, so two bytes of rubbish in
+// front cost that staff and the one after it as well.
+func TestAStaffNameIsNotTakenTwoBytesEarly(t *testing.T) {
+	var b []byte
+	b = append(b, '0', 0xF8)
+	b = append(b, []byte("Piano RH1 Display")...)
+	b = append(b, 0, 0, 0, 0)
+	b = append(b, make([]byte, 160)...)
+
+	w := &walker{b: b, version: 205}
+	if !w.findStaffHeader() {
+		t.Fatal("no staff header found at all")
+	}
+	if w.i != 2 {
+		t.Errorf("the staff was found at %d, want 2 — where its name starts", w.i)
+	}
+	// And a name that is all printable to begin with is not trimmed.
+	w = &walker{b: append([]byte("1st violins\x00\x00\x00\x00"), make([]byte, 160)...)}
+	if !w.findStaffHeader() || w.i != 0 {
+		t.Errorf("1st violins was found at %d, want 0", w.i)
+	}
+}
+
+// A 2.5 staff says which of the two layers it belongs to, and the hidden one
+// is not printed.
+//
+// NoteWorthy writes an instrument twice over — a staff to be played and a
+// staff to be read — and prints only the second. Danse Macabre is eight
+// staves that way and two on the page; drawn all together they came out as
+// four grand staves of the same music stacked up the page.
+func TestTheHiddenLayerIsNotPrinted(t *testing.T) {
+	header := func(names ...string) []byte {
+		var out []byte
+		for _, n := range names {
+			out = append(out, []byte(n)...)
+			out = append(out, 0)
+		}
+		return append(out, make([]byte, 128)...)
+	}
+	for _, c := range []struct {
+		layer string
+		hide  bool
+	}{{"Hidden", true}, {"Display", false}} {
+		w := &walker{b: header("Piano RH1", "", "", "", c.layer), version: 205}
+		p, err := w.staff(205)
+		if err != nil {
+			t.Fatalf("%s: %v", c.layer, err)
+		}
+		if p.Hidden != c.hide {
+			t.Errorf("a %s staff comes back hidden=%v, want %v", c.layer, p.Hidden, c.hide)
+		}
+	}
+}
+
+// A staff goes on until the next one begins, whatever object count it gives.
+//
+// The number is not always the number it holds: three of the four printed
+// staves of Danse Macabre stopped five, seven and thirteen bars before the
+// end of the piece — the last chords of a Liszt transcription, gone with
+// nothing said about them — and Für Elise lost its last nine bars, which is
+// the whole of its ending.
+func TestAStaffGoesOnPastTheCountItGives(t *testing.T) {
+	// Five names, the settings, no lyrics, and then the count.
+	var b []byte
+	for _, n := range []string{"Right hand", "", "", "", "Display"} {
+		b = append(b, []byte(n)...)
+		b = append(b, 0)
+	}
+	b = append(b, make([]byte, 41+2)...) // settings, no lyric lines
+	b = append(b, 3, 0)                  // "one object", counted the 1.7x way
+
+	// Three notes and a barline each, where the staff admits to one.
+	for i := 0; i < 3; i++ {
+		b = append(b, 8, 0, 0, 2, 0, 0x10, 0, 0, 0, byte(i), 5)
+		b = append(b, 2, 0, 0, 0, 1)
+	}
+	// And then the next staff, which is where this one has to stop.
+	for _, n := range []string{"Left hand", "", "", "", "Display"} {
+		b = append(b, []byte(n)...)
+		b = append(b, 0)
+	}
+	b = append(b, make([]byte, 160)...)
+
+	w := &walker{b: b, version: 205}
+	p, err := w.staff(205)
+	if err != nil {
+		t.Fatalf("%v", err)
+	}
+	if got := len(p.Measures); got != 3 {
+		t.Errorf("the staff came back with %d bars, want the 3 that are written", got)
+	}
+	if !w.atStaffHeader() {
+		t.Error("the walk did not stop on the next staff")
+	}
+}
+
+// The first clef, key and meter are the staff's own; the rest are changes
+// written where they happen.
+//
+// Every one of them used to be written onto the part, so the last of each in
+// the piece became the one its first bar was read under. Danse Macabre opens
+// in two-four and turns into a waltz partway down, and it opened as a waltz:
+// three-four over bars holding a half note each, which is not a bar of music.
+func TestASignatureChangeIsWrittenWhereItHappens(t *testing.T) {
+	// Two-four, a bar, then three-four.
+	b := []byte{
+		5, 0, 0, 2, 0, 2, 0, 0, 0, // 2/4
+		8, 0, 0, 1, 0, 0x10, 0, 0, 0, 0, 5, // a note, so the bar is a bar
+		2, 0, 0, 0, 1, // barline
+		5, 0, 0, 3, 0, 2, 0, 0, 0, // 3/4
+		8, 0, 0, 1, 0, 0x10, 0, 0, 0, 0, 5,
+		2, 0, 0, 0, 1, // barline
+	}
+	w := &walker{b: b, version: 205}
+	st := &staffState{part: &model.Part{Clef: model.Treble}}
+	for w.remaining() > 0 {
+		if err := w.object(st); err != nil {
+			t.Fatalf("%v", err)
+		}
+	}
+	two := model.TimeSignature{Beats: 2, BeatValue: 4, Symbol: model.TimeNumeric}
+	three := model.TimeSignature{Beats: 3, BeatValue: 4, Symbol: model.TimeNumeric}
+	if st.part.Time != two {
+		t.Errorf("the staff opens in %v, want the %v it is written in", st.part.Time, two)
+	}
+	if len(st.part.Measures) < 2 {
+		t.Fatalf("%d bars", len(st.part.Measures))
+	}
+	if got := st.part.Measures[1].Time; got == nil || *got != three {
+		t.Errorf("the second bar changes to %v, want %v", got, three)
+	}
+}
+
+// A note is read against the clef in force where it is written, not against
+// the one its staff opened with.
+//
+// NoteWorthy stores where on the staff a note sits; what note that is depends
+// on the sign at the head of the line. The left hand of Danse Macabre goes up
+// into the treble at bar five and stays there for fifty bars, and read in the
+// bass throughout it came out an octave and a half below where it belongs —
+// and was drawn there, piled under the staff on ledger lines.
+func TestANoteIsReadAgainstTheClefInForce(t *testing.T) {
+	note := []byte{8, 0, 0, 2, 0, 0x10, 0, 0, 0, 0, 5}
+	pitchUnder := func(clefCode byte) model.Pitch {
+		b := []byte{0, 0, 0, clefCode, 0, 0, 0}
+		b = append(b, note...)
+		w := &walker{b: b, version: 205}
+		st := &staffState{part: &model.Part{Clef: model.Treble}}
+		for w.remaining() > 0 {
+			if err := w.object(st); err != nil {
+				t.Fatalf("%v", err)
+			}
+		}
+		st.closeMeasure(model.BarFinal)
+		n := st.part.Measures[0].Voices[0].Elements[0].(*model.Note)
+		return n.Pitch
+	}
+	// The same staff position under the two clefs is two different notes,
+	// a sixth apart.
+	treble, bass := pitchUnder(0), pitchUnder(1)
+	if treble == bass {
+		t.Fatalf("the same position reads as %v%d under both clefs", treble.Step, treble.Octave)
+	}
+	if treble.MIDI() <= bass.MIDI() {
+		t.Errorf("under the treble the note is %v%d and under the bass %v%d, which is the wrong way round",
+			treble.Step, treble.Octave, bass.Step, bass.Octave)
+	}
+}
+
+// Two staves marked "layer with next" are one staff on the page.
+//
+// NoteWorthy writes a pianist's hand as two staves when it has two
+// independent lines, and prints them as one. Read one part per staff, Danse
+// Macabre came out as four grand staves of the same music stacked up the
+// page where NoteWorthy shows two. And a bar one layer writes exactly as the
+// other already has is printed once: the sustained note under a run is in
+// both layers, and added twice it was two half notes side by side in every
+// one of the first four bars.
+func TestLayeredStavesBecomeOneStaff(t *testing.T) {
+	bar := func(els ...model.Element) *model.Measure {
+		return &model.Measure{Voices: []*model.Voice{{Elements: els}}}
+	}
+	half := model.Duration{Num: 1, Den: 2}
+	g5 := model.Pitch{Step: model.StepG, Octave: 5}
+	c5 := model.Pitch{Step: model.StepC, Octave: 5}
+
+	upper := &model.Part{Name: "RH1", Measures: []*model.Measure{
+		bar(&model.Note{Pitch: g5, Dur: half}),
+		bar(&model.Note{Pitch: c5, Dur: half}),
+	}}
+	lower := &model.Part{Name: "RH2", Measures: []*model.Measure{
+		bar(&model.Note{Pitch: g5, Dur: half}), // the same bar, printed once
+		bar(&model.Note{Pitch: g5, Dur: half}), // its own line, printed too
+	}}
+	alone := &model.Part{Name: "LH", Measures: []*model.Measure{bar(), bar()}}
+
+	out, names := mergeLayers([]*model.Part{upper, lower, alone},
+		[]bool{true, false, false}, []string{"Piano", "", ""})
+	if len(out) != 2 {
+		t.Fatalf("%d staves came back, want 2", len(out))
+	}
+	if out[0].Name != "RH1" || out[1].Name != "LH" {
+		t.Errorf("the staves are %q and %q", out[0].Name, out[1].Name)
+	}
+	if got := len(out[0].Measures[0].Voices); got != 1 {
+		t.Errorf("the unison bar has %d voices, want the 1 it is printed with", got)
+	}
+	if got := len(out[0].Measures[1].Voices); got != 2 {
+		t.Errorf("the bar of two lines has %d voices, want 2", got)
+	}
+
+	// A staff that shares with the next is not merged across the line
+	// between what sounds and what is printed.
+	hidden := &model.Part{Name: "hidden", Hidden: true, Measures: []*model.Measure{bar(), bar()}}
+	// The group name survives the merge, so the brace still knows what it
+	// is round.
+	if len(names) != 2 || names[0] != "Piano" {
+		t.Errorf("the merged staves are filed under %v, want the Piano the first carried", names)
+	}
+
+	out, _ = mergeLayers([]*model.Part{hidden, alone}, []bool{true, false}, []string{"", ""})
+	if len(out) != 2 {
+		t.Errorf("a hidden staff was merged with a printed one")
+	}
+}
+
+// 2.5 counts a note's staff position downwards from the middle line, as 1.70
+// does and as 1.75 and 2.0 do not.
+//
+// Measured against NoteWorthy's own page. The opening of Danse Macabre is a
+// half note under the treble staff, a right hand alternating A4 and D5 above
+// it, and a left hand of F sharp 4 and B4 under a treble clef. Counted
+// upwards those notes come out G5, C5 and G4, E5 and B4 — every one of them
+// the mirror of what is printed, reflected in the middle line.
+func TestTwentyFiveCountsTheOtherWay(t *testing.T) {
+	// Position 5: five steps from the middle line, whichever way that is.
+	note := []byte{8, 0, 0, 2, 0, 0x10, 0, 0, 0, 5, 5}
+	read := func(version int) model.Pitch {
+		w := &walker{b: note, version: version}
+		st := &staffState{part: &model.Part{Clef: model.Treble}}
+		if err := w.object(st); err != nil {
+			t.Fatalf("%d: %v", version, err)
+		}
+		st.closeMeasure(model.BarFinal)
+		return st.part.Measures[0].Voices[0].Elements[0].(*model.Note).Pitch
+	}
+	// Five above the middle line of a treble staff is G5; five below is D4.
+	if got := read(200); got.Step != model.StepG || got.Octave != 5 {
+		t.Errorf("2.0 reads position 5 as %v%d, want G5", got.Step, got.Octave)
+	}
+	if got := read(205); got.Step != model.StepD || got.Octave != 4 {
+		t.Errorf("2.5 reads position 5 as %v%d, want D4", got.Step, got.Octave)
+	}
+}
+
+// An accidental is written once and holds for the rest of the bar.
+//
+// A rule of notation rather than of this file format: NoteWorthy draws the
+// sharp on the first F of the bar and on none of the others, and means all of
+// them. Read note by note, the left hand of Danse Macabre played F sharp, F,
+// F, F where the page says F sharp four times over.
+func TestAnAccidentalLastsToTheBarline(t *testing.T) {
+	// The accidental is the bottom three bits of the last byte: nought is
+	// a sharp and five is nothing written at all.
+	sharp := []byte{8, 0, 0, 2, 0, 0x10, 0, 0, 0, 1, 0}
+	plain := []byte{8, 0, 0, 2, 0, 0x10, 0, 0, 0, 1, 5}
+	var b []byte
+	b = append(b, sharp...)
+	b = append(b, plain...)
+	b = append(b, 2, 0, 0, 0, 1) // the barline
+	b = append(b, plain...)
+
+	w := &walker{b: b, version: 205}
+	st := &staffState{part: &model.Part{Clef: model.Treble}}
+	for w.remaining() > 0 {
+		if err := w.object(st); err != nil {
+			t.Fatalf("%v", err)
+		}
+	}
+	st.closeMeasure(model.BarFinal)
+
+	alters := []int{}
+	for _, m := range st.part.Measures {
+		for _, v := range m.Voices {
+			for _, e := range v.Elements {
+				if n, ok := e.(*model.Note); ok {
+					alters = append(alters, n.Pitch.Alter)
+				}
+			}
+		}
+	}
+	if len(alters) != 3 {
+		t.Fatalf("%d notes came out, want 3", len(alters))
+	}
+	if alters[0] != 1 || alters[1] != 1 {
+		t.Errorf("the bar reads %v, want the sharp to hold over the second note", alters[:2])
+	}
+	if alters[2] != 0 {
+		t.Errorf("the note after the barline is altered by %d, want none of it", alters[2])
+	}
+}
+
+// Staves filed under one name are braced together and labelled with it.
+//
+// A staff with no name of its own belongs to the group above it, which is how
+// NoteWorthy writes a grand staff: "Piano" on the right hand and nothing on
+// the left, because the word labels the pair. Read as one group per staff,
+// Danse Macabre had no brace at all and its two staves stood apart on the
+// page as though they were two instruments.
+func TestAGrandStaffIsBracedAndNamed(t *testing.T) {
+	parts := []*model.Part{{Name: "RH"}, {Name: "LH"}}
+	got := staffGroups(parts, []string{"Piano", ""})
+	if len(got) != 1 {
+		t.Fatalf("%d groups, want 1: %v", len(got), got)
+	}
+	g := got[0]
+	if g.First != 0 || g.Last != 1 {
+		t.Errorf("the group runs %d..%d, want 0..1", g.First, g.Last)
+	}
+	if g.Symbol != model.GroupBrace || !g.Barlines {
+		t.Errorf("two staves of one instrument are drawn with %v, want a brace with its barlines joined", g.Symbol)
+	}
+	if g.Name != "Piano" {
+		t.Errorf("the group is called %q", g.Name)
+	}
+
+	// Three or more under one name are a section, so a bracket.
+	got = staffGroups([]*model.Part{{}, {}, {}}, []string{"Strings", "", ""})
+	if len(got) != 1 || got[0].Symbol != model.GroupBracket {
+		t.Errorf("three staves are drawn with %v, want a bracket", got)
+	}
+
+	// The name every NoteWorthy file carries when nobody has filed the
+	// staff under anything is not a group, and nothing is drawn round it.
+	if got := staffGroups([]*model.Part{{}, {}}, []string{"Standard", ""}); len(got) != 0 {
+		t.Errorf("the default group was drawn: %v", got)
+	}
+
+	// A staff that is not on the page does not hold a group open across
+	// the ones that are.
+	got = staffGroups([]*model.Part{{Name: "a"}, {Hidden: true}, {Name: "b"}},
+		[]string{"Piano", "", ""})
+	if len(got) != 0 {
+		t.Errorf("a group reached across a hidden staff: %v", got)
+	}
+}
+
+// A clef change written partway through a bar is drawn partway through the
+// bar.
+//
+// Hoisted to the head of the bar instead, it is read by the notes in front of
+// it as well, and they are then drawn against a clef they were never written
+// under. Danse Macabre's left hand dives into the bass and back inside a bar
+// at 118 and 119, and the note before each sign came out six ledger lines
+// below the staff.
+func TestAClefChangeStaysWhereItIsWritten(t *testing.T) {
+	note := func(pos byte) []byte {
+		return []byte{8, 0, 0, 2, 0, 0x10, 0, 0, pos, 0, 5}
+	}
+	clef := func(c byte) []byte { return []byte{0, 0, 0, c, 0, 0, 0} }
+
+	var b []byte
+	b = append(b, clef(0)...) // the staff opens in the treble
+	b = append(b, note(0)...)
+	b = append(b, clef(1)...) // and drops into the bass mid-bar
+	b = append(b, note(0)...)
+	b = append(b, 2, 0, 0, 0, 1)
+
+	w := &walker{b: b, version: 205}
+	st := &staffState{part: &model.Part{Clef: model.Treble}}
+	for w.remaining() > 0 {
+		if err := w.object(st); err != nil {
+			t.Fatalf("%v", err)
+		}
+	}
+	st.closeMeasure(model.BarFinal)
+
+	m := st.part.Measures[0]
+	if m.Clef != nil {
+		t.Errorf("the bar changes clef at its head (%v); the change is written inside it", *m.Clef)
+	}
+	els := m.Voices[0].Elements
+	if len(els) != 2 {
+		t.Fatalf("%d elements in the bar", len(els))
+	}
+	if mk := marksOf(els[0]); mk == nil || mk.Clef != nil {
+		t.Errorf("the first note carries a clef change; the change comes after it")
+	}
+	if mk := marksOf(els[1]); mk == nil || mk.Clef == nil || *mk.Clef != model.Bass {
+		t.Errorf("the second note does not carry the change into the bass")
+	}
+	// And the notes keep the pitches they were written at: the same
+	// position under two clefs is two different notes.
+	a := els[0].(*model.Note).Pitch
+	c := els[1].(*model.Note).Pitch
+	if a.MIDI() == c.MIDI() {
+		t.Errorf("both notes came out as %v%d, so the change was not applied", a.Step, a.Octave)
+	}
+}
+
+// The file says which notes are beamed together, and the bottom two bits of
+// the stem byte are where it says it.
+//
+// NoteWorthy spells its groups out note by note rather than leaving them to
+// be worked out from the meter, which is the only way a group like the three
+// quavers in bar 119 of Danse Macabre can be written down at all: nothing
+// about 2/4 says to beam three of them together. Left to the engraver, the
+// six semiquavers of Für Elise's second bar came out as three beamed pairs
+// where the file — and every edition — has one group of six.
+func TestTheFileSaysWhatIsBeamed(t *testing.T) {
+	note := func(beam byte) []byte {
+		return []byte{8, 0, 0, 3, 0, 0x20 | beam, 0, 0, 0, 0, 5}
+	}
+	var b []byte
+	for _, beam := range []byte{1, 2, 3, 0} {
+		b = append(b, note(beam)...)
+	}
+	w := &walker{b: b, version: 205}
+	st := &staffState{part: &model.Part{Clef: model.Treble}}
+	for w.remaining() > 0 {
+		if err := w.object(st); err != nil {
+			t.Fatalf("%v", err)
+		}
+	}
+	st.closeMeasure(model.BarFinal)
+
+	want := []model.Beam{model.BeamStart, model.BeamContinue, model.BeamStop, model.BeamNone}
+	els := st.part.Measures[0].Voices[0].Elements
+	if len(els) != len(want) {
+		t.Fatalf("%d notes came out", len(els))
+	}
+	for i, w := range want {
+		if got := marksOf(els[i]).Beam; got != w {
+			t.Errorf("note %d is beamed %v, want %v", i+1, got, w)
+		}
+	}
+}
+
+// A fermata is a Tempo Variance, written just before the note it sits over.
+//
+// NoteWorthy has no fermata of its own: the pause over the last chord of a
+// phrase is a Tempo Variance whose style says Fermata. Bar 30 of Danse
+// Macabre is a whole rest under one in both hands, and both came out bare.
+func TestAFermataIsATempoVariance(t *testing.T) {
+	// The style is the third byte of the four that follow the header.
+	b := []byte{14, 0, 0, 0xF9, 0x1A, nwcFermata, 0}
+	b = append(b, 9, 0, 0, 0, 0, 0x20, 0, 0, 0, 0, 0) // the whole rest
+	w := &walker{b: b, version: 205}
+	st := &staffState{part: &model.Part{Clef: model.Treble}}
+	for w.remaining() > 0 {
+		if err := w.object(st); err != nil {
+			t.Fatalf("%v", err)
+		}
+	}
+	st.closeMeasure(model.BarFinal)
+	r, ok := st.part.Measures[0].Voices[0].Elements[0].(*model.Rest)
+	if !ok {
+		t.Fatalf("the element is a %T", st.part.Measures[0].Voices[0].Elements[0])
+	}
+	found := false
+	for _, a := range r.Articulations {
+		if a == model.Fermata {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("the rest came out bare, want the pause over it")
+	}
+}
+
+// The words written beside the music are kept.
+//
+// They were read and thrown away, so every direction a composer wrote on the
+// page was missing from it: "Mouvement modéré de Valse" over bar 31 of Danse
+// Macabre, the "marcato" beside it, "una corda" under the first bar.
+//
+// Except the ones drawn in NoteWorthy's own symbol font, which are strokes
+// rather than words: the 8va over bars 24 to 29 is a run of 0xF2 in it, which
+// is a dash, and printing that as text would put a line of rubbish on the
+// page where the bracket belongs.
+func TestTheWordsBesideTheMusicAreKept(t *testing.T) {
+	text := func(font byte, s string) []byte {
+		// Three bytes of header, two more, and then the font the words
+		// are drawn in.
+		b := []byte{17, 0, 0, 0xF0, 0, font}
+		b = append(b, []byte(s)...)
+		return append(b, 0)
+	}
+	var b []byte
+	b = append(b, text(2, "Mouvement modéré de Valse")...)
+	b = append(b, text(nwcMusicFont, "\xF2\xF2\xF2\xF2")...)
+	b = append(b, 8, 0, 0, 3, 0, 0x20, 0, 0, 0, 0, 5)
+
+	w := &walker{b: b, version: 205}
+	st := &staffState{part: &model.Part{Clef: model.Treble}}
+	for w.remaining() > 0 {
+		if err := w.object(st); err != nil {
+			t.Fatalf("%v", err)
+		}
+	}
+	st.closeMeasure(model.BarFinal)
+	got := marksOf(st.part.Measures[0].Voices[0].Elements[0]).Texts
+	if len(got) != 1 {
+		t.Fatalf("the note carries %v, want the one direction", got)
+	}
+	if got[0].Text != "Mouvement modéré de Valse" {
+		t.Errorf("the note carries %q", got[0].Text)
+	}
+}
+
+// A rest that another line is playing through is not printed.
+//
+// Two layers share one staff, and NoteWorthy prints the notes and leaves out
+// the rest that sits under them: a layer that holds its place for half a bar
+// while the other plays does it with a rest nobody sees. Bar 254 of Danse
+// Macabre is one — a minim rest under two crotchets — and printed it sat in
+// the middle of the music where the page has nothing.
+//
+// Hidden rather than thrown away: the rest is what holds the rest of its
+// layer in time.
+func TestARestUnderAnotherLineIsNotPrinted(t *testing.T) {
+	quarter := model.Duration{Num: 1, Den: 4}
+	half := model.Duration{Num: 1, Den: 2}
+	note := func(d model.Duration) model.Element {
+		return &model.Note{Pitch: model.Pitch{Step: model.StepG, Octave: 4}, Dur: d}
+	}
+
+	// One layer plays two crotchets; the other plays two quavers and then
+	// holds its place with a minim rest.
+	upper := &model.Part{Measures: []*model.Measure{{Voices: []*model.Voice{{
+		Elements: []model.Element{note(quarter), note(quarter)},
+	}}}}}
+	lower := &model.Part{Measures: []*model.Measure{{Voices: []*model.Voice{{
+		Elements: []model.Element{
+			&model.Note{Pitch: model.Pitch{Step: model.StepB, Octave: 3}, Dur: quarter},
+			&model.Rest{Dur: half},
+		},
+	}}}}}
+	out, _ := mergeLayers([]*model.Part{upper, lower}, []bool{true, false}, []string{"", ""})
+	if len(out) != 1 {
+		t.Fatalf("%d staves came back", len(out))
+	}
+	vs := out[0].Measures[0].Voices
+	if len(vs) != 2 {
+		t.Fatalf("%d voices in the bar", len(vs))
+	}
+	r, ok := vs[1].Elements[1].(*model.Rest)
+	if !ok {
+		t.Fatalf("the second element is a %T", vs[1].Elements[1])
+	}
+	if !r.Hidden {
+		t.Error("the rest under the other line is printed")
+	}
+	if r.Dur.Cmp(half) != 0 {
+		t.Errorf("the rest is %v long, want the %v that holds its line in time", r.Dur, half)
+	}
+
+	// A bar where nothing else plays keeps its rest on the page.
+	a := &model.Part{Measures: []*model.Measure{{Voices: []*model.Voice{{
+		Elements: []model.Element{&model.Rest{Dur: half}},
+	}}}}}
+	b := &model.Part{Measures: []*model.Measure{{Voices: []*model.Voice{{
+		Elements: []model.Element{&model.Rest{Dur: quarter}},
+	}}}}}
+	out, _ = mergeLayers([]*model.Part{a, b}, []bool{true, false}, []string{"", ""})
+	for _, v := range out[0].Measures[0].Voices {
+		for _, e := range v.Elements {
+			if r, ok := e.(*model.Rest); ok && r.Hidden {
+				t.Error("a bar of silence lost its rest")
+			}
+		}
+	}
+}
+
+// A rest chord holds time like any other rest.
+//
+// NoteWorthy keeps a rest as a chord when the layer it is in has notes
+// elsewhere in the bar. Stepped over, its bar came out short: the left hand
+// of Danse Macabre at bar 254 is one of these and five quavers, and without
+// it the bar is a quaver light.
+func TestARestChordHoldsItsTime(t *testing.T) {
+	// Three bytes of header, the value block, and two more.
+	b := []byte{18, 0, 0, 3, 0, 0x10, 2, 0, 0, 0x30, 0xF8, 1, 0}
+	w := &walker{b: b, version: 205}
+	st := &staffState{part: &model.Part{Clef: model.Treble}}
+	if err := w.object(st); err != nil {
+		t.Fatalf("%v", err)
+	}
+	if w.i != len(b) {
+		t.Errorf("the record came to %d bytes, want %d", w.i, len(b))
+	}
+	st.closeMeasure(model.BarFinal)
+	els := st.part.Measures[0].Voices[0].Elements
+	if len(els) != 1 {
+		t.Fatalf("%d elements came out", len(els))
+	}
+	r, ok := els[0].(*model.Rest)
+	if !ok {
+		t.Fatalf("the element is a %T", els[0])
+	}
+	if want := (model.Duration{Num: 1, Den: 8}); r.Dur.Cmp(want) != 0 {
+		t.Errorf("the rest is %v long, want %v", r.Dur, want)
+	}
+}
+
+// An octave bracket is a word and then a row of dashes, and only the hook on
+// the end says how far it reaches.
+//
+// NoteWorthy has no ottava of its own: a staff author types "8va" over the
+// music and draws the bracket after it in a music font. Read as text that is
+// a word with nothing after it — which is what the page showed — and the
+// dashes are a line of o-graves. Danse Macabre's first bracket runs from bar
+// 19 to bar 29, where its hook turns down.
+//
+// A word with no bracket after it stays a word. Two thirds of them are.
+func TestAnOctaveBracketReachesAsFarAsItsHook(t *testing.T) {
+	text := func(font byte, s string) []byte {
+		b := []byte{17, 0, 0, 0xF0, 0, font}
+		b = append(b, []byte(s)...)
+		return append(b, 0)
+	}
+	note := []byte{8, 0, 0, 2, 0, 0x10, 0, 0, 0, 0, 5}
+	dashes := "\xF2\xF2\xF2\xF2\xF2"
+
+	read := func(b []byte) []model.Element {
+		w := &walker{b: b, version: 205}
+		st := &staffState{part: &model.Part{Clef: model.Treble}}
+		for w.remaining() > 0 {
+			if err := w.object(st); err != nil {
+				t.Fatalf("%v", err)
+			}
+		}
+		st.closeMeasure(model.BarFinal)
+		return st.part.Measures[0].Voices[0].Elements
+	}
+
+	// The word, two notes under it, more dashes, and the hook.
+	var b []byte
+	b = append(b, text(2, "8va")...)
+	b = append(b, note...)
+	b = append(b, text(nwcMusicFont, dashes)...)
+	b = append(b, note...)
+	b = append(b, text(nwcMusicFont, dashes+"w")...)
+	b = append(b, note...)
+
+	els := read(b)
+	if len(els) != 3 {
+		t.Fatalf("%d notes came out", len(els))
+	}
+	start := marksOf(els[0]).Octave
+	if start == nil || !start.Start || start.Amount != 1 {
+		t.Fatalf("the first note does not open the bracket: %+v", start)
+	}
+	if !start.SoundsAsWritten {
+		t.Error("the bracket moves the music; the notes under it are at pitch already")
+	}
+	if stop := marksOf(els[1]).Octave; stop == nil || !stop.Stop {
+		t.Errorf("the bracket does not end where its hook is")
+	}
+	// The line draws its own label, so the word is not written as well.
+	for _, tx := range marksOf(els[0]).Texts {
+		if tx.Text == "8va" {
+			t.Error(`the word "8va" is printed as well as the bracket`)
+		}
+	}
+
+	// And a word with no bracket after it is a word.
+	var plain []byte
+	plain = append(plain, text(2, "8va")...)
+	plain = append(plain, note...)
+	els = read(plain)
+	if marksOf(els[0]).Octave != nil {
+		t.Error("a word with no bracket after it drew one anyway")
+	}
+	found := false
+	for _, tx := range marksOf(els[0]).Texts {
+		if tx.Text == "8va" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("the word was taken off the page and nothing drawn in its place")
+	}
+}
+
+// A crescendo or a diminuendo is a dynamic variance, and the third byte of
+// it says which way the wedge points.
+//
+// The record was stepped over, so no NoteWorthy score gscore opened had ever
+// had a wedge in it. Which way round the styles are did not have to be
+// guessed: a crescendo runs from a softer dynamic to a louder one, and
+// across the corpus fifty-three of the sixty-two marked 0 that are followed
+// by another dynamic get louder, while every one of the sixteen marked 1
+// gets softer. The page agrees — bar 251 of Danse Macabre is marked 0, says
+// "cresc.", and its wedge opens to the right.
+func TestAWedgePointsTheWayTheStyleSays(t *testing.T) {
+	note := []byte{8, 0, 0, 2, 0, 0x10, 0, 0, 0, 0, 5}
+	variance := func(style byte) []byte { return []byte{15, 0, 0, 0x0E, 0, style} }
+
+	read := func(style byte) []model.Element {
+		var b []byte
+		b = append(b, variance(style)...)
+		b = append(b, note...)
+		b = append(b, note...)
+		b = append(b, 2, 0, 0, 0, 1) // the barline ends it
+		w := &walker{b: b, version: 205}
+		st := &staffState{part: &model.Part{Clef: model.Treble}}
+		for w.remaining() > 0 {
+			if err := w.object(st); err != nil {
+				t.Fatalf("%v", err)
+			}
+		}
+		return st.part.Measures[0].Voices[0].Elements
+	}
+
+	for style, want := range map[byte]model.HairpinKind{0: model.Crescendo, 1: model.Diminuendo} {
+		els := read(style)
+		if len(els) != 2 {
+			t.Fatalf("style %d: %d notes", style, len(els))
+		}
+		h := marksOf(els[0]).Hairpin
+		if h == nil || !h.Start {
+			t.Fatalf("style %d opens no wedge", style)
+		}
+		if h.Kind != want {
+			t.Errorf("style %d draws a %v, want a %v", style, h.Kind, want)
+		}
+		// It ends at the barline rather than running on down the page.
+		if end := marksOf(els[1]).Hairpin; end == nil || !end.Stop {
+			t.Errorf("style %d: the wedge does not close at the barline", style)
+		}
+	}
+
+	// A dynamic closes it too, which is where NoteWorthy draws it to.
+	var b []byte
+	b = append(b, variance(0)...)
+	b = append(b, note...)
+	b = append(b, 7, 0, 0, 0, 0, 5, 0, 0, 0, 0) // forte
+	b = append(b, note...)
+	w := &walker{b: b, version: 205}
+	st := &staffState{part: &model.Part{Clef: model.Treble}}
+	for w.remaining() > 0 {
+		if err := w.object(st); err != nil {
+			t.Fatalf("%v", err)
+		}
+	}
+	st.closeMeasure(model.BarFinal)
+	els := st.part.Measures[0].Voices[0].Elements
+	if h := marksOf(els[0]).Hairpin; h == nil || !h.Stop {
+		t.Errorf("the wedge did not end at the dynamic it arrives at")
+	}
+}
+
+// From 1.75 a slur is one bit, and where it ends has to be worked out.
+//
+// The file marks every element the phrase mark covers as joined to the next,
+// and writes nothing at all about the far end: the slur stops on the first
+// element after the run. 1.70 writes both ends and is read as it was.
+//
+// Measured against the page. Bar 195 of Danse Macabre carries the bit on six
+// of its elements and bar 196 on two, and the mark printed over them runs
+// from the second element of 195 to the third of 196 — the same eight. Read
+// with the 1.70 rule, every file but Für Elise came back with no slurs at
+// all; Danse Macabre has two hundred and fifteen.
+func TestASlurEndsOnTheNoteAfterTheLastJoinedOne(t *testing.T) {
+	// The slur is the sixth byte of the value block, which is the ninth of
+	// the record.
+	note := func(joined byte) []byte {
+		return []byte{8, 0, 0, 3, 0, 0x20, 0, 0, joined, 0, 5}
+	}
+	var b []byte
+	for _, j := range []byte{0, 1, 1, 1, 0, 0} {
+		b = append(b, note(j)...)
+	}
+	w := &walker{b: b, version: 205}
+	st := &staffState{part: &model.Part{Clef: model.Treble}}
+	for w.remaining() > 0 {
+		if err := w.object(st); err != nil {
+			t.Fatalf("%v", err)
+		}
+	}
+	st.closeMeasure(model.BarFinal)
+	els := st.part.Measures[0].Voices[0].Elements
+
+	var got string
+	for _, e := range els {
+		mk := marksOf(e)
+		switch {
+		case mk.SlurStart:
+			got += "("
+		case mk.SlurStop:
+			got += ")"
+		default:
+			got += "."
+		}
+	}
+	// The run of three opens on the first of them and closes on the one
+	// after the last.
+	if want := ".(..)."; got != want {
+		t.Errorf("the slur reads %q, want %q", got, want)
+	}
+
 }

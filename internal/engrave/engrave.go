@@ -1634,7 +1634,7 @@ func (e *engraver) prefixWidth(p *model.Part, at int) float64 {
 		// The word TAB, and no key signature to follow it.
 		w = tabClefWidth(p, sp)
 	default:
-		clef, _ := smufl.ClefGlyph(p.Clef)
+		clef, _ := smufl.ClefGlyph(p.ClefAt(at))
 		w = sp.ClefBefore + smufl.Advance(clef) + sp.ClefAfter
 		w += e.keySignatureWidth(p.KeyAt(at))
 	}
@@ -2569,9 +2569,19 @@ func (e *engraver) staffLines(x, width float64) {
 }
 
 func (e *engraver) drawClef(p *model.Part, x float64) float64 {
-	name, _ := smufl.ClefGlyph(p.Clef)
+	// The clef in force at this system, not the one the staff opened the
+	// piece with.
+	//
+	// A hand that goes up into the treble at bar five and stays there is
+	// read in the treble on every system after it, and the sign at the head
+	// of each of those systems says so. Drawn from the part's own clef, the
+	// left hand of Danse Macabre had a bass clef at the head of every
+	// system while its notes were placed in the treble — the sign saying
+	// one thing and the notes another, which is worse than either.
+	c := e.clef
+	name, _ := smufl.ClefGlyph(c)
 	e.lay.Glyphs = append(e.lay.Glyphs, Glyph{
-		Name: name, X: x, Y: e.y + stepY(clefRefStep[p.Clef]),
+		Name: name, X: x, Y: e.y + stepY(clefRefStep[c]),
 	})
 	return x + smufl.Advance(name) + e.opt.Spacings.ClefAfter
 }

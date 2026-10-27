@@ -13,6 +13,7 @@ package nwc
 import (
 	"encoding/binary"
 	"fmt"
+	"strings"
 
 	"github.com/stricaud/gscore/internal/model"
 )
@@ -45,6 +46,29 @@ type walker struct {
 	// reader could use, and which therefore came to the single note their
 	// record carries.
 	flatChords int
+	// layerWithNext is the staff just read asking to be printed on the
+	// same staff as the one after it. It lives here rather than on the
+	// part because it is a thing about the file, not about the music: once
+	// the two staves are one part it has nothing left to say.
+	layerWithNext bool
+	// group is the staff just read's group name, for the same reason.
+	group string
+}
+
+// symbolFont says whether a text slot holds symbols rather than words.
+//
+// What is written in one is strokes: a staff user draws things NoteWorthy has
+// no object for by typing in a music font, and the 8va over bars 24 to 29 of
+// Danse Macabre is a run of 0xF2 in one, which is a dash, with a hook on the
+// end. Printed as text it is a line of o-graves across the page.
+//
+// By the slot rather than by the typeface's name, which is not always one
+// that says what it is — this file draws its 8va in "MusikDingsSans". Across
+// the corpus the first eight slots carry the writing — "dolce", "poco rit.",
+// "una corda", a fingering — and everything from the eighth up carries
+// symbols: two thousand of them, and not one word.
+func (w *walker) symbolFont(slot byte) bool {
+	return slot >= nwcMusicFont
 }
 
 func (w *walker) remaining() int { return len(w.b) - w.i }
@@ -203,9 +227,12 @@ type noteValue struct {
 	// has both; the note a slur begins on has only the second.
 	slurFrom bool
 	slurTo   bool
+	// beam is the note's place in the beam over it, straight off the file:
+	// 0 none, 1 beginning, 2 continuing, 3 ending.
+	beam byte
 }
 
-func (w *walker) noteValue() (noteValue, error) {
+func (w *walker) noteValue(rest bool) (noteValue, error) {
 	var nv noteValue
 	raw := make([]byte, 8)
 	for i := range raw {
@@ -228,14 +255,22 @@ func (w *walker) noteValue() (noteValue, error) {
 	// Nothing read this byte before, so no score opened in gscore has ever
 	// had a slur in it.
 	//
-	// 1.70 only, because the byte is not the same thing everywhere. A 1.75
-	// score leaves it zero on all but a handful of notes, and a 2.0 one
-	// writes 01, 80 and 81 in it — read as a span that would be hundreds
-	// of slurs that begin and never end, drawn across the page to the
-	// margin of every system after them. What this byte means in those
-	// versions is still to be found out.
+	// From 1.75 only bit one is a slur and bit two is something else, so
+	// the far end has to be worked out rather than read: the slur ends on
+	// the note after the last one joined onward.
+	//
+	// Measured against the page. Bar 195 of Danse Macabre carries the bit
+	// on six of its elements and bar 196 on two, and the phrase mark
+	// printed over them runs from the second element of 195 to the third
+	// of 196 — the same eight. The short mark at bar 198 is the same bit
+	// on one chord, joining it to the next.
+	//
+	// The other bits are left alone. A 2.0 file writes 0x80 as well, and
+	// read as part of a span that would be hundreds of slurs beginning and
+	// never ending, drawn across the page to the margin of every system
+	// after them.
+	nv.slurTo = raw[5]&0x01 != 0
 	if w.version > 0 && w.version < 175 {
-		nv.slurTo = raw[5]&0x01 != 0
 		nv.slurFrom = raw[5]&0x02 != 0
 		// And 0x20 of the same byte is a grace note, which takes no time
 		// in the bar it is written in.
@@ -249,13 +284,27 @@ func (w *walker) noteValue() (noteValue, error) {
 		nv.grace = raw[5]&0x20 != 0
 	}
 
-	// One extra byte follows when the accidental byte says so.
-	if accidental&0x40 == 0x40 {
+	// One extra byte follows when the accidental byte says so — on a note.
+	//
+	// A rest has no accidental, so the byte in that place means something
+	// else and must not be read as one. In a 2.5 score it is often 0xF8,
+	// and every rest in the piece therefore ate the byte after it: a bar of
+	// Danse Macabre with two rests in it put the walk two bytes out, and
+	// what followed was read as a run of clefs.
+	if !rest && accidental&0x40 == 0x40 {
 		if _, err := w.u8(); err != nil {
 			return nv, err
 		}
 	}
 
+	// From 2.0 the top half of the duration byte carries flags of its own,
+	// so only the bottom four bits say how long the note is. Danse Macabre
+	// writes 0x11 for a half note, and read whole that is no duration at
+	// all: the walk gave up on it two thirds of the way down the first
+	// staff.
+	if w.version >= 200 {
+		durByte &= 0x0F
+	}
 	d, ok := nwc1Durations[durByte]
 	if !ok {
 		return nv, fmt.Errorf(
@@ -293,6 +342,7 @@ func (w *walker) noteValue() (noteValue, error) {
 	// fifteen times, which is the five bars of triplet sixteenths before
 	// the theme comes back. Nothing else in the piece is in a triplet and
 	// nothing else in it carries the bits.
+	nv.beam = stem & 3
 	if (stem>>2)&3 != 0 {
 		nv.dur = nv.dur.Scale(2, 3)
 		nv.triplet = true
@@ -300,7 +350,23 @@ func (w *walker) noteValue() (noteValue, error) {
 
 	// The position is signed and counted from the middle line, as in NWCTXT.
 	nv.step = int(int8(position)) + 4
-	if w.version > 0 && w.version < 175 {
+	if w.version >= 205 {
+		// 2.5 counts downwards, as 1.70 does and as 1.75 and 2.0 do not.
+		//
+		// Measured against NoteWorthy's own page. The opening of Danse
+		// Macabre is a half note under the treble staff, a right hand
+		// alternating A4 and D5 above it, and a left hand of F sharp 4 and
+		// B4 under a treble clef. Counted upwards those five notes come
+		// out G5, C5 and G4, and E5 and B4 — every one of them the mirror
+		// of what is printed, reflected in the middle line.
+		//
+		// 1.75 and 2.0 are left alone because they are right: the subject
+		// of Die Kunst der Fuge is in the corpus in a 2.0 file, and it
+		// comes out as Bach wrote it — up a fifth, down a third, down a
+		// third, down a step and back. Counted the other way it is that
+		// shape upside down.
+		nv.step = -int(int8(position)) + 4
+	} else if w.version > 0 && w.version < 175 {
 		// 1.70 counts the other way: downwards from the middle line where
 		// 1.75 counts upwards. Everything else about the byte is the same,
 		// so the reading is the same with the sign turned round.
@@ -423,6 +489,25 @@ func parseNWC1(raw []byte, version int) (*model.Score, error) {
 			return nil, err
 		}
 	}
+	// And then whatever padding this version puts before the count.
+	//
+	// 2.5 writes a zero byte there, and read as the count's low byte it
+	// made a five-staff score claim to have one thousand two hundred and
+	// eighty: the same failure as the marker above, one version later.
+	//
+	// Found rather than counted, for the reason the fonts are. A count's
+	// low byte is never zero — a score has at least one staff — so a zero
+	// here is padding whatever version wrote it, and a version that puts
+	// none is unaffected.
+	for {
+		b, err := w.peek()
+		if err != nil || b != 0x00 {
+			break
+		}
+		if err := w.skip(1); err != nil {
+			return nil, err
+		}
+	}
 	staffCount, err := w.u16()
 	if err != nil {
 		return nil, err
@@ -433,8 +518,28 @@ func parseNWC1(raw []byte, version int) (*model.Score, error) {
 
 	// Staves that could not be read, to tell the reader about afterwards.
 	var lost []string
+	// One entry per part kept, saying whether that staff is printed on the
+	// same staff as the one after it, and which group it is filed under.
+	var shares []bool
+	var groups []string
 
-	for i := 0; i < staffCount; i++ {
+	// The count is a floor, not a ceiling.
+	//
+	// A 2.5 score writes staves the count does not admit to: Danse Macabre
+	// says five and has six, the sixth being the left hand of the two
+	// printed staves — the half of the piece a pianist actually reads. It
+	// was simply dropped, and the file said nothing about losing it.
+	//
+	// So the staves are read until there are no more of them. The count
+	// still decides how many are owed, and a file that ends before it has
+	// delivered them says so; one that has more keeps going. The cap is
+	// what stops a file whose stream happens to keep making the header
+	// shape from being read for ever.
+	const maxStaves = 64
+	for i := 0; i < maxStaves; i++ {
+		if i >= staffCount && !w.atStaffHeader() && !w.looksLikeAnotherStaff() {
+			break
+		}
 		// Land on the staff before reading it.
 		//
 		// A staff ends where the next one begins, and nearly always the
@@ -451,8 +556,16 @@ func parseNWC1(raw []byte, version int) (*model.Score, error) {
 		// picks the walk up again after a staff that failed halfway, which
 		// is how a file with one bad staff now gives up only that staff
 		// instead of everything after it.
+		// Land on the staff, the first one included.
+		//
+		// The first was trusted to be exactly where the header walk left
+		// off, which held until a version put something between the staff
+		// count and the staff: 2.5 writes twelve bytes there, and read as
+		// a staff they are a name of control characters and a score of
+		// nothing. The search that picks the walk up after every other
+		// staff does for the first one too.
 		searched := false
-		if i > 0 && !w.atStaffHeader() {
+		if !w.atStaffHeader() {
 			if !w.findStaffHeader() {
 				// Nothing left that looks like a staff. The ones the file
 				// promised and did not deliver are named rather than
@@ -464,6 +577,12 @@ func parseNWC1(raw []byte, version int) (*model.Score, error) {
 						"staff %d: the file ends before it", n+1))
 				}
 				break
+			}
+			if i >= staffCount {
+				// Past what the file promised, so this is one of the extra
+				// staves rather than a missing one: it is read, but the
+				// search is not allowed to wander for it.
+				_ = searched
 			}
 			searched = true
 		}
@@ -493,6 +612,8 @@ func parseNWC1(raw []byte, version int) (*model.Score, error) {
 				lost = append(lost, fmt.Sprintf("staff %d: %v%s", i+1, err, kept))
 				if part != nil && countElements(part) > 0 {
 					score.Parts = append(score.Parts, part)
+					shares = append(shares, false)
+					groups = append(groups, w.group)
 				}
 				continue
 			}
@@ -569,7 +690,11 @@ func parseNWC1(raw []byte, version int) (*model.Score, error) {
 			continue
 		}
 		score.Parts = append(score.Parts, part)
+		shares = append(shares, w.layerWithNext)
+		groups = append(groups, w.group)
 	}
+	score.Parts, groups = mergeLayers(score.Parts, shares, groups)
+	score.Groups = staffGroups(score.Parts, groups)
 	// Whatever the file did not say about what plays each staff, its own
 	// names usually do.
 	nameInstruments(score)
@@ -669,7 +794,15 @@ func (w *walker) staff(version int) (*model.Part, error) {
 	if err != nil {
 		return nil, err
 	}
-	if _, err := w.cstring(); err != nil { // group
+	// Which of 2.5's two layers the staff belongs to, for the versions
+	// that have them.
+	layer := ""
+
+	// The group the staff is filed under — "Piano", "Strings", "Voice".
+	// NoteWorthy prints it down the left of the staves that share it, with
+	// a brace or a bracket round them.
+	w.group, err = w.cstring()
+	if err != nil {
 		return nil, err
 	}
 	if version >= 200 {
@@ -681,7 +814,29 @@ func (w *walker) staff(version int) (*model.Part, error) {
 			}
 		}
 	}
+	if version >= 205 {
+		// 2.5 writes one more: the layer the staff belongs to, "Hidden" or
+		// "Display". It is how one instrument is written twice — a staff
+		// that sounds and a staff that is printed — and the names in this
+		// file say so: "Piano RH1 Sounding" is Hidden and "Piano LH2" is
+		// Display.
+		//
+		// Counted as four strings, the walk ended a string early and read
+		// the layer's name as the staff's: a score of staves called
+		// "Hidden" with no music in them.
+		//
+		// 205 and not 250: a version is its major number in hundreds plus
+		// its minor, so 2.5 counts as two hundred and five.
+		s, err := w.cstring()
+		if err != nil {
+			return nil, err
+		}
+		layer = s
+	}
 
+	// Where the staff's settings begin, which is what the one flag read out
+	// of them below is measured from.
+	settings := w.i
 	if err := w.skip(15 + 2 + 2); err != nil { // settings, upper, lower
 		return nil, err
 	}
@@ -700,6 +855,24 @@ func (w *walker) staff(version int) (*model.Part, error) {
 		if err := w.skip(10); err != nil {
 			return nil, err
 		}
+	}
+
+	// "Layer with next staff": the two staves are printed as one.
+	//
+	// It is how a pianist's right hand is written as two independent lines
+	// on a single staff — one part of the texture per layer, each with its
+	// own stems and rests — and it is why Danse Macabre has eight staves in
+	// the file and two on the page. Without it the score came out as four
+	// grand staves of the same music stacked up the page.
+	//
+	// Read at a measured offset rather than a derived one. What lies
+	// between the names and here is not all understood: the byte before it
+	// is the number of lines the staff is drawn with, five on every staff
+	// of every file in the corpus, and the flag is the byte after that.
+	// 2.0 and later only, because 1.7x puts something else there.
+	w.layerWithNext = false
+	if version >= 200 && settings+28 < len(w.b) {
+		w.layerWithNext = w.b[settings+28] != 0
 	}
 
 	lyricLines, err := w.u16()
@@ -746,18 +919,62 @@ func (w *walker) staff(version int) (*model.Part, error) {
 
 	part := &model.Part{
 		Name: name,
-		Clef: model.Treble,
-		Key:  model.KeySignature{Fifths: 0, Mode: model.Major},
-		Time: model.TimeSignature{Beats: 4, BeatValue: 4, Symbol: model.TimeNumeric},
+		// A staff in the hidden layer is the one that sounds, not the one
+		// that is printed: NoteWorthy writes an instrument twice over, a
+		// staff to be played and a staff to be read, and prints only the
+		// second. Danse Macabre is eight staves that way and two on the
+		// page, and drawn all together they were four grand staves of the
+		// same music stacked up the page.
+		//
+		// Hidden in gscore takes a staff off the page and out of what is
+		// played, and the printed staves carry the same notes, so the
+		// piece still sounds.
+		Hidden: layer == "Hidden",
+		Clef:   model.Treble,
+		Key:    model.KeySignature{Fifths: 0, Mode: model.Major},
+		Time:   model.TimeSignature{Beats: 4, BeatValue: 4, Symbol: model.TimeNumeric},
 	}
 	st := &staffState{part: part}
-	for i := 0; i < objectCount; i++ {
+	// The count is a floor here too.
+	//
+	// A staff goes on until the next one begins, and the number it gives
+	// is not always the number it holds: the Rossi leaves two records
+	// behind, and three of Danse Macabre's printed staves stop five, seven
+	// and thirteen bars before the end of the piece — the last chords of a
+	// Liszt transcription, missing with nothing said about them.
+	//
+	// So past the count the walk carries on until it reaches the next
+	// staff, runs out of file, or stops making sense. Stops quietly: the
+	// staff has already given everything the file promised, and a complaint
+	// about the tail would be a complaint about music that is on the page.
+	const tail = 1 << 16
+	for i := 0; i < objectCount+tail; i++ {
+		past := i >= objectCount
+		if past && (w.remaining() == 0 || w.atStaffHeader()) {
+			break
+		}
 		if w.remaining() > 0 && w.b[w.i] == 0xFF && w.endOfObjects() {
 			// A marker closes the list early; the count a staff reports is
 			// not always the number of objects it really stores.
 			break
 		}
+		at := w.i
 		if err := w.object(st); err != nil {
+			// A staff that walks into the next staff's name has simply
+			// run out of music, whatever its object count claims. Danse
+			// Macabre's left hand says it has sixty-three thousand
+			// objects and has about two thousand, and reading on turned
+			// the P of "Piano LH1 Sounding" into an unknown object type
+			// 80 — and left the next staff to be found by searching,
+			// three bytes late, under the name "no LH1 Sounding".
+			//
+			// Tested here rather than before each object because the
+			// signature is a weak one: four strings in a row, which a run
+			// of zeroes in the middle of the music also satisfies.
+			w.i = at
+			if past || w.atStaffHeader() {
+				break
+			}
 			// Keep what was read. A staff that goes wrong at object five
 			// hundred has four hundred and ninety-nine objects of music in
 			// it, and throwing those away to report a clean failure is the
@@ -765,7 +982,7 @@ func (w *walker) staff(version int) (*model.Part, error) {
 			// piece, and most of it is right there.
 			st.closeMeasure(model.BarFinal)
 			linkTies(part)
-			return part, fmt.Errorf("object %d of %d: %w", i+1, objectCount, err)
+			return part, fmt.Errorf("object %d of %d at byte %d: %w", i+1, objectCount, w.i, err)
 		}
 	}
 	st.closeMeasure(model.BarFinal)
@@ -809,12 +1026,45 @@ func (w *walker) lyrics(lines int) error {
 type staffState struct {
 	part *model.Part
 	// clefSet says the staff's opening clef has been read, so that a clef
-	// change partway through does not become the staff's own.
+	// change partway through does not become the staff's own. timeSet is
+	// the same for the meter.
 	clefSet bool
-	meas    *model.Measure
+	timeSet bool
+	keySet  bool
+	// time is the meter in force and clef the sign in force, so that a
+	// change back to what the staff opened with is still written down.
+	time model.TimeSignature
+	clef model.Clef
+	key  model.KeySignature
+	meas *model.Measure
 	// pendingDynamic waits for the next note, since NoteWorthy writes the
 	// marking as an object of its own just before what it applies to.
 	pendingDynamic model.Dynamic
+	// pendingClef is a clef change written partway through a bar, waiting
+	// for the note it is printed in front of.
+	pendingClef *model.Clef
+	// pendingFermata and pendingText are the pause and the words written
+	// just before what they belong to, as NoteWorthy writes both.
+	pendingFermata bool
+	pendingText    []string
+	// An octave bracket being waited on. NoteWorthy writes the word and
+	// then draws the bracket after it with dashes, and only the hook on
+	// the end says how far it reaches. Until that turns up there is
+	// nothing to draw but the word, so the word is written as words and
+	// taken back if the bracket turns out to be real.
+	// slurOpen says the element before this one was joined onward, so a
+	// note that is not closes the slur.
+	slurOpen bool
+
+	// A wedge being drawn, and the last note it has reached.
+	pendingHairpin *model.Hairpin
+	hairpin        *model.Hairpin
+	hairpinLast    model.Element
+
+	octaveWord   string
+	octaveAmount int
+	octaveOn     model.Element
+	octaveLast   model.Element
 	// chord is the chord being gathered and chordLeft how many of its
 	// noteheads are still to come. A 1.70 chord is a record that says how
 	// many notes it has and then lets them follow as ordinary note
@@ -830,6 +1080,25 @@ type staffState struct {
 	// instead of opening another.
 	ending    *model.Ending
 	endingBar int
+	// accs holds the accidentals written so far in the bar now being read,
+	// by the note they were written on. They are cleared at the barline.
+	accs map[[2]int]int
+}
+
+// nowClef and nowKey are the sign and the key in force, which is what a note
+// is read against. Before the staff has said otherwise they are its own.
+func (s *staffState) nowClef() model.Clef {
+	if s.clefSet {
+		return s.clef
+	}
+	return s.part.Clef
+}
+
+func (s *staffState) nowKey() model.KeySignature {
+	if s.keySet {
+		return s.key
+	}
+	return s.part.Key
 }
 
 func (s *staffState) ensure() {
@@ -854,7 +1123,143 @@ func (s *staffState) add(el model.Element) {
 		// they would be, and the chord is as finished as it is going to be.
 		s.endChord()
 	}
+	s.attachClef(el)
 	s.meas.Voices[0].Elements = append(s.meas.Voices[0].Elements, el)
+}
+
+// attachClef puts a clef change waiting to be written in front of the element
+// it belongs to.
+func (s *staffState) attachClef(el model.Element) {
+	m := marksOf(el)
+	if m == nil {
+		return
+	}
+	if s.pendingClef != nil {
+		m.Clef = s.pendingClef
+		s.pendingClef = nil
+	}
+	if s.pendingFermata {
+		m.AddArticulation(model.Fermata)
+		s.pendingFermata = false
+	}
+	for _, t := range s.pendingText {
+		m.Texts = append(m.Texts, model.TextMark{Text: t, Italic: true})
+	}
+	s.pendingText = s.pendingText[:0]
+	if s.pendingHairpin != nil {
+		m.Hairpin = s.pendingHairpin
+		s.pendingHairpin = nil
+	}
+	if s.hairpin != nil {
+		s.hairpinLast = el
+	}
+	if s.octaveWord != "" && s.octaveOn == nil {
+		// The word has found the note it is written over. If the bracket
+		// after it is ever finished, this is where it begins.
+		s.octaveOn = el
+	}
+	if s.octaveOn != nil {
+		s.octaveLast = el
+	}
+}
+
+// slurRun works out where a slur begins and ends from the one bit that says
+// a note is joined to the next.
+//
+// From 1.75 the file marks only that, so the end of a phrase mark is not
+// written anywhere: it is the first element after the run of joined ones.
+func (s *staffState) slurRun(m *model.Marks, joined bool) {
+	switch {
+	case joined && !s.slurOpen:
+		m.SlurStart = true
+	case !joined && s.slurOpen:
+		m.SlurStop = true
+	}
+	s.slurOpen = joined
+}
+
+// openHairpin starts a wedge, drawn from the next note on.
+func (s *staffState) openHairpin(kind model.HairpinKind) {
+	s.closeHairpin()
+	s.pendingHairpin = &model.Hairpin{Kind: kind, Start: true}
+	s.hairpin = s.pendingHairpin
+}
+
+// closeHairpin ends the wedge on the last note it reached.
+func (s *staffState) closeHairpin() {
+	if s.hairpin == nil {
+		return
+	}
+	if m := marksOf(s.hairpinLast); m != nil {
+		if m.Hairpin == s.hairpin {
+			// A wedge over a single note opens and closes on it.
+			m.Hairpin.Stop = true
+		} else {
+			m.Hairpin = &model.Hairpin{Kind: s.hairpin.Kind, Stop: true}
+		}
+	}
+	s.hairpin, s.pendingHairpin, s.hairpinLast = nil, nil, nil
+}
+
+// openOctave remembers an octave word, in case a bracket is drawn after it.
+func (s *staffState) openOctave(word string, amount int) {
+	s.forgetOctave()
+	s.octaveWord, s.octaveAmount = word, amount
+	// Written as words for now. A word with no bracket after it is a
+	// marking like any other, and most of them are: of the sixty-six in
+	// Danse Macabre, twenty-four are followed by a bracket that finishes.
+	s.pendingText = append(s.pendingText, word)
+}
+
+// closeOctave turns the word and the bracket drawn after it into one line
+// over the notes it covers.
+func (s *staffState) closeOctave() {
+	on, last := marksOf(s.octaveOn), marksOf(s.octaveLast)
+	if s.octaveWord == "" || on == nil || last == nil {
+		s.forgetOctave()
+		return
+	}
+	// The line draws its own label, so the word is taken back off the note
+	// it was written on.
+	for i, t := range on.Texts {
+		if t.Text == s.octaveWord {
+			on.Texts = append(on.Texts[:i], on.Texts[i+1:]...)
+			break
+		}
+	}
+	line := &model.OctaveShift{
+		Amount: s.octaveAmount, Start: true, SoundsAsWritten: true,
+	}
+	on.Octave = line
+	if s.octaveLast == s.octaveOn {
+		line.Stop = true
+	} else {
+		last.Octave = &model.OctaveShift{
+			Amount: s.octaveAmount, Stop: true, SoundsAsWritten: true,
+		}
+	}
+	s.forgetOctave()
+}
+
+// forgetOctave gives up on a word whose bracket never arrived. The word
+// stays where it was written.
+func (s *staffState) forgetOctave() {
+	s.octaveWord, s.octaveAmount = "", 0
+	s.octaveOn, s.octaveLast = nil, nil
+}
+
+// marksOf is the marks an element carries, if it is the kind that carries
+// any.
+func marksOf(el model.Element) *model.Marks {
+	switch e := el.(type) {
+	case *model.Note:
+		return &e.Marks
+	case *model.Chord:
+		return &e.Marks
+	case *model.Rest:
+		return &e.Marks
+	}
+	return nil
 }
 
 // openChord starts a chord of n noteheads, which the next n note records
@@ -863,6 +1268,7 @@ func (s *staffState) add(el model.Element) {
 func (s *staffState) openChord(ch *model.Chord, n int) {
 	s.endChord()
 	s.ensure()
+	s.attachClef(ch)
 	s.meas.Voices[0].Elements = append(s.meas.Voices[0].Elements, ch)
 	s.chord, s.chordLeft = ch, n
 }
@@ -918,6 +1324,41 @@ func (s *staffState) closeMeasure(style model.BarlineStyle) {
 	s.meas.RightBarline = style
 	s.part.Measures = append(s.part.Measures, s.meas)
 	s.meas = nil
+	// A written accidental lasts to the barline and no further.
+	s.accs = nil
+	// So does a wedge, give or take. NoteWorthy draws one from where it is
+	// marked to the dynamic it arrives at — but a crescendo that is never
+	// answered then runs for ever: measured across this piece the spans
+	// come out a median of eleven bars and a longest of thirty-nine, which
+	// is not a crescendo anybody wrote. Its real length is not in the file
+	// in any form found so far, so a wedge is drawn for the bar it is
+	// marked in. NoteWorthy's own at bar 244 carries a little past the
+	// barline, so this is short rather than wrong.
+	s.closeHairpin()
+}
+
+// pitch turns a staff position into a sounding pitch, under the clef and key
+// in force and whatever accidentals this bar has already had.
+//
+// An accidental is written once and holds for the rest of the bar, which is
+// a rule of notation rather than of this file format: NoteWorthy draws the
+// sharp on the first F of the bar and on none of the others, and means all
+// of them. Read note by note, the left hand of Danse Macabre played F sharp,
+// F, F, F where the page says F sharp four times over.
+func (s *staffState) pitch(step int, acc model.Accidental) model.Pitch {
+	p := pitchFor(s.nowClef(), s.nowKey(), step, acc)
+	key := [2]int{int(p.Step), p.Octave}
+	if acc != model.NoAccidental {
+		if s.accs == nil {
+			s.accs = map[[2]int]int{}
+		}
+		s.accs[key] = p.Alter
+		return p
+	}
+	if alter, ok := s.accs[key]; ok {
+		p.Alter = alter
+	}
+	return p
 }
 
 var nwc1Clefs = map[int]model.Clef{
@@ -938,7 +1379,43 @@ var nwc1Barlines = map[byte]model.BarlineStyle{
 }
 
 // object reads one entry of the music stream.
+// wideObject is the bit in an object's third byte that makes its record
+// three bytes longer than the plain one of the same type.
+//
+// Found by walking the first staff of Danse Macabre — eighty-four thousand
+// bytes and twenty-two text objects, each of which the walk has to land on
+// exactly — and asking which records were the wrong length. Barlines and
+// volta brackets came in two sizes: 02 00 08 00 00 and 02 00 20 00 00 01 FE
+// 05, the same type, five bytes and eight. The bit is set on both of them
+// and on nothing in the stretch that already read correctly, and honouring
+// it took the walk from a third of the way down the staff to the end of it.
+//
+// What the three bytes hold is not known. They are not needed for anything
+// gscore draws, so they are stepped over rather than read.
+// nwcFermata is the Tempo Variance style that draws a pause, and
+// nwcMusicFont the font index of NoteWorthy's own symbol font.
+const (
+	nwcFermata   = 2
+	nwcMusicFont = 8
+)
+
+const wideObject = 0x20
+
 func (w *walker) object(st *staffState) error {
+	if w.i >= len(w.b) {
+		return w.skip(1)
+	}
+	wide := w.version >= 205 && w.i+2 < len(w.b) && w.b[w.i+2]&wideObject != 0
+	if err := w.objectBody(st); err != nil {
+		return err
+	}
+	if wide {
+		return w.skip(3)
+	}
+	return nil
+}
+
+func (w *walker) objectBody(st *staffState) error {
 	objType, err := w.u8()
 	if err != nil {
 		return err
@@ -972,15 +1449,40 @@ func (w *walker) object(st *staffState) error {
 		if _, err := w.u16(); err != nil { // octave shift
 			return err
 		}
-		if clef, ok := nwc1Clefs[c]; ok && !st.clefSet {
-			// The first one only. A staff that changes clef partway — the
-			// left hand of a piano piece going up into the treble for a
-			// while — writes another of these, and taking the last one
-			// made the whole staff treble from its first bar. gscore keeps
-			// one clef per staff, so the one it opens with is the one that
-			// belongs to it.
-			st.part.Clef = clef
-			st.clefSet = true
+		if clef, ok := nwc1Clefs[c]; ok {
+			// The first one is the staff's own; the rest are changes
+			// written where they happen.
+			//
+			// A staff is not one clef. The left hand of Danse Macabre goes
+			// up into the treble at bar 5 and stays there for pages, and
+			// NoteWorthy draws the sign where it changes. Taking the last
+			// clef in the piece for the staff's own made the whole staff
+			// treble from its first bar; taking only the first threw every
+			// change away, and the passages that change came out drawn an
+			// octave and a half from where they belong.
+			if !st.clefSet {
+				st.part.Clef = clef
+				st.clefSet = true
+			} else if st.clef != clef {
+				st.ensure()
+				if len(st.meas.Voices[0].Elements) == 0 {
+					// Nothing written in this bar yet, so the sign belongs
+					// at its head.
+					st.meas.Clef = &clef
+				} else {
+					// Partway through the bar, which is where NoteWorthy
+					// writes it and where it has to be drawn: a change
+					// hoisted to the head of the bar is read by the notes
+					// in front of it as well, and they are then drawn
+					// against a clef they were never written under. Danse
+					// Macabre's left hand dives into the bass and back
+					// inside a bar at 118 and 119, and the grace note
+					// before each sign came out six ledger lines below the
+					// staff.
+					st.pendingClef = &clef
+				}
+			}
+			st.clef = clef
 		}
 
 	case 1: // key signature
@@ -995,11 +1497,32 @@ func (w *walker) object(st *staffState) error {
 		if err != nil {
 			return err
 		}
-		if err := w.skip(7); err != nil {
+		pad := 7
+		if w.version >= 205 {
+			// Two bytes longer, and nothing in the first staff of Danse
+			// Macabre says what is in them. Read short, the walk came off
+			// the rails at the first key change and spent the rest of the
+			// staff reading music as a run of clefs.
+			pad = 9
+		}
+		if err := w.skip(pad); err != nil {
 			return err
 		}
 		// Each bit set is one altered note.
-		st.part.Key = model.KeySignature{Fifths: bits(sharps) - bits(flats)}
+		sig := model.KeySignature{Fifths: bits(sharps) - bits(flats)}
+		// The first is the staff's key and the rest are changes, as with
+		// the meter and the clef. Written onto the part every time, the
+		// last key in the piece became the key of its first bar — and
+		// since an unmarked note takes its accidental from the key, every
+		// note in the staff was read against whatever key it ended in.
+		if !st.keySet {
+			st.part.Key = sig
+			st.keySet = true
+		} else if st.key != sig {
+			st.ensure()
+			st.meas.Key = &sig
+		}
+		st.key = sig
 
 	case 2: // barline
 		style, err := w.u8()
@@ -1036,6 +1559,26 @@ func (w *walker) object(st *staffState) error {
 		}
 
 	case 4: // instrument patch
+		if w.version >= 205 {
+			// 2.5 writes a string in the middle of this one, so its length
+			// is not fixed: eight bytes, the words, one byte, and then the
+			// ladder of velocities a dynamic plays at.
+			//
+			// The words are what the mark draws. Danse Macabre's are "8 -
+			// - - - - - ", which is the ottava line over bar 76, and a
+			// plain "8" where the line is short. Read as a fixed eight
+			// bytes the walk came out short by the whole string and read
+			// the next object from the middle of this one — "unknown
+			// object type 56", which is no type at all but the 0x38 that
+			// begins "8".
+			if err := w.skip(8); err != nil {
+				return err
+			}
+			if _, err := w.cstring(); err != nil {
+				return err
+			}
+			return w.skip(1 + 8)
+		}
 		// nwc1.posa leaves the eight bytes undescribed; the General MIDI
 		// program is the second of them.
 		raw := make([]byte, 8)
@@ -1063,9 +1606,25 @@ func (w *walker) object(st *staffState) error {
 			return err
 		}
 		if top > 0 && bottom > 0 {
-			st.part.Time = model.TimeSignature{
+			sig := model.TimeSignature{
 				Beats: top, BeatValue: 1 << bottom, Symbol: model.TimeNumeric,
 			}
+			// The first one is the staff's meter; the rest are changes
+			// written where they happen.
+			//
+			// Every one of them used to be written onto the part, so the
+			// last meter in the piece became the meter of its first bar.
+			// Danse Macabre opens in two-four and turns into a waltz
+			// partway down, and it opened as a waltz: three-four over four
+			// bars holding a half note each, which is not a bar of music.
+			if !st.timeSet {
+				st.part.Time = sig
+				st.timeSet = true
+			} else if st.time != sig {
+				st.ensure()
+				st.meas.Time = &sig
+			}
+			st.time = sig
 		}
 
 	case 6: // tempo
@@ -1087,6 +1646,18 @@ func (w *walker) object(st *staffState) error {
 		if w.tempo == 0 && bpm >= 20 && bpm <= 400 {
 			w.tempo = bpm
 		}
+		if w.version >= 205 {
+			// 2.5 writes no words with the speed: the object ends at the
+			// two bytes after the number.
+			//
+			// Read as a 2.0 tempo, the string it does not have was taken
+			// out of whatever followed — a dynamic, a rest — and the walk
+			// went on from the middle of it. Both tempos in the first
+			// staff of Danse Macabre are nine bytes, the second of them
+			// "a Tempo" at bar 79, where the words are a text object of
+			// their own standing beside it.
+			return w.skip(2)
+		}
 		if err := w.skip(2); err != nil { // base, pad
 			return err
 		}
@@ -1106,10 +1677,15 @@ func (w *walker) object(st *staffState) error {
 		}
 		// nwc1.posa names the levels ppp through fff in order; the marking
 		// applies to whatever sounds next.
+		//
+		// It also ends a wedge: a crescendo is drawn from where it starts
+		// to the dynamic it arrives at, which is the only thing in the
+		// file that says how far it reaches.
+		st.closeHairpin()
 		st.pendingDynamic = nwc1Dynamics[level]
 
 	case 8, 9: // note, rest
-		nv, err := w.noteValue()
+		nv, err := w.noteValue(objType == 9)
 		if err != nil {
 			return err
 		}
@@ -1127,21 +1703,27 @@ func (w *walker) object(st *staffState) error {
 		if objType == 9 {
 			r := &model.Rest{Dur: nv.dur}
 			r.Tuplet = tupletMark(nv.triplet)
+			r.Beam = beamMark(nv.beam)
 			st.add(r)
 			return nil
 		}
 		n := &model.Note{
-			Pitch:      pitchFor(st.part, nv.step, nv.acc),
+			Pitch:      st.pitch(nv.step, nv.acc),
 			Dur:        nv.dur,
 			Accidental: nv.acc,
 		}
 		n.TieStart = nv.tie
 		n.Tuplet = tupletMark(nv.triplet)
+		n.Beam = beamMark(nv.beam)
 		// A slur belongs to its two ends. The file marks every note under
 		// it, so the ends are the note that is joined onward without being
 		// joined back, and the note that is joined back without going on.
-		n.SlurStart = nv.slurTo && !nv.slurFrom
-		n.SlurStop = nv.slurFrom && !nv.slurTo
+		if w.version > 0 && w.version < 175 {
+			n.SlurStart = nv.slurTo && !nv.slurFrom
+			n.SlurStop = nv.slurFrom && !nv.slurTo
+		} else {
+			st.slurRun(&n.Marks, nv.slurTo)
+		}
 		if st.pendingDynamic != model.DynamicNone {
 			n.Dynamic = st.pendingDynamic
 			st.pendingDynamic = model.DynamicNone
@@ -1206,7 +1788,7 @@ func (w *walker) object(st *staffState) error {
 			// it ran through them while the right hand was still in the
 			// bar they share — the staves of a NoteWorthy score keep the
 			// same barlines, and ours no longer did.
-			nv, cerr := w.noteValue()
+			nv, cerr := w.noteValue(false)
 			if cerr != nil {
 				return cerr
 			}
@@ -1227,18 +1809,23 @@ func (w *walker) object(st *staffState) error {
 				// one real notehead, so the melody is kept and the harmony
 				// above it is not — which the log says out loud.
 				n := &model.Note{
-					Pitch:      pitchFor(st.part, nv.step, nv.acc),
+					Pitch:      st.pitch(nv.step, nv.acc),
 					Dur:        nv.dur,
 					Accidental: nv.acc,
 				}
 				n.TieStart = nv.tie
 				n.Tuplet = tupletMark(nv.triplet)
+				n.Beam = beamMark(nv.beam)
 				st.add(n)
 				w.flatChords++
 				return nil
 			}
 			ch := &model.Chord{Dur: nv.dur}
 			ch.Tuplet = tupletMark(nv.triplet)
+			ch.Beam = beamMark(nv.beam)
+			if w.version >= 175 {
+				st.slurRun(&ch.Marks, nv.slurTo)
+			}
 			// The marks are written on the chord's own record, not on the
 			// noteheads that follow it, and belong to the chord as a whole:
 			// NoteWorthy prints one staccato dot under a chord, not one
@@ -1252,7 +1839,18 @@ func (w *walker) object(st *staffState) error {
 			st.openChord(ch, count)
 			return nil
 		}
-		if err := w.skip(8); err != nil { // the same shape a note carries
+		// The same block a note carries, read the same way — not skipped
+		// over as eight bytes.
+		//
+		// It is eight bytes until the accidental byte says it is nine, and
+		// a chord whose own block said so left the walk one byte short:
+		// the notehead count was read from the middle of the block, came
+		// back as ten, and ten noteheads were taken out of the music after
+		// it. In Danse Macabre that is bar 180 or so, where the walk
+		// stopped with "unrecognised duration byte 0x08" — a type byte
+		// read as a duration.
+		head, err := w.noteValue(false)
+		if err != nil {
 			return err
 		}
 		count, err := w.u8()
@@ -1263,11 +1861,22 @@ func (w *walker) object(st *staffState) error {
 			return err
 		}
 		ch := &model.Chord{}
+		// The chord's own record carries the beam, the triplet and the
+		// marks; its noteheads only carry pitches.
+		ch.Beam = beamMark(head.beam)
+		ch.Tuplet = tupletMark(head.triplet)
+		st.slurRun(&ch.Marks, head.slurTo)
+		if head.staccato {
+			ch.AddArticulation(model.Staccato)
+		}
+		if head.accent {
+			ch.AddArticulation(model.Accent)
+		}
 		for i := 0; i < int(count); i++ {
 			if err := w.skip(3); err != nil {
 				return err
 			}
-			nv, err := w.noteValue()
+			nv, err := w.noteValue(false)
 			if err != nil {
 				return err
 			}
@@ -1275,7 +1884,7 @@ func (w *walker) object(st *staffState) error {
 				ch.Dur = nv.dur
 			}
 			n := &model.Note{
-				Pitch:      pitchFor(st.part, nv.step, nv.acc),
+				Pitch:      st.pitch(nv.step, nv.acc),
 				Dur:        nv.dur,
 				Accidental: nv.acc,
 			}
@@ -1293,19 +1902,141 @@ func (w *walker) object(st *staffState) error {
 	case 13: // MIDI instruction
 		return w.skip(2 + 32)
 	case 14: // tempo variance
-		return w.skip(4)
+		// A fermata is one of these.
+		//
+		// NoteWorthy has no fermata of its own: the pause over the last
+		// chord of a phrase is a Tempo Variance whose style says Fermata,
+		// written as an object just before the note it sits over. Bar 30
+		// of Danse Macabre is a whole rest under one, and the rest came
+		// out bare.
+		// Where it sits and how it is placed come first; the style is the
+		// third byte of the four.
+		if err := w.skip(2); err != nil {
+			return err
+		}
+		style, err := w.u8()
+		if err != nil {
+			return err
+		}
+		if err := w.skip(1); err != nil {
+			return err
+		}
+		if style == nwcFermata {
+			st.pendingFermata = true
+		}
+		return nil
 	case 15: // dynamic variance
-		return w.skip(3)
+		// A crescendo or a diminuendo: the wedge under the staff that
+		// says the music grows or fades. It was stepped over, so no
+		// NoteWorthy score gscore opened has ever had one in it.
+		//
+		// Three bytes: where it sits, how it is placed, and which way it
+		// goes. Which way is the third, and the corpus says so without
+		// having to be told: a crescendo runs from a softer dynamic to a
+		// louder one, and of the sixty-two marked 0 that are followed by
+		// another dynamic, fifty-three get louder. Of the sixteen marked
+		// 1, every single one gets softer.
+		if err := w.skip(2); err != nil {
+			return err
+		}
+		style, err := w.u8()
+		if err != nil {
+			return err
+		}
+		kind, ok := nwc1Hairpins[style]
+		if !ok {
+			// Styles beyond the wedges — the ones NoteWorthy writes as
+			// words — have nothing to draw a wedge for.
+			st.closeHairpin()
+			return nil
+		}
+		st.openHairpin(kind)
+		return nil
 	case 16: // performance style
 		return w.skip(3)
 	case 17: // text
-		if err := w.skip(3); err != nil {
+		// The words written beside the music: "Mouvement modéré de
+		// Valse", "marcato", "una corda". They were read and thrown away,
+		// so every direction a composer wrote on the page was missing from
+		// it.
+		//
+		// The font the words are drawn in is the byte before them. The
+		// first eight slots hold type and the rest hold symbols, in which
+		// a staff author draws what NoteWorthy has no object for — an
+		// octave line is the word "8va" in type and then a row of 0xF2 in
+		// a music font, which is a dash. Printed as text that is a line of
+		// o-graves across the page, so the strokes are read as the bracket
+		// they are and nothing is printed for them.
+		if err := w.skip(2); err != nil {
 			return err
 		}
-		_, err := w.cstring()
-		return err
+		font, err := w.u8()
+		if err != nil {
+			return err
+		}
+		text, err := w.cstring()
+		if err != nil {
+			return err
+		}
+		// An octave bracket is the word "8va" in type and then runs of
+		// dashes in a music font, finishing with a hook that turns down
+		// towards the staff. The dashes themselves are strokes and are
+		// not printed as text — a line of o-graves across the page is
+		// what that gives. What they are read for is the hook: it is the
+		// only thing in the file that says how far the bracket reaches,
+		// and Danse Macabre's first one reaches bar 29.
+		if w.symbolFont(font) {
+			if dashes, ends := octaveDashes(text); dashes && ends {
+				st.closeOctave()
+			}
+			return nil
+		}
+		if !looksLikeText(text) {
+			return nil
+		}
+		if n, ok := octaveAmount(text); ok {
+			st.openOctave(text, n)
+			return nil
+		}
+		st.pendingText = append(st.pendingText, text)
+		return nil
 	case 18: // rest chord
-		return w.skip(8 + 2)
+		// A rest that NoteWorthy keeps as a chord, because the layer it
+		// is in has notes elsewhere in the bar. It holds time like any
+		// other rest, and stepped over its bar came out short: the left
+		// hand of Danse Macabre at bar 254 is one of these and five
+		// quavers, and without it the bar is an eighth light.
+		//
+		// 2.0 and later, where the block has been read and checked. In
+		// 1.75 the same change costs a bar in two files of the corpus, so
+		// what the record holds there is still to be found out.
+		if w.version < 200 {
+			return w.skip(8 + 2)
+		}
+		nv, err := w.noteValue(true)
+		if err != nil {
+			return err
+		}
+		r := &model.Rest{Dur: nv.dur}
+		r.Tuplet = tupletMark(nv.triplet)
+		st.add(r)
+		return w.skip(2)
+
+	case 20:
+		// A type 2.5 writes that the older versions do not, and that
+		// nothing in nwc1.posa describes. The second staff of Danse
+		// Macabre has one between two bars of silence, holding 0x03E8 —
+		// a round thousand — and whatever that is, nothing on the page
+		// depends on it. Four bytes after the header, which is what makes
+		// the rest of the staff read.
+		return w.skip(4)
+
+	case 22:
+		// Another of 2.5's own, two bytes after the header. It stands just
+		// before the words "Mouvement modéré de Valse" on the staff that
+		// is printed, and like the type 20 beside it nothing gscore draws
+		// needs what it holds.
+		return w.skip(2)
 
 	case 254, 255:
 		// A 1.70 score writes one of these here and there inside a staff.
@@ -1331,12 +2062,21 @@ func bits(b byte) int {
 	return n
 }
 
-func pitchFor(p *model.Part, step int, acc model.Accidental) model.Pitch {
-	pitch := model.PitchFromDiatonicIndex(step - clefOffset(p.Clef))
+// pitchFor turns a staff position into a pitch, against the clef and key in
+// force where it is written.
+//
+// Not against the staff's own: NoteWorthy stores where on the staff a note
+// sits, and what note that is depends on the sign at the head of the line.
+// Read against the clef the staff opened with, the left hand of Danse Macabre
+// came out an octave and a half below where it is written for the fifty bars
+// it spends up in the treble — and the page showed it there, piled under the
+// staff on ledger lines, with a treble clef in front of it saying otherwise.
+func pitchFor(clef model.Clef, key model.KeySignature, step int, acc model.Accidental) model.Pitch {
+	pitch := model.PitchFromDiatonicIndex(step - clefOffset(clef))
 	if acc != model.NoAccidental {
 		pitch.Alter = acc.Semitones()
 	} else {
-		pitch.Alter = p.Key.AlterFor(pitch.Step)
+		pitch.Alter = key.AlterFor(pitch.Step)
 	}
 	return pitch
 }
@@ -1471,6 +2211,13 @@ func (w *walker) lyrics2() error {
 // reach found nothing and the left hand of the piece was never read.
 const staffSearch = 1 << 20
 
+// looksLikeAnotherStaff says whether a staff header is still to come,
+// without moving the walk.
+func (w *walker) looksLikeAnotherStaff() bool {
+	probe := &walker{b: w.b, i: w.i, version: w.version}
+	return probe.findStaffHeader()
+}
+
 // atStaffHeader says whether the walk is standing on the start of a staff.
 //
 // Four printable strings in a row — the name, the group, the instrument and
@@ -1484,7 +2231,17 @@ func (w *walker) atStaffHeader() bool {
 		if err != nil {
 			return false
 		}
-		if n == 0 && (s == "" || !looksLikeText(s)) {
+		if n == 0 && (s == "" || !looksLikeText(s) || s[0] <= ' ') {
+			// A staff is named for somebody to read, so its name starts
+			// with something printable. Danse Macabre's object stream
+			// makes the four-strings-in-a-row shape by accident here and
+			// there, and every one of those accidents is called "\t": read
+			// as staves they added three to a six-staff score, one of them
+			// with three hundred and ninety-three bars of someone else's
+			// music in it.
+			//
+			// Printable rather than a letter, because a name that opens
+			// with a digit is ordinary — "1st violins".
 			return false
 		}
 		if len(s) > 48 || (s != "" && !looksLikeText(s)) {
@@ -1505,11 +2262,61 @@ func (w *walker) findStaffHeader() bool {
 	for at := w.i; at < limit; at++ {
 		probe := &walker{b: w.b, i: at}
 		if probe.atStaffHeader() {
-			w.i = at
+			w.i = nameStart(w.b, at)
 			return true
 		}
 	}
 	return false
+}
+
+// nameStart trims the odd bytes a search can pick up in front of a staff's
+// name.
+//
+// The search stops at the first place that makes the header shape, and a
+// stray printable byte or two before the name makes that shape just as well.
+// Danse Macabre's fifth staff was found two bytes early and came back called
+// "0øPiano RH1 Display" — the name right but everything measured from it two
+// bytes out, which lost the staff after it as well.
+//
+// A staff name is plain ASCII in every file in the corpus — "Piano RH1
+// Display", "1st violins" — so the walk steps forward to the first start
+// that gives one of those and is still a staff header. "0øPiano RH1 Display"
+// is not one; the name two bytes later is.
+//
+// Measured from the name, not trimmed afterwards: everything in the staff is
+// laid out relative to where its header begins, so two bytes of rubbish in
+// front of the name costs the whole staff and the one after it, not just the
+// look of a label.
+func nameStart(b []byte, at int) int {
+	for i := at; i < at+8 && i < len(b); i++ {
+		probe := &walker{b: b, i: i}
+		if !probe.atStaffHeader() {
+			break
+		}
+		name := &walker{b: b, i: i}
+		s, err := name.cstring()
+		if err != nil {
+			break
+		}
+		if plainASCII(s) {
+			return i
+		}
+	}
+	return at
+}
+
+// plainASCII says whether every character of a string is an ordinary
+// printable one.
+func plainASCII(s string) bool {
+	if s == "" {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		if s[i] < ' ' || s[i] > '~' {
+			return false
+		}
+	}
+	return true
 }
 
 // pastStaffHeader steps over a staff's four names, so that a search for the
@@ -1602,5 +2409,302 @@ func fitBarRests(score *model.Score) {
 			}
 			r.Dur = bar
 		}
+	}
+}
+
+// mergeLayers puts the staves that asked to share one staff onto one part.
+//
+// NoteWorthy writes a pianist's two hands as four staves when each hand has
+// two independent lines, and marks the first of each pair "layer with next
+// staff". The page shows two staves; the file holds four. Read one part per
+// staff, Danse Macabre came out as four grand staves of the same music
+// stacked up the page, where NoteWorthy prints one.
+//
+// A layer becomes a voice, which is what a voice is for: its own stems, its
+// own rests, the same bar. Everything a measure carries besides its notes —
+// the barline that closes it, a change of meter or key or clef — belongs to
+// the bar rather than to the line, so the first staff of the pair keeps its
+// own and the rest only add their voices.
+func mergeLayers(parts []*model.Part, shares []bool, groups []string) ([]*model.Part, []string) {
+	if len(shares) != len(parts) || len(groups) != len(parts) {
+		return parts, groups
+	}
+	out := make([]*model.Part, 0, len(parts))
+	kept := make([]string, 0, len(parts))
+	for i := 0; i < len(parts); i++ {
+		p, g := parts[i], groups[i]
+		for i+1 < len(parts) && shares[i] && parts[i+1].Hidden == p.Hidden {
+			layerOnto(p, parts[i+1])
+			i++
+			if g == "" {
+				g = groups[i]
+			}
+		}
+		out = append(out, p)
+		kept = append(kept, g)
+	}
+	return out, kept
+}
+
+// nwcDefaultGroup is the name NoteWorthy files carry when nobody has filed
+// the staff under anything. It is not an instrument group and nothing is
+// drawn round it.
+const nwcDefaultGroup = "Standard"
+
+// staffGroups turns the staves' group names into what is drawn down the left
+// of them.
+//
+// A staff with no name of its own belongs to the group above it, which is how
+// NoteWorthy writes a grand staff: "Piano" on the right hand and nothing on
+// the left, because the word labels the pair rather than the staff. Read as
+// one group per staff, Danse Macabre had no brace at all and its two staves
+// stood apart on the page as if they were two instruments.
+//
+// A brace for two staves and a bracket for more: two staves under one name
+// are one player's hands, and more than two are a section.
+func staffGroups(parts []*model.Part, groups []string) []model.StaffGroup {
+	if len(groups) != len(parts) {
+		return nil
+	}
+	var out []model.StaffGroup
+	name, first := "", -1
+	flush := func(last int) {
+		if first >= 0 && last > first && name != "" && name != nwcDefaultGroup {
+			g := model.StaffGroup{
+				First: first, Last: last, Name: name,
+				Symbol: model.GroupBracket,
+			}
+			if last-first == 1 {
+				g.Symbol, g.Barlines = model.GroupBrace, true
+			}
+			out = append(out, g)
+		}
+		name, first = "", -1
+	}
+	for i, p := range parts {
+		if p.Hidden {
+			// Not on the page, so nothing is drawn beside it, and it does
+			// not hold a group open across the staves that are.
+			flush(i - 1)
+			continue
+		}
+		if g := groups[i]; g != "" {
+			flush(i - 1)
+			name, first = g, i
+			continue
+		}
+		if first < 0 {
+			continue
+		}
+	}
+	flush(len(parts) - 1)
+	return out
+}
+
+// layerOnto adds every voice of one staff to the bars of another.
+//
+// A bar one layer writes exactly as another already has is not added twice.
+// The sustained note under a run is written in both layers of Danse
+// Macabre's right hand, and NoteWorthy prints it once: two layers in unison
+// are one line on the page. Added twice it came out as two half notes side
+// by side in every one of the first four bars, which is not what is written
+// and not what is played.
+func layerOnto(p, q *model.Part) {
+	for len(p.Measures) < len(q.Measures) {
+		p.Measures = append(p.Measures, &model.Measure{Voices: []*model.Voice{{}}})
+	}
+	for i, m := range q.Measures {
+		to := p.Measures[i]
+		// A change written at the head of the bar belongs to the bar, not
+		// to the line: whichever layer carries it, the merged staff needs
+		// it. The first layer's own wins where both have one.
+		if to.Clef == nil {
+			to.Clef = m.Clef
+		}
+		if to.Key == nil {
+			to.Key = m.Key
+		}
+		if to.Time == nil {
+			to.Time = m.Time
+		}
+		for _, v := range m.Voices {
+			if !hasVoice(to, v) {
+				to.Voices = append(to.Voices, v)
+			}
+		}
+		hideUnisons(to)
+		dropSilentVoices(to)
+		hideCoveredRests(to)
+	}
+}
+
+// hideCoveredRests takes the rests off the page where another line is already
+// playing through them.
+//
+// Two layers on one staff share its space, and NoteWorthy prints the notes
+// and leaves out the rest that sits under them: a layer that holds its place
+// for half a bar while the other plays does it with a rest nobody sees. Bar
+// 254 of Danse Macabre is one — a minim rest under two crotchets — and
+// printed it sat in the middle of the music where the page has nothing.
+//
+// Hidden rather than thrown away. The rest is what holds the rest of the
+// layer in time, and a line that loses it plays everything after it early.
+func hideCoveredRests(m *model.Measure) {
+	type span struct{ from, to model.Duration }
+	var plays []span
+	for _, v := range m.Voices {
+		at := model.Duration{Num: 0, Den: 1}
+		for _, e := range v.Elements {
+			d := e.Duration()
+			if _, ok := e.(*model.Rest); !ok {
+				plays = append(plays, span{at, at.Add(d)})
+			}
+			at = at.Add(d)
+		}
+	}
+	for _, v := range m.Voices {
+		at := model.Duration{Num: 0, Den: 1}
+		for _, e := range v.Elements {
+			d := e.Duration()
+			if r, ok := e.(*model.Rest); ok {
+				end := at.Add(d)
+				for _, s := range plays {
+					if s.from.Cmp(end) < 0 && at.Cmp(s.to) < 0 {
+						r.Hidden = true
+						break
+					}
+				}
+			}
+			at = at.Add(d)
+		}
+	}
+}
+
+// dropSilentVoices takes away the lines that only rest, in a bar where
+// another line plays.
+//
+// A layer that is silent for a bar is silent on the page too: NoteWorthy
+// prints the bar's notes and nothing else. Kept, the left hand of Danse
+// Macabre had a whole-bar rest sitting in the middle of its semiquavers from
+// bar five on — the other layer saying nothing, at length.
+//
+// Only where the bar has something else to show. A bar in which every line
+// rests keeps its rest, because a bar has to hold something.
+func dropSilentVoices(m *model.Measure) {
+	plays := false
+	for _, v := range m.Voices {
+		if voicePlays(v) {
+			plays = true
+			break
+		}
+	}
+	if !plays {
+		return
+	}
+	kept := m.Voices[:0]
+	for _, v := range m.Voices {
+		if voicePlays(v) {
+			kept = append(kept, v)
+		}
+	}
+	m.Voices = kept
+}
+
+// voicePlays says whether a line has anything in it but rests.
+func voicePlays(v *model.Voice) bool {
+	for _, e := range v.Elements {
+		switch e.(type) {
+		case *model.Rest:
+		default:
+			return true
+		}
+	}
+	return false
+}
+
+// hasVoice says whether a bar already holds this line of music.
+func hasVoice(m *model.Measure, v *model.Voice) bool {
+	want := voiceKey(v)
+	for _, got := range m.Voices {
+		if voiceKey(got) == want {
+			return true
+		}
+	}
+	return false
+}
+
+// voiceKey is what a voice puts on the page: the notes, their pitches and
+// how long they last, in order.
+func voiceKey(v *model.Voice) string {
+	var b strings.Builder
+	for _, e := range v.Elements {
+		b.WriteString(elementKey(e))
+	}
+	return b.String()
+}
+
+// elementKey is what one element puts on the page.
+func elementKey(e model.Element) string {
+	var b strings.Builder
+	{
+		switch x := e.(type) {
+		case *model.Note:
+			fmt.Fprintf(&b, "n%s%d%+d/%v;", x.Pitch.Step, x.Pitch.Octave, x.Pitch.Alter, x.Dur)
+		case *model.Rest:
+			fmt.Fprintf(&b, "r%v;", x.Dur)
+		case *model.Chord:
+			b.WriteString("c")
+			for _, n := range x.Notes {
+				fmt.Fprintf(&b, "%s%d%+d,", n.Pitch.Step, n.Pitch.Octave, n.Pitch.Alter)
+			}
+			fmt.Fprintf(&b, "/%v;", x.Dur)
+		default:
+			fmt.Fprintf(&b, "%T;", e)
+		}
+	}
+	return b.String()
+}
+
+// hideUnisons takes the second copy of a note off the page where two layers
+// play the same thing at the same moment.
+//
+// Layered staves share the staff, so a note both of them hold is one
+// notehead: NoteWorthy prints it once. Bar 149 of Danse Macabre is a layer
+// whose first chord is its own and whose other four are the layer below it
+// note for note, and printed as written that was every chord drawn twice
+// with two stems through it.
+//
+// A hidden rest takes the copy's place, because the time still has to be
+// held: the line it belongs to goes on after it.
+func hideUnisons(m *model.Measure) {
+	if len(m.Voices) < 2 {
+		return
+	}
+	// What each voice holds, by the moment it holds it.
+	type at struct {
+		from model.Duration
+		key  string
+	}
+	seen := map[string]bool{}
+	mark := func(v *model.Voice, record bool) {
+		now := model.Duration{Num: 0, Den: 1}
+		for i, e := range v.Elements {
+			d := e.Duration()
+			if _, isRest := e.(*model.Rest); !isRest {
+				k := at{now, elementKey(e)}
+				id := fmt.Sprintf("%v|%s", k.from, k.key)
+				if record {
+					seen[id] = true
+				} else if seen[id] {
+					v.Elements[i] = &model.Rest{Dur: d, Hidden: true}
+				}
+			}
+			now = now.Add(d)
+		}
+	}
+	mark(m.Voices[0], true)
+	for _, v := range m.Voices[1:] {
+		mark(v, false)
+		mark(v, true)
 	}
 }

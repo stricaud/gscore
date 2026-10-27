@@ -1462,7 +1462,7 @@ func TestAnAccidentalLastsToTheBarline(t *testing.T) {
 // page as though they were two instruments.
 func TestAGrandStaffIsBracedAndNamed(t *testing.T) {
 	parts := []*model.Part{{Name: "RH"}, {Name: "LH"}}
-	got := staffGroups(parts, []string{"Piano", ""})
+	got := staffGroups(parts, []string{"Piano", ""}, nil)
 	if len(got) != 1 {
 		t.Fatalf("%d groups, want 1: %v", len(got), got)
 	}
@@ -1478,21 +1478,21 @@ func TestAGrandStaffIsBracedAndNamed(t *testing.T) {
 	}
 
 	// Three or more under one name are a section, so a bracket.
-	got = staffGroups([]*model.Part{{}, {}, {}}, []string{"Strings", "", ""})
+	got = staffGroups([]*model.Part{{}, {}, {}}, []string{"Strings", "", ""}, nil)
 	if len(got) != 1 || got[0].Symbol != model.GroupBracket {
 		t.Errorf("three staves are drawn with %v, want a bracket", got)
 	}
 
 	// The name every NoteWorthy file carries when nobody has filed the
 	// staff under anything is not a group, and nothing is drawn round it.
-	if got := staffGroups([]*model.Part{{}, {}}, []string{"Standard", ""}); len(got) != 0 {
+	if got := staffGroups([]*model.Part{{}, {}}, []string{"Standard", ""}, nil); len(got) != 0 {
 		t.Errorf("the default group was drawn: %v", got)
 	}
 
 	// A staff that is not on the page does not hold a group open across
 	// the ones that are.
 	got = staffGroups([]*model.Part{{Name: "a"}, {Hidden: true}, {Name: "b"}},
-		[]string{"Piano", "", ""})
+		[]string{"Piano", "", ""}, nil)
 	if len(got) != 0 {
 		t.Errorf("a group reached across a hidden staff: %v", got)
 	}
@@ -2076,5 +2076,277 @@ func TestASpannerTheFileNeverEndsIsEndedAnyway(t *testing.T) {
 	closeDanglingSpans(one)
 	if h := only.Hairpin; h == nil || !h.Start || !h.Stop {
 		t.Errorf("a wedge on the last note came back as %+v, want both ends on it", h)
+	}
+}
+
+// One byte stands between a tempo's speed and the words written with it,
+// not two.
+//
+// The byte is the note the speed is counted in. Taking two ate the first
+// letter of the words with it — Beethoven's "Adagio sostenuto" came back as
+// "dagio sostenuto" — and where a tempo has no words the record is then read
+// a byte long, which is enough to lose the rest of the staff. Op. 27 has
+// such a tempo at bar 68 and the walk never recovered: the staff after it
+// was found by searching, nine bytes into its own name.
+func TestOneByteStandsBetweenTheSpeedAndTheWords(t *testing.T) {
+	words := []byte{6, 0, 0, 0xF3, 0x08, 0x38, 0x00, 0x02}
+	words = append(words, []byte("Adagio sostenuto\x00")...)
+	// A barline after it, which is what must be found if the size is right.
+	withWords := append(words, 2, 0, 0, 0, 1)
+
+	silent := []byte{6, 0, 0, 0xFA, 0x00, 0x2D, 0x00, 0x02, 0x00}
+	silent = append(silent, 2, 0, 0, 0, 1)
+
+	for _, c := range []struct {
+		name string
+		b    []byte
+	}{{"with words", withWords}, {"with none", silent}} {
+		w := &walker{b: c.b, version: 175}
+		st := &staffState{part: &model.Part{Clef: model.Treble}}
+		for i := 0; i < 2; i++ {
+			if err := w.object(st); err != nil {
+				t.Fatalf("%s, object %d: %v", c.name, i+1, err)
+			}
+		}
+		if w.i != len(c.b) {
+			t.Errorf("%s: the tempo and the barline came to %d bytes, want %d",
+				c.name, w.i, len(c.b))
+		}
+	}
+
+	// And the words come out whole.
+	w := &walker{b: withWords, version: 175}
+	st := &staffState{part: &model.Part{Clef: model.Treble}}
+	if err := w.object(st); err != nil {
+		t.Fatalf("%v", err)
+	}
+	if len(st.pendingText) != 1 || st.pendingText[0] != "Adagio sostenuto" {
+		t.Errorf("the tempo is marked %q", st.pendingText)
+	}
+	if w.tempo != 56 {
+		t.Errorf("the speed came out %d, want the 56 it is marked", w.tempo)
+	}
+}
+
+// A staff header is recognised by as many names as its version writes.
+//
+// Four was right for 2.0 and wrong for 1.75, which writes two: the staff's
+// own name and the group it is filed under, and then its settings. Asked for
+// four, a real 1.75 header fails as soon as those settings happen not to
+// read as text — Op. 27's second staff is "RH2" and "Standard" followed by a
+// 0x04, and the walk went straight past it and spent ten thousand bytes
+// looking for a staff it had already stepped over.
+func TestAHeaderIsAsManyNamesAsTheVersionWrites(t *testing.T) {
+	// A 1.75 header: two names, then settings that are not text.
+	var b []byte
+	b = append(b, []byte("RH2\x00Standard\x00")...)
+	b = append(b, 0x04, 0x00, 0x00, 0x01)
+	b = append(b, make([]byte, 160)...)
+
+	if !(&walker{b: b, version: 175}).atStaffHeader() {
+		t.Error("a 1.75 staff header was not recognised")
+	}
+	// The same bytes are not a 2.0 header, which has four names.
+	if (&walker{b: b, version: 200}).atStaffHeader() {
+		t.Error("two names were taken for a 2.0 header, which writes four")
+	}
+}
+
+// A triplet is drawn as a group, so the reader has to say where the group
+// begins and where it ends.
+//
+// The two bits count the note's place the way the beam bits do — nothing,
+// first, middle, last — and only their being nonzero was read. The engraver
+// opens a tuplet at a note marked Start and closes it at one marked Stop, so
+// with neither ever set the run opened at the first triplet note of the piece
+// and waited for an end that never came: not one "3" was written. Moonlight
+// Sonata is triplets from end to end and came out as plain eighths, beamed in
+// twos because nothing said they belonged in threes.
+func TestATripletSaysWhereItBeginsAndEnds(t *testing.T) {
+	// An eighth note. Byte five is the stem, whose bit 0x20 every note in
+	// the corpus carries, bits 0 and 1 the beam and bits 2 and 3 the place
+	// in the triplet.
+	note := func(stem, pos byte) []byte {
+		return []byte{8, 0, 0, 3, 0, stem, 0, 0, 0, pos, 5, 0, 0}
+	}
+	b := append(note(0x20|1<<2|1, 0), note(0x20|2<<2|2, 1)...)
+	b = append(b, note(0x20|3<<2|3, 2)...)
+	b = append(b, 2, 0, 0, 0, 1) // the barline that closes them
+
+	st := &staffState{part: &model.Part{Clef: model.Treble}}
+	w := &walker{b: b, version: 170}
+	for i := 0; i < 4; i++ {
+		if err := w.object(st); err != nil {
+			t.Fatalf("object %d: %v", i+1, err)
+		}
+	}
+	els := st.part.Measures[0].Voices[0].Elements
+	if len(els) != 3 {
+		t.Fatalf("%d notes in the bar, want three", len(els))
+	}
+	want := []struct{ start, stop bool }{{true, false}, {false, false}, {false, true}}
+	for i, el := range els {
+		n, ok := el.(*model.Note)
+		if !ok {
+			t.Fatalf("element %d is a %T", i, el)
+		}
+		if n.Tuplet == nil {
+			t.Fatalf("note %d is in no tuplet", i)
+		}
+		if n.Tuplet.Start != want[i].start || n.Tuplet.Stop != want[i].stop {
+			t.Errorf("note %d: start %v stop %v, want start %v stop %v",
+				i, n.Tuplet.Start, n.Tuplet.Stop, want[i].start, want[i].stop)
+		}
+		// Three in the time of two, so each sounds two thirds as long.
+		if got, want := n.Dur, (model.Duration{Num: 1, Den: 12}); got.Cmp(want) != 0 {
+			t.Errorf("note %d lasts %v, want %v", i, got, want)
+		}
+	}
+}
+
+// Where the "layer with next staff" flag sits moves with the version.
+//
+// 2.0 inserts eight bytes of dynamic velocities ahead of the staff's
+// vertical sizes, so the flag that is twenty bytes into a 1.75 staff's
+// settings is twenty-eight bytes into a 2.0 one. Read at 2.0's offset, a
+// 1.75 staff never asks to be layered: Moonlight Sonata is four staves in
+// the file and two on the page, and gscore drew four.
+func TestTheLayerFlagMovesWithTheVersion(t *testing.T) {
+	// Copied from the two right-hand staves of Op. 27 no. 2. The first
+	// asks to be layered with the second; the second does not.
+	settings := func(lines, layer byte) []byte {
+		s := []byte{
+			0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, // the staff's own settings
+			1, 0, // the instrument it plays
+			1, 0, // half of a grand staff
+			0xEE, 0xFF, 0x0F, 0, // how far it reaches up and down
+			lines, layer,
+		}
+		return append(s, make([]byte, 64)...)
+	}
+	header := func(name string, lines, layer byte) []byte {
+		b := append([]byte(name), 0)
+		b = append(b, []byte("Standard")...)
+		b = append(b, 0)
+		return append(b, settings(lines, layer)...)
+	}
+
+	for _, tc := range []struct {
+		name  string
+		lines byte
+		layer byte
+		want  bool
+	}{
+		{"Right Hand", 5, 1, true},
+		{"RH2", 0, 0, false},
+	} {
+		w := &walker{b: header(tc.name, tc.lines, tc.layer), version: 175}
+		if _, err := w.staff(175); err != nil {
+			t.Fatalf("%s: %v", tc.name, err)
+		}
+		if w.layerWithNext != tc.want {
+			t.Errorf("%s layers with the next staff: %v, want %v",
+				tc.name, w.layerWithNext, tc.want)
+		}
+	}
+
+	if got, want := dialectOf(205).layerByte, 28; got != want {
+		t.Errorf("2.5 reads the flag at %d, want %d", got, want)
+	}
+}
+
+// A grand staff is braced even when the file names no group for it.
+//
+// Most piano files put "Piano" on the right hand and nothing on the left,
+// and the group name is enough. Moonlight Sonata files all four of its
+// staves under NoteWorthy's default group, which names nothing — so the two
+// that are left after the layers are merged stood apart on the page with no
+// brace and no barline between them, as though a pianist's hands were two
+// instruments. What the file does say is in each staff's own settings: the
+// right hand calls itself the upper half of a grand staff and the left hand
+// the lower.
+func TestAGrandStaffIsBracedWhenNoGroupNamesIt(t *testing.T) {
+	rh, lh := &model.Part{Name: "Right Hand"}, &model.Part{Name: "Left Hand"}
+	braces := map[*model.Part]int{rh: braceUpper, lh: braceLower}
+	got := staffGroups([]*model.Part{rh, lh},
+		[]string{nwcDefaultGroup, nwcDefaultGroup}, braces)
+	if len(got) != 1 {
+		t.Fatalf("%d groups, want the one brace: %v", len(got), got)
+	}
+	if got[0].Symbol != model.GroupBrace || !got[0].Barlines {
+		t.Errorf("the pair is drawn with %v, want a brace with its barlines joined", got[0].Symbol)
+	}
+	if got[0].First != 0 || got[0].Last != 1 {
+		t.Errorf("the group runs %d..%d, want 0..1", got[0].First, got[0].Last)
+	}
+
+	// A name beats the settings: the group is drawn once, with the word.
+	got = staffGroups([]*model.Part{rh, lh}, []string{"Piano", ""}, braces)
+	if len(got) != 1 || got[0].Name != "Piano" {
+		t.Errorf("a named grand staff came out as %v, want one group called Piano", got)
+	}
+
+	// Anything the settings do not say is a grand staff is left alone. The
+	// Appassionata and a Mozart score both write 3 there.
+	got = staffGroups([]*model.Part{rh, lh}, []string{nwcDefaultGroup, nwcDefaultGroup},
+		map[*model.Part]int{rh: 3, lh: 3})
+	if len(got) != 0 {
+		t.Errorf("staves that claim no grand staff were braced: %v", got)
+	}
+}
+
+// Not every file closes its font table with the 0xFF marker.
+//
+// Refusing one that does not threw the whole score away — "the twelve fonts
+// are not where any version puts them" — over a byte that changes nothing
+// after it. Beethoven's Op. 111 is 1.75, writes its twelve typefaces exactly
+// as Op. 27 does, and has a zero there.
+func TestTheFontTableNeedNotEndInTheMarker(t *testing.T) {
+	// Twelve fonts, then the zero Op. 111 writes, the padding behind it,
+	// and a staff count of eight.
+	b := append(fontBlock("Times New Roman", 12), 0x00, 0x00, 0x01, 0x00, 0x08, 0x00)
+	w := &walker{b: b, version: 175}
+	if err := w.findFonts(); err != nil {
+		t.Fatalf("%v", err)
+	}
+	if got, want := w.i, len(fontBlock("Times New Roman", 12)); got != want {
+		t.Errorf("the walk stopped at %d, want %d — the byte after the last font", got, want)
+	}
+}
+
+// A staff that is only played is not drawn.
+//
+// NoteWorthy writes an instrument twice where the sound wanted and the
+// notation wanted differ — a staff to be played and a staff to be read — and
+// prints only the second. 2.5 names the two layers in the staff header; 1.75
+// does not, and the Op. 111 sonata calls its playing staves "RH
+// Interpretation" and "LH Interpretation", which says it to a reader and
+// nothing to a program. The second byte of the settings says it: one piano
+// came out as six staves up the page, four of them the same music again.
+func TestAStaffThatIsOnlyPlayedIsNotDrawn(t *testing.T) {
+	read, play := &model.Part{Name: "Right Hand"}, &model.Part{Name: "RH Interpretation"}
+	hidePlayOnly([]*model.Part{read, play}, map[*model.Part]bool{read: true})
+	if read.Hidden {
+		t.Errorf("the printed staff was taken off the page")
+	}
+	if !play.Hidden {
+		t.Errorf("the staff that is only played was drawn")
+	}
+
+	// Most files leave the byte alone on every staff, and a file that has
+	// never said which staves to print is not one with nothing on its page.
+	a, b := &model.Part{Name: "Right Hand"}, &model.Part{Name: "Left Hand"}
+	hidePlayOnly([]*model.Part{a, b}, map[*model.Part]bool{})
+	if a.Hidden || b.Hidden {
+		t.Errorf("a file that claims nothing had its staves hidden")
+	}
+
+	// 1.70 writes something in that byte too and what it means is not
+	// settled, so the flag is not read there at all.
+	if dialectOf(170).printedFlag {
+		t.Errorf("1.70 is trusted to say which staves are printed")
+	}
+	if !dialectOf(175).printedFlag {
+		t.Errorf("1.75 is not trusted to say which staves are printed")
 	}
 }

@@ -46,6 +46,12 @@ type walker struct {
 	// reader could use, and which therefore came to the single note their
 	// record carries.
 	flatChords int
+	// brace is the staff just read saying it is the upper or the lower half
+	// of a grand staff. See dialect.braceByte.
+	brace int
+	// printed is the staff just read saying it is one of the staves on the
+	// page, rather than one that is only played.
+	printed bool
 	// layerWithNext is the staff just read asking to be printed on the
 	// same staff as the one after it. It lives here rather than on the
 	// part because it is a thing about the file, not about the music: once
@@ -70,6 +76,9 @@ type walker struct {
 func (w *walker) symbolFont(slot byte) bool {
 	return slot >= nwcMusicFont
 }
+
+// dia is the layout this file's version is written in.
+func (w *walker) dia() dialect { return dialectOf(w.version) }
 
 func (w *walker) remaining() int { return len(w.b) - w.i }
 
@@ -219,7 +228,7 @@ type noteValue struct {
 	// chordNote says this note is one of the noteheads of the chord record
 	// before it, rather than a note of its own in the bar.
 	chordNote bool
-	triplet   bool
+	triplet   int
 	step      int
 	acc       model.Accidental
 	// slurFrom and slurTo say this note is joined by a slur to the one
@@ -270,7 +279,7 @@ func (w *walker) noteValue(rest bool) (noteValue, error) {
 	// never ending, drawn across the page to the margin of every system
 	// after them.
 	nv.slurTo = raw[5]&0x01 != 0
-	if w.version > 0 && w.version < 175 {
+	if w.dia().slurHasBothEnds {
 		nv.slurFrom = raw[5]&0x02 != 0
 		// And 0x20 of the same byte is a grace note, which takes no time
 		// in the bar it is written in.
@@ -302,7 +311,7 @@ func (w *walker) noteValue(rest bool) (noteValue, error) {
 	// writes 0x11 for a half note, and read whole that is no duration at
 	// all: the walk gave up on it two thirds of the way down the first
 	// staff.
-	if w.version >= 200 {
+	if w.dia().durationHasFlags {
 		durByte &= 0x0F
 	}
 	d, ok := nwc1Durations[durByte]
@@ -343,40 +352,32 @@ func (w *walker) noteValue(rest bool) (noteValue, error) {
 	// the theme comes back. Nothing else in the piece is in a triplet and
 	// nothing else in it carries the bits.
 	nv.beam = stem & 3
-	if (stem>>2)&3 != 0 {
+	// The two bits say which of the three it is as well as that it is one,
+	// and both halves are needed: the figure is written over the group, so
+	// a group with no first and no last note is never written at all.
+	nv.triplet = int(stem>>2) & 3
+	if nv.triplet != tripletNone {
 		nv.dur = nv.dur.Scale(2, 3)
-		nv.triplet = true
 	}
 
-	// The position is signed and counted from the middle line, as in NWCTXT.
+	// The position is signed and counted from the middle line, as in
+	// NWCTXT — but which way it counts is the least consistent thing in
+	// the format. 1.70 counts downwards, 1.75 and 2.0 upwards, and 2.5
+	// downwards again.
+	//
+	// Every one of those was measured rather than assumed. Beethoven's
+	// Albumblatt opens E, D sharp, E, D sharp, E, B, D natural, C and its
+	// eight bytes are -3, -2, -3, -2, -3, 0, -2, -1: position 0 lands on
+	// the middle line, which is what says the 1.70 reading is right rather
+	// than merely fitted. The subject of Die Kunst der Fuge is in the
+	// corpus in a 2.0 file and comes out as Bach wrote it — up a fifth,
+	// down a third, down a third, down a step and back — which counted the
+	// other way is that shape upside down. And the opening of Danse
+	// Macabre is a half note under the treble staff with a right hand
+	// alternating A4 and D5 above it; counted upwards those come out G5
+	// and C5 and G4, the mirror of what NoteWorthy prints.
 	nv.step = int(int8(position)) + 4
-	if w.version >= 205 {
-		// 2.5 counts downwards, as 1.70 does and as 1.75 and 2.0 do not.
-		//
-		// Measured against NoteWorthy's own page. The opening of Danse
-		// Macabre is a half note under the treble staff, a right hand
-		// alternating A4 and D5 above it, and a left hand of F sharp 4 and
-		// B4 under a treble clef. Counted upwards those five notes come
-		// out G5, C5 and G4, and E5 and B4 — every one of them the mirror
-		// of what is printed, reflected in the middle line.
-		//
-		// 1.75 and 2.0 are left alone because they are right: the subject
-		// of Die Kunst der Fuge is in the corpus in a 2.0 file, and it
-		// comes out as Bach wrote it — up a fifth, down a third, down a
-		// third, down a step and back. Counted the other way it is that
-		// shape upside down.
-		nv.step = -int(int8(position)) + 4
-	} else if w.version > 0 && w.version < 175 {
-		// 1.70 counts the other way: downwards from the middle line where
-		// 1.75 counts upwards. Everything else about the byte is the same,
-		// so the reading is the same with the sign turned round.
-		//
-		// Checked against the piece itself. Beethoven's Albumblatt opens
-		// E, D sharp, E, D sharp, E, B, D natural, C — in the fifth octave
-		// bar the B — and the eight bytes are -3, -2, -3, -2, -3, 0, -2,
-		// -1. Position 0 lands on the middle line of the staff, which is
-		// what says the reading is right rather than merely fitted: B
-		// above middle C in the treble, D below it in the bass.
+	if w.dia().positionsCountDown {
 		nv.step = -int(int8(position)) + 4
 	}
 	nv.acc = nwc1Accidentals[accidental&0x07]
@@ -462,16 +463,16 @@ func parseNWC1(raw []byte, version int) (*model.Score, error) {
 		return nil, err
 	}
 
-	marker, err := w.u8()
-	if err != nil {
-		return nil, err
-	}
-	if marker != 0xFF {
-		return nil, fmt.Errorf(
-			"nwc: expected the score marker 0xFF but found 0x%02X; the header "+
-				"walk has gone out of step", marker)
-	}
-	if err := w.skip(3); err != nil { // 2 pad, layering
+	// The byte that closes the font table, and the padding behind it.
+	//
+	// Most files write 0xFF there and refusing anything else used to be the
+	// check that the header walk was still in step. It is not one: the
+	// Op. 111 sonata is 1.75, writes twelve fonts exactly as Op. 27 does
+	// and puts a zero in that slot, and the whole file — eight staves of
+	// it — was thrown away over the byte. What follows is the same either
+	// way, and the staff count below is the real check, since a count
+	// outside one to sixty-four says the walk is lost.
+	if err := w.skip(1 + 3); err != nil { // marker, 2 pad, layering
 		return nil, err
 	}
 	// A second marker, in the versions that write one.
@@ -522,6 +523,8 @@ func parseNWC1(raw []byte, version int) (*model.Score, error) {
 	// same staff as the one after it, and which group it is filed under.
 	var shares []bool
 	var groups []string
+	braces := map[*model.Part]int{}
+	printed := map[*model.Part]bool{}
 
 	// The count is a floor, not a ceiling.
 	//
@@ -614,6 +617,15 @@ func parseNWC1(raw []byte, version int) (*model.Score, error) {
 					score.Parts = append(score.Parts, part)
 					shares = append(shares, false)
 					groups = append(groups, w.group)
+					// What the header said about the staff still holds: it
+					// is read before the music, and it is the music that
+					// went wrong. Left out here, Op. 111's "Lower Right
+					// Hand" — which breaks halfway down — lost its claim to
+					// be a printed staff and was taken off the page.
+					braces[part] = w.brace
+					if w.printed {
+						printed[part] = true
+					}
 				}
 				continue
 			}
@@ -692,7 +704,14 @@ func parseNWC1(raw []byte, version int) (*model.Score, error) {
 		score.Parts = append(score.Parts, part)
 		shares = append(shares, w.layerWithNext)
 		groups = append(groups, w.group)
+		// Held against the part rather than its index, because merging the
+		// layers below drops staves and moves the rest up.
+		braces[part] = w.brace
+		if w.printed {
+			printed[part] = true
+		}
 	}
+	hidePlayOnly(score.Parts, printed)
 	score.Parts, groups = mergeLayers(score.Parts, shares, groups)
 	// Again, now the layers are one staff. A spanner is held open per line
 	// while drawing, and merging moves lines about: one closed on its own
@@ -700,7 +719,7 @@ func parseNWC1(raw []byte, version int) (*model.Score, error) {
 	for _, p := range score.Parts {
 		closeDanglingSpans(p)
 	}
-	score.Groups = staffGroups(score.Parts, groups)
+	score.Groups = staffGroups(score.Parts, groups, braces)
 	// Whatever the file did not say about what plays each staff, its own
 	// names usually do.
 	nameInstruments(score)
@@ -796,48 +815,34 @@ func (e *PartialError) Details() []string {
 }
 
 func (w *walker) staff(version int) (*model.Part, error) {
-	name, err := w.cstring()
-	if err != nil {
-		return nil, err
-	}
-	// Which of 2.5's two layers the staff belongs to, for the versions
-	// that have them.
-	layer := ""
+	d := dialectOf(version)
 
-	// The group the staff is filed under — "Piano", "Strings", "Voice".
-	// NoteWorthy prints it down the left of the staves that share it, with
-	// a brace or a bracket round them.
-	w.group, err = w.cstring()
-	if err != nil {
-		return nil, err
-	}
-	if version >= 200 {
-		// 2.0 names the instrument and the sound it plays with, where 1.75
-		// had only the staff's own name and its group.
-		for i := 0; i < 2; i++ {
-			if _, err := w.cstring(); err != nil {
-				return nil, err
-			}
-		}
-	}
-	if version >= 205 {
-		// 2.5 writes one more: the layer the staff belongs to, "Hidden" or
-		// "Display". It is how one instrument is written twice — a staff
-		// that sounds and a staff that is printed — and the names in this
-		// file say so: "Piano RH1 Sounding" is Hidden and "Piano LH2" is
-		// Display.
-		//
-		// Counted as four strings, the walk ended a string early and read
-		// the layer's name as the staff's: a score of staves called
-		// "Hidden" with no music in them.
-		//
-		// 205 and not 250: a version is its major number in hundreds plus
-		// its minor, so 2.5 counts as two hundred and five.
+	// The names a staff header opens with, which is where the versions
+	// differ most: the staff's own and the group it is filed under in
+	// 1.75; the instrument and the sound it plays with as well from 2.0;
+	// and from 2.5 the layer it belongs to, "Hidden" or "Display".
+	//
+	// Counted one short, the walk ended a string early and read the last
+	// of them as the staff's own: a score of staves called "Hidden" with
+	// no music in them.
+	names := make([]string, d.headerNames)
+	for i := range names {
 		s, err := w.cstring()
 		if err != nil {
 			return nil, err
 		}
-		layer = s
+		names[i] = s
+	}
+	name := names[0]
+	// The group NoteWorthy prints down the left of the staves that share
+	// it, with a brace or a bracket round them.
+	w.group = names[1]
+	layer := ""
+	if d.headerNames >= 5 {
+		// How one instrument is written twice — a staff that sounds and a
+		// staff that is printed. The names in Danse Macabre say so: "Piano
+		// RH1 Sounding" is Hidden and "Piano LH2" is Display.
+		layer = names[4]
 	}
 
 	// Where the staff's settings begin, which is what the one flag read out
@@ -846,7 +851,7 @@ func (w *walker) staff(version int) (*model.Part, error) {
 	if err := w.skip(15 + 2 + 2); err != nil { // settings, upper, lower
 		return nil, err
 	}
-	if version >= 175 {
+	if d.staffLinesByte {
 		if err := w.skip(1); err != nil { // staff lines
 			return nil, err
 		}
@@ -854,13 +859,11 @@ func (w *walker) staff(version int) (*model.Part, error) {
 	if err := w.skip(4 + 1 + 1 + 1 + 4); err != nil {
 		return nil, err
 	}
-	if version >= 200 {
-		// Ten more bytes of staff settings than 1.75 keeps. 2.0 gave the
-		// staff a few more things to remember about itself — what it plays
-		// through, how it is laid out — and they sit here.
-		if err := w.skip(10); err != nil {
-			return nil, err
-		}
+	// More staff settings than 1.75 keeps. 2.0 gave the staff a few extra
+	// things to remember about itself — what it plays through, how it is
+	// laid out — and they sit here.
+	if err := w.skip(d.extraSettings); err != nil {
+		return nil, err
 	}
 
 	// "Layer with next staff": the two staves are printed as one.
@@ -871,14 +874,45 @@ func (w *walker) staff(version int) (*model.Part, error) {
 	// the file and two on the page. Without it the score came out as four
 	// grand staves of the same music stacked up the page.
 	//
-	// Read at a measured offset rather than a derived one. What lies
-	// between the names and here is not all understood: the byte before it
-	// is the number of lines the staff is drawn with, five on every staff
-	// of every file in the corpus, and the flag is the byte after that.
-	// 2.0 and later only, because 1.7x puts something else there.
+	// Read at a measured offset rather than a derived one, and the offset
+	// moves with the version: see dialect.layerByte. Moonlight Sonata is
+	// 1.75 and four staves in the file, "Right Hand" layered with "RH2"
+	// and "Left Hand" with "LH2"; read at 2.0's offset they would all be
+	// unlayered, which is the four staves gscore drew where NoteWorthy
+	// draws a pianist's two.
 	w.layerWithNext = false
-	if version >= 200 && settings+28 < len(w.b) {
-		w.layerWithNext = w.b[settings+28] != 0
+	if d.layerByte > 0 && settings+d.layerByte < len(w.b) {
+		w.layerWithNext = w.b[settings+d.layerByte] != 0
+	}
+
+	// Whether the staff is printed at all.
+	//
+	// NoteWorthy writes an instrument twice over where the sound wanted and
+	// the notation wanted are not the same thing: a staff to be played and
+	// a staff to be read, with only the second on the page. 2.5 names the
+	// two layers "Hidden" and "Display" in the staff header and that is how
+	// Danse Macabre was sorted out, but no earlier version writes the
+	// names — the Op. 111 sonata is 1.75 and calls its four playing staves
+	// "RH Interpretation", "LH Interpretation" and so on, which says it to
+	// a reader and nothing to a program.
+	//
+	// The second byte of the settings says it, and says the same thing in
+	// every version: 1 on the staves Danse Macabre calls Display and 0 on
+	// the ones it calls Sounding, 1 on Op. 111's four hands and 0 on its
+	// four interpretations, 1 on the two staves of the Op. 27 Presto that
+	// are not in the group called "Hidden".
+	//
+	// Only where some staff claims it, though. Most files leave it zero
+	// throughout — everything in them is printed — and a file that never
+	// says which staves are printed is not saying that none of them are.
+	w.printed = d.printedFlag && settings+1 < len(w.b) && w.b[settings+1] == 1
+
+	// And whether the staff is half of a grand staff, which is the one
+	// thing that says to brace it when the file files every staff under
+	// NoteWorthy's default group and so names no group at all.
+	w.brace = braceNone
+	if d.braceByte > 0 && settings+d.braceByte < len(w.b) {
+		w.brace = int(w.b[settings+d.braceByte])
 	}
 
 	lyricLines, err := w.u16()
@@ -894,14 +928,14 @@ func (w *walker) staff(version int) (*model.Part, error) {
 	// for it and then found a count of zero in the two bytes after. The
 	// staff came out empty, and the one after it began in the middle of
 	// this one's music.
-	if lyricLines > 0 || version < 200 {
+	if lyricLines > 0 || d.lyricOptionsAlways {
 		if _, err := w.u16(); err != nil { // lyric options
 			return nil, err
 		}
 	}
 
 	if lyricLines > 0 {
-		if version >= 200 {
+		if d.pagedLyrics {
 			if err := w.lyrics2(); err != nil {
 				return nil, err
 			}
@@ -935,7 +969,12 @@ func (w *walker) staff(version int) (*model.Part, error) {
 		// Hidden in gscore takes a staff off the page and out of what is
 		// played, and the printed staves carry the same notes, so the
 		// piece still sounds.
-		Hidden: layer == "Hidden",
+		// A staff filed under a group called "Hidden" says the same thing
+		// in words, which is how the Op. 27 Presto says it: "_Treble Clef"
+		// and "_Bass Clef", in the group "Hidden", under the two staves
+		// that are printed. 1.70 has no flag this reader trusts, so the
+		// name is all there is.
+		Hidden: layer == "Hidden" || w.group == "Hidden",
 		Clef:   model.Treble,
 		Key:    model.KeySignature{Fifths: 0, Mode: model.Major},
 		Time:   model.TimeSignature{Beats: 4, BeatValue: 4, Symbol: model.TimeNumeric},
@@ -1413,7 +1452,7 @@ func (w *walker) object(st *staffState) error {
 	if w.i >= len(w.b) {
 		return w.skip(1)
 	}
-	wide := w.version >= 205 && w.i+2 < len(w.b) && w.b[w.i+2]&wideObject != 0
+	wide := w.dia().wideRecords && w.i+2 < len(w.b) && w.b[w.i+2]&wideObject != 0
 	if err := w.objectBody(st); err != nil {
 		return err
 	}
@@ -1444,7 +1483,7 @@ func (w *walker) objectBody(st *staffState) error {
 	// type claims took the walk through a barline and into the middle of a
 	// fingering mark. The mark the record carries is the length, not the
 	// type.
-	if flags == 5 && w.version > 0 && w.version < 175 {
+	if flags == 5 && w.dia().shortFlagRecord {
 		return w.skip(1)
 	}
 
@@ -1505,15 +1544,11 @@ func (w *walker) objectBody(st *staffState) error {
 		if err != nil {
 			return err
 		}
-		pad := 7
-		if w.version >= 205 {
-			// Two bytes longer, and nothing in the first staff of Danse
-			// Macabre says what is in them. Read short, the walk came off
-			// the rails at the first key change and spent the rest of the
-			// staff reading music as a run of clefs.
-			pad = 9
-		}
-		if err := w.skip(pad); err != nil {
+		// 2.5 writes two bytes more here, and nothing in the first staff
+		// of Danse Macabre says what is in them. Read short, the walk came
+		// off the rails at the first key change and spent the rest of the
+		// staff reading music as a run of clefs.
+		if err := w.skip(w.dia().keyPad); err != nil {
 			return err
 		}
 		// Each bit set is one altered note.
@@ -1567,7 +1602,7 @@ func (w *walker) objectBody(st *staffState) error {
 		}
 
 	case 4: // instrument patch
-		if w.version >= 205 {
+		if w.dia().patchHasWords {
 			// 2.5 writes a string in the middle of this one, so its length
 			// is not fixed: eight bytes, the words, one byte, and then the
 			// ladder of velocities a dynamic plays at.
@@ -1654,7 +1689,7 @@ func (w *walker) objectBody(st *staffState) error {
 		if w.tempo == 0 && bpm >= 20 && bpm <= 400 {
 			w.tempo = bpm
 		}
-		if w.version >= 205 {
+		if !w.dia().tempoHasWords {
 			// 2.5 writes no words with the speed: the object ends at the
 			// two bytes after the number.
 			//
@@ -1666,10 +1701,21 @@ func (w *walker) objectBody(st *staffState) error {
 			// their own standing beside it.
 			return w.skip(2)
 		}
-		if err := w.skip(2); err != nil { // base, pad
+		// One byte between the speed and the words, not two.
+		//
+		// The byte is the note the speed is counted in. Taking two ate the
+		// first letter of the words with it — "Adagio sostenuto" came back
+		// as "dagio sostenuto" — and where a tempo has no words at all the
+		// record is then read one byte long, which is enough to lose the
+		// staff: Beethoven's Op. 27 has one at bar 68 and the walk went
+		// into the middle of the next object and never recovered.
+		if err := w.skip(1); err != nil { // the beat it is counted in
 			return err
 		}
-		_, err := w.cstring() // tempo text
+		text, err := w.cstring()
+		if text != "" {
+			st.pendingText = append(st.pendingText, text)
+		}
 		return err
 
 	case 7: // dynamic
@@ -1703,8 +1749,8 @@ func (w *walker) objectBody(st *staffState) error {
 		// and the walk was two further out of step with each one; read as
 		// ten for rests as well, every rest ate the two bytes after it and
 		// the time signature arrived as 8/0.
-		if objType == 8 && w.version > 0 && w.version < 175 {
-			if err := w.skip(2); err != nil {
+		if pad := w.dia().notePad; objType == 8 && pad > 0 {
+			if err := w.skip(pad); err != nil {
 				return err
 			}
 		}
@@ -1717,7 +1763,7 @@ func (w *walker) objectBody(st *staffState) error {
 			// run stayed open across whatever silence followed: a layer of
 			// Danse Macabre that plays one chord at bar 494 and then rests
 			// held its slur to bar 666.
-			if w.version >= 175 {
+			if !w.dia().slurHasBothEnds {
 				st.slurRun(&r.Marks, nv.slurTo)
 			}
 			st.add(r)
@@ -1734,7 +1780,7 @@ func (w *walker) objectBody(st *staffState) error {
 		// A slur belongs to its two ends. The file marks every note under
 		// it, so the ends are the note that is joined onward without being
 		// joined back, and the note that is joined back without going on.
-		if w.version > 0 && w.version < 175 {
+		if w.dia().slurHasBothEnds {
 			n.SlurStart = nv.slurTo && !nv.slurFrom
 			n.SlurStop = nv.slurFrom && !nv.slurTo
 		} else {
@@ -1785,7 +1831,7 @@ func (w *walker) objectBody(st *staffState) error {
 		// is worse than changing neither: with a ten-byte opening and
 		// eight-byte noteheads every chord came out two bytes short for
 		// each note in it, and four more bars were lost than gained.
-		if w.version > 0 && w.version < 175 {
+		if w.dia().chordNotesFollow {
 			// A 1.70 chord does not carry its noteheads: it says how many
 			// it has and lets them follow as ordinary note records.
 			//
@@ -1839,7 +1885,7 @@ func (w *walker) objectBody(st *staffState) error {
 			ch := &model.Chord{Dur: nv.dur}
 			ch.Tuplet = tupletMark(nv.triplet)
 			ch.Beam = beamMark(nv.beam)
-			if w.version >= 175 {
+			if !w.dia().slurHasBothEnds {
 				st.slurRun(&ch.Marks, nv.slurTo)
 			}
 			// The marks are written on the chord's own record, not on the
@@ -2026,7 +2072,7 @@ func (w *walker) objectBody(st *staffState) error {
 		// 2.0 and later, where the block has been read and checked. In
 		// 1.75 the same change costs a bar in two files of the corpus, so
 		// what the record holds there is still to be found out.
-		if w.version < 200 {
+		if !w.dia().restChordHoldsTime {
 			return w.skip(8 + 2)
 		}
 		nv, err := w.noteValue(true)
@@ -2149,18 +2195,41 @@ func (w *walker) looksLikeFonts() bool {
 			// enough of one came before it.
 			return n >= minFonts
 		}
-		name, err := w.cstring()
-		if err != nil {
-			return false
-		}
 		// A typeface is a short printable name. Checking it keeps the
 		// search from accepting a run of empty strings in a pad field,
 		// which is the one other place a dozen NULs sit together.
-		if !looksLikeTypeface(name) {
-			return false
+		//
+		// It is also what ends the list in a file that writes no marker,
+		// which Op. 111 does: twelve good records and then something that
+		// is not one. The walk is put back to where that record began, so
+		// the caller starts on the byte after the last font either way.
+		at := w.i
+		name, err := w.cstring()
+		if err != nil || !looksLikeTypeface(name) || w.skip(4) != nil {
+			w.i = at
+			return n >= minFonts
 		}
-		if err := w.skip(4); err != nil {
-			return false
+	}
+	return false
+}
+
+// hasLetterOrDigit says whether a staff name has anything in it a name is
+// made of.
+//
+// A staff is named for somebody to read, so there is a letter or a number in
+// it somewhere — "S" and "1st violins" both qualify. An object stream makes
+// the four-strings-in-a-row shape by accident here and there, and the names
+// those accidents carry are single punctuation marks: Beethoven's Op. 27
+// came back with staves called \", !, * and %, each holding a few bars of
+// the staff it was found inside.
+func hasLetterOrDigit(s string) bool {
+	for _, c := range s {
+		switch {
+		case c >= 'A' && c <= 'Z', c >= 'a' && c <= 'z', c >= '0' && c <= '9':
+			return true
+		case c >= 0xC0:
+			// An accented letter, which Latin-1 puts up here.
+			return true
 		}
 	}
 	return false
@@ -2241,13 +2310,21 @@ func (w *walker) looksLikeAnotherStaff() bool {
 // signature taken alone and a strong one taken here, where the alternative
 // is reading an object stream as text.
 func (w *walker) atStaffHeader() bool {
+	// As many names as this version writes, and no more.
+	//
+	// Four was right for 2.0 and wrong for 1.75, which writes two: the
+	// staff's own name and its group, and then its settings. Asked for
+	// four, a real 1.75 header fails the test as soon as the settings
+	// happen not to read as text — Beethoven's Op. 27 has "RH2" and
+	// "Standard" followed by a 0x04, and the walk went straight past the
+	// staff and spent the next ten thousand bytes looking for one.
 	probe := &walker{b: w.b, i: w.i}
-	for n := 0; n < 4; n++ {
+	for n := 0; n < w.dia().headerNames; n++ {
 		s, err := probe.cstring()
 		if err != nil {
 			return false
 		}
-		if n == 0 && (s == "" || !looksLikeText(s) || s[0] <= ' ') {
+		if n == 0 && (s == "" || !looksLikeText(s) || !hasLetterOrDigit(s)) {
 			// A staff is named for somebody to read, so its name starts
 			// with something printable. Danse Macabre's object stream
 			// makes the four-strings-in-a-row shape by accident here and
@@ -2264,7 +2341,7 @@ func (w *walker) atStaffHeader() bool {
 			return false
 		}
 	}
-	// A staff has a good deal more in it than its four names.
+	// A staff has a good deal more in it than its names.
 	return probe.remaining() > 32
 }
 
@@ -2462,6 +2539,33 @@ func mergeLayers(parts []*model.Part, shares []bool, groups []string) ([]*model.
 	return out, kept
 }
 
+// hidePlayOnly takes the staves that are only played off the page.
+//
+// See the note in staff() on the byte this reads. The rule is the whole of
+// it: where no staff says it is printed, every staff is, because a file that
+// has never been told which staves to print is not a file with nothing on
+// its page.
+func hidePlayOnly(parts []*model.Part, printed map[*model.Part]bool) {
+	any := false
+	for _, p := range parts {
+		if printed[p] {
+			any = true
+			break
+		}
+	}
+	if !any {
+		return
+	}
+	for _, p := range parts {
+		if !printed[p] {
+			// Hidden takes the staff off the page and out of what is
+			// played, and the printed staves carry the same music, so the
+			// piece still sounds.
+			p.Hidden = true
+		}
+	}
+}
+
 // nwcDefaultGroup is the name NoteWorthy files carry when nobody has filed
 // the staff under anything. It is not an instrument group and nothing is
 // drawn round it.
@@ -2478,7 +2582,7 @@ const nwcDefaultGroup = "Standard"
 //
 // A brace for two staves and a bracket for more: two staves under one name
 // are one player's hands, and more than two are a section.
-func staffGroups(parts []*model.Part, groups []string) []model.StaffGroup {
+func staffGroups(parts []*model.Part, groups []string, braces map[*model.Part]int) []model.StaffGroup {
 	if len(groups) != len(parts) {
 		return nil
 	}
@@ -2514,6 +2618,43 @@ func staffGroups(parts []*model.Part, groups []string) []model.StaffGroup {
 		}
 	}
 	flush(len(parts) - 1)
+	return append(out, grandStaves(parts, braces, out)...)
+}
+
+// grandStaves braces the pairs that said so in their own settings and that no
+// group name has already covered.
+//
+// Most piano files name the group — "Piano" on the right hand, nothing on the
+// left — and the pass above is enough. Moonlight Sonata names nothing: all
+// four of its staves are filed under NoteWorthy's default group, and the two
+// that are left after the layers are merged stood apart on the page with no
+// brace and no barline between them, which is two instruments rather than one
+// pianist. What the file does say is in the settings of each staff: the right
+// hand calls itself the upper half of a grand staff and the left hand the
+// lower.
+func grandStaves(parts []*model.Part, braces map[*model.Part]int, have []model.StaffGroup) []model.StaffGroup {
+	covered := func(i int) bool {
+		for _, g := range have {
+			if i >= g.First && i <= g.Last {
+				return true
+			}
+		}
+		return false
+	}
+	var out []model.StaffGroup
+	for i := 0; i+1 < len(parts); i++ {
+		if braces[parts[i]] != braceUpper || braces[parts[i+1]] != braceLower {
+			continue
+		}
+		if parts[i].Hidden || parts[i+1].Hidden || covered(i) || covered(i+1) {
+			continue
+		}
+		out = append(out, model.StaffGroup{
+			First: i, Last: i + 1,
+			Symbol: model.GroupBrace, Barlines: true,
+		})
+		i++
+	}
 	return out
 }
 

@@ -110,8 +110,18 @@ func (e *engraver) labelWidth(parts []*model.Part, first bool) float64 {
 		return 0
 	}
 	widest := 0.0
-	for _, p := range parts {
-		if w := textWidth(partLabel(p, first), nameSize); w > widest {
+	braced := e.bracedStaves()
+	for i, p := range parts {
+		w := textWidth(partLabel(p, first), nameSize)
+		if braced[i] {
+			// The brace stands between this staff and its name, so the
+			// margin has to hold both. A grand staff that names no group
+			// labels each of its staves, and without the allowance the
+			// words "Right Hand" and "Left Hand" were written across the
+			// brace that joins them.
+			w += braceWidth(1e9) + groupGap*0.5
+		}
+		if w > widest {
 			widest = w
 		}
 	}
@@ -153,6 +163,26 @@ func textWidth(s string, size float64) float64 {
 		return 0
 	}
 	return float64(len([]rune(s))) * size * 0.52
+}
+
+// bracedStaves marks the drawn staves that have a brace between them and
+// whatever is written to their left.
+func (e *engraver) bracedStaves() map[int]bool {
+	out := map[int]bool{}
+	for _, g := range e.score.Groups {
+		if g.Symbol != model.GroupBrace {
+			continue
+		}
+		fi, ok1 := e.drawnAt(g.First)
+		li, ok2 := e.drawnAt(g.Last)
+		if !ok1 || !ok2 || li <= fi {
+			continue
+		}
+		for i := fi; i <= li; i++ {
+			out[i] = true
+		}
+	}
+	return out
 }
 
 // drawGroups draws the braces and brackets at the left of a system, and the
@@ -234,6 +264,7 @@ func (e *engraver) drawGroups(parts []*model.Part, left float64, tops []float64,
 			named[i] = true
 		}
 	}
+	braced := e.bracedStaves()
 	for i, p := range parts {
 		if i >= len(tops) || named[i] {
 			continue
@@ -242,10 +273,18 @@ func (e *engraver) drawGroups(parts []*model.Part, left float64, tops []float64,
 		if label == "" {
 			continue
 		}
+		// Clear of the brace where there is one, as a group's own name is.
+		// Moonlight Sonata's grand staff carries no group name, so each of
+		// its two staves is labelled on its own, and both words were drawn
+		// over the brace.
+		at := left - groupGap - 0.4
+		if braced[i] {
+			at -= braceWidth(partH(parts[i])*2) + groupGap*0.5
+		}
 		e.lay.Texts = append(e.lay.Texts, Text{
 			// Centred on the staff's middle line, which is where a name sits
 			// in every printed score.
-			S: label, X: left - groupGap - 0.4,
+			S: label, X: at,
 			Y:    tops[i] + partH(parts[i])/2 + nameSize*0.35,
 			Size: nameSize, Anchor: "end",
 		})

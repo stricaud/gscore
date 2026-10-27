@@ -322,11 +322,11 @@ var durNames = map[string]model.Duration{
 }
 
 // parseDur reads a Dur field: a value plus comma-separated modifiers.
-func parseDur(s string) (dur model.Duration, triplet bool, ok bool) {
+func parseDur(s string) (dur model.Duration, triplet int, ok bool) {
 	parts := strings.Split(s, ",")
 	d, ok := durNames[strings.TrimSpace(parts[0])]
 	if !ok {
-		return model.Duration{}, false, false
+		return model.Duration{}, 0, false
 	}
 	for _, m := range parts[1:] {
 		switch strings.TrimSpace(m) {
@@ -336,8 +336,19 @@ func parseDur(s string) (dur model.Duration, triplet bool, ok bool) {
 			d = d.Scale(7, 4)
 		case "Triplet", "Triplet=First", "Triplet=End":
 			// Three in the time of two, so each one sounds two thirds as long.
+			//
+			// Which of the three it is matters as well as that it is one:
+			// the figure is written over the group, and a group with no
+			// end never closes, so nothing is written at all.
 			d = d.Scale(2, 3)
-			triplet = true
+			switch strings.TrimSpace(m) {
+			case "Triplet=First":
+				triplet = tripletFirst
+			case "Triplet=End":
+				triplet = tripletLast
+			default:
+				triplet = tripletMiddle
+			}
 		}
 	}
 	return d, triplet, true
@@ -454,11 +465,41 @@ func beamMark(b byte) model.Beam {
 	return model.BeamNone
 }
 
-func tupletMark(triplet bool) *model.Tuplet {
-	if !triplet {
+// Where a note stands in its triplet. NoteWorthy counts them the way it
+// counts beams — nothing, first, middle, last — in both the text format and
+// the binary one, and both mean the same thing by the numbers.
+const (
+	tripletNone = iota
+	tripletFirst
+	tripletMiddle
+	tripletLast
+)
+
+// tupletMark turns that place into the group the engraver draws.
+//
+// Start and Stop are what bound the group, and without them the "3" over a
+// triplet is never written: the run opens at the first note that carries the
+// mark and waits for a Stop that never comes. Moonlight Sonata is triplets
+// from end to end and came out as plain beamed eighths, beamed in twos
+// because nothing said they belonged in threes.
+// What the brace byte says about a staff. Anything else — 3 is the one the
+// corpus has, on the eleven staves of a Mozart score and on the four of the
+// Appassionata — says nothing this reader acts on.
+const (
+	braceNone  = 0
+	braceUpper = 1
+	braceLower = 2
+)
+
+func tupletMark(triplet int) *model.Tuplet {
+	if triplet == tripletNone {
 		return nil
 	}
-	return &model.Tuplet{Actual: 3, Normal: 2}
+	return &model.Tuplet{
+		Actual: 3, Normal: 2,
+		Start: triplet == tripletFirst,
+		Stop:  triplet == tripletLast,
+	}
 }
 
 func (p *parser) addNote(attrs map[string]string) error {
@@ -607,4 +648,136 @@ func octaveDashes(text string) (dashes, ends bool) {
 var nwc1Hairpins = map[byte]model.HairpinKind{
 	0: model.Crescendo,
 	1: model.Diminuendo,
+}
+
+// dialect is how one version of the binary format differs from the others.
+//
+// The versions are not one format with options. A note's staff position is
+// counted downwards from the middle line in 1.70, upwards in 1.75 and 2.0,
+// and downwards again in 2.5. A note's value block is ten bytes in 1.70 and
+// eight after it. A slur is two bits in 1.70 and one from 1.75. A staff
+// header carries two names in 1.75, four in 2.0 and five in 2.5. Each of
+// those was found separately, and each used to sit as its own version test
+// in the middle of the code that depended on it — two dozen of them, spread
+// through the reader, which is how a change made for one version quietly
+// broke another.
+//
+// Gathered here, the four dialects can be read side by side, and what is
+// known about each is in one place rather than wherever it was first needed.
+// Anything still unknown for a version is a field this table cannot fill in.
+type dialect struct {
+	// positionsCountDown says a note's staff position is counted downwards
+	// from the middle line rather than upwards.
+	positionsCountDown bool
+	// slurHasBothEnds says the slur byte marks a note as joined to the one
+	// before it as well as the one after, so both ends are written down.
+	// Otherwise only "joined onward" is, and the far end is worked out.
+	slurHasBothEnds bool
+	// durationHasFlags says the top half of the duration byte carries flags
+	// of its own, so only the bottom four bits say how long a note is.
+	durationHasFlags bool
+	// wideRecords says a bit in an object's third byte makes its record
+	// three bytes longer.
+	wideRecords bool
+	// shortFlagRecord says a record marked 5 in its flags byte is four
+	// bytes long whatever its type says.
+	shortFlagRecord bool
+	// chordNotesFollow says a chord does not carry its noteheads: it says
+	// how many it has and lets them follow as ordinary note records.
+	chordNotesFollow bool
+	// notePad is the bytes a note record carries past its value block.
+	notePad int
+	// headerNames is how many strings a staff header opens with.
+	headerNames int
+	// staffLinesByte says the staff settings carry the line count.
+	staffLinesByte bool
+	// extraSettings is the bytes of staff settings past the older layout.
+	extraSettings int
+	// printedFlag says the second byte of the staff settings can be trusted
+	// to say whether the staff is one of the ones on the page.
+	//
+	// 1.70 writes something there too, and what it means is not settled:
+	// the Op. 27 Presto sets it on the two staves it prints and clears it
+	// on the two it files under a group called "Hidden", which fits, but
+	// the Allegretto of the same sonata sets it on the right hand alone
+	// and clears it on the left, and a piano piece with no left hand is
+	// not what that file is. So 1.70 is left to its group names.
+	printedFlag bool
+	// braceByte is where in the staff settings the byte sits that says the
+	// staff is the upper or the lower half of a grand staff, or zero in a
+	// version whose settings have not been measured. It is the word just
+	// past the staff's instrument, so it moves with the eight bytes 2.0
+	// inserts, the same as layerByte does.
+	braceByte int
+	// layerByte is where in the staff settings the flag sits that says this
+	// staff is printed on the same staff as the one after it, or zero in a
+	// version whose settings have not been measured.
+	//
+	// It is the byte after the staff's line count, which is the byte after
+	// the lower vertical size. The whole block before it is the same in
+	// every version but for two things: 1.70 writes no line count, and 2.0
+	// inserts eight bytes of dynamic velocities before the vertical sizes.
+	// So the offset is 20 in 1.75 and 28 from 2.0, and both were read off
+	// the corpus rather than derived: what lies between the names and the
+	// vertical sizes is not all understood.
+	layerByte int
+	// lyricOptionsAlways says the word after the lyric line count is
+	// written even when the staff has no lyrics.
+	lyricOptionsAlways bool
+	// pagedLyrics says lyrics are stored as the 2.0 block rather than as
+	// the fixed pages 1.7x uses.
+	pagedLyrics bool
+	// keyPad is the bytes a key signature carries past its accidentals.
+	keyPad int
+	// patchHasWords says the instrument patch carries a string in the
+	// middle of it, so its length is not fixed.
+	patchHasWords bool
+	// tempoHasWords says the speed is followed by the words it is written
+	// with.
+	tempoHasWords bool
+	// restChordHoldsTime says a rest kept as a chord holds its own length,
+	// which is checked from 2.0 and still unknown in 1.75.
+	restChordHoldsTime bool
+}
+
+// dialectOf is the layout a version is written in.
+//
+// A version is its major number in hundreds plus its minor, so 2.5 counts as
+// two hundred and five. Zero is a file whose version is not known, which is
+// read as the middle of the range: the 1.75 layout, which is what most of
+// the corpus is.
+func dialectOf(version int) dialect {
+	old := version > 0 && version < 175
+	d := dialect{
+		positionsCountDown: old || version >= 205,
+		slurHasBothEnds:    old,
+		shortFlagRecord:    old,
+		chordNotesFollow:   old,
+		durationHasFlags:   version >= 200,
+		wideRecords:        version >= 205,
+		staffLinesByte:     version >= 175,
+		lyricOptionsAlways: version < 200,
+		pagedLyrics:        version >= 200,
+		patchHasWords:      version >= 205,
+		tempoHasWords:      version < 205,
+		restChordHoldsTime: version >= 200,
+		headerNames:        2,
+		keyPad:             7,
+		braceByte:          13,
+		printedFlag:        version >= 175,
+	}
+	if old {
+		d.notePad = 2
+	}
+	if version >= 175 {
+		d.layerByte = 20
+	}
+	if version >= 200 {
+		d.headerNames, d.extraSettings = 4, 10
+		d.layerByte, d.braceByte = 28, 21
+	}
+	if version >= 205 {
+		d.headerNames, d.keyPad = 5, 9
+	}
+	return d
 }

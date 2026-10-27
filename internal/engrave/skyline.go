@@ -187,7 +187,31 @@ func (e *engraver) marked() mark {
 // all of them, is one space tall and centred on where it sits.
 func (e *engraver) outline(from mark, x0, x1, top float64) *skyline {
 	s := newSkyline(x0, x1, top, e.staffH())
+	e.addSince(s, from)
+	return s
+}
 
+// staffOutline is the outline of the staff being drawn, kept and extended
+// rather than built again each time it is wanted.
+//
+// Every slur asks for it, and building one walks everything on the staff and
+// lays out a sample every quarter of a space across the staff's whole width.
+// In the editor's strip a staff is the whole piece: Beethoven's ninth built
+// a two-million-sample outline for each of its thousands of slurs, and spent
+// eleven of its twelve seconds of layout doing it. Kept, each slur adds only
+// what has been drawn since the last one asked.
+func (e *engraver) staffOutline() *skyline {
+	if e.staffSky == nil {
+		e.staffSky = newSkyline(e.staffX0, e.staffX1, e.staffTop, e.staffH())
+		e.staffSkyAt = e.staffMark
+	}
+	e.addSince(e.staffSky, e.staffSkyAt)
+	e.staffSkyAt = e.marked()
+	return e.staffSky
+}
+
+// addSince registers everything drawn since a mark on an outline.
+func (e *engraver) addSince(s *skyline, from mark) {
 	for _, g := range e.lay.Glyphs[from.glyphs:] {
 		up, down := glyphReach(g.Name)
 		w := glyphWidth(g)
@@ -228,7 +252,6 @@ func (e *engraver) outline(from mark, x0, x1, top float64) *skyline {
 		// size and down by a descender.
 		s.add(x, x+w, t.Y-t.Size*0.8, t.Y+t.Size*0.25)
 	}
-	return s
 }
 
 // glyphWidth is how wide a glyph is where the layout does not say.

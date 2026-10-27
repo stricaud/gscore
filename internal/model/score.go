@@ -436,6 +436,34 @@ func (p *Part) ClefAt(index int) Clef {
 // By when it happens rather than by which voice holds it: two lines on one
 // staff can each move the clef, and the one that counts at the barline is
 // whichever moved it last.
+// Clefs is the clef in force at the head of every bar of a part, worked out
+// in one pass down it.
+//
+// ClefAt answers that for a single bar and walks from the beginning of the
+// part to do it, which is the right shape for a question asked once and the
+// wrong one for a question asked about every bar in turn. Laying out
+// Beethoven's ninth — fifty-three staves of two and a half thousand bars —
+// took fifty-five seconds, and more than half of it was spent in ClefAt
+// re-reading bars it had already read.
+//
+// The two agree bar for bar, and a test says so.
+func (p *Part) Clefs() []Clef {
+	out := make([]Clef, len(p.Measures))
+	c := p.Clef
+	for i, m := range p.Measures {
+		if m.Clef != nil {
+			c = *m.Clef
+		}
+		// A change written inside this bar takes effect after it, so the
+		// bar itself keeps the clef it began with.
+		out[i] = c
+		if last, ok := lastClefIn(m); ok {
+			c = last
+		}
+	}
+	return out
+}
+
 func lastClefIn(m *Measure) (Clef, bool) {
 	var found Clef
 	var at Duration
@@ -460,6 +488,39 @@ func lastClefIn(m *Measure) (Clef, bool) {
 // It is asked of the score rather than of a part because a tempo change is
 // written once, over the top staff, and means the same to everybody in the
 // room. Whichever part carries it, it is the piece's.
+// Tempos is the tempo in force in every bar of the score, worked out in one
+// pass through it.
+//
+// TempoAt answers for a single bar and walks from the first one across every
+// staff to do it, which is the right shape asked once and the wrong one
+// asked about every note in turn. Building the performance of Beethoven's
+// ninth took thirty-one seconds and twenty-six of them were here, so Play
+// looked like a button that did nothing.
+//
+// The two agree bar for bar, and a test says so.
+func (s *Score) Tempos() []Tempo {
+	n := 0
+	for _, p := range s.Parts {
+		if len(p.Measures) > n {
+			n = len(p.Measures)
+		}
+	}
+	out := make([]Tempo, n)
+	t := s.Tempo
+	for i := range out {
+		// A tempo written at this bar governs this bar, so it is taken
+		// before the answer is recorded rather than after.
+		for _, p := range s.Parts {
+			if i < len(p.Measures) && p.Measures[i].Tempo != nil {
+				t = *p.Measures[i].Tempo
+				break
+			}
+		}
+		out[i] = t
+	}
+	return out
+}
+
 func (s *Score) TempoAt(index int) Tempo {
 	t := s.Tempo
 	for i := 0; i <= index; i++ {

@@ -477,6 +477,18 @@
   <div id="drumpad-grid"></div>
 </div>
 
+<!-- Gilbert, while a score is being opened.
+     A big one takes a few seconds — Beethoven's ninth is fifty-three staves
+     of two and a half thousand bars — and a window that sits there doing
+     nothing for a few seconds looks like a window that has crashed. The same
+     drawing that is the About box's and was the 2005 splash screen's. -->
+<div id="busy" hidden>
+  <div id="busy-box" role="status" aria-live="polite">
+    <img id="busy-logo" src="gilbert.svg" alt="" width="96" height="95">
+    <p id="busy-text">Opening…</p>
+  </div>
+</div>
+
 <div id="statusbar">
   <span id="status">Ready</span>
   <span id="filename"></span>

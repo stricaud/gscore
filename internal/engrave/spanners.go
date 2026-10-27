@@ -749,7 +749,7 @@ func (e *engraver) clearArch(x0, x1, y1, y2, cy, dir float64) float64 {
 	if x1 <= x0 {
 		return cy
 	}
-	sky := e.outline(e.staffMark, e.staffX0, e.staffX1, e.staffTop)
+	sky := e.staffOutline()
 
 	// Only what lies between the ends: the notes the slur starts and ends
 	// on are its own, and a slur is drawn from them, not over them.

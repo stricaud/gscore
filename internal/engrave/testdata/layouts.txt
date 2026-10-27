@@ -6,7 +6,7 @@ abc/boite-musique.abc eabfc14e979c9985 514
 abc/decoration.abc c1c6eea6d301c988 32
 abc/pitch.abc 3041e2426fc05ef5 236
 abc/sunshine.abc 69bfa806c0455e29 136
-samples/altes-10e-solo.abc e7619f79769d33d7 12337
+samples/altes-10e-solo.abc 52a57195a64a4c62 12337
 samples/boite-musique.abc eabfc14e979c9985 514
 suite/01a-Pitches-Pitches.musicxml ac9b5a16d2ed23a9 555
 suite/01b-Pitches-Intervals.musicxml 10c7ac11bad1da6c 412

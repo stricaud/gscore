@@ -126,7 +126,7 @@ func (a *App) createSymbol(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	a.mu.Lock()
+	a.lock()
 	err := a.symbols.Add(&symbol.Symbol{
 		Name: doc.Name, Kind: symbol.FromPixels, Pixels: bm,
 	})
@@ -184,7 +184,7 @@ func (a *App) handleInsertSymbol(w http.ResponseWriter, r *http.Request) {
 		placement = model.PlacementBelow
 	}
 
-	a.mu.Lock()
+	a.lock()
 	defer a.mu.Unlock()
 
 	_, m, err := a.locate(partIdx, measIdx)
@@ -311,7 +311,7 @@ func (a *App) handleMoveSymbol(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	a.mu.Lock()
+	a.lock()
 	defer a.mu.Unlock()
 
 	moved := 0
@@ -368,7 +368,7 @@ func (a *App) handleImportSymbols(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	a.mu.Lock()
+	a.lock()
 	added, replaced := 0, 0
 	for _, name := range incoming.Names() {
 		s, ok := incoming.Lookup(name)
@@ -403,7 +403,7 @@ func (a *App) importSymbolsFrom(w http.ResponseWriter, path string) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	a.mu.Lock()
+	a.lock()
 	added, replaced := 0, 0
 	for _, name := range incoming.Names() {
 		s, ok := incoming.Lookup(name)

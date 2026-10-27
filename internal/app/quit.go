@@ -130,7 +130,7 @@ func (a *App) writeScore(path string) error {
 		}
 	}
 
-	a.mu.Lock()
+	a.lock()
 	a.filename = path
 	a.unsaved = false
 	a.mu.Unlock()

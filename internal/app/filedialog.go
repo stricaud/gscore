@@ -217,7 +217,7 @@ func (a *App) openPath(path string) error {
 	if len(scores) == 0 {
 		return err
 	}
-	a.mu.Lock()
+	a.lock()
 	a.setBook(scores, path, err)
 	a.mu.Unlock()
 	a.remember(path)
@@ -288,7 +288,7 @@ func (a *App) handleSave(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	a.mu.Lock()
+	a.lock()
 	a.filename = path
 	// What is on disk is what is in hand, so there is nothing to warn about
 	// on the way out.
@@ -834,7 +834,7 @@ func (a *App) sendDocument(w http.ResponseWriter, r *http.Request) {
 	w.Write(buf.Bytes())
 
 	if savesTheScore(ext) {
-		a.mu.Lock()
+		a.lock()
 		a.unsaved = false
 		a.mu.Unlock()
 	}

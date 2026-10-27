@@ -799,6 +799,12 @@ func (r *reader) measure(doc *document, st *msStaff) error {
 			return r.jump(m)
 		case "LayoutBreak", "MeasureNumber", "vspacerUp", "vspacerDown",
 			"noOffset", "irregular", "stretch", "multiMeasureRest",
+			// breakMultiMeasureRest asks MuseScore not to fold this bar
+			// into the long rest around it. gscore does not fold bars into
+			// long rests, so there is nothing for it to ask: reported as
+			// unread it was the one complaint Beethoven's ninth raised,
+			// about a bar that reads perfectly.
+			"breakMultiMeasureRest",
 			"measureRepeatCount", "excludeFromOtherParts", "eid", "visible",
 			"sysInitBarLineType", "lineBreak", "pageBreak", "StaffTypeChange":
 			return r.dec.Skip()

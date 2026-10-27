@@ -561,6 +561,45 @@ body.native #menubar { padding-left: 12px; }
 #chord-opts label { display: flex; align-items: center; gap: 6px; }
 #chord-form .small { margin: 4px 0 10px; }
 
+/* Gilbert again, over the whole window while a score is being read and laid
+   out. Not a dialog: there is nothing to answer and nothing to cancel, and a
+   <dialog> would take the keyboard away from a window that is about to want
+   it back. */
+#busy {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: color-mix(in srgb, var(--bg) 82%, transparent);
+}
+#busy[hidden] { display: none; }
+#busy-box {
+  text-align: center;
+  color: var(--muted);
+  font-size: 12px;
+}
+#busy-logo {
+  display: block;
+  margin: 0 auto 10px;
+  width: 96px;
+  height: auto;
+  animation: busy-bob 1.4s ease-in-out infinite;
+}
+#busy-text { margin: 0; }
+
+@keyframes busy-bob {
+  0%, 100% { transform: translateY(0) rotate(-3deg); }
+  50%      { transform: translateY(-10px) rotate(3deg); }
+}
+
+/* Somebody who has asked not to be moved about gets the mascot standing
+   still. The point is to say the program is working, and the words say it. */
+@media (prefers-reduced-motion: reduce) {
+  #busy-logo { animation: none; }
+}
+
 /* Gilbert, from the 2005 splash screen. */
 #about { text-align: center; }
 #about h2 { margin-top: 6px; }

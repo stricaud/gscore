@@ -416,7 +416,7 @@ func (e *engraver) drawSignatureChange(part *model.Part, b measureBox, x float64
 	}
 
 	if b.change.hasKey {
-		naturals, accidentals := keyChangeSteps(part.ClefAt(b.index), b.change.from, *b.change.key)
+		naturals, accidentals := keyChangeSteps(e.clefAt(part, b.index), b.change.from, *b.change.key)
 		for _, step := range naturals {
 			e.lay.Glyphs = append(e.lay.Glyphs, Glyph{
 				Name: "accidentalNatural", X: x, Y: e.y + stepY(float64(step)),
@@ -1780,8 +1780,21 @@ func (e *engraver) clearOfNoteheads(x, y float64, above bool) float64 {
 		air   = 1.3 // what to leave between the notehead and the mark
 	)
 	top, bot := e.y-8, e.y+e.staffH()+8
-	for _, g := range e.lay.Glyphs {
-		if !strings.HasPrefix(g.Name, "notehead") || g.Y < top || g.Y > bot {
+	// From where this staff began, not from the start of the drawing.
+	//
+	// The question is about the noteheads on this staff, and everything
+	// drawn before it began is on another staff or another system. Asked
+	// of the whole page, it is a walk down every glyph placed so far for
+	// every mark placed after them: Beethoven's ninth is two hundred
+	// thousand glyphs and spent a fifth of its layout here.
+	from := e.staffGlyphs
+	if from > len(e.lay.Glyphs) {
+		from = len(e.lay.Glyphs)
+	}
+	for _, g := range e.lay.Glyphs[from:] {
+		// The cheap tests first: a coordinate compares in an instruction
+		// and a name does not.
+		if g.Y < top || g.Y > bot || !strings.HasPrefix(g.Name, "notehead") {
 			continue
 		}
 		if g.X > x+reach || g.X+smufl.Advance(g.Name) < x-reach {

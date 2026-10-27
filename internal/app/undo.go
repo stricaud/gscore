@@ -73,14 +73,14 @@ func (a *App) undoable(h http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 
-		a.mu.Lock()
+		a.lock()
 		before := a.take()
 		a.mu.Unlock()
 
 		rec := &statusWriter{ResponseWriter: w, code: http.StatusOK}
 		h(rec, r)
 
-		a.mu.Lock()
+		a.lock()
 		defer a.mu.Unlock()
 		if rec.code < 200 || rec.code >= 300 {
 			return // nothing happened, so there is nothing to take back
@@ -124,7 +124,7 @@ func (a *App) handleUndo(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "POST required", http.StatusMethodNotAllowed)
 		return
 	}
-	a.mu.Lock()
+	a.lock()
 	defer a.mu.Unlock()
 
 	if len(a.undoStack) == 0 {
@@ -149,7 +149,7 @@ func (a *App) handleRedo(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "POST required", http.StatusMethodNotAllowed)
 		return
 	}
-	a.mu.Lock()
+	a.lock()
 	defer a.mu.Unlock()
 
 	if len(a.redoStack) == 0 {

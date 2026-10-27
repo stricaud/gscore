@@ -44,8 +44,9 @@ func (a *App) handleHits(w http.ResponseWriter, r *http.Request) {
 	}
 
 	a.mu.RLock()
-	lay := engrave.Engrave(a.score, opt)
+	score := a.score
 	a.mu.RUnlock()
+	lay := a.layout(score, opt)
 
 	writeJSON(w, map[string]any{
 		"hits":        lay.Hits,
@@ -136,7 +137,7 @@ func (a *App) handleInsert(w http.ResponseWriter, r *http.Request) {
 	dur = dotted(dur, q.Get("dots"))
 	acc := accidentalByName[q.Get("accidental")]
 
-	a.mu.Lock()
+	a.lock()
 	defer a.mu.Unlock()
 
 	p, m, err := a.locateForWriting(partIdx, measIdx)
@@ -380,7 +381,7 @@ func (a *App) handleAddPitch(w http.ResponseWriter, r *http.Request) {
 	step, _ := strconv.Atoi(q.Get("step"))
 	acc := accidentalByName[q.Get("accidental")]
 
-	a.mu.Lock()
+	a.lock()
 	defer a.mu.Unlock()
 
 	p, m, err := a.locate(partIdx, measIdx)
@@ -471,7 +472,7 @@ func (a *App) handleBarline(w http.ResponseWriter, r *http.Request) {
 	partIdx, _ := strconv.Atoi(q.Get("part"))
 	measIdx, _ := strconv.Atoi(q.Get("measure"))
 
-	a.mu.Lock()
+	a.lock()
 	defer a.mu.Unlock()
 
 	if _, _, err := a.locate(partIdx, measIdx); err != nil {
@@ -499,7 +500,7 @@ func (a *App) handleDelete(w http.ResponseWriter, r *http.Request) {
 	measIdx, _ := strconv.Atoi(q.Get("measure"))
 	at, _ := strconv.Atoi(q.Get("at"))
 
-	a.mu.Lock()
+	a.lock()
 	defer a.mu.Unlock()
 
 	_, m, err := a.locate(partIdx, measIdx)
@@ -536,7 +537,7 @@ func (a *App) handleDeleteSelection(w http.ResponseWriter, r *http.Request) {
 		byMeasure[k] = append(byMeasure[k], t.index)
 	}
 
-	a.mu.Lock()
+	a.lock()
 	defer a.mu.Unlock()
 
 	removed := 0
@@ -561,7 +562,7 @@ func (a *App) handleDeleteSelection(w http.ResponseWriter, r *http.Request) {
 // handleAddMeasure appends an empty measure to every part, so the staves stay
 // the same length and their barlines keep lining up.
 func (a *App) handleAddMeasure(w http.ResponseWriter, r *http.Request) {
-	a.mu.Lock()
+	a.lock()
 	defer a.mu.Unlock()
 	for _, p := range a.score.Parts {
 		p.AppendMeasure()
@@ -693,7 +694,7 @@ type keyedNote struct {
 // notesOf resolves a selection to the notes in it, a chord counting as all of
 // its noteheads: an accidental put on a chord belongs to the whole chord.
 func (a *App) notesOf(q url.Values) ([]keyedNote, error) {
-	a.mu.Lock()
+	a.lock()
 	defer a.mu.Unlock()
 
 	var out []keyedNote
@@ -851,7 +852,7 @@ func (a *App) marksOf(q url.Values) ([]*model.Marks, error) {
 		if err != nil {
 			return nil, err
 		}
-		a.mu.Lock()
+		a.lock()
 		defer a.mu.Unlock()
 
 		var out []*model.Marks
@@ -903,7 +904,7 @@ func (a *App) markAt(q url.Values) (*model.Marks, error) {
 		at = -1
 	}
 
-	a.mu.Lock()
+	a.lock()
 	defer a.mu.Unlock()
 
 	_, m, err := a.locate(partIdx, measIdx)
@@ -979,7 +980,7 @@ func (a *App) handleStaff(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	partIdx, _ := strconv.Atoi(q.Get("part"))
 
-	a.mu.Lock()
+	a.lock()
 	defer a.mu.Unlock()
 	if partIdx < 0 || partIdx >= len(a.score.Parts) {
 		http.Error(w, "no such staff", http.StatusBadRequest)
@@ -1164,7 +1165,7 @@ func (a *App) handleTempo(w http.ResponseWriter, r *http.Request) {
 				http.StatusBadRequest)
 			return
 		}
-		a.mu.Lock()
+		a.lock()
 		defer a.mu.Unlock()
 		for _, p := range a.score.Parts {
 			if bar < len(p.Measures) {
@@ -1201,7 +1202,7 @@ func (a *App) handleTempo(w http.ResponseWriter, r *http.Request) {
 		Parens: q.Get("parens") == "1",
 	}
 
-	a.mu.Lock()
+	a.lock()
 	defer a.mu.Unlock()
 	if bar == 0 {
 		a.score.Tempo = t
@@ -1241,7 +1242,7 @@ func (a *App) handleHeader(w http.ResponseWriter, r *http.Request) {
 	}
 	q := r.URL.Query()
 
-	a.mu.Lock()
+	a.lock()
 	defer a.mu.Unlock()
 	// Only what was sent is changed, so a dialog can set one field alone.
 	if q.Has("title") {
@@ -1488,7 +1489,7 @@ func (a *App) handleEnding(w http.ResponseWriter, r *http.Request) {
 	}
 	open := q.Get("open") == "1"
 
-	a.mu.Lock()
+	a.lock()
 	defer a.mu.Unlock()
 
 	changed := 0
@@ -1559,7 +1560,7 @@ func (a *App) handleJump(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	a.mu.Lock()
+	a.lock()
 	defer a.mu.Unlock()
 
 	changed := 0
@@ -1652,7 +1653,7 @@ func (a *App) handleShift(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	a.mu.Lock()
+	a.lock()
 	defer a.mu.Unlock()
 
 	sort.Slice(targets, func(i, j int) bool {
@@ -1854,7 +1855,7 @@ func (a *App) handleCopy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	a.mu.Lock()
+	a.lock()
 	defer a.mu.Unlock()
 
 	var out []model.Element
@@ -1891,7 +1892,7 @@ func (a *App) handlePaste(w http.ResponseWriter, r *http.Request) {
 		at = -1
 	}
 
-	a.mu.Lock()
+	a.lock()
 	defer a.mu.Unlock()
 
 	if len(a.clip.elements) == 0 {
@@ -2033,7 +2034,7 @@ func (a *App) handleLyrics(w http.ResponseWriter, r *http.Request) {
 		verse = 1
 	}
 
-	a.mu.Lock()
+	a.lock()
 	defer a.mu.Unlock()
 
 	if partIdx < 0 || partIdx >= len(a.score.Parts) {
@@ -2237,7 +2238,7 @@ func (a *App) handleMarker(w http.ResponseWriter, r *http.Request) {
 	measIdx, _ := strconv.Atoi(q.Get("measure"))
 	text := strings.TrimSpace(q.Get("text"))
 
-	a.mu.Lock()
+	a.lock()
 	defer a.mu.Unlock()
 
 	found := false
@@ -2265,7 +2266,7 @@ func (a *App) handleView(w http.ResponseWriter, r *http.Request) {
 	}
 	q := r.URL.Query()
 
-	a.mu.Lock()
+	a.lock()
 	defer a.mu.Unlock()
 
 	changed := []string{}
@@ -2295,7 +2296,7 @@ func (a *App) handleGroup(w http.ResponseWriter, r *http.Request) {
 	first, _ := strconv.Atoi(q.Get("first"))
 	last, _ := strconv.Atoi(q.Get("last"))
 
-	a.mu.Lock()
+	a.lock()
 	defer a.mu.Unlock()
 
 	if q.Get("symbol") == "none" {
@@ -2537,7 +2538,7 @@ func (a *App) handleAddStaff(w http.ResponseWriter, r *http.Request) {
 	}
 	q := r.URL.Query()
 
-	a.mu.Lock()
+	a.lock()
 	defer a.mu.Unlock()
 
 	clef := model.Treble
@@ -2640,7 +2641,7 @@ func (a *App) handleRemoveStaff(w http.ResponseWriter, r *http.Request) {
 	}
 	at, _ := strconv.Atoi(r.URL.Query().Get("part"))
 
-	a.mu.Lock()
+	a.lock()
 	defer a.mu.Unlock()
 
 	if at < 0 || at >= len(a.score.Parts) {
@@ -2673,7 +2674,7 @@ func (a *App) handleMoveStaff(w http.ResponseWriter, r *http.Request) {
 		to = from + 1
 	}
 
-	a.mu.Lock()
+	a.lock()
 	defer a.mu.Unlock()
 
 	n := len(a.score.Parts)
@@ -2732,7 +2733,7 @@ func (a *App) handleMeasureRepeat(w http.ResponseWriter, r *http.Request) {
 	measIdx, _ := strconv.Atoi(q.Get("measure"))
 	bars, _ := strconv.Atoi(q.Get("bars"))
 
-	a.mu.Lock()
+	a.lock()
 	defer a.mu.Unlock()
 
 	_, m, err := a.locate(partIdx, measIdx)
@@ -2811,7 +2812,7 @@ func (a *App) handleTie(w http.ResponseWriter, r *http.Request) {
 	// barline if that is where it is. Asking for both was asking the reader
 	// to say something the mark already says.
 	if len(targets) == 1 && q.Get("tie") != "none" {
-		a.mu.Lock()
+		a.lock()
 		if next, ok := a.noteAfter(targets[0]); ok {
 			targets = append(targets, next)
 		}
@@ -2863,7 +2864,7 @@ type tieTarget struct {
 
 // tieTargets resolves the selection to elements, in reading order.
 func (a *App) tieTargets(q url.Values) ([]tieTarget, error) {
-	a.mu.Lock()
+	a.lock()
 	defer a.mu.Unlock()
 
 	var out []tieTarget
@@ -3089,7 +3090,7 @@ func (a *App) handleCursor(w http.ResponseWriter, r *http.Request) {
 	}
 	part := num("part")
 
-	a.mu.Lock()
+	a.lock()
 	defer a.mu.Unlock()
 	if part < 0 || part >= len(a.score.Parts) {
 		http.Error(w, "no such staff", http.StatusBadRequest)
@@ -3378,7 +3379,7 @@ func (a *App) handleTuplet(w http.ResponseWriter, r *http.Request) {
 	}
 	n, _ := strconv.Atoi(q.Get("n"))
 
-	a.mu.Lock()
+	a.lock()
 	defer a.mu.Unlock()
 
 	p, m, err := a.locate(partIdx, measIdx)
@@ -3612,7 +3613,7 @@ func (a *App) pairTremolo(q url.Values, strokes int, buzz bool) (int, error) {
 		at = -1
 	}
 
-	a.mu.Lock()
+	a.lock()
 	defer a.mu.Unlock()
 
 	_, m, err := a.locate(partIdx, measIdx)
@@ -3668,7 +3669,7 @@ func (a *App) handleDot(w http.ResponseWriter, r *http.Request) {
 		at = -1
 	}
 
-	a.mu.Lock()
+	a.lock()
 	defer a.mu.Unlock()
 
 	p, m, err := a.locate(partIdx, measIdx)
@@ -3762,7 +3763,7 @@ func (a *App) handleDuration(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	a.mu.Lock()
+	a.lock()
 	defer a.mu.Unlock()
 
 	// Bar by bar, because changing a length changes where everything after
@@ -3931,7 +3932,7 @@ func (a *App) handleSplitMeasure(w http.ResponseWriter, r *http.Request) {
 	measIdx, _ := strconv.Atoi(q.Get("measure"))
 	at, _ := strconv.Atoi(q.Get("at"))
 
-	a.mu.Lock()
+	a.lock()
 	defer a.mu.Unlock()
 
 	p, m, err := a.locate(partIdx, measIdx)
@@ -4011,7 +4012,7 @@ func (a *App) handleJoinMeasure(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	a.mu.Lock()
+	a.lock()
 	defer a.mu.Unlock()
 
 	last := true
@@ -4089,7 +4090,7 @@ func (a *App) handleClearMeasure(w http.ResponseWriter, r *http.Request) {
 	partIdx, _ := strconv.Atoi(q.Get("part"))
 	measIdx, _ := strconv.Atoi(q.Get("measure"))
 
-	a.mu.Lock()
+	a.lock()
 	defer a.mu.Unlock()
 
 	_, m, err := a.locate(partIdx, measIdx)

@@ -217,7 +217,12 @@ func buildPlayback(s *model.Score) Playback {
 	// the cursor and the note it was supposed to be pointing at were most of
 	// a page apart. Deciding the bar lines first and hanging every part off
 	// them makes that unrepresentable.
-	starts, total := measureTimeline(s, order)
+	// The speed in every bar, worked out once. A piece is not one speed, so
+	// this is wanted for every note; asked of the score each time it walks
+	// the score from its first bar across every staff, and the performance
+	// of a symphony took half a minute to build.
+	tempos := s.Tempos()
+	starts, total := measureTimeline(s, tempos, order)
 	for k, start := range starts {
 		d := total - start
 		if k+1 < len(starts) {
@@ -299,7 +304,7 @@ func buildPlayback(s *model.Score) Playback {
 				// score: a tempo change partway through has to reach the notes
 				// as well as the barlines, or the two drift apart from the bar
 				// it is written at onwards.
-				secondsPerWhole := wholeNoteSeconds(s, mi)
+				secondsPerWhole := wholeNoteSeconds(tempos, mi)
 
 				ref := refBase[pi][mi]
 				if m.Repeat > 0 {
@@ -480,12 +485,12 @@ func buildPlayback(s *model.Score) Playback {
 // cursor and the note it pointed at came to be a bar apart.
 //
 // Returns the start of every bar and the time the last one ends.
-func measureTimeline(s *model.Score, order []int) ([]float64, float64) {
+func measureTimeline(s *model.Score, tempos []model.Tempo, order []int) ([]float64, float64) {
 	starts := make([]float64, len(order))
 	at := 0.0
 	for k, i := range order {
 		starts[k] = at
-		at += s.MeasureDuration(i).Float() * wholeNoteSeconds(s, i)
+		at += s.MeasureDuration(i).Float() * wholeNoteSeconds(tempos, i)
 	}
 	return starts, at
 }
@@ -495,8 +500,15 @@ func measureTimeline(s *model.Score, order []int) ([]float64, float64) {
 // One beat lasts 60/bpm seconds, and a whole note is however many beats fit
 // in it — which is why the beat the number counts has to be carried beside
 // the number. A tempo of 120 means nothing on its own.
-func wholeNoteSeconds(s *model.Score, bar int) float64 {
-	t := s.TempoAt(bar)
+//
+// It takes the score's tempos rather than the score: asking the score bar by
+// bar walks it from the beginning each time, and this is asked for every
+// note in the piece.
+func wholeNoteSeconds(tempos []model.Tempo, bar int) float64 {
+	var t model.Tempo
+	if bar >= 0 && bar < len(tempos) {
+		t = tempos[bar]
+	}
 	bpm := t.BPM
 	if bpm <= 0 {
 		bpm = 120

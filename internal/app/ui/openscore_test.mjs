@@ -46,6 +46,11 @@ function load(answer) {
       return answer;
     },
     async reopen() {},
+    // Gilbert, who comes up over the window while a score is being read.
+    // Nothing here is slow enough to see him, but the function still calls
+    // for him and a scope without him throws before it says anything.
+    busy() {},
+    idle() {},
   };
   const body = grab("openScore") + "\nreturn { openScore };";
   const api = new Function(...Object.keys(scope), body)(...Object.values(scope));

@@ -947,13 +947,26 @@ async function loadInfo() {
 // outside looks like the score suddenly shrinking — the change was to one
 // exercise and the answer was the whole book.
 async function reload() {
-  stop();
-  state.selection = null;
-  state.multi = [];
-  await loadInfo();
-  await drawScore();
-  await loadHits();
-  placeCursorOnOpen();
+  // The one place every open and every redraw of the whole score goes
+  // through, which is why Gilbert is put up here rather than beside each of
+  // them. A score opened from the command line never touches openFile at
+  // all — the server has it before the window exists — and that is exactly
+  // the case where the wait is longest.
+  //
+  // No words: whoever started the work has usually already said what it is,
+  // and busy only replaces the line when it is given something to say.
+  busy();
+  try {
+    stop();
+    state.selection = null;
+    state.multi = [];
+    await loadInfo();
+    await drawScore();
+    await loadHits();
+    placeCursorOnOpen();
+  } finally {
+    idle();
+  }
 }
 
 // placeCursorOnOpen puts the writing cursor on the page as soon as the score
@@ -1535,18 +1548,23 @@ function rebuildNativeMenus() {
 
 async function openRecent(path) {
   status("Opening " + path + "…");
-  const res = await fetch("/api/openpath?path=" + encodeURIComponent(path), {
-    method: "POST",
-  });
-  if (!res.ok) {
-    status("Could not open it: " + (await res.text()).trim());
-    // Gone or unreadable: the list says so next time it is asked.
+  busy("Opening " + path + "…");
+  try {
+    const res = await fetch("/api/openpath?path=" + encodeURIComponent(path), {
+      method: "POST",
+    });
+    if (!res.ok) {
+      status("Could not open it: " + (await res.text()).trim());
+      // Gone or unreadable: the list says so next time it is asked.
+      await loadRecent();
+      return;
+    }
+    await reopen();
     await loadRecent();
-    return;
+    status("Opened " + (state.info?.filename || path));
+  } finally {
+    idle();
   }
-  await reopen();
-  await loadRecent();
-  status("Opened " + (state.info?.filename || path));
 }
 
 /* ---------- instruments in the page ---------- */
@@ -2088,6 +2106,26 @@ async function loadHits() {
   state.barlines = d.barlines || [];
   state.headers = d.headers || [];
   state.strips = d.strips || [];
+  state.stripIndex = indexStrips(state.strips);
+  state.hitsByBar = indexHits(state.hits);
+}
+
+// indexHits files the clickable regions by which bar they are part of.
+function indexHits(hits) {
+  const bars = new Map();
+  for (const h of hits || []) {
+    const got = bars.get(h.measure);
+    if (got) got.push(h);
+    else bars.set(h.measure, [h]);
+  }
+  return bars;
+}
+
+// hitsIn is the regions belonging to one bar, on every staff.
+function hitsIn(index) {
+  const bars = state.hitsByBar;
+  if (bars) return bars.get(index) || [];
+  return (state.hits || []).filter((h) => h.measure === index);
 }
 
 // dynamicAt finds the dynamic a click landed on.
@@ -2172,8 +2210,34 @@ function headerAt(x, y) {
 // bar is selected: "key change from here" is something said about a bar, and
 // clicking inside one finds a note instead — a full bar has no empty space to
 // click in at all.
+// stripBin is how wide one bucket of the index below is, in staff spaces.
+// A bar is narrower than this, so a strip falls in one bucket or two.
+const stripBin = 64;
+
+// indexStrips files the bars by where they are across the page.
+//
+// stripAt is asked on every movement of the pointer, and walking every bar
+// of every staff to answer it is a hundred and thirty-eight thousand
+// comparisons on a symphony — for one frame of hover. Bucketed, it is the
+// few bars that share a stretch of the page.
+function indexStrips(strips) {
+  const bins = new Map();
+  for (const st of strips) {
+    const lo = Math.floor(st.x0 / stripBin);
+    const hi = Math.floor(st.x1 / stripBin);
+    for (let b = lo; b <= hi; b++) {
+      const got = bins.get(b);
+      if (got) got.push(st);
+      else bins.set(b, [st]);
+    }
+  }
+  return bins;
+}
+
 function stripAt(x, y) {
-  for (const st of state.strips) {
+  const bins = state.stripIndex;
+  const here = bins ? bins.get(Math.floor(x / stripBin)) : state.strips;
+  for (const st of here || []) {
     if (x >= st.x0 && x <= st.x1 && y >= st.top && y <= st.bottom) return st;
   }
   return null;
@@ -2291,14 +2355,44 @@ function elementAt(hit, x, y) {
 function setupStripHover() {
   const wrap = $("#canvas-wrap");
   let shown = null;
+  // The band itself, made once and moved, rather than made and thrown away.
+  //
+  // It used to be found with querySelectorAll over the drawing and then put
+  // back with insertBefore. On a symphony the drawing is nine hundred
+  // thousand shapes: the search walked all of them and the insertion made
+  // the browser lay all of them out again, twice for every movement of the
+  // pointer. Scrolling with the pointer over the music was unusable.
+  let band = null;
+  let bandIn = null;
+
+  const bandFor = (svg) => {
+    if (band && bandIn === svg) return band;
+    band = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+    band.setAttribute("class", "strip");
+    svg.insertBefore(band, svg.firstChild);
+    bandIn = svg;
+    return band;
+  };
 
   const clear = () => {
-    currentSVG()?.querySelectorAll("rect.strip").forEach((r) => r.remove());
+    // Hidden where it is. Taking it out of the drawing is what cost the
+    // layout; leaving it there and empty costs nothing.
+    if (band) band.setAttribute("width", "0");
     document.body.classList.remove("over-strip");
     shown = null;
   };
 
-  wrap.addEventListener("mousemove", (e) => {
+  // At most one of these per frame. A mouse reports its position far more
+  // often than the screen is redrawn, and the work below is only worth
+  // doing once per picture.
+  let queued = null;
+  let frame = 0;
+
+  const show = () => {
+    frame = 0;
+    const e = queued;
+    queued = null;
+    if (!e) return;
     if (state.readOnly || state.playing) {
       if (shown !== null) clear();
       return;
@@ -2306,8 +2400,8 @@ function setupStripHover() {
     const svg = currentSVG();
     if (!svg) return;
     const r = svg.getBoundingClientRect();
-    const x = (e.clientX - r.left) / state.zoom;
-    const y = (e.clientY - r.top) / state.zoom;
+    const x = (e.x - r.left) / state.zoom;
+    const y = (e.y - r.top) / state.zoom;
 
     const strip = stripAt(x, y);
     if (!strip) {
@@ -2315,22 +2409,25 @@ function setupStripHover() {
       return;
     }
     if (shown === strip.measure) return;
-    clear();
     shown = strip.measure;
 
     const z = state.zoom;
-    const band = document.createElementNS("http://www.w3.org/2000/svg", "rect");
-    band.setAttribute("class", "strip");
-    band.setAttribute("x", String(strip.x0 * z));
-    band.setAttribute("y", String(strip.top * z));
-    band.setAttribute("width", String((strip.x1 - strip.x0) * z));
-    band.setAttribute("height", String((strip.bottom - strip.top) * z));
-    band.setAttribute("rx", String(0.3 * z));
-    svg.insertBefore(band, svg.firstChild);
+    const b = bandFor(svg);
+    b.setAttribute("x", String(strip.x0 * z));
+    b.setAttribute("y", String(strip.top * z));
+    b.setAttribute("width", String((strip.x1 - strip.x0) * z));
+    b.setAttribute("height", String((strip.bottom - strip.top) * z));
+    b.setAttribute("rx", String(0.3 * z));
     document.body.classList.add("over-strip");
+  };
+
+  wrap.addEventListener("mousemove", (e) => {
+    queued = { x: e.clientX, y: e.clientY };
+    if (!frame) frame = requestAnimationFrame(show);
   });
 
   wrap.addEventListener("mouseleave", () => {
+    queued = null;
     clear();
     document.body.classList.remove("over-strip");
   });
@@ -5566,17 +5663,24 @@ function askPrint(many, parts, title, verb, paper) {
 async function openFile(file) {
   if (!file) return;
   status("Opening " + file.name + "…");
-  const res = await fetch("/api/open?name=" + encodeURIComponent(file.name), {
-    method: "POST",
-    body: await file.arrayBuffer(),
-  });
-  if (!res.ok) {
-    status("Could not open: " + (await res.text()).trim());
-    return false;
+  busy("Opening " + file.name + "…");
+  try {
+    const res = await fetch("/api/open?name=" + encodeURIComponent(file.name), {
+      method: "POST",
+      body: await file.arrayBuffer(),
+    });
+    if (!res.ok) {
+      status("Could not open: " + (await res.text()).trim());
+      return false;
+    }
+    await reopen();
+    status("Opened " + file.name);
+    return true;
+  } finally {
+    // Whatever happened, including nothing: a mascot left spinning over a
+    // window that has given up is worse than no mascot at all.
+    idle();
   }
-  await reopen();
-  status("Opened " + file.name);
-  return true;
 }
 
 // openScore asks the system for a file when gscore is running as an
@@ -5594,7 +5698,14 @@ async function openScore() {
           status("Ready");
           return;
         }
-        await reopen();
+        // From here on it is reading and laying out, which is the part that
+        // takes the time. The panel itself was the person's own doing.
+        busy("Opening " + d.filename + "…");
+        try {
+          await reopen();
+        } finally {
+          idle();
+        }
         status("Opened " + d.filename);
         return;
       }
@@ -6145,11 +6256,15 @@ async function play(opts) {
 // measureBox gives a measure's horizontal extent, shared by every staff
 // showing it. The columns are aligned across parts by the engraver, so one
 // range serves them all.
+// measureBox is the box round one bar, across every staff it is drawn on.
+//
+// Taken from the index rather than by walking every region in the score:
+// the playing cursor asks for this bar and the next one on every frame, and
+// on a symphony a region is one of a hundred and thirty-eight thousand.
 function measureBox(index) {
   let x0 = Infinity, x1 = -Infinity;
   let top = Infinity, bottom = -Infinity;
-  for (const h of state.hits) {
-    if (h.measure !== index) continue;
+  for (const h of hitsIn(index)) {
     x0 = Math.min(x0, h.x0);
     x1 = Math.max(x1, h.x1);
     top = Math.min(top, h.staffTop);
@@ -6247,12 +6362,86 @@ function systemSpan(measure) {
   return { top, bottom };
 }
 
+// eventIndex files a performance's events by the second each one begins in,
+// and records how long the longest of them lasts.
+//
+// One bucket per second is fine enough: a frame then looks at the second it
+// is in and at the few before it that could still be ringing, instead of at
+// the whole piece.
+function eventIndex(events) {
+  const bins = new Map();
+  let longest = 0;
+  for (const ev of events || []) {
+    const b = Math.floor(ev.start);
+    const got = bins.get(b);
+    if (got) got.push(ev);
+    else bins.set(b, [ev]);
+    if (ev.dur > longest) longest = ev.dur;
+  }
+  return { bins, longest };
+}
+
+// soundingAt is every event that could be ringing at a moment: the ones
+// starting in this second and in the seconds a long note could reach across.
+function soundingAt(when, at) {
+  const out = [];
+  const here = Math.floor(at);
+  // A note cannot have started more than its own length ago and still be
+  // sounding, so the longest note in the piece bounds how far back to look.
+  const first = Math.floor(at - when.longest) - 1;
+  for (let b = first; b <= here; b++) {
+    const got = when.bins.get(b);
+    if (got) out.push(...got);
+  }
+  return out;
+}
+
+// refIndex files a drawing's shapes by the number the engraver gave them.
+//
+// Lighting up a sounding note used to ask the drawing for the shapes with a
+// given number, which on a symphony is an attribute selector run over nine
+// hundred thousand of them — twice per note, sixty times a second. Filed
+// once when the piece starts playing, it is a lookup.
+//
+// Built the first time it is asked for, because a score that is never played
+// should not pay for it.
+function refIndex(svg) {
+  let map = null;
+  const none = [];
+  return (ref) => {
+    if (!svg) return none;
+    if (!map) {
+      map = new Map();
+      for (const n of svg.querySelectorAll("[data-ref]")) {
+        const k = n.getAttribute("data-ref");
+        const got = map.get(k);
+        if (got) got.push(n);
+        else map.set(k, [n]);
+      }
+    }
+    return map.get(String(ref)) || none;
+  };
+}
+
 // follow moves the cursor and lights up whichever notehead is sounding. The
 // engraver and the playback builder number elements identically, so an
 // event's ref finds its glyph directly.
 function follow(pb) {
   const svg = currentSVG();
   const total = pb.duration;
+  // The events filed by the second they start in, and how long the longest
+  // note in the piece lasts.
+  //
+  // What is sounding has to be worked out for every frame, and asking it of
+  // every event in the performance means walking the whole piece sixty
+  // times a second: Beethoven's ninth is a quarter of a million events, so
+  // the question took longer to answer than the frame it was asked for and
+  // playing it stopped dead. Filed by second, a frame looks at the handful
+  // of events that could still be ringing.
+  const when = eventIndex(pb.events);
+  // And the glyphs filed by the number the engraver gave them, so that
+  // lighting one up is a lookup rather than a search of the whole drawing.
+  const byRef = refIndex(svg);
 
   const tick = () => {
     const now = (performance.now() - playStart) / 1000;
@@ -6288,7 +6477,7 @@ function follow(pb) {
     // one found showed a Requiem for five voices as a solo.
     const sounding = new Set();
     let lead = null;
-    for (const ev of pb.events) {
+    for (const ev of soundingAt(when, shown)) {
       if (shown >= ev.start && shown < ev.start + ev.dur) {
         sounding.add(ev.ref);
         if (lead === null || ev.part === fingering.staff) lead = ev;
@@ -6297,13 +6486,11 @@ function follow(pb) {
     if (!sameSet(sounding, current)) {
       for (const ref of current) {
         if (sounding.has(ref)) continue;
-        svg?.querySelectorAll(`[data-ref="${ref}"]`)
-           .forEach((n) => n.classList.remove("playing"));
+        for (const n of byRef(ref)) n.classList.remove("playing");
       }
       for (const ref of sounding) {
         if (current.has(ref)) continue;
-        svg?.querySelectorAll(`[data-ref="${ref}"]`)
-           .forEach((n) => n.classList.add("playing"));
+        for (const n of byRef(ref)) n.classList.add("playing");
       }
       current = sounding;
       if (lead) updateFingering(lead);
@@ -6660,6 +6847,46 @@ function setupFullscreen() {
 
 function status(msg) {
   $("#status").textContent = msg;
+}
+
+/* ---------- saying that it is working ---------- */
+
+// Opening a score is not instant on a big one. Beethoven's ninth is six
+// megabytes of MuseScore, fifty-three staves and two and a half thousand
+// bars, and reading it, laying it out and drawing it takes seconds. For
+// those seconds the window did nothing at all and said nothing at all, which
+// is indistinguishable from a window that has stopped working.
+//
+// So Gilbert comes up over it. Counted rather than switched, because one
+// slow thing can start inside another and the inner one finishing does not
+// mean the outer one has.
+let busyDepth = 0;
+let busyTimer = 0;
+
+function busy(msg) {
+  busyDepth++;
+  const t = $("#busy-text");
+  if (t && msg) t.textContent = msg;
+  if (busyTimer) return;
+  // Only once it has actually taken a moment. Most scores open faster than
+  // the eye, and a mascot that appears and vanishes inside a frame reads as
+  // a flicker rather than as progress.
+  busyTimer = setTimeout(() => {
+    busyTimer = 0;
+    const el = $("#busy");
+    if (el) el.hidden = false;
+  }, 250);
+}
+
+function idle() {
+  if (busyDepth > 0) busyDepth--;
+  if (busyDepth > 0) return;
+  if (busyTimer) {
+    clearTimeout(busyTimer);
+    busyTimer = 0;
+  }
+  const el = $("#busy");
+  if (el) el.hidden = true;
 }
 
 function escapeHTML(s) {

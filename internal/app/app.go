@@ -37,6 +37,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/stricaud/gscore/docs"
 	"github.com/stricaud/gscore/internal/brand"
@@ -56,6 +57,28 @@ var uiFiles embed.FS
 type App struct {
 	mu    sync.RWMutex
 	score *model.Score
+
+	// What was last engraved, and how many times anything has been able to
+	// change since.
+	//
+	// Laying out a big score is seconds of work — Beethoven's ninth is
+	// fifty-three staves of two and a half thousand bars and takes four and
+	// a half — and the editor asks for it twice on every change: once for
+	// the drawing and once for the regions that can be clicked. Opening that
+	// file engraved it twice over for one picture.
+	//
+	// gen counts writes rather than changes. Every path that takes the write
+	// lock bumps it, whether or not it touched anything, so a cached layout
+	// is handed back only while nothing has had the chance to make it wrong.
+	// Counting too generously costs a re-engrave; counting where the score
+	// is touched instead would mean finding every place that touches it, and
+	// one missed would draw a score that is no longer there.
+	gen      atomic.Uint64
+	layMu    sync.Mutex
+	layGen   uint64
+	layScore *model.Score
+	layOpt   engrave.Options
+	lay      *engrave.Layout
 	// book holds every score in the file, since one file may carry many: an
 	// ABC tune book, for instance. score is whichever of them is being
 	// worked on.
@@ -121,7 +144,7 @@ func New(s *model.Score, filename string) *App {
 // There is no machine here, but there is no network either: the core, the
 // page and the person are all the same computer.
 func (a *App) InBrowser() {
-	a.mu.Lock()
+	a.lock()
 	a.inBrowser = true
 	a.mu.Unlock()
 }
@@ -133,7 +156,7 @@ func (a *App) InBrowser() {
 // nowhere to go until now. Without this the log window was empty for exactly
 // the case it was written for: a tune book opened from the command line.
 func (a *App) Opened(err error) {
-	a.mu.Lock()
+	a.lock()
 	defer a.mu.Unlock()
 	a.warning, a.importLog = readProblems(err)
 }
@@ -233,7 +256,7 @@ func (a *App) Serve(addr string, native bool) (string, error) {
 	}()
 
 	host, _, _ := net.SplitHostPort(ln.Addr().String())
-	a.mu.Lock()
+	a.lock()
 	a.native = native
 	a.local = host == "127.0.0.1" || host == "::1"
 	opened := a.filename
@@ -451,6 +474,35 @@ func (a *App) APIRoutes(mux *http.ServeMux) {
 	}
 }
 
+// lock takes the write lock, and counts the write. See App.gen.
+func (a *App) lock() {
+	a.mu.Lock()
+	a.gen.Add(1)
+}
+
+// layout engraves a score, or hands back the last layout when nothing has
+// been able to change since it was made.
+//
+// It keeps one, not a collection: the editor asks for the same view twice in
+// a row and then asks again for a different one, so one is what pays. It
+// takes no lock of its own on the score, so the caller's discipline about
+// that is whatever it already was.
+func (a *App) layout(score *model.Score, opt engrave.Options) *engrave.Layout {
+	// Read before engraving, not after. A write that lands while this is
+	// working leaves the layout tagged with the older count, so the next
+	// reader finds the tag stale and engraves again — which is what should
+	// happen, since what was engraved may be half of each.
+	gen := a.gen.Load()
+	a.layMu.Lock()
+	defer a.layMu.Unlock()
+	if a.lay != nil && a.layGen == gen && a.layScore == score && a.layOpt == opt {
+		return a.lay
+	}
+	lay := engrave.Engrave(score, opt)
+	a.layGen, a.layScore, a.layOpt, a.lay = gen, score, opt, lay
+	return lay
+}
+
 func (a *App) handleSVG(w http.ResponseWriter, r *http.Request) {
 	a.mu.RLock()
 	score := a.score
@@ -484,7 +536,7 @@ func (a *App) handleSVG(w http.ResponseWriter, r *http.Request) {
 	ropt.Symbols = a.symbols
 	a.mu.RUnlock()
 
-	lay := engrave.Engrave(score, eopt)
+	lay := a.layout(score, eopt)
 	w.Header().Set("Content-Type", "image/svg+xml")
 	w.Header().Set("Cache-Control", "no-store")
 	if err := svg.Render(w, lay, ropt); err != nil {
@@ -739,7 +791,7 @@ func (a *App) handleTune(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "which tune?", http.StatusBadRequest)
 		return
 	}
-	a.mu.Lock()
+	a.lock()
 	defer a.mu.Unlock()
 	if i < 0 || i >= len(a.book) {
 		http.Error(w, "no such tune", http.StatusBadRequest)
@@ -751,7 +803,7 @@ func (a *App) handleTune(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) handleNew(w http.ResponseWriter, r *http.Request) {
-	a.mu.Lock()
+	a.lock()
 	a.setBook([]*model.Score{model.NewScore()}, "", nil)
 	a.mu.Unlock()
 	writeJSON(w, map[string]string{"status": "ok"})
@@ -783,7 +835,7 @@ func (a *App) handleOpen(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	a.mu.Lock()
+	a.lock()
 	a.setBook(scores, name, err)
 	a.mu.Unlock()
 	writeJSON(w, map[string]any{"status": "ok", "filename": name, "tunes": len(scores)})
@@ -792,8 +844,9 @@ func (a *App) handleOpen(w http.ResponseWriter, r *http.Request) {
 // handleLayout reports the engraved size, which the canvas uses to size itself.
 func (a *App) handleLayout(w http.ResponseWriter, r *http.Request) {
 	a.mu.RLock()
-	lay := engrave.Engrave(a.score, a.engraveOpt)
+	score, eopt := a.score, a.engraveOpt
 	a.mu.RUnlock()
+	lay := a.layout(score, eopt)
 	writeJSON(w, map[string]float64{"width": lay.Width, "height": lay.Height})
 }
 

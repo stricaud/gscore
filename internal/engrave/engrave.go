@@ -634,11 +634,26 @@ func Engrave(s *model.Score, opt Options) *Layout {
 
 func engraveWith(s *model.Score, opt Options, room map[int]need) *Layout {
 	e := &engraver{opt: opt, score: s, room: room,
-		pickup: opensWithPickup(s),
-		spans:  map[[2]int]*openSpans{},
-		lay:    &Layout{Refs: map[int]RefPos{}, defaults: opt.Defaults}}
+		pickup:   opensWithPickup(s),
+		spans:    map[[2]int]*openSpans{},
+		clefs:    map[*model.Part][]model.Clef{},
+		versesOf: map[*model.Part]int{},
+		lay:      &Layout{Refs: map[int]RefPos{}, defaults: opt.Defaults}}
 	e.run()
 	return e.lay
+}
+
+// clefAt is Part.ClefAt, answered from the run worked out once per part.
+func (e *engraver) clefAt(p *model.Part, i int) model.Clef {
+	run, ok := e.clefs[p]
+	if !ok {
+		run = p.Clefs()
+		e.clefs[p] = run
+	}
+	if i < 0 || i >= len(run) {
+		return p.ClefAt(i)
+	}
+	return run[i]
 }
 
 type engraver struct {
@@ -659,6 +674,21 @@ type engraver struct {
 	room map[int]need
 	y    float64 // top line of the staff being drawn
 	clef model.Clef
+	// clefs is each part's clef bar by bar, worked out once. Asking the
+	// part itself costs a walk from its first bar, and asking it for every
+	// bar in turn makes laying out a long score quadratic: more than half
+	// the time spent on Beethoven's ninth went there. A layout pass does
+	// not change the score, so one pass down each part holds good for the
+	// whole of it.
+	clefs map[*model.Part][]model.Clef
+	// verses is how many lines of words go under each part, counted once.
+	// Counting walks the whole part, and it was counted again for every
+	// system on it.
+	versesOf map[*model.Part]int
+	// staffGlyphs is where in lay.Glyphs the staff being drawn begins, so
+	// that a mark looking for the noteheads under it need not walk the
+	// whole drawing to find them.
+	staffGlyphs int
 	// lines and lineGap describe the staff being drawn: five lines a space
 	// apart for ordinary music, one per string and wider for tablature.
 	lines   int
@@ -697,6 +727,10 @@ type engraver struct {
 	staffTop  float64
 	staffX0   float64
 	staffX1   float64
+	// staffSky is that staff's outline so far, and staffSkyAt how much of
+	// the drawing has gone into it. See staffOutline.
+	staffSky   *skyline
+	staffSkyAt mark
 
 	// waiting are the marks that go outside the staff and cannot be placed
 	// where they are met.
@@ -1042,7 +1076,7 @@ func (e *engraver) musicAbove(parts []*model.Part, start, end int) float64 {
 	p := parts[0]
 	highest := staffHeight * 2 // the top line, in staff steps
 	for mi := start; mi < end && mi < len(p.Measures); mi++ {
-		clef := p.ClefAt(mi)
+		clef := e.clefAt(p, mi)
 		for _, v := range p.Measures[mi].Voices {
 			for _, el := range v.Elements {
 				switch n := el.(type) {
@@ -1158,7 +1192,7 @@ func (e *engraver) staffReach(p *model.Part, start, end int) (above, below float
 		if len(p.Measures[mi].Voices) > 1 {
 			stemOut = stemLength
 		}
-		clef := p.ClefAt(mi)
+		clef := e.clefAt(p, mi)
 		for _, v := range p.Measures[mi].Voices {
 			for _, el := range v.Elements {
 				var steps []int
@@ -1387,7 +1421,7 @@ func (e *engraver) overhang() float64 {
 
 	for _, p := range e.score.Parts {
 		for mi, m := range p.Measures {
-			clef := p.ClefAt(mi)
+			clef := e.clefAt(p, mi)
 			for _, v := range m.Voices {
 				for _, el := range v.Elements {
 					step, up, ok := topOf(clef, el)
@@ -1634,7 +1668,7 @@ func (e *engraver) prefixWidth(p *model.Part, at int) float64 {
 		// The word TAB, and no key signature to follow it.
 		w = tabClefWidth(p, sp)
 	default:
-		clef, _ := smufl.ClefGlyph(p.ClefAt(at))
+		clef, _ := smufl.ClefGlyph(e.clefAt(p, at))
 		w = sp.ClefBefore + smufl.Advance(clef) + sp.ClefAfter
 		w += e.keySignatureWidth(p.KeyAt(at))
 	}
@@ -1916,7 +1950,7 @@ func (e *engraver) signatureAt(p *model.Part, index int) (signatureChange, float
 	if m.Key != nil {
 		ch.key, ch.hasKey = m.Key, true
 		ch.from = p.KeyAt(index - 1)
-		naturals, accidentals := keyChangeSteps(p.ClefAt(index), ch.from, *m.Key)
+		naturals, accidentals := keyChangeSteps(e.clefAt(p, index), ch.from, *m.Key)
 		for range naturals {
 			w += smufl.Advance("accidentalNatural") + sp.BetweenKeyAccidentals
 		}
@@ -2274,7 +2308,7 @@ func (e *engraver) drawSystem(parts []*model.Part, boxes [][]measureBox,
 	// widening every gap by the worst case pushes a pianist's two staves half
 	// a page apart for the sake of a guitar diagram three staves away.
 	gapAfter := func(i int) float64 {
-		gap := e.staffGap(len(parts)) + roomBelow(parts[i])
+		gap := e.staffGap(len(parts)) + e.roomBelow(parts[i])
 		if i+1 < len(parts) {
 			if above := e.partChordRoom(parts[i+1], start, end); above > 0 {
 				gap += above
@@ -2326,7 +2360,9 @@ func (e *engraver) drawSystem(parts []*model.Part, boxes [][]measureBox,
 	}
 
 	for pi, p := range parts {
-		e.clef = p.ClefAt(start)
+		// Where this staff's own ink begins. See clearOfNoteheads.
+		e.staffGlyphs = len(e.lay.Glyphs)
+		e.clef = e.clefAt(p, start)
 		// How this staff is ruled: five lines of pitches, or one line per
 		// string with the frets written on them.
 		e.lines, e.lineGap = partLines(p), partGap(p)
@@ -2340,6 +2376,8 @@ func (e *engraver) drawSystem(parts []*model.Part, boxes [][]measureBox,
 		staffMark := e.marked()
 		e.staffMark, e.staffTop = staffMark, staffTop
 		e.staffX0, e.staffX1 = sp.Margin, right
+		// A new staff, so the outline kept for the last one is of no use.
+		e.staffSky = nil
 		staffTops = append(staffTops, e.y)
 		// Each staff's clef starts far enough right that its own key and
 		// meter end where everybody else's do, so a staff in C major and one
@@ -2421,7 +2459,7 @@ func (e *engraver) drawSystem(parts []*model.Part, boxes [][]measureBox,
 		// The staff is finished, so the marks that go outside it now know
 		// what they have to clear. They are placed outwards from the staff
 		// in the order notation puts them in, each clearing the last.
-		sky := e.outline(staffMark, sp.Margin, right, staffTop)
+		sky := e.staffOutline()
 		// The band over a bar goes above that bar's music, now that there
 		// is an outline to put it above.
 		//
@@ -2504,7 +2542,7 @@ func (e *engraver) drawSystem(parts []*model.Part, boxes [][]measureBox,
 	// began four bars ago arrives over somebody else's first bar.
 	foot := parts[len(parts)-1]
 	_, footLow := e.staffReach(foot, start, end)
-	e.y += partH(foot) + math.Max(roomBelow(foot),
+	e.y += partH(foot) + math.Max(e.roomBelow(foot),
 		footLow+marksBelow(foot, start, end))
 	// And no higher than what was drawn, whatever the estimate said.
 	if lowest > e.y {

@@ -164,7 +164,7 @@ func (a *App) handleSetKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	a.mu.Lock()
+	a.lock()
 	defer a.mu.Unlock()
 	if part < 0 || part >= len(a.score.Parts) {
 		http.Error(w, "no such part", http.StatusBadRequest)

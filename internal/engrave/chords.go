@@ -109,6 +109,18 @@ func (e *engraver) partChordRoom(p *model.Part, start, end int) float64 {
 	return room
 }
 
+// partVerses is how many lines of words are written under one staff, counted
+// once per part: counting walks every element of it, and the answer is wanted
+// again for every system the part appears on.
+func (e *engraver) partVerses(p *model.Part) int {
+	if n, ok := e.versesOf[p]; ok {
+		return n
+	}
+	n := partVerses(p)
+	e.versesOf[p] = n
+	return n
+}
+
 // partVerses is how many lines of words are written under one staff.
 func partVerses(p *model.Part) int {
 	most := 0
@@ -131,8 +143,8 @@ func partVerses(p *model.Part) int {
 }
 
 // roomBelow is the space one staff needs under it for its own words.
-func roomBelow(p *model.Part) float64 {
-	if n := partVerses(p); n > 0 {
+func (e *engraver) roomBelow(p *model.Part) float64 {
+	if n := e.partVerses(p); n > 0 {
 		return lyricDrop + float64(n-1)*lyricLine
 	}
 	return 0

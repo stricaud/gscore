@@ -16,6 +16,7 @@ import (
 	"image/png"
 	"io"
 	"io/fs"
+	"math"
 	"net/http"
 
 	"github.com/stricaud/gscore/internal/engrave"
@@ -474,7 +475,28 @@ func buildPlayback(s *model.Score) Playback {
 			}
 		}
 	}
+	trimTimes(out.Events)
 	return out
+}
+
+// trimTimes rounds every time in a performance to the microsecond.
+//
+// Not for the sound — a microsecond is a thousandth of the shortest thing
+// anybody can hear as separate — but for the writing of it. A time worked
+// out by adding thirds of a beat together comes out as 2645.209921115705
+// and 0.9090909090909092, and every one of those digits is a byte handed
+// over and a byte read back. A symphony is a hundred and thirty-two
+// thousand notes, and the times alone were a third of the eighteen
+// megabytes it took to say how to play it — which in the page, where the
+// core writing them out is WebAssembly, is most of the wait between
+// pressing Play and hearing anything.
+func trimTimes(events []Event) {
+	const grain = 1e6 // a microsecond
+	for i := range events {
+		events[i].Start = math.Round(events[i].Start*grain) / grain
+		events[i].Dur = math.Round(events[i].Dur*grain) / grain
+		events[i].Gate = math.Round(events[i].Gate*grain) / grain
+	}
 }
 
 // measureTimeline decides when each bar begins.

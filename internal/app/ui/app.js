@@ -47,6 +47,8 @@ const state = {
   selection: null,
 
   hits: [],
+  // The performance, kept until the music changes. See playbackData.
+  playback: null,
   // How big the engraved score is, in staff spaces, and which stretch of it
   // is in the page — null when the whole of it is. See drawWindow.
   size: null,
@@ -1336,6 +1338,27 @@ async function reload() {
   } finally {
     idle();
   }
+  // And then, with the score on screen and nothing being waited on, work
+  // out how to play it.
+  //
+  // Nothing needs the performance until Play is pressed, and on a symphony
+  // it is a hundred and thirty-two thousand notes and sixteen megabytes —
+  // a second of work in the page, where the core is WebAssembly. Done
+  // while the score is being read rather than when the button is pressed,
+  // it is already in hand. Not awaited: the score is on screen and
+  // editable, and if Play comes first it simply waits for this.
+  warmPlayback();
+}
+
+// warmPlayback works the performance out in the background, once the
+// browser has nothing better to do.
+function warmPlayback() {
+  const go = () => {
+    if (state.playback || state.playing) return;
+    void playbackData();
+  };
+  if (window.requestIdleCallback) window.requestIdleCallback(go, { timeout: 3000 });
+  else setTimeout(go, 400);
 }
 
 // placeCursorOnOpen puts the writing cursor on the page as soon as the score
@@ -2464,7 +2487,37 @@ async function getSoundfont() {
 // Nothing is patched in place, because the drawing holds no music and the
 // music holds no geometry; that separation is what makes this simple.
 
+// playbackData is the performance, worked out once and kept until the music
+// changes.
+//
+// Working one out is every note of every repeat with its own time, its own
+// loudness and its own instrument: a hundred and thirty-two thousand of
+// them on a symphony, and eighteen megabytes of JSON. In the page the core
+// writing that is WebAssembly, so it is a second rather than a moment —
+// and it was paid again every time Play was pressed, for a performance that
+// had not changed since the last one.
+//
+// Let go whenever the hit regions are, which is whenever the music has been
+// touched.
+async function playbackData() {
+  if (state.playback) return state.playback;
+  try {
+    const d = await (await fetch("/api/playback")).json();
+    // In the order it is played, once. Everything downstream either wants
+    // that order or does not care, and sorting a hundred and thirty-two
+    // thousand notes is not work to do twice.
+    (d.events || []).sort((a, b) => a.start - b.start);
+    state.playback = d;
+    return d;
+  } catch (_) {
+    return null;
+  }
+}
+
 async function loadHits() {
+  // The music may have changed, so the performance worked out from it is no
+  // longer the performance.
+  state.playback = null;
   const res = await fetch("/api/hits?mode=" + state.mode);
   const d = await res.json();
   state.hits = d.hits || [];
@@ -6396,12 +6449,11 @@ function stopScheduling() {
 function scheduleOscillators(events, from, t0, master) {
   stopScheduling();
 
-  // In the order they are played, so that moving the window forward is a
-  // walk rather than a search. Only what is still to be heard: everything
-  // over before we came in is nothing to build.
-  const todo = events
-    .filter((e) => e.start + e.dur > from)
-    .sort((a, b) => a.start - b.start);
+  // Only what is still to be heard: everything over before we came in is
+  // nothing to build. Already in the order it is played — see
+  // playbackData — so moving the window forward is a walk rather than a
+  // search.
+  const todo = events.filter((e) => e.start + e.dur > from);
   if (!todo.length) return;
 
   // The longest note in the piece, which is how long after building one it
@@ -6619,8 +6671,8 @@ async function playNow(opts) {
     }
   }
 
-  const pb = await (await fetch("/api/playback")).json();
-  if (!pb.events || pb.events.length === 0) {
+  const pb = await playbackData();
+  if (!pb || !pb.events || pb.events.length === 0) {
     status("Nothing to play");
     return;
   }
@@ -6663,8 +6715,14 @@ async function playNow(opts) {
   state.pausedAt = null;
 
   // The cursor is placed from the engraved positions, so they have to be in
-  // hand before it can be shown.
-  await loadHits();
+  // hand before it can be shown — but they usually already are. They are
+  // loaded when the score is opened and again after every edit, and nothing
+  // else moves them. Asking for them again cost a round trip of every
+  // clickable region in the score, which on a symphony is a hundred and
+  // thirty-eight thousand of them and seventy megabytes: in the page, where
+  // the core writing that out is WebAssembly, it was most of the wait
+  // between pressing Play and hearing anything.
+  if (!(state.hits || []).length) await loadHits();
 
   wakeAudio();
   await audio.resume();

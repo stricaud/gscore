@@ -169,3 +169,62 @@ test("a piece short enough to build in one go is built in one go", () => {
   assert.equal(t.built.length, song.length, "a short song was dribbled out");
   assert.equal(t.running(), false, "a timer is still ticking over a finished song");
 });
+
+/*
+ * And what pressing Play asks for before it can start.
+ *
+ * It used to ask for two things it already had. The clickable regions are
+ * loaded when a score is opened and again after every edit, and nothing
+ * else moves them — but Play asked for them again, which on a symphony is a
+ * hundred and thirty-eight thousand regions and seventy megabytes. And the
+ * performance was worked out from scratch every time, which is a hundred
+ * and thirty-two thousand notes and sixteen more. In the page, where the
+ * core writing both of them out is WebAssembly, that was most of the wait
+ * between pressing Play and hearing anything.
+ */
+
+test("play does not ask again for regions it already has", () => {
+  const fn = src.match(/^async function playNow\(opts\)[\s\S]*?^}/m)[0];
+  assert.ok(/if \(!\(state\.hits \|\| \[\]\)\.length\) await loadHits\(\)/.test(fn),
+    "play reloads every clickable region in the score before it starts");
+});
+
+test("the performance is worked out once and kept until the music changes", () => {
+  const fn = src.match(/^async function playbackData\(\)[\s\S]*?^}/m)[0];
+  assert.ok(/if \(state\.playback\) return state\.playback/.test(fn),
+    "playbackData works the performance out again every time");
+  assert.ok(fn.includes("sort("),
+    "the notes are not put in playing order once, so each play sorts them again");
+
+  const play = src.match(/^async function playNow\(opts\)[\s\S]*?^}/m)[0];
+  assert.ok(play.includes("playbackData()"),
+    "play still fetches the performance itself, so nothing is kept");
+
+  // And let go whenever the regions are, which is whenever the music has
+  // been touched. Keeping a stale performance would play the score as it
+  // was before the edit.
+  const hits = src.match(/^async function loadHits\(\)[\s\S]*?^}/m)[0];
+  assert.ok(/state\.playback = null/.test(hits),
+    "an edit leaves the old performance in hand, and it would be played");
+});
+
+test("the scheduler trusts the order rather than sorting again", () => {
+  const fn = src.match(/^function scheduleOscillators\([\s\S]*?^}/m)[0];
+  assert.ok(!fn.includes(".sort("),
+    "the notes are sorted again every time play is pressed");
+});
+
+test("the performance is worked out before Play is pressed, not after", () => {
+  // Nothing needs it until the button is pressed, and on a symphony it is a
+  // second of work. Done while the score is being read, it is already in
+  // hand; and because playbackData keeps it, pressing Play first simply
+  // waits for the one that is already running.
+  const fn = src.match(/^async function reload\(\)[\s\S]*?^}/m)[0];
+  assert.ok(fn.includes("warmPlayback()"),
+    "reload leaves the performance to be worked out when Play is pressed");
+  const warm = src.match(/^function warmPlayback\(\)[\s\S]*?^}/m)[0];
+  assert.ok(/state\.playback \|\| state\.playing/.test(warm),
+    "it works one out again even when there is one, or while the music plays");
+  assert.ok(warm.includes("requestIdleCallback"),
+    "it competes with drawing the score instead of waiting for a quiet moment");
+});

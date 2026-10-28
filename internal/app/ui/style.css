@@ -1505,7 +1505,52 @@ dialog.wide { max-width: 640px; }
 
 /* ---- harmonics ---- */
 
-#harmonics { max-width: 640px; }
+/* One size, whatever it is showing.
+   What the panel has to say about a single note is a line and a table with
+   no rows in it; about a chord of four it is six rows and a crowded
+   spectrum. Sized to its contents it grew and shrank under the pointer as
+   the selection moved from note to note, which makes the thing being read
+   move as well. So the window is given a height and the contents scroll
+   inside it. */
+#harmonics {
+  max-width: 640px;
+  width: min(640px, 92vw);
+  height: min(70vh, 560px);
+  display: flex;
+  flex-direction: column;
+  padding: 16px 20px;
+}
+
+/* The head: what is being read, and the way out. Both stay put while the
+   rest scrolls. */
+.dlg-head {
+  display: flex; align-items: flex-start; gap: 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--line);
+}
+.dlg-head > div { flex: 1; min-width: 0; }
+.dlg-head h2 { margin: 0; }
+.dlg-head form { margin: 0; }
+.dlg-close {
+  margin-top: 0;
+  padding: 2px 9px;
+  line-height: 1.2;
+  font-size: 15px;
+}
+
+#harm-staff {
+  margin: 2px 0 0;
+  color: var(--muted);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+
+#harm-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  /* Clear of the scrollbar, which otherwise sits on the spectrum. */
+  padding-right: 4px;
+}
 
 /* The verdict, as words and as a bar: the words are read first and the bar
    is what makes two chords comparable at a glance. */
@@ -1526,6 +1571,9 @@ dialog.wide { max-width: 640px; }
   background-size: 140px 100%;
 }
 #harm-number { font-variant-numeric: tabular-nums; min-width: 3em; text-align: right; }
+
+/* The staff a note is on, where the chord is spread over several. */
+.harm-on { color: var(--muted); font-size: 12px; }
 
 #harm-spectrum { margin: 6px 0; }
 .harm-svg { width: 100%; height: auto; display: block; }

@@ -9494,6 +9494,23 @@ async function refreshHarmonics() {
   drawHarmonics(d);
 }
 
+// staffName is what a staff is called, by the number the analysis gives it.
+function staffName(staves, part) {
+  return (staves || [])[part] || `Staff ${(part || 0) + 1}`;
+}
+
+// harmStaves is every staff the sounding notes are on, in the order they
+// are listed and without repeats.
+function harmStaves(d) {
+  const staves = d.staves || [];
+  const out = [];
+  for (const n of d.notes || []) {
+    const name = staffName(staves, n.part);
+    if (!out.includes(name)) out.push(name);
+  }
+  return out;
+}
+
 function drawHarmonics(d) {
   const words = $("#harm-words");
   const number = $("#harm-number");
@@ -9507,13 +9524,33 @@ function drawHarmonics(d) {
     fill.style.width = Math.min(100, (d.roughness || 0) * 100) + "%";
   }
 
+  // The head says what is being read and when, and stays one line so that
+  // the window does not move while the selection does.
+  const staff = $("#harm-staff");
+  if (staff) {
+    const line = harmStaves(d).join(" · ");
+    staff.textContent = line
+      ? `${line} — at ${(d.at || 0).toFixed(2)}s`
+      : `Nothing sounding at ${(d.at || 0).toFixed(2)}s`;
+    // The whole of it, for a head too narrow to show the whole of it.
+    staff.title = staff.textContent;
+  }
+
   const where = $("#harm-where");
   if (where) {
-    const names = (d.notes || []).map((n, i) =>
-      `<em style="color:${harmColours[i % harmColours.length]}">${n.name}</em>`);
-    where.innerHTML = names.length
-      ? `At ${(d.at || 0).toFixed(2)}s: ${names.join(" ")}`
-      : `At ${(d.at || 0).toFixed(2)}s: nothing sounding`;
+    // Which staff each note is on, where the chord is spread over more than
+    // one of them. On a single staff the head has already said so, and
+    // repeating it beside every note would be noise.
+    const staves = d.staves || [];
+    const spread = harmStaves(d).length > 1;
+    const names = (d.notes || []).map((n, i) => {
+      const colour = harmColours[i % harmColours.length];
+      const on = spread
+        ? ` <span class="harm-on">(${escapeHTML(staffName(staves, n.part))})</span>`
+        : "";
+      return `<em style="color:${colour}">${escapeHTML(n.name)}</em>${on}`;
+    });
+    where.innerHTML = names.length ? names.join(" ") : "Nothing is sounding there.";
   }
 
   drawSpectrum(d);

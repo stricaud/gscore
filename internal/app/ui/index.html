@@ -543,31 +543,44 @@
      spectrum off the loudspeaker shows the soundfont, and the question
      being asked is about the chord. -->
 <dialog id="harmonics">
-  <h2>Harmonics</h2>
-  <p class="small" id="harm-where">Pick a note, or play, and this follows it.</p>
-
-  <div id="harm-verdict"><span id="harm-words">—</span>
-    <span id="harm-bar"><i id="harm-fill"></i></span>
-    <b id="harm-number">0.00</b>
+  <!-- The head stays put and the rest scrolls under it. The panel follows
+       whatever is picked up, and what it has to say about one note is a
+       good deal shorter than what it has to say about a chord of four: let
+       the window take the size of its contents and it changed height under
+       the pointer at every note. So it is one size, and the close button
+       and the staff being read are where they can always be found. -->
+  <div class="dlg-head">
+    <div>
+      <h2>Harmonics</h2>
+      <p class="small" id="harm-staff">Pick a note, or play, and this follows it.</p>
+    </div>
+    <form method="dialog">
+      <button value="close" type="submit" class="dlg-close" aria-label="Close">✕</button>
+    </form>
   </div>
 
-  <div id="harm-spectrum"></div>
-  <p class="small" id="harm-legend"></p>
+  <div id="harm-body">
+    <p class="small" id="harm-where"></p>
 
-  <table id="harm-intervals"></table>
+    <div id="harm-verdict"><span id="harm-words">—</span>
+      <span id="harm-bar"><i id="harm-fill"></i></span>
+      <b id="harm-number">0.00</b>
+    </div>
 
-  <p class="small">
-    Each note carries a series of partials above it. Where two notes'
-    partials land together they reinforce; where they land close but not
-    together they beat, and that is roughness — measured here in semitones,
-    so 1 is as rough as two notes a semitone apart. The cents say how far
-    equal temperament has bent each interval from the whole-number ratio it
-    is named after.
-  </p>
+    <div id="harm-spectrum"></div>
+    <p class="small" id="harm-legend"></p>
 
-  <form method="dialog" class="ask-buttons">
-    <button value="close" type="submit">Close</button>
-  </form>
+    <table id="harm-intervals"></table>
+
+    <p class="small">
+      Each note carries a series of partials above it. Where two notes'
+      partials land together they reinforce; where they land close but not
+      together they beat, and that is roughness — measured here in semitones,
+      so 1 is as rough as two notes a semitone apart. The cents say how far
+      equal temperament has bent each interval from the whole-number ratio it
+      is named after.
+    </p>
+  </div>
 </dialog>
 
 <dialog id="draw">

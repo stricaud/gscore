@@ -1516,10 +1516,16 @@ dialog.wide { max-width: 640px; }
   max-width: 640px;
   width: min(640px, 92vw);
   height: min(70vh, 560px);
-  display: flex;
   flex-direction: column;
   padding: 16px 20px;
 }
+/* Only while it is open, and this is not a detail.
+   A dialog is hidden by the browser's own `dialog:not([open]) {display:none}`,
+   and an id beats that, so a `display` written here is a dialog that is on
+   the screen from the moment the page loads and that closing does not take
+   away: the panel was there at startup and would not go. Everything else
+   above can say what it likes; only this one has to wait to be asked. */
+#harmonics[open] { display: flex; }
 
 /* The head: what is being read, and the way out. Both stay put while the
    rest scrolls. */

@@ -130,3 +130,60 @@ test("an unnamed staff is numbered", () => {
   const made = panel({ at: 0, staves: [], notes: [{ name: "C4", part: 2 }] });
   assert.match(made.get("#harm-staff").textContent, /^Staff 3 —/);
 });
+
+/*
+ * And the trap that giving it a size walked straight into.
+ *
+ * A <dialog> is hidden by the browser's own rule, `dialog:not([open])
+ * { display: none }`. That is one element and one class's worth of
+ * specificity, so a `display` written against a dialog's id beats it — and
+ * the dialog is then on the screen from the moment the page loads, with
+ * closing it making no difference, because closing only takes the `open`
+ * attribute off.
+ *
+ * Laying the harmonics panel out as a flex column did exactly that: the
+ * window was up before anybody asked for it and would not go away. The rule
+ * is general, so the test is: whatever a dialog is given, it is given it
+ * only while it is open.
+ */
+test("no dialog is given a display except while it is open", () => {
+  const ids = [...html.matchAll(/<dialog id="([^"]+)"/g)].map((m) => m[1]);
+  assert.ok(ids.length > 2, "no dialogs were found, so this is testing nothing");
+
+  const plain = css.replace(/\/\*[\s\S]*?\*\//g, "");
+  const rules = plain.split("}").map((chunk) => {
+    const i = chunk.indexOf("{");
+    return i < 0 ? null : { sel: chunk.slice(0, i).trim(), body: chunk.slice(i + 1) };
+  }).filter(Boolean);
+
+  for (const { sel, body } of rules) {
+    // `display: none` is the safe direction: it hides a thing that was
+    // going to be hidden anyway. Only a display that shows something can
+    // take a dialog out of the browser's hands.
+    const shows = [...body.matchAll(/(?:^|[;\s])display\s*:\s*([\w-]+)/g)]
+      .some((m) => m[1] !== "none");
+    if (!shows) continue;
+    for (const one of sel.split(",")) {
+      // The subject of the selector, which is the last thing in the chain:
+      // `#ask label` styles a label inside a dialog and says nothing about
+      // the dialog itself.
+      const parts = one.trim().split(/[\s>+~]+/).filter(Boolean);
+      const subject = parts[parts.length - 1] || "";
+      for (const id of ids) {
+        if (!new RegExp("#" + id + "(?![\\w-])").test(subject)) continue;
+        assert.match(subject, /\[open\]/,
+          `"${one.trim()}" sets display, so #${id} is on the screen ` +
+          `before anybody asks for it and closing it changes nothing`);
+      }
+    }
+  }
+});
+
+test("the panel is only ever opened by asking for it", () => {
+  const calls = [...src.matchAll(/openHarmonics\(\)/g)].length;
+  // Its own definition, and the one menu action that calls it.
+  assert.equal(calls, 2,
+    "something other than the Harmonics menu item opens the panel");
+  assert.match(src, /case "harmonics": await openHarmonics\(\)/,
+    "the menu item no longer opens it");
+});

@@ -553,6 +553,9 @@ async function action(name) {
     case "keymap": await openKeyMap(); break;
     case "scoremap": await openScoreMap(); break;
     case "voices": await openVoiceLeading(); break;
+    case "spacing": await openSpacing(); break;
+    case "rhythm": await openRhythm(); break;
+    case "melody": await openMelody(); break;
 
     case "beam-join": await mark("beam", { beam: "join" }, "Beamed together"); break;
     case "beam-here": await beamOrBreak(); break;
@@ -9204,6 +9207,9 @@ async function main() {
   setupKeyMapClicks();
   setupScoreMapClicks();
   setupVoiceLeadingClicks();
+  setupSpacingClicks();
+  setupRhythmClicks();
+  setupMelodyClicks();
   setupPanning();
   setupMarquee();
   setupSymbolDragging();
@@ -9598,6 +9604,15 @@ function drawChord(d) {
   const what = d.function && clear ? ` · ${escapeHTML(d.function)}` : "";
   box.innerHTML = numeral +
     `<span class="harm-chord-name">${escapeHTML(c.name)}${what}</span> ${where}`;
+
+  // And whether it will speak down there. The roughness bar below says how
+  // rough the chord is; this is the orchestrator's version of the same
+  // thing about the bottom of it, where a chord turns to mud first.
+  const thin = $("#harm-thick");
+  if (thin) {
+    thin.textContent = d.thick ? d.thick.text : "";
+    thin.hidden = !d.thick;
+  }
 }
 
 // drawSpectrum draws every partial as a line on a log frequency axis.
@@ -10230,6 +10245,322 @@ function setupVoiceLeadingClicks() {
     const row = e.target.closest ? e.target.closest(".voices-row") : null;
     if (!row) return;
     const dlg = $("#voices");
+    if (dlg?.open) dlg.close();
+    await goToMeasure(Number(row.dataset.bar));
+  });
+}
+
+/* ---------- how low the bottom of the harmony is spaced ---------- */
+
+// The roughness of the harmonics panel, pointed outward.
+//
+// That panel answers "is this chord rough" with a number. An orchestrator is
+// asking the same question the other way round — "will this spacing speak
+// down there" — and wants a warning on a bar rather than a number in a
+// dialog. It is the same physics: low notes have their partials packed close
+// together in frequency, so an interval that is clear in the middle of the
+// piano beats against itself an octave and a half down. A major third on
+// middle C is a chord; the same third two octaves lower is a rumble with no
+// third in it.
+//
+// Advice and never a fault. The limits are conventional and the books do not
+// agree to the semitone, a piano's left hand does this all day and is fine,
+// and a composer writing a low third in the bassoons may want exactly that
+// rumble. Plenty of music is made of it.
+
+const spacingNote =
+  "An orchestrator's guideline, about chords held low rather than notes " +
+  "going past: the lower two notes of a sonority have their partials packed " +
+  "close enough together to beat, and the narrower the interval the higher " +
+  "it has to sit to stay clear. The numbers are conventional and the books " +
+  "differ by a semitone or so. A piano's left hand does this all day and is " +
+  "fine; a low third in the bassoons may be exactly the rumble you want.";
+
+// spacingDeepest is how far below a limit the bar is drawn full. Past an
+// octave under there is nothing left to say but "very".
+const spacingDeepest = 12;
+
+async function openSpacing() {
+  const dlg = $("#spacing");
+  if (!dlg) return;
+  if (!dlg.open) dlg.showModal();
+  await refreshSpacing();
+}
+
+async function refreshSpacing() {
+  let d;
+  try {
+    const res = await fetch("/api/spacing");
+    if (!res.ok) return;
+    d = await res.json();
+  } catch (_) {
+    return; // a reader, not an editor
+  }
+  drawSpacing(d);
+}
+
+function drawSpacing(d) {
+  const body = $("#spacing-body");
+  const where = $("#spacing-where");
+  if (!body) return;
+  const thick = d.thick || [];
+
+  body.innerHTML = `<p class="voices-tradition">${escapeHTML(spacingNote)}</p>` +
+    (thick.length
+      ? thick.map(spacingRow).join("")
+      : `<p class="small">Nothing held low enough to turn thick.</p>`);
+
+  if (where) {
+    where.textContent = thick.length
+      ? `${thick.length} place${thick.length === 1 ? "" : "s"} to listen to`
+      : "Nothing to listen to";
+  }
+}
+
+function spacingRow(t) {
+  const bars = t.fromBar === t.toBar
+    ? `bar ${barNumberOf(t.fromBar)}`
+    : `bars ${barNumberOf(t.fromBar)}–${barNumberOf(t.toBar)}`;
+  const often = t.times > 1 ? `, ${t.times} times` : "";
+  const deep = Math.min(100, (t.below / spacingDeepest) * 100);
+  return `<button type="button" class="spacing-row" data-bar="${t.fromBar}" ` +
+    `title="${escapeHTML(t.below + " semitones below the usual limit")}">` +
+    `<span class="spacing-deep"><i style="width:${deep.toFixed(0)}%"></i></span>` +
+    `<span>${escapeHTML(t.text)}</span>` +
+    `<span class="where">${escapeHTML(bars + often)}</span></button>`;
+}
+
+function setupSpacingClicks() {
+  const body = $("#spacing-body");
+  if (!body) return;
+  body.addEventListener("click", async (e) => {
+    const row = e.target.closest ? e.target.closest(".spacing-row") : null;
+    if (!row) return;
+    const dlg = $("#spacing");
+    if (dlg?.open) dlg.close();
+    await goToMeasure(Number(row.dataset.bar));
+  });
+}
+
+/* ---------- where the notes fall against the beat ---------- */
+
+// A metre is a pattern of strong and weak, and almost everything a rhythm
+// does it does by agreeing with that pattern or pulling against it. A bar of
+// four with the notes on one and three is the metre spoken plainly; the same
+// notes a quaver late are the same notes and a different piece.
+//
+// What comes back is a description and not a verdict: syncopation is not a
+// fault, it is most of what makes music move. Two things in the panel are
+// checks rather than descriptions and are kept apart from it — a bar holding
+// more or less than its metre says, and a passage written faster than it can
+// be articulated.
+
+async function openRhythm() {
+  const dlg = $("#rhythm");
+  if (!dlg) return;
+  if (!dlg.open) dlg.showModal();
+  await refreshRhythm();
+}
+
+async function refreshRhythm() {
+  let d;
+  try {
+    const res = await fetch("/api/rhythm");
+    if (!res.ok) return;
+    d = await res.json();
+  } catch (_) {
+    return; // a reader, not an editor
+  }
+  drawRhythm(d);
+}
+
+function drawRhythm(d) {
+  const body = $("#rhythm-body");
+  if (!body) return;
+  const pulses = (d.pulses || []).filter((p) => p.notes > 0);
+  if (!pulses.length) {
+    body.innerHTML = `<p class="small">There is nothing written yet.</p>`;
+    return;
+  }
+  const odd = d.odd || [];
+  const rushed = d.rushed || [];
+
+  body.innerHTML =
+    `<h3>where the notes fall</h3>` +
+    pulses.map((p) => beatRow(p, d.bars || 0)).join("") +
+    (odd.length
+      ? `<h3>bars that do not add up</h3>` + odd.map(oddRow).join("")
+      : "") +
+    (rushed.length
+      ? `<h3>faster than it can be played</h3>` + rushed.map(rushedRow).join("")
+      : "");
+
+  const where = $("#rhythm-where");
+  if (where) {
+    const sync = pulses.reduce((n, p) => n + p.syncopated, 0);
+    where.textContent = `${d.bars} bars · ` +
+      (sync ? `${sync} notes pull against the metre` : "nothing pulls against the metre") +
+      (odd.length ? ` · ${odd.length} bar${odd.length === 1 ? "" : "s"} do not add up` : "");
+  }
+}
+
+function beatRow(p, bars) {
+  const total = Math.max(1, p.notes);
+  const part = (n) => (n / total) * 100;
+  const pct = (n) => Math.round(part(n));
+  return `<div class="beat-row">` +
+    `<div class="beat-name"><b>${escapeHTML(p.name)}</b>` +
+    `<span class="beat-of">${p.notes} notes · ${pct(p.downbeats)}% on the ` +
+    `downbeat, ${pct(p.onBeat)}% on other beats, ${pct(p.offBeat)}% between them` +
+    (p.syncopated ? ` · ${p.syncopated} syncopated` : "") +
+    `</span></div>` +
+    `<div class="beat-bar">` +
+    `<span class="beat-down" style="width:${part(p.downbeats).toFixed(2)}%"></span>` +
+    `<span class="beat-on" style="width:${part(p.onBeat).toFixed(2)}%"></span>` +
+    `<span class="beat-off" style="width:${part(p.offBeat).toFixed(2)}%"></span>` +
+    `</div>` +
+    (p.syncopated ? mapStrip(p.bars || [], bars, maxOf(p.bars)) : "") +
+    `</div>`;
+}
+
+function maxOf(ns) {
+  let most = 1;
+  for (const n of ns || []) if (n > most) most = n;
+  return most;
+}
+
+function oddRow(o) {
+  return `<button type="button" class="voices-row" data-bar="${o.bar}">` +
+    `<span>${escapeHTML(o.text)}</span>` +
+    `<span class="where">bar ${barNumberOf(o.bar)}</span></button>`;
+}
+
+function rushedRow(r) {
+  const bars = r.fromBar === r.toBar
+    ? `bar ${barNumberOf(r.fromBar)}`
+    : `bars ${barNumberOf(r.fromBar)}–${barNumberOf(r.toBar)}`;
+  const ms = Math.round(r.each * 1000);
+  return `<button type="button" class="voices-row" data-bar="${r.fromBar}">` +
+    `<span><span class="voices-kind">${escapeHTML(r.name)}</span>` +
+    `${r.notes} notes of about ${ms} milliseconds each, where this instrument ` +
+    `needs ${Math.round(r.limit * 1000)} to speak</span>` +
+    `<span class="where">${escapeHTML(bars)}</span></button>`;
+}
+
+function setupRhythmClicks() {
+  const body = $("#rhythm-body");
+  if (!body) return;
+  body.addEventListener("click", async (e) => {
+    const row = e.target.closest ? e.target.closest(".voices-row") : null;
+    if (!row) return;
+    const dlg = $("#rhythm");
+    if (dlg?.open) dlg.close();
+    await goToMeasure(Number(row.dataset.bar));
+  });
+}
+
+/* ---------- what each line is made of ---------- */
+
+// A melody is a shape, and the shape is made of the intervals between one
+// note and the next. A line that is nearly all steps is a tune somebody can
+// hum after one hearing; a line of leaps is an accompaniment figure, a
+// fanfare or an arpeggio. Neither is better. What is worth being told is
+// which one you have written, because a composer writing a vocal line and
+// getting the second is usually not doing it on purpose.
+//
+// A description and not a mark. Stravinsky's lines leap and are not
+// improvable.
+
+async function openMelody() {
+  const dlg = $("#melody");
+  if (!dlg) return;
+  if (!dlg.open) dlg.showModal();
+  await refreshMelody();
+}
+
+async function refreshMelody() {
+  let d;
+  try {
+    const res = await fetch("/api/melody");
+    if (!res.ok) return;
+    d = await res.json();
+  } catch (_) {
+    return; // a reader, not an editor
+  }
+  drawMelody(d);
+}
+
+function drawMelody(d) {
+  const body = $("#melody-body");
+  if (!body) return;
+  const shapes = (d.shapes || []).filter((s) => s.moves > 0);
+  if (!shapes.length) {
+    body.innerHTML = `<p class="small">There is nothing written yet.</p>`;
+    return;
+  }
+  const awkward = d.awkward || [];
+  body.innerHTML =
+    `<h3>what each line is made of</h3>` +
+    shapes.map(shapeRow).join("") +
+    (awkward.length
+      ? `<h3>moves worth a second look</h3>` + awkward.map(awkwardRow).join("")
+      : "");
+
+  const where = $("#melody-where");
+  if (where) {
+    const hum = shapes.filter((s) => (s.same + s.steps) / s.moves >= 0.66).length;
+    where.textContent = `${shapes.length} line${shapes.length === 1 ? "" : "s"} · ` +
+      `${hum} mostly stepwise`;
+  }
+}
+
+// intervalWord names a width the way a musician says it, for the one
+// interval a line uses more than any other.
+function intervalWord(semitones) {
+  const names = ["the same note", "a semitone", "a tone", "a minor third",
+                 "a major third", "a fourth", "a tritone", "a fifth",
+                 "a minor sixth", "a major sixth", "a minor seventh",
+                 "a major seventh", "an octave"];
+  return names[semitones] || "more than an octave";
+}
+
+function shapeRow(s) {
+  const part = (n) => (n / Math.max(1, s.moves)) * 100;
+  const stepwise = (s.same + s.steps) / Math.max(1, s.moves) >= 0.66;
+  return `<div class="shape-row">` +
+    `<div class="beat-name"><b>${escapeHTML(s.name)}</b>` +
+    `<span class="shape-hum">${stepwise ? "mostly steps — singable" : "mostly leaps"}` +
+    `</span></div>` +
+    `<div class="shape-bar">` +
+    `<span class="shape-same" style="width:${part(s.same).toFixed(2)}%"></span>` +
+    `<span class="shape-step" style="width:${part(s.steps).toFixed(2)}%"></span>` +
+    `<span class="shape-leap" style="width:${part(s.leaps).toFixed(2)}%"></span>` +
+    `</div>` +
+    `<div class="shape-says">${s.moves} moves · ${Math.round(part(s.steps))}% steps, ` +
+    `${Math.round(part(s.same))}% repeated, ${Math.round(part(s.leaps))}% leaps · ` +
+    `mostly ${escapeHTML(intervalWord(s.commonest))} · widest ` +
+    `${escapeHTML(intervalWord(Math.min(13, s.widest)))} in bar ` +
+    `${barNumberOf(s.widestBar)}</div></div>`;
+}
+
+function awkwardRow(a) {
+  const bars = a.bar === a.toBar
+    ? `bar ${barNumberOf(a.bar)}`
+    : `bars ${barNumberOf(a.bar)}–${barNumberOf(a.toBar)}`;
+  const often = a.times > 1 ? `, ${a.times} times` : "";
+  return `<button type="button" class="voices-row" data-bar="${a.bar}">` +
+    `<span><span class="voices-kind">${escapeHTML(a.name)}</span>` +
+    `${escapeHTML(a.text)}</span>` +
+    `<span class="where">${escapeHTML(bars + often)}</span></button>`;
+}
+
+function setupMelodyClicks() {
+  const body = $("#melody-body");
+  if (!body) return;
+  body.addEventListener("click", async (e) => {
+    const row = e.target.closest ? e.target.closest(".voices-row") : null;
+    if (!row) return;
+    const dlg = $("#melody");
     if (dlg?.open) dlg.close();
     await goToMeasure(Number(row.dataset.bar));
   });

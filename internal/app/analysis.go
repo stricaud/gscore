@@ -119,6 +119,26 @@ func (a *App) handleHarmonics(w http.ResponseWriter, r *http.Request) {
 		midis = append(midis, n.MIDI)
 	}
 	chord := analysis.NameChord(midis)
+	// And whether it will speak down there. The roughness number below
+	// says how rough the chord is; this says the orchestrator's version of
+	// the same thing about the bottom of it, which is where a chord turns
+	// to mud first.
+	var thick map[string]any
+	if len(midis) > 1 {
+		sorted := append([]int(nil), midis...)
+		sort.Ints(sorted)
+		gap := sorted[1] - sorted[0]
+		if limit, ok := analysis.LowLimit(gap); ok &&
+			limit-sorted[0] >= analysis.LeastBelow {
+			thick = map[string]any{
+				"low": sorted[0], "high": sorted[1], "semitones": gap,
+				"limit": limit, "below": limit - sorted[0],
+				"text": "the bottom of this chord is spaced below where it " +
+					"usually speaks clearly — " + pitchName(sorted[0]) +
+					" under " + pitchName(limit) + " for that interval",
+			}
+		}
+	}
 	a.mu.RLock()
 	bar := barAt(pb, at)
 	key, fit := keyAround(a.score, bar)
@@ -136,6 +156,7 @@ func (a *App) handleHarmonics(w http.ResponseWriter, r *http.Request) {
 
 	writeJSON(w, map[string]any{
 		"chord":      chord,
+		"thick":      thick,
 		"key":        key,
 		"keyName":    key.Name(fifths),
 		"keyFit":     fit,
@@ -601,11 +622,14 @@ func scoreLines(s *model.Score) ([]analysis.Line, []analysis.Sound) {
 								Name: lineName(staff, vi, rank),
 							})
 						}
+						heard := sounding(p, pitch, 0)
 						sounds = append(sounds, analysis.Sound{
 							Line: idx, Bar: mi,
 							At: starts[mi] + start, Until: starts[mi] + start + held,
-							MIDI: sounding(p, pitch, 0).MIDI(),
-							Ref:  base[pi][mi] + ei,
+							MIDI:   heard.MIDI(),
+							Name:   heard.String(),
+							Letter: heard.DiatonicIndex(),
+							Ref:    base[pi][mi] + ei,
 						})
 					}
 					start += held
@@ -686,4 +710,226 @@ func barStarts(s *model.Score) []float64 {
 	}
 	out[n] = at
 	return out
+}
+
+// handleSpacing says where the bottom of the harmony is written too low for
+// the interval it is spaced at.
+//
+// The roughness of the harmonics panel pointed outward. That panel answers
+// "is this chord rough" with a number; an orchestrator is asking the same
+// question the other way round — "will this spacing speak down there" — and
+// wants it on a bar rather than in a dialog.
+func (a *App) handleSpacing(w http.ResponseWriter, r *http.Request) {
+	a.mu.RLock()
+	_, sounds := scoreLines(a.score)
+	a.mu.RUnlock()
+
+	thick := analysis.Spacing(sounds, pitchName)
+	if thick == nil {
+		thick = []analysis.Thick{}
+	}
+	writeJSON(w, map[string]any{"thick": thick})
+}
+
+// articulationLimits is the shortest note each family can start and stop
+// cleanly, in seconds.
+//
+// Conventional and generous: a string player's bow and a pianist's finger
+// can go faster than a tongue can, and a tuba's column of air is the slowest
+// thing in the room. These are the point past which a passage stops being
+// fast and starts being a smear, not the point past which it is difficult.
+var articulationLimits = map[model.Family]float64{
+	model.FamilyPiano:     0.045,
+	model.FamilyPlucked:   0.050,
+	model.FamilyTuned:     0.050,
+	model.FamilyBowed:     0.055,
+	model.FamilyFlute:     0.065,
+	model.FamilyReed:      0.075,
+	model.FamilyBrass:     0.095,
+	model.FamilySustained: 0.110,
+}
+
+// handleRhythm says where the notes fall against the beat, and where the
+// bars or the tempo do not add up.
+//
+// A metre is a pattern of strong and weak, and almost everything a rhythm
+// does it does by agreeing with that pattern or pulling against it. Which is
+// happening is a description and not a verdict: syncopation is not a fault,
+// it is most of what makes music move.
+func (a *App) handleRhythm(w http.ResponseWriter, r *http.Request) {
+	a.mu.RLock()
+	beats, names, odd := scoreBeats(a.score)
+	bars := a.score.MeasureCount()
+	tempos := a.score.Tempos()
+	limits := make([]float64, len(a.score.Parts))
+	for i, p := range a.score.Parts {
+		if p.Unpitched() {
+			limits[i] = 0
+			continue
+		}
+		limits[i] = articulationLimits[p.Instrument.Family()]
+	}
+	a.mu.RUnlock()
+
+	seconds := func(b analysis.Beat) float64 {
+		return b.Held * wholeNoteSeconds(tempos, b.Bar)
+	}
+	limit := func(part int) (float64, bool) {
+		if part < 0 || part >= len(limits) || limits[part] <= 0 {
+			return 0, false
+		}
+		return limits[part], true
+	}
+	rushed := analysis.Rushed(beats, names, seconds, limit, pitchName)
+	if rushed == nil {
+		rushed = []analysis.Hurried{}
+	}
+	if odd == nil {
+		odd = []analysis.Odd{}
+	}
+	writeJSON(w, map[string]any{
+		"bars":   bars,
+		"pulses": analysis.Pulses(beats, names, bars),
+		"odd":    odd,
+		"rushed": rushed,
+	})
+}
+
+// scoreBeats reads where every note starts in its bar, and which bars hold
+// more or less than their metre says.
+func scoreBeats(s *model.Score) ([]analysis.Beat, []string, []analysis.Odd) {
+	base := baseRefs(s)
+	names := make([]string, len(s.Parts))
+	var beats []analysis.Beat
+	var odd []analysis.Odd
+	seen := map[int]bool{}
+
+	for pi, p := range s.Parts {
+		names[pi] = p.Name
+		if names[pi] == "" {
+			names[pi] = "Staff " + strconv.Itoa(pi+1)
+		}
+		if p.Hidden {
+			continue
+		}
+		for mi, m := range p.Measures {
+			time := p.TimeAt(mi)
+			unit, says := 0.0, 0.0
+			if time.BeatValue > 0 {
+				unit = 1 / float64(time.BeatValue)
+				says = float64(time.Beats) * unit
+			}
+			longest, tremolo := 0.0, false
+			for _, v := range m.Voices {
+				at := 0.0
+				for ei, el := range v.Elements {
+					d := el.Duration()
+					held := 0.0
+					if d.Den != 0 {
+						held = float64(d.Num) / float64(d.Den)
+					}
+					if mk := marksOfElement(el); mk != nil && mk.Tremolo.Paired() {
+						tremolo = true
+					}
+					if len(pitchesIn(el)) > 0 {
+						beats = append(beats, analysis.Beat{
+							Bar: mi, At: at, Held: held,
+							Beats: time.Beats, Unit: unit, Part: pi,
+							Ref: base[pi][mi] + ei,
+						})
+					}
+					at += held
+				}
+				if at > longest {
+					longest = at
+				}
+			}
+			// A bar that does not add up is usually an import that went
+			// wrong or an edit that did. Reported once for the score
+			// rather than once per staff, because it is one bar.
+			//
+			// A bar holding a two-note tremolo is left out: gscore counts
+			// the pair as the sum of its two written notes and MuseScore
+			// counts it as one of them, and until that is settled a bar
+			// of them is not evidence of anything.
+			if says > 0 && !tremolo && !seen[mi] && !near(longest, says) &&
+				!(mi == 0 && longest < says) {
+				seen[mi] = true
+				odd = append(odd, analysis.Odd{
+					Bar: mi, Held: longest, Says: says,
+					Text: barHolds(longest, says, time),
+				})
+			}
+		}
+	}
+	return beats, names, odd
+}
+
+func near(a, b float64) bool { return a-b < 1e-9 && b-a < 1e-9 }
+
+func barHolds(held, says float64, time model.TimeSignature) string {
+	what := "more"
+	if held < says {
+		what = "less"
+	}
+	return "this bar holds " + what + " than " +
+		strconv.Itoa(time.Beats) + "/" + strconv.Itoa(time.BeatValue) + " says"
+}
+
+// handleMelody says what each line is made of, and which of its moves are
+// worth a second look.
+func (a *App) handleMelody(w http.ResponseWriter, r *http.Request) {
+	a.mu.RLock()
+	lines, steps := scoreSteps(a.score)
+	a.mu.RUnlock()
+
+	names := make([]string, len(lines))
+	for i, l := range lines {
+		names[i] = l.Name
+	}
+	awkward := analysis.Awkwardness(steps, names, pitchName)
+	if awkward == nil {
+		awkward = []analysis.Awkward{}
+	}
+	writeJSON(w, map[string]any{
+		"shapes":  analysis.Shapes(steps, names),
+		"awkward": awkward,
+	})
+}
+
+// scoreSteps reads every move from one note to the next in each line.
+func scoreSteps(s *model.Score) ([]analysis.Line, []analysis.Step) {
+	lines, sounds := scoreLines(s)
+	byLine := map[int][]analysis.Sound{}
+	for _, snd := range sounds {
+		byLine[snd.Line] = append(byLine[snd.Line], snd)
+	}
+	var steps []analysis.Step
+	for li := range lines {
+		run := byLine[li]
+		sort.Slice(run, func(i, j int) bool { return run[i].At < run[j].At })
+		for i := 0; i+1 < len(run); i++ {
+			from, to := run[i], run[i+1]
+			steps = append(steps, analysis.Step{
+				Line: li, Bar: to.Bar, From: from.MIDI, To: to.MIDI,
+				Ref: to.Ref, Letters: lettersApart(from, to),
+				FromName: from.Name, ToName: to.Name,
+			})
+		}
+	}
+	return lines, steps
+}
+
+// lettersApart is how many letter names two notes are written apart, which
+// is the one thing their sounding pitches cannot say.
+//
+// Read off the spelling gscore keeps on every note rather than guessed at
+// from the semitones: A to C and A to B sharp are the same sound, and only
+// the letters tell a minor third from an augmented second.
+func lettersApart(from, to analysis.Sound) int {
+	n := to.Letter - from.Letter
+	if n < 0 {
+		n = -n
+	}
+	return n
 }

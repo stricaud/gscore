@@ -1578,6 +1578,80 @@ dialog.wide { max-width: 640px; }
 }
 #harm-number { font-variant-numeric: tabular-nums; min-width: 3em; text-align: right; }
 
+/* ---- rhythm and melody ---- */
+
+#rhythm, #melody {
+  max-width: 780px;
+  width: min(780px, 95vw);
+  height: min(78vh, 640px);
+  flex-direction: column;
+  padding: 16px 20px;
+}
+#rhythm[open], #melody[open] { display: flex; }
+#rhythm-body, #melody-body {
+  flex: 1; min-height: 0; overflow-y: auto; padding-right: 4px;
+}
+#rhythm-body h3, #melody-body h3 {
+  margin: 14px 0 6px; font-size: 13px; color: var(--muted);
+  font-weight: 600; text-transform: lowercase;
+}
+#rhythm-body h3:first-child, #melody-body h3:first-child { margin-top: 2px; }
+
+/* One staff: its name, where its notes fall, and a strip of where it pulls
+   against the metre. */
+.beat-row { padding: 7px 0; border-bottom: 1px solid var(--line); }
+.beat-name { display: flex; align-items: baseline; gap: 8px; }
+.beat-name b { font-weight: 600; }
+.beat-of { color: var(--muted); font-size: 12px; }
+.beat-bar { display: flex; height: 10px; border-radius: 3px; overflow: hidden; margin: 4px 0 2px; }
+.beat-bar span { height: 100%; }
+.beat-down { background: var(--accent); }
+.beat-on { background: var(--accent); opacity: .55; }
+.beat-off { background: var(--line); }
+.beat-sync { width: 100%; height: 7px; display: block; }
+
+/* What a line is made of, as one bar of steps against leaps. */
+.shape-row { padding: 7px 0; border-bottom: 1px solid var(--line); }
+.shape-bar { display: flex; height: 10px; border-radius: 3px; overflow: hidden; margin: 4px 0 2px; }
+.shape-step { background: var(--accent); }
+.shape-same { background: var(--accent); opacity: .45; }
+.shape-leap { background: #d1702f; }
+.shape-says { color: var(--muted); font-size: 12px; }
+.shape-hum { color: var(--ink); font-size: 12px; }
+
+/* ---- spacing ---- */
+
+#spacing {
+  max-width: 760px;
+  width: min(760px, 95vw);
+  height: min(76vh, 620px);
+  flex-direction: column;
+  padding: 16px 20px;
+}
+#spacing[open] { display: flex; }
+#spacing-body { flex: 1; min-height: 0; overflow-y: auto; padding-right: 4px; }
+
+.spacing-row {
+  display: grid; grid-template-columns: 2.6em 1fr auto; gap: 10px;
+  align-items: baseline; width: 100%;
+  padding: 5px 0; border: 0; border-bottom: 1px solid var(--line);
+  background: none; color: inherit; font: inherit; text-align: left;
+  cursor: pointer; margin: 0;
+}
+.spacing-row:hover { background: var(--panel-dark); }
+.spacing-row .where { color: var(--muted); font-size: 12px; white-space: nowrap; }
+
+/* How far under the limit it sits, as a bar rather than a number: the
+   difference between one semitone and ten is the whole of the advice. */
+.spacing-deep {
+  display: block; height: 7px; border-radius: 3px;
+  background: var(--line);
+}
+.spacing-deep i {
+  display: block; height: 100%; border-radius: 3px;
+  background: linear-gradient(90deg, #d1702f, #b03a4a);
+}
+
 /* ---- voice leading ---- */
 
 #voices {
@@ -1731,6 +1805,11 @@ dialog.wide { max-width: 640px; }
 .harm-numeral { font-size: 20px; font-weight: 600; font-variant-numeric: lining-nums; }
 .harm-chord-name { font-size: 14px; }
 .harm-in-key { color: var(--muted); font-size: 12px; }
+
+/* The orchestrator's warning about the bottom of the chord, where it has
+   one. Advice, so it is said quietly. */
+#harm-thick { margin: 4px 0 0; color: #b0702f; }
+#harm-thick[hidden] { display: none; }
 
 /* The staff a note is on, where the chord is spread over several. */
 .harm-on { color: var(--muted); font-size: 12px; }

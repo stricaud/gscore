@@ -1909,6 +1909,205 @@ paths:
                         lower: { type: string }
                         ref: { type: integer, description: A notehead to point at. }
 
+  /api/spacing:
+    get:
+      tags: [score]
+      summary: Where the bottom of the harmony is spaced too low to speak
+      description: |
+        The roughness of /api/harmonics pointed outward. That one answers
+        "is this chord rough" with a number; an orchestrator is asking the
+        same question the other way round — "will this spacing speak down
+        there" — and wants it against a bar.
+
+        The same physics. Low notes have their partials packed close
+        together in frequency, so an interval that is clear in the middle
+        of the piano beats against itself an octave and a half down: a
+        major third on middle C is a chord, and the same third two octaves
+        lower is a rumble with no third in it. Where that happens for each
+        interval is the low interval limit, written down by orchestrators
+        since Rimsky-Korsakov.
+
+        Only the lowest two notes sounding are judged, because they are the
+        ones whose partials are packed close enough together to fight, and
+        only where they are *held*: a bass moving through a low second on
+        its way somewhere is a passing tone, and reporting those buried
+        Beethoven's ninth under eight hundred findings. A spacing less than
+        two semitones under its limit is not reported either — the books
+        differ by about that much, so it is the width of the disagreement
+        rather than a finding.
+
+        Advice and never a fault. A piano's left hand does this all day and
+        is fine, and a composer writing a low third in the bassoons may
+        want exactly that rumble.
+      responses:
+        "200":
+          description: Where the harmony sits low.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  thick:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        text: { type: string }
+                        fromBar: { type: integer }
+                        toBar: { type: integer }
+                        times: { type: integer }
+                        low: { type: integer, description: The bottom note, as it sounds. }
+                        high: { type: integer, description: The note above it. }
+                        semitones: { type: integer }
+                        limit:
+                          type: integer
+                          description: The lowest that interval is usually written on.
+                        below:
+                          type: integer
+                          description: How far under that this one sits, in semitones.
+                        ref: { type: integer, description: A notehead to point at. }
+
+  /api/rhythm:
+    get:
+      tags: [score]
+      summary: Where the notes fall against the beat
+      description: |
+        A metre is a pattern of strong and weak, and almost everything a
+        rhythm does it does by agreeing with that pattern or pulling
+        against it. A bar of four with the notes on one and three is the
+        metre spoken plainly; the same notes a quaver late are the same
+        notes and a different piece.
+
+        `pulses` is a description and not a verdict — syncopation is not a
+        fault, it is most of what makes music move. Each staff's notes are
+        counted as starting on the downbeat, on another beat, or between
+        beats; `syncopated` is the subset of the last that hold *across*
+        the next beat, which is syncopation proper as against a note that
+        merely falls between beats and stops before the next one.
+
+        Two things are checks rather than descriptions. `odd` is bars
+        holding more or less than their metre says — usually an import or
+        an edit that went wrong; a bar holding a two-note tremolo is left
+        out, because gscore counts the pair as the sum of its two written
+        notes and MuseScore counts it as one of them. `rushed` is stretches
+        written faster than the instrument can articulate, which is a fact
+        about the player like a note below the bottom of an instrument: at
+        least four notes in a row, because one very short note is an
+        ornament and every ornament is played by leaning on it rather than
+        by counting it.
+      responses:
+        "200":
+          description: How the piece sits against its metre.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  bars: { type: integer }
+                  pulses:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        part: { type: integer }
+                        name: { type: string }
+                        notes: { type: integer }
+                        downbeats: { type: integer }
+                        onBeat: { type: integer }
+                        offBeat: { type: integer }
+                        syncopated: { type: integer }
+                        bars:
+                          type: array
+                          items: { type: integer }
+                          description: How many notes pull against the metre in each bar.
+                  odd:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        bar: { type: integer }
+                        held: { type: number }
+                        says: { type: number }
+                        text: { type: string }
+                  rushed:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        part: { type: integer }
+                        name: { type: string }
+                        fromBar: { type: integer }
+                        toBar: { type: integer }
+                        notes: { type: integer }
+                        each: { type: number, description: How long one of them lasts, in seconds. }
+                        limit: { type: number, description: The shortest the instrument can articulate. }
+                        ref: { type: integer }
+
+  /api/melody:
+    get:
+      tags: [score]
+      summary: What each line is made of, and which moves are worth a look
+      description: |
+        A melody is a shape, and the shape is made of the intervals between
+        one note and the next. A line that is nearly all steps is a tune
+        somebody can hum after one hearing; a line of leaps is an
+        accompaniment figure, a fanfare or an arpeggio. Neither is better —
+        what is worth being told is which one you have written, because a
+        composer writing a vocal line and getting the second is usually not
+        doing it on purpose.
+
+        `shapes` counts each line's moves: a repeated note, a step of a
+        tone or less, or a leap. `awkward` is the two moves worth more than
+        a count. A leap of a major sixth or more that keeps going the same
+        way leaves the ear a long way from where it started with nothing to
+        hold on to; the usual advice is to turn back after a leap. And an
+        augmented second is told from the minor third it sounds exactly
+        like by the letters the two notes are written on — A to C is a
+        third anybody sings, A to B sharp is the step singers have
+        complained about since the harmonic minor was invented.
+
+        A description, not a mark. Stravinsky's lines leap and are not
+        improvable.
+      responses:
+        "200":
+          description: What the lines are made of.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  shapes:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        line: { type: integer }
+                        name: { type: string }
+                        notes: { type: integer }
+                        moves: { type: integer }
+                        same: { type: integer }
+                        steps: { type: integer }
+                        leaps: { type: integer }
+                        widest: { type: integer }
+                        widestBar: { type: integer }
+                        commonest: { type: integer }
+                        up: { type: integer }
+                        down: { type: integer }
+                  awkward:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        kind:
+                          type: string
+                          enum: [leap not turned, augmented second]
+                        text: { type: string }
+                        line: { type: integer }
+                        name: { type: string }
+                        bar: { type: integer }
+                        ref: { type: integer }
+                        semitones: { type: integer }
+
   /api/playback:
     get:
       tags: [play, render]

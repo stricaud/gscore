@@ -56,6 +56,17 @@ type Sound struct {
 	Bar       int
 	At, Until float64
 	MIDI, Ref int
+	// Name is the note as it is written, spelling and all. Named from its
+	// sounding number instead, D to E sharp came back as "D to F" — a
+	// minor third, under a heading saying it was an augmented second.
+	Name string
+	// Letter is where the note sits on the staff, counted in letter names
+	// rather than semitones. It is the one thing sounding pitch cannot
+	// say: A to C and A to B sharp are the same three semitones and the
+	// same sound, and one is a third a singer takes in their stride while
+	// the other is the step they have complained about for four hundred
+	// years.
+	Letter int
 }
 
 // Motion is one thing worth saying about how two lines moved.

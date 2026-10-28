@@ -389,6 +389,10 @@
       <button data-action="keymap"><span>Keys and modulations…</span></button>
       <button data-action="scoremap"><span>Shape of the piece…</span></button>
       <button data-action="voices"><span>Voice leading…</span></button>
+      <button data-action="spacing"><span>Spacing…</span></button>
+      <hr>
+      <button data-action="rhythm"><span>Rhythm and metre…</span></button>
+      <button data-action="melody"><span>Melodic shape…</span></button>
     </div>
   </div>
 
@@ -570,6 +574,7 @@
          about the notes, the numeral is a fact about the notes and the key
          together, and it is the one that says what the chord is for. -->
     <p id="harm-chord"></p>
+    <p class="small" id="harm-thick" hidden></p>
 
     <div id="harm-verdict"><span id="harm-words">—</span>
       <span id="harm-bar"><i id="harm-fill"></i></span>
@@ -662,6 +667,55 @@
     </form>
   </div>
   <div id="voices-body"></div>
+</dialog>
+
+<!-- How low the bottom of the harmony is spaced.
+     The roughness of the harmonics panel pointed outward: that one answers
+     "is this chord rough" with a number, and an orchestrator is asking the
+     same question the other way round — "will this spacing speak down
+     there" — and wants it on a bar, not in a dialog. -->
+<dialog id="spacing">
+  <div class="dlg-head">
+    <div>
+      <h2>Spacing</h2>
+      <p class="small" id="spacing-where">How low the bottom of the harmony is written.</p>
+    </div>
+    <form method="dialog">
+      <button value="close" type="submit" class="dlg-close" aria-label="Close">✕</button>
+    </form>
+  </div>
+  <div id="spacing-body"></div>
+</dialog>
+
+<!-- Where the notes fall against the beat.
+     A metre is a pattern of strong and weak, and almost everything a rhythm
+     does it does by agreeing with that pattern or pulling against it. -->
+<dialog id="rhythm">
+  <div class="dlg-head">
+    <div>
+      <h2>Rhythm and metre</h2>
+      <p class="small" id="rhythm-where">Where the notes fall against the beat.</p>
+    </div>
+    <form method="dialog">
+      <button value="close" type="submit" class="dlg-close" aria-label="Close">✕</button>
+    </form>
+  </div>
+  <div id="rhythm-body"></div>
+</dialog>
+
+<!-- What each line is made of. A line that is nearly all steps is a tune
+     somebody can hum after one hearing; a line of leaps is a fanfare. -->
+<dialog id="melody">
+  <div class="dlg-head">
+    <div>
+      <h2>Melodic shape</h2>
+      <p class="small" id="melody-where">What each line is made of.</p>
+    </div>
+    <form method="dialog">
+      <button value="close" type="submit" class="dlg-close" aria-label="Close">✕</button>
+    </form>
+  </div>
+  <div id="melody-body"></div>
 </dialog>
 
 <dialog id="draw">

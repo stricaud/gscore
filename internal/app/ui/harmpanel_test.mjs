@@ -217,6 +217,21 @@ function chordLine(d) {
   return made.get("#harm-chord").innerHTML;
 }
 
+// The same, handing back every box it wrote into rather than only the one.
+function chordLineAll(d) {
+  const made = new Map();
+  const scope = {
+    escapeHTML: (s) => String(s),
+    $: (sel) => {
+      if (!made.has(sel)) made.set(sel, { innerHTML: "", textContent: "", hidden: false });
+      return made.get(sel);
+    },
+  };
+  const body = grab("drawChord") + "\nreturn { drawChord };";
+  new Function(...Object.keys(scope), body)(...Object.values(scope)).drawChord(d);
+  return made;
+}
+
 const settled = {
   chord: { named: true, name: "G dominant seventh", root: 7, quality: "dominant seventh" },
   keyName: "C major", keyFit: { correlation: 0.95, margin: 0.28 },
@@ -239,6 +254,24 @@ test("an unsettled key withholds the numeral and says why", () => {
   assert.match(out, /G dominant seventh/, "the chord lost its name as well");
   assert.ok(!/V7/.test(out), "a numeral was given for a key that is not settled");
   assert.match(out, /not settled/, "nothing says why the numeral is missing");
+});
+
+// The orchestrator's version of the roughness number: whether the bottom of
+// this chord will speak where it is written.
+test("a chord spaced too low to speak says so", () => {
+  const made = chordLineAll({
+    ...settled,
+    thick: { text: "the bottom of this chord is spaced below where it usually speaks clearly" },
+  });
+  const warn = made.get("#harm-thick");
+  assert.equal(warn.hidden, false, "the warning is hidden when there is one");
+  assert.match(warn.textContent, /speaks clearly/, "it says nothing");
+});
+
+test("a chord that speaks fine says nothing about it", () => {
+  const warn = chordLineAll(settled).get("#harm-thick");
+  assert.equal(warn.hidden, true, "an empty warning is left on the screen");
+  assert.equal(warn.textContent, "");
 });
 
 test("notes that are not a chord are not named at all", () => {

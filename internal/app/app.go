@@ -94,6 +94,14 @@ type App struct {
 	// copies rather than a list of changes.
 	undoStack []snapshot
 	redoStack []snapshot
+
+	// batch is the one snapshot a running script will undo to, and
+	// batchDepth how many begins are outstanding. While a batch is open
+	// no edit pushes an undo of its own: a script that writes two hundred
+	// notes and comes back as two hundred separate undos is a script
+	// nobody will dare run.
+	batch      *snapshot
+	batchDepth int
 	// warning holds what an importer could not fully read, so the interface
 	// can say so instead of quietly showing half a score.
 	warning string
@@ -397,6 +405,8 @@ func (a *App) APIRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/spacing", a.handleSpacing)
 	mux.HandleFunc("/api/rhythm", a.handleRhythm)
 	mux.HandleFunc("/api/melody", a.handleMelody)
+	mux.HandleFunc("/api/script/begin", a.handleScriptBegin)
+	mux.HandleFunc("/api/script/end", a.handleScriptEnd)
 	mux.HandleFunc("/api/keysignatures", a.handleKeySignatures)
 	mux.HandleFunc("/api/chordpreview", a.handleChordPreview)
 	mux.HandleFunc("/api/chordfingering", a.handleChordFingering)
@@ -469,6 +479,7 @@ func (a *App) APIRoutes(mux *http.ServeMux) {
 		"/api/lyrics":          a.handleLyrics,
 		"/api/chordsymbol":     a.handleChordSymbol,
 		"/api/setkey":          a.handleSetKey,
+		"/api/scripts":         a.handleScripts,
 		"/api/tempo":           a.handleTempo,
 		"/api/header":          a.handleHeader,
 		"/api/staff":           a.handleStaff,

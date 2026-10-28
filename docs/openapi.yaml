@@ -2108,6 +2108,87 @@ paths:
                         ref: { type: integer }
                         semitones: { type: integer }
 
+  /api/scripts:
+    get:
+      tags: [score]
+      summary: The programs kept with the score
+      description: |
+        A piece built from a process — a row, an isorhythm, a phase — is not
+        fully written down by its notes. The notes are the output; the
+        process is the thought, and a composer who comes back to the piece a
+        year later wants the thought. So the scripts travel in the file.
+
+        What comes back is **text**. Nothing here ever runs by itself, and
+        opening a score never runs anything in it: a document that can
+        execute code on being opened is a document that can attack the
+        person who opens it, which is the mistake Word made and spent a
+        decade undoing. The console shows what the file carries, and a
+        person reads it and decides.
+      responses:
+        "200":
+          description: The scripts, in the order they are kept.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  scripts:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        Name: { type: string }
+                        Body: { type: string }
+    post:
+      tags: [score, edit]
+      summary: Replace the programs kept with the score
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                scripts:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      Name: { type: string }
+                      Body: { type: string }
+      responses:
+        "200": { description: How many are now kept. }
+        "400": { $ref: "#/components/responses/Error" }
+
+  /api/script/begin:
+    post:
+      tags: [edit]
+      summary: Start a run of edits that undo together
+      description: |
+        A script that writes two hundred notes and comes back as two hundred
+        separate undos is a script nobody will dare run. Everything between
+        this and /api/script/end is taken back by one press.
+
+        Nested begins are the same batch, and the undo goes back to before
+        the outermost one: a script that calls another still undoes as the
+        thing the person asked for.
+      responses:
+        "200": { description: The batch is open. }
+
+  /api/script/end:
+    post:
+      tags: [edit]
+      summary: Close it, and push the one undo
+      parameters:
+        - name: changed
+          in: query
+          description: >
+            0 where the script did nothing, so that nothing is pushed — an
+            undo that does nothing looks broken.
+          schema: { type: string, enum: ["0", "1"] }
+      responses:
+        "200": { description: The batch is closed. }
+
   /api/playback:
     get:
       tags: [play, render]

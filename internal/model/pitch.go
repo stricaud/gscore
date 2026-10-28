@@ -11,7 +11,10 @@
 
 package model
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
 
 // Step is a diatonic scale step, carrying no alteration of its own.
 type Step int
@@ -114,4 +117,108 @@ func (p Pitch) String() string {
 		}
 	}
 	return fmt.Sprintf("%s%d", s, p.Octave)
+}
+
+// ParsePitch reads a pitch written the way a musician types one: a letter,
+// any accidentals, and an octave. "c4", "F#3", "Bb5", "gx2", "Ebb1".
+//
+// Sharps are # or s, flats b, and a double sharp may be written ## or x.
+// The letter's case does not matter; the octave is scientific, so middle C
+// is c4. A name with no octave comes back with ok and an octave of zero,
+// which is a caller's problem to resolve: in a run of notes the octave
+// nearest the one before is almost always what was meant, and only the
+// caller knows what came before.
+func ParsePitch(s string) (p Pitch, hasOctave bool, ok bool) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return Pitch{}, false, false
+	}
+	letter := s[0]
+	if letter >= 'A' && letter <= 'G' {
+		letter += 'a' - 'A'
+	}
+	if letter < 'a' || letter > 'g' {
+		return Pitch{}, false, false
+	}
+	// a b c d e f g, as steps counted from C.
+	p.Step = Step([7]int{5, 6, 0, 1, 2, 3, 4}[letter-'a'])
+
+	i := 1
+	for i < len(s) {
+		switch s[i] {
+		case '#', 's', 'S':
+			p.Alter++
+		case 'b', 'B':
+			// A flat, unless it is the start of an octave — which it
+			// cannot be, since an octave is a digit.
+			p.Alter--
+		case 'x', 'X':
+			p.Alter += 2
+		case 'n', 'N':
+			// A natural. It alters nothing, and saying so is the point:
+			// in D major a bare f is the key's F sharp and "fn" is the F
+			// the writer meant.
+			p.Alter += 0
+		default:
+			goto octave
+		}
+		i++
+	}
+octave:
+	// Two is as far as notation goes in either direction. A triple sharp
+	// is not a pitch anybody means, and reading one would be reading a
+	// typing mistake as music.
+	if p.Alter < -2 || p.Alter > 2 {
+		return Pitch{}, false, false
+	}
+	if i >= len(s) {
+		return p, false, true
+	}
+	rest := s[i:]
+	neg := false
+	if rest[0] == '-' {
+		neg, rest = true, rest[1:]
+	}
+	if rest == "" {
+		return Pitch{}, false, false
+	}
+	n := 0
+	for k := 0; k < len(rest); k++ {
+		if rest[k] < '0' || rest[k] > '9' {
+			return Pitch{}, false, false
+		}
+		n = n*10 + int(rest[k]-'0')
+	}
+	if neg {
+		n = -n
+	}
+	if n < -1 || n > 9 {
+		return Pitch{}, false, false
+	}
+	p.Octave = n
+	return p, true, true
+}
+
+// NearestTo is this pitch moved to whichever octave puts it closest to
+// another, which is what a run of note names means when they leave the
+// octave out: "c d e f g" climbs, and "c b" goes down a semitone rather
+// than up a seventh.
+func (p Pitch) NearestTo(other Pitch) Pitch {
+	best := p
+	best.Octave = other.Octave
+	for _, oct := range []int{other.Octave - 1, other.Octave, other.Octave + 1} {
+		try := p
+		try.Octave = oct
+		if abs(try.MIDI()-other.MIDI()) < abs(best.MIDI()-other.MIDI()) {
+			best = try
+		}
+	}
+	return best
+}
+
+func abs(n int) int {
+	if n < 0 {
+		return -n
+	}
+	return n
 }

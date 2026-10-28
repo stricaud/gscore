@@ -32,6 +32,20 @@ type scoreDoc struct {
 	Tempo     tempoDoc   `json:"tempo"`
 	Parts     []partDoc  `json:"parts"`
 	Cursor    *cursorDoc `json:"cursor,omitempty"`
+	// Scripts are the programs somebody wrote to make this music. Kept
+	// because a piece built from a process is not fully written down by
+	// its notes: the notes are the output and the process is the thought.
+	//
+	// Text, and only text. Nothing in a file runs on being opened — a
+	// score that could execute code is a document that can attack the
+	// person who opens it, which is the mistake Word made and spent a
+	// decade undoing.
+	Scripts []scriptDoc `json:"scripts,omitempty"`
+}
+
+type scriptDoc struct {
+	Name string `json:"name,omitempty"`
+	Body string `json:"body"`
 }
 
 // Where the writing cursor was left. Not music: it is where somebody was
@@ -336,6 +350,9 @@ func encodeScore(s *model.Score) *scoreDoc {
 			Barlines: g.Barlines, Name: g.Name,
 		})
 	}
+	for _, sc := range s.Scripts {
+		doc.Scripts = append(doc.Scripts, scriptDoc{Name: sc.Name, Body: sc.Body})
+	}
 	for _, p := range s.Parts {
 		pd := partDoc{
 			ID: p.ID, Name: p.Name,
@@ -559,6 +576,9 @@ func decodeScore(doc *scoreDoc) (*model.Score, error) {
 		}
 	}
 
+	for _, sd := range doc.Scripts {
+		s.Scripts = append(s.Scripts, model.Script{Name: sd.Name, Body: sd.Body})
+	}
 	for _, pd := range doc.Parts {
 		p := &model.Part{
 			ID: pd.ID, Name: pd.Name,

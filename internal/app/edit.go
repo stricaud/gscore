@@ -11,6 +11,7 @@
 package app
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -193,9 +194,51 @@ func (a *App) handleInsert(w http.ResponseWriter, r *http.Request) {
 		// and the key signature decides what it sounds like when no accidental
 		// is written on it.
 		pitch := pitchForStep(p.Clef, step)
-		if acc != model.NoAccidental {
+		named := false
+
+		// Or the pitch is named outright. Somebody typing a tune in writes
+		// "c4 d e f g" and means a scale: they are not thinking in staff
+		// positions, and asking them to is asking them to do the clef's
+		// arithmetic in their head. The clef is still what draws it.
+		if v := q.Get("pitch"); v != "" {
+			got, hasOctave, ok := model.ParsePitch(v)
+			if !ok {
+				http.Error(w, v+" is not a pitch", http.StatusBadRequest)
+				return
+			}
+			if !hasOctave {
+				// No octave given: whichever one is nearest the note
+				// before, which is what a run of bare letters means.
+				got = got.NearestTo(lastPitch(p, m, at, pitch))
+			}
+			pitch, named = got, true
+		}
+
+		// Or by how far it is from the note before, which is how a melody
+		// is thought about and said: up a third, down a step. The number is
+		// in diatonic steps, so 1 is the next letter up and -1 the one
+		// below, and the key signature spells it.
+		if v := q.Get("interval"); v != "" {
+			n, err := strconv.Atoi(v)
+			if err != nil {
+				http.Error(w, "an interval is a number of steps", http.StatusBadRequest)
+				return
+			}
+			from := lastPitch(p, m, at, pitch)
+			pitch = model.PitchFromDiatonicIndex(from.DiatonicIndex() + n)
+			named = false
+		}
+
+		switch {
+		case acc != model.NoAccidental:
 			pitch.Alter = acc.Semitones()
-		} else {
+		case named:
+			// A pitch typed with its own accidental keeps it; one typed
+			// without takes the key's, the same as a note placed by hand.
+			if !hasAccidental(q.Get("pitch")) {
+				pitch.Alter = p.Key.AlterFor(pitch.Step)
+			}
+		default:
 			pitch.Alter = p.Key.AlterFor(pitch.Step)
 		}
 		el = &model.Note{Pitch: pitch, Dur: dur, Accidental: acc}
@@ -4228,3 +4271,124 @@ func restEmptyMeasures(s *model.Score) int {
 	}
 	return filled
 }
+
+// hasAccidental says a typed pitch carried one of its own, so the key
+// signature is not to overrule it. "c" takes the key's C sharp; "cn" and
+// "c#" mean what they say.
+func hasAccidental(name string) bool {
+	for i := 1; i < len(name); i++ {
+		switch name[i] {
+		case '#', 's', 'S', 'b', 'B', 'x', 'X', 'n', 'N':
+			return true
+		case '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '-':
+			return false
+		}
+	}
+	return false
+}
+
+// lastPitch is the note before the one being written, which is what a bare
+// letter or an interval is counted from.
+//
+// The note before in the bar, or in the bar before it where this is the
+// first thing here. Where there is no note at all — an empty score, the very
+// first thing anybody types — the staff's middle line stands in, so that a
+// tune typed into an empty bar starts somewhere reasonable rather than
+// nowhere.
+func lastPitch(p *model.Part, m *model.Measure, at int, fallback model.Pitch) model.Pitch {
+	look := func(v *model.Voice, upTo int) (model.Pitch, bool) {
+		if v == nil {
+			return model.Pitch{}, false
+		}
+		if upTo < 0 || upTo > len(v.Elements) {
+			upTo = len(v.Elements)
+		}
+		for i := upTo - 1; i >= 0; i-- {
+			switch e := v.Elements[i].(type) {
+			case *model.Note:
+				return e.Pitch, true
+			case *model.Chord:
+				if len(e.Notes) > 0 {
+					return e.Notes[len(e.Notes)-1].Pitch, true
+				}
+			}
+		}
+		return model.Pitch{}, false
+	}
+	if len(m.Voices) > 0 {
+		if got, ok := look(m.Voices[0], at); ok {
+			return got
+		}
+	}
+	// Back through the bars before this one.
+	for i := len(p.Measures) - 1; i >= 0; i-- {
+		if p.Measures[i] == m {
+			for j := i - 1; j >= 0; j-- {
+				if len(p.Measures[j].Voices) == 0 {
+					continue
+				}
+				if got, ok := look(p.Measures[j].Voices[0], -1); ok {
+					return got
+				}
+			}
+			break
+		}
+	}
+	return fallback
+}
+
+// handleScripts reads and saves the programs kept with the score.
+//
+// A piece built from a process is not fully written down by its notes: the
+// notes are the output and the process is the thought, and a composer who
+// comes back a year later wants the thought. So the scripts travel in the
+// file.
+//
+// What comes back is text, and the editor never runs it on its own. A score
+// that could execute code on being opened is a document that can attack the
+// person who opens it, which is the mistake Word made and spent a decade
+// undoing. The console shows what the file carries, and a person reads it
+// and decides.
+func (a *App) handleScripts(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		a.mu.RLock()
+		out := append([]model.Script(nil), a.score.Scripts...)
+		a.mu.RUnlock()
+		if out == nil {
+			out = []model.Script{}
+		}
+		writeJSON(w, map[string]any{"scripts": out})
+		return
+	case http.MethodPost:
+		// Below.
+	default:
+		http.Error(w, "GET to read them, POST to replace them",
+			http.StatusMethodNotAllowed)
+		return
+	}
+
+	var in struct {
+		Scripts []model.Script `json:"scripts"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		http.Error(w, "a list of scripts: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	for i, sc := range in.Scripts {
+		if len(sc.Body) > maxScript {
+			http.Error(w, "script "+strconv.Itoa(i+1)+" is too long to keep in a score",
+				http.StatusBadRequest)
+			return
+		}
+	}
+
+	a.lock()
+	defer a.mu.Unlock()
+	a.score.Scripts = in.Scripts
+	writeJSON(w, map[string]int{"scripts": len(in.Scripts)})
+}
+
+// maxScript is how long one script may be. Generous for a program and small
+// for a file: a score is music with a note attached, not a source tree.
+const maxScript = 64 * 1024

@@ -167,3 +167,46 @@ func TestTheInstrumentSoundSurvivesARoundTrip(t *testing.T) {
 		t.Errorf("and is called %q", got)
 	}
 }
+
+// A script somebody wrote to make the music travels with it.
+//
+// A piece built from a process is not fully written down by its notes: the
+// notes are the output and the process is the thought, and a composer who
+// comes back a year later wants the thought.
+func TestAScriptSurvivesARoundTrip(t *testing.T) {
+	s := model.NewScore()
+	s.Scripts = []model.Script{
+		{Name: "row", Body: "for (let i = 0; i < 12; i++) note(row[i], \"q\");"},
+		{Body: "transpose(+2)"},
+	}
+
+	var b bytes.Buffer
+	if err := Write(&b, s, nil); err != nil {
+		t.Fatalf("writing: %v", err)
+	}
+	back, _, err := Read(bytes.NewReader(b.Bytes()))
+	if err != nil {
+		t.Fatalf("reading: %v", err)
+	}
+	if len(back.Scripts) != 2 {
+		t.Fatalf("%d scripts came back, want 2", len(back.Scripts))
+	}
+	if back.Scripts[0].Name != "row" || back.Scripts[0].Body != s.Scripts[0].Body {
+		t.Errorf("the first came back as %+v", back.Scripts[0])
+	}
+	if back.Scripts[1].Body != "transpose(+2)" {
+		t.Errorf("a script with no name lost its body: %+v", back.Scripts[1])
+	}
+}
+
+// A score with no scripts carries none, rather than an empty list that
+// grows a key in every file ever saved.
+func TestAScoreWithNoScriptsWritesNone(t *testing.T) {
+	var b bytes.Buffer
+	if err := Write(&b, model.NewScore(), nil); err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(b.Bytes(), []byte(`"scripts"`)) {
+		t.Error("an empty score was given a scripts key")
+	}
+}

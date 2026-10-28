@@ -89,6 +89,11 @@ func (a *App) undoable(h http.HandlerFunc) http.HandlerFunc {
 		// whether the edit took: an edit that can be undone is an edit that
 		// is not on disk.
 		a.unsaved = true
+		// Inside a script, every edit belongs to the one the person asked
+		// for and is taken back with it.
+		if a.batchDepth > 0 {
+			return
+		}
 		a.undoStack = append(a.undoStack, before)
 		if len(a.undoStack) > undoDepth {
 			a.undoStack = a.undoStack[len(a.undoStack)-undoDepth:]
@@ -171,4 +176,69 @@ func (a *App) handleRedo(w http.ResponseWriter, r *http.Request) {
 // edits before it belong to a score that is no longer here.
 func (a *App) forgetHistory() {
 	a.undoStack, a.redoStack = nil, nil
+}
+
+// A script's edits undo as one.
+//
+// A script that writes two hundred notes and comes back as two hundred
+// separate undos is a script nobody will dare run. The editor opens a batch
+// before it runs, closes it after, and everything in between is taken back
+// by one press.
+//
+// Nested begins are the same batch: a script that calls another one still
+// undoes as the thing the person asked for.
+
+// beginBatch starts a run of edits that undo together.
+func (a *App) beginBatch() {
+	a.lock()
+	defer a.mu.Unlock()
+	if a.batchDepth == 0 {
+		before := a.take()
+		a.batch = &before
+	}
+	a.batchDepth++
+}
+
+// endBatch closes it and pushes the one snapshot, where anything was done.
+func (a *App) endBatch(changed bool) {
+	a.lock()
+	defer a.mu.Unlock()
+	if a.batchDepth == 0 {
+		return
+	}
+	a.batchDepth--
+	if a.batchDepth > 0 {
+		return
+	}
+	before := a.batch
+	a.batch = nil
+	if !changed || before == nil {
+		return
+	}
+	a.undoStack = append(a.undoStack, *before)
+	if len(a.undoStack) > undoDepth {
+		a.undoStack = a.undoStack[len(a.undoStack)-undoDepth:]
+	}
+	a.redoStack = nil
+}
+
+// handleScriptBegin and handleScriptEnd bracket a script's edits.
+func (a *App) handleScriptBegin(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST required", http.StatusMethodNotAllowed)
+		return
+	}
+	a.beginBatch()
+	writeJSON(w, map[string]bool{"open": true})
+}
+
+func (a *App) handleScriptEnd(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST required", http.StatusMethodNotAllowed)
+		return
+	}
+	// A script that did nothing leaves nothing to take back, and an undo
+	// that does nothing is worse than no undo at all: it looks broken.
+	a.endBatch(r.URL.Query().Get("changed") != "0")
+	writeJSON(w, map[string]bool{"open": false})
 }

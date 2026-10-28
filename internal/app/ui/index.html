@@ -164,6 +164,7 @@
            lands. The keyboard writes either way, which is what this is a
            switch away from. -->
       <button data-action="note-input"><span>Write with the mouse</span><kbd>I</kbd><kbd id="mouse-tick"></kbd></button>
+      <button data-action="type-music"><span>Type the music</span><kbd>⌘K</kbd><kbd id="type-tick"></kbd></button>
       <hr>
       <button data-action="insert-note"><span>Note</span></button>
       <button data-action="insert-rest"><span>Rest</span></button>
@@ -400,6 +401,7 @@
     <button class="menu-title">Help</button>
     <div class="menu-items">
       <button data-action="shortcuts"><span>Keyboard shortcuts</span></button>
+      <button data-action="typing-help"><span>How to type music</span></button>
       <hr>
       <button data-action="report-bug"><span>Report a bug</span></button>
       <button data-action="import-log"><span>Lines that could not be read</span></button>
@@ -503,6 +505,23 @@
     <img id="busy-logo" src="gilbert.svg" alt="" width="96" height="95">
     <p id="busy-text">Opening…</p>
   </div>
+</div>
+
+<!-- The line you type the music into.
+     NoteWriter II had one of these in 1988 and called it the command
+     window. What makes it fast is that your hands never leave the keys: a
+     note is two facts, which pitch and how long, and a mouse can only say
+     one of them at a time.
+
+     Docked under the music rather than floating at the cursor. Standing
+     where the cursor stands puts it on top of the bar being written, which
+     is the one thing you need to see while writing it. It says which staff
+     and bar it is writing into instead, so the connection is in words. -->
+<div id="typebar" hidden>
+  <span id="type-where">nowhere yet</span>
+  <input type="text" id="type-line" autocomplete="off" spellcheck="false"
+         aria-label="Type music here" placeholder="8abcdef">
+  <span id="type-hint"></span>
 </div>
 
 <div id="statusbar">
@@ -931,6 +950,25 @@
      not carry one. So the dialog is mostly about getting hold of one and
      seeing what it will do with this particular score, and only then about
      how to record. -->
+<!-- What the typing line takes.
+     Built from the same tables the parser reads, rather than written out
+     here: a reference that is kept by hand is a reference that is wrong by
+     the second change, and a wrong reference is worse than none because it
+     is believed. -->
+<dialog id="typing-help" class="wide">
+  <div class="dlg-head">
+    <div>
+      <h2>How to type music</h2>
+      <p class="small">A note is two facts — how long, and which pitch — and
+         this is both of them in the order a musician says them.</p>
+    </div>
+    <form method="dialog">
+      <button value="close" type="submit" class="dlg-close" aria-label="Close">✕</button>
+    </form>
+  </div>
+  <div id="typing-help-body"></div>
+</dialog>
+
 <!-- Every key the editor answers to.
      The list is built from the table in app.js rather than written out here,
      so a binding added to the program shows up without anybody remembering

@@ -515,6 +515,8 @@ async function action(name) {
     case "stop":
       stop();
       break;
+    case "type-music": toggleTypeBar(); break;
+    case "typing-help": openTypingHelp(); break;
     case "note-input":
       setMouseWrites(!state.mouseWrites);
       break;
@@ -3821,6 +3823,9 @@ async function refreshScore() {
 // but the rectangle is what the eye reads.
 function markSelection() {
   rememberCursor();
+  // The typing line stands where the cursor is, so it moves when the
+  // cursor does.
+  placeTypeBar();
   // The drum pads belong to the staff the cursor is on, and the cursor has
   // just moved.
   showDrumPad();
@@ -8123,6 +8128,9 @@ const KEY_BINDINGS = [
   { id: "mouse-writes", menu: "note-input", keys: "i", group: "Writing",
     label: "Write with the mouse, rather than pointing with it",
     run: () => setMouseWrites(!state.mouseWrites) },
+  { id: "type-music", menu: "type-music", keys: "Mod+k", group: "Writing",
+    label: "Type the music in, at the cursor",
+    run: () => toggleTypeBar() },
 
   // How long the next note is. The figures run down the values, with the
   // dotted ones beside the plain ones they lengthen.
@@ -9210,6 +9218,7 @@ async function main() {
   setupSpacingClicks();
   setupRhythmClicks();
   setupMelodyClicks();
+  setupTypeBar();
   setupPanning();
   setupMarquee();
   setupSymbolDragging();
@@ -10564,4 +10573,632 @@ function setupMelodyClicks() {
     if (dlg?.open) dlg.close();
     await goToMeasure(Number(row.dataset.bar));
   });
+}
+
+/* ---------- typing music in ---------- */
+
+// A line you type the music into, standing where the cursor is.
+//
+// NoteWriter II had one of these in 1988 and called it the command window:
+// a line where you typed a short code for any symbol and it appeared. What
+// made it fast was that your hands never left the keys — the review of it
+// says the program is "easy to use and fast" for anybody who already knows
+// how to write music, and that is the whole idea. Pointing at a staff is
+// slow because a note is two facts, which pitch and how long, and a mouse
+// can only say one of them at a time.
+//
+// What is typed here is the same two facts in the order a musician says
+// them: how long, then which notes. "4 c d e f" is four quarter notes
+// climbing. The length is sticky, the way a tool is, so a tune in quavers is
+// "8" once and then letters.
+//
+// A number on its own is a length and a number inside a note is its octave:
+// "4 c4" is a quarter note on middle C. That is the one thing to learn, and
+// it is the reason lengths are numbers at all — the letters are needed for
+// the notes, and e is the note E long before it is an eighth.
+
+// typeHint is what the bar says it will take, shown under it.
+const typeHint =
+  "8abcdef — lengths 1 2 4 8 16 32, dotted 4. · letters a–g, with # for a " +
+  "sharp, _ for a flat and n for a natural, and an octave: f#3 · " +
+  "+3 −2 for an interval from the note before · r rest · | next bar · " +
+  "tie, slur, stacc, ten, accent on everything after them, and off again · " +
+  "or the name of any command";
+
+// typeBudget is how many things one line may write.
+//
+// A line is a phrase somebody typed, not a program: that is what the console
+// is for. A thousand would be a mistake, and a mistake that takes a thousand
+// notes back one at a time is a mistake nobody forgives.
+const typeBudget = 256;
+
+// typeNote reads one token as a note, and says nothing for anything else.
+//
+// A letter a–g, any number of accidentals, and an octave. The accidentals
+// are # or s for sharp, b for flat, x for a double sharp and n for a
+// natural; a natural is worth having because in D major a bare f is the
+// key's F sharp and "fn" is the F the writer meant.
+function typeNote(token) {
+  const m = /^([a-gA-G])([#sbxnSBXN]*)(-?\d+)?$/.exec(token);
+  if (!m) return null;
+  // An octave is one digit, from the sub-contra octave to the top of the
+  // piano. Two of them is a length that was meant to be a new length and
+  // was read as an octave instead, because inside a run the digits after a
+  // note are its octave — "8a4b16cd" is A4 and then a B in octave sixteen.
+  // Saying so is better than handing the server a note nobody can play.
+  if (m[3] !== undefined) {
+    const oct = Number(m[3]);
+    if (!Number.isInteger(oct) || oct < -1 || oct > 9) return null;
+  }
+  // "b" on its own is the note B; "bb" is B flat. The letter is the first
+  // character and everything after it is an accidental, which is what makes
+  // that work without a special case.
+  return { pitch: m[1] + (m[2] || "") + (m[3] || "") };
+}
+
+// typeLengths maps the numbers everybody already writes to the names the
+// editor uses.
+const typeLengths = {
+  1: "whole", 2: "half", 4: "quarter", 8: "eighth",
+  16: "sixteenth", 32: "32nd", 64: "64th",
+};
+
+// typeMarks are the words that turn a mark on for everything typed after
+// them, rather than doing something once.
+//
+// "tie 8 a b d e f" ties the whole run: a tie is a thing a phrase has, not a
+// thing you do to one note, and a typed phrase is where you say so. They
+// work the way a note length works — on until you say otherwise — and the
+// same word again turns the mark off, which is how NoteWriter's command line
+// behaved and the only rule simple enough not to need remembering.
+const typeMarks = {
+  tie: { kind: "tie" },
+  slur: { kind: "slur" },
+  staccato: { kind: "articulation", name: "staccato" },
+  stacc: { kind: "articulation", name: "staccato" },
+  tenuto: { kind: "articulation", name: "tenuto" },
+  ten: { kind: "articulation", name: "tenuto" },
+  accent: { kind: "articulation", name: "accent" },
+  marcato: { kind: "articulation", name: "marcato" },
+  fermata: { kind: "articulation", name: "fermata" },
+};
+
+// splitRun breaks a run of notes written without spaces into its pieces.
+//
+// "8abcdef" is six notes, and typing six spaces to say so is six keystrokes
+// nobody should have to make: a scale is one gesture in the hand and ought
+// to be one in the typing. Spaces are then only needed where a word begins.
+//
+// The one thing a run cannot have is b for a flat. In "8abcdef" the b is the
+// note B, and it has to be, or the commonest thing anybody types comes out
+// as A flat followed by five notes. So inside a run a flat is written _ —
+// "a_" is A flat, the way ABC notation has spelled it since the 1990s. A
+// note standing on its own as a whole token still takes b, because "bb4" is
+// how everybody writes B flat and a token with one note in it cannot be
+// misread.
+function splitRun(token) {
+  const out = [];
+  let i = 0;
+  while (i < token.length) {
+    const c = token[i];
+    if (c >= "0" && c <= "9") {
+      let n = "";
+      while (i < token.length && token[i] >= "0" && token[i] <= "9") n += token[i++];
+      while (i < token.length && token[i] === ".") n += token[i++];
+      out.push(n);
+      continue;
+    }
+    const letter = c.toLowerCase();
+    if (letter >= "a" && letter <= "g") {
+      let note = c;
+      i++;
+      // Accidentals, and no b among them: in a run the b is the note.
+      while (i < token.length && "#sSxXnN_".includes(token[i])) {
+        note += token[i] === "_" ? "b" : token[i];
+        i++;
+      }
+      // Then an octave, where one is given.
+      while (i < token.length && token[i] >= "0" && token[i] <= "9") note += token[i++];
+      out.push(note);
+      continue;
+    }
+    if (c === "|" || c === "r" || c === "R") {
+      out.push(c);
+      i++;
+      continue;
+    }
+    return null; // not a run of music, so it is something else entirely
+  }
+  return out.length ? out : null;
+}
+
+// parseTyping turns a typed line into the things to do, in order.
+//
+// It reads the whole line before anything is written, so a line with a
+// mistake in it writes nothing: half a phrase, with the editor stopped
+// somewhere in the middle of it, is worse than being told what the mistake
+// was.
+function parseTyping(line) {
+  const out = [];
+  let dur = null, dots = 0;
+
+  // Each word, and then each word broken into its pieces where it is a run
+  // of notes written without spaces. A word that names a mark or a command
+  // is left whole: "tie" is a word and not T, I and the note E.
+  const words = [];
+  for (const raw of String(line).trim().split(/\s+/)) {
+    if (!raw) continue;
+    const word = raw.toLowerCase();
+    if (typeMarks[word] || typeNote(raw) || /^[+\u2212-]/.test(raw) ||
+        /^\d+\.*$/.test(raw) || raw === "|") {
+      words.push(raw);
+      continue;
+    }
+    const run = splitRun(raw);
+    if (run) {
+      words.push(...run);
+      continue;
+    }
+    words.push(raw);
+  }
+
+  for (const token of words) {
+
+    if (token === "|") {
+      out.push({ kind: "bar" });
+      continue;
+    }
+    // A length, with any dots on it. Sticky: it stands until another is
+    // given, the way holding a note value does.
+    let m = /^(\d+)(\.*)$/.exec(token);
+    if (m) {
+      const name = typeLengths[Number(m[1])];
+      if (!name) {
+        return { error: `${m[1]} is not a note length — try 1, 2, 4, 8, 16 or 32` };
+      }
+      dur = name;
+      dots = m[2].length;
+      continue;
+    }
+    // An interval from the note before. Signed, always: a bare number is a
+    // length, and a melody said out loud is "up a third" rather than "three".
+    m = /^([+−-])(\d+)$/.exec(token);
+    if (m) {
+      const n = Number(m[2]);
+      if (n < 1 || n > 24) {
+        return { error: `${token} is further than an interval goes` };
+      }
+      out.push({ kind: "note", interval: (m[1] === "+" ? n : -n), dur, dots });
+      continue;
+    }
+    if (/^[rR]$/.test(token)) {
+      out.push({ kind: "rest", dur, dots });
+      continue;
+    }
+    const note = typeNote(token);
+    if (note) {
+      out.push({ kind: "note", pitch: note.pitch, dur, dots });
+      continue;
+    }
+    // A note with an impossible octave is a length somebody meant to
+    // change in the middle of a run, where there is no room to say it.
+    if (/^[a-gA-G][#sbxnSBXN]*\d\d/.test(token)) {
+      return {
+        error: `${token} is not a note — a length inside a run of notes ` +
+          `needs a space in front of it`,
+      };
+    }
+    const word = token.toLowerCase();
+    if (typeMarks[word]) {
+      out.push({ kind: "mark", mark: word });
+      continue;
+    }
+    // Not music and not a mark, so it is a command — which is the other
+    // half of what NoteWriter's command line was for, and how anything
+    // without a key of its own is reached.
+    out.push({ kind: "command", name: word });
+  }
+  if (out.length > typeBudget) {
+    return { error: `that is ${out.length} things at once; ${typeBudget} is the most` };
+  }
+  return { steps: out };
+}
+
+// runTyping writes what a line says, as one thing to undo.
+//
+// One thing, because a phrase somebody typed is one thought: taking back
+// "4 c d e f" should take back the phrase and not the f. The editor already
+// has the bracket for that, and the console will use the same one.
+async function runTyping(line) {
+  const read = parseTyping(line);
+  if (read.error) {
+    status(read.error);
+    return false;
+  }
+  if (!read.steps.length) return false;
+  const sel = state.selection;
+  if (!sel) {
+    status("Put the cursor in a bar first");
+    return false;
+  }
+
+  await fetch("/api/script/begin", { method: "POST" });
+  let wrote = 0, failed = "";
+  // Which marks are on, and where every note written under them landed.
+  // The marks are put on afterwards rather than as each note is written: a
+  // tie joins a note to the one after it, and the one after it does not
+  // exist yet.
+  const on = {};
+  const written = [];
+  try {
+    for (const step of read.steps) {
+      if (step.kind === "mark") {
+        on[step.mark] = !on[step.mark];
+        continue;
+      }
+      if (step.kind === "command") {
+        const cmd = commandNamed(step.name);
+        if (!cmd) {
+          failed = `there is no ${step.name}`;
+          break;
+        }
+        await cmd.run();
+        wrote++;
+        continue;
+      }
+      if (step.kind === "bar") {
+        await nextBarForTyping();
+        continue;
+      }
+      const where = await typeOne(step);
+      if (where.error) {
+        failed = where.error;
+        break;
+      }
+      if (step.kind !== "rest") {
+        written.push({ at: where.at, marks: Object.keys(on).filter((k) => on[k]) });
+      }
+      wrote++;
+    }
+    if (!failed) {
+      const why = await applyTypedMarks(written);
+      if (why) failed = why;
+    }
+  } finally {
+    // Always closed, however it went. A batch left open would swallow
+    // every edit after it into one undo that nobody asked for.
+    await fetch("/api/script/end?changed=" + (wrote ? "1" : "0"),
+                { method: "POST" });
+  }
+
+  await refreshScore();
+  markSelection();
+  if (failed) {
+    status(wrote ? `Wrote ${wrote}, then stopped: ${failed}` : failed);
+    return false;
+  }
+  status(`Wrote ${wrote} thing${wrote === 1 ? "" : "s"}`);
+  return true;
+}
+
+// typeOne writes a single note or rest where the cursor is, and says what
+// went wrong if it could not.
+async function typeOne(step) {
+  const sel = state.selection;
+  if (!sel) return { error: "the cursor is nowhere" };
+  const p = new URLSearchParams({
+    part: String(sel.part),
+    measure: String(sel.measure),
+    at: String(sel.at),
+    kind: step.kind === "rest" ? "rest" : "note",
+  });
+  if (step.dur) p.set("dur", step.dur);
+  else p.set("dur", state.tool.duration);
+  if (step.dots) p.set("dots", String(step.dots));
+  if (step.pitch) p.set("pitch", step.pitch);
+  if (step.interval !== undefined) p.set("interval", String(step.interval));
+  // A note with no pitch and no interval is one typed as a bare length,
+  // which means "where the cursor is pointing" — the same as pressing the
+  // key for it.
+  if (!step.pitch && step.interval === undefined && step.kind !== "rest") {
+    p.set("step", String(sel.step ?? 0));
+  }
+
+  const res = await fetch("/api/insert?" + p.toString(), { method: "POST" });
+  if (!res.ok) return { error: (await res.text()).trim() };
+  const d = await res.json().catch(() => null);
+  // The cursor walks on, so the next token lands after this one — which is
+  // what makes a line of them a phrase rather than a pile.
+  //
+  // Where it actually landed, not where it was aimed: a bar that is full
+  // sends what is written next into the bar after it, and a line typed into
+  // a nearly full bar has to carry on in the next one rather than keep
+  // trying to write into this one. The answer already gives the place after
+  // the element, so it is taken as it is.
+  if (d && d.measure !== undefined) {
+    state.selection = {
+      ...sel, measure: d.measure, at: d.at, ref: null, replace: false,
+    };
+    // Where the thing itself is, which is one before where the cursor now
+    // stands: the answer gives the place after it.
+    return { at: `${sel.part}:${d.measure}:${d.at - 1}` };
+  }
+  state.selection = { ...sel, at: sel.at + 1, ref: null, replace: false };
+  return { at: `${sel.part}:${sel.measure}:${sel.at - 1}` };
+}
+
+// applyTypedMarks puts the sticky marks on the notes that were written
+// under them.
+//
+// Afterwards, because a tie joins a note to the one after it and a slur
+// goes from one note to another: neither can be said until both ends are
+// on the page. A run of notes under one mark is one phrase, so a tie
+// stops at the last of them — a tie with nothing after it is half a mark
+// — and a slur arcs from the first to the last rather than note by note.
+async function applyTypedMarks(written) {
+  for (const mark of Object.keys(typeMarks)) {
+    const what = typeMarks[mark];
+    // Every unbroken run of notes carrying this mark.
+    let i = 0;
+    while (i < written.length) {
+      if (!written[i].marks.includes(mark)) {
+        i++;
+        continue;
+      }
+      let j = i;
+      while (j + 1 < written.length && written[j + 1].marks.includes(mark)) j++;
+      const run = written.slice(i, j + 1).map((n) => n.at);
+      i = j + 1;
+
+      if (what.kind === "articulation") {
+        const p = new URLSearchParams({
+          articulation: what.name, sel: run.join(","),
+        });
+        const res = await fetch("/api/articulation?" + p, { method: "POST" });
+        if (!res.ok) return (await res.text()).trim();
+        continue;
+      }
+      if (run.length < 2) continue; // nothing to join to
+      if (what.kind === "slur") {
+        const res = await fetch(
+          "/api/slur?slur=yes&sel=" + encodeURIComponent(run.join(",")),
+          { method: "POST" });
+        if (!res.ok) return (await res.text()).trim();
+        continue;
+      }
+      // A tie is between neighbours, and the endpoint ties each note of a
+      // selection to the one after it — so the last is left out, because
+      // what it would tie to is outside the phrase.
+      const res = await fetch(
+        "/api/tie?tie=yes&sel=" + encodeURIComponent(run.join(",")),
+        { method: "POST" });
+      if (!res.ok) return (await res.text()).trim();
+    }
+  }
+  return "";
+}
+
+// nextBarForTyping moves the cursor to the start of the next bar, making
+// one where the music has run out.
+async function nextBarForTyping() {
+  const sel = state.selection;
+  if (!sel) return;
+  const last = measureCount() - 1;
+  if (sel.measure >= last) {
+    await fetch("/api/addmeasure", { method: "POST" });
+    await loadHits();
+  }
+  state.selection = { ...sel, measure: sel.measure + 1, at: 0, ref: null, replace: false };
+}
+
+// commandNamed finds a command by what somebody typed: its id, or the start
+// of what it is called. "tie" finds the tie; "cresc" finds the crescendo.
+//
+// One match or none. Two commands starting with the same letters is an
+// ambiguous thing to have typed, and guessing which was meant is how a line
+// of music quietly turns into a key change.
+function commandNamed(name) {
+  const all = KEY_BINDINGS;
+  const exact = all.find((c) => c.id === name);
+  if (exact) return exact;
+  const starts = all.filter((c) =>
+    c.id.startsWith(name) || (c.label || "").toLowerCase().startsWith(name));
+  if (starts.length === 1) return starts[0];
+  const holds = all.filter((c) => (c.label || "").toLowerCase().includes(name));
+  return holds.length === 1 ? holds[0] : null;
+}
+
+// state.typing is whether the bar is up. It is a mode, like writing with
+// the mouse: off until somebody asks for it, and remembered while the score
+// is open rather than between sessions, because it is about what you are
+// doing this minute.
+state.typing = false;
+
+function toggleTypeBar() {
+  setTypeBar(!state.typing);
+}
+
+function setTypeBar(on) {
+  state.typing = !!on && !state.readOnly;
+  const tick = $("#type-tick");
+  if (tick) tick.textContent = state.typing ? "✓" : "";
+  const line = $("#type-line");
+  if (line && !state.typing) line.value = "";
+  placeTypeBar();
+  if (state.typing && line) line.focus();
+  status(state.typing
+    ? "Type the music: " + typeHint
+    : "Typing off");
+}
+
+// placeTypeBar shows or hides the line, and says where it is writing.
+//
+// It is docked under the music rather than standing at the cursor. Standing
+// at the cursor put it squarely over the bar being written, which is the one
+// thing you have to see while writing it — and it only appeared at all when
+// the cursor's bar happened to be among the regions drawn, so closing it and
+// opening it again in a bar past the end of the music showed nothing.
+//
+// What is left of following the cursor is the part that was worth having:
+// it says which staff and which bar the next thing typed will go into, so
+// the connection is in words instead of in pixels.
+function placeTypeBar() {
+  const bar = $("#typebar");
+  if (!bar) return;
+  bar.hidden = !state.typing;
+  if (!state.typing) return;
+
+  const hint = $("#type-hint");
+  const line = $("#type-line");
+  if (hint) {
+    hint.textContent = typeHint;
+    // Only while there is nothing typed: it is there to be read once, and
+    // after that it is in the way of the thing being written.
+    hint.hidden = !!(line && line.value);
+  }
+
+  const where = $("#type-where");
+  if (!where) return;
+  const sel = state.selection;
+  if (!sel) {
+    where.textContent = "Click a bar first";
+    return;
+  }
+  const name = (state.info?.parts || [])[sel.part]?.name || `Staff ${sel.part + 1}`;
+  where.textContent = `${name} · bar ${barNumberOf(sel.measure)}`;
+}
+
+// setupTypeBar wires the line: Enter writes it, Escape puts it away, and
+// everything else is left to the box so that typing a note does not also
+// press the key that note is bound to.
+function setupTypeBar() {
+  const line = $("#type-line");
+  if (!line) return;
+  line.addEventListener("keydown", async (e) => {
+    e.stopPropagation();
+    if (e.key === "Escape") {
+      e.preventDefault();
+      setTypeBar(false);
+      $("#canvas-wrap")?.focus?.();
+      return;
+    }
+    if (e.key !== "Enter") return;
+    e.preventDefault();
+    const what = line.value;
+    if (!what.trim()) {
+      setTypeBar(false);
+      return;
+    }
+    if (await runTyping(what)) {
+      // Cleared on success and left alone on failure, so a line with a
+      // mistake in it can be corrected rather than typed again.
+      line.value = "";
+    }
+    placeTypeBar();
+    line.focus();
+  });
+  // The hint is there to be read once; once there is something in the box
+  // it is in the way of the thing being written.
+  line.addEventListener("input", () => {
+    const hint = $("#type-hint");
+    if (hint) hint.hidden = !!line.value;
+  });
+  // Typing in the box is not typing at the score.
+  line.addEventListener("keypress", (e) => e.stopPropagation());
+  line.addEventListener("keyup", (e) => e.stopPropagation());
+}
+
+/* ---------- what the typing line takes ---------- */
+
+// The reference for it, built from the same tables the parser reads.
+//
+// Built rather than written out, because a reference kept by hand is wrong
+// by the second change — and a wrong reference is worse than none, since it
+// is believed. The lengths and the marks here are the very objects the
+// parser looks things up in, so a length added to the program appears here
+// without anybody remembering to add it.
+
+function openTypingHelp() {
+  const dlg = $("#typing-help");
+  if (!dlg) return;
+  drawTypingHelp();
+  if (!dlg.open) dlg.showModal();
+}
+
+// syntaxRows renders one group of examples.
+function syntaxRows(rows) {
+  return `<dl class="syntax">` + rows.map(([what, means]) =>
+    `<dt>${escapeHTML(what)}</dt><dd>${means}</dd>`).join("") + `</dl>`;
+}
+
+function drawTypingHelp() {
+  const body = $("#typing-help-body");
+  if (!body) return;
+
+  // The lengths, in the order they run, from the table the parser uses.
+  const lengths = Object.keys(typeLengths)
+    .map(Number).sort((a, b) => a - b)
+    .map((n) => [String(n), typeLengths[n]]);
+
+  // The marks, each listed once however many words reach it.
+  const seen = new Map();
+  for (const word of Object.keys(typeMarks)) {
+    const m = typeMarks[word];
+    const key = m.kind + (m.name || "");
+    if (!seen.has(key)) seen.set(key, { words: [], what: m });
+    seen.get(key).words.push(word);
+  }
+  const marks = [...seen.values()].map(({ words, what }) => [
+    words.join(" or "),
+    what.kind === "tie" ? "ties each note to the next one"
+      : what.kind === "slur" ? "one slur from the first note to the last"
+      : escapeHTML(what.name) + " on every note",
+  ]);
+
+  body.innerHTML =
+    `<h3>a line</h3>` +
+    syntaxRows([
+      ["8abcdef", "six eighth notes, climbing — this is the whole of it"],
+      ["4cde 8fg", "quarters <em>c d e</em>, then eighths <em>f g</em>"],
+      ["tie 8abcdef", "the same six, tied together"],
+    ]) +
+    `<h3>how long</h3>` +
+    syntaxRows(lengths.map(([n, name]) => [n, `a ${escapeHTML(name)} note`])
+      .concat([["4.", "dotted — as many dots as you write"]])) +
+    `<p class="syntax-rule">A length stays until you give another, the way
+       holding a note value does. Inside a run of notes it needs a space in
+       front of it: the digits straight after a note are its octave.</p>` +
+    `<h3>which note</h3>` +
+    syntaxRows([
+      ["c", "the C nearest the note before it"],
+      ["c4", "middle C — the octave is scientific"],
+      ["f#3", "F sharp, and <em>s</em> works for the sharp as well"],
+      ["a_", "A flat, inside a run"],
+      ["bb4", "B flat, where the note stands on its own"],
+      ["fn", "F natural, whatever the key signature says"],
+      ["+3", "a third above the note before"],
+      ["−2", "a step below it"],
+      ["r", "a rest, as long as the length in force"],
+      ["|", "the next bar, making one where the music has run out"],
+    ]) +
+    `<p class="syntax-rule">In a run <em>b</em> is the note B — it has to be,
+       or <em>8abcdef</em> would start on an A flat. So a flat inside a run
+       is written <em>_</em>. A note standing on its own as a whole word
+       still takes <em>b</em>, because <em>bb4</em> is how everybody writes
+       B flat.</p>` +
+    `<h3>marks</h3>` +
+    syntaxRows(marks) +
+    `<p class="syntax-rule">A mark goes on everything typed after it, and the
+       same word again turns it off. They are put on once the line is
+       written, because a tie joins a note to the one after it and that note
+       does not exist yet.</p>` +
+    `<h3>anything else</h3>` +
+    syntaxRows([
+      ["transpose-up", "a word that is not music runs the command of that name"],
+      ["tempo", "the start of a name is enough, where only one command starts that way"],
+    ]) +
+    `<p class="syntax-rule">A line is read whole before anything is written,
+       so a line with a mistake in it writes nothing and says what was wrong
+       — with your line still in the box to correct. Everything one line
+       writes is taken back by one press of undo.</p>`;
 }

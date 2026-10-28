@@ -658,6 +658,27 @@ type Score struct {
 	// unrelated lines, and the eye has nothing to tell it where one
 	// instrument ends and the next begins.
 	Groups []StaffGroup
+
+	// Scripts are the programs somebody wrote to make this music, kept
+	// with it.
+	//
+	// A piece built from a process — a row, an isorhythm, a phase — is not
+	// fully written down by its notes. The notes are the output; the
+	// process is the thought, and a composer who comes back to the piece a
+	// year later wants the thought. So the scripts travel in the file.
+	//
+	// Nothing here ever runs by itself. A score that could execute code on
+	// being opened is a document that can attack the person who opens it,
+	// which is the mistake Word made and spent a decade undoing. What is
+	// kept is text: the console shows it, and a person reads it and
+	// decides.
+	Scripts []Script
+}
+
+// Script is one saved program, with the name its author gave it.
+type Script struct {
+	Name string
+	Body string
 }
 
 // GroupSymbol is what is drawn down the left of a group of staves.

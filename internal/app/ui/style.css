@@ -1578,6 +1578,101 @@ dialog.wide { max-width: 640px; }
 }
 #harm-number { font-variant-numeric: tabular-nums; min-width: 3em; text-align: right; }
 
+/* ---- how to type music ---- */
+
+#typing-help {
+  max-width: 760px;
+  width: min(760px, 95vw);
+  height: min(80vh, 660px);
+  flex-direction: column;
+  padding: 16px 20px;
+}
+#typing-help[open] { display: flex; }
+#typing-help-body { flex: 1; min-height: 0; overflow-y: auto; padding-right: 4px; }
+
+#typing-help-body h3 {
+  margin: 16px 0 6px; font-size: 13px; color: var(--muted);
+  font-weight: 600; text-transform: lowercase;
+}
+#typing-help-body h3:first-child { margin-top: 4px; }
+
+/* The example first and what it means after it: somebody looking this up
+   is looking for the shape of the thing, not for a definition. */
+.syntax {
+  display: grid; grid-template-columns: 13em 1fr; gap: 4px 14px;
+  align-items: baseline; margin: 0;
+}
+.syntax dt {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 13px; color: var(--ink);
+  background: var(--panel-dark); border-radius: 4px;
+  padding: 2px 6px; justify-self: start;
+}
+.syntax dd { margin: 0; font-size: 13px; }
+.syntax dd em { color: var(--muted); font-style: normal; }
+
+/* The two rules worth stating in words, because both are places somebody
+   will otherwise be surprised. */
+.syntax-rule {
+  margin: 8px 0 0; padding: 8px 10px;
+  border-left: 2px solid var(--accent);
+  font-size: 12px; line-height: 1.5;
+}
+
+/* ---- typing the music in ---- */
+
+/* Docked under the music, where the drum pads are, and for the same reason:
+   a thing you type into must never stand on the thing you are typing. It
+   floated at the cursor first, which put it squarely over the bar being
+   written — the one thing you need to see while writing it. */
+#typebar {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 6px 12px 7px;
+  border-top: 1px solid var(--line);
+  background: var(--panel);
+}
+#typebar[hidden] { display: none; }
+
+/* Which staff and bar it is writing into: the connection to the cursor,
+   said in words now that it is not standing next to it. */
+#type-where {
+  flex: none;
+  font-size: 12px;
+  color: var(--muted);
+  min-width: 9em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+#type-line {
+  flex: 1;
+  min-width: 10em;
+  font: inherit;
+  font-size: 13px;
+  padding: 4px 8px;
+  border: 1px solid var(--accent);
+  border-radius: 5px;
+  background: var(--panel-dark);
+  color: var(--ink);
+}
+#type-line:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+/* What it takes, on one line beside the box rather than in a block under
+   it, and only while there is nothing typed: it is there to be read once. */
+#type-hint {
+  flex: 2;
+  min-width: 0;
+  font-size: 11px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+#type-hint[hidden] { display: none; }
+
 /* ---- rhythm and melody ---- */
 
 #rhythm, #melody {

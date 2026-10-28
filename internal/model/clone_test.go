@@ -177,3 +177,20 @@ func TestEditingTheOriginalLeavesTheCopy(t *testing.T) {
 		t.Error("editing the original changed the copy")
 	}
 }
+
+// Undo restores a clone, and a score that forgot its scripts every time
+// somebody pressed Ctrl-Z would lose the thought that made it on the first
+// mistake after writing it down.
+func TestACloneKeepsTheScripts(t *testing.T) {
+	s := NewScore()
+	s.Scripts = []Script{{Name: "row", Body: "note(\"c4\")"}}
+	back := s.Clone()
+	if len(back.Scripts) != 1 || back.Scripts[0].Name != "row" {
+		t.Fatalf("the clone came back with %+v", back.Scripts)
+	}
+	// And a copy, not the same slice: editing one must not edit the other.
+	back.Scripts[0].Body = "changed"
+	if s.Scripts[0].Body == "changed" {
+		t.Error("the clone shares its scripts with the original")
+	}
+}

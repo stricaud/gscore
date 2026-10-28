@@ -37,6 +37,12 @@ func (s *Score) Clone() *Score {
 	if s.Groups != nil {
 		out.Groups = append([]StaffGroup(nil), s.Groups...)
 	}
+	// The scripts come too. Undo restores one of these, and a score that
+	// forgot its scripts every time somebody pressed Ctrl-Z would lose the
+	// thought that made it on the first mistake after writing it down.
+	if s.Scripts != nil {
+		out.Scripts = append([]Script(nil), s.Scripts...)
+	}
 	for _, p := range s.Parts {
 		out.Parts = append(out.Parts, p.Clone())
 	}

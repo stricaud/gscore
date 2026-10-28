@@ -972,8 +972,8 @@ func (r *reader) measure(doc *document, st *msStaff) error {
 		m.SectionTitle, st.title = st.title, ""
 	}
 	start := st.tick
-	var loose *voiceState // MuseScore 2 wrote voice one without a wrapper
-	at := -1              // where <tick> last asked for; -1 is "after the note before"
+	var loose *voiceState   // MuseScore 2 wrote voice one without a wrapper
+	at, pending := 0, false // where <tick> last asked for, and whether one has
 	startRepeat := false
 
 	// fresh opens a voice, handing the first one of the bar any change of
@@ -1009,14 +1009,14 @@ func (r *reader) measure(doc *document, st *msStaff) error {
 	var queued []func(*voiceState)
 
 	place := func() {
-		n := at
-		at = -1
+		n, moved := at, pending
+		at, pending = 0, false
 		filled := 0
 		if loose != nil {
 			filled = voiceTicks(loose.v)
 		}
 		switch {
-		case loose == nil || (n >= 0 && n < filled):
+		case loose == nil, moved && n < filled:
 			// A rewind: the bar's next voice starts here. Instead of
 			// wrapping each in <voice>, MuseScore 2 writes them one after
 			// another inside the bar and rewinds before each. Read
@@ -1039,7 +1039,7 @@ func (r *reader) measure(doc *document, st *msStaff) error {
 				loose.v.Elements = append(loose.v.Elements,
 					&model.Rest{Dur: d, Hidden: true})
 			}
-		case n > filled:
+		case moved && n > filled:
 			// A gap in the voice that is already here, spaced the same way.
 			if d, ok := tickDuration(n - filled); ok {
 				loose.v.Elements = append(loose.v.Elements,
@@ -1059,7 +1059,7 @@ func (r *reader) measure(doc *document, st *msStaff) error {
 	// hand that already fills the bar: read against the voice standing
 	// there, the mark was thrown away when that voice was closed.
 	apply := func(f func(*voiceState)) {
-		if at >= 0 {
+		if pending {
 			queued = append(queued, f)
 			return
 		}
@@ -1088,7 +1088,7 @@ func (r *reader) measure(doc *document, st *msStaff) error {
 			// by: by bar forty a tick taken as an offset put thirty-nine
 			// whole notes of silence in front of the voice, and the bar was
 			// drawn forty times too wide with its notes at either end.
-			at = n - start
+			at, pending = n-start, true
 			return nil
 		case "startRepeat":
 			startRepeat = true
@@ -2211,6 +2211,19 @@ func (r *reader) rest(vs *voiceState) error {
 			dots = n
 			return err
 		case "duration":
+			// MuseScore 4 writes the fraction as text and MuseScore 2
+			// wrote it as a pair of attributes. Read only as text, every
+			// whole-bar rest written by the older one came out a whole
+			// note long: the bar of a quarter that carries the Trio's
+			// upbeat in the Moonlight sonata was read as four, and from
+			// there the staff was a bar and a half ahead of the file it
+			// was being read from — so every <tick> after it landed in the
+			// wrong place and the second voice of a bar was laid end to
+			// end after the first instead of under it.
+			if z, n := attr(c, "z"), attr(c, "n"); z != "" && n != "" {
+				whole = parseFraction(z + "/" + n)
+				return r.dec.Skip()
+			}
 			s, err := r.text()
 			if err != nil {
 				return err

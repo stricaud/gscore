@@ -828,6 +828,27 @@ func (t Transposition) Written(k KeySignature) KeySignature {
 	return out
 }
 
+// Sounding returns the concert key a written signature stands for.
+//
+// The inverse of Written, and needed wherever a part's own signature is all
+// there is to go on: an alto saxophone part in three sharps is a piece in C,
+// and a staff joining that piece has to be given the key of the music rather
+// than a copy of what the saxophonist happens to read.
+func (t Transposition) Sounding(k KeySignature) KeySignature {
+	if t.IsZero() {
+		return k
+	}
+	out := k
+	out.Fifths = k.Fifths + t.Fifths()
+	for out.Fifths > 7 {
+		out.Fifths -= 12
+	}
+	for out.Fifths < -7 {
+		out.Fifths += 12
+	}
+	return out
+}
+
 // TranspositionFor gives the usual transposition of an instrument, so that
 // choosing "alto sax" sets up a part that behaves like one without the player
 // having to know the interval by heart.

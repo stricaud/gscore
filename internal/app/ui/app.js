@@ -517,6 +517,7 @@ async function action(name) {
       break;
     case "type-music": toggleTypeBar(); break;
     case "typing-help": openTypingHelp(); break;
+    case "console": await openConsole(); break;
     case "note-input":
       setMouseWrites(!state.mouseWrites);
       break;
@@ -1320,6 +1321,12 @@ async function loadInfo() {
   state.info = await res.json();
   const i = state.info;
 
+  // What the score carries, read with the score rather than when the
+  // console is opened. A warning about losing the scripts on export is no
+  // use if the editor only finds out there are any once you have gone
+  // looking for them.
+  void loadScripts();
+
   // In a native window the title bar already says gscore; repeating it
   // inside the window is what makes a web view look like a web page.
   document.body.classList.toggle("native", !!i.native);
@@ -1695,7 +1702,38 @@ async function keepFile(res, fallbackName) {
   return name;
 }
 
+// keepsScripts says a format can carry the scripts a score holds.
+//
+// Only gscore's own can. Every other format in the world is a format for
+// music, and a script is not music: it is the thought that made it.
+function keepsScripts(ext) {
+  return String(ext).toLowerCase() === "gscore";
+}
+
 async function exportAs(ext, type, what) {
+  // Said before anything is written, because the thing being lost is not
+  // the file — the file is fine — it is the work that went into the file,
+  // and finding that out afterwards is finding it out too late.
+  //
+  // The score itself is untouched, and the warning says so: exporting is
+  // not saving, and somebody who has just been told they are about to lose
+  // something needs to know they have not lost it yet.
+  if (!keepsScripts(ext) && state.scripts.length) {
+    const n = state.scripts.length;
+    const ok = await confirmThat({
+      title: `Export without the ${n === 1 ? "script" : `${n} scripts`}?`,
+      note: `A ${String(ext).toUpperCase()} file holds music, and a script ` +
+        `is not music — it is the process that made it. ${n === 1
+          ? "The script stays"
+          : "They stay"} in this score, and in any .gscore you save; ` +
+        `${n === 1 ? "it" : "they"} will not be in the exported file.`,
+      ok: "Export anyway",
+    });
+    if (!ok) {
+      status("Ready");
+      return;
+    }
+  }
   if (state.info?.local) {
     const p = new URLSearchParams({ as: ext });
     const res = await fetch("/api/save?" + p.toString(), { method: "POST" });
@@ -4864,7 +4902,8 @@ async function settingsDialog() {
 // views used by the desktop builds implement no JavaScript dialog delegate,
 // so prompt() quietly returns null and whatever asked for the value does
 // nothing at all.
-function ask({ title, label, value = "", note = "", options = null, search = false }) {
+function ask({ title, label, value = "", note = "", options = null,
+               search = false, many = false }) {
   const dlg = $("#ask");
   const input = $("#ask-input");
   const select = $("#ask-select");
@@ -4899,7 +4938,16 @@ function ask({ title, label, value = "", note = "", options = null, search = fal
       else if (list.length) select.selectedIndex = 0;
     };
     render(all, value);
-    select.size = useFilter ? Math.min(10, all.length) : 0;
+    // Several at once, where several is what the question is about: "which
+    // instruments" has no single answer and asking it once per instrument
+    // is asking it badly.
+    select.multiple = !!many;
+    select.size = many ? Math.min(10, all.length)
+      : useFilter ? Math.min(10, all.length) : 0;
+    if (many) {
+      const want = [].concat(value || []);
+      for (const o of select.options) o.selected = want.includes(o.value);
+    }
     if (useFilter) {
       filter.value = "";
       onFilter = () => {
@@ -4921,6 +4969,10 @@ function ask({ title, label, value = "", note = "", options = null, search = fal
       if (onFilter) filter.removeEventListener("input", onFilter);
       if (dlg.returnValue !== "ok") {
         resolve(null);
+        return;
+      }
+      if (many) {
+        resolve([...select.selectedOptions].map((o) => o.value));
         return;
       }
       resolve((useList ? select.value : input.value).trim());
@@ -4961,6 +5013,7 @@ function confirmThat({ title, note = "", ok = "OK" }) {
   label.hidden = true;
   $("#ask-input").hidden = true;
   $("#ask-select").hidden = true;
+  $("#ask-select").multiple = false;
   $("#ask-filter").hidden = true;
   const wasOK = okBtn.textContent;
   okBtn.textContent = ok;
@@ -8875,9 +8928,17 @@ async function jumpToMeasure() {
 }
 
 // measureCount is how many bars the part being written in has.
+// measureCount is how many bars the piece has.
+//
+// The blank bar past the end does not count. It is drawn so there is
+// somewhere to click to carry on writing, and it is not a bar until
+// something is written in it — counted as one, the editor believes in a bar
+// that is not there, writes into it, and the bar comes into being on that
+// one staff while every other staff is left a bar short of it.
 function measureCount() {
   let most = 0;
   for (const h of state.hits) {
+    if (h.ahead) continue;
     if (h.measure + 1 > most) most = h.measure + 1;
   }
   return most;
@@ -9219,6 +9280,7 @@ async function main() {
   setupRhythmClicks();
   setupMelodyClicks();
   setupTypeBar();
+  setupConsole();
   setupPanning();
   setupMarquee();
   setupSymbolDragging();
@@ -10896,6 +10958,7 @@ async function typeOne(step) {
   else p.set("dur", state.tool.duration);
   if (step.dots) p.set("dots", String(step.dots));
   if (step.pitch) p.set("pitch", step.pitch);
+  if (step.drum) p.set("drum", String(step.drum));
   if (step.interval !== undefined) p.set("interval", String(step.interval));
   // A note with no pitch and no interval is one typed as a bare length,
   // which means "where the cursor is pointing" — the same as pressing the
@@ -11201,4 +11264,892 @@ function drawTypingHelp() {
        so a line with a mistake in it writes nothing and says what was wrong
        — with your line still in the box to correct. Everything one line
        writes is taken back by one press of undo.</p>`;
+}
+
+/* ---------- the script console ---------- */
+
+// A place to write a program that writes music.
+//
+// A piece built from a process — a row, an isorhythm, a phase, a canon at
+// the fifth — is a piece nobody wants to type out twice. The process is the
+// thought; the notes are its output. So this is a console, and what it
+// gives you is a dozen words and JavaScript's own loops and conditions: the
+// power is in the language, which everybody already has, and not in a music
+// language nobody has ever written in.
+//
+// Four things make it a tool rather than a liability, and each of them is
+// here on purpose.
+//
+//   - The verbs are few. Eight of them and one that takes a line of the
+//     typing language, which is how anything not worth a verb is reached.
+//   - Everything one script writes is one undo. A script of two hundred
+//     notes that came back two hundred presses at a time is a script
+//     nobody would dare run.
+//   - There is a budget. A loop that writes for ever stops, and says so.
+//   - Nothing in a file ever runs by itself. A score carries its scripts
+//     and opening it shows them, unrun. A document that executes code on
+//     being opened is a document that can attack whoever opens it, which
+//     is the mistake Word made and spent a decade undoing.
+
+// consoleBudget is how much one script may write, and how long it may take
+// about it.
+//
+// The count catches a loop that writes for ever; the clock catches one that
+// writes slowly for ever. Neither catches a loop that calls nothing at all
+// — "while (true) {}" will hang the page the same way it would in any
+// browser console — and the help says so rather than pretending otherwise.
+const consoleBudget = { steps: 4000, ms: 3000 };
+
+// consoleVerbs builds the words a script is given.
+//
+// They are synchronous and they queue: calling note() writes nothing, it
+// remembers that a note was asked for, and the whole queue is sent in order
+// once the script has finished. That is what lets a script read as music
+// rather than as plumbing —
+//
+//     for (const p of row) note(p, 8);
+//
+// — with no await anywhere to forget. The cost is that what a script reads
+// is the score as it stood when the script began, which is said plainly in
+// the help.
+function consoleVerbs(out, said, read, question) {
+  const started = Date.now();
+  // How many staves the script has asked for so far, so that staff() can
+  // say which number the next one will be without waiting to find out.
+  let made = 0;
+  // How long a question has been on the screen.
+  //
+  // The clock is on what the script does, not on how long somebody takes
+  // to answer it. Without this, a script that asks two questions is stopped
+  // for running too long while the person it asked is still reading the
+  // first one — which is the one script in the editor that cannot possibly
+  // be in a loop, because it is waiting for them.
+  let waited = 0;
+  const spend = () => {
+    if (out.length >= consoleBudget.steps) {
+      throw new Error(`a script may write ${consoleBudget.steps} things; ` +
+        `this one is still going`);
+    }
+    if (Date.now() - started - waited > consoleBudget.ms) {
+      throw new Error("this script has been running too long and was stopped");
+    }
+  };
+  const lengthOf = (len) => {
+    if (len === undefined || len === null) return undefined;
+    const name = typeLengths[Number(len)];
+    if (!name) throw new Error(`${len} is not a note length`);
+    return name;
+  };
+
+  return {
+    // write takes a line of the typing language, which is how everything
+    // the verbs do not cover is reached: marks, barlines, commands.
+    write(line) {
+      spend();
+      out.push({ do: "line", line: String(line) });
+    },
+    note(pitch, len) {
+      spend();
+      out.push({ do: "note", pitch: String(pitch), dur: lengthOf(len) });
+    },
+    rest(len) {
+      spend();
+      out.push({ do: "rest", dur: lengthOf(len) });
+    },
+    chord(pitches, len) {
+      spend();
+      const all = [].concat(pitches).map(String);
+      if (!all.length) throw new Error("a chord needs notes in it");
+      out.push({ do: "chord", pitches: all, dur: lengthOf(len) });
+    },
+    // step moves from the note before by an interval, which is how a
+    // melody is thought about: up a third, down a step.
+    step(n, len) {
+      spend();
+      out.push({ do: "step", interval: Math.trunc(Number(n)), dur: lengthOf(len) });
+    },
+    bar() {
+      spend();
+      out.push({ do: "bar" });
+    },
+    // staff adds a staff and gives back its number, so that at(bar, staff)
+    // has something to be pointed at.
+    //
+    // The number is known before the staff exists, because staves are added
+    // at the end in the order they are asked for. That is what lets the verb
+    // queue with the rest of them instead of being the second thing in the
+    // language a script has to await.
+    staff(instrument, opts) {
+      spend();
+      const o = opts || {};
+      out.push({
+        do: "staff",
+        instrument: String(instrument),
+        name: o.name === undefined ? "" : String(o.name),
+        clef: o.clef === undefined ? "" : String(o.clef),
+      });
+      made++;
+      return (read.staves || []).length + made;
+    },
+    // drum names what to hit on a drum staff, where a line of the staff is
+    // an instrument and not a pitch. By name — "snare drum", "hi-hat
+    // closed" — or by its MIDI key, for whoever already thinks in those.
+    drum(which, len) {
+      spend();
+      out.push({ do: "drum", which: String(which), dur: lengthOf(len) });
+    },
+    // key is the signature of the piece, counted in sharps or flats:
+    // key(4) is four sharps, key(-3) is three flats.
+    //
+    // Set once for the piece and not per staff, because a signature is a
+    // fact about the music — a part for an instrument in B-flat gets the
+    // signature its own player reads for that key, which is a different
+    // number, and the score works that out rather than the script.
+    key(fifths) {
+      spend();
+      const n = Math.trunc(Number(fifths));
+      if (!(n >= -7 && n <= 7)) {
+        throw new Error(`${fifths} is not a key signature — \u22127 to 7`);
+      }
+      out.push({ do: "key", fifths: n });
+    },
+    // dynamic marks the note just written. Written after the note rather
+    // than given to it, because that is where it goes in the music.
+    dynamic(name) {
+      spend();
+      out.push({ do: "dynamic", name: String(name) });
+    },
+    at(bar, staff) {
+      spend();
+      out.push({
+        do: "at",
+        bar: Math.max(0, Math.trunc(Number(bar)) - 1),
+        staff: staff === undefined ? undefined : Math.max(0, Math.trunc(Number(staff)) - 1),
+      });
+    },
+    // notes reads a bar: what is written there, as it stood when the
+    // script began.
+    //
+    // As it stood, because the verbs queue and nothing has been written
+    // yet. A script reads the music it was given and writes a new one from
+    // it — copy this bar up a fifth, answer it in the bass, invert it —
+    // which is what reading is for; a script that wants to read what it
+    // has just written is asking the queue a question, and the queue is
+    // not a score.
+    notes(bar, staff) {
+      const staves = read.staves || [];
+      const si = staff === undefined
+        ? ((state.selection?.part ?? 0))
+        : Math.max(0, Math.trunc(Number(staff)) - 1);
+      const bi = Math.max(0, Math.trunc(Number(bar)) - 1);
+      const got = (staves[si]?.bars || [])[bi] || [];
+      // A copy, so that a script may do as it likes with what it is given.
+      return got.map((n) => ({ ...n, chord: n.chord ? [...n.chord] : undefined }));
+    },
+    // transpose moves a note by diatonic steps, which is how a passage is
+    // moved: up a fifth is four steps, down an octave is seven.
+    //
+    // Steps and not semitones, because the key signature spells what comes
+    // out — the same way a note written by hand is spelled. A script that
+    // wants an exact semitone writes the accidental itself.
+    transpose(pitch, steps) {
+      return transposeName(String(pitch), Math.trunc(Number(steps)));
+    },
+    // ask puts a question to whoever is running the script.
+    //
+    // The one word here that has to be waited for, and the only place a
+    // script says await. The writing verbs queue and so stay synchronous,
+    // which is what keeps a loop of them readable; a question cannot
+    // queue, because the answer is what the rest of the script is about.
+    //
+    // Answering nothing — closing the question — comes back as null, and a
+    // script that carries on regardless is a script that writes something
+    // nobody asked for. The examples check it.
+    async ask(q, choices, opts) {
+      const began = Date.now();
+      try {
+        const many = !!(opts && opts.many);
+        if (Array.isArray(choices) && choices.length) {
+          return await question({
+            title: String(q), label: (opts && opts.label) || "Choose",
+            options: choices, many,
+            note: (opts && opts.note) || "",
+          });
+        }
+        return await question({
+          title: String(q), label: (opts && opts.label) || "",
+          value: choices === undefined || choices === null ? "" : String(choices),
+          note: (opts && opts.note) || "",
+        });
+      } finally {
+        waited += Date.now() - began;
+      }
+    },
+    // say prints, which is how a script explains itself to whoever runs it.
+    say(...what) {
+      said.push(what.map((w) =>
+        typeof w === "object" ? JSON.stringify(w) : String(w)).join(" "));
+    },
+  };
+}
+
+// runConsole runs a script and then does what it asked for.
+//
+// Two halves, and the split is the whole design. The script runs first and
+// writes nothing: it fills a queue. Then the queue is sent, in order, inside
+// one undo. A script that throws halfway has asked for nothing, so nothing
+// has happened, and the error is the only thing that reaches the score.
+async function runConsole(source) {
+  const queue = [], said = [];
+  // The score as it stands, read once before the script runs. The verbs
+  // are synchronous so that a script reads as music rather than as
+  // plumbing, and a synchronous verb cannot go and ask.
+  let read = { staves: [] };
+  try {
+    const res = await fetch("/api/contents");
+    if (res.ok) read = await res.json();
+  } catch (_) {
+    // A script that writes without reading still works.
+  }
+  const verbs = consoleVerbs(queue, said, read, ask);
+
+  // What the score looked like when the script began, for a script that
+  // wants to know. It does not change as the queue is written, which the
+  // help says in as many words.
+  const look = {
+    bars: measureCount(),
+    staves: (state.info?.parts || []).length,
+    staffNames: (state.info?.parts || []).map((p) => p.name || ""),
+  };
+
+  try {
+    // Run as an async function, so that a script may await a question. The
+    // writing verbs stay synchronous and queue; await is for ask and for
+    // nothing else, which is why there is no await to forget in a loop.
+    const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
+    const run = new AsyncFunction(...Object.keys(verbs), "score", "Math", "JSON",
+      `"use strict";\n${source}\n`);
+    await run(...Object.values(verbs), look, Math, JSON);
+  } catch (e) {
+    return { said, error: String(e && e.message ? e.message : e) };
+  }
+  if (!queue.length) {
+    return { said, wrote: 0 };
+  }
+
+  await fetch("/api/script/begin", { method: "POST" });
+  let wrote = 0, error = "";
+  try {
+    for (const step of queue) {
+      const why = await doConsoleStep(step);
+      if (why) {
+        error = why;
+        break;
+      }
+      wrote++;
+    }
+  } finally {
+    await fetch("/api/script/end?changed=" + (wrote ? "1" : "0"),
+                { method: "POST" });
+  }
+  await refreshScore();
+  markSelection();
+  return { said, wrote, error };
+}
+
+// doConsoleStep carries out one thing the script asked for.
+async function doConsoleStep(step) {
+  switch (step.do) {
+    case "line":
+      // The typing language, so everything it can say the console can say.
+      return (await runTyping(step.line)) ? "" : "could not write " + step.line;
+    case "at": {
+      const sel = state.selection || { part: 0, measure: 0, step: 4 };
+      const part = step.staff === undefined ? sel.part : step.staff;
+      while (measureCount() <= step.bar) {
+        await fetch("/api/addmeasure", { method: "POST" });
+        await loadHits();
+      }
+      state.selection = {
+        ...sel, part, measure: step.bar, at: 0, ref: null, replace: false,
+      };
+      return "";
+    }
+    case "bar":
+      await nextBarForTyping();
+      return "";
+    case "staff": {
+      const q = new URLSearchParams({ instrument: step.instrument });
+      if (step.name) q.set("name", step.name);
+      if (step.clef) q.set("clef", step.clef);
+      const res = await fetch("/api/addstaff?" + q, { method: "POST" });
+      if (!res.ok) return (await res.text()).trim();
+      // The new staff has the bars the others have, and at() counts them.
+      await loadHits();
+      return "";
+    }
+    case "drum": {
+      const key = await drumKeyFor(step.which);
+      if (!key) return "there is no drum called " + step.which;
+      const got = await typeOne({ kind: "note", drum: key, dur: step.dur });
+      return got.error || "";
+    }
+    case "key": {
+      const res = await fetch("/api/setkey?fifths=" + step.fifths,
+                              { method: "POST" });
+      return res.ok ? "" : (await res.text()).trim();
+    }
+    case "dynamic": {
+      const sel = state.selection;
+      if (!sel || !sel.at) return "there is no note for " + step.name;
+      const q = new URLSearchParams({
+        part: String(sel.part), measure: String(sel.measure),
+        at: String(sel.at), dynamic: step.name,
+      });
+      const res = await fetch("/api/dynamic?" + q, { method: "POST" });
+      return res.ok ? "" : (await res.text()).trim();
+    }
+    case "chord": {
+      // The first note is written and the rest are stacked onto it, which
+      // is how a chord is built everywhere else in the editor.
+      const first = await typeOne({ kind: "note", pitch: step.pitches[0], dur: step.dur });
+      if (first.error) return first.error;
+      const sel = state.selection;
+      for (const p of step.pitches.slice(1)) {
+        const q = new URLSearchParams({
+          part: String(sel.part), measure: String(sel.measure),
+          index: String(sel.at - 1), pitch: p,
+        });
+        const res = await fetch("/api/addpitch?" + q, { method: "POST" });
+        if (!res.ok) return (await res.text()).trim();
+      }
+      return "";
+    }
+    default: {
+      const what = {
+        kind: step.do === "rest" ? "rest" : "note",
+        pitch: step.pitch, dur: step.dur,
+      };
+      if (step.do === "step") what.interval = step.interval;
+      const got = await typeOne(what);
+      return got.error || "";
+    }
+  }
+}
+
+// drumKeyFor turns what a script called a drum into the key that sounds it.
+//
+// The largest kit is asked for, not the one the drum pad happens to be set
+// to: a script naming the ride bell should not be told there is no such
+// drum because somebody left the pad on the six-pad kit.
+let drumNames = null;
+async function drumKeyFor(which) {
+  const n = Number(which);
+  if (Number.isInteger(n) && n > 0) return n;
+  if (!drumNames) {
+    try {
+      const res = await fetch("/api/percussion?kit=large");
+      drumNames = res.ok ? (await res.json()).pads || [] : [];
+    } catch (_) {
+      drumNames = [];
+    }
+  }
+  const want = String(which).trim().toLowerCase();
+  const pad = drumNames.find((d) => d.name.toLowerCase() === want) ||
+    drumNames.find((d) => d.name.toLowerCase().startsWith(want));
+  return pad ? pad.key : 0;
+}
+
+// consoleHelp is the vocabulary, said in one line beside the buttons. The
+// whole of it fits there, which is the point of there being so few words.
+const consoleHelp =
+  "note(\"c4\", 8) · rest(4) · chord([…], 2) · step(+3) · bar() · " +
+  "at(bar, staff) · staff(\"flute\") · key(4) · dynamic(\"sfz\") · " +
+  "drum(\"snare drum\") · write(\"8abc\") · notes(bar, staff) · " +
+  "transpose(\"c4\", 4) · ask(q, […]) · say(…) · score.bars";
+
+// consoleExamples are whole scripts to start from, built into the editor.
+//
+// They open in the box and do not run, which is the same rule a script a
+// file carries lives under: nothing in gscore runs code you have not read.
+// One example that really writes a piece says more about what the console
+// is for than a page of documentation about what each verb does.
+const consoleExamples = [
+  {
+    name: "Moonlight III",
+    about: "asks which instruments, then writes a Presto agitato",
+    body: `// Moonlight III — a Presto agitato written out of rules and dice.
+//
+// Beethoven's finale is four things happening at once: C-sharp minor, an
+// arpeggio racing upward in sixteenths, two sforzandi where it breaks at
+// the top, and a dry staccato bass underneath. Those four are shapes and
+// not notes, so they can be written down as rules and the notes left to
+// the dice. What comes out is a pastiche and sounds like one — but it is
+// in his handwriting, and it is a better place to start than a blank page.
+//
+// Change a table and it stops being Beethoven. That is the point of it.
+
+// What each player is given, and where it sits.
+//
+// "figure" takes the arpeggio, "bass" the ground under it, "drums" keeps
+// the engine running, and "both" takes two staves, because that is one
+// person with two hands. base is the octave the figure climbs from and span
+// how many notes of the chord it climbs through before it turns, which is
+// how an oboe gets the same shape as a piano without being asked for notes
+// it does not have.
+//
+// All of it is written in concert pitch — what you hear. up is how far the
+// part has to be written above what it sounds, so a part for an instrument
+// in E flat comes out in the key its player reads. Beethoven did not have
+// saxophones, but the tables do not mind.
+const PLAYERS = {
+  piano:         { role: "both",   base: 3, span: 9, low: 2 },
+  harpsichord:   { role: "both",   base: 3, span: 9, low: 2 },
+  harp:          { role: "both",   base: 3, span: 9, low: 2 },
+  violin:        { role: "figure", base: 4, span: 8 },
+  flute:         { role: "figure", base: 4, span: 8 },
+  oboe:          { role: "figure", base: 4, span: 7 },
+  viola:         { role: "figure", base: 3, span: 8, clef: "alto" },
+  clarinet:      { role: "figure", base: 3, span: 8, up: [1, 2] },
+  trumpet:       { role: "figure", base: 4, span: 7, up: [1, 2] },
+  "french horn": { role: "figure", base: 3, span: 7, up: [4, 7] },
+  "alto sax":    { role: "figure", base: 3, span: 7, up: [5, 9] },
+  "tenor sax":   { role: "figure", base: 3, span: 7, up: [8, 14] },
+  cello:         { role: "bass",   low: 2 },
+  bassoon:       { role: "bass",   low: 2 },
+  contrabass:    { role: "bass",   low: 2, up: [7, 12] },
+  "drum kit":    { role: "drums" },
+};
+
+const CHOICES = Object.keys(PLAYERS);
+
+// The chords, spelled out. A diminished fifth is not an augmented fourth
+// and a B sharp is not a C, however the keyboard feels about it: the
+// spelling is what says which chord this is, and it is the spelling that
+// has to survive being written out for a part in another key.
+const CHORDS = {
+  "i":     ["c#", "e",  "g#"],
+  "iv":    ["f#", "a",  "c#"],
+  "V7":    ["g#", "b#", "d#", "f#"],
+  "VI":    ["a",  "c#", "e"],
+  "ii0":   ["d#", "f#", "a"],
+  "N":     ["d",  "f#", "a"],
+  "vii07": ["b#", "d#", "f#", "a"],
+  "III":   ["e",  "g#", "b"],
+};
+
+// Where each chord is willing to go next. This is the whole of the harmony:
+// no rule about what a chord is, only about what follows what, which is the
+// part a listener actually hears.
+const NEXT = {
+  "i":     ["iv", "V7", "VI", "N", "vii07", "III"],
+  "iv":    ["V7", "vii07", "i", "N"],
+  "V7":    ["i", "VI"],
+  "VI":    ["iv", "ii0", "N", "V7"],
+  "ii0":   ["V7", "vii07"],
+  "N":     ["V7", "vii07"],
+  "vii07": ["i", "V7"],
+  "III":   ["VI", "iv"],
+};
+
+// What the drums do, laid over the same bar as the figure: eight
+// sixteenths, two eighths, four sixteenths. The kick is the downbeat, the
+// hi-hat is the sixteenths tearing past, the crash is where the hand
+// breaks at the top, and the toms fall with the arpeggio.
+const KICK = "bass drum", HAT = "hi-hat closed", CRASH = "crash cymbal";
+const TUMBLE = ["high tom", "low-mid tom", "low tom", "low floor tom"];
+
+const LETTERS = "cdefgab";
+const STEPS = [0, 2, 4, 5, 7, 9, 11];
+const SIGNS = ["bb", "b", "n", "#", "x"];
+
+function pick(list) {
+  return list[Math.floor(Math.random() * list.length)];
+}
+
+// written turns a note as it sounds into the note its player reads, spelled
+// out — accidental and all, including the naturals.
+//
+// Spelled out because the key signature is not to be trusted to say it. A
+// D in C sharp minor is a D sharp unless somebody writes otherwise, and the
+// D of the Neapolitan is the one note in the chord that has to.
+//
+// up is how far above the sounding note the written one goes, as a number
+// of letters and a number of semitones — a major sixth for an alto
+// saxophone is five letters and nine semitones. Both are needed and
+// neither on its own will do: the letters decide what it is called and the
+// semitones decide what it sounds like, and the accidental is whatever
+// makes those two agree. That is how the leading note of C sharp minor,
+// written for alto saxophone, comes out as a G double sharp.
+function written(note, up) {
+  up = up || [0, 0];
+  const letter = LETTERS.indexOf(note[0]);
+  const octave = Number(note[note.length - 1]);
+  let alter = 0;
+  for (const c of note.slice(1, -1)) {
+    if (c === "#") alter += 1;
+    else if (c === "x") alter += 2;
+    else if (c === "b") alter -= 1;
+  }
+  const reach = letter + up[0];
+  const over = Math.floor(reach / 7);
+  const to = reach - over * 7;
+  const plain = STEPS[to] + 12 * over - STEPS[letter];
+  const sign = alter + up[1] - plain;
+  if (sign < -2 || sign > 2) {
+    throw new Error(note + " cannot be written for that instrument");
+  }
+  return LETTERS[to] + SIGNS[sign + 2] + (octave + over);
+}
+
+// climb is the chord laid out upward from an octave, as many notes as asked.
+//
+// The octave goes up whenever the letter does not: F sharp, A, C sharp is a
+// chord of F sharp minor, and its C sharp is the one above the A and not
+// the one three notes below it.
+function climb(chord, from, count) {
+  const out = [];
+  let octave = from, last = -1;
+  for (let i = 0; i < count; i++) {
+    const note = chord[i % chord.length];
+    const letter = LETTERS.indexOf(note[0]);
+    if (letter <= last) octave++;
+    last = letter;
+    out.push(note + octave);
+  }
+  return out;
+}
+
+// zigzag walks up the notes it is given and turns round at the top.
+//
+// The turn is what keeps the shape inside an instrument: the figure wants
+// eight notes rising and an oboe has only seven to give, so the eighth
+// comes back down instead of going off the end of the instrument.
+function zigzag(tones, count, from) {
+  const out = [];
+  let i = from || 0, step = 1;
+  for (let k = 0; k < count; k++) {
+    out.push(tones[i]);
+    i += step;
+    if (i >= tones.length) { i = tones.length - 2; step = -1; }
+    if (i < 0) { i = 1; step = 1; }
+  }
+  return out;
+}
+
+// progression is the harmony of the whole piece, one chord to the bar.
+function progression(bars) {
+  const out = ["i"];
+  while (out.length < bars) out.push(pick(NEXT[out[out.length - 1]]));
+  // Home at the end whatever the dice said. A piece that stops wherever
+  // the random walk had got to does not sound finished, it sounds dropped.
+  out[bars - 2] = "V7";
+  out[bars - 1] = "i";
+  return out;
+}
+
+// figureBar writes one bar of the right hand: eight sixteenths climbing,
+// two eighths, and four sixteenths falling away. On the bars that break it
+// is the two eighths that carry the sforzandi.
+function figureBar(chord, p, breaks, opening) {
+  const tones = climb(chord, p.base, p.span);
+  // Where the climb starts: mostly the bottom of the chord, now and then
+  // the note above it. That one throw of the dice is all it takes to stop
+  // four bars of the same harmony coming out as four copies of one bar.
+  const run = zigzag(tones, 14, Math.random() < 0.3 ? 1 : 0);
+  run.slice(0, 8).forEach((tone, i) => {
+    note(written(tone, p.up), 16);
+    // Softly, once, at the very start. The movement opens quietly and the
+    // sforzandi are only loud against something.
+    if (opening && i === 0) dynamic("p");
+  });
+  if (breaks) {
+    // The sforzandi. Twice on the top note, which is the gesture the whole
+    // movement is built out of.
+    const top = written(tones[tones.length - 1], p.up);
+    note(top, 8); dynamic("sfz");
+    note(top, 8); dynamic("sfz");
+    // And away from the top, since that is where the break left the hand.
+    for (let k = 2; k <= 5; k++) note(written(tones[p.span - k], p.up), 16);
+    return;
+  }
+  // No break, so the wave simply carries on where the eighths left it.
+  note(written(run[8], p.up), 8);
+  note(written(run[9], p.up), 8);
+  for (const tone of run.slice(10, 14)) note(written(tone, p.up), 16);
+}
+
+// bassBar writes one bar of the left hand: eight dry staccato eighths, in
+// one of the three shapes the movement keeps underneath itself.
+function bassBar(chord, p) {
+  const root = chord[0], fifth = chord[2];
+  const low = p.low;
+  const over = LETTERS.indexOf(fifth[0]) > LETTERS.indexOf(root[0]) ? low : low + 1;
+  const shape = Math.random();
+  const line = [];
+  for (let i = 0; i < 8; i++) {
+    if (shape < 0.34) line.push(root + (i % 2 ? low + 1 : low));
+    else if (shape < 0.67) line.push(i % 2 ? fifth + over : root + low);
+    else line.push(root + low);
+  }
+  // One line of the typing language, which is how a script reaches the
+  // marks: stacc stays on until the line ends.
+  write("stacc 8 " + line.map((n) => written(n, p.up)).join(" "));
+}
+
+// drumBar lays the same bar out on the kit.
+function drumBar(breaks) {
+  drum(KICK, 16);
+  for (let i = 1; i < 8; i++) drum(HAT, 16);
+  drum(breaks ? CRASH : HAT, 8);
+  drum(breaks ? CRASH : HAT, 8);
+  // The fall: down the toms with the arpeggio, or the snare backbeat if
+  // the dice say so.
+  if (Math.random() < 0.5) for (const tom of TUMBLE) drum(tom, 16);
+  else for (let i = 0; i < 4; i++) drum(i === 1 ? "snare drum" : HAT, 16);
+}
+
+// ---------------------------------------------------------------- the run
+
+const want = await ask("Which instruments?", CHOICES, {
+  many: true, label: "Instruments",
+  note: "Hold shift or command to take more than one.",
+});
+if (!want || !want.length) {
+  say("Nothing chosen, so nothing written.");
+  return;
+}
+
+const asked = await ask("How many measures?", "16", {
+  note: "Two to thirty-two. It comes out in two-bar waves.",
+});
+if (asked === null) {
+  say("Nothing written.");
+  return;
+}
+let bars = Math.trunc(Number(asked));
+if (!(bars >= 2)) bars = 16;
+if (bars > 32) bars = 32;
+if (bars % 2) bars++;
+
+const plan = progression(bars);
+say("C sharp minor, " + bars + " bars");
+say(plan.join(" "));
+
+// Four sharps, once, for the whole score — before any staff is made, so
+// that a drum staff, which is in no key at all, is never given one. Every
+// other staff gets the signature its own player reads for that key.
+key(4);
+
+for (const name of want) {
+  const p = PLAYERS[name];
+  if (!p) continue;
+  if (p.role === "drums") {
+    const where = staff(name);
+    at(1, where);
+    for (let i = 0; i < bars; i++) {
+      drumBar(i % 2 === 1);
+      if (i < bars - 1) bar();
+    }
+    continue;
+  }
+  const two = p.role === "both";
+  if (two || p.role === "figure") {
+    const where = staff(name, {
+      clef: p.clef || "treble",
+      name: two ? name + " right" : "",
+    });
+    at(1, where);
+    for (let i = 0; i < bars; i++) {
+      figureBar(CHORDS[plan[i]], p, i % 2 === 1, i === 0);
+      if (i < bars - 1) bar();
+    }
+  }
+  if (two || p.role === "bass") {
+    const where = staff(name, {
+      clef: "bass",
+      name: two ? name + " left" : "",
+    });
+    at(1, where);
+    for (let i = 0; i < bars; i++) {
+      bassBar(CHORDS[plan[i]], p);
+      if (i < bars - 1) bar();
+    }
+  }
+}
+
+say("Written. The staff the score started with is above it all, still");
+say("empty — take it out if you do not want it.");
+`,
+  },
+];
+
+function drawExamples() {
+  const box = $("#console-examples");
+  if (!box) return;
+  box.innerHTML =
+    '<span class="console-saved-note">Examples:</span>' +
+    consoleExamples.map((e, i) =>
+      `<button type="button" class="console-script" data-example="${i}" ` +
+      `title="${escapeHTML(e.about)}">${escapeHTML(e.name)}</button>`).join("");
+}
+
+// state.scripts is what the score carries. Shown, never run.
+state.scripts = [];
+
+async function openConsole() {
+  const dlg = $("#console");
+  if (!dlg) return;
+  await loadScripts();
+  if (!dlg.open) dlg.showModal();
+  $("#console-source")?.focus?.();
+}
+
+// loadScripts reads what the file carries and puts it on the screen.
+//
+// On the screen and nowhere else. This is the whole of the promise: a score
+// may arrive from anybody, and opening one must never be a way for them to
+// run something on your machine. So the scripts are shown, and a person
+// reads them and presses Run.
+async function loadScripts() {
+  try {
+    const res = await fetch("/api/scripts");
+    if (res.ok) state.scripts = (await res.json()).scripts || [];
+  } catch (_) {
+    state.scripts = [];
+  }
+  drawSavedScripts();
+  drawExamples();
+  const help = $("#console-help");
+  if (help) help.textContent = consoleHelp;
+  return state.scripts;
+}
+
+function drawSavedScripts() {
+  const box = $("#console-saved");
+  if (!box) return;
+  if (!state.scripts.length) {
+    box.innerHTML = "";
+    return;
+  }
+  box.innerHTML =
+    state.scripts.map((s, i) =>
+      `<button type="button" class="console-script" data-script="${i}">` +
+      `${escapeHTML(s.Name || s.name || `script ${i + 1}`)}</button>`).join("") +
+    `<span class="console-saved-note">kept with the score — opened, not run</span>`;
+}
+
+// saveScript keeps what is in the box with the score, under the name given.
+async function saveScript() {
+  const source = $("#console-source")?.value ?? "";
+  if (!source.trim()) {
+    consoleSay("There is nothing to keep", true);
+    return;
+  }
+  // A name, always. A score may carry several scripts and the name is the
+  // only thing that tells them apart: an unnamed one is one nobody can ask
+  // for again. Keeping a script under a name that is already there
+  // replaces it, which is what saving the thing you just opened means.
+  const name = ($("#console-name")?.value || "").trim();
+  if (!name) {
+    consoleSay("Give it a name first — that is how you find it again", true);
+    $("#console-name")?.focus?.();
+    return;
+  }
+  const next = state.scripts.filter((s) => (s.Name || s.name) !== name);
+  next.push({ Name: name, Body: source });
+
+  const res = await fetch("/api/scripts", {
+    method: "POST",
+    body: JSON.stringify({ scripts: next }),
+  });
+  if (!res.ok) {
+    consoleSay((await res.text()).trim(), true);
+    return;
+  }
+  state.scripts = next;
+  drawSavedScripts();
+  consoleSay(name ? `Kept as "${name}"` : "Kept with the score");
+}
+
+function consoleSay(text, bad) {
+  const out = $("#console-out");
+  if (!out) return;
+  out.textContent = text;
+  out.className = bad ? "console-bad" : "";
+}
+
+function setupConsole() {
+  const dlg = $("#console");
+  if (!dlg) return;
+  const source = $("#console-source");
+
+  $("#console-run")?.addEventListener("click", async () => {
+    const got = await runConsole(source?.value ?? "");
+    const lines = [...got.said];
+    if (got.error) lines.push(got.error);
+    else lines.push(`Wrote ${got.wrote} thing${got.wrote === 1 ? "" : "s"}.`);
+    consoleSay(lines.join("\n") || "Nothing to do.", !!got.error);
+  });
+
+  $("#console-save")?.addEventListener("click", () => void saveScript());
+
+  // An example opens in the box, under its own name, so that keeping it
+  // after changing it keeps it as something of yours.
+  $("#console-examples")?.addEventListener("click", (e) => {
+    const b = e.target.closest ? e.target.closest(".console-script") : null;
+    if (!b || !source) return;
+    const ex = consoleExamples[Number(b.dataset.example)];
+    if (!ex) return;
+    source.value = ex.body;
+    const name = $("#console-name");
+    if (name) name.value = ex.name;
+    consoleSay("Opened. Read it, then press Run.");
+  });
+
+  // Clicking a saved script opens it in the box. Opens: the one thing it
+  // does not do is run it.
+  $("#console-saved")?.addEventListener("click", (e) => {
+    const b = e.target.closest ? e.target.closest(".console-script") : null;
+    if (!b || !source) return;
+    const s = state.scripts[Number(b.dataset.script)];
+    if (!s) return;
+    source.value = s.Body || s.body || "";
+    const name = $("#console-name");
+    if (name) name.value = s.Name || s.name || "";
+    consoleSay("Opened. Read it, then press Run.");
+  });
+
+  // What is typed in the box is not typed at the score.
+  for (const kind of ["keydown", "keypress", "keyup"]) {
+    source?.addEventListener(kind, (e) => e.stopPropagation());
+    $("#console-name")?.addEventListener(kind, (e) => e.stopPropagation());
+  }
+}
+
+// transposeName moves a written note by diatonic steps.
+//
+// Diatonic, so that "up a fifth" is four steps and comes out spelled the
+// way the key spells it rather than as whatever semitone arithmetic
+// produces: a fifth above F is C and not B sharp, and no amount of counting
+// semitones will tell you which of those was meant. Any accidental written
+// on the note is dropped for the same reason — the key signature spells the
+// answer, exactly as it does for a note written by hand.
+function transposeName(pitch, steps) {
+  const m = /^([a-gA-G])([#sbxnSBXN]*)(-?\d+)?$/.exec(String(pitch).trim());
+  if (!m) return pitch;
+  const letters = "cdefgab";
+  const from = letters.indexOf(m[1].toLowerCase());
+  if (from < 0) return pitch;
+  const octave = m[3] === undefined ? 4 : Number(m[3]);
+  // Counted from C of octave zero, so that moving across a C is moving
+  // into the next octave without a special case for it.
+  const index = octave * 7 + from + steps;
+  let letter = index % 7;
+  let oct = Math.floor(index / 7);
+  if (letter < 0) {
+    letter += 7;
+    oct -= 1;
+  }
+  return letters[letter] + (m[3] === undefined ? "" : String(oct));
 }

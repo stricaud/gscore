@@ -1578,6 +1578,64 @@ dialog.wide { max-width: 640px; }
 }
 #harm-number { font-variant-numeric: tabular-nums; min-width: 3em; text-align: right; }
 
+/* ---- the script console ---- */
+
+#console {
+  max-width: 820px;
+  width: min(820px, 96vw);
+  height: min(84vh, 720px);
+  flex-direction: column;
+  padding: 16px 20px;
+}
+#console[open] { display: flex; }
+#console-body {
+  flex: 1; min-height: 0;
+  display: flex; flex-direction: column; gap: 8px;
+  padding-top: 8px;
+}
+
+/* The scripts the score carries, shown and not run. */
+#console-saved,
+#console-examples { display: flex; flex-wrap: wrap; gap: 6px; align-items: baseline; }
+#console-saved:empty, #console-examples:empty { display: none; }
+.console-script {
+  font: inherit; font-size: 12px;
+  padding: 3px 9px; border-radius: 12px;
+  border: 1px solid var(--line); background: var(--panel-dark);
+  color: inherit; cursor: pointer;
+}
+.console-script:hover { border-color: var(--accent); }
+.console-saved-note { font-size: 11px; color: var(--muted); }
+
+#console-source {
+  flex: 1; min-height: 8em; resize: none;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 13px; line-height: 1.5;
+  padding: 8px 10px; border-radius: 6px;
+  border: 1px solid var(--line);
+  background: var(--panel-dark); color: var(--ink);
+}
+#console-source:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+#console-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+#console-bar button { margin-top: 0; }
+#console-name {
+  font: inherit; font-size: 12px; padding: 4px 8px;
+  border-radius: 5px; border: 1px solid var(--line);
+  background: var(--panel-dark); color: var(--ink);
+}
+#console-help { font-size: 11px; color: var(--muted); flex: 1; min-width: 0; }
+
+#console-out {
+  flex: none; max-height: 9em; overflow-y: auto; margin: 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px; line-height: 1.5; white-space: pre-wrap;
+  padding: 6px 10px; border-radius: 6px;
+  background: var(--panel-dark); color: var(--muted);
+  min-height: 2.4em;
+}
+.console-bad { color: #b03a4a; }
+
 /* ---- how to type music ---- */
 
 #typing-help {

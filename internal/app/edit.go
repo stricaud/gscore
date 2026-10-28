@@ -440,9 +440,27 @@ func (a *App) handleAddPitch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	pitch := pitchForStep(p.Clef, step)
-	if acc != model.NoAccidental {
+	named := false
+	// Or named outright, the same way a note is written: a chord typed or
+	// scripted is a list of names, and turning each of them into a staff
+	// position is the clef's arithmetic done by hand.
+	if name := q.Get("pitch"); name != "" {
+		got, hasOctave, ok := model.ParsePitch(name)
+		if !ok {
+			http.Error(w, name+" is not a pitch", http.StatusBadRequest)
+			return
+		}
+		if !hasOctave {
+			got = got.NearestTo(pitch)
+		}
+		pitch, named = got, true
+	}
+	switch {
+	case acc != model.NoAccidental:
 		pitch.Alter = acc.Semitones()
-	} else {
+	case named && hasAccidental(q.Get("pitch")):
+		// Spelled as it was typed.
+	default:
 		pitch.Alter = p.Key.AlterFor(pitch.Step)
 	}
 	add := &model.Note{Pitch: pitch, Dur: v.Elements[index].Duration(), Accidental: acc}
@@ -2612,12 +2630,21 @@ func (a *App) handleAddStaff(w http.ResponseWriter, r *http.Request) {
 
 	// The key and the meter come from the score, not from nothing: a new
 	// staff in C major under a piece in five flats would be wrong on sight.
+	//
+	// From the score and not from the staff it is copied off. A signature is
+	// what its own player reads, so the first part's is turned back into the
+	// key of the music and then written again for whoever is joining: a
+	// saxophone added to a piece in four sharps reads seven, and handing it
+	// the four put it in the wrong key with an accidental on nearly every
+	// note of it.
 	key := model.KeySignature{}
 	time := model.TimeSignature{Beats: 4, BeatValue: 4}
 	bars := 1
+	concert := model.KeySignature{}
 	if len(a.score.Parts) > 0 {
 		first := a.score.Parts[0]
-		key, time = first.Key, first.Time
+		concert = first.Transpose.Sounding(first.Key)
+		key, time = model.TranspositionFor(inst).Written(concert), first.Time
 		for _, p := range a.score.Parts {
 			if len(p.Measures) > bars {
 				bars = len(p.Measures)
@@ -2652,8 +2679,11 @@ func (a *App) handleAddStaff(w http.ResponseWriter, r *http.Request) {
 		src := a.score.Parts[0]
 		for i := 0; i < bars && i < len(src.Measures); i++ {
 			part.Measures[i].RightBarline = src.Measures[i].RightBarline
+			// A key change partway through is the music changing key, so it
+			// too is read off the staff it is written on and written again
+			// for this one.
 			if k := src.Measures[i].Key; k != nil && clef != model.Percussion {
-				c := *k
+				c := model.TranspositionFor(inst).Written(src.Transpose.Sounding(*k))
 				part.Measures[i].Key = &c
 			}
 			if t := src.Measures[i].Time; t != nil {
@@ -4375,9 +4405,27 @@ func (a *App) handleScripts(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "a list of scripts: "+err.Error(), http.StatusBadRequest)
 		return
 	}
+	seen := map[string]bool{}
 	for i, sc := range in.Scripts {
+		// A name, always. A score may carry several and they are the only
+		// thing that tells them apart: an unnamed script is one nobody can
+		// ask for, and two unnamed scripts are two nobody can tell apart.
+		name := strings.TrimSpace(sc.Name)
+		if name == "" {
+			http.Error(w, "script "+strconv.Itoa(i+1)+" has no name, and a "+
+				"script nobody can name is a script nobody can find again",
+				http.StatusBadRequest)
+			return
+		}
+		if seen[name] {
+			http.Error(w, "there are two scripts called "+name,
+				http.StatusBadRequest)
+			return
+		}
+		seen[name] = true
+		in.Scripts[i].Name = name
 		if len(sc.Body) > maxScript {
-			http.Error(w, "script "+strconv.Itoa(i+1)+" is too long to keep in a score",
+			http.Error(w, name+" is too long to keep in a score",
 				http.StatusBadRequest)
 			return
 		}
@@ -4392,3 +4440,105 @@ func (a *App) handleScripts(w http.ResponseWriter, r *http.Request) {
 // maxScript is how long one script may be. Generous for a program and small
 // for a file: a score is music with a note attached, not a source tree.
 const maxScript = 64 * 1024
+
+// handleContents says what is written in the score, bar by bar.
+//
+// The one thing the editor could not be asked. Everything else answers a
+// question about where the ink went or how the music sounds; this answers
+// "what is written here", which is what a script needs before it can copy a
+// phrase, transpose it, invert it or answer it in another voice.
+//
+// The whole score at once, because the console reads it once when a script
+// starts and then works from that: the verbs are synchronous so that a
+// script reads as music rather than as plumbing, and a synchronous verb
+// cannot go and ask.
+func (a *App) handleContents(w http.ResponseWriter, r *http.Request) {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+
+	type noteDoc struct {
+		Pitch  string `json:"pitch"`
+		Length int    `json:"length"`
+		Dots   int    `json:"dots,omitempty"`
+		Rest   bool   `json:"rest,omitempty"`
+		// Chord carries the other notes of a chord, the lowest first.
+		Chord []string `json:"chord,omitempty"`
+	}
+	type staffDoc struct {
+		Name string      `json:"name"`
+		Bars [][]noteDoc `json:"bars"`
+	}
+
+	out := make([]staffDoc, 0, len(a.score.Parts))
+	for pi, p := range a.score.Parts {
+		name := p.Name
+		if name == "" {
+			name = "Staff " + strconv.Itoa(pi+1)
+		}
+		st := staffDoc{Name: name, Bars: make([][]noteDoc, len(p.Measures))}
+		for mi, m := range p.Measures {
+			bar := []noteDoc{}
+			for _, v := range m.Voices {
+				for _, el := range v.Elements {
+					d := el.Duration()
+					n := noteDoc{Length: lengthNumber(d), Dots: dotsOf(d)}
+					switch e := el.(type) {
+					case *model.Rest:
+						n.Rest = true
+					case *model.Note:
+						n.Pitch = e.Pitch.String()
+					case *model.Chord:
+						for i, cn := range e.Notes {
+							if i == 0 {
+								n.Pitch = cn.Pitch.String()
+								continue
+							}
+							n.Chord = append(n.Chord, cn.Pitch.String())
+						}
+					default:
+						continue
+					}
+					bar = append(bar, n)
+				}
+			}
+			st.Bars[mi] = bar
+		}
+		out = append(out, st)
+	}
+	writeJSON(w, map[string]any{"staves": out})
+}
+
+// lengthNumber is the figure a length is written as — 4 for a quarter note,
+// 8 for an eighth — and dotsOf how many dots it carries.
+//
+// Counted apart, because a dotted quarter is a quarter with a dot and not a
+// length of its own: that is how it is written, how it is typed, and how
+// every other part of the editor holds it.
+func lengthNumber(d model.Duration) int {
+	n, _ := plainLength(d)
+	return n
+}
+
+func dotsOf(d model.Duration) int {
+	_, dots := plainLength(d)
+	return dots
+}
+
+// plainLength undots a length: three halves of a value is that value with a
+// dot, and seven quarters of it is that value with two.
+func plainLength(d model.Duration) (length, dots int) {
+	d = d.Reduced()
+	if d.Num == 0 || d.Den == 0 {
+		return 0, 0
+	}
+	for dots = 0; dots < 3; dots++ {
+		if d.Num == 1 {
+			return d.Den, dots
+		}
+		if d.Num%3 != 0 {
+			return 0, 0
+		}
+		d = model.Duration{Num: d.Num / 3 * 2, Den: d.Den}.Reduced()
+	}
+	return 0, 0
+}

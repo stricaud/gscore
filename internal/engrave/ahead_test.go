@@ -50,3 +50,39 @@ func TestWriteAheadBar(t *testing.T) {
 		}
 	}
 }
+
+// The write-ahead bar says what it is.
+//
+// It looks exactly like an empty bar of the piece from outside, and the
+// editor counts bars from these. Counted as one, the editor believes the
+// score is a bar longer than it is: it then writes into that bar without
+// first making it, and the bar comes into being on the one staff that was
+// written to while every other staff stays a bar short of it.
+func TestTheWriteAheadBarIsMarkedAsOne(t *testing.T) {
+	s := model.NewScore()
+	p := s.Parts[0]
+	p.Measures[0].Voices[0].Elements = []model.Element{
+		&model.Note{Pitch: model.Pitch{Step: model.StepG, Octave: 4},
+			Dur: model.Duration{Num: 1, Den: 1}},
+	}
+
+	opt := DefaultOptions()
+	opt.Mode = Strip
+	opt.WriteAhead = true
+	lay := Engrave(s, opt)
+
+	real, ahead := 0, 0
+	for _, h := range lay.Hits {
+		if h.Ahead {
+			ahead++
+			continue
+		}
+		real++
+	}
+	if real != 1 {
+		t.Errorf("%d bars of the piece, want 1", real)
+	}
+	if ahead != 1 {
+		t.Errorf("%d bars marked as room to write, want 1", ahead)
+	}
+}

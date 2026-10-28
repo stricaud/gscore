@@ -148,3 +148,43 @@ func TestAScriptTooLongIsRefused(t *testing.T) {
 		t.Errorf("a %d byte script was accepted", len(long))
 	}
 }
+
+// A script must have a name. A score may carry several and the name is the
+// only thing that tells them apart: an unnamed script is one nobody can ask
+// for, and two unnamed scripts are two nobody can tell apart.
+func TestAScriptWithoutANameIsRefused(t *testing.T) {
+	h := newHarness(t)
+	rec := httptest.NewRecorder()
+	h.mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/scripts",
+		strings.NewReader(`{"scripts":[{"Body":"note(\"c4\")"}]}`)))
+	if rec.Code < 400 {
+		t.Fatal("a script with no name was kept")
+	}
+	if !strings.Contains(rec.Body.String(), "name") {
+		t.Errorf("it was refused without saying why: %q", rec.Body.String())
+	}
+	if got := scriptsIn(t, h); len(got) != 0 {
+		t.Errorf("it was kept anyway: %+v", got)
+	}
+}
+
+func TestTwoScriptsCannotShareAName(t *testing.T) {
+	h := newHarness(t)
+	rec := httptest.NewRecorder()
+	h.mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/scripts",
+		strings.NewReader(`{"scripts":[{"Name":"row","Body":"a"},{"Name":"row","Body":"b"}]}`)))
+	if rec.Code < 400 {
+		t.Error("two scripts called row were kept")
+	}
+}
+
+// A name of nothing but spaces is a name nobody can type.
+func TestANameOfSpacesIsNoName(t *testing.T) {
+	h := newHarness(t)
+	rec := httptest.NewRecorder()
+	h.mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/scripts",
+		strings.NewReader(`{"scripts":[{"Name":"   ","Body":"a"}]}`)))
+	if rec.Code < 400 {
+		t.Error("a script named with spaces was kept")
+	}
+}

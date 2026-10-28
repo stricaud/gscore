@@ -48,10 +48,11 @@ function load({ info, body, headers = {}, ok = true, status = 200 }) {
     async json() { return body; },
   };
   const scope = {
-    state: { info },
+    state: { info, scripts: info.scripts || [] },
     status: (s) => said.push(s),
     async fetch(url) { asked.push(url); return res; },
     async loadInfo() {},
+    confirmThat: async () => true,
     URL: { createObjectURL: () => "blob:x", revokeObjectURL() {} },
     document: {
       createElement() {
@@ -60,7 +61,8 @@ function load({ info, body, headers = {}, ok = true, status = 200 }) {
       },
     },
   };
-  const body_ = grab("keepFile") + "\n" + grab("saveScore") + "\n" + grab("exportAs") +
+  const body_ = [grab("keepFile"), grab("saveScore"), grab("exportAs"),
+                 grab("keepsScripts")].join("\n") +
     "\nreturn { saveScore, exportAs };";
   const api = new Function(...Object.keys(scope), body_)(...Object.values(scope));
   return { ...api, asked, said, kept, readAsText: () => readAsText };

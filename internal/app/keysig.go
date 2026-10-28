@@ -214,6 +214,11 @@ func (a *App) handleSetKey(w http.ResponseWriter, r *http.Request) {
 
 	if atErr != nil || at <= 0 {
 		for _, p := range a.score.Parts {
+			// A drum staff is in no key: its lines name instruments, and a
+			// signature in front of them says nothing anybody can read.
+			if p.Unpitched() {
+				continue
+			}
 			p.Key = model.KeySignature{Fifths: p.Transpose.Written(asked).Fifths, Mode: p.Key.Mode}
 			// A change written at the very start would be drawn twice.
 			if len(p.Measures) > 0 {
@@ -228,7 +233,7 @@ func (a *App) handleSetKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	for _, p := range a.score.Parts {
-		if at >= len(p.Measures) {
+		if at >= len(p.Measures) || p.Unpitched() {
 			continue
 		}
 		want := p.Transpose.Written(asked).Fifths

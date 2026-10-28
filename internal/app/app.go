@@ -405,6 +405,7 @@ func (a *App) APIRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/spacing", a.handleSpacing)
 	mux.HandleFunc("/api/rhythm", a.handleRhythm)
 	mux.HandleFunc("/api/melody", a.handleMelody)
+	mux.HandleFunc("/api/contents", a.handleContents)
 	mux.HandleFunc("/api/script/begin", a.handleScriptBegin)
 	mux.HandleFunc("/api/script/end", a.handleScriptEnd)
 	mux.HandleFunc("/api/keysignatures", a.handleKeySignatures)

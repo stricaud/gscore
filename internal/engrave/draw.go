@@ -328,6 +328,7 @@ func (e *engraver) drawMeasure(part *model.Part, b measureBox, x, end float64, s
 		TimeChange:  b.m.Time != nil,
 		Fifths:      part.KeyAt(b.index).Fifths,
 		Full:        barIsFull(part, b),
+		Ahead:       b.ahead,
 	}
 	for i, p := range items {
 		kind := "rest"

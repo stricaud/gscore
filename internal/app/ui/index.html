@@ -165,6 +165,7 @@
            switch away from. -->
       <button data-action="note-input"><span>Write with the mouse</span><kbd>I</kbd><kbd id="mouse-tick"></kbd></button>
       <button data-action="type-music"><span>Type the music</span><kbd>⌘K</kbd><kbd id="type-tick"></kbd></button>
+      <button data-action="console"><span>Script console…</span></button>
       <hr>
       <button data-action="insert-note"><span>Note</span></button>
       <button data-action="insert-rest"><span>Rest</span></button>
@@ -950,6 +951,42 @@
      not carry one. So the dialog is mostly about getting hold of one and
      seeing what it will do with this particular score, and only then about
      how to record. -->
+<!-- A place to write a program that writes music.
+     A piece built from a process is a piece nobody wants to type out twice:
+     the process is the thought and the notes are its output. What the
+     console gives is a dozen words and JavaScript's own loops, because the
+     power belongs in the language everybody already has.
+
+     The scripts a score carries are shown here when it is opened. They are
+     never run. A document that executes code on being opened is a document
+     that can attack whoever opens it. -->
+<dialog id="console" class="wide">
+  <div class="dlg-head">
+    <div>
+      <h2>Script console</h2>
+      <p class="small" id="console-where">A dozen words, and JavaScript for the rest.</p>
+    </div>
+    <form method="dialog">
+      <button value="close" type="submit" class="dlg-close" aria-label="Close">✕</button>
+    </form>
+  </div>
+
+  <div id="console-body">
+    <div id="console-examples"></div>
+    <div id="console-saved"></div>
+    <textarea id="console-source" spellcheck="false" rows="10"
+              aria-label="The script"></textarea>
+    <div id="console-bar">
+      <button type="button" id="console-run" class="primary">Run</button>
+      <button type="button" id="console-save">Keep with the score</button>
+      <input type="text" id="console-name" placeholder="name it" size="14"
+             aria-label="What to call this script">
+      <span id="console-help"></span>
+    </div>
+    <pre id="console-out" aria-live="polite"></pre>
+  </div>
+</dialog>
+
 <!-- What the typing line takes.
      Built from the same tables the parser reads, rather than written out
      here: a reference that is kept by hand is a reference that is wrong by

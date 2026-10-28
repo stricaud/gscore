@@ -2108,6 +2108,56 @@ paths:
                         ref: { type: integer }
                         semitones: { type: integer }
 
+  /api/contents:
+    get:
+      tags: [score]
+      summary: What is written in the score, bar by bar
+      description: |
+        The one thing the editor could not be asked. Everything else answers
+        a question about where the ink went or how the music sounds; this
+        answers "what is written here", which is what a script needs before
+        it can copy a phrase, transpose it, invert it or answer it in
+        another voice.
+
+        The whole score at once, because the console reads it once when a
+        script starts and works from that: the console's verbs are
+        synchronous so that a script reads as music rather than as
+        plumbing, and a synchronous verb cannot go and ask.
+
+        A length is the figure it is written as — 4 for a quarter note, 8
+        for an eighth — with the dots counted separately, because a dotted
+        quarter is a quarter with a dot and not a length of its own.
+      responses:
+        "200":
+          description: Every staff, every bar, everything written in it.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  staves:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        name: { type: string }
+                        bars:
+                          type: array
+                          description: One entry per bar, each a list of what is in it.
+                          items:
+                            type: array
+                            items:
+                              type: object
+                              properties:
+                                pitch: { type: string, description: 'As written: "F#3".' }
+                                length: { type: integer }
+                                dots: { type: integer }
+                                rest: { type: boolean }
+                                chord:
+                                  type: array
+                                  items: { type: string }
+                                  description: The other notes of a chord, lowest first.
+
   /api/scripts:
     get:
       tags: [score]
@@ -2976,6 +3026,12 @@ components:
               full:
                 type: boolean
                 description: The bar already holds as much time as its meter allows.
+              ahead:
+                type: boolean
+                description: >-
+                  The blank bar drawn past the end of the music, which is
+                  somewhere to click and not a bar of the piece. Anything
+                  counting bars has to leave it out.
               elements:
                 type: array
                 items:

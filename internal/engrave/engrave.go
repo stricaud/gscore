@@ -325,6 +325,11 @@ type Hit struct {
 	// and sent the note into the next bar, which is how clicking one bar
 	// wrote in the one beside it.
 	Full bool `json:"full,omitempty"`
+	// Ahead says this is the blank bar drawn past the end of the music,
+	// which is somewhere to click and not a bar of the piece. Counting it
+	// as one makes the score a bar longer than it is, and whoever is
+	// counting then writes into a bar that only exists on their own staff.
+	Ahead bool `json:"ahead,omitempty"`
 	// Elements is what the measure already holds, with where each one landed.
 	// A click needs this to tell "select that note" from "put a note here",
 	// which is the difference between reading a score and writing one.

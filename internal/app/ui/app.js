@@ -11325,6 +11325,14 @@ function consoleVerbs(out, said, read, question) {
   // first one — which is the one script in the editor that cannot possibly
   // be in a loop, because it is waiting for them.
   let waited = 0;
+  // A score that has just been made is one staff with nothing on it. A
+  // script writing for four instruments should finish with four staves and
+  // not five, so the first one it asks for moves into the staff that is
+  // already there rather than standing beside it. Only a brand new score:
+  // an empty staff somebody put in the middle of their own music is a staff
+  // they meant to have.
+  const spare = (read.staves || []).length === 1 &&
+    ((read.staves[0] || {}).bars || []).every((b) => b.every((n) => n.rest));
   const spend = () => {
     if (out.length >= consoleBudget.steps) {
       throw new Error(`a script may write ${consoleBudget.steps} things; ` +
@@ -11382,14 +11390,15 @@ function consoleVerbs(out, said, read, question) {
     staff(instrument, opts) {
       spend();
       const o = opts || {};
+      made++;
+      const take = spare && made === 1;
       out.push({
-        do: "staff",
+        do: "staff", take,
         instrument: String(instrument),
         name: o.name === undefined ? "" : String(o.name),
         clef: o.clef === undefined ? "" : String(o.clef),
       });
-      made++;
-      return (read.staves || []).length + made;
+      return take ? 1 : (read.staves || []).length + made - (spare ? 1 : 0);
     },
     // drum names what to hit on a drum staff, where a line of the staff is
     // an instrument and not a pitch. By name — "snare drum", "hi-hat
@@ -11580,8 +11589,20 @@ async function doConsoleStep(step) {
       return "";
     case "staff": {
       const q = new URLSearchParams({ instrument: step.instrument });
-      if (step.name) q.set("name", step.name);
       if (step.clef) q.set("clef", step.clef);
+      if (step.take) {
+        // Moving into the empty staff a new score comes with, rather than
+        // leaving it above the music as a staff nobody asked for. It has to
+        // be given a name here: the staff already has one, and the one it
+        // has is "Staff".
+        q.set("part", "0");
+        q.set("name", step.name || step.instrument);
+        const res = await fetch("/api/staff?" + q, { method: "POST" });
+        if (!res.ok) return (await res.text()).trim();
+        await loadHits();
+        return "";
+      }
+      if (step.name) q.set("name", step.name);
       const res = await fetch("/api/addstaff?" + q, { method: "POST" });
       if (!res.ok) return (await res.text()).trim();
       // The new staff has the bars the others have, and at() counts them.
@@ -11676,48 +11697,49 @@ const consoleHelp =
 // is for than a page of documentation about what each verb does.
 const consoleExamples = [
   {
-    name: "Moonlight III",
-    about: "asks which instruments, then writes a Presto agitato",
-    body: `// Moonlight III — a Presto agitato written out of rules and dice.
+    name: "After the Moonlight",
+    about: "asks which instruments, then writes a Presto agitato of its own",
+    body: `// After the Moonlight — a Presto agitato out of rules and dice.
 //
-// Beethoven's finale is four things happening at once: C-sharp minor, an
-// arpeggio racing upward in sixteenths, two sforzandi where it breaks at
-// the top, and a dry staccato bass underneath. Those four are shapes and
-// not notes, so they can be written down as rules and the notes left to
-// the dice. What comes out is a pastiche and sounds like one — but it is
-// in his handwriting, and it is a better place to start than a blank page.
+// Not a copy of Beethoven's finale. What is taken from it is the argument:
+// C sharp minor at speed, a texture that never stops moving, sforzandi
+// that arrive without being led up to, a dry bass underneath, and a
+// harmony that refuses to settle. What is left to the dice is everything
+// else — which bar does what, how long a thought lasts, where it sits,
+// how loud, and what the kit is doing about it.
 //
-// Change a table and it stops being Beethoven. That is the point of it.
+// So it writes a different piece every time, and none of them is his. Run
+// it twice and compare the two; that difference is the part that is yours
+// to steer, and every knob for it is a table at the top of this script.
 
-// What each player is given, and where it sits.
+// What each player is given, and what it can reach.
 //
-// "figure" takes the arpeggio, "bass" the ground under it, "drums" keeps
-// the engine running, and "both" takes two staves, because that is one
-// person with two hands. base is the octave the figure climbs from and span
-// how many notes of the chord it climbs through before it turns, which is
-// how an oboe gets the same shape as a piano without being asked for notes
-// it does not have.
+// base is the octave a figure would like to start from, span how many notes
+// of the chord it climbs through, low and high the notes the instrument
+// actually has — in concert pitch, what you hear. The range is not
+// decoration: a figure that will not fit inside it is moved by octaves
+// until it does, and narrowed if that is not enough, so an oboe gets the
+// shape a piano gets without being asked for notes it does not own.
 //
-// All of it is written in concert pitch — what you hear. up is how far the
-// part has to be written above what it sounds, so a part for an instrument
-// in E flat comes out in the key its player reads. Beethoven did not have
-// saxophones, but the tables do not mind.
+// up is how far the part is written above what it sounds, in letters and
+// semitones, so a part for an instrument in E flat comes out in the key its
+// player reads. poly says the staff can hold a chord; one flute cannot.
 const PLAYERS = {
-  piano:         { role: "both",   base: 3, span: 9, low: 2 },
-  harpsichord:   { role: "both",   base: 3, span: 9, low: 2 },
-  harp:          { role: "both",   base: 3, span: 9, low: 2 },
-  violin:        { role: "figure", base: 4, span: 8 },
-  flute:         { role: "figure", base: 4, span: 8 },
-  oboe:          { role: "figure", base: 4, span: 7 },
-  viola:         { role: "figure", base: 3, span: 8, clef: "alto" },
-  clarinet:      { role: "figure", base: 3, span: 8, up: [1, 2] },
-  trumpet:       { role: "figure", base: 4, span: 7, up: [1, 2] },
-  "french horn": { role: "figure", base: 3, span: 7, up: [4, 7] },
-  "alto sax":    { role: "figure", base: 3, span: 7, up: [5, 9] },
-  "tenor sax":   { role: "figure", base: 3, span: 7, up: [8, 14] },
-  cello:         { role: "bass",   low: 2 },
-  bassoon:       { role: "bass",   low: 2 },
-  contrabass:    { role: "bass",   low: 2, up: [7, 12] },
+  piano:         { role: "both",  base: 3, span: 9, low: "a0",  high: "c8", poly: true },
+  harpsichord:   { role: "both",  base: 3, span: 8, low: "f1",  high: "f6", poly: true },
+  harp:          { role: "both",  base: 3, span: 9, low: "c1",  high: "g7", poly: true },
+  violin:        { role: "line",  base: 4, span: 8, low: "g3",  high: "a7" },
+  viola:         { role: "line",  base: 3, span: 8, low: "c3",  high: "e6", clef: "alto" },
+  flute:         { role: "line",  base: 4, span: 8, low: "c4",  high: "d7" },
+  oboe:          { role: "line",  base: 4, span: 7, low: "bb3", high: "a6" },
+  clarinet:      { role: "line",  base: 4, span: 8, low: "d3",  high: "bb6", up: [1, 2] },
+  trumpet:       { role: "line",  base: 4, span: 7, low: "e3",  high: "c6",  up: [1, 2] },
+  "french horn": { role: "line",  base: 3, span: 7, low: "b1",  high: "f5",  up: [4, 7] },
+  "alto sax":    { role: "line",  base: 4, span: 7, low: "db3", high: "ab5", up: [5, 9] },
+  "tenor sax":   { role: "line",  base: 3, span: 7, low: "ab2", high: "e5",  up: [8, 14] },
+  cello:         { role: "bass",  base: 2, span: 6, low: "c2",  high: "a5" },
+  bassoon:       { role: "bass",  base: 2, span: 6, low: "bb1", high: "e5" },
+  contrabass:    { role: "bass",  base: 2, span: 5, low: "e1",  high: "g3", up: [7, 12] },
   "drum kit":    { role: "drums" },
 };
 
@@ -11725,8 +11747,8 @@ const CHOICES = Object.keys(PLAYERS);
 
 // The chords, spelled out. A diminished fifth is not an augmented fourth
 // and a B sharp is not a C, however the keyboard feels about it: the
-// spelling is what says which chord this is, and it is the spelling that
-// has to survive being written out for a part in another key.
+// spelling says which chord this is, and it is the spelling that has to
+// survive being written out for a part in another key.
 const CHORDS = {
   "i":     ["c#", "e",  "g#"],
   "iv":    ["f#", "a",  "c#"],
@@ -11752,12 +11774,10 @@ const NEXT = {
   "III":   ["VI", "iv"],
 };
 
-// What the drums do, laid over the same bar as the figure: eight
-// sixteenths, two eighths, four sixteenths. The kick is the downbeat, the
-// hi-hat is the sixteenths tearing past, the crash is where the hand
-// breaks at the top, and the toms fall with the arpeggio.
-const KICK = "bass drum", HAT = "hi-hat closed", CRASH = "crash cymbal";
-const TUMBLE = ["high tom", "low-mid tom", "low tom", "low floor tom"];
+// The scale the runs walk. The seventh is raised where the harmony leans on
+// it, which is the one thing the minor scale cannot make its mind up about.
+const SCALE = ["c#", "d#", "e", "f#", "g#", "a", "b"];
+const LEADING = ["V7", "vii07"];
 
 const LETTERS = "cdefgab";
 const STEPS = [0, 2, 4, 5, 7, 9, 11];
@@ -11767,20 +11787,41 @@ function pick(list) {
   return list[Math.floor(Math.random() * list.length)];
 }
 
+function chance(p) {
+  return Math.random() < p;
+}
+
+// midi is what a written note sounds as, so two of them can be compared.
+function midi(note) {
+  const letter = LETTERS.indexOf(note[0]);
+  const octave = Number(note[note.length - 1]);
+  let alter = 0;
+  for (const c of note.slice(1, -1)) {
+    if (c === "#") alter += 1;
+    else if (c === "x") alter += 2;
+    else if (c === "b") alter -= 1;
+  }
+  return 12 * (octave + 1) + STEPS[letter] + alter;
+}
+
+function moveOctave(note, by) {
+  return note.slice(0, -1) + (Number(note[note.length - 1]) + by);
+}
+
 // written turns a note as it sounds into the note its player reads, spelled
 // out — accidental and all, including the naturals.
 //
-// Spelled out because the key signature is not to be trusted to say it. A
-// D in C sharp minor is a D sharp unless somebody writes otherwise, and the
-// D of the Neapolitan is the one note in the chord that has to.
+// Spelled out because the key signature is not to be trusted to say it. A D
+// in C sharp minor is a D sharp unless somebody writes otherwise, and the D
+// of the Neapolitan is the one note in the chord that has to.
 //
 // up is how far above the sounding note the written one goes, as a number
 // of letters and a number of semitones — a major sixth for an alto
 // saxophone is five letters and nine semitones. Both are needed and
 // neither on its own will do: the letters decide what it is called and the
 // semitones decide what it sounds like, and the accidental is whatever
-// makes those two agree. That is how the leading note of C sharp minor,
-// written for alto saxophone, comes out as a G double sharp.
+// makes the two agree. That is how the leading note of C sharp minor,
+// written for alto saxophone, comes out a G double sharp.
 function written(note, up) {
   up = up || [0, 0];
   const letter = LETTERS.indexOf(note[0]);
@@ -11802,16 +11843,16 @@ function written(note, up) {
   return LETTERS[to] + SIGNS[sign + 2] + (octave + over);
 }
 
-// climb is the chord laid out upward from an octave, as many notes as asked.
+// climb is a set of notes laid out upward from an octave, as many as asked.
 //
 // The octave goes up whenever the letter does not: F sharp, A, C sharp is a
 // chord of F sharp minor, and its C sharp is the one above the A and not
 // the one three notes below it.
-function climb(chord, from, count) {
+function climb(notes, from, count) {
   const out = [];
   let octave = from, last = -1;
   for (let i = 0; i < count; i++) {
-    const note = chord[i % chord.length];
+    const note = notes[i % notes.length];
     const letter = LETTERS.indexOf(note[0]);
     if (letter <= last) octave++;
     last = letter;
@@ -11820,11 +11861,36 @@ function climb(chord, from, count) {
   return out;
 }
 
-// zigzag walks up the notes it is given and turns round at the top.
+// inside moves a run of notes by whole octaves until all of it is within
+// reach, and says so by answering with nothing if it cannot be.
+function inside(run, p) {
+  const low = midi(p.low), high = midi(p.high);
+  for (const by of [0, -1, 1, -2, 2, -3, 3]) {
+    const moved = run.map((n) => moveOctave(n, by));
+    const got = moved.map(midi);
+    if (Math.min(...got) >= low && Math.max(...got) <= high) return moved;
+  }
+  return null;
+}
+
+// reach is the notes this player can have of this chord, as high and as
+// wide as it can take them.
 //
-// The turn is what keeps the shape inside an instrument: the figure wants
-// eight notes rising and an oboe has only seven to give, so the eighth
-// comes back down instead of going off the end of the instrument.
+// The home octave first, then the octave either side of it, and only then
+// a narrower figure: a sweep in the wrong octave is further from what was
+// meant than a shorter one in the right place.
+function reach(notes, p, lift) {
+  // Never fewer than four notes to work with: the shapes below count on
+  // having somewhere to fall to, and a chord narrowed to three of them is
+  // a shape with a hole where its fourth note should be.
+  for (let span = p.span; span >= 4; span--) {
+    const got = inside(climb(notes, p.base + (lift || 0), span), p);
+    if (got) return got;
+  }
+  throw new Error("nothing of that chord fits this instrument");
+}
+
+// zigzag walks up the notes it is given and turns round at the top.
 function zigzag(tones, count, from) {
   const out = [];
   let i = from || 0, step = 1;
@@ -11837,76 +11903,242 @@ function zigzag(tones, count, from) {
   return out;
 }
 
-// progression is the harmony of the whole piece, one chord to the bar.
-function progression(bars) {
-  const out = ["i"];
-  while (out.length < bars) out.push(pick(NEXT[out[out.length - 1]]));
-  // Home at the end whatever the dice said. A piece that stops wherever
-  // the random walk had got to does not sound finished, it sounds dropped.
-  out[bars - 2] = "V7";
-  out[bars - 1] = "i";
-  return out;
-}
+// ------------------------------------------------------------ the shapes
+//
+// A bar is a list of moments: what sounds, for how long, and whether
+// anything is marked on it. Building it as a list rather than writing it
+// out as we go puts the arithmetic in one place — a shape that does not
+// add up to a bar is caught here, by the bar itself, and not later by
+// somebody counting beats on the page.
 
-// figureBar writes one bar of the right hand: eight sixteenths climbing,
-// two eighths, and four sixteenths falling away. On the bars that break it
-// is the two eighths that carry the sforzandi.
-function figureBar(chord, p, breaks, opening) {
-  const tones = climb(chord, p.base, p.span);
-  // Where the climb starts: mostly the bottom of the chord, now and then
-  // the note above it. That one throw of the dice is all it takes to stop
-  // four bars of the same harmony coming out as four copies of one bar.
-  const run = zigzag(tones, 14, Math.random() < 0.3 ? 1 : 0);
-  run.slice(0, 8).forEach((tone, i) => {
-    note(written(tone, p.up), 16);
-    // Softly, once, at the very start. The movement opens quietly and the
-    // sforzandi are only loud against something.
-    if (opening && i === 0) dynamic("p");
-  });
-  if (breaks) {
-    // The sforzandi. Twice on the top note, which is the gesture the whole
-    // movement is built out of.
-    const top = written(tones[tones.length - 1], p.up);
-    note(top, 8); dynamic("sfz");
-    note(top, 8); dynamic("sfz");
-    // And away from the top, since that is where the break left the hand.
-    for (let k = 2; k <= 5; k++) note(written(tones[p.span - k], p.up), 16);
-    return;
+function bar16(events, what) {
+  let held = 0;
+  for (const e of events) held += 1 / e.len;
+  if (Math.abs(held - 1) > 1e-9) {
+    throw new Error((what || "a shape") + " came out " + held + " of a bar");
   }
-  // No break, so the wave simply carries on where the eighths left it.
-  note(written(run[8], p.up), 8);
-  note(written(run[9], p.up), 8);
-  for (const tone of run.slice(10, 14)) note(written(tone, p.up), 16);
+  return events;
 }
 
-// bassBar writes one bar of the left hand: eight dry staccato eighths, in
-// one of the three shapes the movement keeps underneath itself.
-function bassBar(chord, p) {
-  const root = chord[0], fifth = chord[2];
-  const low = p.low;
-  const over = LETTERS.indexOf(fifth[0]) > LETTERS.indexOf(root[0]) ? low : low + 1;
-  const shape = Math.random();
-  const line = [];
+const one = (t, len, mark) => ({ tones: [t], len, mark });
+const many = (ts, len, mark) => ({ tones: ts, len, mark });
+const gap = (len) => ({ rest: true, len });
+
+// Every shape is handed the same four things: the chord tones it may use,
+// the scale behind them, who is playing, and the bar's dice.
+//
+// The dice are thrown once for the bar and then given to everybody, rather
+// than each player throwing their own. That is what lets two instruments
+// double a line: they are reading the same throw, so they turn at the same
+// note. Each throwing separately gave four players four different versions
+// of one idea, played at once, which is not an orchestration — it is a
+// smear.
+
+// The sweep: eight sixteenths climbing, two eighths where it breaks, four
+// falling away. The one shape that is his outright.
+function sweep(tones, scale, p, r) {
+  const run = zigzag(tones, 14, r.from);
+  const top = tones[tones.length - 1];
+  return bar16([
+    ...run.slice(0, 8).map((t) => one(t, 16)),
+    one(top, 8, "sfz"), one(top, 8, "sfz"),
+    ...[2, 3, 4, 5].map((k) => one(tones[Math.max(0, tones.length - k)], 16)),
+  ], "the sweep");
+}
+
+// A wave with no break in it: up and straight back down.
+function wave(tones, scale, p, r) {
+  return bar16(zigzag(tones, 16, r.from).map((t) => one(t, 16)), "the wave");
+}
+
+// A run up the scale, which is where the piece goes when the arpeggios have
+// been going long enough.
+function scaleRun(tones, scale, p, r) {
+  const from = midi(tones[0]);
+  const line = climb(scale, Number(tones[0][tones[0].length - 1]), 24)
+    .filter((n) => midi(n) >= from);
+  if (line.length < 8) throw new Error("the scale ran out under the run");
+  const walk = r.upward ? line.slice(0, 8) : line.slice(0, 8).reverse();
+  return bar16([
+    ...walk.map((t) => one(t, 16)),
+    ...walk.slice().reverse().map((t) => one(t, 16)),
+  ], "the run");
+}
+
+// Broken octaves, or whatever interval the chord puts under the hand.
+function broken(tones, scale, p, r) {
+  const lo = tones[r.from], hi = tones[Math.min(r.from + 2, tones.length - 1)];
+  const out = [];
+  for (let i = 0; i < 16; i++) out.push(one(i % 2 ? hi : lo, 16));
+  return bar16(out, "the broken octaves");
+}
+
+// A turn round each chord tone: the note, the one above, the note, the one
+// below. Four beats of fidgeting, which is what agitato means.
+function turn(tones, scale, p, r) {
+  const out = [];
+  for (let beat = 0; beat < 4; beat++) {
+    const t = tones[(beat + r.from) % tones.length];
+    const i = scale.indexOf(t.slice(0, -1));
+    const oct = Number(t[t.length - 1]);
+    const ladder = climb(scale, oct, 9);
+    const over = i < 0 ? t : ladder[i + 1];
+    const under = i <= 0 ? t : ladder[i - 1];
+    out.push(one(t, 16), one(over, 16), one(t, 16), one(under, 16));
+  }
+  return bar16(out, "the turn");
+}
+
+// The chord itself, hammered.
+//
+// A piano can hammer a chord; one flute cannot, and eight repetitions of a
+// single note is not a texture, it is a stuck key. So a part that can hold
+// only one note at a time rocks between two of the chord instead, which is
+// the same energy and is a line.
+function hammer(tones, scale, p, r) {
+  const top = tones.slice(-3);
+  const two = [tones[tones.length - 1], tones[Math.max(0, tones.length - 3)]];
+  const out = [];
   for (let i = 0; i < 8; i++) {
-    if (shape < 0.34) line.push(root + (i % 2 ? low + 1 : low));
-    else if (shape < 0.67) line.push(i % 2 ? fifth + over : root + low);
-    else line.push(root + low);
+    const mark = i === 0 ? "sfz" : undefined;
+    out.push(p.poly ? many(top, 8, mark) : one(two[i % 2], 8, mark));
   }
-  // One line of the typing language, which is how a script reaches the
-  // marks: stacc stays on until the line ends.
-  write("stacc 8 " + line.map((n) => written(n, p.up)).join(" "));
+  return bar16(out, "the hammered chord");
 }
 
-// drumBar lays the same bar out on the kit.
-function drumBar(breaks) {
-  drum(KICK, 16);
-  for (let i = 1; i < 8; i++) drum(HAT, 16);
-  drum(breaks ? CRASH : HAT, 8);
-  drum(breaks ? CRASH : HAT, 8);
-  // The fall: down the toms with the arpeggio, or the snare backbeat if
-  // the dice say so.
-  if (Math.random() < 0.5) for (const tom of TUMBLE) drum(tom, 16);
-  else for (let i = 0; i < 4; i++) drum(i === 1 ? "snare drum" : HAT, 16);
+// Two blows and two silences. Nothing in the movement is louder than the
+// beat he leaves empty after one.
+function stab(tones, scale, p, r) {
+  const top = p.poly ? tones.slice(-3) : [tones[tones.length - 1]];
+  return bar16(
+    [many(top, 4, "sfz"), gap(4), many(top, 4, "sfz"), gap(4)], "the stab");
+}
+
+// The end: one chord, held, and done.
+function close(tones, scale, p, r) {
+  return bar16([many(p.poly ? tones.slice(-3) : [tones[0]], 1)], "the last bar");
+}
+
+const FIGURES = {
+  sweep, wave, run: scaleRun, broken, turn, hammer, stab,
+};
+// What the figure does over a phrase, and how often. The sweep is the
+// piece's own voice and the rest are what it says in between, so it comes
+// up more often than any one of them.
+const FIGURE_WEIGHTS = [
+  "sweep", "sweep", "sweep", "wave", "wave",
+  "run", "run", "broken", "turn", "hammer", "stab",
+];
+
+// ------------------------------------------------------------- the bass
+
+function bassLine(chord, p, kind) {
+  const tones = reach(chord, p, 0);
+  const root = tones[0];
+  const fifth = tones[Math.min(2, tones.length - 1)];
+  const over = inside([moveOctave(root, 1)], p);
+  const high = over ? over[0] : fifth;
+
+  switch (kind) {
+    case "held":
+      return bar16([one(root, 1)]);
+    case "halves":
+      return bar16([one(root, 2), one(fifth, 2)]);
+    case "walk":
+      // Four quarters, however many notes the chord gave us to walk on.
+      return bar16([0, 1, 2, 3].map((i) => one(tones[i % tones.length], 4)));
+    case "offbeat": {
+      const out = [];
+      for (let i = 0; i < 4; i++) out.push(gap(8), one(i % 2 ? fifth : root, 8));
+      return bar16(out);
+    }
+    case "murky": {
+      // The eighteenth century's own engine: root and fifth alternating in
+      // sixteenths under everything, and nobody has bettered it.
+      const out = [];
+      for (let i = 0; i < 16; i++) out.push(one(i % 2 ? fifth : root, 16));
+      return bar16(out);
+    }
+    case "pedal": {
+      const out = [];
+      for (let i = 0; i < 8; i++) out.push(one(root, 8));
+      return bar16(out);
+    }
+    default: {
+      const out = [];
+      for (let i = 0; i < 8; i++) out.push(one(i % 2 ? high : root, 8));
+      return bar16(out);
+    }
+  }
+}
+
+const BASSES = [
+  "octaves", "octaves", "pedal", "murky", "held", "halves", "walk", "offbeat",
+];
+// Which bass goes under which figure. A held chord under a hammered one is
+// two things standing still; the engine shapes want something moving.
+const BASS_FOR = {
+  hammer: ["held", "halves", "offbeat"],
+  stab: ["held", "halves"],
+  run: ["octaves", "pedal", "held"],
+};
+
+// ------------------------------------------------------------- the drums
+
+const KICK = "bass drum", HAT = "hi-hat closed", OPEN = "hi-hat open";
+const SNARE = "snare drum", CRASH = "crash cymbal", RIDE = "ride cymbal";
+const TOMS = ["high tom", "low-mid tom", "low tom", "low floor tom"];
+
+function drumLine(kind, breaks, ending) {
+  const hit = (name, len) => ({ drum: name, len });
+  if (ending) {
+    // A fill, because a phrase that simply stops has not ended.
+    return bar16([
+      hit(KICK, 4), hit(SNARE, 4),
+      ...TOMS.map((t) => hit(t, 16)),
+      hit(SNARE, 16), hit(SNARE, 16), hit(SNARE, 16), hit(CRASH, 16),
+    ], "the fill");
+  }
+  switch (kind) {
+    case "backbeat":
+      return bar16([
+        hit(KICK, 8), hit(HAT, 8), hit(SNARE, 8), hit(HAT, 8),
+        hit(KICK, 8), hit(KICK, 8), hit(SNARE, 8), hit(OPEN, 8),
+      ]);
+    case "roll": {
+      const out = [];
+      for (let i = 0; i < 16; i++) out.push(hit(i % 4 ? SNARE : KICK, 16));
+      return bar16(out);
+    }
+    case "sparse":
+      return bar16([
+        hit(breaks ? CRASH : KICK, 4), { rest: true, len: 4 },
+        hit(RIDE, 4), { rest: true, len: 4 },
+      ]);
+    default: {
+      const out = [hit(KICK, 16)];
+      for (let i = 1; i < 8; i++) out.push(hit(HAT, 16));
+      out.push(hit(breaks ? CRASH : HAT, 8), hit(breaks ? CRASH : HAT, 8));
+      for (const t of TOMS) out.push(hit(t, 16));
+      return bar16(out);
+    }
+  }
+}
+
+const KITS = ["drive", "drive", "backbeat", "roll", "sparse"];
+
+// -------------------------------------------------------------- the page
+
+// play writes one bar out, in whatever key its player reads.
+function play(events, p) {
+  for (const e of events) {
+    if (e.rest) { rest(e.len); continue; }
+    if (e.drum) { drum(e.drum, e.len); continue; }
+    const notes = e.tones.map((t) => written(t, p.up));
+    if (notes.length > 1 && p.poly) chord(notes, e.len);
+    else note(notes[notes.length - 1], e.len);
+    if (e.mark) dynamic(e.mark);
+  }
 }
 
 // ---------------------------------------------------------------- the run
@@ -11921,65 +12153,179 @@ if (!want || !want.length) {
 }
 
 const asked = await ask("How many measures?", "16", {
-  note: "Two to thirty-two. It comes out in two-bar waves.",
+  note: "Four to twenty-four. It comes out in four-bar thoughts.",
 });
 if (asked === null) {
   say("Nothing written.");
   return;
 }
 let bars = Math.trunc(Number(asked));
-if (!(bars >= 2)) bars = 16;
-if (bars > 32) bars = 32;
-if (bars % 2) bars++;
+if (!(bars >= 4)) bars = 16;
+if (bars > 24) bars = 24;
+bars -= bars % 4;
 
-const plan = progression(bars);
-say("C sharp minor, " + bars + " bars");
+// The piece, phrase by phrase, before a note of it is written.
+//
+// Deciding it all first is what lets a phrase be a thought rather than four
+// unrelated bars: the bass knows what the figure is doing, the kit knows
+// where the phrase ends, and the harmony can hold a chord across two bars
+// because somebody is looking at the whole four.
+// Who the figure belongs to, phrase by phrase.
+//
+// Four instruments playing the same line is one instrument with a thicker
+// sound, and that is what four bars of it sound like. So they take turns:
+// one carries the figure, one holds a note under it, one plays the bass,
+// one sits the phrase out and comes back. Rotating the jobs is what turns
+// a texture into an orchestration, and it costs four lines.
+const JOBS = ["under", "hold", "hold", "figure", "tacet"];
+
+const melodic = want.filter((n) => PLAYERS[n] && PLAYERS[n].role === "line");
+
+const phrases = [];
+for (let at = 0; at < bars; at += 4) {
+  const last = at + 4 >= bars;
+  const shape = last ? "sweep" : pick(FIGURE_WEIGHTS);
+  const n = phrases.length;
+  // A different one leads each phrase, and the rest fall in behind it in
+  // the order they were chosen.
+  const jobs = {};
+  melodic.forEach((name, i) => {
+    const away = (i - n % melodic.length + melodic.length) % melodic.length;
+    jobs[name] = away === 0 ? "figure" : pick(JOBS);
+  });
+  phrases.push({
+    at,
+    shape,
+    jobs,
+    bass: pick(BASS_FOR[shape] || BASSES),
+    kit: pick(KITS),
+    // Where it sits. A phrase an octave up is the same thought said
+    // higher, and it is most of what stops sixteen bars sounding like four
+    // bars written out four times.
+    lift: pick([0, 0, 0, 1, -1]),
+    loud: last ? "ff" : pick(["p", "p", "mp", "mf", "f", "f"]),
+    last,
+  });
+}
+
+// The dice for each bar, thrown once and read by everybody. Two players
+// doubling a line have to turn at the same note, and they cannot if each
+// of them is throwing separately.
+const rolls = [];
+for (let i = 0; i < bars; i++) {
+  rolls.push({ from: chance(0.3) ? 1 : 0, upward: chance(0.5) });
+}
+
+// The harmony. One chord to the bar, except where a phrase wants to lean on
+// one for two bars, which is how a piece breathes.
+const plan = [];
+let now = "i";
+for (let i = 0; i < bars; i++) {
+  plan.push(now);
+  if (!chance(0.25)) now = pick(NEXT[now]);
+}
+// Home at the end whatever the dice said. A piece that stops wherever the
+// random walk had got to does not sound finished, it sounds dropped.
+plan[bars - 3] = "V7";
+plan[bars - 2] = "V7";
+plan[bars - 1] = "i";
+
+say("C sharp minor, " + bars + " bars, " + phrases.length + " phrases");
 say(plan.join(" "));
+say(phrases.map((f) => f.shape + "/" + f.bass + " " + f.loud).join(", "));
+for (const name of melodic) {
+  say("  " + name + ": " + phrases.map((f) => f.jobs[name]).join(" "));
+}
 
 // Four sharps, once, for the whole score — before any staff is made, so
 // that a drum staff, which is in no key at all, is never given one. Every
 // other staff gets the signature its own player reads for that key.
 key(4);
 
+function scaleFor(name) {
+  return LEADING.includes(name)
+    ? SCALE.slice(0, 6).concat("b#")
+    : SCALE;
+}
+
+// oneBar writes whatever this player is doing in this bar.
+function oneBar(p, f, i, voice) {
+  const name = plan[i];
+  const notes = CHORDS[name];
+  const ending = f.last && i === bars - 1;
+  const job = ending ? "figure" : (f.jobs ? f.jobs[p.who] : "figure");
+
+  if (job === "tacet") {
+    rest(1);
+    return;
+  }
+  if (job === "under") {
+    play(bassLine(notes, p, f.bass), p);
+    return;
+  }
+  if (job === "hold") {
+    // One note of the chord, held — a different one for each player, so
+    // that what they are holding between them is the chord.
+    const tones = reach(notes, p, f.lift);
+    const held = tones[voice % tones.length];
+    play(bar16([one(held, 1, i === f.at ? "p" : undefined)], "a held note"), p);
+    return;
+  }
+  const tones = reach(notes, p, f.lift);
+  const shape = ending ? close : FIGURES[f.shape];
+  const events = shape(tones, scaleFor(name), p, rolls[i]);
+  if (i === f.at) events[0] = { ...events[0], mark: f.loud };
+  play(events, p);
+}
+
 for (const name of want) {
   const p = PLAYERS[name];
   if (!p) continue;
+
   if (p.role === "drums") {
     const where = staff(name);
     at(1, where);
     for (let i = 0; i < bars; i++) {
-      drumBar(i % 2 === 1);
+      const f = phrases[Math.floor(i / 4)];
+      play(drumLine(f.kit, i % 2 === 1, i === f.at + 3 && !f.last), p);
       if (i < bars - 1) bar();
     }
     continue;
   }
+
   const two = p.role === "both";
-  if (two || p.role === "figure") {
+  if (two || p.role === "line") {
+    // who is how the phrase finds out what this player was given to do, and
+    // voice is which note of a held chord is theirs.
+    const me = { ...p, who: name };
+    const voice = Math.max(0, melodic.indexOf(name));
     const where = staff(name, {
       clef: p.clef || "treble",
       name: two ? name + " right" : "",
     });
     at(1, where);
     for (let i = 0; i < bars; i++) {
-      figureBar(CHORDS[plan[i]], p, i % 2 === 1, i === 0);
+      oneBar(me, phrases[Math.floor(i / 4)], i, voice);
       if (i < bars - 1) bar();
     }
   }
   if (two || p.role === "bass") {
+    const low = two ? { ...p, base: p.base - 1, span: 6 } : p;
     const where = staff(name, {
       clef: "bass",
       name: two ? name + " left" : "",
     });
     at(1, where);
     for (let i = 0; i < bars; i++) {
-      bassBar(CHORDS[plan[i]], p);
+      const f = phrases[Math.floor(i / 4)];
+      const kind = f.last && i === bars - 1 ? "held" : f.bass;
+      play(bassLine(CHORDS[plan[i]], low, kind), low);
       if (i < bars - 1) bar();
     }
   }
 }
 
-say("Written. The staff the score started with is above it all, still");
-say("empty — take it out if you do not want it.");
+say("Written. Run it again for a different piece.");
 `,
   },
 ];

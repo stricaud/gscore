@@ -39,7 +39,7 @@ const konst = (name) => {
 };
 
 // The verbs, with the queue they fill.
-function verbs(budget) {
+function verbs(budget, read) {
   const out = [], said = [];
   const scope = {
     Date, Math, JSON, String, Number, Array,
@@ -50,7 +50,10 @@ function verbs(budget) {
     grab("consoleVerbs") + "\nreturn consoleVerbs;")(...Object.values(scope));
   // A score of one staff, which is what a new one is: staff() counts from
   // what is already there.
-  return { out, said, v: make(out, said, { staves: [{ name: "Staff", bars: [[]] }] }) };
+  return {
+    out, said,
+    v: make(out, said, read || { staves: [{ name: "Staff", bars: [[]] }] }),
+  };
 }
 
 // Calling note() writes nothing: it remembers that a note was asked for,
@@ -319,13 +322,39 @@ test("the scripts are read when the score is", () => {
  * for, so the answer is arithmetic rather than a guess.
  */
 test("staff queues the staff and says which number it will be", () => {
-  const { out, v } = verbs();
+  // A score with music in it: the staves asked for go beside it.
+  const { out, v } = verbs(undefined, {
+    staves: [{ name: "Piano", bars: [[{ pitch: "C4", length: 4 }]] }],
+  });
   assert.equal(v.staff("flute"), 2, "the first new staff of a one-staff score");
   assert.equal(v.staff("cello", { clef: "bass", name: "cello I" }), 3);
   assert.deepEqual(out, [
-    { do: "staff", instrument: "flute", name: "", clef: "" },
-    { do: "staff", instrument: "cello", name: "cello I", clef: "bass" },
+    { do: "staff", take: false, instrument: "flute", name: "", clef: "" },
+    { do: "staff", take: false, instrument: "cello", name: "cello I", clef: "bass" },
   ]);
+});
+
+// A score that has just been made is one staff with nothing on it. A script
+// writing for four instruments should finish with four staves, not five:
+// the first one it asks for moves into the staff that is already there.
+test("the first staff moves into the empty one a new score comes with", () => {
+  const blank = { staves: [{ name: "Staff", bars: [[{ rest: true, length: 1 }]] }] };
+  const { out, v } = verbs(undefined, blank);
+  assert.equal(v.staff("flute"), 1, "it stood beside the empty staff");
+  assert.equal(v.staff("cello"), 2, "and the second one lost count");
+  assert.equal(out[0].take, true);
+  assert.equal(out[1].take, false, "only the first one takes it over");
+
+  // But an empty staff in the middle of somebody's own music is a staff
+  // they meant to have, and is left where it is.
+  const theirs = verbs(undefined, {
+    staves: [
+      { name: "Piano", bars: [[{ pitch: "C4", length: 4 }]] },
+      { name: "Spare", bars: [[{ rest: true, length: 1 }]] },
+    ],
+  });
+  assert.equal(theirs.v.staff("flute"), 3, "it took over a staff of theirs");
+  assert.equal(theirs.out[0].take, false);
 });
 
 // A signature nobody can write is caught in the script rather than at the
@@ -414,7 +443,7 @@ function lengthOf(step, lengths) {
 test("the example writes bars that hold exactly one bar of music", async () => {
   const lengths = konst("typeLengths");
   const { out } = await runExample(
-    [["piano", "oboe", "contrabass", "alto sax", "drum kit"], "10"]);
+    [["piano", "oboe", "contrabass", "alto sax", "drum kit"], "12"]);
   let bar = 0, staves = 0, sfz = 0;
   const bars = [];
   for (const step of out) {
@@ -430,7 +459,7 @@ test("the example writes bars that hold exactly one bar of music", async () => {
   if (bar) bars.push(bar);
 
   assert.equal(staves, 6, "piano takes two staves, the other four one each");
-  assert.ok(bars.length >= 50, `only ${bars.length} bars were written`);
+  assert.ok(bars.length >= 40, `only ${bars.length} bars were written`);
   for (const [i, held] of bars.entries()) {
     assert.ok(Math.abs(held - 1) < 1e-9,
       `bar ${i + 1} holds ${held} of a bar, not one`);
@@ -485,16 +514,20 @@ test("the bar drawn past the end is not counted as a bar", () => {
 // signature, and the key signature on a saxophone's staff is not the one
 // the script was thinking in.
 test("the example spells out every note it writes", async () => {
-  const { out } = await runExample([["alto sax", "piano", "french horn"], "6"]);
-  const notes = out.filter((s) => s.do === "note");
-  assert.ok(notes.length > 50, "nothing was written to look at");
-  for (const s of notes) {
-    assert.match(s.pitch, /^[a-g](#|x|b|bb|n)-?\d$/,
-      `${s.pitch} was left for the key signature to spell`);
+  const { out } = await runExample([["alto sax", "piano", "french horn"], "8"]);
+  const written = [];
+  for (const s of out) {
+    if (s.do === "note") written.push(s.pitch);
+    if (s.do === "chord") written.push(...s.pitches);
+  }
+  assert.ok(written.length > 50, "nothing was written to look at");
+  for (const name of written) {
+    assert.match(name, /^[a-g](#|x|b|bb|n)-?\d$/,
+      `${name} was left for the key signature to spell`);
   }
   // And a transposing part really is moved: the alto saxophone reads a
   // major sixth above what it sounds, so it has notes the piano has not.
-  const pitches = new Set(notes.map((s) => s.pitch));
+  const pitches = new Set(written);
   assert.ok([...pitches].some((p) => p.includes("x")),
     "nothing came out double sharp, so nothing was transposed far enough");
 });

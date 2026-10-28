@@ -130,3 +130,39 @@ func TestSoundingUndoesWritten(t *testing.T) {
 		}
 	}
 }
+
+// Changing a staff's instrument moves what is written so that what is
+// heard does not change — and the key signature is part of what is
+// written. The notes moved and the signature went the other way, which put
+// the part in the wrong key with an accidental on nearly every note.
+func TestChangingTheInstrumentMovesTheSignatureWithTheNotes(t *testing.T) {
+	h := newHarness(t)
+	h.post("/api/setkey?fifths=4")
+	h.note(0, 0, 4, "quarter")
+
+	sounded := h.app.score.Parts[0].Measures[0].Voices[0].Elements[0].(*model.Note)
+	was := sounded.Pitch
+
+	h.post("/api/staff?part=0&instrument=alto%20sax")
+	p := h.app.score.Parts[0]
+	if got := p.Key.Fifths; got != 7 {
+		t.Errorf("the part now reads %d sharps, want 7", got)
+	}
+	// And it still sounds the same: written up a major sixth, read down one.
+	now := p.Measures[0].Voices[0].Elements[0].(*model.Note).Pitch
+	if got := p.Transpose.Apply(now); got != was {
+		t.Errorf("it now sounds %v, want the %v it did", got, was)
+	}
+}
+
+// And back again. Taking the saxophone off a part puts it back in the key
+// the piece is in, rather than somewhere three sharps away from it.
+func TestChangingTheInstrumentBackRestoresTheSignature(t *testing.T) {
+	h := newHarness(t)
+	h.post("/api/setkey?fifths=4")
+	h.post("/api/staff?part=0&instrument=alto%20sax")
+	h.post("/api/staff?part=0&instrument=flute")
+	if got := h.app.score.Parts[0].Key.Fifths; got != 4 {
+		t.Errorf("the part came back in %d sharps, want the 4 it started in", got)
+	}
+}

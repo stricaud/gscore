@@ -25,7 +25,17 @@ import { readFileSync } from "node:fs";
 import { strict as assert } from "node:assert";
 import test from "node:test";
 
-const src = readFileSync(new URL("./app.js", import.meta.url), "utf8");
+// The example scripts are taken out first. They are whole programs kept as
+// text, and a function in one of them is not a declaration in app.js — it
+// is a line in a string that the console runs in a scope of its own, where
+// the only names are the verbs. Scanned along with the code, an example
+// that happens to call something play() reads as a second play() here.
+const whole = readFileSync(new URL("./app.js", import.meta.url), "utf8");
+// Anchored on what comes after it: an example's own text has lines that
+// close an array, and a lazy match stops at the first of them.
+const src = whole.replace(
+  /^const consoleExamples = \[[\s\S]*?\n\];\n\nfunction drawExamples/m,
+  "const consoleExamples = [];\n\nfunction drawExamples");
 
 function declaredTwice(pattern) {
   const seen = new Map();

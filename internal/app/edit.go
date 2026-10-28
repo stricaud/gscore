@@ -1365,9 +1365,14 @@ func retranspose(p *model.Part, from, to model.Transposition) {
 		return
 	}
 
+	// The signature moves the way the notes do. A part in C read by an alto
+	// saxophone is written a major sixth up and so in three more sharps, and
+	// the sign here was the other way round: the notes went up and the
+	// signature went down after them, which put the part in the wrong key
+	// and an accidental on nearly every note of it.
 	shiftKey := func(k model.KeySignature) model.KeySignature {
 		out := k
-		out.Fifths = k.Fifths + to.Fifths() - from.Fifths()
+		out.Fifths = k.Fifths + from.Fifths() - to.Fifths()
 		for out.Fifths > 7 {
 			out.Fifths -= 12
 		}

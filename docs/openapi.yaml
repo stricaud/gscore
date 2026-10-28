@@ -894,7 +894,11 @@ paths:
           schema: { type: string, enum: ["0", "1"] }
         - name: pair
           in: query
-          description: Between two notes rather than on one.
+          description: >
+            Between two notes rather than on one. Name both of them in sel,
+            next to each other in the same bar, or name one and the mark
+            pairs it with the note written after it. Clearing a tremolo
+            (strokes=0) clears the whole pair, from either of its notes.
           schema: { type: string, enum: ["0", "1"] }
       responses:
         "200": { $ref: "#/components/responses/Changed" }
@@ -1604,8 +1608,8 @@ paths:
       description: |
         The engraver is the only thing that knows where a note went, and this
         is it saying so: one region per bar, with every element's position in
-        staff spaces, plus the barlines, the dynamics, the hairpins, the tempo
-        marks and the bands over each bar. A click becomes a place in the
+        staff spaces, plus the barlines, the dynamics, the hairpins, the
+        tremolos, the tempo marks and the bands over each bar. A click becomes a place in the
         music by looking it up here.
       parameters:
         - name: mode
@@ -2178,6 +2182,27 @@ components:
               title: { type: string }
         canUndo: { type: boolean }
         canRedo: { type: boolean }
+        movements:
+          type: array
+          description: >-
+            Where each movement begins and ends, listed only when a score has
+            more than one. Bars are numbered from one in every movement, so a
+            bar number means nothing without saying which movement it is in:
+            "go to bar four" is the fourth bar of the movement the cursor is
+            standing in. The bounds are bars of the whole score, counted from
+            zero, so everything else — the clickable regions, the
+            performance, the cursor — goes on meaning what it meant.
+          items:
+            type: object
+            properties:
+              first: { type: integer }
+              last: { type: integer }
+              title: { type: string }
+        markers:
+          type: integer
+          description: >-
+            How many rehearsal marks the score carries, so the editor can
+            offer the next letter when one is written.
         current:
           type: integer
           description: Which piece of a tune book is open.
@@ -2353,4 +2378,11 @@ components:
           items: { type: object }
         dynamics: { type: array, items: { type: object } }
         hairpins: { type: array, items: { type: object } }
+        tremolos:
+          type: array
+          description: >
+            The beams of each two-note tremolo. They are the only thing on
+            the page that stands for the mark, so they are what a click on
+            it finds; from and to name the two notes it alternates between.
+          items: { type: object }
         tempos: { type: array, items: { type: object } }

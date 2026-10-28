@@ -508,10 +508,47 @@ func (e *engraver) numberWidth(mi, start int) float64 {
 // which is the kind of difference that only shows when two people are
 // reading from different copies and one of them says "from bar sixty-five".
 func (e *engraver) barNumber(mi int) int {
-	if e.pickup {
-		return mi
+	from := e.sectionFrom(mi)
+	at := mi - from
+	if from == 0 {
+		if e.pickup {
+			return at
+		}
+		return at + 1
 	}
-	return mi + 1
+	// A movement of its own: its own first bar, and its own upbeat.
+	if pickupAt(e.score, from) {
+		return at
+	}
+	return at + 1
+}
+
+// sectionFrom is the first bar of the movement a bar belongs to.
+//
+// Numbering restarts with every movement, because that is how a movement is
+// read and how it is cited: the Presto's fourth bar is its own fourth, not
+// the sonata's hundred and thirty-seventh. Every printed edition numbers
+// them that way and so does MuseScore, which is where these scores are
+// written.
+func (e *engraver) sectionFrom(mi int) int {
+	if e.sections == nil {
+		n := e.score.MeasureCount()
+		e.sections = make([]int, n)
+		from := 0
+		for i := 0; i < n; i++ {
+			e.sections[i] = from
+			for _, p := range e.score.Parts {
+				if i < len(p.Measures) && p.Measures[i].EndsSection {
+					from = i + 1
+					break
+				}
+			}
+		}
+	}
+	if mi < 0 || mi >= len(e.sections) {
+		return 0
+	}
+	return e.sections[mi]
 }
 
 // opensWithPickup reports whether the piece opens with an anacrusis: a first
@@ -524,26 +561,33 @@ func (e *engraver) barNumber(mi int) int {
 // renumbering those would have moved every number on the page because the
 // reader could not count. A pickup is short and then whole, which is the
 // one shape that means somebody began before the first beat.
-func opensWithPickup(s *model.Score) bool {
-	if s == nil || s.MeasureCount() < 2 {
+func opensWithPickup(s *model.Score) bool { return pickupAt(s, 0) }
+
+// pickupAt is the same question asked of the bar a movement opens with.
+//
+// Numbering restarts with every movement, so every movement gets the same
+// decision about its own first bar: the Allegretto of the Moonlight sonata
+// opens with a quarter-note upbeat, and its first full bar is its bar one.
+func pickupAt(s *model.Score, at int) bool {
+	if s == nil || s.MeasureCount() < at+2 {
 		return false
 	}
 	bar := model.Duration{}
 	for _, p := range s.Parts {
-		if len(p.Measures) == 0 {
+		if at >= len(p.Measures) {
 			continue
 		}
-		bar = p.TimeAt(0).BarDuration()
+		bar = p.TimeAt(at).BarDuration()
 		break
 	}
 	if bar.IsZero() {
 		return false
 	}
-	opening := s.MeasureDuration(0)
+	opening := s.MeasureDuration(at)
 	if opening.IsZero() || opening.Cmp(bar) >= 0 {
 		return false
 	}
-	return s.MeasureDuration(1).Cmp(bar) == 0
+	return s.MeasureDuration(at+1).Cmp(bar) == 0
 }
 
 func (e *engraver) drawMeasureNumbers(columns []float64, start, end int) {

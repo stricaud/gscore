@@ -149,3 +149,132 @@ func TestAHalfWrittenPairIsNotDrawn(t *testing.T) {
 		t.Errorf("%d beams drawn for a pair with only one end", n)
 	}
 }
+
+// The beams stand clear of both stems, and of the noteheads under them.
+//
+// Drawn stem to stem and stacked down to the heads, the pair reads as one
+// beamed group whose beams happen to be doubled, and a pianist reading bar
+// 23 of the Presto saw two beamed half notes rather than an alternation
+// between them. The air at each end is what says the beams belong to
+// neither note but to the movement between the two.
+func TestTheBeamsStandClearOfTheNotesTheyJoin(t *testing.T) {
+	opt := DefaultOptions()
+	opt.Mode = Strip
+	lay := Engrave(tremoloPair(3, model.Duration{Num: 1, Den: 2}, model.StepC, model.StepG), opt)
+
+	var heads []Glyph
+	for _, g := range lay.Glyphs {
+		if has(g.Name, "noteheadHalf") {
+			heads = append(heads, g)
+		}
+	}
+	if len(heads) != 2 {
+		t.Fatalf("%d noteheads, want 2", len(heads))
+	}
+	// The stems of those two notes, which the barline is not one of.
+	lo := math.Min(heads[0].X, heads[1].X) - 0.5
+	hi := math.Max(heads[0].X, heads[1].X) + 2
+	var stems []Line
+	for _, l := range lay.Lines {
+		if math.Abs(l.X1-l.X2) < 0.01 && math.Abs(l.Y1-l.Y2) > 1 &&
+			l.X1 >= lo && l.X1 <= hi {
+			stems = append(stems, l)
+		}
+	}
+	if len(stems) != 2 {
+		t.Fatalf("%d stems, want the two the pair hangs from", len(stems))
+	}
+	left, right := math.Min(stems[0].X1, stems[1].X1), math.Max(stems[0].X1, stems[1].X1)
+	for i, q := range lay.Quads {
+		x0, x1 := q.X[0], q.X[0]
+		for _, x := range q.X {
+			x0, x1 = math.Min(x0, x), math.Max(x1, x)
+		}
+		if x0 <= left+0.01 {
+			t.Errorf("beam %d begins at %.2f, on the left stem at %.2f", i, x0, left)
+		}
+		if x1 >= right-0.01 {
+			t.Errorf("beam %d ends at %.2f, on the right stem at %.2f", i, x1, right)
+		}
+	}
+
+	// And the lowest beam keeps off the notehead below it.
+	for _, h := range heads {
+		for i, q := range lay.Quads {
+			for _, y := range q.Y {
+				if math.Abs(h.Y-y) < 0.5 {
+					t.Errorf("beam %d runs at %.2f, through the notehead at %.2f",
+						i, y, h.Y)
+				}
+			}
+		}
+	}
+}
+
+// The beams are the only thing on the page that stands for the mark, so
+// they are a clickable region of their own.
+//
+// Without one a click on them fell through to whatever was underneath, and
+// there was no way to pick a tremolo up — or to see that one had been
+// picked up, which from where anybody is sitting is the same thing.
+func TestTheTremoloHasARegionOfItsOwn(t *testing.T) {
+	opt := DefaultOptions()
+	opt.Mode = Strip
+	lay := Engrave(tremoloPair(3, model.Duration{Num: 1, Den: 2}, model.StepC, model.StepG), opt)
+
+	if len(lay.Tremolos) != 1 {
+		t.Fatalf("%d regions for one tremolo, want 1", len(lay.Tremolos))
+	}
+	tr := lay.Tremolos[0]
+	if tr.Beams != 3 {
+		t.Errorf("the region says %d beams, and three were drawn", tr.Beams)
+	}
+	if tr.From == 0 || tr.To == 0 || tr.From == tr.To {
+		t.Errorf("the region names notes %d and %d, want the two it joins", tr.From, tr.To)
+	}
+	if tr.Width <= 0 || tr.Height <= 0 {
+		t.Fatalf("the region is %.2f by %.2f, which cannot be clicked", tr.Width, tr.Height)
+	}
+	// It covers every beam that was drawn, which is what was clicked.
+	for i, q := range lay.Quads {
+		for k := range q.X {
+			if q.X[k] < tr.X-0.01 || q.X[k] > tr.X+tr.Width+0.01 {
+				t.Errorf("beam %d reaches to %.2f, outside the region %.2f..%.2f",
+					i, q.X[k], tr.X, tr.X+tr.Width)
+			}
+			if q.Y[k] < tr.Y-0.01 || q.Y[k] > tr.Y+tr.Height+0.01 {
+				t.Errorf("beam %d reaches to %.2f, outside the region %.2f..%.2f",
+					i, q.Y[k], tr.Y, tr.Y+tr.Height)
+			}
+		}
+	}
+}
+
+// The pair between two whole noteheads is the same mark and is picked up
+// the same way.
+func TestTheWholeNotePairHasARegionToo(t *testing.T) {
+	opt := DefaultOptions()
+	opt.Mode = Strip
+	lay := Engrave(tremoloPair(2, model.Duration{Num: 1, Den: 1}, model.StepC, model.StepG), opt)
+	if len(lay.Tremolos) != 1 {
+		t.Fatalf("%d regions between two whole notes, want 1", len(lay.Tremolos))
+	}
+}
+
+// An ordinary beamed group is not a tremolo, and clicking its beams must
+// not pick one up.
+func TestAnOrdinaryBeamIsNotATremolo(t *testing.T) {
+	s := tremoloPair(3, model.Duration{Num: 1, Den: 8}, model.StepC, model.StepG)
+	for _, el := range s.Parts[0].Measures[0].Voices[0].Elements {
+		el.(*model.Note).Tremolo = nil
+	}
+	opt := DefaultOptions()
+	opt.Mode = Strip
+	lay := Engrave(s, opt)
+	if len(lay.Quads) == 0 {
+		t.Fatal("the two eighths were not beamed, so there is nothing to tell apart")
+	}
+	if len(lay.Tremolos) != 0 {
+		t.Errorf("%d tremolo regions over a plain beam", len(lay.Tremolos))
+	}
+}

@@ -299,8 +299,14 @@ func TestNotesRestsAndTheirMarks(t *testing.T) {
 	if n1.Dur != (model.Duration{Num: 3, Den: 8}) {
 		t.Errorf("the dotted quarter lasts %v", n1.Dur)
 	}
-	if !n1.TieStart {
-		t.Error("the tie does not start")
+	// The file writes a tie on this note and there is nothing to tie it to:
+	// a rest follows it, and no note of its pitch comes after. A tie the
+	// engraver cannot close is carried to the right margin of its system
+	// and begun again on the next, and the next, to the end of the piece —
+	// so a tie with one end is dropped, as a slur with one end is.
+	if n1.TieStart {
+		t.Error("a tie with nothing to tie to was kept, and it is drawn as a " +
+			"line across the rest of the score")
 	}
 	// It sounds E flat; on an alto that is written as the C a major sixth
 	// above, which is what tpc2 spells and tpc does not.

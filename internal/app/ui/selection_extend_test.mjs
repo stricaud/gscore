@@ -50,6 +50,9 @@ const api = (state) => {
     rememberCursor() {},
     currentSVG: () => null,
     refTarget: () => null,
+    // Bars are numbered from one in every movement. This score has one, so
+    // the number over a bar is its place in the file.
+    barNumberOf: (m) => m + 1,
     orderedSelection() {
       return [...state.multi].sort((a, b) =>
         a.measure !== b.measure ? a.measure - b.measure : a.index - b.index);

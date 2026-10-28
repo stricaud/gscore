@@ -54,6 +54,7 @@ func (a *App) handleHits(w http.ResponseWriter, r *http.Request) {
 		"chords":      lay.Chords,
 		"tempos":      lay.Tempos,
 		"hairpins":    lay.Hairpins,
+		"tremolos":    lay.Tremolos,
 		"barlines":    lay.Barlines,
 		"strips":      lay.Strips,
 		"headers":     lay.Headers,
@@ -3589,6 +3590,7 @@ func (a *App) handleTremolo(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	a.lock()
 	for _, m := range marks {
 		if strokes == 0 && !buzz {
 			m.Tremolo = nil
@@ -3596,7 +3598,48 @@ func (a *App) handleTremolo(w http.ResponseWriter, r *http.Request) {
 		}
 		m.Tremolo = &model.Tremolo{Strokes: strokes, Buzz: buzz}
 	}
-	writeJSON(w, map[string]int{"changed": len(marks)})
+	// Taking a two-note tremolo off one of its notes leaves the other
+	// holding half a mark. Nothing is drawn, because half a pair is not a
+	// pair, and the note plays on as though it had never been marked — but
+	// the mark is still in the file, and the next thing written beside it
+	// pairs with it again. So "no tremolo" means the whole of it.
+	n := len(marks) + clearHalfTremolos(a.score)
+	a.mu.Unlock()
+	writeJSON(w, map[string]int{"changed": n})
+}
+
+// clearHalfTremolos takes off every two-note tremolo mark whose partner is
+// not there, and says how many it took off.
+func clearHalfTremolos(s *model.Score) int {
+	n := 0
+	for _, p := range s.Parts {
+		for _, m := range p.Measures {
+			for _, v := range m.Voices {
+				for i, el := range v.Elements {
+					mk := marksOfElement(el)
+					if mk == nil || !mk.Tremolo.Paired() {
+						continue
+					}
+					var other *model.Marks
+					if mk.Tremolo.Start && i+1 < len(v.Elements) {
+						other = marksOfElement(v.Elements[i+1])
+						if other != nil && other.Tremolo.Paired() && other.Tremolo.Stop {
+							continue
+						}
+					}
+					if mk.Tremolo.Stop && i > 0 {
+						other = marksOfElement(v.Elements[i-1])
+						if other != nil && other.Tremolo.Paired() && other.Tremolo.Start {
+							continue
+						}
+					}
+					mk.Tremolo = nil
+					n++
+				}
+			}
+		}
+	}
+	return n
 }
 
 // pairTremolo marks the chosen note and the one after it as a two-note
@@ -3611,6 +3654,35 @@ func (a *App) pairTremolo(q url.Values, strokes int, buzz bool) (int, error) {
 	at, err := strconv.Atoi(q.Get("at"))
 	if err != nil {
 		at = -1
+	}
+
+	// Two notes chosen, which is how the mark is asked for with the mouse:
+	// pick up the pair it goes between and say so. One note works too — it
+	// pairs with the note after it — but having to know that is having to
+	// know how the file is written rather than what the mark means.
+	if sel := q.Get("sel"); sel != "" {
+		targets, err := parseTargets(sel)
+		if err != nil {
+			return 0, err
+		}
+		if len(targets) > 2 {
+			return 0, editError("a two-note tremolo goes between two notes, " +
+				"and there are " + strconv.Itoa(len(targets)) + " selected")
+		}
+		first := targets[0]
+		if len(targets) == 2 {
+			second := targets[1]
+			if second.index < first.index {
+				first, second = second, first
+			}
+			if first.part != second.part || first.measure != second.measure {
+				return 0, editError("the two notes of a tremolo are in the same bar")
+			}
+			if second.index != first.index+1 {
+				return 0, editError("the two notes of a tremolo are next to each other")
+			}
+		}
+		partIdx, measIdx, at = first.part, first.measure, first.index+1
 	}
 
 	a.lock()

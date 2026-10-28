@@ -650,6 +650,19 @@ type info struct {
 	// it will do rather than looking the same whether it will do it or not.
 	CanUndo bool `json:"canUndo"`
 	CanRedo bool `json:"canRedo"`
+	// Movements is where each movement of the score begins and ends, and
+	// what it is called.
+	//
+	// The editor needs it because bars are numbered from one in every
+	// movement: "go to bar four" means the fourth bar of the movement you
+	// are standing in, and without this the editor could only count from
+	// the first bar of the whole piece — so typing the number printed over
+	// a bar of the Presto took you to the Adagio.
+	//
+	// One entry for a score with no movements in it, which is every
+	// ordinary score.
+	Movements []movementInfo `json:"movements,omitempty"`
+
 	// Markers is how many rehearsal marks the score carries, so the editor
 	// can offer the next letter when one is written.
 	//
@@ -715,6 +728,16 @@ type tempoInfo struct {
 	Parens bool   `json:"parens,omitempty"`
 }
 
+// movementInfo is one movement of a score, as the editor sees it.
+type movementInfo struct {
+	// First and Last are bars of the whole score, counted from zero, so
+	// that everything else the editor holds — the clickable regions, the
+	// performance, the cursor — goes on meaning what it meant.
+	First int    `json:"first"`
+	Last  int    `json:"last"`
+	Title string `json:"title,omitempty"`
+}
+
 type partInfo struct {
 	Name       string `json:"name"`
 	Instrument string `json:"instrument"`
@@ -751,6 +774,11 @@ func (a *App) handleInfo(w http.ResponseWriter, r *http.Request) {
 		Subtitle:  a.score.Identity.Subtitle,
 		Composer:  a.score.Identity.Composer,
 		Tempo:     a.score.Tempo.BPM,
+	}
+	for _, sec := range a.score.Sections() {
+		out.Movements = append(out.Movements, movementInfo{
+			First: sec.First, Last: sec.Last, Title: sec.Title,
+		})
 	}
 	out.Markers = markerCount(a.score)
 	out.Cursor = a.cursorInfo()

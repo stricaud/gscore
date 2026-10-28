@@ -166,3 +166,52 @@ func TestAMovementWithNoNameIsStillSeparated(t *testing.T) {
 		t.Errorf("%d systems begin a movement, want 2", started)
 	}
 }
+
+// Bars are numbered from one in every movement.
+//
+// That is how a movement is read and how it is cited: the Presto's fourth
+// bar is its own fourth, not the sonata's hundred and thirty-seventh. Every
+// printed edition numbers them that way and so does MuseScore, which is
+// where these scores are written.
+func TestBarsAreNumberedFromOneInEveryMovement(t *testing.T) {
+	s := movements(12, 3, 7)
+	e := &engraver{score: s, opt: DefaultOptions()}
+
+	// Bars 1..4, then 1..4 again, then 1..4 again.
+	want := []int{1, 2, 3, 4, 1, 2, 3, 4, 1, 2, 3, 4}
+	for i, w := range want {
+		if got := e.barNumber(i); got != w {
+			t.Errorf("bar %d of the score is numbered %d, want %d", i+1, got, w)
+		}
+	}
+}
+
+func TestAMovementThatOpensWithAnUpbeatCountsFromItsFirstFullBar(t *testing.T) {
+	// The Allegretto of the Moonlight sonata opens on a quarter-note
+	// upbeat. An anacrusis is not counted, in a movement exactly as in a
+	// piece: its first full bar is its bar one.
+	s := movements(8, 3)
+	// The fifth bar — the first of the second movement — holds a quarter
+	// where the meter asks for a whole.
+	s.Parts[0].Measures[4].Voices[0].Elements = []model.Element{
+		&model.Rest{Dur: model.Duration{Num: 1, Den: 4}},
+	}
+	e := &engraver{score: s, opt: DefaultOptions()}
+
+	if got := e.barNumber(4); got != 0 {
+		t.Errorf("the upbeat is numbered %d, want 0 — it is not counted", got)
+	}
+	if got := e.barNumber(5); got != 1 {
+		t.Errorf("the first full bar of the movement is numbered %d, want 1", got)
+	}
+}
+
+func TestAScoreWithOneMovementNumbersStraightThrough(t *testing.T) {
+	s := movements(6)
+	e := &engraver{score: s, opt: DefaultOptions()}
+	for i := 0; i < 6; i++ {
+		if got := e.barNumber(i); got != i+1 {
+			t.Errorf("bar %d is numbered %d", i+1, got)
+		}
+	}
+}

@@ -76,6 +76,21 @@ type Options struct {
 	// coordinate means the same thing whether the whole score was written
 	// or a window of it. Nothing that reads the drawing has to know.
 	Window *Box
+
+	// Scope confines the stylesheet to this drawing, under a class of this
+	// name, for an SVG that will be put inline in a page beside others.
+	//
+	// An inline <svg> hands its <style> to the page it is in: the rules go
+	// into the document's own stylesheet and are not confined to the
+	// drawing they were written for, however they look. So the fifteen
+	// little staves of the key signature picker, drawn at eleven units to
+	// the space and dropped into the page, set the size of every glyph in
+	// the score behind them — and the music stayed that way after the
+	// picker was closed, because the picture is still in the page.
+	//
+	// Empty leaves the rules bare, which is right for a drawing that is a
+	// document on its own.
+	Scope string
 }
 
 // Box is a rectangle in staff spaces.
@@ -120,8 +135,12 @@ func Render(w io.Writer, lay *engrave.Layout, opt Options) error {
 
 	if !opt.Fragment {
 		width, height := lay.Width*s, lay.Height*s
+		class := "gscore-score"
+		if opt.Scope != "" {
+			class += " " + scopeClass(opt.Scope)
+		}
 		fmt.Fprintf(&b, `<svg xmlns="http://www.w3.org/2000/svg" width="%.1f" height="%.1f" `+
-			`viewBox="0 0 %.1f %.1f" class="gscore-score">`+"\n", width, height, width, height)
+			`viewBox="0 0 %.1f %.1f" class="%s">`+"\n", width, height, width, height, class)
 		writeStyle(&b, opt, s)
 	}
 	win := opt.Window
@@ -237,6 +256,11 @@ func Render(w io.Writer, lay *engrave.Layout, opt Options) error {
 }
 
 // writeStyle writes the rules the shapes are drawn under.
+// scopeClass is the class a scoped drawing's rules hang from. A class
+// rather than an id, because a picker draws the same picture several times
+// over and there would be as many of them in the page at once.
+func scopeClass(scope string) string { return "gscore-" + scope }
+
 func writeStyle(b *strings.Builder, opt Options, s float64) {
 	b.WriteString("<style>\n")
 	if opt.EmbedFont {
@@ -245,11 +269,20 @@ func writeStyle(b *strings.Builder, opt Options, s float64) {
 		fmt.Fprintf(b, `@font-face{font-family:"%s";src:url("data:font/otf;base64,%s") format("opentype");}`+"\n",
 			smufl.FontFamily, base64.StdEncoding.EncodeToString(smufl.FontData()))
 	}
-	fmt.Fprintf(b, `.gscore-score{background:#fff;}`+"\n")
-	fmt.Fprintf(b, `.g{font-family:"%s";font-size:%.3fpx;fill:#000;}`+"\n", smufl.FontFamily, 4*s)
-	fmt.Fprintf(b, `.t{font-family:Georgia,"Times New Roman",serif;fill:#000;}`+"\n")
-	fmt.Fprintf(b, `line{stroke:#000;stroke-linecap:butt;}`+"\n")
-	fmt.Fprintf(b, `path.curve{fill:none;stroke:#000;}`+"\n")
+	// What the rules hang from. Unscoped they are the whole page's, which
+	// is what a drawing that is a file on its own wants and is exactly
+	// wrong for one that is going inside a page that has a score in it.
+	self, under := ".gscore-score", ""
+	if opt.Scope != "" {
+		self = "." + scopeClass(opt.Scope)
+		under = self + " "
+	}
+	fmt.Fprintf(b, `%s{background:#fff;}`+"\n", self)
+	fmt.Fprintf(b, `%s.g{font-family:"%s";font-size:%.3fpx;fill:#000;}`+"\n",
+		under, smufl.FontFamily, 4*s)
+	fmt.Fprintf(b, `%s.t{font-family:Georgia,"Times New Roman",serif;fill:#000;}`+"\n", under)
+	fmt.Fprintf(b, `%sline{stroke:#000;stroke-linecap:butt;}`+"\n", under)
+	fmt.Fprintf(b, `%spath.curve{fill:none;stroke:#000;}`+"\n", under)
 	b.WriteString("</style>\n")
 }
 

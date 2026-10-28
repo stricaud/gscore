@@ -51,6 +51,9 @@ function load(selection) {
     status: (s) => said.push(s),
     markSelection() {},
     scrollSelectionIntoView() {},
+    // Bars are numbered from one in every movement. This score has one, so
+    // the number over a bar is its place in the file.
+    barNumberOf: (m) => m + 1,
   };
   const body = grab("moveCursorBy") + "\nreturn { moveCursorBy };";
   const api = new Function(...Object.keys(scope), body)(...Object.values(scope));

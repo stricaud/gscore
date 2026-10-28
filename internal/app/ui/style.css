@@ -772,10 +772,10 @@ body.over-strip #canvas svg,
 body.over-strip #canvas .tune,
 body.over-strip #canvas text.g[data-ref] { cursor: pointer; }
 
-body.shift-select #canvas .tune,
-body.shift-select #canvas svg,
-body.shift-select #canvas text.g[data-ref],
-body.shift-select #canvas image[data-symbol] { cursor: grab; }
+/* Shift used to be how music was picked up with the mouse, and the pointer
+   turned into a hand to say so. A plain click picks it up now, so the hand
+   was a hand for nothing: it appeared over the score whenever Shift was
+   held for anything else at all. */
 
 body.player #canvas .tune,
 body.player #canvas svg,

@@ -375,3 +375,53 @@ func TestABreakOnTheLastBarOpensNothing(t *testing.T) {
 		t.Errorf("got %q, want %q", got, want)
 	}
 }
+
+// Sections is the one definition of where the movements are.
+//
+// Playing uses it, the layout uses it to break the page, the bar numbers
+// use it, and the editor is told it so that "go to bar four" means the
+// fourth bar of the movement you are standing in. Two definitions would be
+// two answers.
+func TestSectionsAreTheMovementsOfAScore(t *testing.T) {
+	s := bars(12)
+	s.bar(3).EndsSection = true
+	s.bar(7).EndsSection = true
+	s.bar(4).SectionTitle = "Movement II"
+	s.bar(8).SectionTitle = "Movement III"
+
+	got := s.Sections()
+	want := []Section{
+		{First: 0, Last: 3},
+		{First: 4, Last: 7, Title: "Movement II"},
+		{First: 8, Last: 11, Title: "Movement III"},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("%d movements, want %d: %+v", len(got), len(want), got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("movement %d is %+v, want %+v", i+1, got[i], want[i])
+		}
+	}
+}
+
+func TestAScoreWithNoBreaksIsOneSection(t *testing.T) {
+	// Which is every ordinary score.
+	got := bars(6).Sections()
+	if len(got) != 1 || got[0].First != 0 || got[0].Last != 5 {
+		t.Errorf("a plain score came out as %+v, want one movement of all six bars", got)
+	}
+	if len(bars(0).Sections()) != 0 {
+		t.Error("a score with no bars has a movement in it")
+	}
+}
+
+func TestABreakOnTheLastBarAddsNoMovement(t *testing.T) {
+	s := bars(4)
+	s.bar(3).EndsSection = true
+	got := s.Sections()
+	if len(got) != 1 {
+		t.Errorf("%d movements, want 1: a break on the last bar closes the "+
+			"piece rather than opening a movement with no bars in it", len(got))
+	}
+}

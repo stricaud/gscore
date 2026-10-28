@@ -40,19 +40,25 @@ func (s *Score) PlayOrder() []int {
 	d := s.directions(n)
 
 	var out []int
-	for _, sec := range s.sections(n) {
+	for _, sec := range s.Sections() {
 		if len(out) >= maxPlayedBars {
 			break
 		}
-		out = append(out, d.play(sec.from, sec.to, maxPlayedBars-len(out))...)
+		out = append(out, d.play(sec.First, sec.Last+1, maxPlayedBars-len(out))...)
 	}
 	return out
 }
 
-// section is a stretch of bars read on its own.
-type section struct{ from, to int }
+// Section is one movement of a score: the bars it holds, and its name.
+type Section struct {
+	// First and Last are indices into the score's bars, inclusive.
+	First, Last int
+	// Title is what the movement is called, where the file says — "Movement
+	// III", "Presto agitato" — and empty where it does not.
+	Title string
+}
 
-// sections is the stretches a score is read in.
+// Sections is the stretches a score is read in.
 //
 // A section break is where the music starts afresh: one movement ends and
 // another begins. It matters because everything that sends a player
@@ -66,9 +72,19 @@ type section struct{ from, to int }
 // middle of the second movement and stopped — with the whole third movement
 // unplayed, and so unreachable: pressing play from a bar in it started the
 // piece from the top, because that bar was in no part of the performance.
-func (s *Score) sections(n int) []section {
-	var out []section
+//
+// A score with no breaks in it is one section, which is every ordinary
+// score.
+func (s *Score) Sections() []Section {
+	n := s.MeasureCount()
+	if n == 0 {
+		return nil
+	}
+	var out []Section
 	from := 0
+	add := func(to int) {
+		out = append(out, Section{First: from, Last: to, Title: s.sectionTitle(from)})
+	}
 	for i := 0; i < n; i++ {
 		ends := false
 		for _, p := range s.Parts {
@@ -80,11 +96,23 @@ func (s *Score) sections(n int) []section {
 		// A break on the last bar closes the piece rather than opening
 		// another section, so it adds nothing.
 		if ends && i+1 < n {
-			out = append(out, section{from, i + 1})
+			add(i)
 			from = i + 1
 		}
 	}
-	return append(out, section{from, n})
+	add(n - 1)
+	return out
+}
+
+// sectionTitle is what the movement beginning at a bar is called, from
+// whichever staff carries it.
+func (s *Score) sectionTitle(at int) string {
+	for _, p := range s.Parts {
+		if at < len(p.Measures) && p.Measures[at].SectionTitle != "" {
+			return p.Measures[at].SectionTitle
+		}
+	}
+	return ""
 }
 
 // play is one section's bars in the order they are played.

@@ -167,6 +167,7 @@ func (e *engraver) barlineAt(end, right float64) float64 {
 // x is where the bar's own music starts and end is where the next bar starts;
 // the barline goes between them, at the place every staff agrees on.
 func (e *engraver) drawMeasure(part *model.Part, b measureBox, x, end float64, stretch float64) float64 {
+	e.barIndex = b.index
 	sp := e.opt.Spacings
 	start := x
 
@@ -1124,13 +1125,17 @@ func (e *engraver) drawWholeNoteTremolos(items []*placed) {
 			continue // nothing readable would fit
 		}
 		y := (e.y + stepY(float64(a.step)) + e.y + stepY(float64(b.step))) / 2
+		top, bottom := math.Inf(1), math.Inf(-1)
 		for level := 1; level <= levels; level++ {
 			// Centred on that line: the stack grows evenly either side
 			// rather than hanging off it.
 			off := (float64(level) - float64(levels+1)/2) *
 				(d.BeamThickness + d.BeamSpacing)
 			e.beamQuad(x0, y+off, x1, y+off, d.BeamThickness, 1)
+			top = math.Min(top, y+off)
+			bottom = math.Max(bottom, y+off+d.BeamThickness)
 		}
+		e.markTremolo([]*placed{a, b}, ma.Tremolo, x0, top, x1-x0, bottom-top)
 		i++
 	}
 }
@@ -1143,6 +1148,21 @@ const (
 	// And how far they are kept from the end of the stem, so they do not
 	// run into a flag or a beam.
 	tremoloFromEnd = 0.9
+
+	// A two-note tremolo's beams run between the two stems rather than
+	// across them, and are kept off both: air at each end, and more air
+	// between the innermost beam and the noteheads.
+	//
+	// Drawn stem to stem and stacked down to the heads, the pair reads as
+	// one beamed group whose beams happen to be doubled — which is what
+	// bar 23 of the Presto looked like, where what a pianist has to see at
+	// a glance is that those two half notes are an alternation and not a
+	// pair of beamed notes. Standing clear of both stems is what says the
+	// beams belong to neither note but to the movement between them.
+	tremoloPairGap = 0.45
+	// Never more than this share of the gap between the stems, so a close
+	// pair keeps a beam long enough to read as one.
+	tremoloPairShare = 0.2
 )
 
 // roomForTremolo lengthens a stem until the slashes on it have somewhere to
@@ -1333,7 +1353,7 @@ func (e *engraver) drawBeamGroup(g []*placed) {
 	// beams drawn through its own noteheads.
 	if tr := pairTremolo(g); tr != nil {
 		stack := float64(tr.Beams()) * (d.BeamThickness + d.BeamSpacing)
-		if room := stack - d.BeamThickness; room > 0 {
+		if room := stack - d.BeamThickness + tremoloPairGap; room > 0 {
 			shift += room
 		}
 	}
@@ -1415,12 +1435,30 @@ func (e *engraver) drawBeamGroup(g []*placed) {
 	// between the two the player alternates between.
 	if tr := pairTremolo(g); tr != nil {
 		x0, x1 := ends[0].x, ends[len(ends)-1].x
+		if inset := math.Min(tremoloPairGap, (x1-x0)*tremoloPairShare); inset > 0 {
+			x0, x1 = x0+inset, x1-inset
+		}
+		top, bottom := math.Inf(1), math.Inf(-1)
 		for level := maxFlags + 1; level <= maxFlags+tr.Beams(); level++ {
 			offset := float64(level-1) * (d.BeamThickness + d.BeamSpacing) * -dir
-			e.beamQuad(x0, beamY(x0)+offset, x1, beamY(x1)+offset,
-				d.BeamThickness, dir)
+			y0, y1 := beamY(x0)+offset, beamY(x1)+offset
+			e.beamQuad(x0, y0, x1, y1, d.BeamThickness, dir)
+			top = math.Min(top, math.Min(y0, y1)+math.Min(0, dir*d.BeamThickness))
+			bottom = math.Max(bottom, math.Max(y0, y1)+math.Max(0, dir*d.BeamThickness))
 		}
+		e.markTremolo(g, tr, x0, top, x1-x0, bottom-top)
 	}
+}
+
+// markTremolo records where a two-note tremolo's beams ended up, so that the
+// mark can be clicked and shown as picked up. It is the only thing on the
+// page that stands for it.
+func (e *engraver) markTremolo(g []*placed, tr *model.Tremolo, x, y, w, h float64) {
+	e.lay.Tremolos = append(e.lay.Tremolos, TremoloPos{
+		Part: e.partIndex, Measure: e.barIndex,
+		From: g[0].index, To: g[len(g)-1].index,
+		X: x, Y: y, Width: w, Height: h, Beams: tr.Beams(),
+	})
 }
 
 // tremoloPairs finds the two-note tremolos in a bar: a note marked as the

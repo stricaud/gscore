@@ -174,6 +174,15 @@ type Layout struct {
 	// Hairpins are where the swells ended up, so one can be clicked.
 	Hairpins []HairpinPos `json:"hairpins"`
 
+	// Tremolos are where the beams of a two-note tremolo ended up.
+	//
+	// The mark is not a glyph on a note and there is nothing else on the
+	// page that stands for it: the beams between the two stems are the
+	// whole of it. Without a region of their own a click on them fell
+	// through to the bar underneath, and there was no way to pick up a
+	// tremolo — or to see that one had been picked up.
+	Tremolos []TremoloPos `json:"tremolos"`
+
 	// Tempos are where the tempo markings ended up, so one can be clicked.
 	//
 	// A change of speed is written above the staff, between the bars rather
@@ -236,6 +245,20 @@ type HairpinPos struct {
 	Width   float64 `json:"width"`
 	Height  float64 `json:"height"`
 	Kind    string  `json:"kind"`
+}
+
+// TremoloPos is one two-note tremolo's beams on the page, in staff spaces.
+type TremoloPos struct {
+	Part    int `json:"part"`
+	Measure int `json:"measure"`
+	// From and To are the two notes it alternates between.
+	From   int     `json:"from"`
+	To     int     `json:"to"`
+	X      float64 `json:"x"`
+	Y      float64 `json:"y"`
+	Width  float64 `json:"width"`
+	Height float64 `json:"height"`
+	Beams  int     `json:"beams"`
 }
 
 // TempoPos is one tempo marking's box on the page, in staff spaces.
@@ -713,6 +736,8 @@ type engraver struct {
 	nextRef int
 	// partIndex is whose staff is being drawn, for the hit regions.
 	partIndex int
+	// barIndex is which bar of it, for the same reason.
+	barIndex int
 
 	// origin maps a drawn staff back to its number in the score, which
 	// differs from its position as soon as a staff is hidden.
@@ -743,6 +768,9 @@ type engraver struct {
 	// began, so that the system records its territory as starting there and
 	// the page is cut above the heading rather than below it.
 	headingTop float64
+	// sections is, for each bar, the first bar of the movement it belongs
+	// to. Worked out once. See sectionFrom.
+	sections []int
 
 	// waiting are the marks that go outside the staff and cannot be placed
 	// where they are met.
@@ -817,12 +845,26 @@ type openSpan struct {
 	// it from the first note put a slur on the stem side of every note but
 	// one wherever a phrase began in a group beamed the other way, and then
 	// it had to dive under the beam to clear it.
+	//
+	// Below only where every stem points up. Where they point both ways
+	// there is no side away from them, and the answer every engraver gives
+	// is above — Gould's rule in Behind Bars. Counted as a majority
+	// instead, a phrase of mostly-up stems with a few down ones went below
+	// and had to climb over the ones pointing the other way.
 	up, down int
 
-	// lowest and highest are the outermost noteheads the slur covers, so
-	// that once the side is settled it can leave from the right edge of the
-	// notes at each end.
-	lowest, highest int
+	// fromHi and fromLo are the top and bottom noteheads of the note the
+	// slur began on, so that once the side is settled it can leave from the
+	// right edge of that note.
+	//
+	// Of that note, and not of the whole phrase. A slur used to begin at
+	// the outermost notehead anywhere under it, which is right for a flat
+	// phrase and wrong for any other: the Presto of the Moonlight sonata
+	// arpeggiates two octaves upward in a bar, so a slur drawn below it
+	// started a tenth under its own first note and swept diagonally up
+	// through the staff to the last one. The ends belong to their notes.
+	// What is between them is the arch's business — see clearArch.
+	fromHi, fromLo int
 
 	// rel is that same height measured from the top of its staff rather than
 	// from the top of the whole drawing. A curve cut at a line break is

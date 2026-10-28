@@ -609,6 +609,7 @@ async function action(name) {
     case "tremolo-2": await setTremolo(2, false); break;
     case "tremolo-3": await setTremolo(3, false); break;
     case "tremolo-4": await setTremolo(4, false); break;
+    case "tremolo-pair-1": await setTremolo(1, false, true); break;
     case "tremolo-pair-2": await setTremolo(2, false, true); break;
     case "tremolo-pair-3": await setTremolo(3, false, true); break;
     case "tremolo-buzz": await setTremolo(0, true); break;
@@ -1114,7 +1115,7 @@ function drawSprints() {
       b.setAttribute("aria-label", what);
       // An arrow with a wall at the end of it: go as far as this goes.
       b.textContent = "⇥";
-      b.addEventListener("click", () => void sprintToStaffEnd(r.part));
+      b.addEventListener("click", () => void sprintToStaffEnd(r.part, r.top));
       box.appendChild(b);
     }
   }
@@ -1139,10 +1140,17 @@ function placeSprints(rows, box, svg, wrap) {
 
 // sprintToStaffEnd goes to the last bar of one staff and leaves the cursor
 // ready to write in it.
-async function sprintToStaffEnd(part) {
+//
+// top is where that staff is drawn. A score with movements draws each one
+// in its own band, one under the other, so the same part is on the page
+// several times over; "as far as this goes" means as far as this band
+// goes. Without it the arrow beside the first movement of the Moonlight
+// sonata ran to the last bar of the third.
+async function sprintToStaffEnd(part, top) {
   let last = null;
   for (const h of state.hits || []) {
     if (h.part !== part) continue;
+    if (top != null && Math.abs(h.staffTop - top) > 0.01) continue;
     if (!last || h.measure > last.measure) last = h;
   }
   const name = (state.info?.parts || [])[part]?.name || `Staff ${part + 1}`;
@@ -1169,7 +1177,9 @@ async function sprintToStaffEnd(part) {
   // than once for every frame of it.
   await ensureTiles();
   flashMeasure(box);
-  status(`${name}: measure ${last.measure + 1}`);
+  const where = movementAt(last.measure);
+  const named = where && where.title ? ` of ${where.title}` : "";
+  status(`${name}: measure ${barNumberOf(last.measure)}${named}`);
 }
 
 // setupVirtualDraw fetches the next stretch as the view approaches the edge
@@ -2666,6 +2676,7 @@ async function loadHits() {
   state.chordMarks = d.chords || [];
   state.tempos = d.tempos || [];
   state.hairpins = d.hairpins || [];
+  state.tremolos = d.tremolos || [];
   state.barlines = d.barlines || [];
   state.headers = d.headers || [];
   state.strips = d.strips || [];
@@ -2738,6 +2749,27 @@ function hairpinAt(x, y) {
     if (x >= h.x - 0.3 && x <= h.x + h.width + 0.3 &&
         y >= h.y - 0.5 && y <= h.y + h.height + 0.5) {
       return h;
+    }
+  }
+  return null;
+}
+
+// tremoloAt finds the two-note tremolo a click landed on.
+//
+// The beams between the two stems are the whole of the mark: it is not a
+// glyph on a note and there is nothing else on the page that stands for it.
+// A click on them fell through to whatever was underneath, so there was no
+// way to pick a tremolo up — or to see that one had been picked up, which
+// is the same thing from where anybody is sitting.
+//
+// The box is drawn tight. The beams run over the noteheads of the two notes
+// they join, and a generous target here would be a notehead that cannot be
+// clicked.
+function tremoloAt(x, y) {
+  for (const t of state.tremolos || []) {
+    if (x >= t.x && x <= t.x + t.width &&
+        y >= t.y - 0.2 && y <= t.y + t.height + 0.2) {
+      return t;
     }
   }
   return null;
@@ -3087,6 +3119,15 @@ function setupCanvasClicks() {
       return;
     }
 
+    // The beams of a two-note tremolo, which stand between the notes rather
+    // than on either of them. Before the notes, because that is where they
+    // are drawn: over the heads of the pair they join.
+    const trem = tremoloAt(x, y);
+    if (trem) {
+      selectTremolo(trem);
+      return;
+    }
+
     const hit = hitAt(x, y);
     if (!hit) {
       clearSelection();
@@ -3163,7 +3204,7 @@ function setupCanvasClicks() {
     // is where the keyboard will write.
     if (picking || state.readOnly) {
       markSelection();
-      status(`Measure ${hit.measure + 1}`);
+      status(`Measure ${barNumberOf(hit.measure)}`);
       return;
     }
     await insertAtSelection(state.tool.rest, false);
@@ -3320,7 +3361,7 @@ function selectRange(from, to) {
   markSelection();
   status(state.multi.length === 1
     ? "1 selected"
-    : `${state.multi.length} selected \u2014 measures ${a.measure + 1}\u2013${b.measure + 1}`);
+    : `${state.multi.length} selected \u2014 measures ${barNumberOf(a.measure)}\u2013${barNumberOf(b.measure)}`);
 }
 
 // selectDynamic picks up a dynamic marking.
@@ -3381,7 +3422,7 @@ function selectTempo(t) {
   markSelection();
   status(t.measure === 0
     ? `${t.label} — the speed the piece starts at`
-    : `${t.label} at bar ${t.measure + 1} — press Backspace to take it away`);
+    : `${t.label} at bar ${barNumberOf(t.measure)} — press Backspace to take it away`);
 }
 
 // selectHairpin picks up a swell.
@@ -3394,6 +3435,24 @@ function selectHairpin(h) {
   };
   markSelection();
   status(`${h.kind} \u2014 press Backspace to take it away`);
+}
+
+// selectTremolo picks up the mark between two notes.
+//
+// What is picked up is the first of the two, because that is the note the
+// mark is written on and the note every command that touches it names —
+// taking it off either end takes off the whole of it. The box, though, goes
+// round the beams, because the beams are what was clicked.
+function selectTremolo(t) {
+  state.multi = [];
+  state.anchor = state.focus = null;
+  state.selection = {
+    part: t.part, measure: t.measure, ref: t.from,
+    at: 0, step: 0, tremolo: t,
+  };
+  markSelection();
+  const beams = t.beams === 1 ? "one beam" : `${t.beams} beams`;
+  status(`Two-note tremolo, ${beams} \u2014 press Backspace to take it away`);
 }
 
 // selectMeasure picks up a whole bar rather than a note in it.
@@ -3414,7 +3473,7 @@ function selectMeasure(part, measure) {
   const has = [];
   if (hit?.keyChange) has.push("a key change");
   if (hit?.timeChange) has.push("a meter change");
-  status(`Measure ${measure + 1}` +
+  status(`Measure ${barNumberOf(measure)}` +
     (has.length ? ` — ${has.join(" and ")} here` : "") +
     " · Score ▸ Key or Time applies from here");
 }
@@ -3447,7 +3506,7 @@ function select(hit, el, step) {
   };
   markSelection();
   updateFingering();
-  status(`Selected ${el.kind} ${el.index + 1} of measure ${hit.measure + 1}`);
+  status(`Selected ${el.kind} ${el.index + 1} of measure ${barNumberOf(hit.measure)}`);
 }
 
 function clearSelection() {
@@ -3548,7 +3607,7 @@ async function insertAtSelection(rest, keepSelection) {
     const name = drumName(state.tool.drum, sel.step);
     if (name) what = name + ", " + state.tool.duration;
   }
-  status(moved ? `${what} — measure ${sel.measure + 1}` : what + " inserted");
+  status(moved ? `${what} — measure ${barNumberOf(sel.measure)}` : what + " inserted");
   void keepSelection;
 }
 
@@ -3605,6 +3664,30 @@ async function deleteSelected() {
     status(`${hair.kind} removed`);
     return;
   }
+  // A tremolo was picked up by clicking its beams. Both of its notes go
+  // back to being notes: half a mark draws nothing and plays as an ordinary
+  // note, but it is still in the file for the next thing written beside it
+  // to pair with.
+  const trem = state.selection?.tremolo;
+  if (trem && !state.multi.length) {
+    const first = refTarget(trem.from);
+    if (!first) {
+      status("Could not find that tremolo any more");
+      return;
+    }
+    const res = await fetch(
+      "/api/tremolo?strokes=0&sel=" + encodeURIComponent(first),
+      { method: "POST" });
+    if (!res.ok) {
+      status("Could not remove it: " + (await res.text()).trim());
+      return;
+    }
+    state.selection.tremolo = null;
+    await refreshScore();
+    status("Tremolo removed");
+    return;
+  }
+
   // A tempo marking was picked up by clicking it, so it is the change that
   // goes and the bar carries on at the speed it had before.
   const atBar = state.selection?.tempo;
@@ -3674,8 +3757,8 @@ async function deleteSelected() {
     const d = await res.json().catch(() => ({}));
     await refreshScore();
     status(d.removed
-      ? `Measure ${sel.measure + 1} emptied — ${d.removed} removed`
-      : `Measure ${sel.measure + 1} was already empty`);
+      ? `Measure ${barNumberOf(sel.measure)} emptied — ${d.removed} removed`
+      : `Measure ${barNumberOf(sel.measure)} was already empty`);
     return;
   }
 
@@ -3786,6 +3869,14 @@ function markSelection() {
     const h = sel.hairpin;
     svg.insertBefore(
       selectionRect(h.x - 0.3, h.y - 0.5, h.width + 0.6, h.height + 1.0, z),
+      svg.firstChild);
+    return;
+  }
+
+  if (sel.tremolo) {
+    const t = sel.tremolo;
+    svg.insertBefore(
+      selectionRect(t.x - 0.4, t.y - 0.4, t.width + 0.8, t.height + 0.8, z),
       svg.firstChild);
     return;
   }
@@ -4122,8 +4213,8 @@ async function setJump(what, label) {
   }
   await refreshScore();
   const none = what.sign === "none" || what.jump === "none";
-  status(none ? `Cleared at measure ${sel.measure + 1}`
-              : `${label.split(" \u2014 ")[0]} at measure ${sel.measure + 1}`);
+  status(none ? `Cleared at measure ${barNumberOf(sel.measure)}`
+              : `${label.split(" \u2014 ")[0]} at measure ${barNumberOf(sel.measure)}`);
 }
 
 // A slur arcs over a passage and a tie joins neighbours, so both want a range
@@ -4157,7 +4248,11 @@ async function setTie(what, head) {
 }
 
 // A tremolo is a mark on the note, so it goes through the same door as the
-// rest of them.
+// rest of them — including the selection, which is what the two-note form
+// is asked for with: pick the two notes the beams go between. One note
+// still works, pairing with whatever is written next to it, but having to
+// know that is having to know how the file is stored rather than what the
+// mark means.
 const tremoloNames = ["no tremolo", "one slash", "two slashes", "three slashes",
                       "four slashes", "five slashes"];
 
@@ -5070,7 +5165,7 @@ async function setTimeDialog(at) {
   const where = $("#timesig-where");
   if (where) {
     where.textContent = measure > 0
-      ? `From measure ${measure + 1} to the end, on every staff.`
+      ? `From measure ${barNumberOf(measure)} to the end, on every staff.`
       : "For the whole piece, on every staff.";
   }
   const hitHere = state.hits.find(
@@ -5107,7 +5202,7 @@ async function setTimeDialog(at) {
       return;
     }
     await refreshScore();
-    status(`The meter change at measure ${measure + 1} is gone`);
+    status(`The meter change at measure ${barNumberOf(measure)} is gone`);
     return;
   }
 
@@ -5132,7 +5227,7 @@ async function setTimeDialog(at) {
   }
   await refreshScore();
   status(measure > 0
-    ? `${meter} from measure ${measure + 1}, on every staff`
+    ? `${meter} from measure ${barNumberOf(measure)}, on every staff`
     : `${meter}, on every staff`);
 }
 
@@ -5155,7 +5250,7 @@ async function setInstrumentDialog() {
 // openBarlinePicker asks what the clicked barline should be.
 async function openBarlinePicker(bar) {
   const v = await ask({
-    title: `Barline after measure ${bar.measure + 1}`,
+    title: `Barline after measure ${barNumberOf(bar.measure)}`,
     label: "Draw it as",
     value: bar.style,
     note: "A repeat sends the player back to the matching open repeat.",
@@ -5183,7 +5278,7 @@ async function openBarlinePicker(bar) {
     }
     clearSelection();
     await refreshScore();
-    status(`Measures ${bar.measure + 1} and ${bar.measure + 2} are now one`);
+    status(`Measures ${barNumberOf(bar.measure)} and ${barNumberOf(bar.measure + 1)} are now one`);
     return;
   }
 
@@ -5579,7 +5674,7 @@ async function markerDialog() {
   }
   // The next letter, so marks run A, B, C without being typed each time.
   const v = await ask({
-    title: `Rehearsal mark at measure ${sel.measure + 1}`,
+    title: `Rehearsal mark at measure ${barNumberOf(sel.measure)}`,
     label: "Mark",
     value: nextMarkerLetter(),
     note: "Written over every staff, because “from B” has to mean the same " +
@@ -6126,7 +6221,7 @@ async function openKeyPicker(partIndex, at) {
   // that did nothing, unless something says which bar it was.
   const measure = at !== undefined ? at : (state.selection?.measure ?? 0);
   $("#keysig-where").textContent = measure > 0
-    ? `From measure ${measure + 1} to the end, on every staff.`
+    ? `From measure ${barNumberOf(measure)} to the end, on every staff.`
     : "For the whole piece, on every staff.";
 
   // What the staff is in now: where the slider starts, and what a change at
@@ -6192,7 +6287,7 @@ async function openKeyPicker(partIndex, at) {
       return;
     }
     await reload();
-    status(`The key change at measure ${measure + 1} is gone`);
+    status(`The key change at measure ${barNumberOf(measure)} is gone`);
     return;
   }
   if (result !== "ok") return;
@@ -6210,7 +6305,7 @@ async function openKeyPicker(partIndex, at) {
   await reload();
   const named = keyOptions.find((k) => k.fifths === fifths);
   status(measure > 0
-    ? `${named ? named.major + " major" : "Key"} from measure ${measure + 1}, on every staff`
+    ? `${named ? named.major + " major" : "Key"} from measure ${barNumberOf(measure)}, on every staff`
     : `${named ? named.major + " major" : "Key"}, on every staff`);
 }
 
@@ -7954,19 +8049,6 @@ function setupPanning() {
   });
 }
 
-// Holding Shift turns the pointer into the selecting one, so the gesture is
-// visible before it is used.
-function setupShiftHint() {
-  const apply = (on) => document.body.classList.toggle("shift-select", on);
-  window.addEventListener("keydown", (e) => {
-    if (e.key === "Shift") apply(true);
-  });
-  window.addEventListener("keyup", (e) => {
-    if (e.key === "Shift") apply(false);
-  });
-  window.addEventListener("blur", () => apply(false));
-}
-
 function setupZoomGestures() {
   // Ctrl or Command with the wheel zooms, which is what every other canvas
   // does; without the modifier the wheel scrolls as usual.
@@ -8690,8 +8772,8 @@ function moveCursorBy(delta) {
   markSelection();
   scrollSelectionIntoView();
   status(p.ref === null
-    ? `Measure ${p.measure + 1} — nothing written here yet`
-    : `Measure ${p.measure + 1}, note ${p.index + 1}`);
+    ? `Measure ${barNumberOf(p.measure)} — nothing written here yet`
+    : `Measure ${barNumberOf(p.measure)}, note ${p.index + 1}`);
 }
 
 // scrollSelectionIntoView keeps the cursor on screen as it walks the music.
@@ -8702,18 +8784,65 @@ function moveCursorBy(delta) {
 // A long piece is a long way to scroll. Hunting for bar 184 by dragging is
 // the kind of thing a computer should be doing, and it is the first thing
 // anybody wants after being told "from bar 184" across a rehearsal room.
+/* ---------- movements ---------- */
+
+// Bars are numbered from one in every movement, so a bar number means
+// nothing without saying which movement it is in.
+//
+// Going to bar four of the Presto is what somebody standing in the Presto
+// means by "go to bar four" — it is the number printed over the bar they
+// are looking at. Counted from the first bar of the whole sonata it took
+// them to the Adagio, two movements back.
+
+// movementAt is the movement a bar belongs to, or null in a score that has
+// only one — which is every ordinary score, and where none of this applies.
+function movementAt(measure) {
+  const all = state.info?.movements || [];
+  if (all.length < 2) return null;
+  for (const m of all) {
+    if (measure >= m.first && measure <= m.last) return m;
+  }
+  return all[all.length - 1];
+}
+
+// movementHere is the movement the cursor is standing in.
+function movementHere() {
+  return movementAt(state.selection?.measure ?? 0);
+}
+
+// barNumberOf is the number printed over a bar: its place in its own
+// movement.
+function barNumberOf(measure) {
+  const m = movementAt(measure);
+  return measure - (m ? m.first : 0) + 1;
+}
+
+// barIndexOf turns a number somebody typed back into a bar of the score,
+// within the movement they are standing in.
+function barIndexOf(n, movement) {
+  return (movement ? movement.first : 0) + n - 1;
+}
+
 async function jumpToMeasure() {
   const total = measureCount();
   if (!total) {
     status("There is nothing to go to yet");
     return;
   }
-  const here = (state.selection?.measure ?? 0) + 1;
+  // Within the movement the cursor is in, because that is what the numbers
+  // over the bars say.
+  const where = movementHere();
+  const last = where ? where.last - where.first + 1 : total;
+  const named = where && where.title ? ` of ${where.title}` : "";
+
   const answer = await ask({
     title: "Go to measure",
-    label: `Measure number (1 to ${total})`,
-    value: String(here),
-    note: "The score is numbered from the first full bar.",
+    label: `Measure number (1 to ${last})${named}`,
+    value: String(barNumberOf(state.selection?.measure ?? 0)),
+    note: where
+      ? `${where.title || "This movement"} is numbered from its own first ` +
+        `full bar, as it is on the page.`
+      : "The score is numbered from the first full bar.",
   });
   if (answer === null) return;
 
@@ -8722,11 +8851,12 @@ async function jumpToMeasure() {
     status("That is not a measure number");
     return;
   }
-  if (n > total) {
-    status(`There are only ${total} measures`);
+  if (n > last) {
+    status(`There ${last === 1 ? "is" : "are"} only ${last} measure` +
+           `${last === 1 ? "" : "s"}${named}`);
     return;
   }
-  await goToMeasure(n - 1);
+  await goToMeasure(barIndexOf(n, where));
 }
 
 // measureCount is how many bars the part being written in has.
@@ -8739,16 +8869,26 @@ function measureCount() {
 }
 
 // goToMeasure moves the page to a bar, selects it and says where it landed.
+//
+// It takes a bar of the score, not a number somebody typed: everything else
+// the editor holds — the clickable regions, the performance, the cursor —
+// counts bars from the beginning of the file, and only what is written on
+// the page and typed into the box is counted from the movement.
 async function goToMeasure(index) {
   const box = measureBox(index);
   if (!box) {
-    status(`Measure ${index + 1} is not on the page`);
+    status(`Measure ${barNumberOf(index)} is not on the page`);
     return;
   }
   selectMeasure(state.selection?.part ?? 0, index);
   await glideTo(box);
+  // The view has moved a long way, so the pieces under it are different
+  // ones.
+  await ensureTiles();
   flashMeasure(box);
-  status(`Measure ${index + 1}`);
+  const where = movementAt(index);
+  status(`Measure ${barNumberOf(index)}` +
+         (where && where.title ? ` — ${where.title}` : ""));
 }
 
 // glideTo scrolls the view to a box, over time rather than in one jump.
@@ -9059,7 +9199,6 @@ async function main() {
   setupPanning();
   setupMarquee();
   setupSymbolDragging();
-  setupShiftHint();
   setupFollowRelease();
   setupFullscreen();
   setupCanvasClicks();

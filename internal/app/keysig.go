@@ -146,6 +146,10 @@ func (a *App) handleKeySigSVG(w http.ResponseWriter, r *http.Request) {
 	ropt := svg.DefaultOptions()
 	ropt.StaffSpace = space
 	ropt.EmbedFont = false
+	// Put straight into the page beside the score, so its stylesheet is
+	// kept to itself: an inline <svg> hands its rules to the whole page,
+	// and these are drawn at the picker's own size.
+	ropt.Scope = "keysig"
 
 	w.Header().Set("Content-Type", "image/svg+xml")
 	w.Header().Set("Cache-Control", "max-age=3600")
@@ -283,6 +287,9 @@ func (a *App) handleTimeSigSVG(w http.ResponseWriter, r *http.Request) {
 	ropt := svg.DefaultOptions()
 	ropt.StaffSpace = space
 	ropt.EmbedFont = false
+	// Several of these go into the picker at once, and all of them into
+	// the page the score is drawn in. Their rules stay on them.
+	ropt.Scope = "timesig"
 
 	w.Header().Set("Content-Type", "image/svg+xml")
 	w.Header().Set("Cache-Control", "max-age=3600")
@@ -370,6 +377,8 @@ func (a *App) handleChordPreview(w http.ResponseWriter, r *http.Request) {
 	ropt := svg.DefaultOptions()
 	ropt.StaffSpace = space
 	ropt.EmbedFont = false
+	// Inline in the page, like the other pictures.
+	ropt.Scope = "chord"
 
 	w.Header().Set("Content-Type", "image/svg+xml")
 	w.Header().Set("Cache-Control", "no-store")

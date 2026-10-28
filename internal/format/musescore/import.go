@@ -49,10 +49,57 @@ func Import(r io.Reader) (*model.Score, error) {
 	for _, p := range s.Parts {
 		balanceSlurs(p)
 	}
+	breakTiesAtMovements(s)
 	if len(rd.skipped) > 0 {
 		return s, &PartialError{Skipped: rd.skipped}
 	}
 	return s, nil
+}
+
+// breakTiesAtMovements unties a note held across the end of a movement.
+//
+// A held note does not survive the piece it is held in: the Allegretto ends
+// and the Presto begins, in another key and another meter, and nothing is
+// still ringing from before.
+//
+// Done here rather than while the staves are read, because where the
+// movements divide is written on one staff and belongs to all of them —
+// MuseScore puts the break on the first staff and the rest of the score
+// never hears about it.
+func breakTiesAtMovements(s *model.Score) {
+	secs := s.Sections()
+	if len(secs) < 2 {
+		return
+	}
+	last := map[int]bool{}
+	for _, sec := range secs[:len(secs)-1] {
+		last[sec.Last] = true
+	}
+	for _, p := range s.Parts {
+		for mi, m := range p.Measures {
+			if !last[mi] {
+				continue
+			}
+			for _, v := range m.Voices {
+				for _, el := range v.Elements {
+					for _, n := range tiedNotesOf(el) {
+						n.TieStart = false
+					}
+				}
+			}
+		}
+	}
+}
+
+// tiedNotesOf is the noteheads of an element that can carry a tie.
+func tiedNotesOf(el model.Element) []*model.Note {
+	switch n := el.(type) {
+	case *model.Note:
+		return []*model.Note{n}
+	case *model.Chord:
+		return n.Notes
+	}
+	return nil
 }
 
 // balanceSlurs drops a slur that has only one of its two ends.
@@ -349,6 +396,27 @@ type msStaff struct {
 	// the bar it is written in, so the bar's own start has to be subtracted
 	// from it — and the only way to know that is to have been counting.
 	tick int
+
+	// clefWait is a change of clef that has not reached a note yet.
+	//
+	// MuseScore writes the change at the tick it happens, and a change
+	// that happens at a barline is written after the last note of the bar
+	// before — where it is also drawn, as a warning to the player. There
+	// is no note left in that bar to carry it, so it was dropped: the
+	// Moonlight sonata's left hand went up to the treble in bar 189 and
+	// never came back, and ninety bars of it were drawn two clefs low,
+	// five and six ledger lines under the staff.
+	clefWait *model.Clef
+
+	// spans are the long marks a MuseScore 1 or 2 file has opened and not
+	// closed yet, by the id its <endSpanner> will name.
+	spans map[string]*msSpan
+
+	// lastEl is the last note or rest read on this staff, in whichever bar
+	// and voice it fell. An <endSpanner> is written at the tick where the
+	// mark stops, which is often the first thing in the bar after it, so
+	// the note it ends on can be in the bar before.
+	lastEl model.Element
 
 	// title is a movement's name, waiting for the bar it belongs to.
 	//
@@ -675,30 +743,76 @@ func closeTies(measures []*model.Measure) {
 	}
 	for v := 0; v < most; v++ {
 		var seq []model.Element
-		for _, m := range measures {
+		// Which bar each of them is in, because how far apart two notes are
+		// is what says whether one can be tied to the other.
+		var at []int
+		for mi, m := range measures {
 			if v < len(m.Voices) && m.Voices[v] != nil {
-				seq = append(seq, m.Voices[v].Elements...)
+				for _, el := range m.Voices[v].Elements {
+					seq = append(seq, el)
+					at = append(at, mi)
+				}
 			}
 		}
-		closeTieRun(seq)
+		closeTieRun(seq, at)
 	}
 }
 
+// nextBarAlong says the note after this one is near enough to be tied to.
+//
+// A tie joins a note to the one that follows it, so the two are in the same
+// bar or on either side of one barline and never further apart. "The next
+// element of this voice" is not the same thing: a voice that stops and
+// starts again leaves a gap, and the next element after the gap may be
+// anywhere.
+//
+// The left hand of the Moonlight sonata has a voice that holds a note in
+// bar 131 and does not appear again until bar 142, in the next movement.
+// The tie was drawn the whole way — a line across two systems and through
+// two staves of music, from a note in the Allegretto to one in the Presto.
+func nextBarAlong(at []int, i int) bool {
+	return i+1 < len(at) && at[i+1]-at[i] <= 1
+}
+
 // closeTieRun marks the far end of every tie in one run of a voice.
-func closeTieRun(seq []model.Element) {
-	// Only ever adding a stop, never taking a start away. A tie whose note
-	// is not there — the last note of an excerpt, a tie across a repeat —
-	// is left as the file wrote it, because guessing that a file is wrong
-	// is how an importer loses music somebody meant.
+func closeTieRun(seq []model.Element, at []int) {
+	// A tie with nothing to tie to is not drawn.
+	//
+	// It used to be left as the file wrote it, on the reasoning that
+	// guessing a file is wrong is how an importer loses music somebody
+	// meant. That is true of the music and false of the drawing: a tie the
+	// engraver cannot close is carried to the right margin of its system
+	// and begun again on the next, and the next, to the end of the piece.
+	// The left hand of the Moonlight sonata has one — a voice that holds a
+	// note in bar 131 and does not appear again until bar 142, in another
+	// movement — and it was drawn as a line through two staves of the
+	// Presto.
+	//
+	// So the start goes with the stop: either the tie has both ends or it
+	// has neither.
 	for i, el := range seq {
 		notes, whole := tieNotes(el)
+		made := false
 		for _, n := range notes {
 			if !n.TieStart && !whole {
 				continue
 			}
-			if to := tieTarget(seq, i+1, n.Pitch); to != nil {
-				to.TieStop = true
+			var to *model.Note
+			if nextBarAlong(at, i) {
+				to = tieTarget(seq, i+1, n.Pitch)
 			}
+			if to != nil {
+				to.TieStop = true
+				made = true
+				continue
+			}
+			n.TieStart = false
+		}
+		// A chord may be tied as a whole rather than notehead by notehead.
+		// Where not one of its notes found anywhere to go, the chord has
+		// nothing left to say either.
+		if c, ok := el.(*model.Chord); ok && c.TieStart && !made {
+			c.TieStart = false
 		}
 	}
 }
@@ -859,12 +973,106 @@ func (r *reader) measure(doc *document, st *msStaff) error {
 	}
 	start := st.tick
 	var loose *voiceState // MuseScore 2 wrote voice one without a wrapper
+	at := -1              // where <tick> last asked for; -1 is "after the note before"
 	startRepeat := false
+
+	// fresh opens a voice, handing the first one of the bar any change of
+	// clef the bar before ran out of notes to carry.
+	carried := false
+	fresh := func() *voiceState {
+		vs := newVoice(m)
+		if !carried && st.clefWait != nil {
+			carried = true
+			clef := *st.clefWait
+			vs.pending = append(vs.pending, func(mk *model.Marks) {
+				mk.Clef = &clef
+				st.clefWait = nil
+			})
+		}
+		return vs
+	}
+
+	// place moves the write position to where the last <tick> asked for.
+	//
+	// MuseScore 2 and earlier write <tick> before anything whose place in
+	// the bar is not simply "after the note before it", and a rewind to
+	// somewhere earlier is how they begin the bar's next voice. Acting on
+	// every one of them cut bars into pieces: a hairpin that ends halfway
+	// through a dotted half is written with a <tick> too, and the voice it
+	// belonged to was closed under it and the mark thrown away with it.
+	// Only a tick that a note or a rest follows moves anything.
+	// queued are the long marks read since the last <tick>, waiting for
+	// the voice that tick opens. MuseScore writes them at the position the
+	// tick names, and until a note or a rest arrives there it is not known
+	// whether that position belongs to the voice already here or begins
+	// the next one.
+	var queued []func(*voiceState)
+
+	place := func() {
+		n := at
+		at = -1
+		filled := 0
+		if loose != nil {
+			filled = voiceTicks(loose.v)
+		}
+		switch {
+		case loose == nil || (n >= 0 && n < filled):
+			// A rewind: the bar's next voice starts here. Instead of
+			// wrapping each in <voice>, MuseScore 2 writes them one after
+			// another inside the bar and rewinds before each. Read
+			// straight through, the second voice was laid end to end
+			// after the first and the bar came out holding twice the
+			// music it should — which is what put the two staves of a
+			// piano out of step with each other, and why a bar of
+			// three-four could hold five notes.
+			if loose != nil {
+				r.closeVoice(loose)
+				m.Voices = append(m.Voices, loose.v)
+			}
+			loose = fresh()
+			// A voice that comes in part way through the bar is spaced to
+			// its entry by a rest that takes room without being printed.
+			// MuseScore leaves those rests out: the voice below is
+			// already holding that beat and a second rest on top of it
+			// would only be something else to read.
+			if d, ok := tickDuration(n); ok && n > 0 {
+				loose.v.Elements = append(loose.v.Elements,
+					&model.Rest{Dur: d, Hidden: true})
+			}
+		case n > filled:
+			// A gap in the voice that is already here, spaced the same way.
+			if d, ok := tickDuration(n - filled); ok {
+				loose.v.Elements = append(loose.v.Elements,
+					&model.Rest{Dur: d, Hidden: true})
+			}
+		}
+		for _, f := range queued {
+			f(loose)
+		}
+		queued = nil
+	}
+
+	// apply gives a long mark the voice it belongs to, which is the voice
+	// at the write position — and while a <tick> is still waiting, that
+	// voice may not have been made yet. Bar 54 of the Moonlight sonata
+	// opens a crescendo on the left hand at the first beat, behind a right
+	// hand that already fills the bar: read against the voice standing
+	// there, the mark was thrown away when that voice was closed.
+	apply := func(f func(*voiceState)) {
+		if at >= 0 {
+			queued = append(queued, f)
+			return
+		}
+		if loose == nil {
+			loose = fresh()
+		}
+		f(loose)
+	}
 
 	err := r.children(func(c xml.StartElement) error {
 		switch c.Name.Local {
 		case "voice":
-			vs := newVoice(m)
+			vs := fresh()
 			if err := r.voice(doc, st, vs); err != nil {
 				return err
 			}
@@ -880,29 +1088,7 @@ func (r *reader) measure(doc *document, st *msStaff) error {
 			// by: by bar forty a tick taken as an offset put thirty-nine
 			// whole notes of silence in front of the voice, and the bar was
 			// drawn forty times too wide with its notes at either end.
-			n -= start
-			// Where the voices of a bar come from in MuseScore 2 and
-			// earlier. Instead of wrapping each in <voice>, it writes them
-			// one after another inside the bar and rewinds the write
-			// position with <tick> before each. Read straight through, the
-			// second voice was laid end to end after the first and the bar
-			// came out holding twice the music it should — which is what
-			// put the two staves of a piano out of step with each other,
-			// and why a bar of three-four could hold five notes.
-			if loose != nil {
-				r.closeVoice(loose)
-				m.Voices = append(m.Voices, loose.v)
-			}
-			loose = newVoice(m)
-			// A voice that comes in part way through the bar is spaced to
-			// its entry by a rest that takes room without being printed.
-			// MuseScore leaves those rests out: the voice below is already
-			// holding that beat and a second rest on top of it would only
-			// be something else to read.
-			if d, ok := tickDuration(n); ok {
-				loose.v.Elements = append(loose.v.Elements,
-					&model.Rest{Dur: d, Hidden: true})
-			}
+			at = n - start
 			return nil
 		case "startRepeat":
 			startRepeat = true
@@ -949,14 +1135,30 @@ func (r *reader) measure(doc *document, st *msStaff) error {
 			"sysInitBarLineType", "lineBreak", "pageBreak", "StaffTypeChange":
 			return r.dec.Skip()
 		default:
-			if loose == nil {
-				loose = newVoice(m)
+			f, err := r.oldSpan(st, c)
+			if err != nil {
+				return err
 			}
+			if f != nil {
+				apply(f)
+				return nil
+			}
+			place()
 			return r.voiceElement(doc, st, loose, c)
 		}
 	})
 	if err != nil {
 		return err
+	}
+	if len(queued) > 0 {
+		// A mark written after the bar's last note, where no tick of its
+		// own ever arrived. It belongs to the music that is there.
+		if loose == nil {
+			loose = fresh()
+		}
+		for _, f := range queued {
+			f(loose)
+		}
 	}
 	if loose != nil {
 		r.closeVoice(loose)
@@ -968,17 +1170,13 @@ func (r *reader) measure(doc *document, st *msStaff) error {
 	// Carry the count on to the next bar. The bar's length is the longest
 	// of its voices: they all fill it, and whichever reaches furthest says
 	// how far it reaches.
-	longest := model.Duration{Num: 0, Den: 1}
+	longest := 0
 	for _, v := range m.Voices {
-		total := model.Duration{Num: 0, Den: 1}
-		for _, el := range v.Elements {
-			total = total.Add(el.Duration())
-		}
-		if total.Cmp(longest) > 0 {
-			longest = total
+		if n := voiceTicks(v); n > longest {
+			longest = n
 		}
 	}
-	st.tick += durationTicks(longest)
+	st.tick += longest
 	if startRepeat {
 		// A repeat opens on the barline between this bar and the one before
 		// it, and gscore keeps a barline on the bar it closes.
@@ -1159,12 +1357,14 @@ func (r *reader) voiceElement(doc *document, st *msStaff, vs *voiceState, e xml.
 		if err := r.chord(st, vs); err != nil {
 			return err
 		}
+		st.lastEl = vs.last
 		r.endOctave(st)
 		return nil
 	case "Rest":
 		if err := r.rest(vs); err != nil {
 			return err
 		}
+		st.lastEl = vs.last
 		r.endOctave(st)
 		return nil
 	case "Clef":
@@ -1199,6 +1399,16 @@ func (r *reader) voiceElement(doc *document, st *msStaff, vs *voiceState, e xml.
 		return r.barLine(vs.m)
 	case "Spanner":
 		return r.spanner(st, vs, attr(e, "type"))
+	case "HairPin", "Ottava", "Volta", "Pedal", "TextLine", "Trill",
+		"LetRing", "PalmMute", "Vibrato", "endSpanner", "Slur":
+		f, err := r.oldSpan(st, e)
+		if err != nil {
+			return err
+		}
+		if f != nil {
+			f(vs)
+		}
+		return nil
 	case "Tuplet":
 		return r.tuplet(vs)
 	case "endTuplet":
@@ -1211,7 +1421,7 @@ func (r *reader) voiceElement(doc *document, st *msStaff, vs *voiceState, e xml.
 		"visible", "Ambitus", "FretDiagram", "InstrumentChange", "Marker",
 		"Jump", "StaffTypeChange", "noOffset", "stretch", "Segment",
 		"vspacerUp", "vspacerDown", "vspacerFixed", "measureNumberMode",
-		"MeasureNumber", "endSpanner", "SystemDivider", "Spacer":
+		"MeasureNumber", "SystemDivider", "Spacer":
 		// Furniture: how the page is laid out, what is linked to what, and
 		// the file's own bookkeeping. None of it is music, and reporting it
 		// would bury what is.
@@ -1266,10 +1476,12 @@ func (r *reader) clef(st *msStaff, vs *voiceState) error {
 		// note at that tick, which may be anywhere in the bar. Altes puts
 		// four of them in two bars, so that the right hand can take a
 		// phrase in the bass and come back without a ledger line in sight.
+		clef := k
+		st.clefWait = &clef
 		if vs != nil {
-			clef := k
 			vs.pending = append(vs.pending, func(m *model.Marks) {
 				m.Clef = &clef
+				st.clefWait = nil
 			})
 		}
 		return nil
@@ -1680,11 +1892,7 @@ func (r *reader) spanner(st *msStaff, vs *voiceState, kind string) error {
 			vs.markNext(func(m *model.Marks) { m.SlurStop = true })
 		}
 	case "HairPin":
-		h := &model.Hairpin{Kind: model.Crescendo, Start: start, Stop: stop}
-		if sub == "1" || sub == "3" {
-			h.Kind = model.Diminuendo
-		}
-		vs.hairpin = h
+		vs.hairpin = &model.Hairpin{Kind: hairpinKind(sub), Start: start, Stop: stop}
 	case "Ottava":
 		amount, ok := octaveAmounts[sub]
 		if !ok {
@@ -1716,6 +1924,182 @@ func (r *reader) spanner(st *msStaff, vs *voiceState, kind string) error {
 		r.report("a %s spanner is not read", kind)
 	}
 	return nil
+}
+
+// msSpan is a long mark opened in a MuseScore 1 or 2 file and waiting for
+// the <endSpanner> that closes it.
+type msSpan struct {
+	kind  string
+	sub   string
+	label string
+	at    model.Element // the last note read when it opened
+}
+
+// oldSpan reads a long mark the way MuseScore 1 and 2 wrote one.
+//
+// Those versions open the mark in the bar where it starts, name it with an
+// id, and close it with an <endSpanner> of the same id at the tick where it
+// stops — often a bar or more later. MuseScore 3 replaced the pair with a
+// single <Spanner> written at both ends, and that was the only form this
+// reader knew: the Moonlight sonata came in with all ninety-eight of its
+// hairpins, both of its voltas and every one of its trills missing, and the
+// file said so in four lines of warning that named no bar.
+//
+// What it hands back puts the mark on a voice, which is a step the caller
+// has to take later: the mark is written at a position, and which voice
+// that position belongs to is only known once a note arrives there. It
+// returns nil, having read nothing, for an element that is not one of these
+// marks.
+func (r *reader) oldSpan(st *msStaff, e xml.StartElement) (func(*voiceState), error) {
+	switch e.Name.Local {
+	case "Slur":
+		// MuseScore 1 and 2 write the slur's shape here and its two ends
+		// on the chords it joins, where they are read. There is no music
+		// in this one.
+		return func(*voiceState) {}, r.dec.Skip()
+	case "endSpanner":
+		id := attr(e, "id")
+		if err := r.dec.Skip(); err != nil {
+			return nil, err
+		}
+		return func(vs *voiceState) { r.closeSpan(st, vs, id) }, nil
+	case "HairPin", "Ottava", "Volta", "Pedal", "TextLine", "Trill",
+		"LetRing", "PalmMute", "Vibrato":
+	default:
+		return nil, nil
+	}
+
+	sp := &msSpan{kind: e.Name.Local, at: st.lastEl}
+	err := r.children(func(c xml.StartElement) error {
+		switch c.Name.Local {
+		case "subtype":
+			s, err := r.text()
+			sp.sub = s
+			return err
+		case "endings":
+			s, err := r.text()
+			if sp.label == "" {
+				sp.label = s
+			}
+			return err
+		case "beginText":
+			// <beginText><text>1.</text></beginText>
+			s, err := r.innerText()
+			if sp.label == "" {
+				sp.label = s
+			}
+			return err
+		default:
+			return r.dec.Skip()
+		}
+	})
+	if err != nil {
+		return nil, err
+	}
+	if id := attr(e, "id"); id != "" {
+		if st.spans == nil {
+			st.spans = map[string]*msSpan{}
+		}
+		st.spans[id] = sp
+	}
+	return func(vs *voiceState) { r.openSpan(st, vs, sp) }, nil
+}
+
+// openSpan hangs the mark's opening on the note that is coming.
+func (r *reader) openSpan(st *msStaff, vs *voiceState, sp *msSpan) {
+	switch sp.kind {
+	case "HairPin":
+		vs.hairpin = &model.Hairpin{Kind: hairpinKind(sp.sub), Start: true}
+	case "Ottava":
+		amount, ok := octaveAmounts[sp.sub]
+		if !ok {
+			amount = 1
+		}
+		vs.octave = &model.OctaveShift{Amount: amount, Start: true}
+		st.octave = amount
+	case "Trill":
+		vs.markNext(func(m *model.Marks) {
+			if m.Trill == nil {
+				m.Trill = &model.Trill{}
+			}
+			m.Trill.Start = true
+		})
+	case "Volta":
+		volta(vs.m, sp.label, true, false)
+	default:
+		r.report("a %s spanner is not read", sp.kind)
+	}
+}
+
+// closeSpan ends the mark an <endSpanner> names.
+func (r *reader) closeSpan(st *msStaff, vs *voiceState, id string) {
+	sp := st.spans[id]
+	if sp == nil {
+		return
+	}
+	delete(st.spans, id)
+	if sp.kind == "Volta" {
+		// A volta's end is written at the tick where the bracket stops,
+		// which is the start of the bar after the one it covers: the
+		// bracket is over bar 65 and the <endSpanner> is the first thing
+		// in bar 66. Anywhere else in a bar and it is that bar's own.
+		m := vs.m
+		if vs.last == nil && len(st.measures) > 0 {
+			m = st.measures[len(st.measures)-1]
+		}
+		volta(m, sp.label, false, true)
+		return
+	}
+	marks := marksOf(st.lastEl)
+	if marks == nil || st.lastEl == sp.at {
+		// Nothing was written between the two ends, so the note the
+		// opening is still waiting for carries the closing as well.
+		switch sp.kind {
+		case "HairPin":
+			if vs.hairpin != nil {
+				vs.hairpin.Stop = true
+			}
+		case "Ottava":
+			if vs.octave != nil {
+				vs.octave.Stop = true
+			}
+		case "Trill":
+			vs.markNext(func(m *model.Marks) {
+				if m.Trill == nil {
+					m.Trill = &model.Trill{}
+				}
+				m.Trill.Stop = true
+			})
+		}
+		return
+	}
+	switch sp.kind {
+	case "HairPin":
+		if marks.Hairpin == nil {
+			marks.Hairpin = &model.Hairpin{Kind: hairpinKind(sp.sub)}
+		}
+		marks.Hairpin.Stop = true
+	case "Ottava":
+		if marks.Octave == nil {
+			marks.Octave = &model.OctaveShift{Amount: st.octave}
+		}
+		marks.Octave.Stop = true
+		st.octaveEnds = true
+	case "Trill":
+		if marks.Trill == nil {
+			marks.Trill = &model.Trill{}
+		}
+		marks.Trill.Stop = true
+	}
+}
+
+// hairpinKind reads which way the wedge opens. MuseScore numbers them
+// crescendo, diminuendo, and then the same two again written as text.
+func hairpinKind(sub string) model.HairpinKind {
+	if sub == "1" || sub == "3" {
+		return model.Diminuendo
+	}
+	return model.Crescendo
 }
 
 // markNext remembers a mark for the next note in the voice.
@@ -1948,9 +2332,9 @@ func (r *reader) chord(st *msStaff, vs *voiceState) error {
 			"grace32after":
 			ch.grace = true
 			return r.dec.Skip()
-		case "Tremolo", "TremoloSingleChord":
+		case "Tremolo", "TremoloSingleChord", "TremoloTwoChord":
 			return r.tremolo(ch, c)
-		case "TremoloTwoChord", "Arpeggio", "ChordLine":
+		case "Arpeggio", "ChordLine":
 			return r.unhandled("chord", c)
 		default:
 			return r.dec.Skip()
@@ -2014,17 +2398,35 @@ func (r *reader) chord(st *msStaff, vs *voiceState) error {
 	}
 	vs.attach(marks)
 	vs.add(el)
+	// The far end of a two-note tremolo.
+	//
+	// The beams are drawn between a pair of chords, and MuseScore writes
+	// the mark on the first of them and nothing at all on the second. The
+	// second is the next chord of this voice, which is known here and
+	// nowhere else.
+	if t := marks.Tremolo; t != nil && t.Start {
+		strokes, buzz := t.Strokes, t.Buzz
+		vs.markNext(func(m *model.Marks) {
+			m.Tremolo = &model.Tremolo{Strokes: strokes, Buzz: buzz, Stop: true}
+		})
+	}
 	return nil
 }
 
-// tremolo reads the slashes on one chord.
+// tremolo reads the slashes on a chord.
 //
 // MuseScore names them by the note they stand for rather than by how many
-// slashes that is — r8 is a repeated eighth and so one slash, r32 is three —
-// which is the same fact counted from the other end. The two-note kind is
-// written as c8, c16 and so on, and is a different mark: it belongs to the
-// pair of chords it sits between, not to this one, so it is reported rather
-// than quietly turned into a mark on one of them.
+// slashes that is — r8 is a repeated eighth and so one slash, r32 is three
+// — which is the same fact counted from the other end.
+//
+// c8, c16 and so on are the two-note kind: beams drawn between a pair of
+// chords, meaning alternate between them for as long as the two of them
+// last. They were reported as unread, because the mark belongs to the pair
+// rather than to either chord — so two half notes of a measured tremolo
+// came out as two half notes, and a pianist reading them played two half
+// notes. The mark is on the first of the pair and the second is marked
+// where the chord is added, which is the only place that knows what comes
+// next.
 func (r *reader) tremolo(ch *chordData, el xml.StartElement) error {
 	sub := ""
 	err := r.children(func(c xml.StartElement) error {
@@ -2047,11 +2449,21 @@ func (r *reader) tremolo(ch *chordData, el xml.StartElement) error {
 		ch.tremolo = &model.Tremolo{Strokes: 3}
 	case "r64":
 		ch.tremolo = &model.Tremolo{Strokes: 4}
+	case "c8":
+		ch.tremolo = &model.Tremolo{Strokes: 1, Start: true}
+	case "c16":
+		ch.tremolo = &model.Tremolo{Strokes: 2, Start: true}
+	case "c32":
+		ch.tremolo = &model.Tremolo{Strokes: 3, Start: true}
+	case "c64":
+		ch.tremolo = &model.Tremolo{Strokes: 4, Start: true}
 	case "buzz", "buzzRoll":
 		ch.tremolo = &model.Tremolo{Buzz: true}
 	case "":
-		// No subtype at all: one slash is the least it can mean.
-		ch.tremolo = &model.Tremolo{Strokes: 1}
+		// No subtype at all. On a chord of its own that is one slash; on a
+		// two-chord tremolo, which MuseScore 4 names in the element rather
+		// than in a subtype, it is the pair with one beam.
+		ch.tremolo = &model.Tremolo{Strokes: 1, Start: el.Name.Local == "TremoloTwoChord"}
 	default:
 		r.report("a %s of %q is not read", el.Name.Local, sub)
 	}
@@ -2618,6 +3030,15 @@ var headKinds = map[string]model.NoteheadKind{
 const msTicksPerQuarter = 480
 
 // tickDuration turns a position in a bar into the silence before it.
+// voiceTicks is how much of its bar a voice has filled.
+func voiceTicks(v *model.Voice) int {
+	total := model.Duration{Num: 0, Den: 1}
+	for _, el := range v.Elements {
+		total = total.Add(el.Duration())
+	}
+	return durationTicks(total)
+}
+
 func tickDuration(ticks int) (model.Duration, bool) {
 	if ticks <= 0 {
 		return model.Duration{}, false

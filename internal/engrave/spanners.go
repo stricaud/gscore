@@ -506,12 +506,6 @@ func (e *engraver) slurAt(part *model.Part, m *model.Marks, p *placed) {
 		} else {
 			open.slur.down++
 		}
-		if p.lo < open.slur.lowest {
-			open.slur.lowest = p.lo
-		}
-		if p.hi > open.slur.highest {
-			open.slur.highest = p.hi
-		}
 	}
 
 	// The side this note alone would put the curve on, which is what a tie
@@ -533,19 +527,21 @@ func (e *engraver) slurAt(part *model.Part, m *model.Marks, p *placed) {
 			gy := e.y + stepY(float64(gstep))
 			open.slur = &openSpan{
 				x: gx, y: gy, rel: gy - e.y, above: true,
-				lowest: gstep, highest: gstep,
+				fromHi: gstep, fromLo: gstep,
 			}
 		}
 	}
 
 	if m.SlurStop && open.slur != nil {
 		sl := open.slur
-		// Away from the stems of the notes it covers. A tie between them
-		// settles it the way one note would.
-		sl.above = sl.down >= sl.up
-		edge, toEdge := sl.highest, p.hi
+		// Away from the stems of the notes it covers — and above wherever
+		// they point both ways, there being no side away from them then.
+		sl.above = sl.down > 0 || sl.up == 0
+		// Each end on its own note. What lies between them is lifted over
+		// by the arch, not by dragging the ends out to meet it.
+		edge, toEdge := sl.fromHi, p.hi
 		if !sl.above {
-			edge, toEdge = sl.lowest, p.lo
+			edge, toEdge = sl.fromLo, p.lo
 		}
 		sl.y = e.y + stepY(float64(edge))
 		e.drawTieOrSlur(sl, x, e.y+stepY(float64(toEdge)), slurLift, true)
@@ -559,7 +555,7 @@ func (e *engraver) slurAt(part *model.Part, m *model.Marks, p *placed) {
 		y := e.y + stepY(float64(edge))
 		open.slur = &openSpan{
 			x: x, y: y, rel: y - e.y, above: above,
-			lowest: p.lo, highest: p.hi,
+			fromHi: p.hi, fromLo: p.lo,
 		}
 		if e.stemUp(p) {
 			open.slur.up++

@@ -1717,6 +1717,62 @@ paths:
                     type: array
                     items: { $ref: "#/components/schemas/PartReach" }
 
+  /api/keys:
+    get:
+      tags: [score]
+      summary: What key the music is in, through the piece
+      description: |
+        Not what the key signature says. A signature is written once and
+        stands until somebody writes another one; the music moves through
+        keys inside it all the time, and where it moves is most of what
+        there is to understand about a piece. The development of a sonata
+        is the signature of the exposition and almost none of its keys.
+
+        Read by Krumhansl and Schmuckler's method: how long each of the
+        twelve pitch classes sounds over the four bars around each bar,
+        correlated against profiles of how long each degree sounds in music
+        known to be in a key. The profiles are Krumhansl and Kessler's, out
+        of listening experiments, so what is matched against is what
+        listeners report. Every pitched staff counts, because the key is
+        the piece's and not any one staff's.
+
+        The answer is gathered into the stretches where it stays the same.
+        Two bars have to agree before a change is believed, so a secondary
+        dominant is not reported as a modulation, and bars with nothing in
+        them carry the key through rather than breaking it.
+
+        `clear` says the reading stands far enough above the next best key
+        to be stated plainly. Where it is false the stretch is music that
+        does not settle anywhere, which is a true thing to know about it.
+      responses:
+        "200":
+          description: The piece's keys, in order.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  bars: { type: integer, description: How many bars the piece has. }
+                  keys:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        fromBar: { type: integer }
+                        toBar: { type: integer }
+                        key:
+                          type: object
+                          properties:
+                            tonic: { type: integer }
+                            minor: { type: boolean }
+                        name:
+                          type: string
+                          description: >
+                            Spelled the way the page is spelled: a stretch
+                            in a piece of four sharps is G♯ major, not A♭.
+                        fit: { $ref: "#/components/schemas/Fit" }
+                        clear: { type: boolean }
+
   /api/playback:
     get:
       tags: [play, render]
@@ -2349,9 +2405,65 @@ components:
         notes: { type: integer, description: How many notes or bars the finding is about. }
         worst: { $ref: "#/components/schemas/PlacedNote" }
 
+    Chord:
+      type: object
+      description: >
+        What a set of sounding notes is called. A set that is not a chord
+        gscore names comes back with named false and nothing else filled
+        in: a wrong name is read, believed and acted on.
+      properties:
+        root: { type: integer, description: The pitch class it is built on, 0 for C. }
+        quality: { type: string, description: 'What is built on it: major, dominant seventh.' }
+        bass: { type: integer, description: The pitch class at the bottom. }
+        inversion:
+          type: integer
+          description: Which chord tone the bass is — 0 the root, 1 the third, and so on.
+        name: { type: string }
+        named: { type: boolean }
+
+    Fit:
+      type: object
+      description: >
+        How good a key reading is, in two numbers that mean different
+        things. correlation says how like a key the music is at all;
+        margin says how far clear the winner is of the next best key, and
+        it is the one that says whether there is an answer or a tie. One
+        note correlates 0.68 with all twenty-four keys at once and is
+        nothing at all clear of any of them; a phrase that really is in a
+        key comes out a quarter or more clear. Below about 0.15 the answer
+        is worth showing as unsettled rather than stating.
+      properties:
+        correlation: { type: number }
+        margin: { type: number }
+
     Harmonics:
       type: object
       properties:
+        chord: { $ref: "#/components/schemas/Chord" }
+        key:
+          type: object
+          description: >
+            The key the music is in where this chord falls, read from the
+            phrase around it rather than from the key signature. A
+            signature is written once and the music moves through keys
+            inside it all the time.
+          properties:
+            tonic: { type: integer }
+            minor: { type: boolean }
+        keyName:
+          type: string
+          description: >
+            That key written out, spelled the way the page is spelled: the
+            dominant of a piece in four sharps is G♯ major, not A♭ major.
+        keyFit: { $ref: "#/components/schemas/Fit" }
+        numeral:
+          type: string
+          description: >
+            What the chord is doing in that key, with the figures for its
+            inversion. Empty where the chord has no name.
+        function:
+          type: string
+          description: 'The word a listener would use: tonic, dominant, subdominant.'
         at: { type: number, description: The moment this describes, in seconds. }
         duration: { type: number, description: How long the whole performance is. }
         verdict:

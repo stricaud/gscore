@@ -82,6 +82,7 @@ function panel(d) {
     escapeHTML: (s) => String(s),
     drawSpectrum: () => {},
     drawIntervals: () => {},
+    drawChord: () => {},
     $: (sel) => {
       if (!made.has(sel)) made.set(sel, el());
       return made.get(sel);
@@ -186,4 +187,62 @@ test("the panel is only ever opened by asking for it", () => {
     "something other than the Harmonics menu item opens the panel");
   assert.match(src, /case "harmonics": await openHarmonics\(\)/,
     "the menu item no longer opens it");
+});
+
+/*
+ * What the chord is called, and what it is doing.
+ *
+ * Two different claims, and the panel has to make them differently. The name
+ * is a fact about the notes: A, C♯ and E with E at the bottom is A major in
+ * second inversion whatever else is going on. The numeral is a fact about
+ * the notes and the key together — in E that is IV, in A it is the tonic —
+ * and it is the one that says what the chord is for.
+ *
+ * The key is read from the phrase around the chord rather than from the key
+ * signature, so a stretch of music that does not settle anywhere comes back
+ * saying so. A bare fifth is in a dozen keys at once, and naming one of them
+ * would be a guess told in the voice of a fact.
+ */
+function chordLine(d) {
+  const made = new Map();
+  const scope = {
+    escapeHTML: (s) => String(s),
+    $: (sel) => {
+      if (!made.has(sel)) made.set(sel, { innerHTML: "", textContent: "" });
+      return made.get(sel);
+    },
+  };
+  const body = grab("drawChord") + "\nreturn { drawChord };";
+  new Function(...Object.keys(scope), body)(...Object.values(scope)).drawChord(d);
+  return made.get("#harm-chord").innerHTML;
+}
+
+const settled = {
+  chord: { named: true, name: "G dominant seventh", root: 7, quality: "dominant seventh" },
+  keyName: "C major", keyFit: { correlation: 0.95, margin: 0.28 },
+  numeral: "V7", function: "dominant",
+};
+
+test("a chord in a settled key is named and given its numeral", () => {
+  const out = chordLine(settled);
+  assert.match(out, /V7/, "the numeral is missing");
+  assert.match(out, /G dominant seventh/, "the chord is not named");
+  assert.match(out, /dominant/, "what it is doing is not said");
+  assert.match(out, /in C major/, "the key it is being read in is not said");
+});
+
+// Where the key is not settled the chord still has a name — that is a fact
+// about the notes — but the numeral is withheld, because a numeral is a
+// claim about a key and there is not one to make it about.
+test("an unsettled key withholds the numeral and says why", () => {
+  const out = chordLine({ ...settled, keyFit: { correlation: 0.81, margin: 0.04 } });
+  assert.match(out, /G dominant seventh/, "the chord lost its name as well");
+  assert.ok(!/V7/.test(out), "a numeral was given for a key that is not settled");
+  assert.match(out, /not settled/, "nothing says why the numeral is missing");
+});
+
+test("notes that are not a chord are not named at all", () => {
+  assert.equal(chordLine({ chord: { named: false }, keyName: "C major" }), "",
+    "a cluster was given a name");
+  assert.equal(chordLine({}), "", "nothing sounding was given one");
 });

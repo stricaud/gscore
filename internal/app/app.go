@@ -391,6 +391,8 @@ func (a *App) APIRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/playback", a.handlePlayback)
 	mux.HandleFunc("/api/harmonics", a.handleHarmonics)
 	mux.HandleFunc("/api/reach", a.handleReach)
+	mux.HandleFunc("/api/keys", a.handleKeys)
+	mux.HandleFunc("/api/map", a.handleMap)
 	mux.HandleFunc("/api/keysignatures", a.handleKeySignatures)
 	mux.HandleFunc("/api/chordpreview", a.handleChordPreview)
 	mux.HandleFunc("/api/chordfingering", a.handleChordFingering)

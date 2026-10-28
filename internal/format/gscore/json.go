@@ -62,12 +62,17 @@ type partDoc struct {
 	Name       string `json:"name,omitempty"`
 	Instrument string `json:"instrument,omitempty"`
 	Program    int    `json:"program,omitempty"`
-	Clef       string `json:"clef"`
-	Fifths     int    `json:"fifths"`
-	Mode       string `json:"mode"`
-	Beats      int    `json:"beats"`
-	Beat       int    `json:"beatValue"`
-	TimeSym    string `json:"timeSymbol,omitempty"`
+	// Sound is what the staff is written for, named the way MusicXML's
+	// standard instrument sounds name it. The program says what to play it
+	// with and this says what it is, which a program number cannot: there
+	// is one bassoon in General MIDI and no contrabassoon.
+	Sound   string `json:"sound,omitempty"`
+	Clef    string `json:"clef"`
+	Fifths  int    `json:"fifths"`
+	Mode    string `json:"mode"`
+	Beats   int    `json:"beats"`
+	Beat    int    `json:"beatValue"`
+	TimeSym string `json:"timeSymbol,omitempty"`
 	// Transpose is how far below what is printed this staff sounds, written
 	// the way MusicXML writes it so the two agree.
 	Transpose *transposeDoc `json:"transpose,omitempty"`
@@ -336,6 +341,7 @@ func encodeScore(s *model.Score) *scoreDoc {
 			ID: p.ID, Name: p.Name,
 			Instrument: p.Instrument.String(),
 			Program:    int(p.Instrument),
+			Sound:      p.Sound,
 			Clef:       clefNames[p.Clef],
 			Fifths:     p.Key.Fifths,
 			Mode:       modeNames[p.Key.Mode],
@@ -557,6 +563,7 @@ func decodeScore(doc *scoreDoc) (*model.Score, error) {
 		p := &model.Part{
 			ID: pd.ID, Name: pd.Name,
 			Instrument: model.Instrument(pd.Program),
+			Sound:      pd.Sound,
 			Clef:       clefValues[pd.Clef],
 			Key:        model.KeySignature{Fifths: pd.Fifths, Mode: modeValues[pd.Mode]},
 			Time: model.TimeSignature{

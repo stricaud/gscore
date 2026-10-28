@@ -353,7 +353,9 @@ type document struct {
 }
 
 type msPart struct {
-	name     string
+	name string
+	// sound is the instrument's own name for itself, from <instrumentId>.
+	sound    string
 	program  int
 	hasProg  bool
 	transDia int
@@ -643,6 +645,17 @@ func (r *reader) instrument(p *msPart) error {
 				p.name = s
 			}
 			return nil
+		case "instrumentId":
+			// What the instrument is, as against what it is played with.
+			// MuseScore writes both and gscore read only the program, so
+			// the Ninth's Controfagotto arrived as a bassoon: there is no
+			// contrabassoon in General MIDI, and nothing else in the file
+			// says which of the two it is.
+			id, err := r.text()
+			if id != "" {
+				p.sound = id
+			}
+			return err
 		case "StringData":
 			return r.stringData(p)
 		case "transposeDiatonic":
@@ -2978,8 +2991,13 @@ func toPart(p *msPart, st *msStaff, index int) *model.Part {
 	if index == 0 {
 		out.Name = p.name
 	}
+	out.Sound = p.sound
 	if p.hasProg {
 		out.Instrument = model.Instrument(p.program)
+	} else if prog, ok := model.SoundProgram(p.sound); ok {
+		// A file that names the instrument and leaves the program out:
+		// the name is enough to pick something to play it with.
+		out.Instrument = prog
 	}
 	if p.transDia != 0 || p.transChr != 0 {
 		out.Transpose = model.Transposition{Diatonic: p.transDia, Chromatic: p.transChr}

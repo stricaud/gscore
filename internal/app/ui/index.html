@@ -386,6 +386,7 @@
     <div class="menu-items">
       <button data-action="harmonics"><span>Harmonics…</span></button>
       <button data-action="range"><span>Range…</span></button>
+      <button data-action="keymap"><span>Keys and modulations…</span></button>
     </div>
   </div>
 
@@ -563,6 +564,11 @@
   <div id="harm-body">
     <p class="small" id="harm-where"></p>
 
+    <!-- What the chord is called and what it is doing: the name is a fact
+         about the notes, the numeral is a fact about the notes and the key
+         together, and it is the one that says what the chord is for. -->
+    <p id="harm-chord"></p>
+
     <div id="harm-verdict"><span id="harm-words">—</span>
       <span id="harm-bar"><i id="harm-fill"></i></span>
       <b id="harm-number">0.00</b>
@@ -599,6 +605,25 @@
     </form>
   </div>
   <div id="range-body"></div>
+</dialog>
+
+<!-- Where the music goes.
+     Not what the key signature says: a signature is written once and stands
+     until somebody writes another one, and the music moves through keys
+     inside it all the time. The development of a sonata is the signature of
+     the exposition and almost none of its keys. -->
+<dialog id="keymap">
+  <div class="dlg-head">
+    <div>
+      <h2>Keys and modulations</h2>
+      <p class="small" id="keymap-where">Read from the notes, not from the key signature.</p>
+    </div>
+    <form method="dialog">
+      <button value="close" type="submit" class="dlg-close" aria-label="Close">✕</button>
+    </form>
+  </div>
+  <div id="keymap-strip"></div>
+  <div id="keymap-body"></div>
 </dialog>
 
 <dialog id="draw">

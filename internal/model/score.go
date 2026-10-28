@@ -334,9 +334,15 @@ type Part struct {
 	// Instrument is what this staff sounds as, carried over from
 	// Staff_t.midi_instrument.
 	Instrument Instrument
-	Clef       Clef
-	Key        KeySignature
-	Time       TimeSignature
+	// Sound is what the staff is written for, named the way MusicXML's
+	// standard instrument sounds name it: "wind.reed.contrabassoon",
+	// "voice.soprano". It says what a program number cannot — General MIDI
+	// has one bassoon and no contrabassoon, one choir and no soprano — and
+	// it is what the range is asked of. Empty where the file did not say.
+	Sound string `json:",omitempty"`
+	Clef  Clef
+	Key   KeySignature
+	Time  TimeSignature
 	// Transpose is the interval between this staff's written pitches and what
 	// is heard. Everything stored in Measures is written pitch.
 	Transpose Transposition
@@ -416,6 +422,45 @@ func (t *Tablature) At(p Pitch) (str, fret int, ok bool) {
 
 // KeyAt is the key signature in force at a measure, following any change
 // written in an earlier one.
+// Reach is how far this staff's instrument plays.
+//
+// The sound the part names is asked first and the General MIDI program only
+// after it: the program is what the staff is played with and the sound is
+// what it is. Beethoven's Controfagotto has a bassoon's program, because
+// General MIDI has nothing closer, and asking the program gave the bottom of
+// a bassoon for an instrument that plays an octave below one.
+func (p *Part) Reach() (Reach, bool) {
+	if p.Sound != "" {
+		if r, ok := SoundReach(p.Sound); ok {
+			return r, true
+		}
+		// A sound gscore knows and has no range for — a section patch, a
+		// drum — is an answer, not a gap to fall through.
+		if _, known := SoundName(p.Sound); known {
+			return Reach{}, false
+		}
+	}
+	return p.Instrument.Reach()
+}
+
+// SoundName is what this staff is played on, in as many words as gscore can
+// manage: the sound where the file named one, and the program otherwise.
+func (p *Part) SoundName() string {
+	if p.Sound != "" {
+		if n, ok := SoundName(p.Sound); ok {
+			return n
+		}
+	}
+	return p.Instrument.String()
+}
+
+// Unpitched says the staff is read by position on a kit rather than by
+// pitch, either because it is drawn in a percussion clef or because the file
+// named a drum.
+func (p *Part) Unpitched() bool {
+	return p.Clef == Percussion || SoundIsPercussion(p.Sound)
+}
+
 func (p *Part) KeyAt(index int) KeySignature {
 	k := p.Key
 	for i := 0; i <= index && i < len(p.Measures); i++ {

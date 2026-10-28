@@ -106,7 +106,40 @@ func (a *App) handleHarmonics(w http.ResponseWriter, r *http.Request) {
 	out := analysis.Of(sounding, opt)
 	out.At = at
 
+	// What the chord is called, and what it is doing in the key the music
+	// is in where it falls.
+	//
+	// The name is a fact about the notes; the numeral is a fact about the
+	// notes and the key together, and it is the one that says what the
+	// chord is *for*. Without it the panel could tell somebody that C♯ E
+	// G♯ is rough to two decimal places and not that it is the tonic.
+	midis := make([]int, 0, len(sounding))
+	for _, n := range sounding {
+		midis = append(midis, n.MIDI)
+	}
+	chord := analysis.NameChord(midis)
+	a.mu.RLock()
+	bar := barAt(pb, at)
+	key, fit := keyAround(a.score, bar)
+	// Spelled the way the music around it is spelled: the dominant of a
+	// piece in four sharps is G♯ major, and calling it A♭ major is the
+	// same twelve notes written in a language the page is not in.
+	fifths := 0
+	for _, p := range a.score.Parts {
+		if !p.Hidden && !p.Unpitched() {
+			fifths = p.KeyAt(bar).Fifths
+			break
+		}
+	}
+	a.mu.RUnlock()
+
 	writeJSON(w, map[string]any{
+		"chord":      chord,
+		"key":        key,
+		"keyName":    key.Name(fifths),
+		"keyFit":     fit,
+		"numeral":    analysis.Numeral(chord, key),
+		"function":   analysis.Function(chord, key),
 		"at":         out.At,
 		"duration":   pb.Duration,
 		"notes":      out.Notes,
@@ -145,14 +178,14 @@ func (a *App) handleReach(w http.ResponseWriter, r *http.Request) {
 	insts := make([]analysis.Instrument, len(a.score.Parts))
 	for i, p := range a.score.Parts {
 		in := analysis.Instrument{
-			Staff: p.Name, Name: p.Instrument.String(),
+			Staff: p.Name, Name: p.SoundName(),
 			// A staff of drums is read by position on a kit, not by
 			// pitch, so there is no range to ask about. Asked anyway,
 			// the bass drum of Beethoven's ninth was taken for a string
 			// instrument written six hundred bars below its range.
-			Percussion: p.Clef == model.Percussion,
+			Percussion: p.Unpitched(),
 		}
-		if rr, ok := p.Instrument.Reach(); ok && !in.Percussion {
+		if rr, ok := p.Reach(); ok && !in.Percussion {
 			in.Known = true
 			in.Low, in.High = rr.Low, rr.High
 			in.EasyLow, in.EasyHigh = rr.EasyLow, rr.EasyHigh
@@ -222,4 +255,236 @@ func soundedNotes(s *model.Score) []analysis.Sounded {
 		}
 	}
 	return out
+}
+
+// barAt is which bar of the score a moment falls in.
+func barAt(pb Playback, at float64) int {
+	for _, m := range pb.Measures {
+		if at >= m.Start && at < m.Start+m.Dur {
+			return m.Index
+		}
+	}
+	if n := len(pb.Measures); n > 0 {
+		return pb.Measures[n-1].Index
+	}
+	return 0
+}
+
+// keyAround is the key the music is in at a bar, read from the phrase around
+// it rather than from the key signature.
+//
+// A signature is written once and stands until somebody writes another one;
+// the music moves through keys inside it all the time, and a numeral worked
+// out from the signature would call the whole development of a sonata by the
+// numerals of its exposition.
+func keyAround(s *model.Score, bar int) (analysis.Key, analysis.Fit) {
+	lo := bar - analysis.KeyWindow/2
+	if lo < 0 {
+		lo = 0
+	}
+	hi := lo + analysis.KeyWindow
+	var w analysis.Weights
+	for _, p := range s.Parts {
+		if p.Hidden || p.Unpitched() {
+			continue
+		}
+		for mi := lo; mi < hi && mi < len(p.Measures); mi++ {
+			for _, v := range p.Measures[mi].Voices {
+				for _, el := range v.Elements {
+					d := el.Duration()
+					held := 0.0
+					if d.Den != 0 {
+						held = float64(d.Num) / float64(d.Den)
+					}
+					for _, pitch := range pitchesIn(el) {
+						pc := sounding(p, pitch, 0).MIDI() % 12
+						w[((pc%12)+12)%12] += held
+					}
+				}
+			}
+		}
+	}
+	return analysis.KeyOf(w)
+}
+
+// pitchesIn is the written pitches an element carries, and none for a rest.
+func pitchesIn(el model.Element) []model.Pitch {
+	switch e := el.(type) {
+	case *model.Note:
+		return []model.Pitch{e.Pitch}
+	case *model.Chord:
+		out := make([]model.Pitch, 0, len(e.Notes))
+		for _, n := range e.Notes {
+			out = append(out, n.Pitch)
+		}
+		return out
+	}
+	return nil
+}
+
+// handleKeys says what key the music is in, bar by bar, gathered into the
+// stretches where it stays the same.
+//
+// Not what the key signature says. A signature is written once and stands
+// until somebody writes another one; the music moves through keys inside it
+// all the time, and where it moves is most of what there is to understand
+// about a piece. The development of a sonata is the signature of the
+// exposition and almost none of its keys.
+func (a *App) handleKeys(w http.ResponseWriter, r *http.Request) {
+	a.mu.RLock()
+	bars := barWeights(a.score)
+	fifths := make([]int, len(bars))
+	for i := range bars {
+		for _, p := range a.score.Parts {
+			if !p.Hidden && !p.Unpitched() {
+				fifths[i] = p.KeyAt(i).Fifths
+				break
+			}
+		}
+	}
+	a.mu.RUnlock()
+
+	spans := analysis.Keys(bars)
+	out := make([]map[string]any, 0, len(spans))
+	for _, s := range spans {
+		at := 0
+		if s.FromBar < len(fifths) {
+			at = fifths[s.FromBar]
+		}
+		out = append(out, map[string]any{
+			"fromBar": s.FromBar, "toBar": s.ToBar,
+			"key": s.Key, "name": s.Key.Name(at), "fit": s.Fit,
+			"clear": s.Fit.Clear(),
+		})
+	}
+	// The movements are not sent: the editor already has them from
+	// /api/info, and that is where the bar numbers printed on the page are
+	// worked out from.
+	writeJSON(w, map[string]any{"bars": len(bars), "keys": out})
+}
+
+// barWeights is how long each of the twelve pitch classes sounds in each
+// bar, which is what a key is read from.
+//
+// How long and not how many: a semibreve on the tonic says more about the
+// key than six passing sixteenths, and counting notes says the opposite.
+// Every pitched staff counts, because the key is the piece's and not any one
+// staff's — a bass line alone is in a dozen keys at once.
+func barWeights(s *model.Score) []analysis.Weights {
+	bars := 0
+	for _, p := range s.Parts {
+		if len(p.Measures) > bars {
+			bars = len(p.Measures)
+		}
+	}
+	out := make([]analysis.Weights, bars)
+	for _, p := range s.Parts {
+		if p.Hidden || p.Unpitched() {
+			continue
+		}
+		for mi, m := range p.Measures {
+			for _, v := range m.Voices {
+				for _, el := range v.Elements {
+					d := el.Duration()
+					held := 0.0
+					if d.Den != 0 {
+						held = float64(d.Num) / float64(d.Den)
+					}
+					for _, pitch := range pitchesIn(el) {
+						pc := ((sounding(p, pitch, 0).MIDI() % 12) + 12) % 12
+						out[mi][pc] += held
+					}
+				}
+			}
+		}
+	}
+	return out
+}
+
+// handleMap draws the shape of a piece: who is playing when, and what
+// repeats what.
+//
+// Both are questions about the whole of it, which gscore could answer
+// nothing of. A symphony is fifty-three staves and two and a half thousand
+// bars and there was no way to see any of it at once — not which
+// instruments carry a passage, not where the material comes back, not where
+// the piece is dense and where it thins out.
+func (a *App) handleMap(w http.ResponseWriter, r *http.Request) {
+	a.mu.RLock()
+	busy, shapes := scoreShape(a.score)
+	a.mu.RUnlock()
+
+	least := analysis.LeastEcho
+	if v, err := strconv.Atoi(r.URL.Query().Get("least")); err == nil && v >= 1 && v <= 64 {
+		least = v
+	}
+	echoes := analysis.Echoes(shapes, least)
+	if echoes == nil {
+		echoes = []analysis.Echo{}
+	}
+	writeJSON(w, map[string]any{
+		"bars":    len(shapes),
+		"staves":  busy,
+		"busiest": analysis.Busiest(busy),
+		"echoes":  echoes,
+	})
+}
+
+// scoreShape reads the whole score once: how much each staff plays in each
+// bar, and what each bar holds in a form two bars can be compared in.
+//
+// Once, because a symphony is a large walk and there is no reason to take it
+// twice. The two answers come off the same pass.
+func scoreShape(s *model.Score) ([]analysis.Busy, []analysis.BarShape) {
+	bars := 0
+	for _, p := range s.Parts {
+		if len(p.Measures) > bars {
+			bars = len(p.Measures)
+		}
+	}
+	busy := make([]analysis.Busy, 0, len(s.Parts))
+	inBar := make([][]analysis.BarNote, bars)
+	for pi, p := range s.Parts {
+		b := analysis.Busy{Part: pi, Name: p.Name, Bars: make([]int, bars)}
+		if b.Name == "" {
+			b.Name = p.SoundName()
+		}
+		for mi, m := range p.Measures {
+			at := 0.0
+			for _, v := range m.Voices {
+				at = 0
+				for _, el := range v.Elements {
+					d := el.Duration()
+					held := 0.0
+					if d.Den != 0 {
+						held = float64(d.Num) / float64(d.Den)
+					}
+					for _, pitch := range pitchesIn(el) {
+						b.Bars[mi]++
+						b.Notes++
+						// A staff of drums is counted as playing — it is
+						// — but its pitches are places on a kit and would
+						// make two bars of the same rhythm look like two
+						// different bars.
+						if !p.Unpitched() {
+							inBar[mi] = append(inBar[mi], analysis.BarNote{
+								Part: pi, MIDI: sounding(p, pitch, 0).MIDI(),
+								At: at, Held: held,
+							})
+						}
+					}
+					at += held
+				}
+			}
+			if b.Bars[mi] > 0 {
+				b.Playing++
+			}
+		}
+		busy = append(busy, b)
+	}
+	shapes := make([]analysis.BarShape, bars)
+	for i := range inBar {
+		shapes[i] = analysis.Shaped(inBar[i])
+	}
+	return busy, shapes
 }

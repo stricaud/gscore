@@ -141,3 +141,29 @@ func TestRoundTripKeepsTheCursor(t *testing.T) {
 		t.Errorf("a score with no cursor came back with %+v", *again.Cursor)
 	}
 }
+
+// What a staff is written for survives being saved and opened again.
+//
+// The program says what to play it with and the sound says what it is, and
+// the second is the one the range is asked of: saved as a program alone, a
+// contrabassoon comes back a bassoon and is judged as one.
+func TestTheInstrumentSoundSurvivesARoundTrip(t *testing.T) {
+	s := model.NewScore()
+	s.Parts[0].Instrument = model.Bassoon
+	s.Parts[0].Sound = "wind.reed.contrabassoon"
+
+	var b bytes.Buffer
+	if err := Write(&b, s, nil); err != nil {
+		t.Fatalf("writing: %v", err)
+	}
+	back, _, err := Read(bytes.NewReader(b.Bytes()))
+	if err != nil {
+		t.Fatalf("reading: %v", err)
+	}
+	if got := back.Parts[0].Sound; got != "wind.reed.contrabassoon" {
+		t.Errorf("the part came back written for %q", got)
+	}
+	if got := back.Parts[0].SoundName(); got != "contrabassoon" {
+		t.Errorf("and is called %q", got)
+	}
+}

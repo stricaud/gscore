@@ -550,6 +550,7 @@ async function action(name) {
 
     case "harmonics": await openHarmonics(); break;
     case "range": await openRange(); break;
+    case "keymap": await openKeyMap(); break;
 
     case "beam-join": await mark("beam", { beam: "join" }, "Beamed together"); break;
     case "beam-here": await beamOrBreak(); break;
@@ -9198,6 +9199,7 @@ async function main() {
   setupKeys();
   setupZoomGestures();
   setupRangeClicks();
+  setupKeyMapClicks();
   setupPanning();
   setupMarquee();
   setupSymbolDragging();
@@ -9555,8 +9557,43 @@ function drawHarmonics(d) {
     where.innerHTML = names.length ? names.join(" ") : "Nothing is sounding there.";
   }
 
+  drawChord(d);
   drawSpectrum(d);
   drawIntervals(d);
+}
+
+// drawChord says what the chord is called and what it is doing.
+//
+// Two different claims. The name is a fact about the notes: A, C♯ and E with
+// E at the bottom is A major in second inversion whatever else is going on.
+// The numeral is a fact about the notes and the key together — in E that is
+// IV, and in A it is the tonic — and it is the one that says what the chord
+// is *for*, which is the question somebody trying to understand a piece is
+// actually asking.
+//
+// The key is read from the phrase around the chord rather than from the key
+// signature, so it follows the music where it goes. How clear that reading
+// is comes back with it, and a reading that is not clear says so: a bare
+// fifth is in a dozen keys at once and claiming one of them would be a
+// guess told in the voice of a fact.
+function drawChord(d) {
+  const box = $("#harm-chord");
+  if (!box) return;
+  const c = d.chord;
+  if (!c || !c.named) {
+    box.innerHTML = "";
+    return;
+  }
+  const clear = (d.keyFit?.margin ?? 0) >= 0.15;
+  const where = d.keyName
+    ? `<span class="harm-in-key">in ${escapeHTML(d.keyName)}` +
+      `${clear ? "" : ", though the key is not settled here"}</span>`
+    : "";
+  const numeral = d.numeral && clear
+    ? `<span class="harm-numeral">${escapeHTML(d.numeral)}</span>` : "";
+  const what = d.function && clear ? ` · ${escapeHTML(d.function)}` : "";
+  box.innerHTML = numeral +
+    `<span class="harm-chord-name">${escapeHTML(c.name)}${what}</span> ${where}`;
 }
 
 // drawSpectrum draws every partial as a line on a log frequency axis.
@@ -9815,5 +9852,120 @@ function setupRangeClicks() {
     const dlg = $("#range");
     if (dlg?.open) dlg.close();
     await goToMeasure(Number(go.dataset.bar), Number(go.dataset.part));
+  });
+}
+
+/* ---------- where the music goes ---------- */
+
+// The key the music is in, through the piece.
+//
+// Not what the key signature says. A signature is written once and stands
+// until somebody writes another one; the music moves through keys inside it
+// all the time, and where it moves is most of what there is to understand
+// about a piece. The development of a sonata is the signature of the
+// exposition and almost none of its keys.
+//
+// Read from how long each of the twelve notes sounds over the phrase around
+// each bar, against profiles of how long each degree sounds in music known
+// to be in a key. The method is Krumhansl and Schmuckler's and it is
+// arithmetic on the written notes, so it answers before anything is played.
+
+async function openKeyMap() {
+  const dlg = $("#keymap");
+  if (!dlg) return;
+  if (!dlg.open) dlg.showModal();
+  await refreshKeyMap();
+}
+
+async function refreshKeyMap() {
+  let d;
+  try {
+    const res = await fetch("/api/keys");
+    if (!res.ok) return;
+    d = await res.json();
+  } catch (_) {
+    return; // a reader, not an editor
+  }
+  drawKeyMap(d);
+}
+
+// keyColour puts related keys next to each other in colour, by where the
+// tonic falls on the circle of fifths rather than where it falls on the
+// keyboard. A move to the dominant is then a small step of hue and a move to
+// the far side of the circle is the other side of the wheel — which is what
+// the circle is a picture of, and is the thing worth seeing at a glance.
+function keyColour(key, muted) {
+  const pc = (((key?.tonic ?? 0) % 12) + 12) % 12;
+  const hue = ((pc * 7) % 12) * 30;
+  if (key?.minor) return `hsl(${hue} 38% ${muted ? 62 : 46}%)`;
+  return `hsl(${hue} 58% ${muted ? 72 : 58}%)`;
+}
+
+function drawKeyMap(d) {
+  const strip = $("#keymap-strip");
+  const body = $("#keymap-body");
+  if (!strip || !body) return;
+  const keys = d.keys || [];
+  const bars = d.bars || 0;
+  if (!keys.length || !bars) {
+    strip.innerHTML = "";
+    body.innerHTML = `<p class="small">There is not enough music to read a key from.</p>`;
+    return;
+  }
+
+  // The whole piece as one bar, each stretch as wide as it is long.
+  strip.innerHTML =
+    `<div class="keymap-bar">` +
+    keys.map((k) => {
+      const width = ((k.toBar - k.fromBar + 1) / bars) * 100;
+      const title = `${k.name}, ${barsLabel(k)}`;
+      return `<span class="keymap-seg${k.clear ? "" : " unsettled"}" ` +
+        `style="width:${width.toFixed(3)}%;background:${keyColour(k.key, !k.clear)}" ` +
+        `title="${escapeHTML(title)}"></span>`;
+    }).join("") +
+    `</div><div class="keymap-scale"><span>${escapeHTML(barsAt(0))}</span>` +
+    `<span>${escapeHTML(barsAt(bars - 1))}</span></div>`;
+
+  body.innerHTML = keys.map((k) =>
+    `<button type="button" class="keymap-row" data-bar="${k.fromBar}">` +
+    `<span class="keymap-swatch" style="background:${keyColour(k.key, !k.clear)}"></span>` +
+    `<span class="keymap-name">${escapeHTML(k.name)}</span>` +
+    `<span class="keymap-bars">${escapeHTML(barsLabel(k))}</span>` +
+    (k.clear ? "" : `<span class="keymap-doubt">unsettled</span>`) +
+    `</button>`).join("");
+
+  const where = $("#keymap-where");
+  if (where) {
+    const moves = keys.length - 1;
+    where.textContent = moves <= 0
+      ? `${bars} bars, and it never leaves ${keys[0].name}`
+      : `${bars} bars, through ${keys.length} keys`;
+  }
+}
+
+// barsLabel names a stretch the way the bars are numbered on the page,
+// which in a piece with movements is from the start of each movement.
+function barsLabel(k) {
+  return k.fromBar === k.toBar
+    ? `bar ${barNumberOf(k.fromBar)}`
+    : `bars ${barNumberOf(k.fromBar)}–${barNumberOf(k.toBar)}`;
+}
+
+function barsAt(bar) {
+  const m = movementAt(bar);
+  const n = barNumberOf(bar);
+  return m && m.title ? `${m.title}, bar ${n}` : `bar ${n}`;
+}
+
+// Clicking a stretch goes to where it begins.
+function setupKeyMapClicks() {
+  const body = $("#keymap-body");
+  if (!body) return;
+  body.addEventListener("click", async (e) => {
+    const row = e.target.closest ? e.target.closest(".keymap-row") : null;
+    if (!row) return;
+    const dlg = $("#keymap");
+    if (dlg?.open) dlg.close();
+    await goToMeasure(Number(row.dataset.bar));
   });
 }

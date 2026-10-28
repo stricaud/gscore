@@ -1578,6 +1578,41 @@ dialog.wide { max-width: 640px; }
 }
 #harm-number { font-variant-numeric: tabular-nums; min-width: 3em; text-align: right; }
 
+/* ---- keys and modulations ---- */
+
+#keymap {
+  max-width: 720px;
+  width: min(720px, 94vw);
+  height: min(76vh, 620px);
+  flex-direction: column;
+  padding: 16px 20px;
+}
+#keymap[open] { display: flex; }
+
+/* The whole piece at a glance, above the list of what is in it. */
+#keymap-strip { flex: none; padding: 10px 0 4px; }
+.keymap-bar { display: flex; width: 100%; height: 26px; border-radius: 4px; overflow: hidden; }
+.keymap-seg { height: 100%; }
+.keymap-seg.unsettled { opacity: .45; }
+.keymap-scale {
+  display: flex; justify-content: space-between;
+  color: var(--muted); font-size: 11px; margin-top: 3px;
+}
+
+#keymap-body { flex: 1; min-height: 0; overflow-y: auto; padding-right: 4px; }
+
+.keymap-row {
+  display: flex; align-items: baseline; gap: 10px;
+  padding: 5px 0; border-bottom: 1px solid var(--line);
+  width: 100%; background: none; border-left: 0; border-right: 0; border-top: 0;
+  color: inherit; font: inherit; text-align: left; cursor: pointer; margin: 0;
+}
+.keymap-row:hover { background: var(--panel-dark); }
+.keymap-swatch { width: 12px; height: 12px; border-radius: 3px; flex: none; }
+.keymap-name { font-weight: 600; min-width: 7.5em; }
+.keymap-bars { color: var(--muted); font-size: 12px; flex: 1; }
+.keymap-doubt { color: var(--muted); font-size: 12px; font-style: italic; }
+
 /* ---- range ---- */
 
 /* The same shape as the harmonics panel, and for the same reason: what it
@@ -1617,6 +1652,13 @@ dialog.wide { max-width: 640px; }
 .range-go .where { color: var(--muted); }
 .range-impossible .mark { color: #b03a4a; font-weight: 600; }
 .range-strain .mark { color: #d1702f; font-weight: 600; }
+
+/* What the chord is called, and what it is doing in the key. */
+#harm-chord { margin: 8px 0 0; display: flex; align-items: baseline; gap: 10px; }
+#harm-chord:empty { display: none; }
+.harm-numeral { font-size: 20px; font-weight: 600; font-variant-numeric: lining-nums; }
+.harm-chord-name { font-size: 14px; }
+.harm-in-key { color: var(--muted); font-size: 12px; }
 
 /* The staff a note is on, where the chord is spread over several. */
 .harm-on { color: var(--muted); font-size: 12px; }

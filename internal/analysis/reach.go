@@ -28,10 +28,7 @@
 
 package analysis
 
-import (
-	"sort"
-	"strings"
-)
+import "sort"
 
 // Sounded is one note as it sounds, which is the only way a range can be
 // asked about: a clarinet's bottom note is the same note however the part
@@ -416,15 +413,13 @@ func strainFinding(run []int, bars map[int]*barReach, inst Instrument,
 	}
 }
 
-// possessive names an instrument as the owner of its range. A name already
-// ending in s takes the apostrophe alone, or the strings end up with a
-// range belonging to "the strings's".
-func possessive(name string) string {
-	if strings.HasSuffix(name, "s") {
-		return "the " + name + "'"
-	}
-	return "the " + name + "'s"
-}
+// possessive names an instrument as the owner of its range.
+//
+// Always "'s", including after a name ending in s: a bass is one singer and
+// "the bass' range" reads as a section's. Nothing that reaches here is a
+// plural — the one name that was, the string ensemble, has no range for a
+// finding to be about.
+func possessive(name string) string { return "the " + name + "'s" }
 
 // plural counts a thing in words, because "1 notes" reads as a bug in the
 // program rather than as one note.

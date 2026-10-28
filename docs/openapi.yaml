@@ -1773,6 +1773,142 @@ paths:
                         fit: { $ref: "#/components/schemas/Fit" }
                         clear: { type: boolean }
 
+  /api/map:
+    get:
+      tags: [score]
+      summary: The shape of the piece — who plays when, and what repeats what
+      description: |
+        Two answers about the whole of a piece rather than about a moment.
+
+        `staves` is how many notes each staff has in each bar: not how loud
+        it is and not how important, but how much is written there, which is
+        what shows an entry, a tutti and a staff that rests for eighty bars.
+
+        `echoes` is every stretch of bars that is a stretch heard earlier.
+        A bar is compared by its content with its pitches counted from its
+        own lowest note, so the same phrase a fifth higher is the same
+        phrase and a sequence is found as well as a literal return;
+        `transposed` says how far it has moved, in semitones, and is zero
+        for the same notes again. Each bar is reported once, as part of the
+        longest return it belongs to, and against the earliest place that
+        music was heard: the recapitulation of a sonata is a return of the
+        exposition and not of the development's quotation of it.
+
+        A return has to run to `least` bars to be reported, two by default.
+        One bar coming back is an accompaniment figure, and a list of every
+        bar of an Alberti bass matching the one before it is a list of
+        nothing. Bars with no notes are a return of nothing, however exactly
+        their rests match.
+      parameters:
+        - name: least
+          in: query
+          description: How many bars a return must run to before it is reported.
+          schema: { type: integer, default: 2, minimum: 1, maximum: 64 }
+      responses:
+        "200":
+          description: The shape of it.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  bars: { type: integer }
+                  busiest:
+                    type: integer
+                    description: The most notes any staff has in any one bar.
+                  staves:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        part: { type: integer }
+                        name: { type: string }
+                        bars: { type: array, items: { type: integer } }
+                        notes: { type: integer }
+                        playing:
+                          type: integer
+                          description: How many bars the staff plays in at all.
+                  echoes:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        fromBar: { type: integer }
+                        toBar: { type: integer }
+                        likeBar:
+                          type: integer
+                          description: Where the same music was first heard.
+                        bars: { type: integer }
+                        transposed:
+                          type: integer
+                          description: How far it has moved, in semitones.
+
+  /api/voices:
+    get:
+      tags: [score]
+      summary: How the lines move against each other
+      description: |
+        The one part of the analysis that judges rather than measures.
+
+        Parallel fifths are not wrong; they are wrong *in a tradition* —
+        roughly, European art music between Palestrina and Brahms — and
+        they are the whole sound of organum, of Debussy, of most film music
+        and of every power chord ever played. So nothing here is sent as an
+        error. Each finding says what was seen, where, and in which pair of
+        lines, and the composer decides whether it is what they meant.
+
+        What is found is only what is unarguable once the tradition is
+        granted: two lines moving in parallel perfect fifths, octaves or
+        unisons, a line crossing under one written below it, and a line
+        moving past where its neighbour just was. The contested rules —
+        hidden fifths, unresolved leading tones, unrecovered leaps — are
+        left out rather than guessed at.
+
+        A line is a voice of a staff, and where several notes are written
+        in one voice, the nth down from the top of them: a chorale on two
+        staves has four lines in two voices. A rank that sounds in too
+        little of what its voice plays is a thickening and not a line. A
+        run of the same thing between the same two lines is reported once,
+        with `times` saying how often: a left hand in octaves does the same
+        thing in every bar for pages, and three hundred findings about it
+        are three hundred ways of not saying so.
+
+        A score with more lines than `tooMany` is not analysed at all, and
+        says so: the rules are about a chorale, a quartet or a keyboard
+        piece, and the fifths between a second clarinet and a cello eight
+        bars apart in register are not a fact anybody can use.
+      responses:
+        "200":
+          description: What the lines did.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  lines: { type: integer }
+                  names: { type: array, items: { type: string } }
+                  tooMany:
+                    type: integer
+                    description: >
+                      Present only where the score has too many lines to be
+                      worth asking about; motions is then empty.
+                  motions:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        kind:
+                          type: string
+                          enum: [parallel fifths, parallel octaves, parallel unisons,
+                                 crossing, overlap]
+                        text: { type: string }
+                        fromBar: { type: integer }
+                        toBar: { type: integer }
+                        times: { type: integer }
+                        upper: { type: string }
+                        lower: { type: string }
+                        ref: { type: integer, description: A notehead to point at. }
+
   /api/playback:
     get:
       tags: [play, render]

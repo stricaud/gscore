@@ -551,6 +551,8 @@ async function action(name) {
     case "harmonics": await openHarmonics(); break;
     case "range": await openRange(); break;
     case "keymap": await openKeyMap(); break;
+    case "scoremap": await openScoreMap(); break;
+    case "voices": await openVoiceLeading(); break;
 
     case "beam-join": await mark("beam", { beam: "join" }, "Beamed together"); break;
     case "beam-here": await beamOrBreak(); break;
@@ -9200,6 +9202,8 @@ async function main() {
   setupZoomGestures();
   setupRangeClicks();
   setupKeyMapClicks();
+  setupScoreMapClicks();
+  setupVoiceLeadingClicks();
   setupPanning();
   setupMarquee();
   setupSymbolDragging();
@@ -9965,6 +9969,267 @@ function setupKeyMapClicks() {
     const row = e.target.closest ? e.target.closest(".keymap-row") : null;
     if (!row) return;
     const dlg = $("#keymap");
+    if (dlg?.open) dlg.close();
+    await goToMeasure(Number(row.dataset.bar));
+  });
+}
+
+/* ---------- the shape of a piece ---------- */
+
+// Who is playing when, and what repeats what.
+//
+// Both are questions about the whole of a piece, and the editor could answer
+// nothing of that kind. A symphony is fifty-three staves and two and a half
+// thousand bars: there was no way to see which instruments carry a passage,
+// where the material comes back, or where the piece is thick and where it
+// thins out — all of which are read off a score in a glance by anybody
+// holding one, and none of which a window showing twelve bars can show.
+//
+// What repeats what is the nearer thing to an explanation. Music is made of
+// things coming back, and where they come back is the skeleton somebody
+// listening is trying to hear.
+
+// mapColumns is how many columns the piece is drawn in.
+//
+// A bar of the Ninth is a fifth of a pixel wide, so the bars are gathered
+// into columns and each column shows the busiest bar in it. Busiest and not
+// the average: an entry is the thing worth seeing, and averaging it with the
+// rests around it is how an entry disappears.
+const mapColumns = 360;
+
+// mapLevels is how many shades the strip is drawn in. Five is enough to tell
+// resting from playing from a tutti, and few enough that the rectangles join
+// into runs instead of being one per bar.
+const mapLevels = 5;
+
+async function openScoreMap() {
+  const dlg = $("#scoremap");
+  if (!dlg) return;
+  if (!dlg.open) dlg.showModal();
+  await refreshScoreMap();
+}
+
+async function refreshScoreMap() {
+  let d;
+  try {
+    const res = await fetch("/api/map");
+    if (!res.ok) return;
+    d = await res.json();
+  } catch (_) {
+    return; // a reader, not an editor
+  }
+  drawScoreMap(d);
+}
+
+function drawScoreMap(d) {
+  const body = $("#map-body");
+  if (!body) return;
+  const bars = d.bars || 0;
+  if (!bars) {
+    body.innerHTML = `<p class="small">There is nothing written yet.</p>`;
+    return;
+  }
+  const staves = d.staves || [];
+  const echoes = d.echoes || [];
+
+  body.innerHTML =
+    `<h3>who is playing when</h3>` +
+    staves.map((s) => mapRow(s, bars, d.busiest || 1)).join("") +
+    `<h3>what repeats what</h3>` +
+    (echoes.length
+      ? echoes.map(mapEcho).join("")
+      : `<p class="small">Nothing in it comes back — no stretch of two bars ` +
+        `or more is heard twice.</p>`);
+
+  const where = $("#map-where");
+  if (where) {
+    where.textContent =
+      `${bars} bars · ${staves.length} ${staves.length === 1 ? "staff" : "staves"}` +
+      (echoes.length ? ` · ${echoes.length} return${echoes.length === 1 ? "" : "s"}` : "");
+  }
+}
+
+function mapRow(s, bars, busiest) {
+  return `<div class="map-row"><span class="map-staff" title="${escapeHTML(s.name)}">` +
+    `${escapeHTML(s.name)}</span>${mapStrip(s.bars || [], bars, busiest)}</div>`;
+}
+
+// mapStrip draws one staff's whole part as a strip.
+//
+// Adjacent columns of the same shade are drawn as one rectangle rather than
+// one each: a staff that rests for eighty bars is one wide pale rectangle,
+// and a symphony comes out in a few hundred shapes rather than twenty
+// thousand.
+function mapStrip(counts, bars, busiest) {
+  const W = mapColumns, H = 9;
+  const per = bars / W;
+  const level = (col) => {
+    let most = 0;
+    const from = Math.floor(col * per);
+    const to = Math.max(from + 1, Math.ceil((col + 1) * per));
+    for (let i = from; i < to && i < counts.length; i++) {
+      if (counts[i] > most) most = counts[i];
+    }
+    if (most === 0) return 0;
+    const n = Math.ceil((most / Math.max(1, busiest)) * (mapLevels - 1));
+    return Math.min(mapLevels - 1, Math.max(1, n));
+  };
+
+  const parts = [`<rect class="map-rest" x="0" y="0" width="${W}" height="${H}"/>`];
+  let at = 0;
+  while (at < W) {
+    const here = level(at);
+    let end = at + 1;
+    while (end < W && level(end) === here) end++;
+    if (here > 0) {
+      const shade = 0.22 + (here / (mapLevels - 1)) * 0.78;
+      parts.push(`<rect x="${at}" y="0" width="${end - at}" height="${H}" ` +
+        `fill="var(--accent)" fill-opacity="${shade.toFixed(2)}"/>`);
+    }
+    at = end;
+  }
+  return `<svg class="map-busy" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" ` +
+    `role="img" aria-label="Where this staff plays">${parts.join("")}</svg>`;
+}
+
+function mapEcho(e) {
+  const here = e.fromBar === e.toBar
+    ? `bar ${barNumberOf(e.fromBar)}`
+    : `bars ${barNumberOf(e.fromBar)}–${barNumberOf(e.toBar)}`;
+  const there = e.bars === 1
+    ? `bar ${barNumberOf(e.likeBar)}`
+    : `bars ${barNumberOf(e.likeBar)}–${barNumberOf(e.likeBar + e.bars - 1)}`;
+  return `<button type="button" class="map-echo" data-bar="${e.fromBar}">` +
+    `<span><b>${escapeHTML(here)}</b> are ${escapeHTML(there)} again</span>` +
+    `<span class="moved">${escapeHTML(movedBy(e.transposed))}</span></button>`;
+}
+
+// movedBy says how far a return has moved, in the words a musician uses: the
+// recapitulation of a sonata brings its second subject back a fifth lower,
+// and "−7 semitones" is the same fact in a language nobody reads music in.
+function movedBy(semitones) {
+  if (!semitones) return "the same notes";
+  const names = ["", "a semitone", "a tone", "a minor third", "a major third",
+                 "a fourth", "a tritone", "a fifth", "a minor sixth",
+                 "a major sixth", "a minor seventh", "a major seventh"];
+  const up = semitones > 0;
+  const n = Math.abs(semitones);
+  const octaves = Math.floor(n / 12);
+  const rest = n % 12;
+  let what = names[rest] || "";
+  if (octaves && rest) what = `${what} and ${octaves === 1 ? "an octave" : octaves + " octaves"}`;
+  else if (octaves) what = octaves === 1 ? "an octave" : `${octaves} octaves`;
+  return `${what} ${up ? "higher" : "lower"}`;
+}
+
+function setupScoreMapClicks() {
+  const body = $("#map-body");
+  if (!body) return;
+  body.addEventListener("click", async (e) => {
+    const row = e.target.closest ? e.target.closest(".map-echo") : null;
+    if (!row) return;
+    const dlg = $("#scoremap");
+    if (dlg?.open) dlg.close();
+    await goToMeasure(Number(row.dataset.bar));
+  });
+}
+
+/* ---------- how the lines move against each other ---------- */
+
+// The one part of the analysis that judges rather than measures, and it has
+// to be honest about that.
+//
+// Parallel fifths are not wrong. They are wrong *in a tradition* — roughly,
+// European art music between Palestrina and Brahms — and they are the whole
+// sound of organum, of Debussy, of most film music and of every power chord
+// ever played. A panel that said "error" would be saying something false
+// about every one of those.
+//
+// So nothing here is an error. Each finding says what was seen, where, and
+// in which pair of lines, and the composer decides whether it is what they
+// meant. Where it is, they ignore it and have lost a glance; where it is
+// not, they have been handed the one thing that is genuinely hard to see in
+// your own work, because you know what you meant by it.
+
+async function openVoiceLeading() {
+  const dlg = $("#voices");
+  if (!dlg) return;
+  if (!dlg.open) dlg.showModal();
+  await refreshVoiceLeading();
+}
+
+async function refreshVoiceLeading() {
+  let d;
+  try {
+    const res = await fetch("/api/voices");
+    if (!res.ok) return;
+    d = await res.json();
+  } catch (_) {
+    return; // a reader, not an editor
+  }
+  drawVoiceLeading(d);
+}
+
+// What it judges by, said once at the top rather than argued in every line.
+const voicesTradition =
+  "Judged by the part-writing of European art music between Palestrina and " +
+  "Brahms, which is the tradition these rules come from and the only one " +
+  "they are about. Nothing here is an error: parallel fifths are the sound " +
+  "of organum, of Debussy and of every power chord ever played. What is " +
+  "offered is what was seen, so that you can decide whether it is what you " +
+  "meant.";
+
+function drawVoiceLeading(d) {
+  const body = $("#voices-body");
+  const where = $("#voices-where");
+  if (!body) return;
+
+  if (d.tooMany) {
+    body.innerHTML = `<p class="voices-tradition">${escapeHTML(voicesTradition)}</p>` +
+      `<p class="small">This score has ${d.lines} lines of music, and the ` +
+      `rules are about music of ${d.tooMany} or fewer — a chorale, a quartet, ` +
+      `a keyboard piece in parts. The fifths between a second clarinet and a ` +
+      `cello eight bars apart in register are not a fact anybody can use, and ` +
+      `there would be thousands of them.</p>`;
+    if (where) where.textContent = `${d.lines} lines — too many to be worth asking`;
+    return;
+  }
+
+  const motions = d.motions || [];
+  body.innerHTML = `<p class="voices-tradition">${escapeHTML(voicesTradition)}</p>` +
+    (motions.length
+      ? motions.map(voiceLeadingRow).join("")
+      : `<p class="small">Nothing to report: no parallel fifths or octaves, ` +
+        `no crossing, no overlap.</p>`);
+
+  if (where) {
+    const lines = `${d.lines} line${d.lines === 1 ? "" : "s"}`;
+    where.textContent = motions.length
+      ? `${lines} · ${motions.length} thing${motions.length === 1 ? "" : "s"} to look at`
+      : `${lines} · nothing to look at`;
+  }
+}
+
+function voiceLeadingRow(m) {
+  const bars = m.fromBar === m.toBar
+    ? `bar ${barNumberOf(m.fromBar)}`
+    : `bars ${barNumberOf(m.fromBar)}–${barNumberOf(m.toBar)}`;
+  // How often, where it is more than once. A left hand in octaves does the
+  // same thing in every bar for pages, and the count is what says so.
+  const often = m.times > 1 ? `, ${m.times} times` : "";
+  return `<button type="button" class="voices-row" data-bar="${m.fromBar}">` +
+    `<span><span class="voices-kind">${escapeHTML(m.kind)}</span>` +
+    `${escapeHTML(m.text)}</span>` +
+    `<span class="where">${escapeHTML(bars + often)}</span></button>`;
+}
+
+function setupVoiceLeadingClicks() {
+  const body = $("#voices-body");
+  if (!body) return;
+  body.addEventListener("click", async (e) => {
+    const row = e.target.closest ? e.target.closest(".voices-row") : null;
+    if (!row) return;
+    const dlg = $("#voices");
     if (dlg?.open) dlg.close();
     await goToMeasure(Number(row.dataset.bar));
   });

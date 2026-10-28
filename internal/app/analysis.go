@@ -12,6 +12,7 @@ package app
 
 import (
 	"net/http"
+	"sort"
 	"strconv"
 
 	"github.com/stricaud/gscore/internal/analysis"
@@ -487,4 +488,202 @@ func scoreShape(s *model.Score) ([]analysis.Busy, []analysis.BarShape) {
 		shapes[i] = analysis.Shaped(inBar[i])
 	}
 	return busy, shapes
+}
+
+// handleVoices says how the lines of the score move against each other.
+//
+// The one part of the analysis that judges rather than measures. Parallel
+// fifths are not wrong; they are wrong in a tradition, and they are the
+// whole sound of organum, of Debussy and of every power chord ever played.
+// So nothing here is sent as an error: each finding says what was seen,
+// where, and in which pair of lines, and the composer decides whether it is
+// what they meant.
+func (a *App) handleVoices(w http.ResponseWriter, r *http.Request) {
+	a.mu.RLock()
+	lines, sounds := scoreLines(a.score)
+	a.mu.RUnlock()
+
+	// A score of many staves is many pairs of lines, and most of the pairs
+	// are instruments that never hear each other. Reported anyway it would
+	// be thousands of findings about a symphony, which is a way of saying
+	// nothing at great length.
+	if len(lines) > maxVoiceLines {
+		writeJSON(w, map[string]any{
+			"lines": len(lines), "tooMany": maxVoiceLines, "motions": []any{},
+		})
+		return
+	}
+	motions := analysis.Moving(lines, sounds)
+	if motions == nil {
+		motions = []analysis.Motion{}
+	}
+	names := make([]string, len(lines))
+	for i, l := range lines {
+		names[i] = l.Name
+	}
+	writeJSON(w, map[string]any{
+		"lines": len(lines), "names": names, "motions": motions,
+	})
+}
+
+// maxVoiceLines is how many lines a score may have before this is not worth
+// asking.
+//
+// Sixteen is a chorale, a quartet, a piano piece in several voices — the
+// music the rules it checks were written for and about. A symphony has
+// sixty, and the fifths between the second clarinet and a cello eight bars
+// apart in register are not a fact anybody can use.
+const maxVoiceLines = 16
+
+// lineShare is how much of its voice's music a line has to be present for
+// before it is a line at all.
+//
+// A chorale's alto is the lower note of the treble staff's chords in every
+// bar; the fifth note of one thick piano chord is not a line, it is a
+// thickening. Counting it as one gave the Moonlight thirteen lines, most of
+// them a handful of bars long, and put the whole piece over the limit.
+const lineShare = 0.5
+
+// scoreLines reads the score as lines of music: a voice of a staff, and
+// where several notes are written in one voice, the nth down from the top
+// of them.
+//
+// A chorale written on two staves has four lines in two voices — the soprano
+// and alto are the top and bottom notes of the treble staff's chords. That
+// is how such music is written and so that is how it is read.
+func scoreLines(s *model.Score) ([]analysis.Line, []analysis.Sound) {
+	type key struct{ part, voice, rank int }
+	at := map[key]int{}
+	var lines []analysis.Line
+	var sounds []analysis.Sound
+
+	base := baseRefs(s)
+	// Where every bar begins, worked out once. Asked bar by bar it walked
+	// the whole score from the start each time, and reading the Moonlight
+	// took a quarter of a second for nothing.
+	starts := barStarts(s)
+	for pi, p := range s.Parts {
+		if p.Hidden || p.Unpitched() {
+			continue
+		}
+		// Named the way the editor names staves everywhere else, so a
+		// finding about one can be found on the page. The instrument is
+		// not the name: a sonata's two staves are both "piano".
+		staff := p.Name
+		if staff == "" {
+			staff = "Staff " + strconv.Itoa(pi+1)
+		}
+		for mi, m := range p.Measures {
+			for vi, v := range m.Voices {
+				start := 0.0
+				for ei, el := range v.Elements {
+					d := el.Duration()
+					held := 0.0
+					if d.Den != 0 {
+						held = float64(d.Num) / float64(d.Den)
+					}
+					pitches := pitchesIn(el)
+					// Highest first, so rank 0 is the top line of the
+					// chord and stays the top line as the chord changes
+					// size.
+					sort.Slice(pitches, func(x, y int) bool {
+						return sounding(p, pitches[x], 0).MIDI() >
+							sounding(p, pitches[y], 0).MIDI()
+					})
+					for rank, pitch := range pitches {
+						k := key{pi, vi, rank}
+						idx, seen := at[k]
+						if !seen {
+							idx = len(lines)
+							at[k] = idx
+							lines = append(lines, analysis.Line{
+								Part: pi, Voice: vi, Rank: rank,
+								Name: lineName(staff, vi, rank),
+							})
+						}
+						sounds = append(sounds, analysis.Sound{
+							Line: idx, Bar: mi,
+							At: starts[mi] + start, Until: starts[mi] + start + held,
+							MIDI: sounding(p, pitch, 0).MIDI(),
+							Ref:  base[pi][mi] + ei,
+						})
+					}
+					start += held
+				}
+			}
+		}
+	}
+	return thin(lines, sounds)
+}
+
+// thin drops the ranks that are not lines: those sounding in too little of
+// what their voice plays to be a line of music rather than a thickening of
+// one.
+func thin(lines []analysis.Line, sounds []analysis.Sound) ([]analysis.Line, []analysis.Sound) {
+	// How many bars each line sounds in, and how many its voice does.
+	bars := make([]map[int]bool, len(lines))
+	for i := range bars {
+		bars[i] = map[int]bool{}
+	}
+	for _, s := range sounds {
+		bars[s.Line][s.Bar] = true
+	}
+	top := map[[2]int]int{} // part and voice to its first rank's bars
+	for i, l := range lines {
+		if l.Rank == 0 {
+			top[[2]int{l.Part, l.Voice}] = len(bars[i])
+		}
+	}
+
+	keep := make([]int, len(lines))
+	var out []analysis.Line
+	for i, l := range lines {
+		whole := top[[2]int{l.Part, l.Voice}]
+		if l.Rank > 0 && whole > 0 &&
+			float64(len(bars[i]))/float64(whole) < lineShare {
+			keep[i] = -1
+			continue
+		}
+		keep[i] = len(out)
+		out = append(out, l)
+	}
+	var kept []analysis.Sound
+	for _, s := range sounds {
+		if keep[s.Line] < 0 {
+			continue
+		}
+		s.Line = keep[s.Line]
+		kept = append(kept, s)
+	}
+	return out, kept
+}
+
+func lineName(staff string, voice, rank int) string {
+	name := staff
+	if voice > 0 {
+		name += ", voice " + strconv.Itoa(voice+1)
+	}
+	if rank > 0 {
+		name += ", note " + strconv.Itoa(rank+1) + " down"
+	}
+	return name
+}
+
+// barStarts is where each bar begins along the piece, in whole notes.
+//
+// Counted from the written lengths rather than from the performance: a
+// repeated bar sounds twice and is written once, and a finding about it
+// belongs to the bar on the page.
+func barStarts(s *model.Score) []float64 {
+	n := s.MeasureCount()
+	out := make([]float64, n+1)
+	at := 0.0
+	for i := 0; i < n; i++ {
+		out[i] = at
+		if d := s.MeasureDuration(i); d.Den != 0 {
+			at += float64(d.Num) / float64(d.Den)
+		}
+	}
+	out[n] = at
+	return out
 }

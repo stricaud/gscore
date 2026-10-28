@@ -1578,6 +1578,78 @@ dialog.wide { max-width: 640px; }
 }
 #harm-number { font-variant-numeric: tabular-nums; min-width: 3em; text-align: right; }
 
+/* ---- voice leading ---- */
+
+#voices {
+  max-width: 760px;
+  width: min(760px, 95vw);
+  height: min(76vh, 620px);
+  flex-direction: column;
+  padding: 16px 20px;
+}
+#voices[open] { display: flex; }
+#voices-body { flex: 1; min-height: 0; overflow-y: auto; padding-right: 4px; }
+
+/* What it judges by, said once at the top and not argued in every line. */
+.voices-tradition {
+  margin: 2px 0 10px; padding: 8px 10px;
+  border-left: 2px solid var(--line);
+  color: var(--muted); font-size: 12px; line-height: 1.5;
+}
+
+.voices-row {
+  display: grid; grid-template-columns: 1fr auto; gap: 10px;
+  align-items: baseline; width: 100%;
+  padding: 5px 0; border: 0; border-bottom: 1px solid var(--line);
+  background: none; color: inherit; font: inherit; text-align: left;
+  cursor: pointer; margin: 0;
+}
+.voices-row:hover { background: var(--panel-dark); }
+.voices-row .where { color: var(--muted); font-size: 12px; white-space: nowrap; }
+.voices-kind {
+  display: inline-block; min-width: 8.5em;
+  font-size: 11px; color: var(--muted); text-transform: lowercase;
+}
+
+/* ---- the shape of a piece ---- */
+
+#scoremap {
+  max-width: 860px;
+  width: min(860px, 96vw);
+  height: min(80vh, 680px);
+  flex-direction: column;
+  padding: 16px 20px;
+}
+#scoremap[open] { display: flex; }
+#map-body { flex: 1; min-height: 0; overflow-y: auto; padding-right: 4px; }
+
+#map-body h3 {
+  margin: 14px 0 6px; font-size: 13px; color: var(--muted);
+  font-weight: 600; text-transform: lowercase;
+}
+#map-body h3:first-child { margin-top: 2px; }
+
+/* One row per staff: its name, and a strip of the whole piece shaded by
+   how much it plays. Drawn only where there is something, so a staff that
+   rests for eighty bars leaves eighty bars of paper. */
+.map-row { display: grid; grid-template-columns: 9.5em 1fr; align-items: center; gap: 8px; }
+.map-staff {
+  font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.map-busy { width: 100%; height: 9px; display: block; }
+.map-rest { fill: var(--line); fill-opacity: .35; }
+
+.map-echo {
+  display: grid; grid-template-columns: 1fr auto; gap: 8px;
+  align-items: baseline; width: 100%;
+  padding: 4px 0; border: 0; border-bottom: 1px solid var(--line);
+  background: none; color: inherit; font: inherit; text-align: left;
+  cursor: pointer; margin: 0;
+}
+.map-echo:hover { background: var(--panel-dark); }
+.map-echo .moved { color: var(--muted); font-size: 12px; }
+.map-echo b { font-weight: 600; }
+
 /* ---- keys and modulations ---- */
 
 #keymap {

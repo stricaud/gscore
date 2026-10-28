@@ -387,6 +387,8 @@
       <button data-action="harmonics"><span>Harmonics…</span></button>
       <button data-action="range"><span>Range…</span></button>
       <button data-action="keymap"><span>Keys and modulations…</span></button>
+      <button data-action="scoremap"><span>Shape of the piece…</span></button>
+      <button data-action="voices"><span>Voice leading…</span></button>
     </div>
   </div>
 
@@ -624,6 +626,42 @@
   </div>
   <div id="keymap-strip"></div>
   <div id="keymap-body"></div>
+</dialog>
+
+<!-- The shape of a piece: who is playing when, and what repeats what.
+     Both are questions about the whole of it. A symphony is fifty-three
+     staves and two and a half thousand bars, and there was no way to see any
+     of it at once — not which instruments carry a passage, not where the
+     material comes back, not where the piece is dense and where it thins. -->
+<dialog id="scoremap">
+  <div class="dlg-head">
+    <div>
+      <h2>Shape of the piece</h2>
+      <p class="small" id="map-where">Who is playing when, and what repeats what.</p>
+    </div>
+    <form method="dialog">
+      <button value="close" type="submit" class="dlg-close" aria-label="Close">✕</button>
+    </form>
+  </div>
+  <div id="map-body"></div>
+</dialog>
+
+<!-- How the lines move against each other.
+     The one part of the analysis that judges rather than measures, so it
+     says what it judges by and offers rather than rules. Parallel fifths
+     are not wrong; they are wrong in a tradition, and they are the whole
+     sound of organum, of Debussy and of every power chord ever played. -->
+<dialog id="voices">
+  <div class="dlg-head">
+    <div>
+      <h2>Voice leading</h2>
+      <p class="small" id="voices-where">How the lines move against each other.</p>
+    </div>
+    <form method="dialog">
+      <button value="close" type="submit" class="dlg-close" aria-label="Close">✕</button>
+    </form>
+  </div>
+  <div id="voices-body"></div>
 </dialog>
 
 <dialog id="draw">

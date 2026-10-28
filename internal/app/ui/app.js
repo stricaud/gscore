@@ -37,14 +37,21 @@ const state = {
   info: null,
   playing: false,
   // What is selected.
-  //
-  // Writing is the default, so a new score can be typed into straight away
-  // with no mode to enter first. What makes that bearable is that a click
-  // landing on a note already there selects it instead of stacking another on
-  // top — which is what anyone means by clicking a note they can see.
-  // Alt-click always selects, and N turns writing off entirely for anyone who
-  // prefers a strict mode.
   selection: null,
+  // Whether a click on the staff writes a note or picks one up.
+  //
+  // Off, which is to say the mouse points and the keyboard writes. A click
+  // means "this one" — the thing everybody expects a click to mean, and the
+  // thing you do far more often than writing. Notes are typed, which is
+  // faster than clicking them in anyway once the cursor is where you want
+  // it.
+  //
+  // Writing with the mouse used to be the only way round: a click wrote a
+  // note and shift-click was the only way to pick one up, so selecting —
+  // the commonest thing anybody does — needed two hands. Insert ▸ Write
+  // with the mouse turns it back on for anyone who prefers it, and shift
+  // still selects while it is on.
+  mouseWrites: false,
 
   hits: [],
   // The performance, kept until the music changes. See playbackData.
@@ -178,7 +185,9 @@ async function paletteAction(item) {
       await insertAtSelection(false);
       return;
     }
-    status(item.label + " — click the drum staff to write it");
+    // Not "click the drum staff": a click points, it does not write. What
+    // is missing is a cursor on a staff that takes drums.
+    status(item.label + " — put the cursor on a drum staff to write it");
     return;
   }
   if (item.ending !== undefined) {
@@ -507,7 +516,7 @@ async function action(name) {
       stop();
       break;
     case "note-input":
-      status("Click the staff to write. Hold shift to select instead.");
+      setMouseWrites(!state.mouseWrites);
       break;
     case "insert-note":
       await insertAtSelection(false);
@@ -3086,9 +3095,9 @@ function setupCanvasClicks() {
     }
 
     const step = stepAt(hit, y);
-    // Writing is what a click does. Holding shift is what selects — which
-    // is a thing you do while you hold it, not a mode you are left in.
-    const picking = e.shiftKey;
+    // A click picks music up, unless writing with the mouse has been turned
+    // on — and then shift picks up, the way it always did.
+    const picking = !state.mouseWrites || e.shiftKey;
     const el = picking ? elementAt(hit, x, y) : columnAt(hit, x);
 
     // A click landing on something already there picks it up — writing a note
@@ -3150,10 +3159,8 @@ function setupCanvasClicks() {
       replace: over,
     };
 
-    // Shift selects and never writes. gscore 0.0.9 made this a mode, with a
-    // cursor tool to put down and pick up, and it was confusing for the
-    // reason modes usually are: what a click does depended on something you
-    // had to remember rather than on something you were doing.
+    // Picking up never writes. What is left is a cursor in the bar, which
+    // is where the keyboard will write.
     if (picking || state.readOnly) {
       markSelection();
       status(`Measure ${hit.measure + 1}`);
@@ -4825,6 +4832,46 @@ function ask({ title, label, value = "", note = "", options = null, search = fal
   });
 }
 
+// confirmThat asks a question that only needs "go on" or "don't".
+//
+// The same one-question dialog ask uses, with nothing to type in it. A
+// question of this shape should not be a box to type into: making somebody
+// retype the name of the staff they are standing on is a lock rather than a
+// question, and it did not even work — a staff with no name of its own
+// asked for the words "that staff", which nobody would guess and nobody
+// should have to.
+//
+// Enter answers yes, because the dialog's own rule is that Enter presses the
+// first button, and because everything it guards can be taken back.
+function confirmThat({ title, note = "", ok = "OK" }) {
+  const dlg = $("#ask");
+  const label = $("#ask-label");
+  const okBtn = $("#ask-ok");
+
+  $("#ask-title").textContent = title;
+  $("#ask-note").textContent = note;
+  $("#ask-note").hidden = !note;
+  label.hidden = true;
+  $("#ask-input").hidden = true;
+  $("#ask-select").hidden = true;
+  $("#ask-filter").hidden = true;
+  const wasOK = okBtn.textContent;
+  okBtn.textContent = ok;
+
+  return new Promise((resolve) => {
+    const done = () => {
+      dlg.removeEventListener("close", done);
+      // Put the dialog back the way the next question will want it.
+      label.hidden = false;
+      okBtn.textContent = wasOK;
+      resolve(dlg.returnValue === "ok");
+    };
+    dlg.addEventListener("close", done);
+    dlg.showModal();
+    setTimeout(() => okBtn.focus(), 0);
+  });
+}
+
 // The things that belong to the score or the staff rather than to a note.
 // Each asks for one value and sends it; nothing here is worth a panel.
 
@@ -5316,6 +5363,36 @@ function markViewTicks() {
   const n = $("#names-tick"), m = $("#numbers-tick");
   if (n) n.textContent = state.view.names ? "✓" : "";
   if (m) m.textContent = state.view.numbers ? "✓" : "";
+  const w = $("#mouse-tick");
+  if (w) w.textContent = state.mouseWrites ? "✓" : "";
+}
+
+// setMouseWrites switches between pointing and writing, and remembers which.
+//
+// Remembered here rather than with the score, because it is a fact about
+// how somebody works and not about the music: open another file and the
+// mouse should still do what it did a moment ago.
+function setMouseWrites(on) {
+  state.mouseWrites = !!on;
+  try {
+    localStorage.setItem("mousewrites", on ? "1" : "0");
+  } catch (_) {
+    /* a private window may refuse; it still holds for this session */
+  }
+  markViewTicks();
+  status(on
+    ? "Writing with the mouse — a click writes a note, shift picks one up"
+    : "Pointing with the mouse — a click picks music up, and the keyboard writes");
+}
+
+// loadMouseWrites brings back what was chosen last time.
+function loadMouseWrites() {
+  try {
+    state.mouseWrites = localStorage.getItem("mousewrites") === "1";
+  } catch (_) {
+    /* the default stands */
+  }
+  markViewTicks();
 }
 
 // chordSymbolDialog writes a chord over the music.
@@ -5969,24 +6046,29 @@ async function showAllStaves() {
 }
 
 async function removeStaff() {
+  const parts = state.info?.parts || [];
   const part = state.selection?.part ?? 0;
-  const name = state.info?.parts?.[part]?.name || "that staff";
-  const sure = await ask({
-    title: "Remove a staff", label: "Type the name to remove it",
-    note: `This takes away ${name} and the music on it.`,
-  });
-  if (sure === null) return;
-  if (sure.trim().toLowerCase() !== name.toLowerCase()) {
-    status("Left it alone — the name did not match");
+  if (parts.length <= 1) {
+    status("A score has to have a staff");
     return;
   }
+  // Named where it has a name, and numbered where it has not: a staff
+  // somebody is about to lose should be said back to them, and "staff 4" is
+  // a better answer than nothing.
+  const name = parts[part]?.name || `staff ${part + 1}`;
+  const sure = await confirmThat({
+    title: "Remove this staff?",
+    note: `This takes away ${name} and the music on it. Undo brings it back.`,
+    ok: "Remove",
+  });
+  if (!sure) return;
   const res = await fetch("/api/removestaff?part=" + part, { method: "POST" });
   if (!res.ok) {
     status("Could not remove it: " + (await res.text()).trim());
     return;
   }
   await reload();
-  status("Removed " + name);
+  status(`Removed ${name} — Undo brings it back`);
 }
 
 async function moveStaff(delta) {
@@ -6787,6 +6869,33 @@ function scrollToTop() {
 // are working on, hearing the piece from the top again is rarely what you
 // wanted. Shift with the space bar still goes back to the beginning, and so
 // does playing with nothing selected.
+// startOfSelection is where in the performance whatever is picked up
+// begins, or null when nothing is.
+//
+// A note carries the number the engraver gave it and the performance knows
+// it by the same one, so it is found exactly. A bar has no number of its
+// own, and neither has a cursor standing in one — and those are most of
+// what anybody picks up. Without an answer for them, going to bar four
+// hundred and pressing play started the piece from the top, which is never
+// what somebody who has just gone to bar four hundred meant.
+//
+// Starting from the beginning is going to the beginning and pressing play,
+// which is one gesture more than it was and the right way round: the common
+// thing should be the easy one.
+function startOfSelection(pb) {
+  const sel = state.selection;
+  const ref = state.multi.length ? orderedSelection()[0]?.ref : sel?.ref;
+  if (ref !== null && ref !== undefined) {
+    const ev = (pb.events || []).find((x) => x.ref === ref);
+    if (ev) return ev.start;
+  }
+  if (!sel || sel.measure === null || sel.measure === undefined) return null;
+  // The first time through: a bar inside a repeat is played more than once,
+  // and the one being looked at is the first of them.
+  const m = (pb.measures || []).find((x) => x.index === sel.measure);
+  return m ? m.start : null;
+}
+
 // play says what it is doing while it gets ready.
 //
 // Working out a performance and handing the first of it to the sound card
@@ -6863,10 +6972,9 @@ async function playNow(opts) {
     // that far. Then there is nothing to carry on from and the top is the
     // only sensible answer.
     if (from >= pb.duration) from = 0;
-  } else if (!(opts && opts.fromStart) && hasSelection()) {
-    const ref = state.multi.length ? orderedSelection()[0].ref : state.selection.ref;
-    const ev = pb.events.find((x) => x.ref === ref);
-    if (ev) from = ev.start;
+  } else if (!(opts && opts.fromStart)) {
+    const at = startOfSelection(pb);
+    if (at !== null) from = at;
   }
   // Whatever was paused has now been taken up or dropped on purpose.
   state.pausedAt = null;
@@ -7923,9 +8031,9 @@ const KEY_BINDINGS = [
     label: "Add a bar at the end", run: () => action("add-measure") },
   { id: "delete", menu: "delete", keys: "Backspace", group: "Writing",
     label: "Delete what is picked up", run: () => action("delete") },
-  { id: "writing-help", menu: "note-input", keys: "i", group: "Writing",
-    label: "How to write and how to select",
-    run: () => status("Click the staff to write. Hold shift to select instead.") },
+  { id: "mouse-writes", menu: "note-input", keys: "i", group: "Writing",
+    label: "Write with the mouse, rather than pointing with it",
+    run: () => setMouseWrites(!state.mouseWrites) },
 
   // How long the next note is. The figures run down the values, with the
   // dotted ones beside the plain ones they lengthen.
@@ -7998,6 +8106,35 @@ const KEY_BINDINGS = [
     label: "Lyrics", run: () => action("set-lyrics") },
   { id: "fingering", keys: "F2", group: "Marks",
     label: "Show the fingering", run: () => toggleFingering() },
+
+  // The marks that go on a note, on the keys NoteWorthy puts them on.
+  //
+  // Each of these was already a menu item and a palette button and nothing
+  // else, which is three gestures for a staccato dot. They are typed far
+  // more often than anything else in a score is, and the keys are the ones
+  // a hand that has written music before already knows: the mark's own
+  // shape where it has one, so > is a diminuendo and ^ a marcato.
+  { id: "artic-accent", menu: "artic-accent", keys: "!", group: "Marks",
+    label: "Accent", run: () => action("artic-accent") },
+  { id: "artic-marcato", menu: "artic-marcato-up", keys: "^", group: "Marks",
+    label: "Marcato", run: () => action("artic-marcato-up") },
+  { id: "artic-staccato", menu: "artic-staccato", keys: ",", group: "Marks",
+    label: "Staccato", run: () => action("artic-staccato") },
+  { id: "artic-staccatissimo", menu: "artic-staccatissimo", keys: "'", group: "Marks",
+    label: "Staccatissimo", run: () => action("artic-staccatissimo") },
+  { id: "artic-tenuto", menu: "artic-tenuto", keys: "_", group: "Marks",
+    label: "Tenuto", run: () => action("artic-tenuto") },
+  { id: "hairpin-cresc", menu: "hairpin-cresc", keys: "<", group: "Marks",
+    label: "Crescendo over what is picked up", run: () => action("hairpin-cresc") },
+  { id: "hairpin-dim", menu: "hairpin-dim", keys: ">", group: "Marks",
+    label: "Diminuendo over what is picked up", run: () => action("hairpin-dim") },
+  // The tie and the slur already answer to T and S. These are the keys
+  // NoteWorthy uses, kept as well rather than instead: a second key for a
+  // thing already bound costs nothing, and either hand is right.
+  { id: "tie-slash", keys: "/", group: "Marks",
+    label: "Tie — the same as T", run: () => action("tie") },
+  { id: "slur-semicolon", keys: ";", group: "Marks",
+    label: "Slur — the same as S", run: () => action("slur") },
 
   // Tuplets, where every other notation program puts them. Written out one
   // by one rather than worked out from a list, because this table is read as
@@ -8974,6 +9111,7 @@ async function main() {
     // Served without a disk behind it. The default stands.
   }
   markBarlineTick();
+  loadMouseWrites();
   syncMenuKeys();
 
   if (opt.score) {

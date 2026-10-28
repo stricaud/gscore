@@ -116,6 +116,9 @@ test("choosing a drum from the palette writes it too, where there is somewhere t
     "the palette's drums only arm the pen, where its note values write");
   assert.ok(bit.includes("isDrumStaff("),
     "the palette writes a drum wherever the cursor happens to be");
-  assert.ok(bit.includes("click the drum staff to write it"),
-    "with nowhere to write it, nothing says what the click did");
+  // And the advice is right: a click points rather than writes, so what is
+  // missing is a cursor on a drum staff, not another click.
+  assert.ok(bit.includes("put the cursor on a drum staff"),
+    "with nowhere to write it, it tells you to click the staff — which now " +
+    "only picks music up");
 });

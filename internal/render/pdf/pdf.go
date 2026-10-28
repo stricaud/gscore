@@ -459,23 +459,41 @@ func (r *renderer) pages() []band {
 	// its side is not a thing that can be set, and the choice is between
 	// printing part of the band and printing a band with its bottom sliced
 	// off by the paper's edge.
-	breaks := []float64{}
+	// Some cuts are not a choice. A section break is where one movement
+	// ends and another begins, and a movement begins on a page of its own:
+	// run on, the Presto of the Moonlight sonata started halfway along a
+	// system that ends the Allegretto, in another key and another meter.
+	type cut struct {
+		at     float64
+		forced bool
+	}
+	cuts := []cut{}
 	for i, sys := range systems {
 		if i > 0 {
-			breaks = append(breaks, sys.Top)
+			cuts = append(cuts, cut{sys.Top, sys.StartsSection})
 		}
 		if sys.Bottom-sys.Top > usable {
-			breaks = append(breaks, r.staffCuts(sys, usable)...)
+			for _, at := range r.staffCuts(sys, usable) {
+				cuts = append(cuts, cut{at, false})
+			}
 		}
 	}
-	breaks = append(breaks, r.lay.Height)
-	sort.Float64s(breaks)
+	cuts = append(cuts, cut{r.lay.Height, false})
+	sort.Slice(cuts, func(a, b int) bool { return cuts[a].at < cuts[b].at })
 
 	var out []band
 	// The first page starts at the very top of the drawing, because the
 	// title block sits above the first system and belongs with it.
 	top, prev := 0.0, 0.0
-	for _, at := range breaks {
+	for _, c := range cuts {
+		at := c.at
+		// A movement begins a page whether or not the one before it is
+		// full.
+		if c.forced && at > top {
+			out = append(out, band{top, at - 0.5})
+			top, prev = at, at
+			continue
+		}
 		if at-top > usable {
 			if prev <= top {
 				// One piece too tall for a page even on its own, and

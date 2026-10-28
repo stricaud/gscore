@@ -40,9 +40,86 @@ func (s *Score) PlayOrder() []int {
 	d := s.directions(n)
 
 	var out []int
+	for _, sec := range s.sections(n) {
+		if len(out) >= maxPlayedBars {
+			break
+		}
+		out = append(out, d.play(sec.from, sec.to, maxPlayedBars-len(out))...)
+	}
+	return out
+}
+
+// section is a stretch of bars read on its own.
+type section struct{ from, to int }
+
+// sections is the stretches a score is read in.
+//
+// A section break is where the music starts afresh: one movement ends and
+// another begins. It matters because everything that sends a player
+// somewhere else is written as though its own movement were the whole
+// piece — "D.C. al Fine" at the end of a minuet's trio means the beginning
+// of the minuet, not the beginning of the sonata, and the Fine it stops at
+// ends the movement rather than the evening.
+//
+// Read as one stretch, the Moonlight sonata played its first movement, its
+// second, went back to bar one for the D.C., played until the Fine in the
+// middle of the second movement and stopped — with the whole third movement
+// unplayed, and so unreachable: pressing play from a bar in it started the
+// piece from the top, because that bar was in no part of the performance.
+func (s *Score) sections(n int) []section {
+	var out []section
+	from := 0
+	for i := 0; i < n; i++ {
+		ends := false
+		for _, p := range s.Parts {
+			if i < len(p.Measures) && p.Measures[i].EndsSection {
+				ends = true
+				break
+			}
+		}
+		// A break on the last bar closes the piece rather than opening
+		// another section, so it adds nothing.
+		if ends && i+1 < n {
+			out = append(out, section{from, i + 1})
+			from = i + 1
+		}
+	}
+	return append(out, section{from, n})
+}
+
+// play is one section's bars in the order they are played.
+//
+// budget is how many more bars the whole performance may hold, so that a
+// malformed score — a repeat that always sends you back to a bar that sends
+// you back — cannot run forever however many sections it has.
+func (d directions) play(from, to, budget int) []int {
+	// The signs that belong to this section. A segno in the first movement
+	// is not where the second movement's D.S. goes.
+	segno, coda, lastEnding := -1, -1, 0
+	for i := from; i < to; i++ {
+		switch d.signs[i] {
+		case Segno:
+			if segno < 0 {
+				segno = i
+			}
+		case Coda:
+			if coda < 0 {
+				coda = i
+			}
+		}
+		if e := d.endings[i]; e != nil {
+			for _, num := range e.Numbers {
+				if num > lastEnding {
+					lastEnding = num
+				}
+			}
+		}
+	}
+
+	var out []int
 	// Where a repeat sends you back to, and how many times each closing
 	// repeat has already sent you.
-	back := 0
+	back := from
 	taken := map[int]int{}
 	// Which time through the current repeated section this is, counted from
 	// one, which is what a volta's numbers mean.
@@ -59,12 +136,12 @@ func (s *Score) PlayOrder() []int {
 	stopAtFine := false
 	leaveAtCoda := false
 
-	for i := 0; i < n && len(out) < maxPlayedBars; {
+	for i := from; i < to && len(out) < budget; {
 		// A bar inside a volta that is not for this time through is skipped,
 		// along with the rest of its bracket.
-		if e := d.endings[i]; e != nil && !playsOn(e, pass, d.lastEnding) {
+		if e := d.endings[i]; e != nil && !playsOn(e, pass, lastEnding) {
 			j := i
-			for j < n && d.endings[j] != nil && !playsOn(d.endings[j], pass, d.lastEnding) {
+			for j < to && d.endings[j] != nil && !playsOn(d.endings[j], pass, lastEnding) {
 				// Past this bracket, and past any that follows it and is
 				// also not for this time through.
 				if d.endings[j].Stop {
@@ -89,8 +166,8 @@ func (s *Score) PlayOrder() []int {
 				break
 			}
 			// To Coda leaves the music here and goes on at the coda.
-			if leaveAtCoda && d.signs[i] == ToCoda && d.coda >= 0 {
-				i = d.coda
+			if leaveAtCoda && d.signs[i] == ToCoda && coda >= 0 {
+				i = coda
 				continue
 			}
 		}
@@ -101,14 +178,16 @@ func (s *Score) PlayOrder() []int {
 			stopAtFine = j.Until == UntilFine
 			leaveAtCoda = j.Until == UntilCoda
 
-			target := 0
-			if j.From == FromSegno && d.segno >= 0 {
-				target = d.segno
+			// The beginning of this section, not of the score: a trio's
+			// "D.C. al Fine" means the beginning of the minuet.
+			target := from
+			if j.From == FromSegno && segno >= 0 {
+				target = segno
 			}
 			// On the way through again a repeated section is played once,
 			// through its last ending: a piece marked 1. and 2. and reached
 			// a third time goes through the second.
-			pass = d.lastEnding + 1
+			pass = lastEnding + 1
 			i = target
 			continue
 		}
@@ -175,11 +254,6 @@ type directions struct {
 	endings []*Ending
 	signs   []Sign
 	jumps   []*Jump
-	// segno and coda are where the signs are, or -1.
-	segno, coda int
-	// lastEnding is the highest volta number written anywhere, so that a
-	// section reached once more than it has brackets takes the last of them.
-	lastEnding int
 }
 
 func (s *Score) directions(n int) directions {
@@ -188,8 +262,6 @@ func (s *Score) directions(n int) directions {
 		endings: make([]*Ending, n),
 		signs:   make([]Sign, n),
 		jumps:   make([]*Jump, n),
-		segno:   -1,
-		coda:    -1,
 	}
 	for i := 0; i < n; i++ {
 		for _, p := range s.Parts {
@@ -208,23 +280,6 @@ func (s *Score) directions(n int) directions {
 			}
 			if m.Jump != nil && d.jumps[i] == nil {
 				d.jumps[i] = m.Jump
-			}
-		}
-		switch d.signs[i] {
-		case Segno:
-			if d.segno < 0 {
-				d.segno = i
-			}
-		case Coda:
-			if d.coda < 0 {
-				d.coda = i
-			}
-		}
-		if e := d.endings[i]; e != nil {
-			for _, num := range e.Numbers {
-				if num > d.lastEnding {
-					d.lastEnding = num
-				}
 			}
 		}
 	}

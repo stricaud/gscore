@@ -262,6 +262,29 @@ type Measure struct {
 	// has to mean the same bar to everybody in the room.
 	Marker string
 
+	// SectionTitle names the movement that begins at this bar, and is
+	// written over the staff where it begins.
+	//
+	// Empty on every bar but the first of a movement — and on that one
+	// only where the file says what the movement is called. A sonata's
+	// third movement is headed "Movement III" or "Presto agitato" and
+	// nothing else is headed at all.
+	SectionTitle string
+
+	// EndsSection says the music starts afresh after this bar: one movement
+	// ends here and another begins.
+	//
+	// It matters to playing rather than to drawing, because everything that
+	// sends a player somewhere else is written as though its own movement
+	// were the whole piece. "D.C. al Fine" at the end of a minuet's trio
+	// means the beginning of the minuet and the Fine in the middle of it,
+	// not the first bar of the sonata and not the end of the evening.
+	//
+	// Read as one stretch, the Moonlight sonata played its first movement,
+	// its second, went back to bar one for the D.C., played as far as the
+	// Fine and stopped — with the whole of the third movement unplayed.
+	EndsSection bool
+
 	// Sign is the segno, the coda, Fine or To Coda written at this bar: the
 	// places the directions below refer to.
 	Sign Sign

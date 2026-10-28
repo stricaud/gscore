@@ -297,3 +297,81 @@ func TestPlayOrderWithTwoSectionsOfEndings(t *testing.T) {
 		t.Errorf("got %q, want %q", got, want)
 	}
 }
+
+// A section break is where the music starts afresh: one movement ends and
+// another begins.
+//
+// Everything that sends a player somewhere else is written as though its own
+// movement were the whole piece. "D.C. al Fine" at the end of a minuet's
+// trio means the beginning of the minuet and the Fine in the middle of it,
+// not the first bar of the sonata and not the end of the evening.
+//
+// Read as one stretch, the Moonlight sonata played its first movement, its
+// second, went back to bar one for the D.C., stopped at the Fine halfway
+// through the second — and never played the third movement at all. Which
+// made every bar of it unreachable: going to one and pressing play started
+// the piece from the top, because that bar was in no part of the
+// performance.
+func TestADaCapoGoesBackToTheStartOfItsOwnSection(t *testing.T) {
+	// Two movements of three bars. The second is a minuet in miniature:
+	// Fine on its middle bar, D.C. al Fine on its last.
+	s := bars(7)
+	s.bar(2).EndsSection = true
+	s.bar(4).Sign = Fine
+	s.bar(5).Jump = &Jump{From: FromStart, Until: UntilFine}
+	s.bar(5).EndsSection = true
+
+	// 1 2 3, then 4 5 6, then back to 4 and as far as the Fine on 5, and
+	// then the third movement — which the Fine must not have ended.
+	if got, want := order(s), "1 2 3 4 5 6 4 5 7"; got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestWithoutASectionBreakNothingChanges(t *testing.T) {
+	// The same score with the break taken out: the D.C. reaches back to the
+	// first bar of all and the Fine ends the piece, which is what a score
+	// with one movement in it means.
+	s := bars(7)
+	s.bar(4).Sign = Fine
+	s.bar(5).Jump = &Jump{From: FromStart, Until: UntilFine}
+
+	if got, want := order(s), "1 2 3 4 5 6 1 2 3 4 5"; got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestARepeatGoesBackInsideItsOwnSection(t *testing.T) {
+	// A repeat with no opening sign goes back to the beginning — of the
+	// section it is in, not of the score.
+	s := bars(6)
+	s.bar(2).EndsSection = true
+	s.bar(5).RightBarline = BarRepeatEnd
+
+	if got, want := order(s), "1 2 3 4 5 6 4 5 6"; got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestASegnoBelongsToItsOwnSection(t *testing.T) {
+	// A D.S. in the second movement must not land on the first movement's
+	// segno. With none of its own it goes to the start of its section.
+	s := bars(8)
+	s.bar(1).Sign = Segno // in the first movement
+	s.bar(3).EndsSection = true
+	s.bar(7).Jump = &Jump{From: FromSegno, Until: UntilEnd}
+
+	if got, want := order(s), "1 2 3 4 5 6 7 8 5 6 7 8"; got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestABreakOnTheLastBarOpensNothing(t *testing.T) {
+	// MuseScore writes one there to end the piece on a double barline; it
+	// is not the start of a movement with no bars in it.
+	s := bars(3)
+	s.bar(2).EndsSection = true
+	if got, want := order(s), "1 2 3"; got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}

@@ -46,10 +46,95 @@ func Import(r io.Reader) (*model.Score, error) {
 	if err != nil {
 		return nil, err
 	}
+	for _, p := range s.Parts {
+		balanceSlurs(p)
+	}
 	if len(rd.skipped) > 0 {
 		return s, &PartialError{Skipped: rd.skipped}
 	}
 	return s, nil
+}
+
+// balanceSlurs drops a slur that has only one of its two ends.
+//
+// MuseScore names both ends, so one without the other is one this reader
+// failed to follow: a slur whose far end is on the other staff of a piano
+// score, or on a chord it could not read, or in a voice that was not there.
+// The Moonlight sonata is written in MuseScore 2 and has a few of each.
+//
+// It matters because of what the drawing does with one: a slur still open
+// when a system ends is carried to the right margin and started again on
+// the system after it, and the one after that, for the rest of the piece.
+// One missing end is a line drawn across every remaining page.
+//
+// Dropping it loses a slur. Keeping it loses the music behind the line.
+//
+// The walk follows the same rules the engraver does, so what is left is
+// exactly what will be drawn: one slur open at a time per line of music, a
+// grace note slurring into the note it leans on, and a start arriving while
+// one is already open being no new slur at all.
+func balanceSlurs(p *model.Part) {
+	most := 0
+	for _, m := range p.Measures {
+		if len(m.Voices) > most {
+			most = len(m.Voices)
+		}
+	}
+	for vi := 0; vi < most; vi++ {
+		// Whatever carries the start of the slur now open: an element's own
+		// marks, or a grace note leaning into one.
+		var open *model.Marks
+		var openGrace *model.Note
+
+		for _, m := range p.Measures {
+			if vi >= len(m.Voices) {
+				continue
+			}
+			for _, el := range m.Voices[vi].Elements {
+				mk := marksOf(el)
+				if mk == nil {
+					continue
+				}
+				// A grace note slurs into the note it decorates, so its
+				// start comes before that note's own marks.
+				if mk.Grace != nil {
+					for _, g := range mk.Grace.Notes {
+						if !g.Marks.SlurStart {
+							continue
+						}
+						if open == nil && openGrace == nil {
+							openGrace = g
+						} else {
+							// Nothing is drawn from it: there is already a
+							// slur open on this line.
+							g.Marks.SlurStart = false
+						}
+					}
+				}
+				if mk.SlurStop {
+					if open == nil && openGrace == nil {
+						mk.SlurStop = false // nothing to end
+					} else {
+						open, openGrace = nil, nil
+					}
+				}
+				if mk.SlurStart {
+					if open == nil && openGrace == nil {
+						open = mk
+					} else {
+						mk.SlurStart = false
+					}
+				}
+			}
+		}
+		// Whatever is still open was never ended.
+		if open != nil {
+			open.SlurStart = false
+		}
+		if openGrace != nil {
+			openGrace.Marks.SlurStart = false
+		}
+	}
 }
 
 func isZip(b []byte) bool {
@@ -264,6 +349,14 @@ type msStaff struct {
 	// the bar it is written in, so the bar's own start has to be subtracted
 	// from it — and the only way to know that is to have been counting.
 	tick int
+
+	// title is a movement's name, waiting for the bar it belongs to.
+	//
+	// MuseScore writes it in a text frame standing between two bars, so it
+	// arrives before the music it heads. A frame before any bar at all is
+	// the score's own title block and belongs to the whole piece; one
+	// further down names the movement that starts after it.
+	title string
 
 	// transChr is the staff's transposition in semitones, written to
 	// sounding, taken from the part that owns it. MuseScore records the
@@ -543,7 +636,7 @@ func (r *reader) staff(doc *document, id string) error {
 		case "Measure":
 			return r.measure(doc, st)
 		case "VBox", "HBox", "TBox", "FBox":
-			return r.frame(doc)
+			return r.frame(doc, st)
 		default:
 			return r.dec.Skip()
 		}
@@ -690,7 +783,15 @@ func (doc *document) defaultClef(id string) model.Clef {
 
 // frame reads the box at the head of the score, which is where the title and
 // the composer are actually written.
-func (r *reader) frame(doc *document) error {
+// frame reads a text frame: the score's title block, or the name of the
+// movement that begins after it.
+//
+// Which it is, is where it stands. A frame before any bar has been read
+// heads the whole piece; one between two bars heads what follows it — and
+// those were thrown away as a second title, so the Moonlight sonata's
+// "Movement III" was nowhere on the page and the Presto began with nothing
+// to say it had.
+func (r *reader) frame(doc *document, st *msStaff) error {
 	return r.children(func(e xml.StartElement) error {
 		if e.Name.Local != "Text" {
 			return r.dec.Skip()
@@ -714,7 +815,22 @@ func (r *reader) frame(doc *document) error {
 			return err
 		}
 		switch style {
+		case "movement title":
+			// Said outright: the name of the movement that begins after
+			// this frame. MuseScore heads each one with its own, under the
+			// work's title — "Movement III" over the Presto.
+			if st != nil {
+				st.title = body
+			}
 		case "title":
+			if st != nil && len(st.measures) > 0 {
+				// Down the score rather than at the head of it, so it names
+				// what comes next rather than the whole piece. Thrown away
+				// as a second title, a movement's name was nowhere on the
+				// page and the music simply began.
+				st.title = body
+				return nil
+			}
 			if doc.title == "" {
 				doc.title = body
 			}
@@ -737,6 +853,10 @@ func (r *reader) frame(doc *document) error {
 
 func (r *reader) measure(doc *document, st *msStaff) error {
 	m := &model.Measure{RightBarline: model.BarSingle}
+	if st.title != "" {
+		// The frame that named this movement stood just before this bar.
+		m.SectionTitle, st.title = st.title, ""
+	}
 	start := st.tick
 	var loose *voiceState // MuseScore 2 wrote voice one without a wrapper
 	startRepeat := false
@@ -797,7 +917,27 @@ func (r *reader) measure(doc *document, st *msStaff) error {
 			return r.marker(m)
 		case "Jump":
 			return r.jump(m)
-		case "LayoutBreak", "MeasureNumber", "vspacerUp", "vspacerDown",
+		case "LayoutBreak":
+			// Most of these are about where the page turns and say nothing
+			// about the music. A section break does: it is where one
+			// movement ends and another begins, and everything that sends
+			// a player somewhere else is written as though its own
+			// movement were the whole piece. Without it the Moonlight
+			// sonata's "D.C. al Fine" at the end of the second movement
+			// went back to the first bar of the first, stopped at a Fine
+			// halfway through the second, and the third movement was never
+			// played at all.
+			return r.children(func(c xml.StartElement) error {
+				if c.Name.Local != "subtype" {
+					return r.dec.Skip()
+				}
+				v, err := r.text()
+				if v == "section" {
+					m.EndsSection = true
+				}
+				return err
+			})
+		case "MeasureNumber", "vspacerUp", "vspacerDown",
 			"noOffset", "irregular", "stretch", "multiMeasureRest",
 			// breakMultiMeasureRest asks MuseScore not to fold this bar
 			// into the long rest around it. gscore does not fold bars into

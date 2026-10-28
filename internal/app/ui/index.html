@@ -111,11 +111,11 @@
       <div class="submenu">
         <button class="submenu-title"><span>Articulation</span><kbd>▸</kbd></button>
         <div class="menu-items">
-          <button data-action="artic-staccato"><span>Staccato</span></button>
-          <button data-action="artic-staccatissimo"><span>Staccatissimo</span></button>
-          <button data-action="artic-tenuto"><span>Tenuto</span></button>
-          <button data-action="artic-accent"><span>Accent</span></button>
-          <button data-action="artic-marcato-up"><span>Marcato up</span></button>
+          <button data-action="artic-staccato"><span>Staccato</span><kbd></kbd></button>
+          <button data-action="artic-staccatissimo"><span>Staccatissimo</span><kbd></kbd></button>
+          <button data-action="artic-tenuto"><span>Tenuto</span><kbd></kbd></button>
+          <button data-action="artic-accent"><span>Accent</span><kbd></kbd></button>
+          <button data-action="artic-marcato-up"><span>Marcato up</span><kbd></kbd></button>
           <button data-action="artic-marcato-down"><span>Marcato down</span></button>
           <hr>
           <button data-action="artic-none"><span>None</span></button>
@@ -160,7 +160,10 @@
   <div class="menu" data-menu="insert">
     <button class="menu-title">Insert</button>
     <div class="menu-items">
-      <button data-action="note-input"><span>Writing mode</span><kbd>I</kbd></button>
+      <!-- Off, a click picks music up; on, a click writes a note where it
+           lands. The keyboard writes either way, which is what this is a
+           switch away from. -->
+      <button data-action="note-input"><span>Write with the mouse</span><kbd>I</kbd><kbd id="mouse-tick"></kbd></button>
       <hr>
       <button data-action="insert-note"><span>Note</span></button>
       <button data-action="insert-rest"><span>Rest</span></button>

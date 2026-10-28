@@ -329,6 +329,14 @@ type SystemPos struct {
 	Staff float64 `json:"staff,omitempty"`
 	First int     `json:"first"`
 	Last  int     `json:"last"`
+	// StartsSection says a new movement begins with this system, so the
+	// page it is on begins with it too.
+	//
+	// A section break is where the music starts afresh. Run on from the bar
+	// before, the Presto of the Moonlight sonata began halfway along a
+	// system that ends the Allegretto, in another key and another meter,
+	// with nothing but a double barline to say so.
+	StartsSection bool `json:"startsSection,omitempty"`
 }
 
 // HeaderPos is a clef, key signature or meter at the head of a system.
@@ -731,6 +739,10 @@ type engraver struct {
 	// the drawing has gone into it. See staffOutline.
 	staffSky   *skyline
 	staffSkyAt mark
+	// headingTop is where the heading of the movement about to be drawn
+	// began, so that the system records its territory as starting there and
+	// the page is cut above the heading rather than below it.
+	headingTop float64
 
 	// waiting are the marks that go outside the staff and cannot be placed
 	// where they are met.
@@ -1371,6 +1383,17 @@ func (e *engraver) layout() {
 		return
 	}
 	for start := 0; start < maxMeasures; {
+		// A movement begins here: air, a rule across the page and its name,
+		// so that what follows reads as another piece of music rather than
+		// as more staves of the one above it.
+		//
+		// The first movement is headed too, where the file names it, but
+		// without the air and the rule: it opens under the score's own
+		// title block, which is separation enough and the only thing above
+		// it.
+		if e.opensSection(parts, start) || (start == 0 && sectionTitleAt(parts, 0) != "") {
+			e.sectionHead(parts, start)
+		}
 		prefix = prefixAt(start)
 		// A tie or a slur carried over from the system above has to come in
 		// from somewhere, and the only room at the head of a system is room
@@ -1380,6 +1403,11 @@ func (e *engraver) layout() {
 			carried = resumeRoom
 		}
 		n := e.breakAt(widths[start:], prefix+carried)
+		// And never past the end of a movement: whatever follows a section
+		// break begins a system of its own, in the strip as on the page.
+		if to := e.sectionEnd(parts, start, maxMeasures); to-start < n {
+			n = to - start
+		}
 		end := start + n
 		last := end >= maxMeasures
 		e.drawSystem(parts, boxes, widths, start, end, prefix+carried, carried, last)
@@ -1394,6 +1422,102 @@ func (e *engraver) layout() {
 }
 
 // breakAt returns how many measures fit on one system.
+// sectionHead writes the heading a new movement begins with.
+//
+// A rule and a name, with air either side of them. Without it the Presto of
+// the Moonlight sonata began on the system under the Allegretto's last one
+// and read as another staff of it — a line of music playing at the same
+// time as the one above, which is what a system of staves means everywhere
+// else in a score.
+//
+// The top of it is remembered, because the page is cut there: a heading
+// printed at the foot of the page before its own movement is worse than no
+// heading.
+func (e *engraver) sectionHead(parts []*model.Part, at int) {
+	sp := e.opt.Spacings
+	if at > 0 {
+		e.headingTop = e.y
+		e.y += sectionAir
+
+		// A rule in the editor's strip, where one movement follows another
+		// down the same scroll and the eye has nothing else to go on. Not
+		// on paper: a movement begins a page there, and the page is the
+		// separation — a line ruled across the top of an otherwise empty
+		// page says nothing the empty page did not.
+		if e.opt.Mode == Strip {
+			e.lay.Lines = append(e.lay.Lines, Line{
+				X1: sp.Margin, Y1: e.y, X2: sp.Margin + e.opt.LineWidth, Y2: e.y,
+				Thickness: e.opt.Defaults.StaffLineThickness,
+			})
+			e.y += sectionAir
+		}
+	}
+
+	if name := sectionTitleAt(parts, at); name != "" {
+		// Centred over the page where there is a page to centre it over; in
+		// the editor's strip, which runs as wide as the music, at the
+		// margin where the movement starts.
+		x, anchor := sp.Margin+e.opt.LineWidth/2, "middle"
+		if e.opt.Mode == Strip {
+			x, anchor = sp.Margin, "start"
+		}
+		e.y += sectionTitleSize
+		e.lay.Texts = append(e.lay.Texts, Text{
+			S: name, X: x, Y: e.y,
+			Size: sectionTitleSize, Anchor: anchor, Bold: true,
+		})
+		e.y += sectionAir
+	}
+}
+
+// sectionTitleAt is what the movement beginning at a bar is called, from
+// whichever staff carries it.
+func sectionTitleAt(parts []*model.Part, at int) string {
+	for _, p := range parts {
+		if at < len(p.Measures) && p.Measures[at].SectionTitle != "" {
+			return p.Measures[at].SectionTitle
+		}
+	}
+	return ""
+}
+
+// How a movement's heading is set.
+const (
+	// sectionAir is the space above and below the rule, in staff spaces.
+	sectionAir = 2.0
+	// sectionTitleSize is the movement's name, smaller than the score's own
+	// title: it names a part of the piece, not the piece.
+	sectionTitleSize = 2.0
+)
+
+// sectionEnd is the first bar after start at which a movement ends, counting
+// the bar itself — so a system beginning at start may run up to there and no
+// further.
+func (e *engraver) sectionEnd(parts []*model.Part, start, n int) int {
+	for mi := start; mi < n; mi++ {
+		for _, p := range parts {
+			if mi < len(p.Measures) && p.Measures[mi].EndsSection {
+				return mi + 1
+			}
+		}
+	}
+	return n
+}
+
+// opensSection says a bar is the first of a movement — the bar after one
+// that ends a section — which is where a new page begins.
+func (e *engraver) opensSection(parts []*model.Part, at int) bool {
+	if at == 0 {
+		return false // the first page is already a first page
+	}
+	for _, p := range parts {
+		if at-1 < len(p.Measures) && p.Measures[at-1].EndsSection {
+			return true
+		}
+	}
+	return false
+}
+
 func (e *engraver) breakAt(widths []float64, prefix float64) int {
 	if e.opt.Mode == Strip {
 		return len(widths)
@@ -2565,7 +2689,13 @@ func (e *engraver) drawSystem(parts []*model.Part, boxes [][]measureBox,
 		Top:    top - reserved,
 		Staff:  top,
 		Bottom: e.y, First: start, Last: end - 1,
+		StartsSection: e.opensSection(parts, start),
 	})
+	// A movement's heading belongs to the system it heads.
+	if e.headingTop > 0 {
+		e.lay.Systems[len(e.lay.Systems)-1].Top = e.headingTop
+		e.headingTop = 0
+	}
 	e.y += sp.SystemGap
 
 	if r := right + sp.Margin; r > e.lay.Width {

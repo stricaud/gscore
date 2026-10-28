@@ -360,3 +360,62 @@ func TestAPartIsSetLargerThanTheScore(t *testing.T) {
 		t.Errorf("a one-staff part came out at %.2fpt", partOpt.StaffSpace)
 	}
 }
+
+// A movement begins a page, whether or not the page before it is full.
+//
+// It is the one cut the renderer does not get to choose. A section break is
+// where the music starts afresh, and run on from the bar before it the
+// Presto of the Moonlight sonata began halfway down a page of the
+// Allegretto — in another key, another meter and another tempo.
+func TestAMovementBeginsAPage(t *testing.T) {
+	lay := &engrave.Layout{
+		Width: 120, Height: 90,
+		Systems: []engrave.SystemPos{
+			{Top: 0, Staff: 2, Bottom: 20, First: 0, Last: 3},
+			{Top: 20, Staff: 22, Bottom: 40, First: 4, Last: 7},
+			// A new movement, a long way from the bottom of the page.
+			{Top: 40, Staff: 42, Bottom: 60, First: 8, Last: 11, StartsSection: true},
+			{Top: 60, Staff: 62, Bottom: 90, First: 12, Last: 15},
+		},
+	}
+	o := DefaultOptions()
+	// A page with room for four of these systems, so nothing but the break
+	// can be what divides them.
+	o.StaffSpace = 1
+	o.MarginTop, o.MarginBottom = 0, 0
+	o.PageHeight = 100
+
+	got := (&renderer{lay: lay, opt: o}).pages()
+	if len(got) != 2 {
+		t.Fatalf("%d pages, want 2: the movement did not begin one", len(got))
+	}
+	if got[1].top != 40 {
+		t.Errorf("the second page begins at %v, want 40 — where the movement does",
+			got[1].top)
+	}
+	if got[0].top != 0 {
+		t.Errorf("the first page begins at %v", got[0].top)
+	}
+}
+
+func TestWithNoMovementsThePageIsFilled(t *testing.T) {
+	// The same drawing with the break taken out: four systems that fit, so
+	// one page.
+	lay := &engrave.Layout{
+		Width: 120, Height: 90,
+		Systems: []engrave.SystemPos{
+			{Top: 0, Staff: 2, Bottom: 20, First: 0, Last: 3},
+			{Top: 20, Staff: 22, Bottom: 40, First: 4, Last: 7},
+			{Top: 40, Staff: 42, Bottom: 60, First: 8, Last: 11},
+			{Top: 60, Staff: 62, Bottom: 90, First: 12, Last: 15},
+		},
+	}
+	o := DefaultOptions()
+	o.StaffSpace = 1
+	o.MarginTop, o.MarginBottom = 0, 0
+	o.PageHeight = 100
+
+	if got := (&renderer{lay: lay, opt: o}).pages(); len(got) != 1 {
+		t.Errorf("%d pages for a drawing that fits on one", len(got))
+	}
+}

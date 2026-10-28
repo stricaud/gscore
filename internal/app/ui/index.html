@@ -385,6 +385,7 @@
     <button class="menu-title">Analysis</button>
     <div class="menu-items">
       <button data-action="harmonics"><span>Harmonics…</span></button>
+      <button data-action="range"><span>Range…</span></button>
     </div>
   </div>
 
@@ -581,6 +582,23 @@
       is named after.
     </p>
   </div>
+</dialog>
+
+<!-- How far each staff reaches.
+     The one check a composer cannot do for themselves: everything else about
+     a part can be heard by reading it, and whether a horn can play a passage
+     depends on the horn and not on the music. -->
+<dialog id="range">
+  <div class="dlg-head">
+    <div>
+      <h2>Range</h2>
+      <p class="small" id="range-where">How far each staff reaches, and whether its instrument can go there.</p>
+    </div>
+    <form method="dialog">
+      <button value="close" type="submit" class="dlg-close" aria-label="Close">✕</button>
+    </form>
+  </div>
+  <div id="range-body"></div>
 </dialog>
 
 <dialog id="draw">

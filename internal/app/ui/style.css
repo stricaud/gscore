@@ -1578,6 +1578,46 @@ dialog.wide { max-width: 640px; }
 }
 #harm-number { font-variant-numeric: tabular-nums; min-width: 3em; text-align: right; }
 
+/* ---- range ---- */
+
+/* The same shape as the harmonics panel, and for the same reason: what it
+   has to say about a piano trio is three lines and about a symphony is
+   fifty-three, and a window that takes the size of its contents is a window
+   that moves. */
+#range {
+  max-width: 720px;
+  width: min(720px, 94vw);
+  height: min(76vh, 620px);
+  flex-direction: column;
+  padding: 16px 20px;
+}
+#range[open] { display: flex; }
+
+#range-body { flex: 1; min-height: 0; overflow-y: auto; padding-right: 4px; }
+
+.range-staff { padding: 9px 0; border-bottom: 1px solid var(--line); }
+.range-staff:last-child { border-bottom: 0; }
+.range-name { display: flex; align-items: baseline; gap: 8px; }
+.range-name b { font-weight: 600; }
+.range-inst { color: var(--muted); font-size: 12px; }
+.range-strip { display: block; width: 100%; height: 20px; margin: 4px 0 2px; }
+.range-says { color: var(--muted); font-size: 12px; }
+.range-quiet { color: var(--muted); font-size: 12px; font-style: italic; }
+
+/* The two kinds of finding are never run together: one is a fact about the
+   instrument and the other is a judgement about the writing. */
+.range-findings { list-style: none; margin: 5px 0 0; padding: 0; }
+.range-findings li { margin: 2px 0; font-size: 13px; }
+.range-go {
+  background: none; border: 0; padding: 0; margin: 0; font: inherit;
+  color: var(--ink); text-align: left; cursor: pointer;
+  border-bottom: 1px dotted var(--line);
+}
+.range-go:hover { border-bottom-color: var(--accent); }
+.range-go .where { color: var(--muted); }
+.range-impossible .mark { color: #b03a4a; font-weight: 600; }
+.range-strain .mark { color: #d1702f; font-weight: 600; }
+
 /* The staff a note is on, where the chord is spread over several. */
 .harm-on { color: var(--muted); font-size: 12px; }
 

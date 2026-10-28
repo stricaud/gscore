@@ -549,6 +549,7 @@ async function action(name) {
     case "tie-none": await setTie("none", false); break;
 
     case "harmonics": await openHarmonics(); break;
+    case "range": await openRange(); break;
 
     case "beam-join": await mark("beam", { beam: "join" }, "Beamed together"); break;
     case "beam-here": await beamOrBreak(); break;
@@ -8874,13 +8875,13 @@ function measureCount() {
 // the editor holds — the clickable regions, the performance, the cursor —
 // counts bars from the beginning of the file, and only what is written on
 // the page and typed into the box is counted from the movement.
-async function goToMeasure(index) {
+async function goToMeasure(index, part) {
   const box = measureBox(index);
   if (!box) {
     status(`Measure ${barNumberOf(index)} is not on the page`);
     return;
   }
-  selectMeasure(state.selection?.part ?? 0, index);
+  selectMeasure(part ?? state.selection?.part ?? 0, index);
   await glideTo(box);
   // The view has moved a long way, so the pieces under it are different
   // ones.
@@ -9196,6 +9197,7 @@ async function main() {
   setupFileInput();
   setupKeys();
   setupZoomGestures();
+  setupRangeClicks();
   setupPanning();
   setupMarquee();
   setupSymbolDragging();
@@ -9642,4 +9644,176 @@ function drawIntervals(d) {
         `<td>${iv.ratio}</td>` +
         `<td class="${off}">${iv.cents >= 0 ? "+" : ""}${iv.cents.toFixed(1)}¢</td></tr>`;
     }).join("");
+}
+
+/* ---------- how far each staff reaches ---------- */
+
+// The one check a composer cannot do for themselves.
+//
+// Everything else about a part can be heard by reading it: whether the tune
+// is any good, whether the rhythm sits, whether the harmony moves. Whether a
+// horn can play a written passage cannot — it depends on the horn and not on
+// the music, and somebody who does not play one has no way of knowing and no
+// way of finding out except by asking a player.
+//
+// Two different kinds of answer come back and the panel keeps them apart. A
+// note outside the instrument altogether is a fact: it will not be played.
+// A part sitting above the comfortable stretch is a judgement: the top of a
+// trumpet part is where the piece arrives, and that is the point of it.
+// Running the two together would make the facts arguable and the judgements
+// binding, and both of those are worse than saying nothing.
+
+// The lowest and highest notes a piano has, which every staff's strip is
+// drawn against so that two staves can be compared by looking at them.
+const rangeLowest = 21;
+const rangeHighest = 108;
+
+async function openRange() {
+  const dlg = $("#range");
+  if (!dlg) return;
+  if (!dlg.open) dlg.showModal();
+  await refreshRange();
+}
+
+async function refreshRange() {
+  const box = $("#range-body");
+  if (!box) return;
+  let d;
+  try {
+    const res = await fetch("/api/reach");
+    if (!res.ok) return;
+    d = await res.json();
+  } catch (_) {
+    return; // a reader, not an editor: a failed read is nothing
+  }
+  drawRange(d);
+}
+
+function drawRange(d) {
+  const box = $("#range-body");
+  if (!box) return;
+  const parts = d.parts || [];
+  if (!parts.length) {
+    box.innerHTML = `<p class="small">There is nothing written yet.</p>`;
+    return;
+  }
+  box.innerHTML = parts.map(rangeStaff).join("");
+
+  const where = $("#range-where");
+  if (where) {
+    const found = parts.reduce((n, p) => n + (p.findings || []).length, 0);
+    where.textContent = found === 0
+      ? `${parts.length} ${parts.length === 1 ? "staff" : "staves"}, nothing out of reach`
+      : `${found} thing${found === 1 ? "" : "s"} to look at`;
+  }
+}
+
+// rangeStaff is one staff's row: what it covers, drawn, and anything worth
+// saying about it.
+function rangeStaff(p) {
+  const head =
+    `<div class="range-name"><b>${escapeHTML(p.name || "Staff " + (p.part + 1))}</b>` +
+    `<span class="range-inst">${escapeHTML(p.instrument || "")}</span></div>`;
+
+  if (p.percussion) {
+    return `<div class="range-staff">${head}` +
+      `<div class="range-quiet">Percussion — its lines are places on a kit ` +
+      `rather than pitches, so there is no range to ask about.</div></div>`;
+  }
+  if (!p.notes) {
+    return `<div class="range-staff">${head}` +
+      `<div class="range-quiet">Nothing written on it.</div></div>`;
+  }
+
+  const says =
+    `${escapeHTML(p.lowest.name)} to ${escapeHTML(p.highest.name)}` +
+    (p.tessitura ? `, sitting ${escapeHTML(midiName(p, p.tessitura.low))}` +
+      `–${escapeHTML(midiName(p, p.tessitura.high))}` : "");
+
+  return `<div class="range-staff">${head}${rangeStrip(p)}` +
+    `<div class="range-says">${says}</div>${rangeFindings(p)}</div>`;
+}
+
+// midiName names a pitch the panel only has a number for. The two ends of
+// the part arrive named; the tessitura is a number because it is worked out
+// rather than read off a note.
+function midiName(p, midi) {
+  if (midi === p.lowest?.midi) return p.lowest.name;
+  if (midi === p.highest?.midi) return p.highest.name;
+  const names = ["C", "C♯", "D", "E♭", "E", "F", "F♯", "G", "A♭", "A", "B♭", "B"];
+  return names[((midi % 12) + 12) % 12] + (Math.floor(midi / 12) - 1);
+}
+
+// rangeStrip draws the staff against its instrument: the whole keyboard as
+// the ruler, the instrument's range as the track, the comfortable stretch
+// lighter inside it, and what is written as a bar across it.
+function rangeStrip(p) {
+  const W = 300, H = 20;
+  const x = (midi) => {
+    const t = (midi - rangeLowest) / (rangeHighest - rangeLowest);
+    return Math.max(0, Math.min(1, t)) * W;
+  };
+  const parts = [];
+  // Every octave C, so the eye has something to measure against.
+  for (let m = 24; m <= rangeHighest; m += 12) {
+    parts.push(`<line class="range-grid" x1="${x(m).toFixed(1)}" y1="2" ` +
+      `x2="${x(m).toFixed(1)}" y2="${H - 2}" stroke="currentColor" ` +
+      `stroke-opacity=".12"/>`);
+  }
+  if (p.playable) {
+    parts.push(`<rect x="${x(p.playable.low).toFixed(1)}" y="7" ` +
+      `width="${(x(p.playable.high) - x(p.playable.low)).toFixed(1)}" height="6" ` +
+      `rx="3" fill="currentColor" fill-opacity=".12"/>`);
+  }
+  if (p.easy) {
+    parts.push(`<rect x="${x(p.easy.low).toFixed(1)}" y="7" ` +
+      `width="${(x(p.easy.high) - x(p.easy.low)).toFixed(1)}" height="6" ` +
+      `rx="3" fill="currentColor" fill-opacity=".16"/>`);
+  }
+  // What is written: the whole span as a line, the tessitura solid.
+  parts.push(`<line x1="${x(p.lowest.midi).toFixed(1)}" y1="10" ` +
+    `x2="${x(p.highest.midi).toFixed(1)}" y2="10" stroke="currentColor" ` +
+    `stroke-width="1.5"/>`);
+  if (p.tessitura) {
+    parts.push(`<rect x="${x(p.tessitura.low).toFixed(1)}" y="6" ` +
+      `width="${Math.max(2, x(p.tessitura.high) - x(p.tessitura.low)).toFixed(1)}" ` +
+      `height="8" rx="2" fill="var(--accent)"/>`);
+  }
+  // The two ends, so the extremes are not lost in the band.
+  for (const end of [p.lowest, p.highest]) {
+    parts.push(`<line x1="${x(end.midi).toFixed(1)}" y1="4" ` +
+      `x2="${x(end.midi).toFixed(1)}" y2="16" stroke="currentColor" stroke-width="1.5"/>`);
+  }
+  return `<svg class="range-strip" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" ` +
+    `role="img" aria-label="Where this staff sits in its instrument's range">` +
+    parts.join("") + `</svg>`;
+}
+
+function rangeFindings(p) {
+  const list = p.findings || [];
+  if (!list.length) return "";
+  return `<ul class="range-findings">` + list.map((f) => {
+    const kind = f.severity === "impossible" ? "range-impossible" : "range-strain";
+    const mark = f.severity === "impossible" ? "cannot be played" : "worth a look";
+    const bars = f.fromBar === f.toBar
+      ? `bar ${barNumberOf(f.fromBar)}`
+      : `bars ${barNumberOf(f.fromBar)}–${barNumberOf(f.toBar)}`;
+    return `<li class="${kind}"><span class="mark">${mark}</span> — ` +
+      `<button type="button" class="range-go" data-part="${p.part}" ` +
+      `data-bar="${f.worst?.bar ?? f.fromBar}">${escapeHTML(f.text)} ` +
+      `<span class="where">(${bars})</span></button></li>`;
+  }).join("") + `</ul>`;
+}
+
+// Clicking a finding goes to the bar it is about, on the staff it is about.
+function setupRangeClicks() {
+  const box = $("#range-body");
+  if (!box) return;
+  box.addEventListener("click", async (e) => {
+    const go = e.target.closest ? e.target.closest(".range-go") : null;
+    if (!go) return;
+    const dlg = $("#range");
+    if (dlg?.open) dlg.close();
+    await goToMeasure(Number(go.dataset.bar), Number(go.dataset.part));
+  });
 }

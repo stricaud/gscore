@@ -1678,6 +1678,45 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Harmonics" }
 
+  /api/reach:
+    get:
+      tags: [score]
+      summary: How far each staff reaches, and whether its instrument can go there
+      description: |
+        For every staff: its lowest and highest sounding note with the bar
+        each falls in, the stretch it spends its time in, what its
+        instrument can play, and anything worth saying about the two
+        together.
+
+        Sounding rather than written, because a range is a physical fact
+        about an instrument and does not move because the part is spelled in
+        another key: a clarinet's bottom note is the same note either way.
+        The part's transposition and any octave line over it are applied.
+
+        Findings come in two kinds and are never run together. `impossible`
+        is a fact — the instrument does not have the note and it will not be
+        played. `strain` is a judgement — the part sits outside the
+        comfortable stretch for long enough to tire a player out, which the
+        top of a trumpet part is allowed to do and forty bars of it is not.
+
+        An instrument gscore does not have a range for gets `playable` and
+        `easy` left out and no findings at all; a guessed range would be
+        worse than a blank, because a composer who cannot tell which is
+        which can use neither. A percussion staff is reported as
+        `percussion` and nothing else: its lines are places on a kit rather
+        than pitches.
+      responses:
+        "200":
+          description: One entry per staff, in staff order.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  parts:
+                    type: array
+                    items: { $ref: "#/components/schemas/PartReach" }
+
   /api/playback:
     get:
       tags: [play, render]
@@ -2245,6 +2284,70 @@ components:
                 type: integer
                 description: How far below what is written this staff sounds.
               hidden: { type: boolean }
+
+    PartReach:
+      type: object
+      properties:
+        part: { type: integer, description: Which staff, counting from zero. }
+        name: { type: string, description: What the staff is called on the page. }
+        instrument: { type: string, description: What it is played on. }
+        notes: { type: integer, description: How many sounding notes are written on it. }
+        percussion:
+          type: boolean
+          description: >
+            A staff of drums. Nothing else is filled in: its lines are
+            places on a kit rather than pitches, so a bass drum written on
+            the bottom line is not a bass drum playing low.
+        lowest: { $ref: "#/components/schemas/PlacedNote" }
+        highest: { $ref: "#/components/schemas/PlacedNote" }
+        tessitura:
+          type: object
+          description: >
+            Where the part spends its time rather than where it reaches:
+            the stretch holding the middle four fifths of the sounding
+            time, so one touched high note does not make a part a high
+            part. This is what a player means by "this part sits high".
+          properties:
+            low: { type: integer }
+            high: { type: integer }
+        playable:
+          type: object
+          description: What the instrument can play, left out where gscore does not know it.
+          properties:
+            low: { type: integer }
+            high: { type: integer }
+        easy:
+          type: object
+          description: Where inside that it plays without the player working for it.
+          properties:
+            low: { type: integer }
+            high: { type: integer }
+        findings:
+          type: array
+          items: { $ref: "#/components/schemas/ReachFinding" }
+
+    PlacedNote:
+      type: object
+      properties:
+        midi: { type: integer, description: The sounding pitch. }
+        name: { type: string, description: That pitch written out. }
+        bar: { type: integer, description: Which bar it is in, counting from zero. }
+        ref: { type: integer, description: The notehead, as the engraver numbers them. }
+
+    ReachFinding:
+      type: object
+      properties:
+        severity:
+          type: string
+          enum: [impossible, strain]
+          description: >
+            impossible is a fact — the instrument does not have the note.
+            strain is a judgement — it has it but would rather not hold it.
+        text: { type: string, description: What it is, in a sentence somebody can act on. }
+        fromBar: { type: integer }
+        toBar: { type: integer }
+        notes: { type: integer, description: How many notes or bars the finding is about. }
+        worst: { $ref: "#/components/schemas/PlacedNote" }
 
     Harmonics:
       type: object

@@ -15,6 +15,7 @@ import (
 	"strconv"
 
 	"github.com/stricaud/gscore/internal/analysis"
+	"github.com/stricaud/gscore/internal/model"
 )
 
 // handleHarmonics says what the harmony is made of at one moment.
@@ -129,4 +130,96 @@ func pitchName(midi int) string {
 		return ""
 	}
 	return names[midi%12] + strconv.Itoa(midi/12-1)
+}
+
+// handleReach says how far each staff reaches, and whether the instrument it
+// is written for can go there.
+//
+// The one check a composer cannot do for themselves. Everything else about a
+// part can be heard by reading it; whether a horn can play a passage depends
+// on the horn and not on the music, and somebody who does not play one has
+// no way of finding out except by asking a player.
+func (a *App) handleReach(w http.ResponseWriter, r *http.Request) {
+	a.mu.RLock()
+	notes := soundedNotes(a.score)
+	insts := make([]analysis.Instrument, len(a.score.Parts))
+	for i, p := range a.score.Parts {
+		in := analysis.Instrument{
+			Staff: p.Name, Name: p.Instrument.String(),
+			// A staff of drums is read by position on a kit, not by
+			// pitch, so there is no range to ask about. Asked anyway,
+			// the bass drum of Beethoven's ninth was taken for a string
+			// instrument written six hundred bars below its range.
+			Percussion: p.Clef == model.Percussion,
+		}
+		if rr, ok := p.Instrument.Reach(); ok && !in.Percussion {
+			in.Known = true
+			in.Low, in.High = rr.Low, rr.High
+			in.EasyLow, in.EasyHigh = rr.EasyLow, rr.EasyHigh
+		}
+		insts[i] = in
+	}
+	a.mu.RUnlock()
+
+	writeJSON(w, map[string]any{
+		"parts": analysis.Reaches(notes, insts, pitchName),
+	})
+}
+
+// soundedNotes is every notehead in the score, as it sounds.
+//
+// Sounding rather than written, because a range is a physical fact about an
+// instrument and does not move because the part is spelled in another key: a
+// clarinet's bottom note is the same note either way. So the part's
+// transposition is applied, and so is any octave line over it.
+//
+// The numbering is the engraver's, by way of baseRefs, so a finding can
+// point at the notehead it is about and the editor can light it up. Taken
+// from the performance instead it would have counted a repeated bar twice
+// and a tremolo thirty times.
+func soundedNotes(s *model.Score) []analysis.Sounded {
+	base := baseRefs(s)
+	var out []analysis.Sounded
+	for pi, p := range s.Parts {
+		// An octave line shifts everything under it until it closes, the
+		// same way playback reads it. A bracket over notes that are at
+		// pitch already says where the music is, not where to move it.
+		shift := 0
+		for mi := range p.Measures {
+			for k, v := range p.Measures[mi].Ordered() {
+				if mk := marksOf(v.El); mk != nil && mk.Octave != nil {
+					if mk.Octave.Start {
+						shift = mk.Octave.Amount
+						if mk.Octave.SoundsAsWritten {
+							shift = 0
+						}
+					}
+				}
+				ref := base[pi][mi] + k
+				d := v.El.Duration()
+				held := 0.0
+				if d.Den != 0 {
+					held = float64(d.Num) / float64(d.Den)
+				}
+				add := func(pitch model.Pitch) {
+					out = append(out, analysis.Sounded{
+						Part: pi, MIDI: sounding(p, pitch, shift).MIDI(),
+						Bar: mi, Ref: ref, Held: held,
+					})
+				}
+				switch el := v.El.(type) {
+				case *model.Note:
+					add(el.Pitch)
+				case *model.Chord:
+					for _, n := range el.Notes {
+						add(n.Pitch)
+					}
+				}
+				if mk := marksOf(v.El); mk != nil && mk.Octave != nil && mk.Octave.Stop {
+					shift = 0
+				}
+			}
+		}
+	}
+	return out
 }

@@ -200,6 +200,17 @@ func (e *engraver) drawMeasure(part *model.Part, b measureBox, x, end float64, s
 			if m == nil || m.Clef == nil || e.opt.HideClef {
 				continue
 			}
+			if *m.Clef == e.clef {
+				// A change to the clef that is already here changes
+				// nothing, and the sign for it says nothing. MuseScore
+				// writes the clef again at the head of each movement of a
+				// sonata, where the staff is in that clef already — so the
+				// Presto of the Moonlight opened with a bass clef at the
+				// head of the system and a second bass clef printed
+				// against the first note, one behind the other, as though
+				// something had changed between them.
+				break
+			}
 			e.clef = *m.Clef
 			name, _ := smufl.ClefGlyph(e.clef)
 			w := smufl.Advance(name) * clefChangeScale

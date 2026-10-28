@@ -1893,12 +1893,8 @@ func (e *engraver) keySignatureWidth(k model.KeySignature) float64 {
 // measureBox computes an ideal and a minimum width for a measure, and claims
 // clefLead is the room a change of clef needs in front of the note it is
 // written before, and zero where there is none.
-func (e *engraver) clefLead(el model.Element) float64 {
-	m := marksOf(el)
-	if m == nil || m.Clef == nil || e.opt.HideClef {
-		return 0
-	}
-	glyph, _ := smufl.ClefGlyph(*m.Clef)
+func (e *engraver) clefLead(c model.Clef) float64 {
+	glyph, _ := smufl.ClefGlyph(c)
 	return smufl.Advance(glyph)*clefChangeScale + e.opt.Spacings.ClefAfter
 }
 
@@ -1983,7 +1979,7 @@ func (e *engraver) measureBox(p *model.Part, m *model.Measure, index int) measur
 			entries = append(entries, entry{
 				at:   at,
 				v:    voiced{el: el, voice: vi},
-				lead: e.accidentalLead(el) + graceLead(el) + e.clefLead(el),
+				lead: e.accidentalLead(el) + graceLead(el),
 				room: flags[i],
 			})
 			at = at.Add(el.Duration())
@@ -1995,6 +1991,24 @@ func (e *engraver) measureBox(p *model.Part, m *model.Measure, index int) measur
 	sort.SliceStable(entries, func(i, j int) bool {
 		return entries[i].at.Cmp(entries[j].at) < 0
 	})
+
+	// Room for the clefs written inside the bar, booked in the order they
+	// are read rather than voice by voice, because that is the order they
+	// are drawn in and one clef serves the whole staff.
+	//
+	// A change to the clef already in force draws nothing, so it needs no
+	// room. Booking it anyway left a clef's width of white space in front
+	// of the note it was written on.
+	clef := e.clefAt(p, index)
+	for k := range entries {
+		mk := marksOf(entries[k].v.el)
+		if mk == nil || mk.Clef == nil || e.opt.HideClef || *mk.Clef == clef {
+			continue
+		}
+		entries[k].lead += e.clefLead(*mk.Clef)
+		clef = *mk.Clef
+	}
+
 	for i := 0; i < len(entries); {
 		j := i
 		col := slot{at: entries[i].at}

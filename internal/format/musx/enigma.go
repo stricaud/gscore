@@ -67,6 +67,7 @@ type document struct {
 		Styles     []staffStyle       `xml:"staffStyle"`
 		StyleUsed  []staffStyleAssign `xml:"staffStyleAssign"`
 		PercNotes  []percussionNote   `xml:"percussionNoteInfo"`
+		PageTexts  []pageTextAssign   `xml:"pageTextAssign"`
 		Exprs      []textExprDef      `xml:"textExprDef"`
 		ExprPlaces []measExprAssign   `xml:"measExprAssign"`
 		Categories []markingsCategory `xml:"markingsCategory"`
@@ -85,6 +86,11 @@ type document struct {
 	} `xml:"entries"`
 	Texts struct {
 		Blocks []blockText `xml:"blockText"`
+		// The words of the marks written on the music, which Finale keeps
+		// apart from the words laid on the page. A text block says which
+		// of the two pools it draws from, and a reader that knows only
+		// about one of them finds every tempo word and direction empty.
+		Exprs []blockText `xml:"expression"`
 	} `xml:"texts"`
 }
 
@@ -95,6 +101,9 @@ type textBlock struct {
 	Cmper  int    `xml:"cmper,attr"`
 	Part   string `xml:"part,attr"`
 	TextID int    `xml:"textID"`
+	// Tag is which pool the words are in: "expression" for a mark on the
+	// music, "block" for something laid on the page.
+	Tag string `xml:"textTag"`
 }
 
 type blockText struct {
@@ -245,6 +254,16 @@ type textExprDef struct {
 	PlayType string `xml:"playType"`
 	Value    int    `xml:"value"`
 	Desc     string `xml:"descStr"`
+	// Block is the text block holding the words the mark is printed with.
+	// Desc beside it is the library's description of the mark — "Allegro
+	// (no playback effect)" — which is written for whoever is choosing one
+	// out of a list and never appears on a page.
+	Block int `xml:"textIDKey"`
+	// Beat is the note the speed is counted in, in Finale's own divisions:
+	// 1024 of them to a quarter. Only a mark that sets the speed has one.
+	Beat int `xml:"auxdata1"`
+	// Vert says which side of the staff the mark is written on.
+	Vert string `xml:"vertMeasExprAlign"`
 }
 
 // measExprAssign is one expression written at one place in the music: which
@@ -255,6 +274,17 @@ type measExprAssign struct {
 	Expr   int    `xml:"textExprID"`
 	Staff  int    `xml:"staffAssign"`
 	EduOff int    `xml:"horzEduOff"`
+	// Inci orders the marks written on one bar, which is the order they
+	// were put there and the only thing that tells two of them apart.
+	Inci int `xml:"inci,attr"`
+}
+
+// pageTextAssign is a block of words laid on a page rather than on the
+// music: a header, a footer, a title, a page number.
+type pageTextAssign struct {
+	Part  string `xml:"part,attr"`
+	Block int    `xml:"block"`
+	Page  int    `xml:"startPage"`
 }
 
 // markingsCategory says what a group of expressions is for, which is how a
@@ -363,6 +393,10 @@ type enigNote struct {
 type reader struct {
 	doc     document
 	skipped map[string]int
+	// examples is a few of what each kind of skipped thing actually was,
+	// in the file's own words: "Solo" at bar 12 says more to whoever opens
+	// the score than "one direction was not read" ever can.
+	examples map[string][]string
 	// The articulations on each entry, and what each kind of articulation
 	// is drawn with.
 	artics    map[int][]int
@@ -375,6 +409,13 @@ type reader struct {
 	// by the entry it came from, which is how a slur names its ends.
 	places  map[[2]int][]place
 	byEntry map[int]*model.Marks
+	// barAt turns Finale's number for a bar into its place in the score,
+	// and partAt turns a staff's number into the part built from it. The
+	// marks that govern a bar rather than a note — a change of speed, a
+	// rehearsal letter — are written against those numbers and have to be
+	// put back onto the right measure of the right part.
+	barAt  map[int]int
+	partAt map[int]int
 	// Which staff and bar are being read, since an element does not know,
 	// and how that staff transposes — what Finale stores is the note that
 	// sounds, and a transposing staff shows another one.
@@ -409,13 +450,45 @@ func marksOf(el model.Element) *model.Marks {
 
 func (r *reader) skip(what string) { r.skipped[what]++ }
 
+// skipExamples is how many of a kind of skipped thing are named in the
+// report before it settles for counting the rest.
+//
+// Enough to recognise what was lost and few enough to read: a score with
+// forty directions in it should say what three of them were and then say
+// there are thirty-seven more, not list the lot.
+const skipExamples = 3
+
+// skipped records one thing not read, in the file's own words.
+//
+// The words matter more than the count. "Directions: not read (2 found)"
+// sends somebody back to Finale to work out which two; "Andante at bar 1,
+// Andantino mosso at bar 10" tells them what to type back in, and tells
+// them at a glance whether what was lost was worth anything.
+func (r *reader) skipWhat(what, detail string) {
+	r.skipped[what]++
+	if detail == "" || len(r.examples[what]) >= skipExamples {
+		return
+	}
+	if r.examples == nil {
+		r.examples = map[string][]string{}
+	}
+	r.examples[what] = append(r.examples[what], detail)
+}
+
+// atBarOf names where something is, for the report. Finale counts its bars
+// from one, as a reader does.
+func atBar(bar int) string { return fmt.Sprintf("at bar %d", bar) }
+
 // read parses the XML and builds the score.
 func read(data []byte, meta metadata) (*model.Score, []string, error) {
 	rd := &reader{
-		skipped: map[string]int{},
-		places:  map[[2]int][]place{},
-		byEntry: map[int]*model.Marks{},
-		perc:    map[int]int{},
+		skipped:  map[string]int{},
+		examples: map[string][]string{},
+		barAt:    map[int]int{},
+		partAt:   map[int]int{},
+		places:   map[[2]int][]place{},
+		byEntry:  map[int]*model.Marks{},
+		perc:     map[int]int{},
 	}
 	if err := xml.Unmarshal(data, &rd.doc); err != nil {
 		return nil, nil, fmt.Errorf("musx: the score inside is not readable: %w", err)
@@ -437,6 +510,15 @@ func read(data []byte, meta metadata) (*model.Score, []string, error) {
 	staves := rd.staffOrder()
 	if len(staves) == 0 {
 		return nil, nil, fmt.Errorf("musx: the file holds no staves")
+	}
+	// Finale's numbers for the bars and the staves, against the places
+	// they end up in here. Both are needed by the marks that are written
+	// against a bar rather than hung on a note.
+	for i, b := range bars {
+		rd.barAt[b.Cmper] = i
+	}
+	for i, id := range staves {
+		rd.partAt[id] = i
 	}
 
 	entries := map[int]*entry{}
@@ -546,7 +628,8 @@ func read(data []byte, meta metadata) (*model.Score, []string, error) {
 	}
 
 	// The marks Finale keeps away from the music, put back on it.
-	rd.expressions()
+	rd.expressions(score)
+	rd.pageTexts()
 	rd.shapes()
 	rd.chordSymbols(score)
 	rd.staffGroups(score, staves)
@@ -561,10 +644,20 @@ func read(data []byte, meta metadata) (*model.Score, []string, error) {
 	// score full of slurs is worse than no log at all.
 	rd.survey(data)
 
-	// What was left behind, said once each rather than once per note.
+	// What was left behind, said once each rather than once per note, and
+	// with a few of them named: a list of kinds says what sort of thing is
+	// missing and a list of examples says whether it mattered.
 	var notes []string
 	for _, what := range sortedKeys(rd.skipped) {
-		notes = append(notes, fmt.Sprintf("%s: not read (%d found)", what, rd.skipped[what]))
+		n := rd.skipped[what]
+		line := fmt.Sprintf("%s: not read (%d found)", what, n)
+		if eg := rd.examples[what]; len(eg) > 0 {
+			line += ": " + strings.Join(eg, ", ")
+			if rest := n - len(eg); rest > 0 {
+				line += fmt.Sprintf(", and %d more", rest)
+			}
+		}
+		notes = append(notes, line)
 	}
 	return score, notes, nil
 }
@@ -589,7 +682,6 @@ var unread = map[string]string{
 
 	"tupletDef": "tuplets",
 
-	"pageTextAssign":    "text blocks standing on the page",
 	"repeatBack":        "repeats and their endings",
 	"backRepeatBar":     "repeats and their endings",
 	"repeatEndingStart": "repeats and their endings",
@@ -1019,17 +1111,21 @@ func (r *reader) text(block int) string {
 	if block == 0 {
 		return ""
 	}
-	id := 0
+	id, tag := 0, ""
 	for _, b := range r.doc.Others.Blocks {
 		if b.Part == "" && b.Cmper == block {
-			id = b.TextID
+			id, tag = b.TextID, b.Tag
 			break
 		}
 	}
 	if id == 0 {
 		return ""
 	}
-	for _, t := range r.doc.Texts.Blocks {
+	pool := r.doc.Texts.Blocks
+	if tag == "expression" {
+		pool = r.doc.Texts.Exprs
+	}
+	for _, t := range pool {
 		if t.Number == id {
 			return strings.TrimSpace(enigmaTags.ReplaceAllString(t.Text, ""))
 		}
@@ -1204,7 +1300,8 @@ func (r *reader) pairTies(p *model.Part) {
 				// A tie into nothing is not a tie. Saying so beats drawing
 				// one across the page.
 				n.TieStart = false
-				r.skip("ties whose note is not held into the one after it")
+				r.skip("ties Finale left on a note that is not held into " +
+					"the next one, and does not draw either")
 			}
 		}
 	}
@@ -1272,12 +1369,53 @@ func dynamicFor(velocity int) model.Dynamic {
 	return best
 }
 
-// expressions writes the dynamics onto the notes they stand over.
-func (r *reader) expressions() {
-	dynamics := map[int]bool{}
+// pageTexts reports the words laid on a page rather than on the music.
+//
+// Most of them are not words at all. Finale builds its headers and footers
+// out of inserts — a title block is the single token ^title(), a footer is
+// ^page(0) — and fills them in from what the file says it is called. gscore
+// has those from the same place and writes its own, so a page made of
+// inserts has lost nothing and saying "seven text blocks were not read"
+// about it sends somebody looking for seven things that are already there.
+//
+// What is worth reporting is a page carrying words somebody typed: a
+// dedication, a note to the player, an instruction at the front. Those have
+// nowhere to go in a score that keeps its text with the music, so they are
+// named — in their own words, which is the only way to judge whether they
+// mattered.
+func (r *reader) pageTexts() {
+	for _, t := range r.doc.Others.PageTexts {
+		if t.Part != "" {
+			continue
+		}
+		words := r.text(t.Block)
+		if words == "" {
+			continue
+		}
+		where := "on the page"
+		if t.Page > 0 {
+			where = fmt.Sprintf("on page %d", t.Page)
+		}
+		r.skipWhat("words laid on the page rather than on the music",
+			fmt.Sprintf("%q %s", words, where))
+	}
+}
+
+// expressions writes the marks Finale keeps away from the music back onto
+// it: the dynamics, the tempo words, the rehearsal letters and the
+// directions to the player.
+//
+// Finale says such a mark in three records. A markingsCategory says what
+// kind of thing it is, a textExprDef is the mark itself — its words, and
+// what it does to playback — and a measExprAssign is one place it is
+// written. Which kind it is decides where it belongs in a score: a tempo
+// word governs a bar, a rehearsal letter names one, and a direction hangs
+// on the note it stands over.
+func (r *reader) expressions(score *model.Score) {
+	cats := map[int]string{}
 	for _, c := range r.doc.Others.Categories {
-		if c.Part == "" && c.Type == "dynamics" {
-			dynamics[c.Cmper] = true
+		if c.Part == "" {
+			cats[c.Cmper] = c.Type
 		}
 	}
 	defs := map[int]textExprDef{}
@@ -1291,29 +1429,173 @@ func (r *reader) expressions() {
 			continue
 		}
 		def, ok := defs[a.Expr]
-		switch {
-		case !ok:
+		if !ok {
 			r.skip("expressions whose definition is missing from the file")
 			continue
-		case !dynamics[def.Category] || def.PlayType != "amplitude":
-			// A tempo word, a rehearsal direction, a technique: read as
-			// text they would all be guesses about where they belong.
-			r.skip("expressions other than dynamics: tempo words and directions")
-			continue
-		case a.Staff <= 0:
-			// Written against a list of staves rather than one of them.
-			r.skip("dynamics written across a group of staves at once")
-			continue
 		}
-		mk := r.at(a.Staff, a.Meas, a.EduOff)
-		if mk == nil {
-			r.skip("dynamics on a bar this reader found nothing in")
-			continue
-		}
-		if d := dynamicFor(def.Value); d != model.DynamicNone {
-			mk.Dynamic = d
+		words := r.text(def.Block)
+		switch cats[def.Category] {
+		case "dynamics":
+			r.dynamicMark(a, def, words)
+		case "tempoMarks", "tempoAlts":
+			r.tempoMark(score, a, def, words)
+		case "rehearsalMarks":
+			r.rehearsalMark(score, a, words)
+		default:
+			// Expressive text, technique text, and whatever a document has
+			// made its own categories for: all of them are words written
+			// on a note, which is what a direction is.
+			r.direction(a, def, words)
 		}
 	}
+}
+
+// dynamicMark writes a dynamic onto the note it stands over.
+//
+// The mark is drawn as a character of Finale's music font, which is of no
+// use to anybody else: "ë" is fortississimo only if you have Maestro and
+// know its layout. What the definition also carries is what the mark does,
+// and that reads the same everywhere — a velocity, which is the dynamic
+// said in numbers.
+func (r *reader) dynamicMark(a measExprAssign, def textExprDef, words string) {
+	d := dynamicFor(def.Value)
+	if def.PlayType != "amplitude" || d == model.DynamicNone {
+		// A word filed under dynamics that does not sound like one: "sfz"
+		// spelled out, "sempre p". It is a direction, and reads as one.
+		r.direction(a, def, words)
+		return
+	}
+	if a.Staff <= 0 {
+		r.skipWhat("dynamics written across a group of staves at once",
+			detailOf(words, a.Meas))
+		return
+	}
+	mk := r.at(a.Staff, a.Meas, a.EduOff)
+	if mk == nil {
+		r.skipWhat("dynamics on a bar this reader found nothing in",
+			detailOf(words, a.Meas))
+		return
+	}
+	mk.Dynamic = d
+}
+
+// tempoMark writes a change of speed over its bar.
+//
+// A tempo word and a metronome mark are one thing in Finale and one thing
+// here: "Andantino mosso" with no speed behind it is a mark with words and
+// no number, and the score goes on at the speed it was already going.
+func (r *reader) tempoMark(score *model.Score, a measExprAssign, def textExprDef, words string) {
+	t := model.Tempo{Text: words}
+	// Only a mark that drives playback carries a speed. The rest are words
+	// — which is most of them, and is why a tempo with no number has to be
+	// a thing this score can hold.
+	if def.PlayType == "time" && def.Value > 0 {
+		if unit, ok := duration(def.Beat); ok {
+			t.BPM, t.Unit = def.Value, unit
+		}
+	}
+	if t.Text == "" && t.BPM == 0 {
+		r.skipWhat("tempo marks with no words and no speed in them", atBar(a.Meas))
+		return
+	}
+	m := r.measureFor(score, a.Staff, a.Meas)
+	if m == nil {
+		r.skipWhat("tempo marks on a bar this reader did not build",
+			detailOf(words, a.Meas))
+		return
+	}
+	if m.Tempo != nil {
+		// The same mark written over every staff of the system, which is
+		// how Finale spells one direction to the whole band.
+		return
+	}
+	m.Tempo = &t
+}
+
+// rehearsalMark names a bar with the letter a conductor calls it by.
+func (r *reader) rehearsalMark(score *model.Score, a measExprAssign, words string) {
+	if words == "" {
+		// Finale can letter a score as it goes, in which case the mark
+		// carries a style and no letter and the letters are whatever the
+		// sequence makes them. Working that out means following every
+		// marker in the piece, and a letter guessed wrong is worse than a
+		// letter missing: a rehearsal mark is an address.
+		r.skipWhat("rehearsal marks Finale letters by itself", atBar(a.Meas))
+		return
+	}
+	m := r.measureFor(score, a.Staff, a.Meas)
+	if m == nil {
+		r.skipWhat("rehearsal marks on a bar this reader did not build",
+			detailOf(words, a.Meas))
+		return
+	}
+	if m.Marker == "" {
+		m.Marker = words
+	}
+}
+
+// direction writes words on the note they stand over: "solo", "pizz.",
+// "dolce", "rit." — anything said to the player that is not a dynamic.
+func (r *reader) direction(a measExprAssign, def textExprDef, words string) {
+	if words == "" {
+		// A mark drawn as a character of Finale's own music font rather
+		// than as words: the sign for a breath, a pedal, a bowing. Reading
+		// it would mean carrying a table of one font's layout and being
+		// wrong for every document set in another.
+		r.skipWhat("marks drawn as characters of Finale's music font", atBar(a.Meas))
+		return
+	}
+	if a.Staff <= 0 {
+		r.skipWhat("directions written across a group of staves at once",
+			detailOf(words, a.Meas))
+		return
+	}
+	mk := r.at(a.Staff, a.Meas, a.EduOff)
+	if mk == nil {
+		r.skipWhat("directions on a bar this reader found nothing in",
+			detailOf(words, a.Meas))
+		return
+	}
+	where := model.PlacementAuto
+	switch def.Vert {
+	case "aboveStaffOrEntry":
+		where = model.PlacementAbove
+	case "belowStaffOrEntry":
+		where = model.PlacementBelow
+	}
+	mk.Texts = append(mk.Texts, model.TextMark{Text: words, Placement: where})
+}
+
+// measureFor is the bar a mark written over a staff belongs to.
+//
+// A mark written against a list of staves rather than one of them — which
+// is how Finale says "this is for the whole band" — belongs to the top
+// staff, because that is where a score prints it.
+func (r *reader) measureFor(score *model.Score, staff, bar int) *model.Measure {
+	i, ok := r.barAt[bar]
+	if !ok {
+		return nil
+	}
+	pi := 0
+	if staff > 0 {
+		p, ok := r.partAt[staff]
+		if !ok {
+			return nil
+		}
+		pi = p
+	}
+	if pi >= len(score.Parts) || i >= len(score.Parts[pi].Measures) {
+		return nil
+	}
+	return score.Parts[pi].Measures[i]
+}
+
+// detailOf is one line of the report: what the mark said and where it was.
+func detailOf(words string, bar int) string {
+	if words == "" {
+		return atBar(bar)
+	}
+	return fmt.Sprintf("%q %s", words, atBar(bar))
 }
 
 // shapes draws the slurs and hairpins back over the music.

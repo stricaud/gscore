@@ -30,18 +30,24 @@ import (
 
 // One staff of two bars in six eight, three quarter notes in the first: an
 // "f" on the middle one, a slur from the first note to the last, a hairpin
-// across the bar, and a tempo mark that is not a dynamic at all.
+// across the bar, a tempo word over the bar, a rehearsal letter naming it
+// and a direction written on the last note.
 const enigmaMarks = `<?xml version="1.0" encoding="UTF-8"?>
 <finale version="27.4" xmlns="http://www.makemusic.com/2012/finale">
   <others>
     <instUsed cmper="0" inci="0"><inst>1</inst></instUsed>
     <staffSpec cmper="1"><staffLines>5</staffLines><fullName>8</fullName></staffSpec>
     <textBlock cmper="8"><textID>22</textID></textBlock>
+    <textBlock cmper="21"><textID>66</textID><textTag>expression</textTag></textBlock>
+    <textBlock cmper="23"><textID>67</textID><textTag>expression</textTag></textBlock>
+    <textBlock cmper="24"><textID>68</textID><textTag>expression</textTag></textBlock>
     <measSpec cmper="1"><beats>2</beats><divbeat>1536</divbeat><barline>normal</barline></measSpec>
     <measSpec cmper="2"><beats>2</beats><divbeat>1536</divbeat><barline>final</barline></measSpec>
     <frameSpec cmper="1" inci="0"><startEntry>1</startEntry><endEntry>3</endEntry></frameSpec>
     <markingsCategory cmper="1"><categoryType>dynamics</categoryType></markingsCategory>
     <markingsCategory cmper="2"><categoryType>tempoMarks</categoryType></markingsCategory>
+    <markingsCategory cmper="5"><categoryType>techniqueText</categoryType></markingsCategory>
+    <markingsCategory cmper="6"><categoryType>rehearsalMarks</categoryType></markingsCategory>
     <textExprDef cmper="3">
       <textIDKey>20</textIDKey><categoryID>1</categoryID>
       <value>88</value><playType>amplitude</playType>
@@ -49,13 +55,27 @@ const enigmaMarks = `<?xml version="1.0" encoding="UTF-8"?>
     </textExprDef>
     <textExprDef cmper="66">
       <textIDKey>21</textIDKey><categoryID>2</categoryID>
-      <descStr>Andante</descStr>
+      <value>72</value><auxdata1>1024</auxdata1><playType>time</playType>
+      <descStr>Andante (playback Tempo = 72)</descStr>
+    </textExprDef>
+    <textExprDef cmper="67">
+      <textIDKey>23</textIDKey><categoryID>5</categoryID>
+      <vertMeasExprAlign>aboveStaffOrEntry</vertMeasExprAlign>
+    </textExprDef>
+    <textExprDef cmper="68">
+      <textIDKey>24</textIDKey><categoryID>6</categoryID>
     </textExprDef>
     <measExprAssign cmper="1" inci="0">
       <textExprID>3</textExprID><staffAssign>1</staffAssign><horzEduOff>1024</horzEduOff>
     </measExprAssign>
     <measExprAssign cmper="1" inci="1">
-      <textExprID>66</textExprID><staffAssign>1</staffAssign>
+      <textExprID>66</textExprID><staffAssign>-1</staffAssign><staffList>1</staffList>
+    </measExprAssign>
+    <measExprAssign cmper="1" inci="2">
+      <textExprID>67</textExprID><staffAssign>1</staffAssign><horzEduOff>2048</horzEduOff>
+    </measExprAssign>
+    <measExprAssign cmper="2" inci="0">
+      <textExprID>68</textExprID><staffAssign>-1</staffAssign><staffList>1</staffList>
     </measExprAssign>
     <smartShape cmper="1">
       <shapeType>slurAuto</shapeType><entryBased/>
@@ -87,6 +107,9 @@ const enigmaMarks = `<?xml version="1.0" encoding="UTF-8"?>
   </entries>
   <texts>
     <blockText number="22">^fontid(2)^size(14)^nfx(0)Flûte</blockText>
+    <expression number="66">^fontTxt(Times New Roman,8192)^size(14)^nfx(1)Andante </expression>
+    <expression number="67">^fontTxt(Times New Roman,8192)^size(12)^nfx(1)pizz.</expression>
+    <expression number="68">^fontid(2)^size(14)^nfx(1)B</expression>
   </texts>
 </finale>`
 
@@ -174,29 +197,61 @@ func TestAHairpinOpensAndClosesWhereItIsPlaced(t *testing.T) {
 	}
 }
 
-// An expression that is not a dynamic is left alone and said out loud.
+// A tempo word is read, and so is the speed behind it.
 //
-// A tempo word, a rehearsal direction and a technique all live in the same
-// list as the dynamics. Read as dynamics they would be nonsense, and read as
-// text they would be guesses about where they belong — so they are counted
-// and reported instead.
-func TestAnExpressionThatIsNotADynamicIsReported(t *testing.T) {
-	_, err := Import(bytes.NewReader(fixture(t, enigmaMarks)))
-	var partial interface {
-		Partial()
-		Details() []string
+// Finale keeps the words of a mark in a pool of its own, apart from the text
+// laid on the page, and a reader that knows only about the page's pool finds
+// every tempo word and every direction empty. That is how "Andante" and
+// "Andantino mosso" went missing from a Rossini that printed both.
+func TestATempoWordIsRead(t *testing.T) {
+	score := read1(t, fixture(t, enigmaMarks))
+	m := score.Parts[0].Measures[0]
+	if m.Tempo == nil {
+		t.Fatal("the bar carries no tempo mark")
 	}
-	if !asPartial(err, &partial) {
-		t.Fatalf("a file with a tempo mark in it said nothing about it: %v", err)
+	if m.Tempo.Text != "Andante" {
+		t.Errorf("the tempo mark says %q", m.Tempo.Text)
 	}
-	found := false
-	for _, d := range partial.Details() {
-		if strings.Contains(d, "expressions other than dynamics") {
-			found = true
-		}
+	// It drives playback too, in the note it is counted in.
+	if m.Tempo.BPM != 72 {
+		t.Errorf("the speed came out %d, want 72", m.Tempo.BPM)
 	}
-	if !found {
-		t.Errorf("the log says %v, with nothing about the tempo mark", partial.Details())
+	if want := (model.Duration{Num: 1, Den: 4}); m.Tempo.Unit.Reduced() != want {
+		t.Errorf("the beat came out %v, want %v", m.Tempo.Unit, want)
+	}
+}
+
+// A mark written for the whole band belongs to the top staff, which is
+// where a score prints it.
+func TestAMarkForEveryStaffGoesOnTheTopOne(t *testing.T) {
+	score := read1(t, fixture(t, enigmaMarks))
+	// The tempo is assigned to a list of staves rather than to one, which
+	// is how Finale says "this is for everybody".
+	if score.Parts[0].Measures[0].Tempo == nil {
+		t.Error("a mark for the whole band was dropped for naming no staff")
+	}
+	if got := score.Parts[0].Measures[1].Marker; got != "B" {
+		t.Errorf("the second bar is lettered %q, want B", got)
+	}
+}
+
+// Words said to the player hang on the note they stand over.
+func TestADirectionIsWrittenOnItsNote(t *testing.T) {
+	score := read1(t, fixture(t, enigmaMarks))
+	// Two quarter notes into the bar, which is the third note.
+	mk := marksAt(t, score, 2)
+	if len(mk.Texts) != 1 {
+		t.Fatalf("the note carries %d words, want one", len(mk.Texts))
+	}
+	if mk.Texts[0].Text != "pizz." {
+		t.Errorf("it says %q", mk.Texts[0].Text)
+	}
+	if mk.Texts[0].Placement != model.PlacementAbove {
+		t.Errorf("it is written %v, and the file says above", mk.Texts[0].Placement)
+	}
+	// And not on the notes it was not written on.
+	if got := marksAt(t, score, 0).Texts; len(got) != 0 {
+		t.Errorf("the first note was given %v", got)
 	}
 }
 
@@ -315,4 +370,105 @@ func spell(p model.Pitch) string {
 		out += "b"
 	}
 	return out
+}
+
+// The report says what was left behind, in the file's own words.
+//
+// "Directions: not read (2 found)" sends somebody back to Finale to work
+// out which two. "pizz. at bar 1" tells them what was lost and lets them
+// judge at a glance whether it mattered.
+func TestTheReportNamesWhatItPassedOver(t *testing.T) {
+	// A direction written across a list of staves rather than on one of
+	// them: read it onto a staff and it would be a guess about which.
+	const spread = `<?xml version="1.0" encoding="UTF-8"?>
+<finale version="27.4" xmlns="http://www.makemusic.com/2012/finale">
+  <others>
+    <instUsed cmper="0" inci="0"><inst>1</inst></instUsed>
+    <staffSpec cmper="1"><staffLines>5</staffLines></staffSpec>
+    <textBlock cmper="23"><textID>67</textID><textTag>expression</textTag></textBlock>
+    <measSpec cmper="1"><beats>2</beats><divbeat>1536</divbeat></measSpec>
+    <markingsCategory cmper="5"><categoryType>techniqueText</categoryType></markingsCategory>
+    <textExprDef cmper="67"><textIDKey>23</textIDKey><categoryID>5</categoryID></textExprDef>
+    <measExprAssign cmper="1" inci="0">
+      <textExprID>67</textExprID><staffAssign>-1</staffAssign><staffList>1</staffList>
+    </measExprAssign>
+  </others>
+  <texts>
+    <expression number="67">^fontid(2)^size(12)^nfx(1)con sordino</expression>
+  </texts>
+</finale>`
+
+	_, err := Import(bytes.NewReader(fixture(t, spread)))
+	var partial interface {
+		Partial()
+		Details() []string
+	}
+	if !asPartial(err, &partial) {
+		t.Fatalf("the error is %T, which is not a partial read", err)
+	}
+	found := ""
+	for _, line := range partial.Details() {
+		if strings.Contains(line, "directions") {
+			found = line
+		}
+	}
+	if found == "" {
+		t.Fatalf("nothing about the direction: %v", partial.Details())
+	}
+	if !strings.Contains(found, `"con sordino"`) {
+		t.Errorf("the report does not say what it said: %s", found)
+	}
+	if !strings.Contains(found, "at bar 1") {
+		t.Errorf("the report does not say where it was: %s", found)
+	}
+}
+
+// A page made of Finale's own inserts has lost nothing, and says nothing.
+//
+// A title block in a Finale file is the single token ^title(); a footer is
+// ^page(0). gscore fills its own from the same place Finale does, so
+// reporting seven of them as unread sends somebody looking for seven things
+// that are already on the page. Words somebody actually typed are another
+// matter, and those are named.
+func TestPageInsertsAreNotReportedAsLost(t *testing.T) {
+	const pages = `<?xml version="1.0" encoding="UTF-8"?>
+<finale version="27.4" xmlns="http://www.makemusic.com/2012/finale">
+  <others>
+    <instUsed cmper="0" inci="0"><inst>1</inst></instUsed>
+    <staffSpec cmper="1"><staffLines>5</staffLines></staffSpec>
+    <measSpec cmper="1"><beats>2</beats><divbeat>1536</divbeat></measSpec>
+    <textBlock cmper="14"><textID>14</textID><textTag>block</textTag></textBlock>
+    <textBlock cmper="90"><textID>90</textID><textTag>block</textTag></textBlock>
+    <pageTextAssign cmper="1" inci="0"><block>14</block><startPage>1</startPage></pageTextAssign>
+    <pageTextAssign cmper="1" inci="1"><block>90</block><startPage>1</startPage></pageTextAssign>
+  </others>
+  <texts>
+    <blockText number="14">^fontid(2)^size(24)^nfx(0)^title()</blockText>
+    <blockText number="90">^fontid(2)^size(10)^nfx(0)À la mémoire de mon père</blockText>
+  </texts>
+</finale>`
+
+	_, err := Import(bytes.NewReader(fixture(t, pages)))
+	var partial interface {
+		Partial()
+		Details() []string
+	}
+	if !asPartial(err, &partial) {
+		t.Fatalf("the error is %T, which is not a partial read", err)
+	}
+	page := ""
+	for _, line := range partial.Details() {
+		if strings.Contains(line, "laid on the page") {
+			page = line
+		}
+	}
+	if page == "" {
+		t.Fatalf("the dedication was not reported: %v", partial.Details())
+	}
+	if !strings.Contains(page, "À la mémoire de mon père") {
+		t.Errorf("the report does not say what it said: %s", page)
+	}
+	if strings.Contains(page, "title") || strings.Contains(page, "(2 found)") {
+		t.Errorf("the title block was reported as lost: %s", page)
+	}
 }

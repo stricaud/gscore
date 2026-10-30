@@ -26,8 +26,8 @@
 package musx
 
 import (
+	"fmt"
 	"io"
-	"strings"
 
 	"github.com/stricaud/gscore/internal/format"
 	"github.com/stricaud/gscore/internal/model"
@@ -51,11 +51,10 @@ type PartialError struct {
 
 func (e *PartialError) Error() string {
 	if len(e.Skipped) == 1 {
-		return "one thing in this Finale file was not read"
+		return "one kind of thing in this Finale file was not read"
 	}
-	return strings.Join([]string{
-		"some of what Finale wrote around the music was not read",
-	}, "")
+	return fmt.Sprintf("%d kinds of thing in this Finale file were not read",
+		len(e.Skipped))
 }
 
 // Partial implements format.Partial: what was read is worth keeping.

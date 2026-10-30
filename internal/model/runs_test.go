@@ -112,3 +112,46 @@ func TestTheTempoRunAgreesWithTheTempoInEveryBar(t *testing.T) {
 			"the staff it was not written on", run[4])
 	}
 }
+
+// A tempo word with no metronome mark changes what is written, not how fast.
+//
+// Finale's library has a twin of every tempo word with no playback effect in
+// it, and the Rossini uses two of them: "Andante" over bar 1 and "Andantino
+// mosso" over bar 10, neither saying a number. Taken as a change of speed,
+// they set the piece to nought beats a minute and playback stopped at the
+// first of them.
+func TestATempoWordWithNoSpeedKeepsTheSpeed(t *testing.T) {
+	s := NewScore()
+	s.Tempo = Tempo{BPM: 96, Unit: Duration{Num: 1, Den: 4}}
+	p := s.Parts[0]
+	for len(p.Measures) < 4 {
+		p.Measures = append(p.Measures, &Measure{Voices: []*Voice{{}}})
+	}
+	p.Measures[1].Tempo = &Tempo{Text: "Andantino mosso"}
+	p.Measures[3].Tempo = &Tempo{Text: "Presto", BPM: 160, Unit: Duration{Num: 1, Den: 4}}
+
+	got := s.Tempos()
+	if len(got) < 4 {
+		t.Fatalf("%d bars of tempo, want four", len(got))
+	}
+	if got[1].BPM != 96 {
+		t.Errorf("a word with no number set the speed to %d", got[1].BPM)
+	}
+	if got[1].Text != "Andantino mosso" {
+		t.Errorf("the words came out %q", got[1].Text)
+	}
+	// It carries on being what it was until something says otherwise.
+	if got[2].BPM != 96 || got[2].Text != "Andantino mosso" {
+		t.Errorf("the next bar is %q at %d", got[2].Text, got[2].BPM)
+	}
+	// And a mark that does say a number still sets one.
+	if got[3].BPM != 160 {
+		t.Errorf("a word with a number set the speed to %d", got[3].BPM)
+	}
+	// The two ways of asking agree, which is what the one-pass version is for.
+	for i := range got {
+		if at := s.TempoAt(i); at != got[i] {
+			t.Errorf("bar %d is %+v one way and %+v the other", i+1, at, got[i])
+		}
+	}
+}

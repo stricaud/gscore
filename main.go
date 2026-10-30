@@ -110,9 +110,18 @@ func main() {
 	if err != nil {
 		// A format may understand part of a file and say so; that is worth
 		// showing rather than refusing to open anything.
+		//
+		// And showing means showing what: a warning that says some of the
+		// file was not read, and then nothing about which part, leaves
+		// whoever is reading it to open the score and hunt. The importer
+		// has already worked out what it passed over and in many cases
+		// what the words were, so the list is printed under the warning.
 		var partial format.Partial
 		if errors.As(err, &partial) && score != nil {
 			fmt.Fprintf(os.Stderr, "gscore: warning: %v\n", err)
+			for _, d := range partial.Details() {
+				fmt.Fprintf(os.Stderr, "gscore:   %s\n", d)
+			}
 		} else {
 			fmt.Fprintf(os.Stderr, "gscore: %v\n", err)
 			os.Exit(1)

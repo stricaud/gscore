@@ -580,7 +580,7 @@ func (s *Score) Tempos() []Tempo {
 		// before the answer is recorded rather than after.
 		for _, p := range s.Parts {
 			if i < len(p.Measures) && p.Measures[i].Tempo != nil {
-				t = *p.Measures[i].Tempo
+				t = t.changedBy(*p.Measures[i].Tempo)
 				break
 			}
 		}
@@ -589,12 +589,28 @@ func (s *Score) Tempos() []Tempo {
 	return out
 }
 
+// changedBy is this tempo after a mark is written over a bar.
+//
+// A mark that carries no metronome mark changes what is written and not how
+// fast to play: "Andantino mosso" over a bar is a word about the character
+// of what follows, and a piece that took it for a speed of nought stopped
+// dead there. Finale writes a great many of them — every tempo word in its
+// library has a twin with no playback effect — and so does anybody who
+// types a word over a bar.
+func (t Tempo) changedBy(c Tempo) Tempo {
+	t.Text, t.Parens = c.Text, c.Parens
+	if c.BPM > 0 {
+		t.BPM, t.Unit = c.BPM, c.Unit
+	}
+	return t
+}
+
 func (s *Score) TempoAt(index int) Tempo {
 	t := s.Tempo
 	for i := 0; i <= index; i++ {
 		for _, p := range s.Parts {
 			if i < len(p.Measures) && p.Measures[i].Tempo != nil {
-				t = *p.Measures[i].Tempo
+				t = t.changedBy(*p.Measures[i].Tempo)
 				break
 			}
 		}

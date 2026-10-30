@@ -2813,19 +2813,29 @@ function hairpinAt(x, y) {
 // the part drawn in clear air anyway.
 function arcAt(x, y) {
   let best = null;
-  let away = arcReach;
+  let away = Infinity;
   for (const a of state.arcs || []) {
     const d = awayFromArc(a, x, y);
-    if (d < away) { best = a; away = d; }
+    if (d > (arcReach[a.kind] ?? arcReach.tie) || d >= away) continue;
+    best = a;
+    away = d;
   }
   return best;
 }
 
 // arcReach is how near a click has to be to a curve to count as on it, in
-// staff spaces. A curve is drawn a fifth of a space thick, so this is
-// generous enough to hit and tight enough not to steal from the notes it
-// arcs over.
-const arcReach = 0.4;
+// staff spaces.
+//
+// A curve is drawn a fifth of a space thick, and asking for a click within
+// that was asking for the line itself: at eight pixels to the space a slur
+// was a three-pixel target in open air, and finding it was a hunt. So the
+// reach is the curve's neighbourhood rather than the curve.
+//
+// Wider for a slur than for a tie. A slur is drawn clear of the music it
+// covers and there is nothing else up there to hit, so a generous reach
+// costs nothing. A tie is tucked between the two noteheads it joins, and
+// the gap between them is where a click means "put the cursor here".
+const arcReach = { slur: 1.2, tie: 0.7 };
 
 // awayFromArc is how far a point is from a quadratic, by walking it.
 //
@@ -2833,33 +2843,29 @@ const arcReach = 0.4;
 // is the root of a cubic, and a curve two or three spaces wide is answered
 // to well within a notehead by thirty steps along it.
 function awayFromArc(a, x, y) {
+  // The ends belong to the notes the curve joins. A ring is left clear
+  // around each of them, wider than the reach — so no click near enough to
+  // count as on the curve can also be a click on the note it springs from,
+  // or on the air above that note, which is where clicking means building a
+  // chord on it.
+  const free = (arcReach[a.kind] ?? arcReach.tie) + 0.1;
   let best = Infinity;
-  // From a seventh of the way along to six sevenths: the rest belongs to
-  // the notes at the ends.
-  for (let i = 4; i <= 26; i++) {
-    const t = i / 30;
-    const u = 1 - t;
-    const px = u * u * a.x1 + 2 * u * t * a.cx + t * t * a.x2;
-    const py = u * u * a.y1 + 2 * u * t * a.cy + t * t * a.y2;
-    const d = Math.hypot(px - x, py - y);
-    if (d < best) best = d;
-  }
-  return best;
-}
-
-// arcBox is the smallest rectangle holding a curve, for drawing round it
-// once it is picked up.
-function arcBox(a) {
-  let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+  let middle = Infinity;
   for (let i = 0; i <= 30; i++) {
     const t = i / 30;
     const u = 1 - t;
     const px = u * u * a.x1 + 2 * u * t * a.cx + t * t * a.x2;
     const py = u * u * a.y1 + 2 * u * t * a.cy + t * t * a.y2;
-    x0 = Math.min(x0, px); x1 = Math.max(x1, px);
-    y0 = Math.min(y0, py); y1 = Math.max(y1, py);
+    const d = Math.hypot(px - x, py - y);
+    if (i === 15) middle = d;
+    if (Math.hypot(px - a.x1, py - a.y1) < free) continue;
+    if (Math.hypot(px - a.x2, py - a.y2) < free) continue;
+    if (d < best) best = d;
   }
-  return { x: x0, y: y0, width: x1 - x0, height: y1 - y0 };
+  // A curve too short to have any middle outside those rings — a tie
+  // between two neighbours — is answered by its midpoint alone, which is
+  // the one point on it that is not an end.
+  return best === Infinity ? middle : best;
 }
 
 // tremoloAt finds the two-note tremolo a click landed on.
@@ -4005,7 +4011,14 @@ function markSelection() {
   if (state.harm?.open && !state.harm.following) void refreshHarmonics();
   const svg = currentSVG();
   if (!svg) return;
+  // Everything the last selection drew. Picking something up replaces what
+  // was picked up before, so none of this survives into the next one.
   svg.querySelectorAll("rect.selection").forEach((r) => r.remove());
+  // The lit tie or slur, which is drawn rather than tinted and so has to be
+  // taken away rather than untinted. Left behind, every curve ever clicked
+  // stayed lit: clicking a slur, then a tie, then a note showed all three
+  // picked up at once.
+  svg.querySelectorAll("path.selection-arc").forEach((n) => n.remove());
   svg.querySelectorAll(".selected").forEach((n) => n.classList.remove("selected"));
   // And the writing cursor, which is redrawn below. Appending a new one
   // without taking the old one away left a trail of them down the bar: every
@@ -4056,14 +4069,11 @@ function markSelection() {
     return;
   }
 
-  // A curve picked up by clicking it: the box goes round the arc, which is
-  // the whole of the mark. Lighting up the notes at its ends would say
+  // A curve picked up by clicking it. The curve itself is lit: it is the
+  // whole of the mark, and lighting the notes at its ends would say
   // Backspace was about to take those away.
   if (sel.arc) {
-    const b = arcBox(sel.arc);
-    svg.insertBefore(
-      selectionRect(b.x - 0.4, b.y - 0.4, b.width + 0.8, b.height + 0.8, z),
-      svg.firstChild);
+    svg.insertBefore(selectionArc(sel.arc, z), svg.firstChild);
     return;
   }
 
@@ -4283,6 +4293,29 @@ function headGlyphAt(svg, ref, y, z) {
   // Within half a space, or the chord has been redrawn since it was picked
   // up and the head that was clicked is no longer where it was.
   return away <= z * 0.5 ? best : null;
+}
+
+// selectionArc is the highlight drawn along a picked-up tie or slur.
+//
+// Not a rectangle. A slur arcs over everything it covers, so the smallest
+// box holding the curve holds all of that music too — a phrase across two
+// bars came back as a pale band over both of them, and what the eye read
+// was "these two bars are selected". Reported as "it does not seem obvious
+// the slur was selected, the selection looks too large on two measures".
+//
+// So the curve is traced instead, thick and in the selection colour, and
+// drawn behind the black arc it belongs to: the one shape on the page that
+// is the mark, lit up as itself.
+function selectionArc(a, z) {
+  const p = document.createElementNS("http://www.w3.org/2000/svg", "path");
+  p.setAttribute("class", "selection-arc");
+  p.setAttribute("d", `M ${a.x1 * z} ${a.y1 * z} Q ${a.cx * z} ${a.cy * z} ` +
+    `${a.x2 * z} ${a.y2 * z}`);
+  // Wide enough to show on both sides of the black curve it sits behind,
+  // which is what makes it read as the curve lit up rather than as a curve
+  // drawn slightly badly. In staff spaces, so it holds at any zoom.
+  p.setAttribute("stroke-width", String(0.75 * z));
+  return p;
 }
 
 function selectionRect(x, y, w, h, z) {

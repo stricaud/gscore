@@ -74,6 +74,7 @@ function load(names, extra = {}) {
   };
   const scope = {
     state,
+    document: extra.document,
     status: (s) => said.push(s),
     markSelection() {},
     refreshScore: async () => {},
@@ -123,19 +124,43 @@ test("the nearer of two curves is the one picked up", () => {
   assert.equal(t.arcAt(q.x, q.y)?.kind, "tie");
 });
 
-test("the box drawn round a curve holds all of it", () => {
-  const t = load(["arcBox"]);
-  const b = t.arcBox(SLUR);
-  for (let i = 0; i <= 10; i++) {
-    const p = at(SLUR, i / 10);
-    assert.ok(p.x >= b.x - 1e-9 && p.x <= b.x + b.width + 1e-9 &&
-              p.y >= b.y - 1e-9 && p.y <= b.y + b.height + 1e-9,
-              `the curve leaves the box at t=${i / 10}`);
+// A slur is open air: a three-pixel target at the zoom the editor opens at,
+// which is a hunt rather than a click. Reported as "I find it hard to
+// select slurs".
+test("a click near a curve finds it, not only one on the line", () => {
+  const t = load(["awayFromArc", "arcAt"]);
+  const p = at(SLUR, 0.5);
+  for (const off of [-0.9, -0.5, 0.5, 0.9]) {
+    assert.equal(t.arcAt(p.x, p.y + off)?.kind, "slur",
+                 `${off} of a space from the slur`);
   }
-  // And nothing much more: a box round a slur must not be a box round the
-  // music under it.
-  assert.ok(b.y + b.height <= Math.max(SLUR.y1, SLUR.y2) + 1e-9,
-            "the box reaches below both ends of the curve");
+  // A tie keeps a tighter one: it is tucked between the two noteheads it
+  // joins, and the gap between them is where a click puts the cursor.
+  const q = at(TIE, 0.5);
+  assert.equal(t.arcAt(q.x, q.y + 0.5)?.kind, "tie", "half a space from the tie");
+  assert.equal(t.arcAt(q.x, q.y + 1.1), null, "a space and more below the tie");
+});
+
+// What is drawn to show it: the curve, not a box round the curve.
+test("a picked-up curve is lit along itself", () => {
+  const made = [];
+  const t = load(["selectionArc"], {
+    document: {
+      createElementNS(ns, name) {
+        const el = { ns, name, attrs: {}, setAttribute(k, v) { this.attrs[k] = v; } };
+        made.push(el);
+        return el;
+      },
+    },
+  });
+  const p = t.selectionArc(SLUR, 8);
+
+  assert.equal(p.name, "path", "a box was drawn instead of the curve");
+  assert.equal(p.attrs.class, "selection-arc");
+  // The same quadratic the engraver drew, at the same zoom.
+  assert.equal(p.attrs.d, "M 160 112 Q 208 56 256 96");
+  assert.ok(Number(p.attrs["stroke-width"]) > 8 * 0.2,
+            "the highlight is no thicker than the curve under it");
 });
 
 test("picking one up selects the curve, not the notes at its ends", () => {
@@ -191,4 +216,74 @@ test("a curve that is no longer there is said so rather than half removed", asyn
   assert.equal(t.asked.length, 0, "it asked anyway: " + t.asked.join(" | "));
   assert.ok(t.said.join(" ").includes("Could not find"),
             "nothing said why: " + t.said.join(" | "));
+});
+
+// Picking something up puts down whatever was picked up before.
+//
+// The lit curve is drawn into the page rather than tinted onto a glyph, so
+// it has to be taken away again by hand — and it was not. Every curve ever
+// clicked stayed lit: "I clicked on slur then tie then a note, everything is
+// selected."
+test("a new selection takes away the last one's marks", () => {
+  // Enough of an <svg> to put shapes in and take them out again.
+  const kids = [];
+  const hit = (k, sel) => ({
+    "rect.selection": k.name === "rect" && k.cls === "selection",
+    "path.selection-arc": k.name === "path" && k.cls === "selection-arc",
+    ".selected": (k.cls || "").split(" ").includes("selected"),
+    ".write-cursor": (k.cls || "").split(" ").includes("write-cursor"),
+  })[sel] ?? false;
+  const svg = {
+    get firstChild() { return kids[0] || null; },
+    insertBefore(node) { kids.unshift(node); return node; },
+    querySelectorAll(sel) {
+      return kids.filter((k) => hit(k, sel)).map((k) => ({
+        classList: { remove: () => { k.cls = ""; } },
+        remove: () => { kids.splice(kids.indexOf(k), 1); },
+      }));
+    },
+  };
+  const el = (name) => ({
+    name, cls: "", attrs: {},
+    setAttribute(k, v) { this.attrs[k] = v; if (k === "class") this.cls = v; },
+  });
+
+  const state = { selection: null, multi: [], zoom: 8, hits: HITS, arcs: [TIE, SLUR] };
+  const scope = {
+    state,
+    document: { createElementNS: (ns, name) => el(name) },
+    currentSVG: () => svg,
+    rememberCursor() {}, placeTypeBar() {}, showDrumPad() {},
+    refreshHarmonics() {}, drawInsertCursor() {}, selectionRect: () => el("rect"),
+    staffHeightOf: () => 4, headGlyphAt: () => null, barNumberOf: (m) => m + 1,
+  };
+  const body = [grab("markSelection"), grab("selectionArc")].join("\n") +
+    "\nreturn { markSelection };";
+  const api = new Function(...Object.keys(scope), body)(...Object.values(scope));
+
+  const lit = () => kids.filter((k) => k.cls === "selection-arc");
+
+  state.selection = { part: 0, measure: 0, ref: 3, arc: SLUR };
+  api.markSelection();
+  assert.equal(lit().length, 1, "the slur was not lit");
+
+  state.selection = { part: 0, measure: 0, ref: 1, arc: TIE };
+  api.markSelection();
+  assert.equal(lit().length, 1, "the slur stayed lit when the tie was picked up");
+  assert.equal(lit()[0].attrs.d,
+    `M ${TIE.x1 * 8} ${TIE.y1 * 8} Q ${TIE.cx * 8} ${TIE.cy * 8} ` +
+    `${TIE.x2 * 8} ${TIE.y2 * 8}`,
+    "what is lit is not the curve that was just picked up");
+
+  // And a note after them, which lights nothing of its own here.
+  state.selection = { part: 0, measure: 0, ref: 1, at: 1, step: 2 };
+  api.markSelection();
+  assert.equal(lit().length, 0, "a curve stayed lit after a note was picked up");
+
+  // Clicking empty space puts everything down.
+  state.selection = { part: 0, measure: 0, ref: 3, arc: SLUR };
+  api.markSelection();
+  state.selection = null;
+  api.markSelection();
+  assert.equal(lit().length, 0, "a curve stayed lit with nothing picked up");
 });

@@ -515,6 +515,18 @@ body.native #menubar { padding-left: 12px; }
   pointer-events: none;
 }
 
+/* A picked-up tie or slur: the curve itself, lit.
+ *
+ * A box round a slur is a box round every bar it arcs over, which reads as
+ * those bars being selected rather than the curve over them. */
+#canvas path.selection-arc {
+  fill: none;
+  stroke: var(--accent);
+  stroke-opacity: .55;
+  stroke-linecap: round;
+  pointer-events: none;
+}
+
 /* Where a jump landed.
  *
  * Going to measure 184 of a long score moves the page a long way, and a page

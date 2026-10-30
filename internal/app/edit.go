@@ -755,17 +755,48 @@ type keyedNote struct {
 
 // notesOf resolves a selection to the notes in it, a chord counting as all of
 // its noteheads: an accidental put on a chord belongs to the whole chord.
+//
+// Unless one of its noteheads was named. The head parameter is the staff step
+// a notehead sits at, which is what the editor knows about the one that was
+// clicked, and it narrows the chord to that note — the only way to sharpen
+// the third of a chord and leave the rest of it alone. It is read only when
+// one element is being asked about: a dragged selection picks up whole
+// chords, and a step shared by two of them would mean different notes in
+// each.
 func (a *App) notesOf(q url.Values) ([]keyedNote, error) {
 	a.lock()
 	defer a.mu.Unlock()
 
+	var head *int
+	if v := q.Get("head"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			return nil, editError("head is a staff step")
+		}
+		head = &n
+	}
+
 	var out []keyedNote
-	collect := func(p *model.Part, el model.Element) {
+	collect := func(p *model.Part, measure int, el model.Element, head *int) {
 		switch e := el.(type) {
 		case *model.Note:
 			out = append(out, keyedNote{e, p.Key})
 		case *model.Chord:
+			// A tablature staff writes fret numbers where noteheads would
+			// go, and their height is which string rather than which pitch.
+			// The step the editor read off the page is then not the step
+			// the note sits at on a staff of pitches, and there is no
+			// telling the chord's notes apart by it — so the chord goes
+			// whole, as it did before any of them could be named.
+			one := head
+			if p.Tab != nil {
+				one = nil
+			}
+			clef := p.ClefAt(measure)
 			for _, n := range e.Notes {
+				if one != nil && engrave.StaffStep(clef, n.Pitch) != *one {
+					continue
+				}
 				out = append(out, keyedNote{n, p.Key})
 			}
 		}
@@ -776,6 +807,9 @@ func (a *App) notesOf(q url.Values) ([]keyedNote, error) {
 		if err != nil {
 			return nil, err
 		}
+		if len(targets) != 1 {
+			head = nil
+		}
 		for _, t := range targets {
 			p, m, err := a.locate(t.part, t.measure)
 			if err != nil {
@@ -785,9 +819,12 @@ func (a *App) notesOf(q url.Values) ([]keyedNote, error) {
 			if t.index < 0 || t.index >= len(v.Elements) {
 				continue
 			}
-			collect(p, v.Elements[t.index])
+			collect(p, t.measure, v.Elements[t.index], head)
 		}
 		if len(out) == 0 {
+			if head != nil {
+				return nil, editError("there is no notehead there")
+			}
 			return nil, editError("there is no note in the selection")
 		}
 		return out, nil
@@ -810,8 +847,11 @@ func (a *App) notesOf(q url.Values) ([]keyedNote, error) {
 	if at <= 0 || at > len(v.Elements) {
 		at = len(v.Elements)
 	}
-	collect(p, v.Elements[at-1])
+	collect(p, measIdx, v.Elements[at-1], head)
 	if len(out) == 0 {
+		if head != nil {
+			return nil, editError("there is no notehead there")
+		}
 		return nil, editError("that is not a note")
 	}
 	return out, nil
@@ -3037,8 +3077,12 @@ func setTie(t tieTarget, step int, hasStep, start, stop bool) bool {
 		m.TieStop = m.TieStop || stop
 		return true
 	}
+	// The clef in force where the note is, not the one the staff opens in:
+	// after a clef change the same note sits at a different step, and a tie
+	// aimed at a notehead by step found none of them.
+	clef := t.part.ClefAt(t.measure)
 	for _, n := range ch.Notes {
-		if engrave.StaffStep(t.part.Clef, n.Pitch) != step {
+		if engrave.StaffStep(clef, n.Pitch) != step {
 			continue
 		}
 		n.TieStart = n.TieStart || start
@@ -3051,8 +3095,9 @@ func setTie(t tieTarget, step int, hasStep, start, stop bool) bool {
 // clearTie takes a tie off, from one notehead or from all of them.
 func clearTie(t tieTarget, step int, hasStep bool) {
 	if ch, ok := t.el.(*model.Chord); ok {
+		clef := t.part.ClefAt(t.measure)
 		for _, n := range ch.Notes {
-			if hasStep && engrave.StaffStep(t.part.Clef, n.Pitch) != step {
+			if hasStep && engrave.StaffStep(clef, n.Pitch) != step {
 				continue
 			}
 			n.TieStart, n.TieStop = false, false

@@ -1982,9 +1982,13 @@ func (e *engraver) measureBox(p *model.Part, m *model.Measure, index int) measur
 		at := model.Duration{Num: 0, Den: 1}
 		for i, el := range voice.Elements {
 			entries = append(entries, entry{
-				at:   at,
-				v:    voiced{el: el, voice: vi},
-				lead: e.accidentalLead(el) + graceLead(el),
+				at: at,
+				v:  voiced{el: el, voice: vi},
+				// chordStepOut on this side too: a notehead that steps
+				// left needs the room, and so does the accidental column,
+				// which is drawn clear of the whole chord and moves left
+				// with it.
+				lead: e.accidentalLead(el) + graceLead(el) + chordStepOut(el),
 				room: flags[i],
 			})
 			at = at.Add(el.Duration())
@@ -2316,7 +2320,7 @@ func (e *engraver) spanWidth(span model.Duration, els []voiced) float64 {
 	}
 	over := 0.0
 	for _, v := range els {
-		if o := chordOverhang(v.el); o > over {
+		if o := chordStepOut(v.el); o > over {
 			over = o
 		}
 	}
@@ -2324,21 +2328,24 @@ func (e *engraver) spanWidth(span model.Duration, els []voiced) float64 {
 	return math.Max(w, sp.MinNote)
 }
 
-// chordOverhang is how far past its own column a chord reaches.
+// chordStepOut is how far past its own column a chord reaches.
 //
 // Two noteheads a second apart cannot be drawn through each other, so one of
-// each pair is pushed across the stem — always to the right, which is where
-// whatever comes next in the bar is standing. A column budgeted at one
-// notehead wide has no room for that, and the next thing is printed on top
-// of the pushed-out head: in the opening of the Altes, an eighth rest over
-// the C of an A flat-C-D chord.
+// each pair steps across the stem: right of it where the stem points up,
+// left of it where it points down. Either way the chord is a notehead wider
+// than the column booked for it, and whatever stands beside it is printed on
+// the stepped-out head — in the opening of the Altes, an eighth rest over
+// the C of an A flat-C-D chord, and at the head of a bar a chord written on
+// top of the barline.
 //
-// Which heads move depends on the stem, and the stem is not decided until
-// the music is drawn. Whether any move at all does not: it happens exactly
-// when two of the notes are a diatonic second apart, and that is the same
-// question whichever way the stem ends up pointing. So the room can be
-// booked here, before any of that is settled.
-func chordOverhang(el model.Element) float64 {
+// Which heads move, and which way, depends on the stem, and the stem is not
+// decided until the music is drawn: a beam settles it for every note under
+// it. Whether any move at all does not — it happens exactly when two of the
+// notes are a diatonic second apart, and that is the same question whichever
+// way the stem ends up pointing. So the room is booked here, before any of
+// that is settled, and on both sides of the column, because at this point
+// either of them could be the side that is used.
+func chordStepOut(el model.Element) float64 {
 	ch, ok := el.(*model.Chord)
 	if !ok || len(ch.Notes) < 2 {
 		return 0

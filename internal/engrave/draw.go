@@ -735,10 +735,41 @@ func (e *engraver) drawChordHeads(p *placed) {
 	}
 	shifted := displacedHeads(steps, up)
 
+	// Which side a displaced notehead steps to: across the stem, and the
+	// stem is on the far side of the chord from where it points.
+	//
+	// A chord is read from its stem end — upwards from the bottom note of a
+	// stem-up chord, downwards from the top note of a stem-down one — and
+	// the note that gives way is the second one of the pair as it is read.
+	// It steps across the stem, so with the stem up it goes right of a stem
+	// standing at the right of the column, and with the stem down it goes
+	// left of a stem standing at the left. Moving it right either way put a
+	// stem-down chord's lower note out on the wrong side, hanging off the
+	// chord with the stem running down between them: reported as "the A
+	// should be on the left, otherwise the chord looks weird".
+	step := smufl.Advance(head)
+	if !up {
+		step = -step
+	}
+	leftmost := p.x
+	if step < 0 {
+		for _, sh := range shifted {
+			if sh {
+				leftmost = p.x + step
+				break
+			}
+		}
+	}
+
 	for i, n := range ch.Notes {
-		step := steps[i]
+		at := steps[i]
+		// Noteheads a second apart cannot sit on the same side of the stem.
+		offset := 0.0
+		if shifted[i] {
+			offset = step
+		}
 		if e.tab != nil {
-			y := e.y + stepY(float64(step))
+			y := e.y + stepY(float64(at))
 			if e.fretNumber(n, p.x+noteheadWidth(p.value)/2, y, p.index) {
 				if i == 0 {
 					e.lay.Refs[p.index] = RefPos{X: p.x, Y: y, Staff: e.y}
@@ -747,15 +778,15 @@ func (e *engraver) drawChordHeads(p *placed) {
 			}
 		}
 		if g := smufl.AccidentalGlyph(n.Accidental); g != "" {
+			// Clear of the whole chord, the stepped-out head included. The
+			// accidentals of a chord stand in a column of their own, so
+			// they all move together or the lowest of them is printed on
+			// the notehead that stepped left.
 			e.lay.Glyphs = append(e.lay.Glyphs, Glyph{
-				Name: g, X: p.x - smufl.Advance(g) - e.opt.Spacings.AccidentalToNote,
-				Y: e.y + stepY(float64(step)),
+				Name: g,
+				X:    leftmost - smufl.Advance(g) - e.opt.Spacings.AccidentalToNote,
+				Y:    e.y + stepY(float64(at)),
 			})
-		}
-		// Noteheads a second apart cannot sit on the same side of the stem.
-		offset := 0.0
-		if shifted[i] {
-			offset = smufl.Advance(head)
 		}
 		// Every notehead carries the chord's own ref, not just the first.
 		// A chord is one element: selecting it must light all of it up, and
@@ -763,15 +794,91 @@ func (e *engraver) drawChordHeads(p *placed) {
 		e.lay.Glyphs = append(e.lay.Glyphs, Glyph{
 			Name: smufl.NoteheadGlyphOf(p.value, n.Head),
 			X:    p.x + offset,
-			Y:    e.y + stepY(float64(step)),
+			Y:    e.y + stepY(float64(at)),
 			Ref:  p.index,
 		})
 		if i == 0 {
-			e.lay.Refs[p.index] = RefPos{X: p.x, Y: e.y + stepY(float64(step)), Staff: e.y}
+			e.lay.Refs[p.index] = RefPos{X: p.x, Y: e.y + stepY(float64(at)), Staff: e.y}
 		}
-		e.ledgerLines(p.x, smufl.Advance(head), step)
+		// Under the notehead it carries, which for a stepped-out head is
+		// not the column: a ledger line drawn at the column left that head
+		// floating beside it with a line under thin air.
+		e.ledgerLines(p.x+offset, smufl.Advance(head), at)
 	}
-	e.drawDots(p.x+smufl.Advance(head)+e.dotGap(e.stemUp(p)), float64(p.hi), p.dots)
+	e.drawChordDots(p, steps, shifted, head, up)
+}
+
+// drawChordDots puts a dot beside every notehead of a dotted chord.
+//
+// The dot is part of how long a note is, and every note of the chord is that
+// long: a dot drawn beside the top notehead alone says the chord is dotted
+// without saying which of its notes are, and leaves the other heads reading
+// as the plain value.
+//
+// They line up in one column clear of the whole chord, a notehead pushed
+// across the stem included, and no two of them share a space — a dot cannot
+// sit on a staff line, so a notehead on a line takes the space above it
+// unless the note a second higher has already taken that space, and then it
+// takes the space below. Two noteheads at the same pitch share one dot.
+func (e *engraver) drawChordDots(p *placed, steps []int, shifted []bool, head string, up bool) {
+	if p.dots <= 0 || len(steps) == 0 {
+		return
+	}
+	// Past the furthest-right notehead, not merely past the column: a dot
+	// placed off the unshifted heads is drawn on top of a shifted one. Only
+	// a stem-up chord's heads step right; a stem-down chord's step left,
+	// out of the dots' way.
+	right := p.x + smufl.Advance(head)
+	if up {
+		for _, s := range shifted {
+			if s {
+				right += smufl.Advance(head)
+				break
+			}
+		}
+	}
+	x := right + e.dotGap(up)
+	for _, ds := range chordDotSteps(steps) {
+		e.dotsAt(x, float64(ds), p.dots)
+	}
+}
+
+// chordDotSteps gives the step each of a chord's dots sits at, one per
+// distinct notehead, from the bottom of the chord up.
+func chordDotSteps(steps []int) []int {
+	seen := map[int]bool{}
+	var heads []int
+	for _, s := range steps {
+		if seen[s] {
+			continue
+		}
+		seen[s] = true
+		heads = append(heads, s)
+	}
+	sort.Ints(heads)
+
+	// A notehead in a space has only one place to put its dot, so those are
+	// claimed first and the ones on lines fit around them.
+	taken := map[int]bool{}
+	for _, s := range heads {
+		if s%2 != 0 {
+			taken[s] = true
+		}
+	}
+	out := make([]int, 0, len(heads))
+	for _, s := range heads {
+		if s%2 != 0 {
+			out = append(out, s)
+			continue
+		}
+		at := s + 1
+		if taken[at] && !taken[s-1] {
+			at = s - 1
+		}
+		taken[at] = true
+		out = append(out, at)
+	}
+	return out
 }
 
 func abs(n int) int {
@@ -1624,13 +1731,20 @@ func (e *engraver) separateLedgers() {
 }
 
 func (e *engraver) drawDots(x, step float64, dots int) {
-	if dots <= 0 {
-		return
-	}
 	// A dot never sits on a line, so one that would moves up into the space.
 	ds := step
 	if int(ds)%2 == 0 {
 		ds++
+	}
+	e.dotsAt(x, ds, dots)
+}
+
+// dotsAt draws a note's dots at the step given, without asking whether that
+// step is a line: a chord works out where each of its dots goes before any
+// of them is drawn, because they have to keep out of each other's way.
+func (e *engraver) dotsAt(x, ds float64, dots int) {
+	if dots <= 0 {
+		return
 	}
 	for i := 0; i < dots; i++ {
 		e.lay.Glyphs = append(e.lay.Glyphs, Glyph{

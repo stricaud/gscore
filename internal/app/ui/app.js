@@ -3532,11 +3532,21 @@ function select(hit, el, step) {
   state.anchor = { part: hit.part, measure: hit.measure, index: el.index };
   state.focus = null;
   state.multi = [];
-  // Which notehead of a chord was clicked, so a tie can be put on that one
-  // rather than on all of them. Null means the element as a whole.
+  // Which notehead of a chord was clicked, so a tie or an accidental can be
+  // put on that one rather than on all of them. Null means the element as a
+  // whole, which is what a dragged selection always picks up.
+  //
+  // The nearest head within a step, which is the same reach that decides
+  // whether the click was on a notehead or in the space above one. An exact
+  // match asked for the middle quarter of a notehead: everywhere else on the
+  // same head picked up the chord and then could not say which note of it
+  // had been pointed at.
   let head = null;
-  if (step !== undefined && (el.steps || []).includes(step)) {
-    head = step;
+  if (step !== undefined) {
+    for (const st of el.steps || []) {
+      if (Math.abs(st - step) > 1) continue;
+      if (head === null || Math.abs(st - step) < Math.abs(head - step)) head = st;
+    }
   }
   state.selection = {
     part: hit.part,
@@ -3553,7 +3563,12 @@ function select(hit, el, step) {
   };
   markSelection();
   updateFingering();
-  status(`Selected ${el.kind} ${el.index + 1} of measure ${barNumberOf(hit.measure)}`);
+  // Naming the notehead, because what the next accidental changes is one
+  // note of the chord and the box round that head is easy to read as a
+  // box round a small chord.
+  const what = el.kind === "chord" && head !== null && (el.steps || []).length > 1
+    ? "one notehead of chord" : el.kind;
+  status(`Selected ${what} ${el.index + 1} of measure ${barNumberOf(hit.measure)}`);
 }
 
 function clearSelection() {
@@ -3963,6 +3978,34 @@ function markSelection() {
     }
   }
 
+  // One notehead of a chord, picked up by clicking it. The box goes round
+  // that head alone: the next accidental is going to change one note of the
+  // chord, and a box round the whole chord would say otherwise.
+  //
+  // Only ever from a click. A dragged selection picks up whole chords, which
+  // is what makes it the way to sharpen all of them at once.
+  if (!state.multi.length && sel.ref !== null && sel.ref !== undefined &&
+      sel.head !== null && sel.head !== undefined) {
+    const hit = state.hits.find(
+      (h) => h.part === sel.part && h.measure === sel.measure);
+    const el = hit && (hit.elements || []).find((e) => e.ref === sel.ref);
+    if (el && el.kind === "chord" && (el.steps || []).length > 1) {
+      const g = headGlyphAt(svg, sel.ref, hit.staffTop + 4 - sel.head / 2, z);
+      if (g) {
+        g.classList.add("selected");
+        const x = Number(g.getAttribute("x")) / z;
+        const y = Number(g.getAttribute("y")) / z;
+        svg.insertBefore(
+          selectionRect(x - 0.4, y - 0.9, el.width + 0.8, 1.8, z),
+          svg.firstChild);
+        // Over it, as it is over any other selection: the chord is picked
+        // up and the next note still goes after it.
+        drawInsertCursor(svg, hit, sel, z);
+        return;
+      }
+    }
+  }
+
   // What the rectangle has to enclose.
   let picked = [];
   if (state.multi.length) {
@@ -4094,6 +4137,25 @@ function ledger(svg, x, staffTop, step, z) {
   svg.appendChild(line);
 }
 
+// headGlyphAt finds one notehead of a chord: the glyph of that element
+// nearest the height given.
+//
+// Every notehead of a chord carries the chord's ref, which is what makes
+// clicking any of them find the chord. Telling them apart afterwards is a
+// matter of where they are drawn, and the only thing that knows a notehead's
+// height is the step it was clicked at.
+function headGlyphAt(svg, ref, y, z) {
+  let best = null;
+  let away = Infinity;
+  for (const g of svg.querySelectorAll(`[data-ref="${ref}"]`)) {
+    const d = Math.abs(Number(g.getAttribute("y")) - y * z);
+    if (d < away) { best = g; away = d; }
+  }
+  // Within half a space, or the chord has been redrawn since it was picked
+  // up and the head that was clicked is no longer where it was.
+  return away <= z * 0.5 ? best : null;
+}
+
 function selectionRect(x, y, w, h, z) {
   const r = document.createElementNS("http://www.w3.org/2000/svg", "rect");
   r.setAttribute("class", "selection");
@@ -4178,14 +4240,41 @@ function hasSelection() {
   return !!(sel && sel.ref !== null && sel.ref !== undefined);
 }
 
+// pickedHead names the notehead of a chord that was clicked, for the
+// commands that act on one note rather than on the whole element.
+//
+// Nothing when a range is picked up: a dragged selection is whole chords,
+// and a staff step shared by two of them is a different note in each.
+function pickedHead() {
+  const sel = state.selection;
+  if (state.multi.length || !sel) return {};
+  if (sel.head === null || sel.head === undefined) return {};
+  return { head: String(sel.head) };
+}
+
+// onThatNotehead says so, when the accidental went on one note of a chord
+// rather than on all of them.
+function onThatNotehead() {
+  const sel = state.selection;
+  if (state.multi.length || !sel || sel.head === null || sel.head === undefined) {
+    return "";
+  }
+  const hit = state.hits.find(
+    (h) => h.part === sel.part && h.measure === sel.measure);
+  const el = hit && (hit.elements || []).find((e) => e.ref === sel.ref);
+  return el && el.kind === "chord" && (el.steps || []).length > 1
+    ? " on that notehead" : "";
+}
+
 // cycleAccidental moves what is picked up one step sharper or flatter.
 const cycleAccidental = (dir) =>
-  mark("accidental", { cycle: dir > 0 ? "up" : "down" },
-       dir > 0 ? "Sharpened" : "Flattened");
+  mark("accidental", { cycle: dir > 0 ? "up" : "down", ...pickedHead() },
+       (dir > 0 ? "Sharpened" : "Flattened") + onThatNotehead());
 
 const setAccidental = (acc, said) =>
-  mark("accidental", { accidental: acc },
-       acc === "none" ? "Accidental removed" : "Written as " + said.toLowerCase());
+  mark("accidental", { accidental: acc, ...pickedHead() },
+       (acc === "none" ? "Accidental removed" : "Written as " + said.toLowerCase()) +
+       onThatNotehead());
 
 // beamOrBreak is what the b key does, which depends on how much is picked up.
 //

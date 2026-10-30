@@ -804,6 +804,9 @@ paths:
     post:
       tags: [write]
       summary: Dot a note — again for two dots, three, then none
+      description: |
+        On a chord, every note in it: a dot is part of how long the note is,
+        and the notes of a chord are all the same length.
       parameters:
         - $ref: "#/components/parameters/part"
         - $ref: "#/components/parameters/measure"
@@ -830,6 +833,9 @@ paths:
         Asking for the accidental a note already has takes it off, so each
         button is its own undo. The written accidental decides how the note
         sounds; with none, the key signature decides.
+
+        On a chord it belongs to the whole chord unless `head` names one of
+        its noteheads.
       parameters:
         - $ref: "#/components/parameters/part"
         - $ref: "#/components/parameters/measure"
@@ -842,6 +848,16 @@ paths:
           in: query
           description: A step sharper or flatter, instead of naming one.
           schema: { type: string, enum: [up, down] }
+        - name: head
+          in: query
+          description: |
+            One notehead of a chord, as the staff step it sits at — half a
+            space each, counted from the bottom line, the same numbering
+            `steps` on a hit uses. The accidental goes on that note and no
+            other. Read only when one element is being asked about: a range
+            is whole chords, since a step names a different note in each.
+            A step no notehead sits at is an error, not the whole chord.
+          schema: { type: integer }
       responses:
         "200": { $ref: "#/components/responses/Changed" }
         "400": { $ref: "#/components/responses/Error" }

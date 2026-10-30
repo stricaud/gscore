@@ -4402,6 +4402,24 @@ function hasSelection() {
   return !!(sel && sel.ref !== null && sel.ref !== undefined);
 }
 
+// pickedNotes says whether what is picked up is music, rather than a marking
+// written over music.
+//
+// Every marking names the note it was written on, so that Backspace can find
+// it — a dynamic, a hairpin, a tempo, a tie, a slur, the beams of a tremolo.
+// That makes hasSelection true for all of them, which is right for "is there
+// something to act on" and wrong for the arrows: moving a slur up a step
+// means moving the note under it, which is not what clicking the slur asked
+// for.
+function pickedNotes() {
+  if (state.multi.length) return true;
+  const sel = state.selection;
+  if (!sel || sel.ref === null || sel.ref === undefined) return false;
+  if (sel.bar) return false;
+  return !(sel.arc || sel.hairpin || sel.tremolo || sel.dynamic ||
+    sel.chordSymbol || (sel.tempo !== undefined && sel.tempo !== null));
+}
+
 // pickedHead names the notehead of a chord that was clicked, for the
 // commands that act on one note rather than on the whole element.
 //
@@ -4426,6 +4444,28 @@ function onThatNotehead() {
   const el = hit && (hit.elements || []).find((e) => e.ref === sel.ref);
   return el && el.kind === "chord" && (el.steps || []).length > 1
     ? " on that notehead" : "";
+}
+
+// typeAccidental is what a sign key does, which is what the palette's button
+// of the same name does.
+//
+// With music picked up it belongs to that music and is written now. With
+// nothing picked up it is a decision about the next note, and the button
+// lights to say the pen is holding it. A marking picked up is neither: a
+// sharp on a slur means a sharp on the note under it, which is not what
+// pointing at the slur asked for.
+function typeAccidental(name, said) {
+  if (pickedNotes()) {
+    void setAccidental(name, said);
+    return;
+  }
+  if (state.selection && isDrumStaff(state.selection.part)) {
+    status("A drum staff has no accidentals");
+    return;
+  }
+  state.tool.accidental = name;
+  markTools();
+  status(said + " — on the next note written");
 }
 
 // cycleAccidental moves what is picked up one step sharper or flatter.
@@ -8465,6 +8505,14 @@ const KEY_BINDINGS = [
   { id: "flatten", keys: "-", group: "Accidentals",
     label: "Flatten — again for a double flat, again for none",
     run: () => void cycleAccidental(-1) },
+  // The signs as they are written, which is what a hand reaches for: a
+  // sharp is #, a flat is _ and a natural is =. They do what the palette's
+  // buttons do — write the sign on what is picked up, or hold it for the
+  // next note where nothing is.
+  { id: "accidental-sharp", keys: "#", group: "Accidentals",
+    label: "Sharp", run: () => typeAccidental("sharp", "Sharp") },
+  { id: "accidental-flat", keys: "_", group: "Accidentals",
+    label: "Flat", run: () => typeAccidental("flat", "Flat") },
   { id: "accidental-natural", keys: "=", group: "Accidentals",
     label: "Natural — or tie, with nothing picked up",
     run: () => {
@@ -8481,7 +8529,7 @@ const KEY_BINDINGS = [
       //
       // The key is free when nothing is picked up, and tying two notes is
       // what it has always done there.
-      if (hasSelection()) void setAccidental("natural", "Natural");
+      if (pickedNotes()) void setAccidental("natural", "Natural");
       else action("tie");
     } },
 
@@ -8523,7 +8571,13 @@ const KEY_BINDINGS = [
     label: "Staccato", run: () => action("artic-staccato") },
   { id: "artic-staccatissimo", menu: "artic-staccatissimo", keys: "'", group: "Marks",
     label: "Staccatissimo", run: () => action("artic-staccatissimo") },
-  { id: "artic-tenuto", menu: "artic-tenuto", keys: "_", group: "Marks",
+  // The underscore pictures a tenuto, and it is also how a flat is written
+  // wherever music is typed rather than drawn. The flat has it: an
+  // accidental is reached far oftener than a tenuto, and nothing else
+  // spells one. No free key pictures a tenuto, so this one sits with the
+  // other articulations instead — , is staccato and ’ staccatissimo,
+  // and : is the next key along.
+  { id: "artic-tenuto", menu: "artic-tenuto", keys: ":", group: "Marks",
     label: "Tenuto", run: () => action("artic-tenuto") },
   { id: "hairpin-cresc", menu: "hairpin-cresc", keys: "<", group: "Marks",
     label: "Crescendo over what is picked up", run: () => action("hairpin-cresc") },
@@ -8581,18 +8635,23 @@ const KEY_BINDINGS = [
   { id: "extend-right", keys: "Shift+ArrowRight", group: "Selecting and moving",
     label: "Take the selection one note further on",
     run: () => extendSelection(1) },
+  // One note picked up is picked up, the same as twenty. Asked of the
+  // dragged selection alone, these moved the cursor instead wherever a note
+  // had been picked up by clicking it — and moving the cursor lets go of
+  // the note, so the arrow appeared to do nothing and quietly dropped the
+  // selection as well.
   { id: "cursor-up", menu: "pitch-up", keys: "ArrowUp", group: "Selecting and moving",
     label: "Up a step — or move the selected notes up",
-    run: () => { if (state.multi.length) void nudge(1); else moveCursorPitch(1); } },
+    run: () => { if (pickedNotes()) void nudge(1); else moveCursorPitch(1); } },
   { id: "cursor-down", menu: "pitch-down", keys: "ArrowDown", group: "Selecting and moving",
     label: "Down a step — or move the selected notes down",
-    run: () => { if (state.multi.length) void nudge(-1); else moveCursorPitch(-1); } },
+    run: () => { if (pickedNotes()) void nudge(-1); else moveCursorPitch(-1); } },
   { id: "cursor-up-octave", menu: "octave-up", keys: "Shift+ArrowUp", group: "Selecting and moving",
     label: "Up an octave",
-    run: () => { if (state.multi.length) void nudge(7); else moveCursorPitch(7); } },
+    run: () => { if (pickedNotes()) void nudge(7); else moveCursorPitch(7); } },
   { id: "cursor-down-octave", menu: "octave-down", keys: "Shift+ArrowDown", group: "Selecting and moving",
     label: "Down an octave",
-    run: () => { if (state.multi.length) void nudge(-7); else moveCursorPitch(-7); } },
+    run: () => { if (pickedNotes()) void nudge(-7); else moveCursorPitch(-7); } },
   { id: "nudge-up", keys: "Alt+ArrowUp", group: "Selecting and moving",
     label: "Move the note up a step", run: () => void nudge(1) },
   { id: "nudge-down", keys: "Alt+ArrowDown", group: "Selecting and moving",
@@ -8874,6 +8933,28 @@ function boundKeys() {
   return out;
 }
 
+// bindingFor is what a keystroke does, or nothing where it does nothing.
+//
+// The chord as it was pressed, and then the character alone where the
+// modifiers were how that character was typed at all. On a good many
+// layouts # or _ is Option or AltGr with a digit, so a binding written
+// against the character would be unreachable for the people whose keyboards
+// make it that way — which is most of them outside the US.
+//
+// Only where nothing claims the chord, so a real Alt binding still wins, and
+// only for punctuation: Alt with a letter, a digit or a named key is a chord
+// and is left alone.
+function bindingFor(e) {
+  const keys = boundKeys();
+  const bound = keys.get(chordOf(e));
+  if (bound) return bound;
+  if (e.altKey && !e.ctrlKey && !e.metaKey &&
+      e.key.length === 1 && !/[\p{L}\p{N}]/u.test(e.key)) {
+    return keys.get(e.key) || null;
+  }
+  return null;
+}
+
 function setupKeys() {
   document.addEventListener("keydown", (e) => {
     if (e.target.matches("input, textarea")) return;
@@ -8913,7 +8994,7 @@ function setupKeys() {
       return;
     }
 
-    const bound = boundKeys().get(chordOf(e));
+    const bound = bindingFor(e);
     if (!bound) return;
     // Inputs and open dialogs are already out, so there is no default worth
     // keeping: Tab would move the focus off the music and Backspace would
@@ -8931,7 +9012,7 @@ function setupKeys() {
 // is still G. The arrow keys are for moving a note to the right place on the
 // staff, which is what a player reads.
 async function nudge(steps) {
-  if (!hasSelection()) {
+  if (!pickedNotes()) {
     status("Click a note first");
     return;
   }

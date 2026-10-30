@@ -307,7 +307,10 @@ func TestDrumLettersAreTestedBeforeTheEditingLetters(t *testing.T) {
 	if drum < 0 {
 		t.Fatal("nothing routes a key press to a drum pad")
 	}
-	bound := strings.Index(js, "boundKeys().get(chordOf(e))")
+	// The call in the listener, not the function it reaches: bindingFor is
+	// written further up the file, so looking for its name alone would find
+	// the definition and compare the wrong two places.
+	bound := strings.Index(js, "const bound = bindingFor(e)")
 	if bound < 0 {
 		t.Fatal("nothing looks a key press up in the bindings; this guard needs updating")
 	}

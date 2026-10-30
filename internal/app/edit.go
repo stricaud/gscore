@@ -230,17 +230,20 @@ func (a *App) handleInsert(w http.ResponseWriter, r *http.Request) {
 			named = false
 		}
 
+		key := p.KeyAt(measIdx)
 		switch {
 		case acc != model.NoAccidental:
+			// Chosen from the palette, so it is written whether or not the
+			// signature already said it: asking for a sharp is asking to
+			// see one.
 			pitch.Alter = acc.Semitones()
-		case named:
-			// A pitch typed with its own accidental keeps it; one typed
-			// without takes the key's, the same as a note placed by hand.
-			if !hasAccidental(q.Get("pitch")) {
-				pitch.Alter = p.Key.AlterFor(pitch.Step)
-			}
+		case named && hasAccidental(q.Get("pitch")):
+			// Spelled as it was typed, and given whatever sign a reader
+			// needs to read it that way.
+			acc = signFor(pitch, alterInForce(m, at, pitch, key))
 		default:
-			pitch.Alter = p.Key.AlterFor(pitch.Step)
+			pitch.Alter = key.AlterFor(pitch.Step)
+			acc = signFor(pitch, alterInForce(m, at, pitch, key))
 		}
 		el = &model.Note{Pitch: pitch, Dur: dur, Accidental: acc}
 	}
@@ -456,13 +459,18 @@ func (a *App) handleAddPitch(w http.ResponseWriter, r *http.Request) {
 		}
 		pitch, named = got, true
 	}
+	key := p.KeyAt(measIdx)
 	switch {
 	case acc != model.NoAccidental:
 		pitch.Alter = acc.Semitones()
 	case named && hasAccidental(q.Get("pitch")):
-		// Spelled as it was typed.
+		// Spelled as it was typed, and with the sign that spells it. The
+		// notes of the chord being built count as already read, so the
+		// third of a chord whose root is sharpened gets its own sign.
+		acc = signFor(pitch, alterInForce(m, index+1, pitch, key))
 	default:
-		pitch.Alter = p.Key.AlterFor(pitch.Step)
+		pitch.Alter = key.AlterFor(pitch.Step)
+		acc = signFor(pitch, alterInForce(m, index+1, pitch, key))
 	}
 	add := &model.Note{Pitch: pitch, Dur: v.Elements[index].Duration(), Accidental: acc}
 
@@ -4397,15 +4405,123 @@ func restEmptyMeasures(s *model.Score) int {
 // signature is not to overrule it. "c" takes the key's C sharp; "cn" and
 // "c#" mean what they say.
 func hasAccidental(name string) bool {
+	return writtenAccidental(name) != model.NoAccidental
+}
+
+// writtenAccidental is the sign a typed pitch spells, or none where it
+// spells none.
+//
+// "b#" is a B with a sharp written in front of it, not merely a B that
+// sounds a semitone higher. Reading only the alteration decided how the
+// note sounded and left nothing to decide how it looked, so a sharp typed
+// in was saved into the file and never drawn: the page said B and the music
+// played B sharp.
+//
+// A natural counts. It alters nothing, and saying so out loud is the whole
+// reason anybody writes one.
+func writtenAccidental(name string) model.Accidental {
+	alter, any := 0, false
+scan:
 	for i := 1; i < len(name); i++ {
 		switch name[i] {
-		case '#', 's', 'S', 'b', 'B', 'x', 'X', 'n', 'N':
-			return true
-		case '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '-':
-			return false
+		case '#', 's', 'S':
+			alter, any = alter+1, true
+		case 'b', 'B':
+			alter, any = alter-1, true
+		case 'x', 'X':
+			alter, any = alter+2, true
+		case 'n', 'N':
+			any = true
+		default:
+			break scan
 		}
 	}
-	return false
+	if !any {
+		return model.NoAccidental
+	}
+	switch alter {
+	case -2:
+		return model.DoubleFlat
+	case -1:
+		return model.Flat
+	case 0:
+		return model.Natural
+	case 1:
+		return model.Sharp
+	case 2:
+		return model.DoubleSharp
+	}
+	return model.NoAccidental
+}
+
+// notesIn is the noteheads of an element: one for a note, all of them for a
+// chord, none for anything else.
+func notesIn(el model.Element) []*model.Note {
+	switch e := el.(type) {
+	case *model.Note:
+		return []*model.Note{e}
+	case *model.Chord:
+		return e.Notes
+	}
+	return nil
+}
+
+// alterInForce is how a letter sounds at a point in a bar, to a reader who
+// has read the bar up to there.
+//
+// What the key signature says for it, unless an accidental written earlier
+// in the bar has already altered that very note. An accidental holds to the
+// end of its bar, in its own octave, which is why a reader needs no help to
+// play the second of two sharpened Fs and does need it for the third note if
+// that one is meant to be natural.
+func alterInForce(m *model.Measure, at int, pitch model.Pitch, key model.KeySignature) int {
+	alter := key.AlterFor(pitch.Step)
+	if len(m.Voices) == 0 || m.Voices[0] == nil {
+		return alter
+	}
+	els := m.Voices[0].Elements
+	if at < 0 || at > len(els) {
+		at = len(els)
+	}
+	for i := 0; i < at; i++ {
+		for _, n := range notesIn(els[i]) {
+			if n.Accidental == model.NoAccidental ||
+				n.Pitch.Step != pitch.Step || n.Pitch.Octave != pitch.Octave {
+				continue
+			}
+			alter = n.Pitch.Alter
+		}
+	}
+	return alter
+}
+
+// signFor is the accidental a note has to carry to be read as the note it
+// is: the sign that spells its alteration, or none where nothing on the page
+// has said otherwise.
+//
+// Both halves matter. Without the first, a b# typed into C major was saved
+// as a B sharp and drawn as a B — the file and the page disagreeing about
+// what the music is, which is the one thing an editor must not do. Without
+// the second, a tune spelled out note by note comes back peppered with signs
+// that say only what the signature already said, and a scale in G major is
+// unreadable.
+func signFor(pitch model.Pitch, inForce int) model.Accidental {
+	if pitch.Alter == inForce {
+		return model.NoAccidental
+	}
+	switch pitch.Alter {
+	case -2:
+		return model.DoubleFlat
+	case -1:
+		return model.Flat
+	case 0:
+		return model.Natural
+	case 1:
+		return model.Sharp
+	case 2:
+		return model.DoubleSharp
+	}
+	return model.NoAccidental
 }
 
 // lastPitch is the note before the one being written, which is what a bare

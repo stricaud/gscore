@@ -277,8 +277,13 @@ type staffSpec struct {
 	// rather than a note of the scale.
 	Notation    string `xml:"notationStyle"`
 	DefaultClef int    `xml:"defaultClef"`
-	FullName    int    `xml:"fullName"`
-	AbbrvName   int    `xml:"abbrvName"`
+	// The clef the staff is read from when it is read transposed, which is
+	// not always the one it sounds in. Left out of the file when it is the
+	// treble, which is what most of the staves that change clef are read
+	// from, so an absent field is a treble clef and not a missing answer.
+	TransposedClef int `xml:"transposedClef"`
+	FullName       int `xml:"fullName"`
+	AbbrvName      int `xml:"abbrvName"`
 	// How far the staff is written from where it sounds, as a diatonic
 	// interval and a number of sharps added to the key signature — which is
 	// how a player's part is described rather than how a tuner describes
@@ -286,6 +291,9 @@ type staffSpec struct {
 	Transposition struct {
 		Interval int `xml:"keysig>interval"`
 		Adjust   int `xml:"keysig>adjust"`
+		// Present when the staff changes clef along with its pitches.
+		// An empty element: there to be there, with nothing in it.
+		SetToClef *struct{} `xml:"setToClef"`
 	} `xml:"transposition"`
 }
 
@@ -499,9 +507,11 @@ func read(data []byte, meta metadata) (*model.Score, []string, error) {
 		// The clef of the first bar is the staff's clef; a change partway
 		// through is a thing gscore writes into the bar, and reading those
 		// is for a later pass.
-		if h, ok := holds[[2]int{staffID, bars[0].Cmper}]; ok && h.ClefID != nil {
-			part.Clef = clefOf(*h.ClefID, rd)
+		var first *int
+		if h, ok := holds[[2]int{staffID, bars[0].Cmper}]; ok {
+			first = h.ClefID
 		}
+		part.Clef = writtenClef(spec, first, rd)
 
 		for _, bar := range bars {
 			m := &model.Measure{
@@ -1399,6 +1409,28 @@ func asWritten(sounds model.Pitch, t model.Transposition) model.Pitch {
 	plain := model.Pitch{Step: out.Step, Octave: out.Octave}
 	out.Alter = sounds.MIDI() - (t.Chromatic + 12*t.OctaveChange) - plain.MIDI()
 	return out
+}
+
+// writtenClef is the clef a staff reads from.
+//
+// gscore keeps a transposing staff's music as the player reads it, so the
+// clef has to be the written one as well, and for some instruments that is
+// not the clef the music sounds in. Finale keeps the two apart: the bars
+// carry the sounding clef, and the staff carries a second clef to be read
+// from instead whenever it says to set the clef along with the pitches.
+//
+// A baritone saxophone is the case that showed it. It sounds where the bass
+// clef is and is read in the treble, and given the sounding clef its part
+// came out with every note three ledger lines above the staff.
+func writtenClef(s staffSpec, bar *int, r *reader) model.Clef {
+	if s.Transposition.SetToClef != nil {
+		return clefOf(s.TransposedClef, r)
+	}
+	if bar != nil {
+		return clefOf(*bar, r)
+	}
+	// A staff whose first bar says nothing about its clef still has one.
+	return clefOf(s.DefaultClef, r)
 }
 
 // writtenKey is the key signature a transposing staff reads from.

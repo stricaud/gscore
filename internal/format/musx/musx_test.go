@@ -523,3 +523,69 @@ func TestAnEmptyBarIsABarOfRest(t *testing.T) {
 		t.Errorf("the rest lasts %v, want a bar of six eight", rest.Dur)
 	}
 }
+
+// A staff that changes clef when it transposes.
+//
+// Some instruments are written in a different clef from the one they sound
+// in, and Finale keeps the two apart: the bars carry the clef the music
+// sounds in, and the staff carries a second clef to be read from instead.
+// gscore keeps the music as the player reads it, so it is that second clef
+// the part wants.
+//
+// A baritone saxophone is the case that showed it. It sounds where the bass
+// clef is and is read in the treble, and given the sounding clef the part
+// came out with every note three ledger lines above the staff. The clef it
+// is read from is not in the file at all: the treble is what is left out.
+const enigmaTransposedClef = `<?xml version="1.0" encoding="UTF-8"?>
+<finale version="27.4" xmlns="http://www.makemusic.com/2012/finale">
+  <others>
+    <instUsed cmper="0" inci="0"><inst>1</inst></instUsed>
+    <instUsed cmper="0" inci="1"><inst>2</inst></instUsed>
+    <staffSpec cmper="1">
+      <staffLines>5</staffLines>
+      <fullName>10</fullName>
+      <defaultClef>3</defaultClef>
+      <transposition>
+        <setToClef/>
+        <keysig><interval>12</interval><adjust>3</adjust></keysig>
+      </transposition>
+    </staffSpec>
+    <staffSpec cmper="2">
+      <staffLines>5</staffLines>
+      <fullName>8</fullName>
+      <defaultClef>3</defaultClef>
+    </staffSpec>
+    <textBlock cmper="8"><textID>22</textID></textBlock>
+    <textBlock cmper="10"><textID>24</textID></textBlock>
+    <measSpec cmper="1"><beats>2</beats><divbeat>1536</divbeat><barline>normal</barline></measSpec>
+  </others>
+  <details>
+    <gfhold cmper1="1" cmper2="1"><clefID>3</clefID></gfhold>
+  </details>
+  <texts>
+    <blockText number="22">^fontid(2)^size(14)^nfx(0)Violoncelle</blockText>
+    <blockText number="24">^fontid(2)^size(14)^nfx(0)Baritone Sax</blockText>
+  </texts>
+</finale>`
+
+func TestAStaffThatChangesClefWhenItTransposes(t *testing.T) {
+	score := read1(t, fixture(t, enigmaTransposedClef))
+	if len(score.Parts) != 2 {
+		t.Fatalf("%d staves, want two", len(score.Parts))
+	}
+	// The bar says the bass clef, which is where the saxophone sounds. It
+	// is read in the treble, and the treble is what is left out of the
+	// file — so an absent clef here is an answer, not a missing one.
+	if got := score.Parts[0].Clef; got != model.Treble {
+		t.Errorf("the baritone saxophone is read in the %v clef, want the treble", got)
+	}
+	// Written in A, three sharps away from the C the piece sounds in.
+	if got := score.Parts[0].Key.Fifths; got != 3 {
+		t.Errorf("it reads from %d sharps, want three", got)
+	}
+	// A staff that does not transpose keeps the clef it sounds in, and
+	// takes it from the staff when its first bar says nothing about one.
+	if got := score.Parts[1].Clef; got != model.Bass {
+		t.Errorf("the cello has the %v clef, want the bass", got)
+	}
+}

@@ -55,6 +55,7 @@ func (a *App) handleHits(w http.ResponseWriter, r *http.Request) {
 		"chords":      lay.Chords,
 		"tempos":      lay.Tempos,
 		"hairpins":    lay.Hairpins,
+		"arcs":        lay.Arcs,
 		"tremolos":    lay.Tremolos,
 		"barlines":    lay.Barlines,
 		"strips":      lay.Strips,
@@ -2886,8 +2887,23 @@ func (a *App) handleSlur(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if r.URL.Query().Get("slur") == "none" {
-		for _, m := range marks {
-			m.SlurStart, m.SlurStop = false, false
+		// ends says the selection is the two notes one curve runs between,
+		// which is what clicking a slur and pressing Backspace means. Only
+		// that curve goes: a note in the middle of a phrase closes one slur
+		// and opens the next, so clearing both marks on both ends would
+		// take away the slur on either side of the one that was asked for.
+		ends := r.URL.Query().Get("ends") != ""
+		for i, m := range marks {
+			if !ends {
+				m.SlurStart, m.SlurStop = false, false
+				continue
+			}
+			if i == 0 {
+				m.SlurStart = false
+			}
+			if i == len(marks)-1 {
+				m.SlurStop = false
+			}
 		}
 		writeJSON(w, map[string]int{"changed": len(marks)})
 		return
@@ -2946,8 +2962,18 @@ func (a *App) handleTie(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if q.Get("tie") == "none" {
-		for _, t := range targets {
-			clearTie(t, step, hasStep)
+		// ends says the selection is the two notes one curve runs between,
+		// which is what clicking a tie and pressing Backspace means. A note
+		// held through three bars stops one tie and starts the next on the
+		// same notehead, so clearing both marks on both ends would take
+		// away the ties on either side of the one that was asked for.
+		ends := q.Get("ends") != ""
+		for i, t := range targets {
+			start, stop := true, true
+			if ends {
+				start, stop = i == 0, i == len(targets)-1
+			}
+			clearTie(t, step, hasStep, start, stop)
 		}
 		writeJSON(w, map[string]int{"changed": len(targets)})
 		return
@@ -3093,22 +3119,37 @@ func setTie(t tieTarget, step int, hasStep, start, stop bool) bool {
 }
 
 // clearTie takes a tie off, from one notehead or from all of them.
-func clearTie(t tieTarget, step int, hasStep bool) {
+func clearTie(t tieTarget, step int, hasStep, start, stop bool) {
 	if ch, ok := t.el.(*model.Chord); ok {
 		clef := t.part.ClefAt(t.measure)
+		// A mark written on the chord itself covers every notehead in it.
+		// Untying one of them leaves the others tied, so the chord's own
+		// mark is handed down to its notes before it goes — otherwise the
+		// notehead was cleared, the chord's mark still said "all of them",
+		// and the curve was drawn again as though nothing had happened.
+		if hasStep && (ch.TieStart || ch.TieStop) {
+			for _, n := range ch.Notes {
+				n.TieStart = n.TieStart || ch.TieStart
+				n.TieStop = n.TieStop || ch.TieStop
+			}
+			ch.TieStart, ch.TieStop = false, false
+		}
 		for _, n := range ch.Notes {
 			if hasStep && engrave.StaffStep(clef, n.Pitch) != step {
 				continue
 			}
-			n.TieStart, n.TieStop = false, false
+			n.TieStart = n.TieStart && !start
+			n.TieStop = n.TieStop && !stop
 		}
 		if !hasStep {
-			ch.TieStart, ch.TieStop = false, false
+			ch.TieStart = ch.TieStart && !start
+			ch.TieStop = ch.TieStop && !stop
 		}
 		return
 	}
 	if m := marksOfElement(t.el); m != nil {
-		m.TieStart, m.TieStop = false, false
+		m.TieStart = m.TieStart && !start
+		m.TieStop = m.TieStop && !stop
 	}
 }
 

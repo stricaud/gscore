@@ -2723,6 +2723,7 @@ async function loadHits() {
   state.chordMarks = d.chords || [];
   state.tempos = d.tempos || [];
   state.hairpins = d.hairpins || [];
+  state.arcs = d.arcs || [];
   state.tremolos = d.tremolos || [];
   state.barlines = d.barlines || [];
   state.headers = d.headers || [];
@@ -2799,6 +2800,66 @@ function hairpinAt(x, y) {
     }
   }
   return null;
+}
+
+// arcAt finds the tie or slur a click landed on.
+//
+// Against the curve itself, not a box round it. A slur arcs over the music it
+// covers, and anything enclosing the curve encloses that music with it: a box
+// would have swallowed every click on the notes of a slurred phrase.
+//
+// The ends are left out. They sit on the two noteheads the curve joins, where
+// a click means the note — so only the middle of the arc answers, which is
+// the part drawn in clear air anyway.
+function arcAt(x, y) {
+  let best = null;
+  let away = arcReach;
+  for (const a of state.arcs || []) {
+    const d = awayFromArc(a, x, y);
+    if (d < away) { best = a; away = d; }
+  }
+  return best;
+}
+
+// arcReach is how near a click has to be to a curve to count as on it, in
+// staff spaces. A curve is drawn a fifth of a space thick, so this is
+// generous enough to hit and tight enough not to steal from the notes it
+// arcs over.
+const arcReach = 0.4;
+
+// awayFromArc is how far a point is from a quadratic, by walking it.
+//
+// Sampled rather than solved: the exact distance from a point to a quadratic
+// is the root of a cubic, and a curve two or three spaces wide is answered
+// to well within a notehead by thirty steps along it.
+function awayFromArc(a, x, y) {
+  let best = Infinity;
+  // From a seventh of the way along to six sevenths: the rest belongs to
+  // the notes at the ends.
+  for (let i = 4; i <= 26; i++) {
+    const t = i / 30;
+    const u = 1 - t;
+    const px = u * u * a.x1 + 2 * u * t * a.cx + t * t * a.x2;
+    const py = u * u * a.y1 + 2 * u * t * a.cy + t * t * a.y2;
+    const d = Math.hypot(px - x, py - y);
+    if (d < best) best = d;
+  }
+  return best;
+}
+
+// arcBox is the smallest rectangle holding a curve, for drawing round it
+// once it is picked up.
+function arcBox(a) {
+  let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+  for (let i = 0; i <= 30; i++) {
+    const t = i / 30;
+    const u = 1 - t;
+    const px = u * u * a.x1 + 2 * u * t * a.cx + t * t * a.x2;
+    const py = u * u * a.y1 + 2 * u * t * a.cy + t * t * a.y2;
+    x0 = Math.min(x0, px); x1 = Math.max(x1, px);
+    y0 = Math.min(y0, py); y1 = Math.max(y1, py);
+  }
+  return { x: x0, y: y0, width: x1 - x0, height: y1 - y0 };
 }
 
 // tremoloAt finds the two-note tremolo a click landed on.
@@ -3176,6 +3237,18 @@ function setupCanvasClicks() {
     }
 
     const hit = hitAt(x, y);
+
+    // The ties and the slurs arc over the music, so they are looked for
+    // before the staff they are drawn above — but never in front of a
+    // notehead. A curve ends on the two notes it joins and passes over the
+    // ones between, and every one of those clicks belongs to its note.
+    if (!hit || !elementAt(hit, x, y)) {
+      const arc = arcAt(x, y);
+      if (arc) {
+        selectArc(arc);
+        return;
+      }
+    }
     if (!hit) {
       clearSelection();
       status("Ready");
@@ -3484,6 +3557,22 @@ function selectHairpin(h) {
   status(`${h.kind} \u2014 press Backspace to take it away`);
 }
 
+// selectArc picks up a tie or a slur.
+//
+// What is picked up is the curve, not the notes under it: Backspace takes
+// the curve away and leaves the music alone. A tie on one notehead of a
+// chord is one curve of several, and it is that one.
+function selectArc(a) {
+  state.multi = [];
+  state.anchor = state.focus = null;
+  state.selection = {
+    part: a.part, measure: a.measure, ref: a.from,
+    at: 0, step: 0, arc: a,
+  };
+  markSelection();
+  status(`${a.kind === "tie" ? "Tie" : "Slur"} \u2014 press Backspace to take it away`);
+}
+
 // selectTremolo picks up the mark between two notes.
 //
 // What is picked up is the first of the two, because that is the note the
@@ -3726,6 +3815,35 @@ async function deleteSelected() {
     status(`${hair.kind} removed`);
     return;
   }
+  // A tie or a slur was picked up by clicking it. Both of its ends go, and
+  // only its own ends: a note in the middle of a phrase closes one slur and
+  // opens the next, and a note held through three bars stops one tie and
+  // starts another on the same notehead.
+  const arc = state.selection?.arc;
+  if (arc && !state.multi.length) {
+    const ends = [refTarget(arc.from), refTarget(arc.to)].filter(Boolean);
+    if (!ends.length) {
+      status(`Could not find that ${arc.kind} any more`);
+      return;
+    }
+    const p = new URLSearchParams({
+      ends: "1", sel: ends.join(","),
+      [arc.kind]: "none",
+    });
+    // Which notehead of the chord, for a tie: a chord is tied notehead by
+    // notehead and the others keep theirs.
+    if (arc.kind === "tie") p.set("step", String(arc.step));
+    const res = await fetch(`/api/${arc.kind}?` + p.toString(), { method: "POST" });
+    if (!res.ok) {
+      status("Could not remove it: " + (await res.text()).trim());
+      return;
+    }
+    state.selection.arc = null;
+    await refreshScore();
+    status(arc.kind === "tie" ? "Tie removed" : "Slur removed");
+    return;
+  }
+
   // A tremolo was picked up by clicking its beams. Both of its notes go
   // back to being notes: half a mark draws nothing and plays as an ordinary
   // note, but it is still in the file for the next thing written beside it
@@ -3934,6 +4052,17 @@ function markSelection() {
     const h = sel.hairpin;
     svg.insertBefore(
       selectionRect(h.x - 0.3, h.y - 0.5, h.width + 0.6, h.height + 1.0, z),
+      svg.firstChild);
+    return;
+  }
+
+  // A curve picked up by clicking it: the box goes round the arc, which is
+  // the whole of the mark. Lighting up the notes at its ends would say
+  // Backspace was about to take those away.
+  if (sel.arc) {
+    const b = arcBox(sel.arc);
+    svg.insertBefore(
+      selectionRect(b.x - 0.4, b.y - 0.4, b.width + 0.8, b.height + 0.8, z),
       svg.firstChild);
     return;
   }

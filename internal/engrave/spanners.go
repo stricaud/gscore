@@ -190,7 +190,7 @@ func (e *engraver) breakSpansOf(open *openSpans, right float64) {
 	// A slur that runs over a line break is drawn to the margin and picked
 	// up again on the next line, which is how it is written on paper.
 	if open.slur != nil {
-		e.drawTieOrSlur(open.slur, right, open.slur.y, slurLift, true)
+		e.drawTieOrSlur(open.slur, right, open.slur.y, slurLift, true, false)
 		open.slur.x = -1
 	}
 	// Up the staff, for the same reason: a chord held over a line break
@@ -198,7 +198,7 @@ func (e *engraver) breakSpansOf(open *openSpans, right float64) {
 	// of the whole layout.
 	for _, step := range sortedSteps(open.ties) {
 		t := open.ties[step]
-		e.drawTieOrSlur(t, right, t.y, tieLift, false)
+		e.drawTieOrSlur(t, right, t.y, tieLift, false, false)
 		t.x = -1
 	}
 }
@@ -490,7 +490,7 @@ const (
 )
 
 // slurAt handles a slur or a tie opening or closing at one element.
-func (e *engraver) slurAt(part *model.Part, m *model.Marks, p *placed) {
+func (e *engraver) slurAt(part *model.Part, m *model.Marks, p *placed, measure int) {
 	if m == nil {
 		return
 	}
@@ -528,6 +528,7 @@ func (e *engraver) slurAt(part *model.Part, m *model.Marks, p *placed) {
 			open.slur = &openSpan{
 				x: gx, y: gy, rel: gy - e.y, above: true,
 				fromHi: gstep, fromLo: gstep,
+				ref: p.index, part: e.partIndex, measure: measure,
 			}
 		}
 	}
@@ -544,7 +545,8 @@ func (e *engraver) slurAt(part *model.Part, m *model.Marks, p *placed) {
 			edge, toEdge = sl.fromLo, p.lo
 		}
 		sl.y = e.y + stepY(float64(edge))
-		e.drawTieOrSlur(sl, x, e.y+stepY(float64(toEdge)), slurLift, true)
+		sl.toRef = p.index
+		e.drawTieOrSlur(sl, x, e.y+stepY(float64(toEdge)), slurLift, true, true)
 		open.slur = nil
 	}
 	if m.SlurStart && open.slur == nil {
@@ -556,6 +558,7 @@ func (e *engraver) slurAt(part *model.Part, m *model.Marks, p *placed) {
 		open.slur = &openSpan{
 			x: x, y: y, rel: y - e.y, above: above,
 			fromHi: p.hi, fromLo: p.lo,
+			ref: p.index, part: e.partIndex, measure: measure,
 		}
 		if e.stemUp(p) {
 			open.slur.up++
@@ -600,7 +603,8 @@ func (e *engraver) slurAt(part *model.Part, m *model.Marks, p *placed) {
 	for _, h := range e.tiedHeads(p, m) {
 		if h.stop {
 			if t, ok := tied.ties[h.step]; ok {
-				e.drawTieOrSlur(t, x, e.y+stepY(float64(h.step)), tieLift, false)
+				t.toRef = p.index
+				e.drawTieOrSlur(t, x, e.y+stepY(float64(h.step)), tieLift, false, true)
 				delete(tied.ties, h.step)
 			}
 		}
@@ -612,7 +616,8 @@ func (e *engraver) slurAt(part *model.Part, m *model.Marks, p *placed) {
 				tied.ties[h.step] = &openSpan{
 					x: x, y: e.y + stepY(float64(h.step)),
 					rel: stepY(float64(h.step)), above: h.above,
-					voice: p.voice,
+					voice: p.voice, step: h.step,
+					ref: p.index, part: e.partIndex, measure: measure,
 				}
 			}
 		}
@@ -628,7 +633,8 @@ func (e *engraver) slurAt(part *model.Part, m *model.Marks, p *placed) {
 		if t.x == x {
 			continue // opened by this element, on another notehead
 		}
-		e.drawTieOrSlur(t, x, e.y+stepY(float64(step)), tieLift, false)
+		t.toRef = p.index
+		e.drawTieOrSlur(t, x, e.y+stepY(float64(step)), tieLift, false, true)
 		delete(tied.ties, step)
 	}
 }
@@ -681,7 +687,10 @@ func (e *engraver) tiedHeads(p *placed, m *model.Marks) []tiedHead {
 // drawTieOrSlur draws the arc. A quadratic is enough: a slur is one curve,
 // and its shape is decided by where it starts, where it ends and how far it
 // reaches.
-func (e *engraver) drawTieOrSlur(from *openSpan, toX, toY, lift float64, slur bool) {
+// complete says whether this is the whole curve or the stub left where it
+// runs off the end of a system: a stub is drawn and recorded like any other
+// piece of the curve, but the note it is running to is not known yet.
+func (e *engraver) drawTieOrSlur(from *openSpan, toX, toY, lift float64, slur, complete bool) {
 	if toX <= from.x {
 		return
 	}
@@ -732,6 +741,30 @@ func (e *engraver) drawTieOrSlur(from *openSpan, toX, toY, lift float64, slur bo
 		X2: toX, Y2: y2,
 		Thickness: e.opt.Defaults.StaffLineThickness * 1.6,
 	})
+
+	// Where it ended up, so the editor can let it be clicked. Only here is
+	// that known: how high a slur arches depends on the music under it, and
+	// which side it falls on depends on the stems of every note it covers.
+	kind := "tie"
+	if slur {
+		kind = "slur"
+	}
+	e.lay.Arcs = append(e.lay.Arcs, ArcPos{
+		Part: from.part, Measure: from.measure,
+		From: from.ref, To: from.toRef, Step: from.step, Kind: kind,
+		X1: from.x, Y1: y1, CX: (from.x + toX) / 2, CY: cy, X2: toX, Y2: y2,
+	})
+	if !complete {
+		// A piece of a curve that is still running. It is on the page and
+		// has to be clickable like the rest of it, so it waits to be told
+		// where it was going.
+		from.stubs = append(from.stubs, len(e.lay.Arcs)-1)
+		return
+	}
+	for _, i := range from.stubs {
+		e.lay.Arcs[i].To = from.toRef
+	}
+	from.stubs = nil
 }
 
 // clearArch lifts a slur's control point until the curve clears what it arcs

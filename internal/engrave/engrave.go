@@ -202,6 +202,17 @@ type Layout struct {
 	// click under the staff found nothing, because everything it knew how to
 	// find was on the staff.
 	Dynamics []DynamicPos `json:"dynamics"`
+
+	// Arcs are where the ties and the slurs were drawn.
+	//
+	// A curve belongs to the two notes at its ends and to neither of the
+	// notes it arcs over, so nothing on the page could be clicked to reach
+	// one: the only way to take a slur off was to select the notes under it
+	// again and ask for the slur to go. The engraver is the only thing that
+	// knows where the curve went — where a slur sits depends on the stems
+	// of everything beneath it and on how high it had to climb to clear
+	// them — so it says.
+	Arcs []ArcPos `json:"arcs"`
 	// Chords are the chord symbols' boxes, for the same reason: a symbol is
 	// written on a line of its own above the staff, as far up as that
 	// stretch of music pushed it, and the editor cannot point at one it
@@ -245,6 +256,35 @@ type HairpinPos struct {
 	Width   float64 `json:"width"`
 	Height  float64 `json:"height"`
 	Kind    string  `json:"kind"`
+}
+
+// ArcPos is one tie or slur on the page, in staff spaces.
+//
+// The curve itself, not a box round it. A slur arcs over the music it covers,
+// and a box enclosing it encloses all of that music too: a click anywhere
+// near the notes under a slur would have found the slur. So the quadratic is
+// given as it was drawn and a click is measured against the curve.
+type ArcPos struct {
+	Part    int `json:"part"`
+	Measure int `json:"measure"`
+	// From and To are the notes at its two ends. To is 0 on the stub left
+	// at a line break until the curve closes on a later system, at which
+	// point the stub is told what it ran to.
+	From int `json:"from"`
+	To   int `json:"to"`
+	// Step is which notehead of a chord a tie joins; a chord is tied
+	// notehead by notehead, so the curve is not the chord's but one note's.
+	// Only a tie has one, which is why Kind has to be read first.
+	Step int `json:"step"`
+	// Kind is "tie" or "slur".
+	Kind string `json:"kind"`
+	// The quadratic: both ends and the control point between them.
+	X1 float64 `json:"x1"`
+	Y1 float64 `json:"y1"`
+	CX float64 `json:"cx"`
+	CY float64 `json:"cy"`
+	X2 float64 `json:"x2"`
+	Y2 float64 `json:"y2"`
 }
 
 // TremoloPos is one two-note tremolo's beams on the page, in staff spaces.
@@ -836,6 +876,17 @@ type openSpan struct {
 	// and which side of the music it arcs over.
 	y     float64
 	above bool
+
+	// step is which notehead of a chord a tie left from, so that taking the
+	// curve away takes it off that note and leaves the chord's others tied.
+	step int
+
+	// stubs are the pieces of this curve already drawn and recorded on
+	// earlier systems, by their place in the layout's arcs. A curve cut at
+	// a line break does not yet know the note it runs to, and every piece
+	// of it has to be clickable — so each is recorded as it is drawn and
+	// told where it was going once the curve finally closes.
+	stubs []int
 
 	// voice is the line of music it belongs to. Ties are kept for the staff
 	// rather than for the voice — see allVoices — so a tie waiting to be

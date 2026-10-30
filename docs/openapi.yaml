@@ -956,6 +956,17 @@ paths:
           in: query
           description: "`none` takes it off. Anything else draws one, and needs two notes or more."
           schema: { type: string }
+        - name: ends
+          in: query
+          description: |
+            The selection is the two notes one curve runs between, which is
+            what clicking the curve and pressing Backspace means. Only that
+            curve goes: the start is cleared on the first note and the stop
+            on the last, so the mark that opens the next phrase — or holds
+            the note into the bar after — is left where it is. Without it
+            both marks are cleared on every note named, which is what
+            "untie this passage" means.
+          schema: { type: boolean }
       responses:
         "200": { $ref: "#/components/responses/Changed" }
         "400": { $ref: "#/components/responses/Error" }
@@ -981,6 +992,17 @@ paths:
           in: query
           description: One notehead of a chord.
           schema: { type: integer }
+        - name: ends
+          in: query
+          description: |
+            The selection is the two notes one curve runs between, which is
+            what clicking the curve and pressing Backspace means. Only that
+            curve goes: the start is cleared on the first note and the stop
+            on the last, so the mark that opens the next phrase — or holds
+            the note into the bar after — is left where it is. Without it
+            both marks are cleared on every note named, which is what
+            "untie this passage" means.
+          schema: { type: boolean }
       responses:
         "200": { $ref: "#/components/responses/Changed" }
         "400": { $ref: "#/components/responses/Error" }
@@ -1625,8 +1647,8 @@ paths:
         The engraver is the only thing that knows where a note went, and this
         is it saying so: one region per bar, with every element's position in
         staff spaces, plus the barlines, the dynamics, the hairpins, the
-        tremolos, the tempo marks and the bands over each bar. A click becomes a place in the
-        music by looking it up here.
+        ties and slurs, the tremolos, the tempo marks and the bands over each
+        bar. A click becomes a place in the music by looking it up here.
       parameters:
         - name: mode
           in: query
@@ -3081,6 +3103,31 @@ components:
           items: { type: object }
         dynamics: { type: array, items: { type: object } }
         hairpins: { type: array, items: { type: object } }
+        arcs:
+          type: array
+          description: >
+            Every tie and slur on the page, as the curve it was drawn as:
+            both ends and the control point between them. A box round a slur
+            would be a box round the music it arcs over, so a click is
+            measured against the curve itself. `from` and `to` are the notes
+            at its ends, `step` the notehead of a chord a tie left from, and
+            `kind` is "tie" or "slur". A curve cut at a line break is two of
+            these, both naming the whole curve.
+          items:
+            type: object
+            properties:
+              part: { type: integer }
+              measure: { type: integer }
+              from: { type: integer }
+              to: { type: integer }
+              step: { type: integer }
+              kind: { type: string, enum: [tie, slur] }
+              x1: { type: number }
+              y1: { type: number }
+              cx: { type: number }
+              cy: { type: number }
+              x2: { type: number }
+              y2: { type: number }
         tremolos:
           type: array
           description: >

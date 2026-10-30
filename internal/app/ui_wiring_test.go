@@ -4,8 +4,11 @@ import (
 	"os"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/stricaud/gscore/internal/smufl"
 )
 
 // The interface is HTML, CSS and JavaScript, and nothing compiles it.
@@ -445,4 +448,99 @@ func TestTheCursorSurvivesARedraw(t *testing.T) {
 	if !strings.Contains(js, `$("#canvas").innerHTML`) {
 		t.Skip("the canvas is no longer replaced wholesale; the hazard may be gone")
 	}
+}
+
+// TestEveryMenuIconIsTheGlyphItSaysItIs.
+//
+// The pictures in the menus are glyphs from the score's own font, written
+// into the markup from a table so that a hundred and sixty entries are not
+// kept in step by hand. The table gives each one as a codepoint with its
+// canonical SMuFL name beside it — which is a promise, and this is the check
+// that it is kept. A sharp beside the flat is the kind of mistake nobody
+// notices and everybody trips over.
+func TestEveryMenuIconIsTheGlyphItSaysItIs(t *testing.T) {
+	js := readUI(t, "app.js")
+	start := strings.Index(js, "const MENU_ICONS = {")
+	if start < 0 {
+		t.Fatal("there is no menu icon table")
+	}
+	end := strings.Index(js[start:], "\n};")
+	if end < 0 {
+		t.Fatal("the menu icon table does not end")
+	}
+	table := js[start : start+end]
+
+	rows := regexp.MustCompile(
+		`"([a-z0-9-]+)":\s*"\\u([0-9a-fA-F]{4})",\s*//\s*([A-Za-z0-9]+)`).
+		FindAllStringSubmatch(table, -1)
+	if len(rows) < 40 {
+		t.Fatalf("only %d icons read from the table; it has more than that",
+			len(rows))
+	}
+
+	html := readUI(t, "index.html")
+	for _, row := range rows {
+		action, cp, name := row[1], row[2], row[3]
+		want, ok := smufl.Glyph(name)
+		if !ok {
+			t.Errorf("%s: the font has no glyph called %q", action, name)
+			continue
+		}
+		got, err := strconv.ParseInt(cp, 16, 32)
+		if err != nil {
+			t.Errorf("%s: %q is not a codepoint", action, cp)
+			continue
+		}
+		if rune(got) != want {
+			t.Errorf("%s is \\u%s but %s is \\u%04x: the comment and the "+
+				"character disagree", action, cp, name, want)
+		}
+		// And it is an icon for something that is actually in a menu.
+		if !strings.Contains(html, `data-action="`+action+`"`) {
+			t.Errorf("%s has an icon but is in no menu", action)
+		}
+	}
+}
+
+// Every glyph the palette shows is in the font too.
+func TestEveryPaletteGlyphIsInTheFont(t *testing.T) {
+	palette := readUI(t, "palette.js")
+	found := 0
+	// Only what is drawn as a glyph. A text item may hold any character —
+	// "To\u00A0Coda" is two words that must not be split — and those are
+	// set in the interface's own font, not the music one.
+	for _, m := range regexp.MustCompile(`g:\s*"((?:[^"\\]|\\u[0-9a-fA-F]{4})+)"`).
+		FindAllStringSubmatch(palette, -1) {
+		for _, r := range unescape(m[1]) {
+			// The private use area, which is where SMuFL lives. Anything
+			// else in a glyph string is ordinary text.
+			if r < 0xE000 || r > 0xF8FF {
+				continue
+			}
+			found++
+			if _, ok := smufl.ByRune(r); !ok {
+				t.Errorf("the palette shows \\u%04x, which the font does not draw", r)
+			}
+		}
+	}
+	if found < 40 {
+		t.Errorf("only %d glyphs found in the palette; this guard needs updating",
+			found)
+	}
+}
+
+// unescape reads a JavaScript string body, which may spell a character out.
+func unescape(s string) string {
+	var b strings.Builder
+	for i := 0; i < len(s); i++ {
+		if s[i] == '\\' && i+5 < len(s) && s[i+1] == 'u' {
+			if cp, err := strconv.ParseInt(s[i+2:i+6], 16, 32); err == nil {
+				b.WriteRune(rune(cp))
+				i += 5
+				continue
+			}
+		}
+		b.WriteByte(s[i])
+	}
+	return b.String()
 }

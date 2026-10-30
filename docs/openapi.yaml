@@ -848,6 +848,16 @@ paths:
           in: query
           description: A step sharper or flatter, instead of naming one.
           schema: { type: string, enum: [up, down] }
+        - name: parens
+          in: query
+          description: |
+            Brackets round the sign. A bracketed accidental is a reminder
+            rather than an instruction — the note sounds the same with or
+            without it — so on its own, with no `accidental` and no `cycle`,
+            this changes only the brackets and `toggle` turns them over. A
+            note with no sign has nothing to bracket, and says so. Taking a
+            sign away takes its brackets with it.
+          schema: { type: string, enum: [on, off, toggle] }
         - name: head
           in: query
           description: |

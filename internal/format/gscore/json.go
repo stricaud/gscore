@@ -141,10 +141,13 @@ type elemDoc struct {
 	Kind string `json:"kind"` // "note", "rest", "chord" or "symbol"
 	Dur  string `json:"dur,omitempty"`
 
-	Pitch  *pitchDoc  `json:"pitch,omitempty"`
-	Notes  []pitchDoc `json:"notes,omitempty"`
-	Acc    string     `json:"accidental,omitempty"`
-	Hidden bool       `json:"hidden,omitempty"`
+	Pitch *pitchDoc  `json:"pitch,omitempty"`
+	Notes []pitchDoc `json:"notes,omitempty"`
+	Acc   string     `json:"accidental,omitempty"`
+	// Parens puts the accidental in brackets: a reminder rather than an
+	// instruction, so it belongs to the sign and not to the pitch.
+	Parens bool `json:"accidentalParens,omitempty"`
+	Hidden bool `json:"hidden,omitempty"`
 	// Head is the notehead's shape and Percussion the drum it plays, both
 	// of which a drum staff needs and neither of which the pitch can say.
 	Head       string     `json:"notehead,omitempty"`
@@ -158,6 +161,7 @@ type pitchDoc struct {
 	Octave     int    `json:"octave"`
 	Alter      int    `json:"alter,omitempty"`
 	Acc        string `json:"accidental,omitempty"`
+	Parens     bool   `json:"accidentalParens,omitempty"`
 	Head       string `json:"notehead,omitempty"`
 	Percussion int    `json:"percussion,omitempty"`
 }
@@ -424,6 +428,7 @@ func encodeElement(el model.Element) elemDoc {
 				Step: e.Pitch.Step.String(), Octave: e.Pitch.Octave, Alter: e.Pitch.Alter,
 			},
 			Acc:        accNames[e.Accidental],
+			Parens:     e.Parens,
 			Head:       headNames[e.Head],
 			Percussion: e.Percussion,
 			Marks:      encodeMarks(&e.Marks),
@@ -439,7 +444,8 @@ func encodeElement(el model.Element) elemDoc {
 			d.Notes = append(d.Notes, pitchDoc{
 				Step: n.Pitch.Step.String(), Octave: n.Pitch.Octave,
 				Alter: n.Pitch.Alter, Acc: accNames[n.Accidental],
-				Head: headNames[n.Head], Percussion: n.Percussion,
+				Parens: n.Parens,
+				Head:   headNames[n.Head], Percussion: n.Percussion,
 			})
 		}
 		return d
@@ -685,8 +691,8 @@ func decodeElement(ed elemDoc) (model.Element, error) {
 		}
 		n := &model.Note{
 			Dur: dur, Pitch: decodePitch(*ed.Pitch),
-			Accidental: accValues[ed.Acc],
-			Head:       headValues[ed.Head], Percussion: ed.Percussion,
+			Accidental: accValues[ed.Acc], Parens: ed.Parens,
+			Head: headValues[ed.Head], Percussion: ed.Percussion,
 		}
 		decodeMarks(ed.Marks, &n.Marks)
 		return n, nil
@@ -699,7 +705,8 @@ func decodeElement(ed elemDoc) (model.Element, error) {
 		for _, pd := range ed.Notes {
 			c.Notes = append(c.Notes, &model.Note{
 				Pitch: decodePitch(pd), Dur: dur, Accidental: accValues[pd.Acc],
-				Head: headValues[pd.Head], Percussion: pd.Percussion,
+				Parens: pd.Parens,
+				Head:   headValues[pd.Head], Percussion: pd.Percussion,
 			})
 		}
 		decodeMarks(ed.Marks, &c.Marks)

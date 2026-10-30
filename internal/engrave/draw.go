@@ -696,15 +696,35 @@ func (e *engraver) drawRestAt(p *placed) {
 	e.drawDots(p.x+smufl.Advance(name)+e.opt.Spacings.DotToNote, step, p.dots)
 }
 
+// drawAccidental writes a note's sign in front of it, in brackets where the
+// note asks for them.
+//
+// at is the left edge of the notehead the sign belongs to: the sign is
+// written to the left of it, and a bracketed one reaches further left still,
+// which is why the room is booked before the music is drawn rather than
+// taken from whatever happens to be beside it.
+func (e *engraver) drawAccidental(n *model.Note, at, y float64) {
+	g := smufl.AccidentalGlyph(n.Accidental)
+	if g == "" {
+		return
+	}
+	x := at - e.opt.Spacings.AccidentalToNote - smufl.Advance(g)
+	if !n.Parens {
+		e.lay.Glyphs = append(e.lay.Glyphs, Glyph{Name: g, X: x, Y: y})
+		return
+	}
+	left, right := "accidentalParensLeft", "accidentalParensRight"
+	lw, rw := smufl.Advance(left), smufl.Advance(right)
+	x -= lw + rw
+	e.lay.Glyphs = append(e.lay.Glyphs,
+		Glyph{Name: left, X: x, Y: y},
+		Glyph{Name: g, X: x + lw, Y: y},
+		Glyph{Name: right, X: x + lw + smufl.Advance(g), Y: y})
+}
+
 func (e *engraver) drawNoteHead(p *placed) {
 	n := p.note
-	if g := smufl.AccidentalGlyph(n.Accidental); g != "" {
-		e.lay.Glyphs = append(e.lay.Glyphs, Glyph{
-			Name: g,
-			X:    p.x - smufl.Advance(g) - e.opt.Spacings.AccidentalToNote,
-			Y:    e.y + stepY(float64(p.step)),
-		})
-	}
+	e.drawAccidental(n, p.x, e.y+stepY(float64(p.step)))
 	head := smufl.NoteheadGlyphOf(p.value, n.Head)
 	y := e.y + stepY(float64(p.step))
 	if e.tab != nil && e.fretNumber(n, p.x+noteheadWidth(p.value)/2, y, p.index) {
@@ -777,17 +797,11 @@ func (e *engraver) drawChordHeads(p *placed) {
 				continue
 			}
 		}
-		if g := smufl.AccidentalGlyph(n.Accidental); g != "" {
-			// Clear of the whole chord, the stepped-out head included. The
-			// accidentals of a chord stand in a column of their own, so
-			// they all move together or the lowest of them is printed on
-			// the notehead that stepped left.
-			e.lay.Glyphs = append(e.lay.Glyphs, Glyph{
-				Name: g,
-				X:    leftmost - smufl.Advance(g) - e.opt.Spacings.AccidentalToNote,
-				Y:    e.y + stepY(float64(at)),
-			})
-		}
+		// Clear of the whole chord, the stepped-out head included. The
+		// accidentals of a chord stand in a column of their own, so they
+		// all move together or the lowest of them is printed on the
+		// notehead that stepped left.
+		e.drawAccidental(n, leftmost, e.y+stepY(float64(at)))
 		// Every notehead carries the chord's own ref, not just the first.
 		// A chord is one element: selecting it must light all of it up, and
 		// clicking any of its heads must find it.

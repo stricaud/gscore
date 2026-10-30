@@ -139,6 +139,32 @@ func MustGlyph(name string) rune {
 // Count reports how many glyph names are known.
 func Count() int { return len(glyphs) }
 
+var (
+	byRuneOnce sync.Once
+	byRune     map[rune]string
+)
+
+// ByRune is the canonical name of the glyph at a codepoint, the reverse of
+// Glyph.
+//
+// For anything holding a character and needing to know what it is: a check
+// that an icon written as a codepoint is the glyph its comment claims to be,
+// which is the only thing standing between a menu and a sharp beside the
+// flat. Where a codepoint has more than one name the first in alphabetical
+// order is given, so the answer does not change between runs.
+func ByRune(r rune) (string, bool) {
+	byRuneOnce.Do(func() {
+		byRune = make(map[rune]string, len(glyphs))
+		for name, cp := range glyphs {
+			if was, ok := byRune[cp]; !ok || name < was {
+				byRune[cp] = name
+			}
+		}
+	})
+	name, ok := byRune[r]
+	return name, ok
+}
+
 // EngravingDefaults holds the line weights and distances a font recommends,
 // all in staff spaces.
 //

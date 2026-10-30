@@ -766,6 +766,16 @@ type Note struct {
 	// Accidental is what to print, which Pitch.Alter does not determine.
 	Accidental Accidental
 
+	// Parens puts the accidental in brackets.
+	//
+	// A bracketed accidental is a reminder rather than an instruction: the
+	// note sounds the same with or without it, and the brackets say that
+	// the editor is pointing something out — a courtesy after a tie over a
+	// barline, or a reading an editor has supplied. It belongs to the sign
+	// and not to the pitch, which is why it sits here and not on Pitch, and
+	// it draws nothing at all without one.
+	Parens bool
+
 	// Head overrides the shape the notehead is drawn with. On a drum staff
 	// this is how a cymbal is told from a drum; elsewhere it is how a
 	// harmonic or an improvised bar is written.

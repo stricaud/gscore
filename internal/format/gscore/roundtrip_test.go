@@ -210,3 +210,54 @@ func TestAScoreWithNoScriptsWritesNone(t *testing.T) {
 		t.Error("an empty score was given a scripts key")
 	}
 }
+
+// A bracketed accidental survives being written out and read back.
+//
+// The brackets are a decision somebody made about how the music reads, and
+// a format that loses them hands back a different score from the one that
+// was saved.
+func TestBracketedAccidentalSurvivesARoundTrip(t *testing.T) {
+	s := model.NewScore()
+	p := s.Parts[0]
+	q := model.Duration{Num: 1, Den: 4}
+	note := &model.Note{
+		Pitch:      model.Pitch{Step: model.StepF, Octave: 4, Alter: 1},
+		Dur:        q,
+		Accidental: model.Sharp,
+		Parens:     true,
+	}
+	chord := &model.Chord{Dur: q, Notes: []*model.Note{
+		{Pitch: model.Pitch{Step: model.StepC, Octave: 4}, Dur: q},
+		{Pitch: model.Pitch{Step: model.StepE, Octave: 4, Alter: -1}, Dur: q,
+			Accidental: model.Flat, Parens: true},
+	}}
+	p.Measures[0].Voices[0].Elements = []model.Element{note, chord,
+		&model.Rest{Dur: model.Duration{Num: 1, Den: 2}}}
+
+	var buf bytes.Buffer
+	if err := Write(&buf, s, nil); err != nil {
+		t.Fatal(err)
+	}
+	back, _, err := Read(bytes.NewReader(buf.Bytes()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	els := back.Parts[0].Measures[0].Voices[0].Elements
+	got, ok := els[0].(*model.Note)
+	if !ok {
+		t.Fatalf("the first element came back as a %T", els[0])
+	}
+	if !got.Parens {
+		t.Error("the note's brackets were lost")
+	}
+	ch, ok := els[1].(*model.Chord)
+	if !ok {
+		t.Fatalf("the second element came back as a %T", els[1])
+	}
+	if ch.Notes[0].Parens {
+		t.Error("a notehead that had no brackets came back with them")
+	}
+	if !ch.Notes[1].Parens {
+		t.Error("the chord's bracketed notehead lost them")
+	}
+}

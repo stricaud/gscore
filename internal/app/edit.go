@@ -713,6 +713,41 @@ func (a *App) handleAccidental(w http.ResponseWriter, r *http.Request) {
 	}
 	q := r.URL.Query()
 	cycle := q.Get("cycle")
+	parens := q.Get("parens")
+
+	// Brackets on their own. A bracketed accidental is a reminder rather
+	// than an instruction — the note sounds the same either way — so asking
+	// for them says nothing about which sign is there, and a note with no
+	// sign has nothing to bracket.
+	if parens != "" && cycle == "" && q.Get("accidental") == "" {
+		notes, err := a.notesOf(q)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		changed := 0
+		for _, n := range notes {
+			if n.Accidental == model.NoAccidental {
+				continue
+			}
+			switch parens {
+			case "on", "1":
+				n.Parens = true
+			case "off", "0":
+				n.Parens = false
+			default:
+				n.Parens = !n.Parens
+			}
+			changed++
+		}
+		if changed == 0 {
+			http.Error(w, "there is no accidental here to put in brackets",
+				http.StatusBadRequest)
+			return
+		}
+		writeJSON(w, map[string]int{"changed": changed})
+		return
+	}
 
 	var acc model.Accidental
 	if cycle == "" {
@@ -743,6 +778,13 @@ func (a *App) handleAccidental(w http.ResponseWriter, r *http.Request) {
 			n.Accidental = model.NoAccidental
 		default:
 			n.Accidental = acc
+		}
+		// Brackets belong to a sign. Taking the sign away takes them with
+		// it, or the next sign written there arrives already bracketed.
+		if n.Accidental == model.NoAccidental {
+			n.Parens = false
+		} else if parens != "" {
+			n.Parens = parens == "on" || parens == "1"
 		}
 		// The written accidental decides how the note sounds. Taking one away
 		// hands that decision back to the key signature.

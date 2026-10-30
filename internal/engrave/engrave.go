@@ -2261,20 +2261,27 @@ func keyChangeSteps(c model.Clef, from, to model.KeySignature) (naturals, accide
 func (e *engraver) accidentalLead(el model.Element) float64 {
 	sp := e.opt.Spacings
 	widest := 0.0
-	consider := func(a model.Accidental) {
-		if a == model.NoAccidental {
+	consider := func(n *model.Note) {
+		if n.Accidental == model.NoAccidental {
 			return
 		}
-		if w := smufl.Advance(smufl.AccidentalGlyph(a)); w > widest {
+		w := smufl.Advance(smufl.AccidentalGlyph(n.Accidental))
+		// Brackets round it reach further left again, and the room has to
+		// be booked or they are printed over whatever stands there.
+		if n.Parens {
+			w += smufl.Advance("accidentalParensLeft") +
+				smufl.Advance("accidentalParensRight")
+		}
+		if w > widest {
 			widest = w
 		}
 	}
 	switch n := el.(type) {
 	case *model.Note:
-		consider(n.Accidental)
+		consider(n)
 	case *model.Chord:
 		for _, cn := range n.Notes {
-			consider(cn.Accidental)
+			consider(cn)
 		}
 	}
 	if widest == 0 {

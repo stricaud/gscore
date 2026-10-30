@@ -28,6 +28,7 @@ func signs(t *testing.T, h *harness) string {
 	name := map[string]string{
 		"accidentalSharp": "#", "accidentalFlat": "b", "accidentalNatural": "n",
 		"accidentalDoubleSharp": "x", "accidentalDoubleFlat": "bb",
+		"accidentalParensLeft": "(", "accidentalParensRight": ")",
 	}
 	lay := engrave.Engrave(h.app.score, opt)
 	heads := 0.0
@@ -196,5 +197,79 @@ func TestWhatATypedNameSpells(t *testing.T) {
 		if got := writtenAccidental(c.name); got != c.want {
 			t.Errorf("%q spells %v, want %v", c.name, got, c.want)
 		}
+	}
+}
+
+// An accidental in brackets.
+//
+// A bracketed accidental is a reminder rather than an instruction: the note
+// sounds the same with or without it, and the brackets say the editor is
+// pointing something out. gscore 0.0.9 had the button; this did not.
+func TestAnAccidentalCanBePutInBrackets(t *testing.T) {
+	h := newHarness(t)
+	typed(h, "f#", "g")
+
+	h.post("/api/accidental?parens=toggle&sel=0:0:0")
+	n := h.app.score.Parts[0].Measures[0].Voices[0].Elements[0].(*model.Note)
+	if !n.Parens {
+		t.Fatal("the sign was not bracketed")
+	}
+	if n.Accidental != model.Sharp || n.Pitch.Alter != 1 {
+		t.Errorf("the brackets changed the note: %v, alter %d",
+			n.Accidental, n.Pitch.Alter)
+	}
+	// Three glyphs where there was one, in reading order.
+	if got, want := signs(t, h), "( # )"; got != want {
+		t.Errorf("the page shows %q, want %q", got, want)
+	}
+
+	// Asked again, they come off.
+	h.post("/api/accidental?parens=toggle&sel=0:0:0")
+	if n.Parens {
+		t.Error("the brackets did not come off again")
+	}
+}
+
+// There is nothing to bracket on a note with no sign, and saying so is
+// better than a button that appears to do nothing.
+func TestBracketsNeedASignToGoRound(t *testing.T) {
+	h := newHarness(t)
+	typed(h, "g")
+	if msg := h.postFails("/api/accidental?parens=toggle&sel=0:0:0"); msg == "" {
+		t.Error("a note with no accidental was bracketed")
+	}
+}
+
+// Brackets belong to a sign. Taking the sign away takes them with it, or the
+// next sign written there arrives already bracketed.
+func TestTakingTheSignAwayTakesItsBrackets(t *testing.T) {
+	h := newHarness(t)
+	typed(h, "f#")
+	h.post("/api/accidental?parens=toggle&sel=0:0:0")
+	// Asking for the sign a note already has takes it off.
+	h.post("/api/accidental?accidental=sharp&sel=0:0:0")
+
+	n := h.app.score.Parts[0].Measures[0].Voices[0].Elements[0].(*model.Note)
+	if n.Accidental != model.NoAccidental {
+		t.Fatalf("the sharp is still there: %v", n.Accidental)
+	}
+	if n.Parens {
+		t.Error("the brackets outlived the sign they were round")
+	}
+}
+
+// And they can be asked for outright, which is what writing one in a file
+// and reading it back has to do.
+func TestBracketsCanBeTurnedOnAndOffOutright(t *testing.T) {
+	h := newHarness(t)
+	typed(h, "f#")
+	h.post("/api/accidental?parens=on&sel=0:0:0")
+	n := h.app.score.Parts[0].Measures[0].Voices[0].Elements[0].(*model.Note)
+	if !n.Parens {
+		t.Error("parens=on did not put them on")
+	}
+	h.post("/api/accidental?parens=off&sel=0:0:0")
+	if n.Parens {
+		t.Error("parens=off did not take them off")
 	}
 }

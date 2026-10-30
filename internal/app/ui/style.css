@@ -164,6 +164,28 @@ body {
   cursor: pointer;
 }
 .menu-items button:hover { background: var(--accent); color: #fff; }
+
+/*
+ * The mark beside a menu entry, drawn in the score's own font so the entry
+ * shows what it writes rather than a picture of it.
+ *
+ * Every entry has the box, empty where there is no mark: it holds the column
+ * open so the words line up. A menu with half its labels indented and half
+ * not is harder to read than one with no pictures in it at all.
+ */
+.menu-icon {
+  flex: 0 0 18px;
+  width: 18px;
+  height: 16px;
+  display: grid;
+  place-items: center;
+  margin-right: -14px;
+  font-style: normal;
+  line-height: 1;
+  color: inherit;
+}
+/* The label takes the room that is left, and the key stays at the far end. */
+.menu-items button > span { flex: 1 1 auto; }
 .menu-items hr { border: 0; border-top: 1px solid var(--line); margin: 4px 2px; }
 
 /* Submenus. A menu with fifty entries in a column is a list to be read, not a
@@ -940,11 +962,27 @@ body.player #canvas text.g[data-ref] { cursor: default; }
  * baseline that assumes a staff beneath it.
  */
 .pal-glyph {
-  display: block;
+  /* The whole square, so that the cap a fitted glyph is given — a share of
+     its button — is a share of the button and not of the glyph itself. */
+  width: 100%;
+  height: 100%;
+  display: grid;
+  place-items: center;
   line-height: 1;
   text-align: center;
 }
-.pal-glyph.flip { display: inline-block; transform: scaleY(-1); }
+.pal-glyph.flip { display: inline-grid; transform: scaleY(-1); }
+
+/*
+ * Fitted, the glyph is a drawing whose view is its own ink, so it is centred
+ * on what you can see rather than on a baseline that assumes a staff under
+ * it. The cap is set per glyph, from the size its section asks for and how
+ * much of the square it is allowed to fill.
+ */
+.pal-glyph svg, .menu-icon svg {
+  display: block;
+  overflow: visible;
+}
 
 /* ---- the one-question dialog ---- */
 

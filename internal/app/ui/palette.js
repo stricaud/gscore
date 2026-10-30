@@ -65,6 +65,11 @@ const PALETTE = [
       { g: "", label: "Flat", tool: "acc", acc: "flat" },
       { g: "", label: "Double sharp", tool: "acc", acc: "double sharp" },
       { g: "", label: "Double flat", tool: "acc", acc: "double flat" },
+      // Brackets round whatever sign is already there. A bracketed
+      // accidental is a reminder rather than an instruction — the note
+      // sounds the same either way — so this says nothing about which
+      // sign it is, and a note without one has nothing to bracket.
+      { g: "\uE26A\uE26B", label: "In brackets", action: "acc-parens" },
       // No "none" button. Clicking the sharp on a note that is already
       // sharp takes the sharp off, which is the same thing said where
       // anybody would look for it.
@@ -266,6 +271,7 @@ function fillPaletteSection(id, items, onAction, size) {
   for (const item of items) {
     grid.appendChild(paletteButton(item, onAction, size));
   }
+  fitGlyphs(grid);
 }
 
 // buildPalette renders the sections into the sidebar.
@@ -313,6 +319,7 @@ function buildPalette(onAction) {
 
     box.appendChild(wrap);
   }
+  fitGlyphs(box);
 }
 
 function paletteButton(item, onAction, size) {
@@ -339,12 +346,138 @@ function paletteButton(item, onAction, size) {
     const g = document.createElement("span");
     g.className = "pal-glyph";
     g.textContent = item.g;
-    if (item.size || size) g.style.fontSize = (item.size || size) + "px";
+    g.dataset.size = String(item.size || size || palGlyphSize);
+    g.style.fontSize = g.dataset.size + "px";
     if (item.flip) g.classList.add("flip");
     b.appendChild(g);
   }
   b.addEventListener("click", () => onAction(item, b));
   return b;
+}
+
+// palGlyphSize is what a palette glyph is drawn at when its section does not
+// say otherwise, in pixels of staff height.
+const palGlyphSize = 19;
+
+/*
+ * Drawing a glyph so that all of it is there.
+ *
+ * A SMuFL glyph is drawn against a staff that is not there. Its ink reaches
+ * far above and below the baseline — a treble clef spans seven spaces, a
+ * stem three and a half — while the line box the browser gives it is one em
+ * tall and centred on that baseline. Centre the line box in a square button
+ * and most of the ink is outside it; the button clips, and what is left is a
+ * note with its stem cut off, a barline with no ends and a treble clef with
+ * no curl. Reported as "notes are being eaten by the top, no margin, same
+ * with barlines and clefs".
+ *
+ * So each glyph is measured and then drawn in an SVG whose view is exactly
+ * its own ink. The browser centres that, and nothing is left outside. The
+ * size it is drawn at is still the section's, because a dot and a clef must
+ * not come out the same size — fitting every glyph to the square would make
+ * an augmentation dot as big as a treble clef. Fitting only caps it: the
+ * glyph is its own size unless that would not fit, and then it is as big as
+ * fits.
+ */
+
+// glyphInk is how far a glyph's ink reaches from the point it is drawn at,
+// in ems. Null where it cannot be measured, which is the signal to leave the
+// character as plain text.
+const glyphInkCache = new Map();
+function glyphInk(ch) {
+  if (glyphInkCache.has(ch)) return glyphInkCache.get(ch);
+  let ink = null;
+  try {
+    glyphInk.canvas = glyphInk.canvas || document.createElement("canvas");
+    const ctx = glyphInk.canvas.getContext("2d");
+    // Measured large and divided down, because the numbers come back in
+    // whole pixels on some browsers and a glyph measured at 1px is a box
+    // of zeroes.
+    const at = 200;
+    ctx.font = at + "px " + glyphFont;
+    const m = ctx.measureText(ch);
+    const left = m.actualBoundingBoxLeft, right = m.actualBoundingBoxRight;
+    const up = m.actualBoundingBoxAscent, down = m.actualBoundingBoxDescent;
+    const w = left + right, h = up + down;
+    if ([left, right, up, down].every((v) => typeof v === "number" && isFinite(v)) &&
+        w > 0 && h > 0) {
+      ink = { x: -left / at, y: -up / at, w: w / at, h: h / at };
+    }
+  } catch (_) {
+    // No canvas, or a browser that does not measure ink. The character
+    // stays as it was, which is what happened before any of this.
+  }
+  glyphInkCache.set(ch, ink);
+  return ink;
+}
+
+const glyphFont = "Bravura";
+const svgNS = "http://www.w3.org/2000/svg";
+
+// glyphSVG draws one glyph in a box that is exactly its ink.
+//
+// size is what it would be drawn at as text, and cap how much of its button
+// it may fill. Both are needed: the first keeps a dot a dot, and the second
+// keeps a clef inside its square.
+function glyphSVG(ch, ink, size, cap) {
+  const svg = document.createElementNS(svgNS, "svg");
+  svg.setAttribute("viewBox",
+    `${ink.x.toFixed(4)} ${ink.y.toFixed(4)} ${ink.w.toFixed(4)} ${ink.h.toFixed(4)}`);
+  // The drawing keeps its shape inside whatever box the cap leaves it.
+  svg.setAttribute("preserveAspectRatio", "xMidYMid meet");
+  svg.setAttribute("focusable", "false");
+  svg.setAttribute("aria-hidden", "true");
+  svg.style.width = (ink.w * size).toFixed(2) + "px";
+  svg.style.height = (ink.h * size).toFixed(2) + "px";
+  if (cap) {
+    svg.style.maxWidth = cap;
+    svg.style.maxHeight = cap;
+  }
+  const t = document.createElementNS(svgNS, "text");
+  t.setAttribute("x", "0");
+  t.setAttribute("y", "0");
+  t.setAttribute("font-size", "1");
+  t.setAttribute("font-family", glyphFont);
+  t.setAttribute("fill", "currentColor");
+  t.textContent = ch;
+  svg.appendChild(t);
+  return svg;
+}
+
+// fitGlyph swaps a character for a drawing of itself that fits.
+//
+// It leaves the character alone where the ink cannot be measured, so a
+// browser that does not answer the question still shows the palette it
+// always showed.
+function fitGlyph(el, cap) {
+  const ch = el.dataset.glyph || el.textContent;
+  if (!ch || el.firstElementChild) return;
+  const ink = glyphInk(ch);
+  if (!ink) return;
+  el.dataset.glyph = ch;
+  el.textContent = "";
+  el.appendChild(glyphSVG(ch, ink, Number(el.dataset.size) || palGlyphSize, cap));
+}
+
+// fitGlyphs waits for the music font and then fits every glyph on the page.
+//
+// After the font, because a glyph measured before it arrives is measured in
+// whatever the browser fell back to, which for these codepoints is a box or
+// nothing at all.
+function fitGlyphs(root) {
+  const run = () => {
+    for (const el of (root || document).querySelectorAll(".pal-glyph")) {
+      fitGlyph(el, "84%");
+    }
+    for (const el of (root || document).querySelectorAll(".menu-icon")) {
+      fitGlyph(el, "100%");
+    }
+  };
+  if (document.fonts && document.fonts.ready) {
+    document.fonts.ready.then(run, run);
+  } else {
+    run();
+  }
 }
 
 // markPaletteTool shows which tool is held, since a tool is a mode and a mode

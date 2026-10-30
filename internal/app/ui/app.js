@@ -202,6 +202,12 @@ async function paletteAction(item) {
     await setJump({ jump: item.jump }, item.label);
     return;
   }
+  // An item that does exactly what a menu entry does, named by that entry,
+  // so the palette and the menu cannot drift apart.
+  if (item.action) {
+    await action(item.action);
+    return;
+  }
   if (item.apply) {
     // A mark that covers a stretch of music needs a stretch selected. Without
     // this it was sent for a single note, where a hairpin opens and closes in
@@ -576,7 +582,7 @@ async function action(name) {
     case "acc-natural": await setAccidental("natural", "Natural"); break;
     case "acc-dsharp": await setAccidental("double sharp", "Double sharp"); break;
     case "acc-dflat": await setAccidental("double flat", "Double flat"); break;
-
+    case "acc-parens": await bracketAccidental(); break;
     case "hairpin-cresc": await setHairpin("crescendo", "Crescendo"); break;
     case "hairpin-dim": await setHairpin("diminuendo", "Diminuendo"); break;
     case "hairpin-none": await setHairpin("none", "Hairpin removed"); break;
@@ -4467,6 +4473,15 @@ function typeAccidental(name, said) {
   markTools();
   status(said + " — on the next note written");
 }
+
+// bracketAccidental puts the sign already on a note into brackets, or takes
+// the brackets off again.
+//
+// A reminder rather than an instruction: the note sounds the same either
+// way, so this says nothing about which sign is there, and a note without
+// one has nothing to bracket.
+const bracketAccidental = () =>
+  mark("accidental", { parens: "toggle", ...pickedHead() }, "Brackets");
 
 // cycleAccidental moves what is picked up one step sharper or flatter.
 const cycleAccidental = (dir) =>
@@ -8777,6 +8792,127 @@ function shortcutText(chord, compact) {
 // still offering Ctrl+S after somebody moved Save is worse than no hint. The
 // dynamics and the hairpins keep theirs, because what is in their kbd is the
 // name of the marking and not a key at all.
+/*
+ * The pictures in the menus.
+ *
+ * gscore 0.0.9 drew the mark beside every menu entry that writes one, so a
+ * staccato was found by looking for the dot rather than by reading seven
+ * words. Asked for again: "I had icons in menu to help the user to quickly
+ * find what they wanted."
+ *
+ * They are glyphs from the score's own font, so a menu entry shows exactly
+ * the mark it writes — not a picture of one. Entries that write nothing on
+ * the page have none, because an icon that stands for nothing is one more
+ * thing to read.
+ *
+ * The names in the comments are the canonical SMuFL ones, so the characters
+ * can be checked against the font rather than taken on trust.
+ */
+const MENU_ICONS = {
+  // Stems and the dot.
+  "stem-up": "\ue1d5",             // noteQuarterUp
+  "stem-down": "\ue1d6",           // noteQuarterDown
+
+  // Accidentals.
+  "acc-sharp": "\ue262",           // accidentalSharp
+  "acc-flat": "\ue260",            // accidentalFlat
+  "acc-natural": "\ue261",         // accidentalNatural
+  "acc-dsharp": "\ue263",          // accidentalDoubleSharp
+  "acc-dflat": "\ue264",           // accidentalDoubleFlat
+  "acc-parens": "\ue26a",          // accidentalParensLeft
+
+  // Articulations.
+  "artic-staccato": "\ue4a2",      // articStaccatoAbove
+  "artic-staccatissimo": "\ue4a6", // articStaccatissimoAbove
+  "artic-tenuto": "\ue4a4",        // articTenutoAbove
+  "artic-accent": "\ue4a0",        // articAccentAbove
+  "artic-marcato-up": "\ue4ac",    // articMarcatoAbove
+  "artic-marcato-down": "\ue4ad",  // articMarcatoBelow
+
+  // Ties and slurs.
+  "slur": "\ue1fd",                // textTie
+  "tie": "\ue1fd",                 // textTie
+  "tie-head": "\ue1fd",            // textTie
+
+  // What is written on a bar.
+  "bar-single": "\ue030",          // barlineSingle
+  "bar-double": "\ue031",          // barlineDouble
+  "bar-final": "\ue032",           // barlineFinal
+  "bar-open": "\ue040",            // repeatLeft
+  "bar-close": "\ue041",           // repeatRight
+  "repeat-bar": "\ue500",          // repeat1Bar
+  "repeat-2bars": "\ue501",        // repeat2Bars
+
+  // Dynamics.
+  "dyn-pppp": "\ue529",            // dynamicPPPP
+  "dyn-ppp": "\ue52a",             // dynamicPPP
+  "dyn-pp": "\ue52b",              // dynamicPP
+  "dyn-p": "\ue520",               // dynamicPiano
+  "dyn-mp": "\ue52c",              // dynamicMP
+  "dyn-mf": "\ue52d",              // dynamicMF
+  "dyn-f": "\ue522",               // dynamicForte
+  "dyn-ff": "\ue52f",              // dynamicFF
+  "dyn-fff": "\ue530",             // dynamicFFF
+
+  // Lines over a stretch of music.
+  "hairpin-cresc": "\ue53e",       // dynamicCrescendoHairpin
+  "hairpin-dim": "\ue53f",         // dynamicDiminuendoHairpin
+  "octave-8va": "\ue511",          // ottavaAlta
+  "octave-8vb": "\ue51c",          // ottavaBassaVb
+  "octave-15ma": "\ue515",         // quindicesimaAlta
+  "octave-15mb": "\ue51d",         // quindicesimaBassaMb
+
+  // Tuplets and tremolos.
+  "tuplet-3": "\ue883",            // tuplet3
+  "tuplet-4": "\ue884",            // tuplet4
+  "tuplet-5": "\ue885",            // tuplet5
+  "tuplet-6": "\ue886",            // tuplet6
+  "tuplet-7": "\ue887",            // tuplet7
+  "tuplet-8": "\ue888",            // tuplet8
+  "tuplet-9": "\ue889",            // tuplet9
+  "tremolo-1": "\ue220",           // tremolo1
+  "tremolo-2": "\ue221",           // tremolo2
+  "tremolo-3": "\ue222",           // tremolo3
+  "tremolo-4": "\ue223",           // tremolo4
+  "tremolo-pair-1": "\ue220",      // tremolo1
+  "tremolo-pair-2": "\ue221",      // tremolo2
+  "tremolo-pair-3": "\ue222",      // tremolo3
+  "tremolo-buzz": "\ue22a",        // buzzRoll
+
+  // What is written on a note or a staff.
+  "insert-note": "\ue1d5",         // noteQuarterUp
+  "insert-rest": "\ue4e5",         // restQuarter
+  "set-key": "\ue262",             // accidentalSharp
+  "set-time": "\ue08a",            // timeSigCommon
+  "group-brace": "\ue000",         // brace
+  "group-bracket": "\ue002",       // bracket
+};
+
+// syncMenuIcons draws the mark beside every menu entry that writes one.
+//
+// Written in from the table rather than into the markup, for the reason the
+// keys are: a hundred and sixty entries kept in step by hand are a hundred
+// and sixty chances to put a sharp beside the flat.
+//
+// Every entry gets the element, including the ones with no icon. It is empty
+// for those, and it holds the column open so the words line up — a menu
+// where half the labels are indented and half are not is harder to read than
+// one with no pictures at all.
+function syncMenuIcons() {
+  for (const b of document.querySelectorAll("[data-action]")) {
+    if (b.querySelector(".menu-icon")) continue;
+    const i = document.createElement("i");
+    i.className = "menu-icon";
+    const ch = MENU_ICONS[b.dataset.action];
+    if (ch) {
+      i.textContent = ch;
+      i.dataset.size = "15";
+    }
+    b.insertBefore(i, b.firstChild);
+  }
+  fitGlyphs(document);
+}
+
 function syncMenuKeys() {
   for (const b of KEY_BINDINGS) {
     if (!b.menu) continue;
@@ -9669,6 +9805,7 @@ async function main() {
   markBarlineTick();
   loadMouseWrites();
   syncMenuKeys();
+  syncMenuIcons();
 
   if (opt.score) {
     await loadFromURL(opt.score);

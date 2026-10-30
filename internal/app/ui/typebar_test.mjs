@@ -46,7 +46,8 @@ const parse = (() => {
     typeMarks: konst("typeMarks"),
     typeBars: konst("typeBars"),
   };
-  const body = [grab("typeNote"), grab("splitRun"), grab("parseTyping")].join("\n") +
+  const body = [grab("typeNote"), grab("splitRun"), grab("typeChord"),
+                grab("parseTyping")].join("\n") +
     "\nreturn parseTyping;";
   return new Function(...Object.keys(scope), body)(...Object.values(scope));
 })();
@@ -156,6 +157,83 @@ test("b is the note and bb is the flat", () => {
 
 test("a natural is a thing you can write", () => {
   assert.equal(parse("fn4").steps[0].pitch, "fn4");
+});
+
+// Notes sounded together go in brackets, as ABC notation has written them
+// since the 1990s and as everybody who copied it writes them — the same
+// reason the barlines and the flats are spelled the way they are here.
+test("a chord is its notes in brackets, and one thing", () => {
+  const { steps, error } = parse("4 [ceg]");
+  assert.ok(!error, String(error));
+  assert.equal(steps.length, 1, "a chord was read as its separate notes");
+  assert.equal(steps[0].kind, "chord");
+  assert.deepEqual(steps[0].pitches, ["c", "e", "g"]);
+  assert.equal(steps[0].dur, "quarter");
+});
+
+// A chord is one sound and a sound has one length, so the length goes where
+// a note's length goes — in front, and sticky.
+test("a chord takes the length in force", () => {
+  const { steps } = parse("2 [ceg] [dfa]");
+  assert.deepEqual(steps.map((s) => s.dur), ["half", "half"]);
+  assert.deepEqual(steps[1].pitches, ["d", "f", "a"]);
+});
+
+test("a chord can be glued into a run", () => {
+  const { steps, error } = parse("8[ceg]d");
+  assert.ok(!error, String(error));
+  assert.deepEqual(steps.map((s) => s.kind), ["chord", "note"]);
+  assert.deepEqual(steps.map((s) => s.dur), ["eighth", "eighth"]);
+});
+
+// Inside the brackets the notes are read the way a run is read, because
+// that is what they are: b is the note B and a flat is written _.
+test("inside a chord b is the note and _ is the flat", () => {
+  assert.deepEqual(parse("[e_gb]").steps[0].pitches, ["eb", "g", "b"]);
+});
+
+test("a chord wider than an octave is written out", () => {
+  assert.deepEqual(parse("[c4g4e5]").steps[0].pitches, ["c4", "g4", "e5"]);
+});
+
+test("a length inside the brackets is told where it goes", () => {
+  const got = parse("[8ce]");
+  assert.ok(got.error, "a length inside a chord was accepted");
+  assert.match(got.error, /length goes in front/, "it does not say what to do");
+});
+
+// A line is split at its spaces before any of it is read, so a chord with
+// spaces in it arrives in pieces. Saying so beats saying there is no
+// command called "[c".
+test("a chord with spaces in it says so", () => {
+  const got = parse("4 [c e g]");
+  assert.ok(got.error, "a chord in pieces was accepted");
+  assert.match(got.error, /no spaces inside the brackets/);
+});
+
+test("a chord with nothing in it is refused", () => {
+  assert.match(parse("4 []").error, /needs some notes in it/);
+});
+
+test("only notes can be in a chord", () => {
+  assert.match(parse("[cr]").error, /cannot be in a chord/);
+});
+
+// The editor builds a chord by adding noteheads to a note already written,
+// which is what the mouse does by clicking the same column twice.
+test("a chord is written as its bottom note and then the rest", () => {
+  const one = grab("typeOne");
+  assert.match(one, /api\/insert/, "the bottom note is never written");
+  assert.match(one, /typeNoteheads\(/, "the other noteheads are never added");
+  const heads = grab("typeNoteheads");
+  assert.match(heads, /api\/addpitch/, "it does not add noteheads");
+  // Each notehead stands above the one before it: the nearest A to a C is
+  // the one below it, and a chord is read from the bottom up.
+  assert.match(heads, /above: "1"/, "the chord is not stacked upwards");
+});
+
+test("the hint mentions chords", () => {
+  assert.match(konst("typeHint"), /\[ceg\]/, "the hint does not mention them");
 });
 
 // Signed, always: a bare number is a length, and a melody said out loud is
@@ -396,6 +474,12 @@ test("it states the two rules that need stating", () => {
     "it does not say why a length inside a run needs a space");
   assert.match(page, /8abcdef<\/em> would start on an A flat/,
     "it does not say why a flat inside a run is written _");
+});
+
+test("it says how a chord is written and which way it is read", () => {
+  const page = helpPage();
+  assert.match(page, /\[ceg\]/, "it does not say how a chord is written");
+  assert.match(page, /is a sixth/, "it does not say a chord reads upwards");
 });
 
 test("it says a line is one undo and writes nothing if it is wrong", () => {

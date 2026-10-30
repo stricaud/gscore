@@ -2601,3 +2601,41 @@ func (p *parser) staffGrouping(line string) {
 		}
 	}
 }
+
+// Fragment reads a line of ABC written into a score that already exists.
+//
+// A tune is not what is wanted here. Somebody with the cursor in a bar of
+// their own score types a phrase in ABC — "cdef|gabc'" — and means it to go
+// in at the cursor, in the key and the meter already in force there. An ABC
+// file cannot say that: every tune carries its own key and its own meter,
+// and a fragment read on its own would come out in C.
+//
+// So the fragment is given the header the score it is going into would have
+// written for it, and read as a tune of one line. The default note length is
+// left out on purpose: ABC's own rule — an eighth in anything from three
+// quarters up, a sixteenth below it — is what somebody typing ABC expects,
+// and writing one in would be gscore overruling the notation it is offering.
+//
+// What comes back is a score of one part. Its bars are the fragment's own;
+// what the caller does with them is the caller's business, because where
+// this music goes depends on where the cursor is and what is already there.
+func Fragment(text string, key model.KeySignature, meter model.TimeSignature) (*model.Score, error) {
+	if strings.TrimSpace(text) == "" {
+		return nil, errors.New("abc: there is nothing to read")
+	}
+	var b strings.Builder
+	b.WriteString("X:1\n")
+	fmt.Fprintf(&b, "M:%d/%d\n", meter.Beats, meter.BeatValue)
+	fmt.Fprintf(&b, "K:%s\n", keyText(key))
+	b.WriteString(text)
+	b.WriteString("\n")
+
+	s, err := Import(strings.NewReader(b.String()))
+	if s == nil {
+		return nil, err
+	}
+	if len(s.Parts) == 0 || len(s.Parts[0].Measures) == 0 {
+		return nil, errors.New("abc: no music in that")
+	}
+	return s, err
+}

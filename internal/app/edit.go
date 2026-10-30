@@ -12,7 +12,9 @@ package app
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"sort"
@@ -20,6 +22,8 @@ import (
 	"strings"
 
 	"github.com/stricaud/gscore/internal/engrave"
+	"github.com/stricaud/gscore/internal/format"
+	"github.com/stricaud/gscore/internal/format/abc"
 	"github.com/stricaud/gscore/internal/model"
 )
 
@@ -455,7 +459,16 @@ func (a *App) handleAddPitch(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if !hasOctave {
-			got = got.NearestTo(pitch)
+			// above says the notehead is being stacked on the ones already
+			// there, which is what a chord typed as a list of letters means:
+			// it is written from the bottom up, so "[ca]" is a sixth. A
+			// click says where it goes by step and needs none of this; what
+			// it asks for instead is the pitch nearest that position.
+			if top, ok := topNotehead(v.Elements[index]); ok && q.Get("above") != "" {
+				got = got.JustAbove(top)
+			} else {
+				got = got.NearestTo(pitch)
+			}
 		}
 		pitch, named = got, true
 	}
@@ -503,6 +516,30 @@ func (a *App) handleAddPitch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, map[string]any{"status": "ok"})
+}
+
+// topNotehead is the highest notehead of a note or a chord, and says so only
+// for something that has one: a rest is not a chord to build on.
+//
+// Highest on the staff, because it is what the next notehead of a chord
+// being written is stacked over.
+func topNotehead(el model.Element) (model.Pitch, bool) {
+	switch e := el.(type) {
+	case *model.Note:
+		return e.Pitch, true
+	case *model.Chord:
+		if len(e.Notes) == 0 {
+			return model.Pitch{}, false
+		}
+		top := e.Notes[0].Pitch
+		for _, n := range e.Notes[1:] {
+			if n.Pitch.DiatonicIndex() > top.DiatonicIndex() {
+				top = n.Pitch
+			}
+		}
+		return top, true
+	}
+	return model.Pitch{}, false
 }
 
 // sortChord puts the noteheads in order from the bottom up, which is the
@@ -4790,4 +4827,123 @@ func plainLength(d model.Duration) (length, dots int) {
 		d = model.Duration{Num: d.Num / 3 * 2, Den: d.Den}.Reduced()
 	}
 	return 0, 0
+}
+
+// handleABC writes a line of ABC notation in at the cursor.
+//
+// The editor's own way of typing music is the short one — "8abcdef" is six
+// quavers — and it is the one to reach for. ABC is the other: a notation a
+// great many people already have in their fingers, with a tune book's worth
+// of things gscore's line does not say at all, and no reason to make
+// somebody who knows it learn a second shorthand to get a phrase in.
+//
+// Read by the same parser that opens an .abc file, so a phrase types the way
+// a file reads. It is given the key and the meter already in force where the
+// cursor is: ABC spells its accidentals against the key, and a fragment read
+// on its own would come out in C.
+func (a *App) handleABC(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST required", http.StatusMethodNotAllowed)
+		return
+	}
+	body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+	if err != nil {
+		http.Error(w, "could not read that", http.StatusBadRequest)
+		return
+	}
+	q := r.URL.Query()
+	partIdx, _ := strconv.Atoi(q.Get("part"))
+	measIdx, _ := strconv.Atoi(q.Get("measure"))
+	at, err := strconv.Atoi(q.Get("at"))
+	if err != nil {
+		at = -1
+	}
+
+	a.lock()
+	defer a.mu.Unlock()
+
+	p, m, err := a.locateForWriting(partIdx, measIdx)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	// In the key and the meter the cursor is standing in, not in ABC's own
+	// defaults. A phrase typed into a piece in A major is in A major.
+	read, err := abc.Fragment(string(body), p.KeyAt(measIdx), p.TimeAt(measIdx))
+	if read == nil {
+		http.Error(w, abcTrouble(err), http.StatusBadRequest)
+		return
+	}
+
+	// Flattened, because where the bars fall is the score's business and
+	// not the fragment's. The piece has a meter; writing music into it
+	// fills the bar and carries the rest into the next one, which is what
+	// happens when the notes are typed one at a time and what somebody
+	// expects when they are typed all at once. A bar line in the ABC is
+	// then not needed — but it is not ignored either: the kind of line it
+	// is follows the note it came after, and is put on whichever bar that
+	// note ends up in.
+	var add []model.Element
+	type closer struct {
+		after model.Element
+		style model.BarlineStyle
+	}
+	var closers []closer
+	for _, bar := range read.Parts[0].Measures {
+		if len(bar.Voices) == 0 || len(bar.Voices[0].Elements) == 0 {
+			continue
+		}
+		for _, el := range bar.Voices[0].Elements {
+			add = append(add, cloneElement(el))
+		}
+		if bar.RightBarline != model.BarSingle && bar.RightBarline != model.BarNone {
+			closers = append(closers, closer{add[len(add)-1], bar.RightBarline})
+		}
+	}
+	if len(add) == 0 {
+		http.Error(w, "there is no music in that", http.StatusBadRequest)
+		return
+	}
+
+	v := m.Voices[0]
+	if at < 0 || at > len(v.Elements) {
+		at = len(v.Elements)
+	}
+	tail := append([]model.Element{}, v.Elements[at:]...)
+	v.Elements = append(append(v.Elements[:at:at], add...), tail...)
+	spill(p, measIdx)
+
+	// The barlines, now that it is known which bar each one's note landed
+	// in. A line on the last note of the fragment closes the bar it ended
+	// in, which is where somebody writing "|:" meant it to go.
+	for _, c := range closers {
+		if i, _ := findElement(p, measIdx, c.after); i >= 0 {
+			p.Measures[i].RightBarline = c.style
+		}
+	}
+
+	measure, idx := findElement(p, measIdx, add[len(add)-1])
+	writeJSON(w, map[string]any{
+		"wrote": len(add), "measure": measure, "at": idx,
+		// What the reader could not read, if anything. An ABC line with one
+		// thing in it gscore does not know is still a line of music.
+		"trouble": abcTrouble(err),
+	})
+}
+
+// abcTrouble says what an ABC read could not manage, in one line.
+func abcTrouble(err error) string {
+	if err == nil {
+		return ""
+	}
+	var partial format.Partial
+	if errors.As(err, &partial) {
+		if d := partial.Details(); len(d) > 0 {
+			return strings.Join(d, "; ")
+		}
+	}
+	// The parser says "abc: ..." because a file is being named; here the
+	// line is the file and the prefix is noise.
+	return strings.TrimPrefix(err.Error(), "abc: ")
 }

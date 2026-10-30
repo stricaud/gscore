@@ -216,6 +216,26 @@ func (p Pitch) NearestTo(other Pitch) Pitch {
 	return best
 }
 
+// JustAbove is this pitch moved to whichever octave puts it just above
+// another, which is what the notes of a chord mean when they leave the
+// octave out.
+//
+// A chord is read and written from the bottom up, so each notehead stands
+// above the one before it however far that is: "[ca]" is a sixth, where the
+// nearest A to a C is the one below it and NearestTo would put it there.
+//
+// Above on the staff rather than above in sound, because what is being
+// stacked is a notehead: a flat on it does not drop it under the notehead
+// below, and C with D flat over it is the cluster it was written as.
+func (p Pitch) JustAbove(other Pitch) Pitch {
+	up := p
+	up.Octave = other.Octave
+	if up.DiatonicIndex() <= other.DiatonicIndex() {
+		up.Octave++
+	}
+	return up
+}
+
 func abs(n int) int {
 	if n < 0 {
 		return -n

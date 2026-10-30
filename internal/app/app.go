@@ -452,6 +452,7 @@ func (a *App) APIRoutes(mux *http.ServeMux) {
 		"/api/delete":          a.handleDelete,
 		"/api/deleteselection": a.handleDeleteSelection,
 		"/api/paste":           a.handlePaste,
+		"/api/abc":             a.handleABC,
 		"/api/nudge":           a.handleNudge,
 		"/api/shift":           a.handleShift,
 		"/api/addmeasure":      a.handleAddMeasure,

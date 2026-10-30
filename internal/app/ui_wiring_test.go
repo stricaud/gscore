@@ -774,3 +774,52 @@ func TestNoFrenchIsLeftBehind(t *testing.T) {
 		}
 	}
 }
+
+// The Mac menu bar gets the pictures too, from the one table.
+//
+// The bar in the native application is built from the page's own menus, for
+// the reason the file says: one list of what gscore can do, not two that
+// disagree. The pictures beside the entries have to travel the same way, or
+// they are a second table that is right on the day it is written — and the
+// Mac draws them itself rather than taking a picture from the page, because
+// a menu is the system's and is set in the system's colours at whatever size
+// its own text is.
+//
+// So the tree the page hands over carries the codepoints, and the Swift
+// side reads them. This checks both ends are still there: it is the sort of
+// wire that breaks silently, leaving a menu bar with the words and none of
+// the pictures and nothing anywhere saying why.
+func TestTheMacMenuBarIsGivenTheIcons(t *testing.T) {
+	js := readUI(t, "app.js")
+	tree := js[strings.Index(js, "window.gscoreMenuTree"):]
+	if i := strings.Index(tree, "\n  };"); i > 0 {
+		tree = tree[:i]
+	}
+	if !strings.Contains(tree, "icon: MENU_ICONS[node.dataset.action]") {
+		t.Error("the menu tree no longer carries the icon from the table")
+	}
+
+	swift, err := os.ReadFile("../../ui/macosx/Sources/Menu.swift")
+	if err != nil {
+		t.Skipf("the Mac sources are not here: %v", err)
+	}
+	if !strings.Contains(string(swift), `entry["icon"]`) {
+		t.Error("the Mac menu bar no longer reads the icon out of the tree")
+	}
+	if !strings.Contains(string(swift), "Glyphs.image(icon)") {
+		t.Error("the Mac menu bar no longer draws the icon")
+	}
+
+	// And that the drawing follows the colours of the menu it is in rather
+	// than baking them. A note is dark on a light menu and light on a dark
+	// one, which is what labelColor means; the mark is red on both.
+	glyphs, err := os.ReadFile("../../ui/macosx/Sources/Glyphs.swift")
+	if err != nil {
+		t.Skipf("the Mac sources are not here: %v", err)
+	}
+	for _, want := range []string{"NSColor.labelColor", "NSColor.systemRed"} {
+		if !strings.Contains(string(glyphs), want) {
+			t.Errorf("the menu pictures are no longer drawn with %s", want)
+		}
+	}
+}

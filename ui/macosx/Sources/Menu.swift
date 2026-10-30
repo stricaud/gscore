@@ -39,12 +39,23 @@ enum Menus {
     /// item makes one entry that sends a command to the editor.
     private static func item(_ title: String, _ action: String,
                              _ key: String = "", _ mods: NSEvent.ModifierFlags = .command,
-                             target: AnyObject) -> NSMenuItem {
+                             icon: String = "", target: AnyObject) -> NSMenuItem {
         let it = NSMenuItem(title: title,
                             action: #selector(AppDelegate.runCommand(_:)), keyEquivalent: key)
         it.keyEquivalentModifierMask = mods
         it.representedObject = action
         it.target = target
+        // The picture beside the words. It is the page's own — the same
+        // table, the same music font — drawn here so that it is in the
+        // colours the system is using rather than the ones the page had.
+        //
+        // An entry with no picture of its own gets the room one would take,
+        // so that the words line up down the menu. Before the font has
+        // arrived nothing gets either, which is a menu bar without pictures
+        // rather than a menu bar indented for pictures that never come.
+        if Glyphs.ready {
+            it.image = Glyphs.image(icon) ?? Glyphs.blank
+        }
         return it
     }
 
@@ -284,8 +295,9 @@ extension Menus {
                       let action = entry["action"] as? String,
                       !label.isEmpty else { continue }
                 let key = keys[action]
-                let made = item(label, action, key?.0 ?? "",
-                                key?.1 ?? [], target: target)
+                let made = item(label, action, key?.0 ?? "", key?.1 ?? [],
+                                icon: entry["icon"] as? String ?? "",
+                                target: target)
                 if let enabled = entry["enabled"] as? Bool, !enabled {
                     made.isEnabled = false
                 }

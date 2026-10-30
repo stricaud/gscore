@@ -99,6 +99,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate,
         window.makeKeyAndOrderFront(nil)
 
         Menus.install(target: self)
+        // The music font, for the pictures beside the menu entries. It
+        // arrives after the bar has been put up, so the bar is made again
+        // once it is here.
+        Glyphs.load(from: url) { [weak self] in
+            guard let self, self.ready else { return }
+            self.rebuildMenus(tries: 1)
+        }
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
 

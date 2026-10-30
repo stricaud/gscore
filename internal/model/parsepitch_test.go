@@ -100,3 +100,38 @@ func TestANamelessOctaveTakesTheShortestWay(t *testing.T) {
 		t.Errorf("c then f sharp went to %v", got)
 	}
 }
+
+// The notes of a chord are not a run: they are read from the bottom up, so
+// each stands above the one before it however far that is.
+//
+// "[ca]" is a sixth. The nearest A to a C is the one below it, which is what
+// the run's rule would have picked and what a chord never means.
+func TestAChordsNotesStackUpwards(t *testing.T) {
+	c4 := Pitch{Step: StepC, Octave: 4}
+	a, _, _ := ParsePitch("a")
+	got := a.JustAbove(c4)
+	if got.Octave != 4 || got.Step != StepA {
+		t.Errorf("c then a went to %v, want the A a sixth above", got)
+	}
+
+	// The same letter is an octave, there being nowhere nearer above.
+	same, _, _ := ParsePitch("c")
+	if got := same.JustAbove(c4); got.Octave != 5 {
+		t.Errorf("c over c went to %v, want the octave", got)
+	}
+
+	// Above on the staff, by notehead: a flat on it does not drop it under
+	// the notehead below, so C with a D flat over it is the cluster it was
+	// written as and not a seventh.
+	db, _, _ := ParsePitch("db")
+	if got := db.JustAbove(c4); got.Octave != 4 {
+		t.Errorf("c then d flat went to %v, want the semitone above", got)
+	}
+
+	// And it reaches the octave it has to from wherever it starts: a pitch
+	// written low is lifted, not left where it was.
+	low := Pitch{Step: StepE, Octave: 1}
+	if got := low.JustAbove(c4); got.Octave != 4 {
+		t.Errorf("an E from octave 1 over c4 went to %v, want octave 4", got)
+	}
+}

@@ -10037,6 +10037,13 @@ async function main() {
           label: (node.querySelector("span")?.textContent || "").trim(),
           action: node.dataset.action,
           enabled: !node.disabled,
+          // The picture beside the words, as the characters it is made of
+          // rather than as a drawing of them. A Mac draws its own menus and
+          // wants to draw these too — in the colours the system is using at
+          // the moment, at the size its own text is at — so it is given the
+          // music font's codepoints and left to it. One table of what each
+          // command looks like, two places that draw from it.
+          icon: MENU_ICONS[node.dataset.action] || "",
         }];
       });
 
@@ -11274,13 +11281,21 @@ function setupMelodyClicks() {
 // "4 c4" is a quarter note on middle C. That is the one thing to learn, and
 // it is the reason lengths are numbers at all — the letters are needed for
 // the notes, and e is the note E long before it is an eighth.
+//
+// Notes sounded together are a chord, and go in brackets: "2 [ceg]" is a
+// half-note triad. ABC notation has written them that way since the 1990s,
+// as has everyone who copied it — the same reason the barlines and the
+// flats are spelled the way they are here — so for anybody who types music
+// there is nothing in it to learn.
 
 // typeHint is what the bar says it will take, shown under it.
 const typeHint =
   "8abcdef — lengths 1 2 4 8 16 32, dotted 4. · letters a–g, with # for a " +
   "sharp, _ for a flat and n for a natural, and an octave: f#3 · " +
+  "[ceg] the notes of a chord, from the bottom up · " +
   "+3 −2 for an interval from the note before · r rest · | next bar, || |: :| |] the barline it ends with · " +
   "tie, slur, stacc, ten, accent on everything after them, and off again · " +
+  "abc … writes the rest of the line as ABC notation · " +
   "or the name of any command";
 
 // typeBudget is how many things one line may write.
@@ -11414,9 +11429,67 @@ function splitRun(token) {
       i++;
       continue;
     }
+    // A chord, taken whole: what is between the brackets is one sound and
+    // is read as a chord, not as the run of separate notes its letters
+    // would otherwise be. An unclosed bracket is handed on as it stands,
+    // so that the reading of it can say what is missing.
+    if (c === "[") {
+      const close = token.indexOf("]", i);
+      out.push(close < 0 ? token.slice(i) : token.slice(i, close + 1));
+      i = close < 0 ? token.length : close + 1;
+      continue;
+    }
     return null; // not a run of music, so it is something else entirely
   }
   return out.length ? out : null;
+}
+
+// typeChord reads one token as a chord, and says what is wrong with it when
+// it is not one.
+//
+// The noteheads go in brackets with nothing between them — "[ceg]" — which
+// is how ABC notation has written a chord since the 1990s and so how
+// everybody who types music already writes one. Inside the brackets the
+// pieces are read by the same reader a run of notes uses, so b is the note
+// B and _ is the flat there exactly as it is outside them.
+//
+// The length is not in the brackets. It goes in front, where a note's
+// length goes and where it is already sticky — "4 [ceg]" — because a chord
+// is one sound and a sound has one length.
+function typeChord(token) {
+  if (!token.startsWith("[")) {
+    return { error: `${token} is not a chord — a chord is written [ceg]` };
+  }
+  // The brackets have to close, and nothing may come between them but the
+  // notes: a line is split at its spaces before any of it is read, so
+  // "[c e g]" arrives here as three pieces and the first of them is this.
+  if (!token.endsWith("]")) {
+    return {
+      error: `${token} is not a chord — a chord is written [ceg], ` +
+        `with no spaces inside the brackets`,
+    };
+  }
+  const inner = token.slice(1, -1);
+  if (!inner) return { error: "a chord needs some notes in it: [ceg]" };
+  const pieces = splitRun(inner);
+  if (!pieces) {
+    return { error: `${token} is not a chord — a chord is written [ceg]` };
+  }
+  const pitches = [];
+  for (const piece of pieces) {
+    const note = typeNote(piece);
+    if (!note) {
+      if (/^\d/.test(piece)) {
+        return {
+          error: `a chord is one length, and the length goes in front of ` +
+            `it: 4 ${token}`,
+        };
+      }
+      return { error: `${piece} is not a note, so it cannot be in a chord` };
+    }
+    pitches.push(note.pitch);
+  }
+  return { pitches };
 }
 
 // parseTyping turns a typed line into the things to do, in order.
@@ -11482,6 +11555,15 @@ function parseTyping(line) {
       out.push({ kind: "rest", dur, dots });
       continue;
     }
+    // A chord. Anything with a bracket in it is meant as one, so a bracket
+    // out of place is answered as the chord it was trying to be rather than
+    // falling through to the end of this and being read as a command.
+    if (token.includes("[") || token.includes("]")) {
+      const chord = typeChord(token);
+      if (chord.error) return { error: chord.error };
+      out.push({ kind: "chord", pitches: chord.pitches, dur, dots });
+      continue;
+    }
     const note = typeNote(token);
     if (note) {
       out.push({ kind: "note", pitch: note.pitch, dur, dots });
@@ -11516,7 +11598,74 @@ function parseTyping(line) {
 // One thing, because a phrase somebody typed is one thought: taking back
 // "4 c d e f" should take back the phrase and not the f. The editor already
 // has the bracket for that, and the console will use the same one.
+// abcPrefix is the word that hands the rest of the line to ABC.
+//
+// A word rather than a punctuation mark, because the line already uses most
+// of the punctuation for music and "abc" is what the notation is called. It
+// cannot be mistaken for the music that follows it either: the editor's own
+// shorthand has no bare word "abc" in it — a run of those three notes is
+// written with a length in front, "8abc", and that is not this.
+const abcPrefix = /^abc\s+/i;
+
+// runABC writes a line of ABC notation in at the cursor.
+//
+// The reading is done by the same parser that opens an .abc file, so a
+// phrase types the way a file reads — chords, ties, slurs, broken rhythms
+// and all — and there is no second, poorer ABC in the editor to keep in
+// step with the first.
+async function runABC(text) {
+  const sel = state.selection;
+  if (!sel) {
+    status("Put the cursor in a bar first");
+    return false;
+  }
+  const p = new URLSearchParams({
+    part: String(sel.part),
+    measure: String(sel.measure),
+    at: String(sel.at),
+  });
+  // One thing to undo, like any other typed line: a phrase somebody typed
+  // is one thought.
+  await fetch("/api/script/begin", { method: "POST" });
+  let res = null;
+  try {
+    res = await fetch("/api/abc?" + p.toString(), {
+      method: "POST",
+      headers: { "Content-Type": "text/plain" },
+      body: text,
+    });
+  } finally {
+    await fetch("/api/script/end?changed=" + (res && res.ok ? "1" : "0"),
+                { method: "POST" });
+  }
+  if (!res || !res.ok) {
+    status(res ? (await res.text()).trim() : "could not write that");
+    return false;
+  }
+  const d = await res.json().catch(() => null);
+  if (d) {
+    // The cursor walks on to the end of what was written, so a second line
+    // carries on from the first.
+    state.selection = {
+      ...sel, measure: d.measure, at: d.at, ref: null, replace: false,
+    };
+  }
+  await refreshScore();
+  markSelection();
+  const n = d ? d.wrote : 0;
+  const trouble = d && d.trouble ? ` (${d.trouble})` : "";
+  status(`Wrote ${n} thing${n === 1 ? "" : "s"} from ABC${trouble}`);
+  return true;
+}
+
 async function runTyping(line) {
+  // "abc" and a space hands the rest of the line to ABC notation. The
+  // editor's own shorthand stays what a bare line is read as, because it is
+  // the shorter of the two and the one the hint under the box describes.
+  const asABC = abcPrefix.exec(String(line));
+  if (asABC) {
+    return runABC(String(line).slice(asABC[0].length));
+  }
   const read = parseTyping(line);
   if (read.error) {
     status(read.error);
@@ -11598,8 +11747,8 @@ async function runTyping(line) {
   return true;
 }
 
-// typeOne writes a single note or rest where the cursor is, and says what
-// went wrong if it could not.
+// typeOne writes a single note, rest or chord where the cursor is, and says
+// what went wrong if it could not.
 async function typeOne(step) {
   const sel = state.selection;
   if (!sel) return { error: "the cursor is nowhere" };
@@ -11612,13 +11761,17 @@ async function typeOne(step) {
   if (step.dur) p.set("dur", step.dur);
   else p.set("dur", state.tool.duration);
   if (step.dots) p.set("dots", String(step.dots));
-  if (step.pitch) p.set("pitch", step.pitch);
+  // A chord goes in as its bottom notehead, and the rest of them are added
+  // to it: that is how the editor builds a chord, and the mouse does the
+  // same thing by clicking in the column a second time.
+  const pitch = step.kind === "chord" ? step.pitches[0] : step.pitch;
+  if (pitch) p.set("pitch", pitch);
   if (step.drum) p.set("drum", String(step.drum));
   if (step.interval !== undefined) p.set("interval", String(step.interval));
   // A note with no pitch and no interval is one typed as a bare length,
   // which means "where the cursor is pointing" — the same as pressing the
   // key for it.
-  if (!step.pitch && step.interval === undefined && step.kind !== "rest") {
+  if (!pitch && step.interval === undefined && step.kind !== "rest") {
     p.set("step", String(sel.step ?? 0));
   }
 
@@ -11639,10 +11792,38 @@ async function typeOne(step) {
     };
     // Where the thing itself is, which is one before where the cursor now
     // stands: the answer gives the place after it.
-    return { at: `${sel.part}:${d.measure}:${d.at - 1}` };
+    const at = `${sel.part}:${d.measure}:${d.at - 1}`;
+    if (step.kind === "chord") {
+      const why = await typeNoteheads(sel.part, d.measure, d.at - 1,
+                                      step.pitches.slice(1));
+      if (why) return { error: why };
+    }
+    return { at };
   }
   state.selection = { ...sel, at: sel.at + 1, ref: null, replace: false };
   return { at: `${sel.part}:${sel.measure}:${sel.at - 1}` };
+}
+
+// typeNoteheads adds the rest of a chord's noteheads to the note just
+// written, and says what went wrong if it could not.
+//
+// Each one is stacked just above the one before it, because a chord is read
+// and written from the bottom up: "[ca]" is a sixth, and the nearest A to a
+// C is the one below it. An octave written out is taken as it is written,
+// so a chord wider than an octave is "[c4g4e5]".
+async function typeNoteheads(part, measure, index, pitches) {
+  for (const pitch of pitches) {
+    const p = new URLSearchParams({
+      part: String(part),
+      measure: String(measure),
+      index: String(index),
+      pitch,
+      above: "1",
+    });
+    const res = await fetch("/api/addpitch?" + p.toString(), { method: "POST" });
+    if (!res.ok) return (await res.text()).trim();
+  }
+  return "";
 }
 
 // applyTypedMarks puts the sticky marks on the notes that were written
@@ -11911,6 +12092,8 @@ function drawTypingHelp() {
       ["a_", "A flat, inside a run"],
       ["bb4", "B flat, where the note stands on its own"],
       ["fn", "F natural, whatever the key signature says"],
+      ["[ceg]", "a chord — its notes from the bottom up"],
+      ["[c4g4e5]", "a chord wider than an octave, written out"],
       ["+3", "a third above the note before"],
       ["−2", "a step below it"],
       ["r", "a rest, as long as the length in force"],
@@ -11921,6 +12104,11 @@ function drawTypingHelp() {
        is written <em>_</em>. A note standing on its own as a whole word
        still takes <em>b</em>, because <em>bb4</em> is how everybody writes
        B flat.</p>` +
+    `<p class="syntax-rule">A chord is read from the bottom up, each notehead
+       the nearest one above the last: <em>[ca]</em> is a sixth, not an A
+       under the C. Its length goes in front of the brackets — a chord is one
+       sound and a sound has one length — and inside them a flat is
+       <em>_</em>, as it is in a run.</p>` +
     `<h3>marks</h3>` +
     syntaxRows(marks) +
     `<p class="syntax-rule">A mark goes on everything typed after it, and the

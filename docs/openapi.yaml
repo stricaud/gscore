@@ -653,6 +653,21 @@ paths:
           description: The element in the bar, counting from zero.
           schema: { type: integer }
         - $ref: "#/components/parameters/step"
+        - name: pitch
+          in: query
+          description: >
+            The notehead named outright — "e", "eb", "e5" — instead of by
+            staff position, which is how a typed or scripted chord says it.
+          schema: { type: string }
+        - name: above
+          in: query
+          description: >
+            Set when a pitch with no octave is being stacked on the
+            noteheads already there, which is what a chord written as a list
+            of letters means: it is read from the bottom up, so "[ca]" is a
+            sixth. Left off, such a pitch goes to the octave nearest the
+            staff position given, which is what a click asks for.
+          schema: { type: string }
         - name: accidental
           in: query
           schema: { $ref: "#/components/schemas/Accidental" }
@@ -731,6 +746,52 @@ paths:
                   pasted: { type: integer }
                   measure: { type: integer }
                   at: { type: integer }
+        "400": { $ref: "#/components/responses/Error" }
+
+  /api/abc:
+    post:
+      tags: [write]
+      summary: Write a line of ABC notation in at the cursor
+      description: |
+        The body is ABC, as it would be written inside a tune: notes, chords,
+        rests, ties, slurs and barlines, with no header. It is read by the
+        same parser that opens an `.abc` file, in the key and the meter
+        already in force where the cursor is — ABC spells its accidentals
+        against the key, so a fragment read on its own would come out in C.
+
+        Where the bars fall is the score's business and not the fragment's:
+        the music fills the bar and carries the rest into the next one, as it
+        does when the notes are typed one at a time. A barline written in the
+        ABC is not needed, and is not ignored either — the kind of line it is
+        goes on whichever bar the note before it ended up in.
+      requestBody:
+        required: true
+        content:
+          text/plain:
+            schema: { type: string }
+            example: "cdef|gabc'|"
+      parameters:
+        - $ref: "#/components/parameters/part"
+        - $ref: "#/components/parameters/measure"
+        - $ref: "#/components/parameters/at"
+      responses:
+        "200":
+          description: How much was written, and where it ended.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  wrote: { type: integer }
+                  measure: { type: integer }
+                  at: { type: integer }
+                  trouble:
+                    type: string
+                    description: >
+                      What the reader could not manage, if anything. A line
+                      with one thing in it gscore does not know is still a
+                      line of music, and comes back written with this filled
+                      in.
         "400": { $ref: "#/components/responses/Error" }
 
   /api/nudge:

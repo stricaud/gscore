@@ -1195,3 +1195,61 @@ func TestAVoiceOverlayIsReadAsASecondVoice(t *testing.T) {
 		t.Errorf("both voices begin on %v", a)
 	}
 }
+
+// A fragment is read in the key and the meter it is going into.
+//
+// An ABC file cannot say that: every tune carries its own key and its own
+// meter. Somebody with the cursor in a bar of their own score types a phrase
+// — "cdef" — and means it in the key already in force there, because that is
+// what ABC's letters mean. Read on its own it would come out in C, and every
+// note of it would be wrong by as many semitones as the signature has
+// sharps.
+func TestAFragmentIsReadInTheKeyItIsGiven(t *testing.T) {
+	s, err := Fragment("cdef", model.KeySignature{Fifths: 3},
+		model.TimeSignature{Beats: 4, BeatValue: 4})
+	if s == nil {
+		t.Fatalf("nothing was read: %v", err)
+	}
+	els := s.Parts[0].Measures[0].Voices[0].Elements
+	if len(els) != 4 {
+		t.Fatalf("%d things were read, want four", len(els))
+	}
+	// A major: C sharp, D, E, F sharp.
+	for i, want := range []int{1, 0, 0, 1} {
+		n, ok := els[i].(*model.Note)
+		if !ok {
+			t.Fatalf("element %d is a %T", i, els[i])
+		}
+		if n.Pitch.Alter != want {
+			t.Errorf("%v is bent by %d, want %d", n.Pitch, n.Pitch.Alter, want)
+		}
+	}
+	// And in the meter it is given, which is what decides the default note
+	// length: an eighth in anything from three quarters up.
+	if want := (model.Duration{Num: 1, Den: 8}); els[0].(*model.Note).Dur.Reduced() != want {
+		t.Errorf("the first lasts %v, want %v", els[0].(*model.Note).Dur, want)
+	}
+}
+
+// The meter it is given decides the default note length, which is ABC's own
+// rule rather than one gscore has made up: a sixteenth below three quarters.
+func TestAFragmentTakesItsDefaultLengthFromTheMeter(t *testing.T) {
+	s, err := Fragment("cdef", model.KeySignature{},
+		model.TimeSignature{Beats: 2, BeatValue: 4})
+	if s == nil {
+		t.Fatalf("nothing was read: %v", err)
+	}
+	els := s.Parts[0].Measures[0].Voices[0].Elements
+	if want := (model.Duration{Num: 1, Den: 16}); els[0].(*model.Note).Dur.Reduced() != want {
+		t.Errorf("in two four the first lasts %v, want %v",
+			els[0].(*model.Note).Dur, want)
+	}
+}
+
+// A fragment with nothing in it is not a fragment.
+func TestAnEmptyFragmentIsRefused(t *testing.T) {
+	if s, err := Fragment("   ", model.KeySignature{},
+		model.TimeSignature{Beats: 4, BeatValue: 4}); s != nil || err == nil {
+		t.Errorf("an empty line was read as %v, %v", s, err)
+	}
+}

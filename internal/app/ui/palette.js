@@ -286,7 +286,8 @@ function buildPalette(onAction) {
 
     const head = document.createElement("button");
     head.className = "pal-head";
-    head.innerHTML = `<span class="pal-arrow">▾</span>${section.name}`;
+    head.innerHTML = `<span class="pal-arrow">▾</span>`;
+    head.append(t(section.name));
     head.addEventListener("click", () => {
       wrap.classList.toggle("closed");
       try {
@@ -325,7 +326,10 @@ function buildPalette(onAction) {
 function paletteButton(item, onAction, size) {
   const b = document.createElement("button");
   b.className = "pal-item";
-  b.title = item.label;
+  // The tooltip is read, so it is translated. dataset.label is not: it is
+  // how markPaletteTool knows which button is which, and a name that
+  // changes with the language is a name that cannot be matched against.
+  b.title = t(item.label);
   b.dataset.label = item.label;
 
   if (item.icon) {

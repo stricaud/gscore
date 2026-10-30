@@ -934,6 +934,10 @@
 <dialog id="settings">
   <h2>Settings</h2>
   <form method="dialog">
+    <label class="setting" for="setting-lang"><span>Language</span></label>
+    <select id="setting-lang" class="setting-field"></select>
+    <p class="small">The language the menus and panels are written in.</p>
+    <hr>
     <label class="setting"><input type="checkbox" id="setting-score-pdf">
       <span>Carry a PDF inside saved <code>.gscore</code> files</span></label>
     <p class="small">A <code>.gscore</code> is a container. With this on it holds a
@@ -1146,6 +1150,7 @@
   <form method="dialog"><button>Close</button></form>
 </dialog>
 
+<script src="i18n.js"></script>
 <script src="palette.js"></script>
 <script src="fingering.js"></script>
 <script src="app.js"></script>

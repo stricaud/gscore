@@ -1,6 +1,8 @@
 package app
 
 import (
+	"encoding/json"
+	"fmt"
 	"os"
 	"regexp"
 	"sort"
@@ -601,6 +603,174 @@ func TestTheFingeringPanelReadsTheStaffTheWayTheEngraverDrewIt(t *testing.T) {
 		if got != at {
 			t.Errorf("the panel puts %s's middle C at step %d; the engraver "+
 				"draws it at %d", row[1], got, at)
+		}
+	}
+}
+
+// TestTheChromeIsTranslated.
+//
+// Every word that sits on screen waiting to be read — the menus, the palette
+// and the labels the shortcuts window is built from — has French against it.
+// A missing one is not a crash: it comes back as English, which is the whole
+// point of keying the dictionary by the English. But it is a word somebody
+// reading the French interface meets in English, and nothing else would say
+// so.
+//
+// What is deliberately left alone is listed here rather than guessed at: the
+// name of the program, the dynamics and the Italian a score is marked up in,
+// the note names and time signatures, the examples somebody is meant to copy,
+// and the symbols on the transport buttons. Translating those would be
+// translating the music.
+func TestTheChromeIsTranslated(t *testing.T) {
+	fr := frenchTable(t)
+
+	english := map[string]string{} // the string, and where it came from
+	add := func(where string, ss ...string) {
+		for _, s := range ss {
+			s = strings.TrimSpace(s)
+			if s != "" {
+				english[s] = where
+			}
+		}
+	}
+
+	html := readUI(t, "index.html")
+	for _, m := range regexp.MustCompile(
+		`<button class="menu-title">([^<]+)</button>`).FindAllStringSubmatch(html, -1) {
+		add("a menu", m[1])
+	}
+	for _, m := range regexp.MustCompile(
+		`<button class="submenu-title"><span>([^<]+)</span>`).
+		FindAllStringSubmatch(html, -1) {
+		add("a submenu", m[1])
+	}
+	for _, m := range regexp.MustCompile(
+		`<button data-action="[^"]+"[^>]*><span[^>]*>([^<]+)</span>`).
+		FindAllStringSubmatch(html, -1) {
+		add("a menu entry", m[1])
+	}
+
+	palette := readUI(t, "palette.js")
+	for _, m := range regexp.MustCompile(`label:\s*"((?:[^"\\]|\\.)*)"`).
+		FindAllStringSubmatch(palette, -1) {
+		add("a palette button", unescape(m[1]))
+	}
+	for _, m := range regexp.MustCompile(`name:\s*"([^"]+)"`).
+		FindAllStringSubmatch(palette, -1) {
+		add("a palette section", m[1])
+	}
+
+	js := readUI(t, "app.js")
+	table := js[strings.Index(js, "const KEY_BINDINGS"):]
+	for _, m := range regexp.MustCompile(`label:\s*"((?:[^"\\]|\\.)*)"`).
+		FindAllStringSubmatch(table, -1) {
+		add("a keyboard shortcut", unescape(m[1]))
+	}
+	for _, m := range regexp.MustCompile(`group:\s*"([^"]+)"`).
+		FindAllStringSubmatch(table, -1) {
+		add("a shortcut heading", m[1])
+	}
+
+	var missing []string
+	for s, where := range english {
+		if _, ok := fr[s]; ok || leaveInEnglish(s) {
+			continue
+		}
+		missing = append(missing, fmt.Sprintf("%s: %q", where, s))
+	}
+	sort.Strings(missing)
+	if len(missing) > 0 {
+		t.Errorf("%d of %d words have no French:", len(missing), len(english))
+		for _, m := range missing[:min(len(missing), 20)] {
+			t.Errorf("   %s", m)
+		}
+		if len(missing) > 20 {
+			t.Errorf("   … and %d more", len(missing)-20)
+		}
+	}
+}
+
+// leaveInEnglish says whether a string is one of the ones that stays as it
+// is in every language.
+func leaveInEnglish(s string) bool {
+	switch s {
+	case "Gscore", "pppp", "ppp", "pp", "p", "mp", "mf", "f", "ff", "fff",
+		"ffff", "sf", "PDF…", "SVG…", "MIDI…", "MusicXML…", "ABC…",
+		"LilyPond…", "Tab", "Common", "Marcato", "Staccato", "Tenuto",
+		"Accent", "Crescendo", "Diminuendo", "Tremolo", "Coda", "Segno":
+		return true
+	}
+	// A time signature, a note name, or anything with no letters in it at
+	// all: the music, which is the same in every language.
+	if regexp.MustCompile(`^\d+/\d+$`).MatchString(s) {
+		return true
+	}
+	if !regexp.MustCompile(`\p{L}{2}`).MatchString(s) {
+		return true
+	}
+	return false
+}
+
+// frenchTable reads the French out of i18n.js, by the English it stands for.
+func frenchTable(t *testing.T) map[string]string {
+	t.Helper()
+	js := readUI(t, "i18n.js")
+	start := strings.Index(js, "const MESSAGES = {")
+	if start < 0 {
+		t.Fatal("i18n.js has no table of messages")
+	}
+	out := map[string]string{}
+	for _, m := range regexp.MustCompile(
+		`(?m)^  ("(?:[^"\\]|\\.)*"): ("(?:[^"\\]|\\.)*"),$`).
+		FindAllStringSubmatch(js[start:], -1) {
+		var k, v string
+		if err := json.Unmarshal([]byte(m[1]), &k); err != nil {
+			t.Fatalf("%s: %v", m[1], err)
+		}
+		if err := json.Unmarshal([]byte(m[2]), &v); err != nil {
+			t.Fatalf("%s: %v", m[2], err)
+		}
+		out[k] = v
+	}
+	if len(out) < 300 {
+		t.Fatalf("only %d words of French read; the table is bigger than that",
+			len(out))
+	}
+	return out
+}
+
+// TestNoFrenchStandsForNothing is the other half: a translation whose English
+// is nowhere in the interface is a word somebody translated and then renamed,
+// and it will sit in the table for ever doing nothing.
+func TestNoFrenchIsLeftBehind(t *testing.T) {
+	fr := frenchTable(t)
+	// Run together the way the dictionary holds them: a sentence is written
+	// across several lines of markup and the dictionary keys it as one.
+	all := regexp.MustCompile(`\s+`).ReplaceAllString(
+		readUI(t, "index.html")+readUI(t, "palette.js")+readUI(t, "app.js"), " ")
+	// What script puts on the screen itself, which is in neither table.
+	spoken := map[string]bool{
+		"Change": true, "Taken by": true, "reset": true,
+		"Automatic (your browser’s)": true, "Language": true,
+		"The language the menus and panels are written in.": true,
+	}
+	var orphans []string
+	for en := range fr {
+		if spoken[en] || strings.Contains(all, en) {
+			continue
+		}
+		// A word written with an escape in the source — an em dash or a
+		// curly quote — is there under another spelling.
+		if strings.ContainsAny(en, "—’“”—") {
+			continue
+		}
+		orphans = append(orphans, en)
+	}
+	sort.Strings(orphans)
+	if len(orphans) > 0 {
+		t.Errorf("%d translations stand for nothing on screen:", len(orphans))
+		for _, o := range orphans[:min(len(orphans), 15)] {
+			t.Errorf("   %q", o)
 		}
 	}
 }

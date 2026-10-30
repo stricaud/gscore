@@ -5208,8 +5208,28 @@ function markBarlineTick() {
 async function settingsDialog() {
   const dlg = $("#settings");
   const pdf = $("#setting-score-pdf");
+  const langBox = $("#setting-lang");
   const now = await (await fetch("/api/settings")).json().catch(() => ({}));
   pdf.checked = now.scorePDF !== false;
+
+  if (langBox) {
+    langBox.innerHTML = "";
+    // "Automatic" first, because it is right nearly always and is what
+    // somebody who has never thought about it already has.
+    const auto = document.createElement("option");
+    auto.value = "auto";
+    auto.textContent = t("Automatic (your browser’s)");
+    langBox.append(auto);
+    for (const l of LANGUAGES) {
+      const o = document.createElement("option");
+      o.value = l.code;
+      // Each language named in itself, so somebody looking for their own
+      // finds it without reading English first.
+      o.textContent = l.name;
+      langBox.append(o);
+    }
+    langBox.value = languageChoice();
+  }
 
   await new Promise((resolve) => {
     const done = () => {
@@ -5220,11 +5240,67 @@ async function settingsDialog() {
     dlg.showModal();
   });
 
-  await fetch("/api/settings?scorePDF=" + (pdf.checked ? "1" : "0"),
-              { method: "POST" });
+  const want = langBox ? langBox.value : languageChoice();
+  const p = new URLSearchParams({ scorePDF: pdf.checked ? "1" : "0", lang: want });
+  await fetch("/api/settings?" + p.toString(), { method: "POST" });
+  if (want !== languageChoice()) {
+    await chooseLanguage(want);
+    return;
+  }
   status(pdf.checked
     ? "Saved scores will carry a PDF — rename one .pdf to read it anywhere"
     : "Saved scores will hold the music only");
+}
+
+// chooseLanguage puts the interface into a language and keeps the choice.
+//
+// Kept in two places: the settings file, which is where a desktop build
+// remembers things, and the browser's own store, which is the only one a
+// page served from a web server has. Whichever answers first is read at
+// startup, and they are written together so they cannot disagree.
+async function chooseLanguage(choice) {
+  setLanguage(choice);
+  try {
+    localStorage.setItem("lang", choice);
+  } catch (_) {
+    // A private window may refuse. The setting on the server still holds.
+  }
+  applyLanguage();
+  status(t("The language the menus and panels are written in."));
+}
+
+// applyLanguage puts every word on the page into the language in force.
+//
+// The markup, then the parts built from tables: the palette is drawn from
+// its own list and the menus carry the names of the keystrokes, and neither
+// is in the page until script puts it there.
+function applyLanguage() {
+  document.documentElement.lang = currentLanguage();
+  translateDOM(document.body);
+  buildPalette(paletteAction);
+  markTools();
+  syncMenuKeys();
+  syncMenuIcons();
+}
+
+// startLanguage settles which language the interface opens in.
+//
+// What somebody asked for, if they ever did; otherwise whatever the browser
+// asks for. The server is asked first because that is where a desktop build
+// keeps it, and the browser's own store answers when there is no server
+// setting — a page on the web has no settings file behind it.
+async function startLanguage(now) {
+  let choice = (now && now.lang) || "";
+  if (!choice) {
+    try {
+      choice = localStorage.getItem("lang") || "";
+    } catch (_) {
+      choice = "";
+    }
+  }
+  setLanguage(choice || "auto");
+  document.documentElement.lang = currentLanguage();
+  translateDOM(document.body);
 }
 
 // ask puts one question and returns the answer, or null if it was dismissed.
@@ -9010,7 +9086,7 @@ async function shortcutsDialog() {
     }
     for (const g of groups) {
       const h = document.createElement("h3");
-      h.textContent = g.name;
+      h.textContent = t(g.name);
       body.appendChild(h);
       for (const b of g.rows) {
         const chord = keyFor(b);
@@ -9024,18 +9100,19 @@ async function shortcutsDialog() {
         // that does nothing.
         if (bound.get(chord) !== b) {
           row.classList.add("shadowed");
-          key.title = "Taken by " + bound.get(chord).label;
+          key.title = t("Taken by") + " " + t(bound.get(chord).label);
         }
         row.appendChild(key);
 
         const what = document.createElement("span");
-        what.textContent = b.label;
+        what.textContent = t(b.label);
         row.appendChild(what);
 
         const change = document.createElement("button");
         change.type = "button";
         change.className = "linklike";
-        change.textContent = (state.keys || {})[b.id] ? "Change \u00b7 reset" : "Change";
+        change.textContent = (state.keys || {})[b.id]
+          ? t("Change") + " \u00b7 " + t("reset") : t("Change");
         change.addEventListener("click", () => {
           if ((state.keys || {})[b.id] && change.textContent.endsWith("reset")) {
             // Two things on one button is one thing too many, so the second
@@ -9860,13 +9937,18 @@ async function main() {
   // that serves the page has no /api/settings and says 404 — so on the web
   // nothing was ever remembered between visits, and the only sign of it was
   // a line in the browser's console.
+  let kept = null;
   try {
-    const kept = await (await fetch("/api/settings")).json();
+    kept = await (await fetch("/api/settings")).json();
     state.trackBarlines = kept.trackBarlines !== false;
     state.keys = kept.keys || {};
   } catch (_) {
     // Served without a disk behind it. The default stands.
   }
+  // Before the menus are filled in and the keys are written into them: a
+  // menu translated after its keystrokes were put there would have to have
+  // them put there twice.
+  await startLanguage(kept);
   markBarlineTick();
   loadMouseWrites();
   syncMenuKeys();

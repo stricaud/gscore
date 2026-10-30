@@ -335,12 +335,14 @@ func (e *engraver) drawMeasure(part *model.Part, b measureBox, x, end float64, s
 		y := e.y + stepY(middleStep)
 		y2 := y
 		var steps []int
+		var alters []int
 		switch {
 		case p.note != nil:
 			kind = "note"
 			y = e.y + stepY(float64(p.step))
 			y2 = y
 			steps = []int{p.step}
+			alters = []int{p.note.Pitch.Alter}
 		case p.chord != nil:
 			// A chord reaches from its lowest notehead to its highest, and a
 			// click anywhere between them means the chord.
@@ -349,6 +351,7 @@ func (e *engraver) drawMeasure(part *model.Part, b measureBox, x, end float64, s
 			y2 = e.y + stepY(float64(p.lo))
 			for _, n := range p.chord.Notes {
 				steps = append(steps, e.noteStep(p.clef, n))
+				alters = append(alters, n.Pitch.Alter)
 			}
 		case p.rest == nil:
 			kind = "symbol"
@@ -369,9 +372,21 @@ func (e *engraver) drawMeasure(part *model.Part, b measureBox, x, end float64, s
 			chord = m.Chord.String()
 			frets = m.Chord.Frame.Spell()
 		}
+		// Only where something is bent. A bar of plain letters would
+		// otherwise carry a row of zeroes in every answer.
+		plain := true
+		for _, a := range alters {
+			if a != 0 {
+				plain = false
+			}
+		}
+		if plain {
+			alters = nil
+		}
 		hit.Elements = append(hit.Elements, ElementPos{
 			Ref: p.index, Index: i, X: p.x, Y: y, Y2: y2, At: at,
-			Width: noteheadWidth(p.value), Kind: kind, Steps: steps,
+			Width: noteheadWidth(p.value), Kind: kind,
+			Steps: steps, Alters: alters,
 			Chord: chord, ChordFrets: frets,
 		})
 	}

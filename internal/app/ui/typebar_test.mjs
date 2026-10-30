@@ -44,6 +44,7 @@ const parse = (() => {
     typeLengths: konst("typeLengths"),
     typeBudget: konst("typeBudget"),
     typeMarks: konst("typeMarks"),
+    typeBars: konst("typeBars"),
   };
   const body = [grab("typeNote"), grab("splitRun"), grab("parseTyping")].join("\n") +
     "\nreturn parseTyping;";
@@ -408,4 +409,48 @@ test("it is reached from the Help menu", () => {
   assert.match(src, /case "typing-help": openTypingHelp\(\)/,
     "the menu item does nothing");
   assert.match(html, /<dialog id="typing-help"/, "there is no window for it");
+});
+
+// The barlines, written the way they are written everywhere music is typed.
+//
+// A plain | goes on to the next bar and leaves its barline alone. The others
+// say what the bar being left ends with — which is the one thing a typed
+// line could not say, so a repeat had to be clicked for afterwards.
+test("a bar can say what barline it ends with", () => {
+  const want = {
+    "|": "",
+    "||": "double",
+    "|:": "repeat-start",
+    ":|": "repeat-end",
+    "|]": "final",
+  };
+  for (const [written, style] of Object.entries(want)) {
+    const { steps, error } = parse(`4 c ${written} d`);
+    assert.ok(!error, `${written}: ${error}`);
+    assert.equal(steps.length, 3, `${written} did not read as one thing`);
+    assert.equal(steps[1].kind, "bar", written);
+    assert.equal(steps[1].barline, style, written);
+  }
+});
+
+// Two characters, read as two characters. A close repeat read one at a time
+// is a colon nobody asked for followed by a new bar.
+test("a barline glued into a run is still one thing", () => {
+  const { steps, error } = parse("8ab:|cd");
+  assert.ok(!error, String(error));
+  assert.deepEqual(steps.map((s) => s.kind),
+                   ["note", "note", "bar", "note", "note"]);
+  assert.equal(steps[2].barline, "repeat-end");
+
+  const open = parse("8ab|:cd");
+  assert.equal(open.steps[2].barline, "repeat-start");
+  const double = parse("8ab||cd");
+  assert.equal(double.steps[2].barline, "double");
+});
+
+// A colon is not music on its own, so a word holding one is a command — and
+// saying so is what keeps "D.S." and the rest reachable.
+test("a lone colon is not a barline", () => {
+  const { steps } = parse("8 a :");
+  assert.equal(steps[steps.length - 1].kind, "command");
 });

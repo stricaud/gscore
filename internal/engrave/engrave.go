@@ -459,6 +459,13 @@ type ElementPos struct {
 	// step in the same column means a note is being added to the chord, and
 	// the editor cannot tell the two apart without knowing which are taken.
 	Steps []int `json:"steps,omitempty"`
+	// Alters are how far each of those noteheads is bent from the plain
+	// letter, in semitones, in the same order — what the signature and the
+	// written sign between them come to. Sent only where one of them is
+	// bent at all, because most notes are not: without it an F sharp and an
+	// F are the same note to anything reading this, and a fingering chart
+	// asked for one hands back the other.
+	Alters []int `json:"alters,omitempty"`
 	// Kind is "note", "chord", "rest" or "symbol".
 	Kind string `json:"kind"`
 	// Chord is the chord symbol written over this element, where there is

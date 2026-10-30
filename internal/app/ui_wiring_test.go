@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stricaud/gscore/internal/engrave"
+	"github.com/stricaud/gscore/internal/model"
 	"github.com/stricaud/gscore/internal/smufl"
 )
 
@@ -470,35 +472,49 @@ func TestEveryMenuIconIsTheGlyphItSaysItIs(t *testing.T) {
 	}
 	table := js[start : start+end]
 
+	// One codepoint is a mark on its own; two are a note and the mark drawn
+	// on it. Either way the comment names them in the same order.
 	rows := regexp.MustCompile(
-		`"([a-z0-9-]+)":\s*"\\u([0-9a-fA-F]{4})",\s*//\s*([A-Za-z0-9]+)`).
+		`"([a-z0-9-]+)":\s*"((?:\\u[0-9a-fA-F]{4})+)",\s*//\s*([A-Za-z0-9 ]+)`).
 		FindAllStringSubmatch(table, -1)
-	if len(rows) < 40 {
+	if len(rows) < 60 {
 		t.Fatalf("only %d icons read from the table; it has more than that",
 			len(rows))
 	}
+	composites := 0
 
 	html := readUI(t, "index.html")
 	for _, row := range rows {
-		action, cp, name := row[1], row[2], row[3]
-		want, ok := smufl.Glyph(name)
-		if !ok {
-			t.Errorf("%s: the font has no glyph called %q", action, name)
+		action := row[1]
+		chars := []rune(unescape(row[2]))
+		names := strings.Fields(row[3])
+		if len(chars) > 1 {
+			composites++
+		}
+		if len(chars) != len(names) {
+			t.Errorf("%s draws %d glyphs and its comment names %d of them",
+				action, len(chars), len(names))
 			continue
 		}
-		got, err := strconv.ParseInt(cp, 16, 32)
-		if err != nil {
-			t.Errorf("%s: %q is not a codepoint", action, cp)
-			continue
-		}
-		if rune(got) != want {
-			t.Errorf("%s is \\u%s but %s is \\u%04x: the comment and the "+
-				"character disagree", action, cp, name, want)
+		for i, name := range names {
+			want, ok := smufl.Glyph(name)
+			if !ok {
+				t.Errorf("%s: the font has no glyph called %q", action, name)
+				continue
+			}
+			if chars[i] != want {
+				t.Errorf("%s draws \\u%04x where it says %s, which is \\u%04x",
+					action, chars[i], name, want)
+			}
 		}
 		// And it is an icon for something that is actually in a menu.
 		if !strings.Contains(html, `data-action="`+action+`"`) {
 			t.Errorf("%s has an icon but is in no menu", action)
 		}
+	}
+	if composites < 5 {
+		t.Errorf("only %d entries draw a mark on a note; the articulations "+
+			"all should", composites)
 	}
 }
 
@@ -543,4 +559,48 @@ func unescape(s string) string {
 		b.WriteByte(s[i])
 	}
 	return b.String()
+}
+
+// TestTheFingeringPanelReadsTheStaffTheWayTheEngraverDrewIt.
+//
+// The panel turns a staff position back into a pitch, which is the engraver's
+// arithmetic run backwards. It keeps its own copy of the clef offsets,
+// because it is JavaScript and the engraver is Go — so the two can drift,
+// and a fingering panel that disagrees with the page about which note is
+// being pointed at is worse than no panel.
+func TestTheFingeringPanelReadsTheStaffTheWayTheEngraverDrewIt(t *testing.T) {
+	js := readUI(t, "app.js")
+	body := functionBody(js, "function midiForStep")
+	if body == "" {
+		t.Fatal("there is no midiForStep; this guard needs updating")
+	}
+
+	want := map[string]model.Clef{
+		"treble": model.Treble, "bass": model.Bass, "alto": model.Alto,
+		"tenor": model.Tenor, "percussion": model.Percussion,
+	}
+	rows := regexp.MustCompile(`(\w+):\s*(-?\d+)`).FindAllStringSubmatch(body, -1)
+	if len(rows) != len(want) {
+		t.Fatalf("%d clefs in the panel's table, want %d", len(rows), len(want))
+	}
+	for _, row := range rows {
+		clef, ok := want[row[1]]
+		if !ok {
+			t.Errorf("the panel knows a clef called %q that the engraver does not",
+				row[1])
+			continue
+		}
+		got, err := strconv.Atoi(row[2])
+		if err != nil {
+			t.Errorf("%s: %q is not an offset", row[1], row[2])
+			continue
+		}
+		// The engraver's own answer: where it puts middle C on that staff,
+		// since a diatonic index of nought is middle C.
+		at := engrave.StaffStep(clef, model.Pitch{Step: model.StepC, Octave: 4})
+		if got != at {
+			t.Errorf("the panel puts %s's middle C at step %d; the engraver "+
+				"draws it at %d", row[1], got, at)
+		}
+	}
 }

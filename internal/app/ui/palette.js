@@ -407,40 +407,97 @@ function glyphInk(ch) {
     // No canvas, or a browser that does not measure ink. The character
     // stays as it was, which is what happened before any of this.
   }
-  glyphInkCache.set(ch, ink);
+  // Cached only when the measurement can be trusted. The music font is
+  // declared in the stylesheet and loaded when something needs it, so a
+  // measurement taken before it arrives is a measurement of whatever the
+  // browser fell back to — and these codepoints are in no other font, so it
+  // comes back as nothing or as a tofu box. Caching that would make the
+  // first bad answer permanent.
+  if (glyphFontReady()) glyphInkCache.set(ch, ink);
   return ink;
+}
+
+// glyphFontReady says whether the music font is loaded and can be measured.
+function glyphFontReady() {
+  try {
+    return !document.fonts || !document.fonts.check ||
+      document.fonts.check('16px "' + glyphFont + '"');
+  } catch (_) {
+    return true; // no way to ask, so take the measurement as it comes
+  }
 }
 
 const glyphFont = "Bravura";
 const svgNS = "http://www.w3.org/2000/svg";
 
-// glyphSVG draws one glyph in a box that is exactly its ink.
+// markGap is the air between a notehead and the mark written under it, in
+// ems. A quarter of a staff space, which is what an engraver leaves.
+const markGap = 0.0625;
+
+// markOn works out where a mark goes under the note it belongs to.
+//
+// By ink, not by a number per mark. Each glyph is measured, and the mark is
+// hung a little below the bottom of the note and centred on it — so a
+// staccato dot and a marcato wedge both land where they should without
+// anyone writing down how tall either of them is.
+//
+// Below, because the note is drawn with its stem up and an articulation
+// goes on the side away from the stem. That is what a printed score does
+// and it is also what keeps the mark out of the stem's way.
+function markOn(note, mark) {
+  const dy = note.y + note.h + markGap - mark.y;
+  const dx = (note.x + note.w / 2) - (mark.x + mark.w / 2);
+  return { dx, dy };
+}
+
+// glyphSVG draws a glyph, or a note with a mark on it, in a box that is
+// exactly their ink.
 //
 // size is what it would be drawn at as text, and cap how much of its button
 // it may fill. Both are needed: the first keeps a dot a dot, and the second
 // keeps a clef inside its square.
-function glyphSVG(ch, ink, size, cap) {
+//
+// The mark is drawn in the colour reserved for it, and the note it sits on
+// in the colour of the text around it. gscore 0.0.9 drew its menu pictures
+// that way and it is the whole reason they work: the black is the note the
+// entry is about and the red is what the entry does to it, so the eye finds
+// the entry it wants without reading a word.
+function glyphSVG(ch, ink, size, cap, mark, markInk) {
+  const parts = [{ ch, x: 0, y: 0, fill: "currentColor" }];
+  let box = { x: ink.x, y: ink.y, w: ink.w, h: ink.h };
+  if (mark && markInk) {
+    const at = markOn(ink, markInk);
+    parts.push({ ch: mark, x: at.dx, y: at.dy, fill: "var(--mark)" });
+    const x0 = Math.min(box.x, markInk.x + at.dx);
+    const y0 = Math.min(box.y, markInk.y + at.dy);
+    const x1 = Math.max(box.x + box.w, markInk.x + at.dx + markInk.w);
+    const y1 = Math.max(box.y + box.h, markInk.y + at.dy + markInk.h);
+    box = { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
+  }
+
   const svg = document.createElementNS(svgNS, "svg");
   svg.setAttribute("viewBox",
-    `${ink.x.toFixed(4)} ${ink.y.toFixed(4)} ${ink.w.toFixed(4)} ${ink.h.toFixed(4)}`);
+    `${box.x.toFixed(4)} ${box.y.toFixed(4)} ${box.w.toFixed(4)} ${box.h.toFixed(4)}`);
   // The drawing keeps its shape inside whatever box the cap leaves it.
   svg.setAttribute("preserveAspectRatio", "xMidYMid meet");
   svg.setAttribute("focusable", "false");
   svg.setAttribute("aria-hidden", "true");
-  svg.style.width = (ink.w * size).toFixed(2) + "px";
-  svg.style.height = (ink.h * size).toFixed(2) + "px";
+  svg.style.width = (box.w * size).toFixed(2) + "px";
+  svg.style.height = (box.h * size).toFixed(2) + "px";
   if (cap) {
     svg.style.maxWidth = cap;
     svg.style.maxHeight = cap;
   }
-  const t = document.createElementNS(svgNS, "text");
-  t.setAttribute("x", "0");
-  t.setAttribute("y", "0");
-  t.setAttribute("font-size", "1");
-  t.setAttribute("font-family", glyphFont);
-  t.setAttribute("fill", "currentColor");
-  t.textContent = ch;
-  svg.appendChild(t);
+  for (const part of parts) {
+    const t = document.createElementNS(svgNS, "text");
+    t.setAttribute("x", part.x.toFixed(4));
+    t.setAttribute("y", part.y.toFixed(4));
+    t.setAttribute("font-size", "1");
+    t.setAttribute("font-family", glyphFont);
+    t.setAttribute("fill", part.fill);
+    t.textContent = part.ch;
+    svg.appendChild(t);
+  }
   return svg;
 }
 
@@ -452,11 +509,19 @@ function glyphSVG(ch, ink, size, cap) {
 function fitGlyph(el, cap) {
   const ch = el.dataset.glyph || el.textContent;
   if (!ch || el.firstElementChild) return;
+  const mark = el.dataset.mark || "";
   const ink = glyphInk(ch);
-  if (!ink) return;
+  const markInk = mark ? glyphInk(mark) : null;
+  if (!ink || (mark && !markInk)) {
+    // Remembered, so that a later pass knows there is still something here
+    // to draw even though the box is empty now.
+    el.dataset.glyph = ch;
+    return;
+  }
   el.dataset.glyph = ch;
   el.textContent = "";
-  el.appendChild(glyphSVG(ch, ink, Number(el.dataset.size) || palGlyphSize, cap));
+  el.appendChild(glyphSVG(ch, ink, Number(el.dataset.size) || palGlyphSize,
+                          cap, mark, markInk));
 }
 
 // fitGlyphs waits for the music font and then fits every glyph on the page.
@@ -473,11 +538,21 @@ function fitGlyphs(root) {
       fitGlyph(el, "100%");
     }
   };
-  if (document.fonts && document.fonts.ready) {
-    document.fonts.ready.then(run, run);
-  } else {
-    run();
+  // Asked for by name, not waited for in general. document.fonts.ready
+  // resolves when nothing is *pending*, and a font the page has declared
+  // but not yet drawn anything in is not pending — so it resolved at once,
+  // every glyph was measured in the fallback font, and the menus came up
+  // with no pictures in them. Which menus depended on whether the palette
+  // had happened to pull the font in first, which is why it was sometimes.
+  try {
+    if (document.fonts && document.fonts.load) {
+      document.fonts.load('16px "' + glyphFont + '"').then(run, run);
+      return;
+    }
+  } catch (_) {
+    // An older browser with no font loading API. Measure and hope.
   }
+  run();
 }
 
 // markPaletteTool shows which tool is held, since a tool is a mode and a mode

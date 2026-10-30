@@ -29,6 +29,10 @@
   --cursor: #4e4e4e;
   --accent-soft: #cfe2f0;
   --paper: #ffffff;
+  /* The red gscore 0.0.9 drew its menu pictures in: the note is the black
+     it would be printed in, and what the entry actually writes is red. The
+     eye finds the entry by the red rather than by reading seven words. */
+  --mark: #c0392b;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -42,6 +46,8 @@
     --accent: #6ba7d6;
     --accent-soft: #2a4357;
     --paper: #f7f6f3;
+    /* Lighter on a dark panel, where the printing red goes muddy. */
+    --mark: #e8705f;
   }
 }
 
@@ -134,6 +140,12 @@ body {
   top: 33px;
   left: 0;
   min-width: 210px;
+  /* No overflow here, ever.
+     A submenu is drawn outside the panel that owns it, so a panel that
+     scrolls clips its own flyouts: setting this to make a long menu fit
+     made every submenu unreachable, which is far worse than a menu that
+     runs long. The panels that may scroll are the submenus themselves,
+     below, and those have nothing inside them to clip. */
   background: var(--panel);
   border: 1px solid var(--line);
   border-radius: 6px;
@@ -152,7 +164,9 @@ body {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  gap: 24px;
+  /* The label takes up the slack, so the key still sits at the far end and
+     the picture stays beside the words rather than a gap away from them. */
+  gap: 10px;
   width: 100%;
   background: none;
   border: 0;
@@ -174,18 +188,44 @@ body {
  * not is harder to read than one with no pictures in it at all.
  */
 .menu-icon {
-  flex: 0 0 18px;
-  width: 18px;
-  height: 16px;
+  /* Big enough to read at a glance. A notehead at the size of the words
+     beside it is a dot: the picture is there to be recognised from across
+     the menu, which takes rather more room than the text does. */
+  flex: 0 0 24px;
+  width: 24px;
+  height: 23px;
   display: grid;
   place-items: center;
-  margin-right: -14px;
   font-style: normal;
   line-height: 1;
-  color: inherit;
+  /* Said outright, not inherited: a note is drawn in the ink the page is
+     written in, which is dark on a light panel and light on a dark one. It
+     is the note the entry is about, so it reads as the music would. */
+  color: var(--ink);
 }
-/* The label takes the room that is left, and the key stays at the far end. */
-.menu-items button > span { flex: 1 1 auto; }
+/* On the entry under the pointer, the white the words turn — and the mark
+   lightened with it, because the printing red on the blue of a highlighted
+   row is a colour nobody can read. */
+.menu-items button:hover .menu-icon { color: #fff; }
+.menu-items button:hover { --mark: #ffd9d2; }
+/* An entry whose picture is the whole of what it writes — an accidental, a
+   dynamic, a barline — is drawn in the colour kept for that, rather than in
+   the colour of the words. Where the picture is a note with a mark on it,
+   the note stays black and only the mark is red; that one is coloured in
+   the drawing itself, because the two halves are one glyph each. */
+.menu-icon.is-mark { color: var(--mark); }
+
+/* The label takes the room that is left, and the key stays at the far end.
+ *
+ * One line each, always. The panel has a minimum width and no maximum, so
+ * anything wider than that makes the panel wider; allowed to wrap instead,
+ * "Two slashes" came out over two lines and the entries of a long submenu
+ * were each twice as tall as they needed to be. */
+.menu-items button > span {
+  flex: 1 1 auto;
+  white-space: nowrap;
+}
+.menu-items button > kbd, .submenu-title > kbd { white-space: nowrap; }
 .menu-items hr { border: 0; border-top: 1px solid var(--line); margin: 4px 2px; }
 
 /* Submenus. A menu with fifty entries in a column is a list to be read, not a
@@ -198,6 +238,13 @@ body {
   left: 100%;
   margin-left: 2px;
   min-width: 190px;
+  /* A submenu opens level with the entry that owns it, which may be near
+     the bottom of the window — so it is held to the window's height, and
+     script moves it up where that is not enough on its own. Nothing opens
+     out of a submenu, so clipping one costs nothing. */
+  max-height: calc(100vh - 16px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 /* Which submenu is open is decided in script and nowhere else.
    Opening on :hover as well left a panel behind for every submenu the

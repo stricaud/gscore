@@ -50,6 +50,14 @@ type settings struct {
 	// for a page nobody looks at, and this is how they stop.
 	NoScorePDF bool `json:"noScorePDF,omitempty"`
 
+	// Lang is the language the interface is shown in, as a two-letter code.
+	//
+	// Empty means whichever the browser asks for, which is right nearly
+	// always and is why there is no default to store. It is kept here so
+	// that somebody who wants French on an English machine — or English on
+	// a French one — says so once.
+	Lang string `json:"lang,omitempty"`
+
 	// Keys is the keyboard bindings the person has changed, as the name of
 	// the command against the keystroke they want for it.
 	//
@@ -227,6 +235,15 @@ func (a *App) handleSettings(w http.ResponseWriter, r *http.Request) {
 		if v, ok := r.URL.Query()["trackBarlines"]; ok && len(v) > 0 {
 			s.LooseBarlines = v[0] == "0"
 		}
+		if v, ok := r.URL.Query()["lang"]; ok && len(v) > 0 {
+			// "auto" is not a language; it is the absence of a choice, and
+			// an empty setting is how that is stored.
+			if v[0] == "auto" {
+				s.Lang = ""
+			} else {
+				s.Lang = v[0]
+			}
+		}
 		if v, ok := r.URL.Query()["keys"]; ok && len(v) > 0 {
 			// The whole set each time, so taking a binding back to its
 			// default is sending a set without it. Unreadable means a
@@ -260,6 +277,7 @@ func (a *App) handleSettings(w http.ResponseWriter, r *http.Request) {
 		"scorePDF":         SaveScorePDF(),
 		"trackBarlines":    TrackBarlines(),
 		"keys":             loadSettings().Keys,
+		"lang":             loadSettings().Lang,
 	})
 }
 

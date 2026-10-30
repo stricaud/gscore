@@ -351,6 +351,10 @@ function setupMenus() {
       const wasOpen = menu.classList.contains("open");
       closeMenus();
       if (!wasOpen) menu.classList.add("open");
+      // A last chance for any picture that could not be drawn when the page
+      // was built, because the music font had not arrived yet. Everything
+      // already drawn is left alone, so opening a menu costs nothing.
+      if (!wasOpen) fitGlyphs(menu);
     });
     // Moving back up to the plain items closes the submenu, so the panel
     // does not sit over the item being reached for.
@@ -417,14 +421,35 @@ function openSubmenu(sub) {
   placeSubmenu(sub);
 }
 
-// placeSubmenu opens a submenu to the left instead of the right when there is
-// no room on the right, which there is not for a menu near the window edge.
+// placeSubmenu puts a submenu where it can be read.
+//
+// To the left instead of the right when there is no room on the right, which
+// there is not for a menu near the window edge — and up when it would run
+// off the bottom, which a submenu near the foot of a long menu does. It
+// opens level with the entry that owns it, so the room under it is whatever
+// is left of the window below that entry: on a short window, nothing.
+//
+// Cut, the entries past the edge were drawn and could not be reached, and
+// nothing said they were there. Reported as "menus are sometimes cut".
 function placeSubmenu(sub) {
   sub.classList.remove("flip");
   const items = sub.querySelector(".menu-items");
   if (!items) return;
+  items.style.top = "";
+
+  if (items.getBoundingClientRect().right > window.innerWidth - 8) {
+    sub.classList.add("flip");
+  }
+
   const r = items.getBoundingClientRect();
-  if (r.right > window.innerWidth - 8) sub.classList.add("flip");
+  const over = r.bottom - (window.innerHeight - 8);
+  if (over <= 0) return;
+  // Up by as much as it hangs over, but never past the top of the window:
+  // a panel taller than the window is scrolled, which its own max-height
+  // already arranges.
+  const now = parseFloat(getComputedStyle(items).top) || 0;
+  const floor = 8 - sub.getBoundingClientRect().top;
+  items.style.top = Math.max(now - over, floor) + "px";
 }
 
 async function action(name) {
@@ -5783,8 +5808,13 @@ function updateFingering(ev) {
     showFingering(null, part?.instrument);
     return;
   }
-  // The staff step is what is on the page; the clef turns it into a pitch.
-  showFingering(midiForStep(part?.clef || "treble", el.steps[el.steps.length - 1]),
+  // The staff step is what is on the page; the clef turns it into a pitch,
+  // and the sign written on it — or the one the signature gives it — says
+  // how far from the plain letter it is. Without that, a player asking for
+  // the F sharp in front of them was handed the fingering for F.
+  const which = el.steps.length - 1;
+  const alter = (el.alters || [])[which] || 0;
+  showFingering(midiForStep(part?.clef || "treble", el.steps[which]) + alter,
                 part?.instrument);
 }
 
@@ -5799,8 +5829,12 @@ function writtenMidiOf(ev) {
 function midiForStep(clef, step) {
   const offsets = { treble: -2, bass: 10, alto: 4, tenor: 6, percussion: 4 };
   const index = step - (offsets[clef] ?? -2);
-  // Diatonic index 0 is C0; seven steps to the octave.
-  const octave = Math.floor(index / 7);
+  // Diatonic index 0 is middle C, not C0: the engraver counts from the
+  // middle of the keyboard, because that is where a staff is. Counted from
+  // C0 instead, every note came out four octaves below itself — a flute
+  // part was answered with "G0, out of the range of this chart", which is
+  // true of G0 and says nothing about the G the player is looking at.
+  const octave = Math.floor(index / 7) + 4;
   const degree = ((index % 7) + 7) % 7;
   const semis = [0, 2, 4, 5, 7, 9, 11][degree];
   return (octave + 1) * 12 + semis;
@@ -8805,11 +8839,28 @@ function shortcutText(chord, compact) {
  * the page have none, because an icon that stands for nothing is one more
  * thing to read.
  *
+ * Colour carries the meaning, as it did in 0.0.9: what the entry writes is
+ * red, and anything there only to show where it goes is the black of the
+ * text around it. So a staccato is a black note with a red dot under it,
+ * and an accidental — which is the whole of what that entry writes — is
+ * red on its own. "It helps to know what it does more easily."
+ *
+ * Two characters means a note with a mark on it: the first is the note and
+ * the second is the mark, hung under it and centred by its own ink so that
+ * a dot and a wedge both land where they should.
+ *
  * The names in the comments are the canonical SMuFL ones, so the characters
  * can be checked against the font rather than taken on trust.
  */
 const MENU_ICONS = {
-  // Stems and the dot.
+  // Moving a note up and down the staff.
+  "pitch-up": "\ueb60",            // arrowBlackUp
+  "pitch-down": "\ueb64",          // arrowBlackDown
+  "octave-up": "\ueb60",           // arrowBlackUp
+  "octave-down": "\ueb64",         // arrowBlackDown
+
+  // Stems: the note drawn the way its stem will point says what the entry
+  // does, and a bare stem glyph says nothing at all.
   "stem-up": "\ue1d5",             // noteQuarterUp
   "stem-down": "\ue1d6",           // noteQuarterDown
 
@@ -8821,13 +8872,17 @@ const MENU_ICONS = {
   "acc-dflat": "\ue264",           // accidentalDoubleFlat
   "acc-parens": "\ue26a",          // accidentalParensLeft
 
-  // Articulations.
-  "artic-staccato": "\ue4a2",      // articStaccatoAbove
-  "artic-staccatissimo": "\ue4a6", // articStaccatissimoAbove
-  "artic-tenuto": "\ue4a4",        // articTenutoAbove
-  "artic-accent": "\ue4a0",        // articAccentAbove
-  "artic-marcato-up": "\ue4ac",    // articMarcatoAbove
-  "artic-marcato-down": "\ue4ad",  // articMarcatoBelow
+  // Articulations, each on the note it is written on. Under it, because the
+  // note is drawn with its stem up and an articulation goes on the side
+  // away from the stem.
+  "artic-staccato": "\ue1d5\ue4a3",      // noteQuarterUp articStaccatoBelow
+  "artic-staccatissimo": "\ue1d5\ue4a7", // noteQuarterUp articStaccatissimoBelow
+  "artic-tenuto": "\ue1d5\ue4a5",        // noteQuarterUp articTenutoBelow
+  "artic-accent": "\ue1d5\ue4a1",        // noteQuarterUp articAccentBelow
+  // The two marcatos differ by which way the wedge points, so they show the
+  // wedge they write rather than both showing the same one.
+  "artic-marcato-up": "\ue1d5\ue4ac",    // noteQuarterUp articMarcatoAbove
+  "artic-marcato-down": "\ue1d5\ue4ad",  // noteQuarterUp articMarcatoBelow
 
   // Ties and slurs.
   "slur": "\ue1fd",                // textTie
@@ -8888,6 +8943,10 @@ const MENU_ICONS = {
   "group-bracket": "\ue002",       // bracket
 };
 
+// menuIconSize is the staff height a menu picture is drawn at, in pixels.
+// Larger than the words beside it: a notehead set at text size is a dot.
+const menuIconSize = 21;
+
 // syncMenuIcons draws the mark beside every menu entry that writes one.
 //
 // Written in from the table rather than into the markup, for the reason the
@@ -8905,8 +8964,14 @@ function syncMenuIcons() {
     i.className = "menu-icon";
     const ch = MENU_ICONS[b.dataset.action];
     if (ch) {
-      i.textContent = ch;
-      i.dataset.size = "15";
+      // Two characters is a note with a mark on it. The note is drawn in
+      // the colour of the words beside it and the mark in the colour kept
+      // for what an entry writes.
+      i.textContent = [...ch][0];
+      const mark = [...ch].slice(1).join("");
+      if (mark) i.dataset.mark = mark;
+      else i.classList.add("is-mark");
+      i.dataset.size = String(menuIconSize);
     }
     b.insertBefore(i, b.firstChild);
   }
@@ -11132,7 +11197,7 @@ function setupMelodyClicks() {
 const typeHint =
   "8abcdef — lengths 1 2 4 8 16 32, dotted 4. · letters a–g, with # for a " +
   "sharp, _ for a flat and n for a natural, and an octave: f#3 · " +
-  "+3 −2 for an interval from the note before · r rest · | next bar · " +
+  "+3 −2 for an interval from the note before · r rest · | next bar, || |: :| |] the barline it ends with · " +
   "tie, slur, stacc, ten, accent on everything after them, and off again · " +
   "or the name of any command";
 
@@ -11166,6 +11231,20 @@ function typeNote(token) {
   // that work without a special case.
   return { pitch: m[1] + (m[2] || "") + (m[3] || "") };
 }
+
+// typeBars are the barlines a bar can be ended with, written the way they
+// are written everywhere music is typed: a plain | goes on to the next bar
+// and leaves its barline alone, and these say what that barline is.
+//
+// ABC has spelled them this way since the 1990s and so does everyone who
+// copied it, so there is nothing here to learn.
+const typeBars = {
+  "|": "",
+  "||": "double",
+  "|:": "repeat-start",
+  ":|": "repeat-end",
+  "|]": "final",
+};
 
 // typeLengths maps the numbers everybody already writes to the names the
 // editor uses.
@@ -11233,7 +11312,22 @@ function splitRun(token) {
       out.push(note);
       continue;
     }
-    if (c === "|" || c === "r" || c === "R") {
+    // A barline, which may be one character or two: "|:" and ":|" and "||"
+    // are each one thing, and reading them a character at a time would turn
+    // a close repeat into a bar of nothing followed by a new bar.
+    if (c === "|" || c === ":") {
+      const two = token.slice(i, i + 2);
+      if (typeBars[two] !== undefined) {
+        out.push(two);
+        i += 2;
+        continue;
+      }
+      if (typeBars[c] === undefined) return null; // a lone colon is not music
+      out.push(c);
+      i++;
+      continue;
+    }
+    if (c === "r" || c === "R") {
       out.push(c);
       i++;
       continue;
@@ -11261,7 +11355,7 @@ function parseTyping(line) {
     if (!raw) continue;
     const word = raw.toLowerCase();
     if (typeMarks[word] || typeNote(raw) || /^[+\u2212-]/.test(raw) ||
-        /^\d+\.*$/.test(raw) || raw === "|") {
+        /^\d+\.*$/.test(raw) || typeBars[raw] !== undefined) {
       words.push(raw);
       continue;
     }
@@ -11275,8 +11369,8 @@ function parseTyping(line) {
 
   for (const token of words) {
 
-    if (token === "|") {
-      out.push({ kind: "bar" });
+    if (typeBars[token] !== undefined) {
+      out.push({ kind: "bar", barline: typeBars[token] });
       continue;
     }
     // A length, with any dots on it. Sticky: it stands until another is
@@ -11378,6 +11472,16 @@ async function runTyping(line) {
         continue;
       }
       if (step.kind === "bar") {
+        // The barline belongs to the bar being finished, so it is written
+        // before the cursor moves on.
+        if (step.barline) {
+          const why = await typeBarline(step.barline);
+          if (why) {
+            failed = why;
+            break;
+          }
+          wrote++;
+        }
         await nextBarForTyping();
         continue;
       }
@@ -11507,6 +11611,23 @@ async function applyTypedMarks(written) {
       if (!res.ok) return (await res.text()).trim();
     }
   }
+  return "";
+}
+
+// typeBarline ends the bar the cursor is in with the barline named, and says
+// what went wrong if it could not.
+//
+// Its own request rather than setBarline's, because that one redraws and
+// talks to the status line: a typed line is one thought, drawn once when
+// the whole of it has been written.
+async function typeBarline(style) {
+  const sel = state.selection;
+  if (!sel) return "the cursor is nowhere";
+  const p = new URLSearchParams({
+    part: String(sel.part), measure: String(sel.measure), style,
+  });
+  const res = await fetch("/api/barline?" + p.toString(), { method: "POST" });
+  if (!res.ok) return (await res.text()).trim();
   return "";
 }
 

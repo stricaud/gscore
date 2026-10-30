@@ -140,6 +140,11 @@ type Layout struct {
 	// defaults is what the layout was drawn with.
 	defaults smufl.EngravingDefaults
 
+	// gaps is, for each system by its first bar, how far apart that
+	// system's staves turned out to need to be — measured from what was
+	// drawn around them rather than counted from the model. See room.go.
+	gaps map[int][]float64
+
 	// Systems are where each system begins and ends vertically, in staff
 	// spaces. Breaking a drawing into pages has to happen between systems and
 	// never through one, and nothing but the engraver knows where they are.
@@ -2565,6 +2570,22 @@ func (e *engraver) drawSystem(parts []*model.Part, boxes [][]measureBox,
 	// widening every gap by the worst case pushes a pianist's two staves half
 	// a page apart for the sake of a guitar diagram three staves away.
 	gapAfter := func(i int) float64 {
+		// What a previous pass saw. The count below is an estimate of what
+		// goes into the gap, and it knows about the marks it has names for
+		// — a dynamic, a hairpin, an octave line — and not about the rest:
+		// a row of accents under one staff and a slur arching over the next
+		// are both drawn into the gap and neither is counted. Bar 55 of the
+		// Rossini is where that showed: a diminuendo, pushed down past the
+		// marcato marks and the slur it had to clear, came out lying across
+		// the saxophone's first note on the staff below.
+		//
+		// It only ever widens. The measurement is of one drawing and the
+		// count stands for every bar of the system, so where they disagree
+		// the wider is the one that holds.
+		measured := 0.0
+		if m, ok := e.room[start]; ok && i < len(m.gaps) {
+			measured = m.gaps[i]
+		}
 		gap := e.staffGap(len(parts)) + e.roomBelow(parts[i])
 		if i+1 < len(parts) {
 			if above := e.partChordRoom(parts[i+1], start, end); above > 0 {
@@ -2598,12 +2619,23 @@ func (e *engraver) drawSystem(parts []*model.Part, boxes [][]measureBox,
 				}
 			}
 		}
+		if measured > gap {
+			gap = measured
+		}
 		return gap
 	}
 
 	// Where each staff of this system was put, for the things drawn across
 	// all of them: the brace, the bracket and the names.
 	staffTops := make([]float64, 0, len(parts))
+
+	// And each staff's finished outline, which is the measurement the next
+	// pass sets the gaps from. A staff's outline is drawn entirely from its
+	// own ink and placed against its own lines, so it says the same thing
+	// whatever the gaps around it are — which is what makes it worth
+	// measuring on one pass and using on the next.
+	outlines := make([]*skyline, 0, len(parts))
+	bottoms := make([]float64, 0, len(parts))
 
 	// The lowest point anything in this system reached, filled in as each
 	// staff is finished.
@@ -2753,10 +2785,28 @@ func (e *engraver) drawSystem(parts []*model.Part, boxes [][]measureBox,
 		if low := sky.reach(sp.Margin, right, true); low > lowest {
 			lowest = low
 		}
+		outlines = append(outlines, sky)
+		bottoms = append(bottoms, e.y+partH(p))
 
 		if pi < len(parts)-1 {
 			e.y += partH(p) + gapAfter(pi)
 		}
+	}
+
+	// What the gaps between these staves turned out to want, for the pass
+	// after this one. Taken before the brace and the joining barlines are
+	// drawn: those run from one staff to the next by definition, and an
+	// outline that had them in it would say each staff reaches down to the
+	// one below and ask for a gap wider again every time it was measured.
+	if len(outlines) > 1 {
+		if e.lay.gaps == nil {
+			e.lay.gaps = map[int][]float64{}
+		}
+		want := make([]float64, len(outlines)-1)
+		for i := range want {
+			want[i] = gapNeeded(outlines[i], outlines[i+1], bottoms[i], staffTops[i+1])
+		}
+		e.lay.gaps[start] = want
 	}
 
 	// The names and the brace reach across every staff of the system, so they

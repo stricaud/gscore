@@ -62,6 +62,40 @@ type need struct {
 	// below is from the top staff line down to the lowest ink, which is
 	// where the system really ends.
 	below float64
+	// gaps is how far apart the system's staves turned out to need to be:
+	// one figure per pair, from the upper staff's bottom line to the lower
+	// one's top line.
+	gaps []float64
+}
+
+// gapNeeded is how far apart two staves have to be for what is drawn around
+// them to clear.
+//
+// The two outlines are read together rather than one after the other, so
+// what is asked for is the worst place along the gap and not the worst of
+// each found wherever in the line it happened to be. A hairpin under the
+// first bar and a run on ledger lines over the last do not meet, and a gap
+// wide enough for both at once is a gap with a hand's width of nothing in
+// the middle of it.
+func gapNeeded(upper, lower *skyline, upperBottom, lowerTop float64) float64 {
+	// Sample for sample, so both outlines have to be ruled the same way.
+	// Within a system they are: every staff spans the same x.
+	if upper == nil || lower == nil || upper.x0 != lower.x0 {
+		return 0
+	}
+	n := len(upper.down)
+	if len(lower.up) < n {
+		n = len(lower.up)
+	}
+	worst := 0.0
+	for i := 0; i < n; i++ {
+		// How far the upper staff hangs below its own bottom line, and the
+		// lower one climbs above its own top line, at this point.
+		if need := (upper.down[i] - upperBottom) + (lowerTop - lower.up[i]); need > worst {
+			worst = need
+		}
+	}
+	return worst + staffClearance
 }
 
 // minRoomAbove is the least a system keeps over its top staff line.
@@ -130,7 +164,8 @@ func roomAbove(lay *Layout) map[int]need {
 			note(ci.Y-ci.Radius, ci.Y+ci.Radius)
 		}
 
-		n := need{above: sys.Staff - highest, below: lowest - sys.Staff}
+		n := need{above: sys.Staff - highest, below: lowest - sys.Staff,
+			gaps: lay.gaps[sys.First]}
 		if n.above < minRoomAbove {
 			n.above = minRoomAbove
 		}

@@ -11,7 +11,9 @@
 package engrave
 
 import (
+	"math"
 	"sort"
+	"strings"
 
 	"github.com/stricaud/gscore/internal/model"
 	"github.com/stricaud/gscore/internal/smufl"
@@ -544,9 +546,11 @@ func (e *engraver) slurAt(part *model.Part, m *model.Marks, p *placed, measure i
 		if !sl.above {
 			edge, toEdge = sl.fromLo, p.lo
 		}
-		sl.y = e.y + stepY(float64(edge))
+		// And each end outside whatever is written on its own note.
+		sl.y = e.slurEndClear(sl.x, e.y+stepY(float64(edge)), sl.above)
 		sl.toRef = p.index
-		e.drawTieOrSlur(sl, x, e.y+stepY(float64(toEdge)), slurLift, true, true)
+		toY := e.slurEndClear(x, e.y+stepY(float64(toEdge)), sl.above)
+		e.drawTieOrSlur(sl, x, toY, slurLift, true, true)
 		open.slur = nil
 	}
 	if m.SlurStart && open.slur == nil {
@@ -765,6 +769,48 @@ func (e *engraver) drawTieOrSlur(from *openSpan, toX, toY, lift float64, slur, c
 		e.lay.Arcs[i].To = from.toRef
 	}
 	from.stubs = nil
+}
+
+// slurEndClear moves a slur's end out past the marks written on the note it
+// begins or ends on.
+//
+// A slur and the articulations under it are written on the same side of the
+// same notes, and which goes outside is not a matter of taste: the marks
+// belong to their noteheads and the slur belongs to the phrase, so the
+// marks sit between the notes and the curve and the curve goes round them.
+//
+// The ends are where this has to be done by hand. What a slur arcs over is
+// lifted clear by its arch, but clearArch leaves the ends alone on purpose
+// — what is there belongs to the slur's own two notes — so a phrase whose
+// first and last notes are accented had its curve drawn through both of
+// them. Bar 55 of the Rossini, where the saxophones have three marcato
+// marks under one slur: the middle one the curve went over and the outer
+// two it went through.
+func (e *engraver) slurEndClear(x, y float64, above bool) float64 {
+	// Half a notehead: the mark and the curve are written at the same x,
+	// which is the middle of the note they are both on.
+	const near = 0.6
+	from := e.staffGlyphs
+	if from > len(e.lay.Glyphs) {
+		from = len(e.lay.Glyphs)
+	}
+	for _, g := range e.lay.Glyphs[from:] {
+		if !strings.HasPrefix(g.Name, "artic") {
+			continue
+		}
+		if math.Abs(g.X-x) > near {
+			continue
+		}
+		up, down := glyphReach(g.Name)
+		if above {
+			if top := g.Y - up; top < y {
+				y = top
+			}
+		} else if bottom := g.Y + down; bottom > y {
+			y = bottom
+		}
+	}
+	return y
 }
 
 // clearArch lifts a slur's control point until the curve clears what it arcs

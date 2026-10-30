@@ -22,6 +22,7 @@ package engrave
 
 import (
 	"math"
+	"strings"
 	"testing"
 
 	"github.com/stricaud/gscore/internal/model"
@@ -139,5 +140,62 @@ func TestASlurOverStemsAllPointingUpGoesBelow(t *testing.T) {
 	if sl.CY < low {
 		t.Errorf("the slur arches to %.2f, above the lowest notehead at %.2f: "+
 			"with every stem up it belongs below", sl.CY, low)
+	}
+}
+
+// The marks on a slur's own notes go inside the curve, not through it.
+//
+// A slur and the articulations under it are written on the same side of the
+// same notes, and which goes outside is settled: the marks belong to their
+// noteheads and the slur to the phrase, so the marks sit between the notes
+// and the curve. What the slur arcs over is lifted clear by its arch, but
+// the ends are not — they belong to the slur's own two notes — so a phrase
+// whose first and last notes were accented had its curve drawn through
+// both. Bar 55 of the Rossini: three marcato marks under one slur, the
+// middle one gone over and the outer two gone through.
+func TestASlurGoesRoundTheMarksOnItsOwnNotes(t *testing.T) {
+	// Low notes, so the stems point up and both the slur and the marks are
+	// written below. Marked and unmarked, to see what the marks did.
+	build := func(marked bool) *Layout {
+		s := model.NewScore()
+		m := s.Parts[0].Measures[0]
+		for _, step := range []model.Step{model.StepC, model.StepE, model.StepC} {
+			n := &model.Note{
+				Pitch: model.Pitch{Step: step, Octave: 4},
+				Dur:   model.Duration{Num: 1, Den: 4},
+			}
+			if marked {
+				n.Marks.Articulations = []model.Articulation{model.Marcato}
+			}
+			m.Voices[0].Elements = append(m.Voices[0].Elements, n)
+		}
+		els := m.Voices[0].Elements
+		els[0].(*model.Note).Marks.SlurStart = true
+		els[2].(*model.Note).Marks.SlurStop = true
+		return Engrave(s, DefaultOptions())
+	}
+
+	plain := theSlur(t, build(false))
+	marked := build(true)
+	curve := theSlur(t, marked)
+
+	// Below, so clear means a larger y: the marks push the ends out, and
+	// with nothing on the notes the ends stay where they were.
+	if curve.Y1 <= plain.Y1 || curve.Y2 <= plain.Y2 {
+		t.Errorf("the marks did not move the slur's ends: plain %.2f..%.2f, "+
+			"marked %.2f..%.2f", plain.Y1, plain.Y2, curve.Y1, curve.Y2)
+	}
+	// And every mark is inside the curve: above its ends, which are its
+	// highest points when it hangs below.
+	outer := math.Max(curve.Y1, curve.Y2)
+	for _, g := range marked.Glyphs {
+		if !strings.HasPrefix(g.Name, "artic") {
+			continue
+		}
+		_, down := glyphReach(g.Name)
+		if bottom := g.Y + down; bottom > outer {
+			t.Errorf("the mark at x=%.2f reaches to %.2f, below the slur's "+
+				"end at %.2f", g.X, bottom, outer)
+		}
 	}
 }

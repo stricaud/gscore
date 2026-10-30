@@ -130,3 +130,88 @@ func TestNothingIsWrittenOutsideItsBar(t *testing.T) {
 		}
 	}
 }
+
+/*
+ * Nothing written under one staff is written over the next one.
+ *
+ * The gap between two staves is reserved before either is drawn, from a
+ * count of what the model says goes into it — a dynamic here, a hairpin
+ * there. A count knows the marks it has names for and nothing else, and the
+ * marks that go outside a staff are placed against what is already drawn
+ * around it, so they end up as far out as they have to go whether or not
+ * anything reserved the room.
+ *
+ * So a hairpin that had to clear a row of accents and a slur, neither of
+ * them counted, went on down past the gap and came to rest across the first
+ * note of the staff below. Bar 55 of the Rossini is where it was found, and
+ * it is a diminuendo lying over a saxophone's top line.
+ *
+ * Asked of the hairpins and the dynamics because those are the marks the
+ * layout records a box for, and they are the ones that travel furthest from
+ * their own staff.
+ */
+func TestNothingUnderAStaffLandsOnTheNextOne(t *testing.T) {
+	for name, path := range corpus(t) {
+		s, _ := load(path)
+		if s == nil {
+			continue
+		}
+		lay := engrave.Engrave(s, engrave.DefaultOptions())
+
+		// Which system a bar is on, and so which staff is the one below
+		// this one. By system rather than by bar: a hairpin cut by a line
+		// break is recorded at the bar it opened in, which is on the system
+		// before the one it was finally drawn on, and looking its neighbour
+		// up by that bar measures it against a staff on another page.
+		sysOf := func(y float64) int {
+			for i, sys := range lay.Systems {
+				if y >= sys.Top && y <= sys.Bottom {
+					return i
+				}
+			}
+			return -1
+		}
+		// A hair of overlap is the thickness of a line, not a collision.
+		const hair = 0.1
+		under := func(what string, part, measure int, x0, x1, y, bottom float64) {
+			si := sysOf(y)
+			if si < 0 {
+				return
+			}
+			sys := lay.Systems[si]
+			for _, h := range lay.Hits {
+				if h.Part != part+1 || h.Measure < sys.First || h.Measure > sys.Last {
+					continue
+				}
+				// The staff's own lines.
+				if bottom > h.StaffTop+hair {
+					t.Errorf("%s: the %s under staff %d at bar %d reaches "+
+						"to %.2f, %.2f into the staff below it",
+						name, what, part+1, measure+1, bottom, bottom-h.StaffTop)
+					return
+				}
+				// And its notes, which climb above them. This is the one
+				// that was wrong: the hairpin stopped just short of the
+				// line below and lay across the notehead over it.
+				for _, el := range h.Elements {
+					if el.X > x1 || el.X+el.Width < x0 {
+						continue
+					}
+					if head := el.Y - 0.5; bottom > head+hair {
+						t.Errorf("%s: the %s under staff %d at bar %d "+
+							"reaches to %.2f, %.2f into a notehead of the "+
+							"staff below it",
+							name, what, part+1, measure+1, bottom, bottom-head)
+						return
+					}
+				}
+			}
+		}
+		for _, h := range lay.Hairpins {
+			under("hairpin", h.Part, h.Measure, h.X, h.X+h.Width, h.Y, h.Y+h.Height)
+		}
+		for _, d := range lay.Dynamics {
+			under("dynamic", d.Part, d.Measure, d.X, d.X+d.Width, d.Y, d.Y+d.Height)
+		}
+	}
+}

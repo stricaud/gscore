@@ -102,9 +102,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate,
         // The music font, for the pictures beside the menu entries. It
         // arrives after the bar has been put up, so the bar is made again
         // once it is here.
+        // Asked for whether or not the page has finished loading. The font
+        // is a local fetch of under a megabyte and nearly always arrives
+        // first, so waiting for the page here meant this did nothing at
+        // all and the pictures depended on some later rebuild happening to
+        // come after the font. Rebuilding early costs nothing: the bar is
+        // only replaced when the page answers with its menus, and left as
+        // it is when it cannot.
         Glyphs.load(from: url) { [weak self] in
-            guard let self, self.ready else { return }
-            self.rebuildMenus(tries: 1)
+            self?.rebuildMenus()
         }
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)

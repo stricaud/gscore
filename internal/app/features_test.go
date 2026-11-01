@@ -2236,3 +2236,67 @@ func TestTheHarmonyOfNothing(t *testing.T) {
 		t.Error("silence got no verdict")
 	}
 }
+
+// Copying a bar of the right hand into the empty left hand.
+//
+// Reported from a piano score: select everything in the first bar of the
+// treble staff, click the first bar of the bass staff, paste — and it
+// lands in the second bar.
+//
+// A bar nobody has written in holds a bar of rest, which is how it says
+// "do not play" rather than "not written yet". That bar is therefore full,
+// and the paste went in after the rest, did not fit, and was carried into
+// the bar after. Writing a note there has always taken the rest out first;
+// pasting has to do the same.
+func TestPastingIntoAnEmptyBarLandsInThatBar(t *testing.T) {
+	h := newHarness(t)
+	h.post("/api/addstaff?instrument=cello&clef=bass")
+	restEmptyMeasures(h.app.score)
+
+	// Three quarters in the first bar of the upper staff, and a second bar
+	// after it so there is somewhere wrong for the paste to go.
+	for _, step := range []int{0, 2, 4} {
+		h.post("/api/insert?part=0&measure=0&at=-1&step=" +
+			itoa(step) + "&dur=quarter&kind=note")
+	}
+	h.post("/api/addmeasure")
+	restEmptyMeasures(h.app.score)
+	h.post("/api/copy?sel=0:0:0,0:0:1,0:0:2")
+
+	// What the editor sends when the bar that was clicked holds a bar of
+	// rest: the rest is picked up, so the caret is after it.
+	h.post("/api/paste?part=1&measure=0&at=1")
+
+	lower := h.app.score.Parts[1]
+	if n := len(lower.Measures[0].Voices[0].Elements); n != 3 {
+		t.Errorf("the first bar of the lower staff holds %d things, want the three pasted", n)
+	}
+	// And the bar after it is still the bar of rest it was.
+	if len(lower.Measures) > 1 {
+		els := lower.Measures[1].Voices[0].Elements
+		if len(els) != 1 {
+			t.Errorf("the second bar holds %d things, want the rest it had", len(els))
+		} else if _, ok := els[0].(*model.Rest); !ok {
+			t.Errorf("the music was carried into the second bar: %T", els[0])
+		}
+	}
+}
+
+// And the rest goes: a bar with the pasted music and a bar's worth of
+// silence in front of it is two bars' worth of time in one bar.
+func TestPastingTakesTheBarRestAway(t *testing.T) {
+	h := newHarness(t)
+	h.post("/api/addstaff?instrument=cello&clef=bass")
+	restEmptyMeasures(h.app.score)
+	h.post("/api/insert?part=0&measure=0&at=-1&step=0&dur=quarter&kind=note")
+	h.post("/api/copy?sel=0:0:0")
+	h.post("/api/paste?part=1&measure=0&at=1")
+
+	els := h.app.score.Parts[1].Measures[0].Voices[0].Elements
+	if len(els) != 1 {
+		t.Fatalf("the bar holds %d things, want the one note", len(els))
+	}
+	if _, ok := els[0].(*model.Note); !ok {
+		t.Errorf("the bar still opens with a %T", els[0])
+	}
+}

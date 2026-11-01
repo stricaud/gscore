@@ -260,22 +260,7 @@ func (a *App) handleInsert(w http.ResponseWriter, r *http.Request) {
 		at = len(v.Elements)
 	}
 
-	// A bar of rest is what an empty bar is, and writing in it fills it
-	// rather than following it.
-	//
-	// The rest is put there so that an empty bar says "do not play" instead
-	// of "not written yet", and so that it can be picked up and dotted and
-	// taken away like anything else. The moment something is written in the
-	// bar it is no longer empty, and leaving the rest in front of the note
-	// would make every bar start with a bar's worth of silence it never
-	// asked for.
-	if len(v.Elements) == 1 {
-		if r, ok := v.Elements[0].(*model.Rest); ok &&
-			r.Dur.Cmp(p.TimeAt(measIdx).BarDuration()) == 0 {
-			v.Elements = v.Elements[:0]
-			at = 0
-		}
-	}
+	at = openEmptyBar(p, m, measIdx, at)
 
 	// Writing over what is picked up rather than in front of it.
 	//
@@ -404,6 +389,34 @@ func spill(p *model.Part, from int) {
 			return
 		}
 	}
+}
+
+// openEmptyBar takes a bar's rest out when something is being written into
+// it, and says where the writing now starts.
+//
+// A bar of rest is what an empty bar is. The rest is put there so that the
+// bar says "do not play" rather than "not written yet", and so that it can
+// be picked up and dotted and taken away like anything else. The moment
+// something is written in the bar it is no longer empty, and leaving the
+// rest in front of what arrives would make every bar start with a bar's
+// worth of silence it never asked for.
+//
+// Worse than untidy, for anything longer than a note: the bar is full as
+// it stands, so what is written goes in after the rest, does not fit, and
+// is carried into the bar after. Copying a bar of the right hand and
+// pasting it into the empty left hand put it one bar late — which is what
+// this is for as much as the tidiness.
+func openEmptyBar(p *model.Part, m *model.Measure, index, at int) int {
+	v := m.Voices[0]
+	if len(v.Elements) != 1 {
+		return at
+	}
+	r, ok := v.Elements[0].(*model.Rest)
+	if !ok || r.Dur.Cmp(p.TimeAt(index).BarDuration()) != 0 {
+		return at
+	}
+	v.Elements = v.Elements[:0]
+	return 0
 }
 
 // findElement says where an element ended up after a spill: which measure
@@ -2118,6 +2131,10 @@ func (a *App) handlePaste(w http.ResponseWriter, r *http.Request) {
 	if at < 0 || at > len(v.Elements) {
 		at = len(v.Elements)
 	}
+	// Into the bar, not after its rest. See openEmptyBar: a bar holding
+	// nothing but its own bar of rest is an empty bar, and it is full, so
+	// pasting after the rest carried the music into the bar after it.
+	at = openEmptyBar(p, m, measIdx, at)
 
 	// A fresh copy each time, so pasting twice does not give two references
 	// to the same notes — changing one would silently change the other.

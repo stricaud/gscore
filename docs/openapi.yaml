@@ -812,6 +812,44 @@ paths:
         "200": { $ref: "#/components/responses/Changed" }
         "400": { $ref: "#/components/responses/Error" }
 
+  /api/pickup:
+    post:
+      tags: [write]
+      summary: Make the first bar an upbeat, or a whole bar again
+      description: >
+        A piece that begins before the first beat opens with a short bar.
+        The numbering follows from that on its own: a bar short of its
+        meter followed by a full one is an upbeat, and the first full bar
+        is bar one. Every staff is made the same length, because bars
+        stand in the same columns on all of them.
+      parameters:
+        - name: dur
+          in: query
+          description: >
+            How long the upbeat is — a note length, or "none" to put the
+            first bar back to its full length.
+          schema: { type: string }
+        - name: dots
+          in: query
+          description: Dots on that length.
+          schema: { type: integer }
+      responses:
+        "200":
+          description: What the first bar now holds.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string }
+                  of:
+                    type: number
+                    description: How much of a full bar the upbeat is.
+                  full:
+                    type: boolean
+                    description: Whether the bar is a whole one again.
+        "400": { $ref: "#/components/responses/Error" }
+
   /api/transpose:
     post:
       tags: [write]

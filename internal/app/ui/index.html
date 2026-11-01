@@ -93,6 +93,11 @@
       <button data-action="delete"><span>Delete</span><kbd>⌫</kbd></button>
       <hr>
       <button data-action="jump"><span>Go to measure…</span><kbd>J</kbd></button>
+      <!-- Picking up music without dragging over it. On a long piece
+           dragging is the wrong way: to take bars 40 to 96 you have to find
+           both ends and hold the mouse down over everything between. -->
+      <button data-action="select-all"><span>Pick up the whole staff</span><kbd>⌘A</kbd></button>
+      <button data-action="select-region"><span>Pick up bars…</span></button>
       <hr>
       <button data-action="pitch-up"><span>Up a step</span><kbd>↑</kbd></button>
       <button data-action="pitch-down"><span>Down a step</span><kbd>↓</kbd></button>
@@ -305,6 +310,10 @@
       <button data-action="set-header"><span>Title and composer…</span></button>
       <hr>
       <button data-action="set-key"><span>Key signature…</span></button>
+      <!-- A piece that begins before the first beat. Everything else
+           follows from the first bar being short: it is not numbered, and
+           bar one is the first full bar. -->
+      <button data-action="set-pickup"><span>Pickup measure…</span></button>
       <button data-action="set-time"><span>Time signature from here…</span></button>
       <hr>
       <!-- Whether a bar that is too long has its last notes moved into the
@@ -371,6 +380,11 @@
            click in. It is here so that what will be printed can be looked
            at without printing it. -->
       <button data-action="view-multirest"><span>Multi-measure rests</span><kbd id="multirest-tick"></kbd></button>
+      <!-- The score as it sounds, rather than as each player reads it. A
+           clarinet in B flat reads a C and a B flat comes out; three staves
+           in three keys playing the same line look like three lines until
+           this is on. -->
+      <button data-action="view-concert"><span>Concert pitch</span><kbd id="concert-tick"></kbd></button>
       <hr>
       <div class="submenu">
         <button class="submenu-title"><span>Fingering</span><kbd>▸</kbd></button>
@@ -815,6 +829,48 @@
   </form>
 </dialog>
 
+<!-- The bar before the first bar. -->
+<dialog id="pickup">
+  <h2>Pickup measure</h2>
+  <p class="small">A piece that begins before the first beat. The bar is left
+     short, bar one becomes the first full bar, and the numbering follows.</p>
+  <form method="dialog" id="pickup-form">
+    <label class="tempo-bar" for="pickup-dur">Upbeat
+      <select id="pickup-dur">
+        <option value="none">no upbeat — a whole first bar</option>
+        <option value="eighth">an eighth note</option>
+        <option value="quarter" selected>a quarter note</option>
+        <option value="quarter,1">a dotted quarter</option>
+        <option value="half">a half note</option>
+        <option value="half,1">a dotted half</option>
+        <option value="sixteenth">a sixteenth note</option>
+      </select></label>
+    <div class="ask-buttons">
+      <button value="ok" type="submit" class="primary">Set</button>
+      <button value="cancel" type="submit">Cancel</button>
+    </div>
+  </form>
+</dialog>
+
+<!-- A stretch of bars, said in numbers instead of dragged over. -->
+<dialog id="region">
+  <h2>Pick up bars</h2>
+  <p class="small">One staff at a time: a slur or a crescendo over three
+     staves at once is not a thing that can be drawn.</p>
+  <form method="dialog" id="region-form">
+    <label class="tempo-bar" for="region-staff">Staff
+      <select id="region-staff"></select></label>
+    <label class="tempo-bar" for="region-from">From bar
+      <input type="number" id="region-from" min="1" step="1" value="1"></label>
+    <label class="tempo-bar" for="region-to">To bar
+      <input type="number" id="region-to" min="1" step="1" value="1"></label>
+    <div class="ask-buttons">
+      <button value="ok" type="submit" class="primary">Pick up</button>
+      <button value="cancel" type="submit">Cancel</button>
+    </div>
+  </form>
+</dialog>
+
 <!-- Moving the music to another key.
      The interval is asked for by name because that is how it is asked for
      out loud — "up a tone", "down a minor third" — and because an interval
@@ -978,6 +1034,9 @@
          about the sheet, and it is wanted as much when printing, where the
          paper is the system's own business, as when exporting. -->
     <div class="choices">
+      <label><input type="checkbox" id="print-concert">
+        <span><b>Concert pitch</b><em>Every part printed as it sounds instead of as
+          its player reads it. A score to study from; not a part to play from.</em></span></label>
       <label><input type="checkbox" id="print-multirest">
         <span><b>Multi-measure rests</b><em>A stretch where every staff rests is
           printed as one bar with the count over it, instead of as that many empty

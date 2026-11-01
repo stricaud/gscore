@@ -594,9 +594,9 @@ func (s *Score) Tempos() []Tempo {
 // A mark that carries no metronome mark changes what is written and not how
 // fast to play: "Andantino mosso" over a bar is a word about the character
 // of what follows, and a piece that took it for a speed of nought stopped
-// dead there. Finale writes a great many of them — every tempo word in its
-// library has a twin with no playback effect — and so does anybody who
-// types a word over a bar.
+// dead there. Other programs write a great many of them — a tempo library
+// tends to hold a twin of every word with no playback effect — and so does
+// anybody who types a word over a bar.
 func (t Tempo) changedBy(c Tempo) Tempo {
 	t.Text, t.Parens = c.Text, c.Parens
 	if c.BPM > 0 {

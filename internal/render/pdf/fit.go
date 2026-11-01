@@ -29,8 +29,8 @@ import (
 //
 // So the size is a decision to be made from the music rather than a constant.
 // This is what every engraver does and what every program that prints music
-// offers: LilyPond calls it the global staff size, MuseScore and Finale call
-// it scaling, and a publisher calls it the rastral. The rule is the same in
+// offers: LilyPond calls it the global staff size, MuseScore calls it
+// scaling, and a publisher calls it the rastral. The rule is the same in
 // all of them — pick the largest type the page will hold a system of.
 //
 // It only ever goes smaller. A size that was asked for is a size not to

@@ -17,8 +17,8 @@ package model
 // names is a convention, not a fact about sound. The top space is a hi-hat
 // because drummers agree it is.
 //
-// Finale calls this a percussion layout and gives each position a "note type"
-// — an instrument, a notehead and a MIDI key — with the mouse naming the
+// Elsewhere this is called a percussion layout: each position is given a
+// "note type" — an instrument, a notehead and a MIDI key — with the mouse naming the
 // instrument as it moves over the staff, and + and − cycling between the
 // instruments that share a position. That is the right design and this is it:
 // a table from staff position to instrument, with alternatives where real
@@ -151,7 +151,7 @@ func PercussionByKey(key int) (PercussionNote, bool) {
 }
 
 // NextPercussion cycles to the next instrument sharing a position, which is
-// Finale's + and − keys.
+// what the + and − keys do.
 func NextPercussion(step, key, delta int) (PercussionNote, bool) {
 	at := PercussionAt(step)
 	if len(at) == 0 {

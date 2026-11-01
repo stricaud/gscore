@@ -451,6 +451,9 @@ func (a *App) renderPDF(w io.Writer, r *http.Request) error {
 	eopt.Mode = engrave.Paginated
 	eopt.ShowMeasureNumbers = q.Get("numbers") != "0"
 	eopt.MultiRests = q.Get("multirest") == "1"
+	// As it sounds, or as it is read. A copy is moved to concert pitch and
+	// that copy is drawn; what is saved in the file is untouched.
+	concert := q.Get("concert") == "1"
 	eopt.ShowPartNames = len(score.Parts) > 1
 	// Not fitted here: what the paper says about type size and line length
 	// is settled per piece below, because the pieces are different sizes of
@@ -461,6 +464,9 @@ func (a *App) renderPDF(w io.Writer, r *http.Request) error {
 	// one another, and a part differs from the score it came out of by an
 	// order of magnitude — seventeen staves against one.
 	fit := func(sc *model.Score, o engrave.Options, paper gpdf.Options) gpdf.Section {
+		if concert {
+			sc = concertOf(sc)
+		}
 		paper, o = gpdf.Fit(sc, paper, o)
 		return gpdf.Section{Layout: engrave.Engrave(sc, o), Opt: paper}
 	}

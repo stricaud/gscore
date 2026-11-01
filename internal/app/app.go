@@ -116,7 +116,11 @@ type App struct {
 	symbols *symbol.Registry
 
 	engraveOpt engrave.Options
-	renderOpt  svg.Options
+	// concert says the score is being shown as it sounds rather than as
+	// each player reads it, and concert0 holds that copy. See concert.go.
+	concert   bool
+	concert0  concertCache
+	renderOpt svg.Options
 
 	// inBrowser records that this core is the page: compiled to WebAssembly
 	// and answering its own requests, with no server and no filesystem.
@@ -460,6 +464,7 @@ func (a *App) APIRoutes(mux *http.ServeMux) {
 		"/api/abc":             a.handleABC,
 		"/api/nudge":           a.handleNudge,
 		"/api/transpose":       a.handleTranspose,
+		"/api/pickup":          a.handlePickup,
 		"/api/shift":           a.handleShift,
 		"/api/addmeasure":      a.handleAddMeasure,
 		"/api/splitmeasure":    a.handleSplitMeasure,
@@ -585,7 +590,7 @@ func (a *App) handleSVG(w http.ResponseWriter, r *http.Request) {
 	// editor already has. See svg.Options.Fragment.
 	ropt.Fragment = r.URL.Query().Get("frag") == "1"
 
-	lay := a.layout(score, eopt)
+	lay := a.layout(a.sounding(score), eopt)
 	w.Header().Set("Content-Type", "image/svg+xml")
 	w.Header().Set("Cache-Control", "no-store")
 	if err := svg.Render(w, lay, ropt); err != nil {
@@ -1078,6 +1083,13 @@ func (a *App) handlePrint(w http.ResponseWriter, r *http.Request) {
 	// page a player reads from and the page being written are not the same
 	// page, and the whole point of counting bars of rest is the first one.
 	eopt.MultiRests = r.URL.Query().Get("multirest") == "1"
+	// And whether the parts are printed as they sound or as they are read.
+	// A conductor's score is often wanted both ways.
+	if r.URL.Query().Get("concert") == "1" {
+		for i, sec := range sections {
+			sections[i].score = concertOf(sec.score)
+		}
+	}
 
 	ropt := svg.DefaultOptions()
 	ropt.Symbols = symbols

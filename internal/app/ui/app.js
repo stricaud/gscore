@@ -86,7 +86,7 @@ const state = {
   // Measure numbers are on: the engraver's DefaultOptions says so, and this
   // has to say the same thing or the tick beside "Measure numbers" in the
   // View menu starts out contradicting the page.
-  view: { names: false, numbers: true, multirest: false },
+  view: { names: false, numbers: true, multirest: false, concert: false },
   // Whether a bar that is too long has its last notes moved along. Read from
   // the server at startup, because it is remembered between sessions.
   trackBarlines: true,
@@ -689,6 +689,15 @@ async function action(name) {
     case "artic-marcato-up": await setArticulation("marcato"); break;
     case "artic-marcato-down": await setArticulation("marcato down"); break;
 
+    case "set-pickup":
+      await pickupDialog();
+      break;
+    case "select-all":
+      selectAll();
+      break;
+    case "select-region":
+      await selectRegionDialog();
+      break;
     case "transpose":
       await transposeDialog();
       break;
@@ -735,6 +744,7 @@ async function action(name) {
     case "view-names": await setView("names", !state.view.names); break;
     case "view-numbers": await setView("numbers", !state.view.numbers); break;
     case "view-multirest": await setView("multirest", !state.view.multirest); break;
+    case "view-concert": await setView("concert", !state.view.concert); break;
 
     case "insert-chord": await chordSymbolDialog(); break;
     case "insert-text": await textDialog(); break;
@@ -1609,6 +1619,7 @@ async function exportPDF() {
   if (choice.landscape) q.set("orientation", "landscape");
   if (!choice.pageNumbers) q.set("pagenumbers", "0");
   if (choice.multiRests) q.set("multirest", "1");
+  if (choice.concert) q.set("concert", "1");
 
   if (state.info?.local) {
     let res = await fetch("/api/save?" + q.toString(), { method: "POST" });
@@ -3524,6 +3535,115 @@ function selectRange(from, to) {
   status(state.multi.length === 1
     ? "1 selected"
     : `${state.multi.length} selected \u2014 measures ${barNumberOf(a.measure)}\u2013${barNumberOf(b.measure)}`);
+}
+
+// selectBudget is the most that can be picked up at once.
+//
+// Every command that works on a selection names each note in the query it
+// sends, so a selection is a few bytes a note on the way to the server.
+// Thousands is a working selection; a hundred thousand is a symphony, and
+// nobody applies a staccato to a symphony.
+const selectBudget = 5000;
+
+// selectSpan picks up everything on one staff between two bars.
+//
+// One staff, because that is what a selection is here: a slur or a
+// crescendo over notes on three staves at once means nothing anybody can
+// draw, and the commands that take a selection are mostly those. Picking
+// up a whole piece is not needed for the ones that do span staves —
+// transposing with nothing picked up moves all of it.
+function selectSpan(part, firstBar, lastBar, what) {
+  const bars = state.hits.filter((h) => h.part === part);
+  if (!bars.length) {
+    status("There is nothing on that staff");
+    return false;
+  }
+  const picked = [];
+  for (const h of bars) {
+    if (h.measure < firstBar || h.measure > lastBar) continue;
+    for (const el of h.elements || []) {
+      picked.push({ part, measure: h.measure, index: el.index, ref: el.ref });
+    }
+  }
+  if (!picked.length) {
+    status("There is nothing written in those bars");
+    return false;
+  }
+  if (picked.length > selectBudget) {
+    status(`That is ${picked.length} things; ${selectBudget} is the most ` +
+      `that can be picked up at once`);
+    return false;
+  }
+
+  state.multi = picked;
+  state.multi = orderedSelection();
+  const first = state.multi[0];
+  const last = state.multi[state.multi.length - 1];
+  state.selection = {
+    part, measure: first.measure, at: first.index + 1, step: 0, ref: first.ref,
+  };
+  state.anchor = { part, measure: first.measure, index: first.index };
+  state.focus = { part, measure: last.measure, index: last.index };
+  markSelection();
+  scrollSelectionIntoView();
+  status(`${picked.length} picked up — ${what}`);
+  return true;
+}
+
+// selectAll picks up the whole of the staff the cursor is on.
+function selectAll() {
+  const part = state.selection?.part ?? 0;
+  const last = state.hits.reduce(
+    (n, h) => (h.part === part ? Math.max(n, h.measure) : n), 0);
+  const name = (state.info?.parts || [])[part]?.name;
+  selectSpan(part, 0, last, name ? `every bar of the ${name}` : "every bar of the staff");
+}
+
+// selectRegionDialog asks for a stretch of bars by number.
+//
+// Dragging is the other way, and on a long piece it is the wrong way: to
+// pick up bars 40 to 96 you have to find both ends and hold the mouse down
+// over everything in between. Saying so in numbers is two fields.
+async function selectRegionDialog() {
+  const dlg = $("#region");
+  const parts = state.info?.parts || [];
+  const bars = state.hits.reduce((n, h) => Math.max(n, h.measure + 1), 0);
+
+  const staff = $("#region-staff");
+  staff.innerHTML = parts.map((p, i) =>
+    `<option value="${i}">${escapeHTML(p.name || `Staff ${i + 1}`)}</option>`).join("");
+  staff.value = String(state.selection?.part ?? 0);
+  // Opening on what is already picked up, so the dialog is a way of
+  // adjusting a selection as well as of making one.
+  const from = $("#region-from"), to = $("#region-to");
+  from.max = to.max = String(Math.max(1, bars));
+  from.value = String(barNumberOf(state.selection?.measure ?? 0));
+  to.value = String(Math.max(Number(from.value), barNumberOf(bars - 1)));
+
+  const answer = await new Promise((resolve) => {
+    const done = () => {
+      dlg.removeEventListener("close", done);
+      resolve(dlg.returnValue);
+    };
+    dlg.addEventListener("close", done);
+    dlg.showModal();
+    from.focus();
+    from.select();
+  });
+  if (answer !== "ok") {
+    status("Ready");
+    return;
+  }
+
+  // Back from the numbers on the page to the bars behind them. Within the
+  // movement the cursor is in, which is what the numbers over the bars say
+  // and what Go to bar reads them as.
+  const part = Number(staff.value) || 0;
+  const where = movementHere();
+  let a = barIndexOf(Number(from.value), where);
+  let b = barIndexOf(Number(to.value), where);
+  if (b < a) [a, b] = [b, a];
+  selectSpan(part, a, b, `bars ${barNumberOf(a)}–${barNumberOf(b)}`);
 }
 
 // selectDynamic picks up a dynamic marking.
@@ -5480,6 +5600,38 @@ function confirmThat({ title, note = "", ok = "OK" }) {
 // Where it lands is the bar that is selected, and the piece itself when
 // nothing is — which is the same thing as the first bar, because the mark in
 // the title block is that marking written over bar one.
+// pickupDialog makes the first bar an upbeat, or a whole bar again.
+async function pickupDialog() {
+  const dlg = $("#pickup");
+  const answer = await new Promise((resolve) => {
+    const done = () => {
+      dlg.removeEventListener("close", done);
+      resolve(dlg.returnValue);
+    };
+    dlg.addEventListener("close", done);
+    dlg.showModal();
+  });
+  if (answer !== "ok") {
+    status("Ready");
+    return;
+  }
+  const [dur, dots] = $("#pickup-dur").value.split(",");
+  const p = new URLSearchParams({ dur });
+  if (dots) p.set("dots", dots);
+
+  const res = await fetch("/api/pickup?" + p.toString(), { method: "POST" });
+  if (!res.ok) {
+    status("Could not set it: " + (await res.text()).trim());
+    return;
+  }
+  const d = await res.json().catch(() => null);
+  await refreshScore();
+  markSelection();
+  status(d && d.full
+    ? "The first bar is a whole bar again"
+    : "The first bar is an upbeat — bar one is the first full bar");
+}
+
 /* ---------- transposing ---------- */
 
 // intervalNames are what each interval is called, for saying afterwards
@@ -6087,6 +6239,7 @@ async function setView(what, on) {
   state.view.names = !!d.names;
   state.view.numbers = !!d.numbers;
   state.view.multirest = !!d.multirest;
+  state.view.concert = !!d.concert;
   markViewTicks();
   await refreshScore();
   const said = {
@@ -6097,15 +6250,22 @@ async function setView(what, on) {
     multirest: on
       ? "Bars of rest counted — they are still there, and still played"
       : "Every bar drawn",
+    // Said in full as well: what is stored has not changed, and writing
+    // on a transposing staff still goes in as what its player reads.
+    concert: on
+      ? "Shown as it sounds — the parts are still written as they are read"
+      : "Shown as each player reads it",
   };
   status(said[what] || "Ready");
 }
 
 function markViewTicks() {
   const n = $("#names-tick"), m = $("#numbers-tick"), r = $("#multirest-tick");
+  const c = $("#concert-tick");
   if (n) n.textContent = state.view.names ? "✓" : "";
   if (m) m.textContent = state.view.numbers ? "✓" : "";
   if (r) r.textContent = state.view.multirest ? "✓" : "";
+  if (c) c.textContent = state.view.concert ? "✓" : "";
   const w = $("#mouse-tick");
   if (w) w.textContent = state.mouseWrites ? "✓" : "";
 }
@@ -7037,7 +7197,8 @@ async function printScore() {
   if (!choice) return;
 
   const path = "/print?what=" + encodeURIComponent(choice.what) +
-    (choice.multiRests ? "&multirest=1" : "");
+    (choice.multiRests ? "&multirest=1" : "") +
+    (choice.concert ? "&concert=1" : "");
 
   // A native window has no print machinery and window.open returns nothing
   // without a UI delegate, so printing is handed to the real browser, which
@@ -7097,6 +7258,7 @@ function askPrint(many, parts, title, verb, paper) {
   // bars is about to print them, and somebody who has never turned them on
   // is not asking for them by opening this.
   $("#print-multirest").checked = !!state.view.multirest;
+  $("#print-concert").checked = !!state.view.concert;
 
   return new Promise((resolve) => {
     const done = () => {
@@ -7111,6 +7273,7 @@ function askPrint(many, parts, title, verb, paper) {
         landscape: paper && $("#print-landscape").checked,
         pageNumbers: !paper || $("#print-numbers").checked,
         multiRests: $("#print-multirest").checked,
+        concert: $("#print-concert").checked,
       });
     };
     dlg.addEventListener("close", done);
@@ -9010,6 +9173,8 @@ const KEY_BINDINGS = [
     label: "Move the notes themselves earlier", run: () => void shiftPassage(-1) },
   { id: "shift-later", keys: "Mod+ArrowRight", group: "Selecting and moving",
     label: "Move the notes themselves later", run: () => void shiftPassage(1) },
+  { id: "select-all", menu: "select-all", keys: "Mod+a", group: "Selecting and moving",
+    label: "Pick up the whole staff", run: () => selectAll() },
   { id: "clear-selection", keys: "Escape", group: "Selecting and moving",
     label: "Stop playing, or let go of the selection",
     run: () => { if (state.playing || state.pausedAt !== null) stop(); else clearSelection(); } },
@@ -12211,6 +12376,8 @@ const WORD_COMMANDS = [
   // the start of it, and until this was here that example named nothing:
   // the speed is set from a dialog and the dialog had no command.
   { id: "set-tempo", label: "Set tempo", run: () => action("set-tempo") },
+  { id: "select-region", label: "Pick up a stretch of bars",
+    run: () => action("select-region") },
 ];
 
 function commandNamed(name) {

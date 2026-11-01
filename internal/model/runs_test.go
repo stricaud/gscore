@@ -115,8 +115,8 @@ func TestTheTempoRunAgreesWithTheTempoInEveryBar(t *testing.T) {
 
 // A tempo word with no metronome mark changes what is written, not how fast.
 //
-// Finale's library has a twin of every tempo word with no playback effect in
-// it, and the Rossini uses two of them: "Andante" over bar 1 and "Andantino
+// A tempo library tends to hold a twin of every word with no playback effect
+// in it, and the Rossini uses two of them: "Andante" over bar 1 and "Andantino
 // mosso" over bar 10, neither saying a number. Taken as a change of speed,
 // they set the piece to nought beats a minute and playback stopped at the
 // first of them.

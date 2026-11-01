@@ -12,7 +12,7 @@
  * It is arranged the way MuseScore arranges a palette — named sections that
  * open and close — rather than as one long strip of buttons, because fifty
  * items in a column is a list, not a tool. Sibelius groups by what a thing
- * does to a note; Finale groups by tool. Grouping by what you are trying to
+ * does to a note, and others group by tool. Grouping by what you are trying to
  * write is the one that survives having a hundred items in it.
  *
  * Every entry is a SMuFL glyph, so the palette is drawn in the same font as

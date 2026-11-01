@@ -49,7 +49,7 @@ func (a *App) handleHits(w http.ResponseWriter, r *http.Request) {
 	}
 
 	a.mu.RLock()
-	score := a.score
+	score := a.sounding(a.score)
 	a.mu.RUnlock()
 	lay := a.layout(score, opt)
 
@@ -198,7 +198,11 @@ func (a *App) handleInsert(w http.ResponseWriter, r *http.Request) {
 		// The staff step is what was clicked; the clef turns it into a pitch,
 		// and the key signature decides what it sounds like when no accidental
 		// is written on it.
-		pitch := pitchForStep(p.Clef, step)
+		// Read off the staff as it is drawn. Where that drawing is in
+		// concert pitch, what was clicked is a sounding pitch and what is
+		// stored is what the player reads, so it goes back through the
+		// part's own interval on the way in.
+		pitch := a.asWritten(p, pitchForStep(p.Clef, step))
 		named := false
 
 		// Or the pitch is named outright. Somebody typing a tune in writes
@@ -216,7 +220,7 @@ func (a *App) handleInsert(w http.ResponseWriter, r *http.Request) {
 				// before, which is what a run of bare letters means.
 				got = got.NearestTo(lastPitch(p, m, at, pitch))
 			}
-			pitch, named = got, true
+			pitch, named = a.asWritten(p, got), true
 		}
 
 		// Or by how far it is from the note before, which is how a melody
@@ -447,7 +451,7 @@ func (a *App) handleAddPitch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	pitch := pitchForStep(p.Clef, step)
+	pitch := a.asWritten(p, pitchForStep(p.Clef, step))
 	named := false
 	// Or named outright, the same way a note is written: a chord typed or
 	// scripted is a list of names, and turning each of them into a staff
@@ -458,6 +462,7 @@ func (a *App) handleAddPitch(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, name+" is not a pitch", http.StatusBadRequest)
 			return
 		}
+		got = a.asWritten(p, got)
 		if !hasOctave {
 			// above says the notehead is being stacked on the ones already
 			// there, which is what a chord typed as a list of letters means:
@@ -2480,12 +2485,20 @@ func (a *App) handleView(w http.ResponseWriter, r *http.Request) {
 		a.engraveOpt.MultiRests = v == "1"
 		changed = append(changed, "multirest")
 	}
+	// Showing the score as it sounds rather than as each player reads it.
+	// Not an engraving option: it is a different score on the screen, made
+	// by moving every transposing part. See concert.go.
+	if v := q.Get("concert"); v != "" {
+		a.concert = v == "1"
+		changed = append(changed, "concert")
+	}
 	writeJSON(w, map[string]any{
 		"status":    "ok",
 		"changed":   changed,
 		"names":     a.engraveOpt.ShowPartNames,
 		"numbers":   a.engraveOpt.ShowMeasureNumbers,
 		"multirest": a.engraveOpt.MultiRests,
+		"concert":   a.concert,
 	})
 }
 

@@ -98,6 +98,10 @@
       <button data-action="pitch-down"><span>Down a step</span><kbd>↓</kbd></button>
       <button data-action="octave-up"><span>Up an octave</span><kbd>⇧↑</kbd></button>
       <button data-action="octave-down"><span>Down an octave</span><kbd>⇧↓</kbd></button>
+      <!-- Moving a step at a time is moving notes about; this is moving the
+           music to another key, which is a different thing and asks for the
+           interval by name. -->
+      <button data-action="transpose"><span>Transpose…</span></button>
 
       <div class="submenu">
         <button class="submenu-title"><span>Stem</span><kbd>▸</kbd></button>
@@ -806,6 +810,59 @@
     <select id="ask-select" hidden></select>
     <div class="ask-buttons">
       <button value="ok" type="submit" class="primary" id="ask-ok">OK</button>
+      <button value="cancel" type="submit">Cancel</button>
+    </div>
+  </form>
+</dialog>
+
+<!-- Moving the music to another key.
+     The interval is asked for by name because that is how it is asked for
+     out loud — "up a tone", "down a minor third" — and because an interval
+     is two numbers, the letters and the semitones, which nobody should have
+     to type. The list carries both. -->
+<dialog id="transpose">
+  <h2>Transpose</h2>
+  <p class="small" id="transpose-where">The whole piece.</p>
+  <form method="dialog" id="transpose-form">
+    <div class="choices">
+      <label><input type="radio" name="transpose-dir" value="up" checked>
+        <span><b>Up</b></span></label>
+      <label><input type="radio" name="transpose-dir" value="down">
+        <span><b>Down</b></span></label>
+    </div>
+    <label class="tempo-bar" for="transpose-interval">Interval
+      <select id="transpose-interval">
+        <option value="1,1">a minor second — a semitone</option>
+        <option value="1,2" selected>a major second — a tone</option>
+        <option value="2,3">a minor third</option>
+        <option value="2,4">a major third</option>
+        <option value="3,5">a perfect fourth</option>
+        <option value="3,6">an augmented fourth</option>
+        <option value="4,6">a diminished fifth</option>
+        <option value="4,7">a perfect fifth</option>
+        <option value="5,8">a minor sixth</option>
+        <option value="5,9">a major sixth</option>
+        <option value="6,10">a minor seventh</option>
+        <option value="6,11">a major seventh</option>
+        <option value="7,12">an octave</option>
+      </select></label>
+    <div class="choices">
+      <label><input type="radio" name="transpose-mode" value="chromatic" checked>
+        <span><b>By the interval</b><em>Exactly that far, whatever it does to the
+          spelling. A major third up turns C into E and C sharp into E sharp.</em></span></label>
+      <label><input type="radio" name="transpose-mode" value="diatonic">
+        <span><b>Within the key</b><em>By letters alone, spelled by the key: a third
+          up is the third degree of it, major or minor as the key says. The quality
+          chosen above is then ignored.</em></span></label>
+    </div>
+    <div class="choices" id="transpose-key-row">
+      <label><input type="checkbox" id="transpose-key" checked>
+        <span><b>Move the key signature with it</b><em>A piece put up a tone is a piece
+          in another key. Without this the notes move and the signature stays, so what
+          moved is written with accidentals.</em></span></label>
+    </div>
+    <div class="ask-buttons">
+      <button value="ok" type="submit" class="primary">Transpose</button>
       <button value="cancel" type="submit">Cancel</button>
     </div>
   </form>

@@ -689,6 +689,9 @@ async function action(name) {
     case "artic-marcato-up": await setArticulation("marcato"); break;
     case "artic-marcato-down": await setArticulation("marcato down"); break;
 
+    case "transpose":
+      await transposeDialog();
+      break;
     case "set-tempo":
       await setTempoDialog();
       break;
@@ -5477,6 +5480,136 @@ function confirmThat({ title, note = "", ok = "OK" }) {
 // Where it lands is the bar that is selected, and the piece itself when
 // nothing is — which is the same thing as the first bar, because the mark in
 // the title block is that marking written over bar one.
+/* ---------- transposing ---------- */
+
+// intervalNames are what each interval is called, for saying afterwards
+// what was done. Keyed by the two numbers the interval actually is.
+const intervalNames = {
+  "1,1": "a semitone", "1,2": "a tone",
+  "2,3": "a minor third", "2,4": "a major third",
+  "3,5": "a fourth", "3,6": "an augmented fourth",
+  "4,6": "a diminished fifth", "4,7": "a fifth",
+  "5,8": "a minor sixth", "5,9": "a major sixth",
+  "6,10": "a minor seventh", "6,11": "a major seventh",
+  "7,12": "an octave",
+};
+
+// transposeSelection is what the music being moved is: the notes picked up,
+// or the whole piece where nothing is.
+//
+// The same rule the dialog shows and the two one-key commands follow, so
+// that "transpose up" means the same thing however it was asked for.
+function transposeSelection() {
+  const refs = pickedRefs();
+  return refs.length ? refs.join(",") : "";
+}
+
+// pickedRefs is every note picked up, as the server names them.
+function pickedRefs() {
+  const out = [];
+  for (const m of state.multi) out.push(`${m.part}:${m.measure}:${m.index}`);
+  if (out.length) return out;
+  const sel = state.selection;
+  if (sel && sel.ref !== null && sel.ref !== undefined && !sel.bar &&
+      sel.at > 0 && pickedNotes()) {
+    out.push(`${sel.part}:${sel.measure}:${sel.at - 1}`);
+  }
+  return out;
+}
+
+// transposeBy moves the music and says what it did.
+async function transposeBy(steps, semitones, opt) {
+  opt = opt || {};
+  const sel = transposeSelection();
+  const p = new URLSearchParams({
+    steps: String(steps), semitones: String(semitones),
+  });
+  if (sel) p.set("sel", sel);
+  if (opt.diatonic) p.set("mode", "diatonic");
+  // The signature only ever moves when the whole piece does; the server
+  // holds to that as well, and says so here so the two cannot drift.
+  p.set("key", !sel && opt.key !== false && !opt.diatonic ? "1" : "0");
+
+  const res = await fetch("/api/transpose?" + p.toString(), { method: "POST" });
+  if (!res.ok) {
+    status("Could not transpose: " + (await res.text()).trim());
+    return false;
+  }
+  const d = await res.json().catch(() => null);
+  await refreshScore();
+  markSelection();
+
+  const name = intervalNames[`${Math.abs(steps)},${Math.abs(semitones)}`] ||
+    `${Math.abs(semitones)} semitones`;
+  const way = (semitones || steps) > 0 ? "up" : "down";
+  const what = sel ? "The selection" : "The piece";
+  let said = `${what} moved ${way} ${name}`;
+  if (d && d.fifths !== undefined) said += `, now in ${keyNamed(d.fifths)}`;
+  // A drum staff is instruments rather than pitches and a tab staff is
+  // fingers rather than pitches, so neither moved. Said rather than done
+  // quietly: a part that did not move is the thing somebody would notice
+  // last and mind most.
+  if (d && d.left) {
+    said += ` — ${d.left} ${d.left === 1 ? "staff" : "staves"} left alone ` +
+      `(drums and tablature are not pitches)`;
+  }
+  status(said);
+  return true;
+}
+
+// keyNamed is what a signature is called.
+//
+// The names are fetched by the key dialog and kept; before it has ever
+// been opened there is nothing to name a key with, and the count of sharps
+// or flats says it plainly enough to be going on with.
+function keyNamed(fifths) {
+  const k = (keyOptions || []).find((o) => o.fifths === fifths);
+  if (k) return k.major + " major";
+  if (fifths === 0) return "C major";
+  const n = Math.abs(fifths);
+  return `${n} ${fifths > 0 ? "sharp" : "flat"}${n === 1 ? "" : "s"}`;
+}
+
+// transposeDialog asks how far, and which way.
+async function transposeDialog() {
+  const dlg = $("#transpose");
+  const sel = transposeSelection();
+  const n = sel ? sel.split(",").length : 0;
+  $("#transpose-where").textContent = sel
+    ? `${n} ${n === 1 ? "note" : "notes"} picked up. The key signature stays as it is.`
+    : "The whole piece, every staff of it.";
+  // Only a whole piece changes key: a phrase moved inside a piece is still
+  // in the key it was in, and is written with accidentals.
+  $("#transpose-key-row").hidden = !!sel;
+
+  const answer = await new Promise((resolve) => {
+    const done = () => {
+      dlg.removeEventListener("close", done);
+      resolve(dlg.returnValue);
+    };
+    dlg.addEventListener("close", done);
+    dlg.showModal();
+  });
+  if (answer !== "ok") {
+    status("Ready");
+    return;
+  }
+
+  const picked = $("#transpose-interval").value.split(",");
+  let steps = Number(picked[0]), semitones = Number(picked[1]);
+  const down = $$('#transpose-form input[name="transpose-dir"]')
+    .find((r) => r.checked)?.value === "down";
+  if (down) {
+    steps = -steps;
+    semitones = -semitones;
+  }
+  const diatonic = $$('#transpose-form input[name="transpose-mode"]')
+    .find((r) => r.checked)?.value === "diatonic";
+  await transposeBy(steps, semitones, {
+    diatonic, key: $("#transpose-key").checked,
+  });
+}
+
 async function setTempoDialog() {
   const dlg = $("#tempo");
 
@@ -8869,6 +9002,10 @@ const KEY_BINDINGS = [
     label: "Move the note up a step", run: () => void nudge(1) },
   { id: "nudge-down", keys: "Alt+ArrowDown", group: "Selecting and moving",
     label: "Move the note down a step", run: () => void nudge(-1) },
+  // Moving the music to another key, which is not the same thing as moving
+  // notes about the staff: a semitone here is a minor second, so the notes
+  // land spelled the way the new key spells them — C to D flat going up,
+  // and not to a C sharp the signature knows nothing about.
   { id: "shift-earlier", keys: "Mod+ArrowLeft", group: "Selecting and moving",
     label: "Move the notes themselves earlier", run: () => void shiftPassage(-1) },
   { id: "shift-later", keys: "Mod+ArrowRight", group: "Selecting and moving",
@@ -12056,8 +12193,28 @@ async function nextBarForTyping() {
 // One match or none. Two commands starting with the same letters is an
 // ambiguous thing to have typed, and guessing which was meant is how a line
 // of music quietly turns into a key change.
+// WORD_COMMANDS are commands with no key: things you run by typing their
+// name, in the typing bar or in the console.
+//
+// They are not in KEY_BINDINGS because everything there answers to a
+// keystroke — the table is checked for it, no two of them may share a key,
+// and a menu entry for one has to show the key beside it. Keys are scarce
+// and these three do not need one; being nameable is the whole of what
+// they need.
+const WORD_COMMANDS = [
+  { id: "transpose", label: "Transpose", run: () => action("transpose") },
+  { id: "transpose-up", label: "Transpose up a semitone",
+    run: () => void transposeBy(1, 1) },
+  { id: "transpose-down", label: "Transpose down a semitone",
+    run: () => void transposeBy(-1, -1) },
+  // The typing help offers "tempo" as its example of naming a command by
+  // the start of it, and until this was here that example named nothing:
+  // the speed is set from a dialog and the dialog had no command.
+  { id: "set-tempo", label: "Set tempo", run: () => action("set-tempo") },
+];
+
 function commandNamed(name) {
-  const all = KEY_BINDINGS;
+  const all = KEY_BINDINGS.concat(WORD_COMMANDS);
   const exact = all.find((c) => c.id === name);
   if (exact) return exact;
   const starts = all.filter((c) =>

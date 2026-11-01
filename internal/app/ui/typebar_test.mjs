@@ -589,3 +589,34 @@ test("the beams are asked for once the line is written", () => {
   const fn = grab("runTyping");
   assert.match(fn, /applyTypedBeams\(written\)/, "the beams are never applied");
 });
+
+// A line that is neither music nor a mark is a command, and the help names
+// two of them as examples. Both named nothing at all: there was no command
+// called transpose-up and nothing a bare "tempo" reached, so the first
+// thing anybody tried from the help answered "there is no transpose-up".
+test("the commands the typing help offers as examples exist", () => {
+  const page = helpPage();
+  const named = [...page.matchAll(/<dt>([a-z][a-z0-9-]*)<\/dt>/g)]
+    .map((m) => m[1])
+    .filter((w) => w !== "r");            // r is a rest, not a command
+  const commands = named.filter((w) => /-|tempo/.test(w));
+  assert.ok(commands.length >= 2, "the help no longer shows command examples");
+  for (const word of commands) {
+    const fn = reachable(word);
+    assert.ok(fn, `the help offers ${word} and no command answers to it`);
+  }
+});
+
+// reachable runs the editor's own lookup over both of its tables, which is
+// what the typing bar does with a word it does not recognise as music.
+function reachable(word) {
+  const bindings = src.match(/^const KEY_BINDINGS = \[[\s\S]*?^\];/m);
+  const words = src.match(/^const WORD_COMMANDS = \[[\s\S]*?^\];/m);
+  assert.ok(bindings && words, "app.js has no command tables");
+  const body = bindings[0] + "\n" + words[0] + "\n" + grab("commandNamed") +
+    "\nreturn commandNamed;";
+  const scope = {
+    action: () => {}, transposeBy: () => {}, nudge: () => {}, setZoom: () => {},
+  };
+  return new Function(...Object.keys(scope), body)(...Object.values(scope))(word);
+}

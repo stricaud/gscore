@@ -812,6 +812,61 @@ paths:
         "200": { $ref: "#/components/responses/Changed" }
         "400": { $ref: "#/components/responses/Error" }
 
+  /api/transpose:
+    post:
+      tags: [write]
+      summary: Move the selection, or the whole piece, to another key
+      description: >
+        An interval is two numbers and not one: the semitones say what is
+        heard and the steps say how it is spelled. Up four semitones and two
+        letters is a major third, C to E; up four semitones and three
+        letters is a diminished fourth, C to F flat.
+      parameters:
+        - $ref: "#/components/parameters/sel"
+        - name: steps
+          in: query
+          description: Letters to move by, positive up. 7 is an octave.
+          schema: { type: integer }
+        - name: semitones
+          in: query
+          description: >
+            Semitones to move by, positive up. Ignored when mode is
+            diatonic, where the key does the spelling.
+          schema: { type: integer }
+        - name: mode
+          in: query
+          description: >
+            "chromatic", the default, moves by the interval exactly.
+            "diatonic" moves by letters alone and lets the key spell the
+            result, so a third up is the third degree of the key.
+          schema: { type: string, enum: [chromatic, diatonic] }
+        - name: key
+          in: query
+          description: >
+            "1" moves the key signatures with the music, which only happens
+            when the whole piece is moving: part of a piece is still in the
+            key it was in, and what moved is written with accidentals.
+          schema: { type: string }
+      responses:
+        "200":
+          description: How many notes moved, and where the key ended up.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  changed: { type: integer }
+                  left:
+                    type: integer
+                    description: >
+                      Staves left alone, being drums or tablature, whose
+                      written pitches are instruments and fingerings rather
+                      than pitches.
+                  fifths:
+                    type: integer
+                    description: The new key signature, where it moved.
+        "400": { $ref: "#/components/responses/Error" }
+
   /api/shift:
     post:
       tags: [write]

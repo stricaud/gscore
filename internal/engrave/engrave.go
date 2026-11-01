@@ -554,6 +554,20 @@ type Options struct {
 	// export dialogs ask for it there.
 	MultiRests bool
 
+	// RoomToWrite keeps the room the rest of a bar would take at the end of
+	// a bar that is not full yet, instead of closing the barline up against
+	// the last note written.
+	//
+	// For writing, not for printing. Two beats written into a bar of four
+	// are two beats and a gap while they are being written — the gap is
+	// where the next two go, and it is where the caret has to be put to
+	// write them. Spaced by what is there, that gap is a sliver between the
+	// last notehead and the barline, and putting the caret in it is aiming
+	// at something a space wide. A printed score has no caret and no notes
+	// to come, so a short bar there is short on purpose — a pickup, or the
+	// last bar of a piece — and is printed as what it is.
+	RoomToWrite bool
+
 	// WriteAhead draws one empty bar past the end of the music, so there is
 	// somewhere to click to carry on writing.
 	//
@@ -2204,6 +2218,17 @@ func (e *engraver) measureBox(p *model.Part, m *model.Measure, index int) measur
 		box.ideal = sp.NoteBase * 2
 		box.minimum = sp.NoteBase
 	}
+	// And a bar that is partly written keeps the room the rest of it would
+	// take, so there is somewhere to put the caret for the notes to come.
+	// Only in the ideal: it is room to write in, and a system short of
+	// space should give it up before it crowds the music that is there.
+	if e.opt.RoomToWrite && !empty {
+		if bar := p.TimeAt(index).BarDuration(); !bar.IsZero() {
+			if have := heldInBar(m); have.Cmp(bar) < 0 {
+				box.ideal += e.spanWidth(bar.Sub(have), nil)
+			}
+		}
+	}
 	// The gap and the barline are part of what a measure occupies, so they
 	// belong in its width. Leaving them out was the other half of the
 	// overflow bug.
@@ -2411,6 +2436,22 @@ func (e *engraver) flagRoom(p *model.Part, elems []model.Element, index int) map
 // score lays out to the staff space exactly as it did before columns. With
 // two, a half note spans the columns of the two quarters played against it
 // and is given the room of both.
+// heldInBar is how much time the bar actually holds: the longest of its
+// voices, because two lines of music in one bar are played at the same time
+// and not one after the other.
+func heldInBar(m *model.Measure) model.Duration {
+	most := model.Duration{Num: 0, Den: 1}
+	for _, v := range m.Voices {
+		if v == nil {
+			continue
+		}
+		if d := v.Duration(); d.Cmp(most) > 0 {
+			most = d
+		}
+	}
+	return most
+}
+
 func (e *engraver) spanWidth(span model.Duration, els []voiced) float64 {
 	sp := e.opt.Spacings
 	if span.IsZero() {

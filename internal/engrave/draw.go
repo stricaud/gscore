@@ -319,9 +319,27 @@ func (e *engraver) drawMeasure(part *model.Part, b measureBox, x, end float64, s
 	e.drawWholeNoteTremolos(items)
 	e.drawTuplets(items, part.Time)
 
+	// How far the bar can be clicked in: to the end of its music, or to the
+	// barline where the bar is not full yet.
+	//
+	// The gap between the last note of a half-written bar and its barline
+	// is where the rest of the bar goes, and it was not part of the bar at
+	// all: a click in it found no bar under the pointer and did nothing.
+	// The caret could only be put after the last note by clicking the note
+	// itself, which means aiming at a notehead to say "after this". A bar
+	// that is full has no such gap — the white space after a whole-bar rest
+	// is the four beats it lasts — and there the reach stops at the music,
+	// as it always did.
+	reach := x
+	if !barIsFull(part, b) && !b.ahead {
+		_, room := e.barlineRoom(b.m.RightBarline)
+		if at := e.barlineAt(end, room); at > reach {
+			reach = at
+		}
+	}
 	hit := Hit{
 		Part: e.partIndex, Measure: b.index,
-		XMin: start, XMax: x, StaffTop: e.y,
+		XMin: start, XMax: reach, StaffTop: e.y,
 		StaffHeight: e.staffH(),
 		Clef:        e.clef.String(),
 		KeyChange:   b.m.Key != nil,

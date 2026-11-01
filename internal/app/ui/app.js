@@ -3770,6 +3770,11 @@ async function insertAtSelection(rest, keepSelection) {
   );
   const el = hit && (hit.elements || [])[sel.at - 1];
   if (el) sel.ref = el.ref;
+  // Selected, but not picked up: see heldForMoving. What was just written
+  // is what a dynamic or a stem change should land on, and it is not what
+  // an arrow key should move — the gesture after writing a note is to go
+  // up or down and write the next one.
+  sel.wrote = true;
   // A bar with no room left in it is no place for the caret.
   //
   // The next note written there goes into the bar after anyway — the server
@@ -4451,6 +4456,24 @@ function pickedNotes() {
   if (sel.bar) return false;
   return !(sel.arc || sel.hairpin || sel.tremolo || sel.dynamic ||
     sel.chordSymbol || (sel.tempo !== undefined && sel.tempo !== null));
+}
+
+// heldForMoving says whether an arrow key should move the notes that are
+// picked up, rather than move the caret.
+//
+// A note just written is selected — it has to be, or a dynamic, a stem
+// change or a tie typed straight after it would have nothing to land on —
+// but being selected is not the same as being picked up to move. Writing a
+// note and then pressing Up means "the next one is a step higher", and
+// while that counted as a picked-up note the arrow moved the note that had
+// just been written instead: the way to write a scale from the keyboard
+// was to write a note, click somewhere else, click back and write the
+// next. Clicking a note still picks it up, and Alt with an arrow still
+// moves whatever is selected, written this moment or not.
+function heldForMoving() {
+  if (state.multi.length) return true;
+  if (state.selection && state.selection.wrote) return false;
+  return pickedNotes();
 }
 
 // pickedHead names the notehead of a chord that was clicked, for the
@@ -6321,14 +6344,62 @@ async function stepHistory(which) {
   }
   const d = await res.json();
   // Undoing can land on a different tune of a book, if that is where the
-  // edit was made.
+  // edit was made. That is a different score on the screen, so the whole of
+  // it is read again and the caret goes wherever that score left it.
   if (d.tune !== undefined && d.tune !== state.info?.current) {
     await reload();
-  } else {
-    await reload();
+    markHistory(d.canUndo, d.canRedo);
+    status(which === "undo" ? "Undone" : "Redone");
+    return;
   }
+
+  // Otherwise the caret stays where it is.
+  //
+  // Taking a note back went through the same path as opening a file: the
+  // selection was dropped and the caret put back wherever the score was
+  // last left, which on a piece being written from the top is bar one. So
+  // writing a wrong note in bar 40 and taking it back sent you to the
+  // beginning, and the way to carry on was to find bar 40 again. Undo is
+  // not a change of place — it is the same place with one thing less in
+  // it.
+  const was = state.selection ? { ...state.selection } : null;
+  await refreshScore();
+  restoreCaret(was);
   markHistory(d.canUndo, d.canRedo);
   status(which === "undo" ? "Undone" : "Redone");
+}
+
+// restoreCaret puts the caret back where it was after the music under it
+// has changed, as far as what is left allows.
+//
+// What it was pointing at may be gone — that is what was undone — so
+// nothing is picked up and nothing is held for a mark to land on. The place
+// is kept and clamped: the bar it was in may have been the one taken away,
+// and the note it stood after may have been the note taken back.
+function restoreCaret(was) {
+  if (!was) return;
+  const parts = state.info?.parts?.length || 1;
+  const part = Math.max(0, Math.min(was.part ?? 0, parts - 1));
+  const bars = state.hits.filter((h) => h.part === part).map((h) => h.measure);
+  if (!bars.length) return;
+  const measure = Math.max(0, Math.min(was.measure ?? 0, Math.max(...bars)));
+  const hit = state.hits.find((h) => h.part === part && h.measure === measure);
+  const held = hit ? (hit.elements || []).length : 0;
+  state.selection = {
+    part, measure,
+    at: Math.max(0, Math.min(was.at ?? 0, held)),
+    step: was.step ?? 0,
+    ref: null,
+    replace: false,
+  };
+  // Whatever was picked up was picked up in the score as it was a moment
+  // ago, and every one of those refs is stale.
+  state.multi = [];
+  state.anchor = null;
+  state.focus = null;
+  // Marked, not scrolled to: the point of this is that the view does not
+  // move.
+  markSelection();
 }
 
 // markHistory greys the entries when there is nothing to take back, so the
@@ -8784,16 +8855,16 @@ const KEY_BINDINGS = [
   // selection as well.
   { id: "cursor-up", menu: "pitch-up", keys: "ArrowUp", group: "Selecting and moving",
     label: "Up a step — or move the selected notes up",
-    run: () => { if (pickedNotes()) void nudge(1); else moveCursorPitch(1); } },
+    run: () => { if (heldForMoving()) void nudge(1); else moveCursorPitch(1); } },
   { id: "cursor-down", menu: "pitch-down", keys: "ArrowDown", group: "Selecting and moving",
     label: "Down a step — or move the selected notes down",
-    run: () => { if (pickedNotes()) void nudge(-1); else moveCursorPitch(-1); } },
+    run: () => { if (heldForMoving()) void nudge(-1); else moveCursorPitch(-1); } },
   { id: "cursor-up-octave", menu: "octave-up", keys: "Shift+ArrowUp", group: "Selecting and moving",
     label: "Up an octave",
-    run: () => { if (pickedNotes()) void nudge(7); else moveCursorPitch(7); } },
+    run: () => { if (heldForMoving()) void nudge(7); else moveCursorPitch(7); } },
   { id: "cursor-down-octave", menu: "octave-down", keys: "Shift+ArrowDown", group: "Selecting and moving",
     label: "Down an octave",
-    run: () => { if (pickedNotes()) void nudge(-7); else moveCursorPitch(-7); } },
+    run: () => { if (heldForMoving()) void nudge(-7); else moveCursorPitch(-7); } },
   { id: "nudge-up", keys: "Alt+ArrowUp", group: "Selecting and moving",
     label: "Move the note up a step", run: () => void nudge(1) },
   { id: "nudge-down", keys: "Alt+ArrowDown", group: "Selecting and moving",
@@ -11522,24 +11593,32 @@ function parseTyping(line) {
   // Each word, and then each word broken into its pieces where it is a run
   // of notes written without spaces. A word that names a mark or a command
   // is left whole: "tie" is a word and not T, I and the note E.
+  //
+  // Which word each piece came out of is kept with it. The spacing of a
+  // typed line is the only phrasing it can carry, so it is read as one:
+  // notes written together are beamed together and a space breaks the
+  // beam. See applyTypedBeams.
   const words = [];
+  let wordNo = 0;
   for (const raw of String(line).trim().split(/\s+/)) {
     if (!raw) continue;
+    wordNo++;
+    const push = (t) => words.push({ t, g: wordNo });
     const word = raw.toLowerCase();
     if (typeMarks[word] || typeNote(raw) || /^[+\u2212-]/.test(raw) ||
         /^\d+\.*$/.test(raw) || typeBars[raw] !== undefined) {
-      words.push(raw);
+      push(raw);
       continue;
     }
     const run = splitRun(raw);
     if (run) {
-      words.push(...run);
+      run.forEach(push);
       continue;
     }
-    words.push(raw);
+    push(raw);
   }
 
-  for (const token of words) {
+  for (const { t: token, g: group } of words) {
 
     if (typeBars[token] !== undefined) {
       out.push({ kind: "bar", barline: typeBars[token] });
@@ -11565,7 +11644,7 @@ function parseTyping(line) {
       if (n < 1 || n > 24) {
         return { error: `${token} is further than an interval goes` };
       }
-      out.push({ kind: "note", interval: (m[1] === "+" ? n : -n), dur, dots });
+      out.push({ kind: "note", interval: (m[1] === "+" ? n : -n), dur, dots, group });
       continue;
     }
     if (/^[rR]$/.test(token)) {
@@ -11578,12 +11657,12 @@ function parseTyping(line) {
     if (token.includes("[") || token.includes("]")) {
       const chord = typeChord(token);
       if (chord.error) return { error: chord.error };
-      out.push({ kind: "chord", pitches: chord.pitches, dur, dots });
+      out.push({ kind: "chord", pitches: chord.pitches, dur, dots, group });
       continue;
     }
     const note = typeNote(token);
     if (note) {
-      out.push({ kind: "note", pitch: note.pitch, dur, dots });
+      out.push({ kind: "note", pitch: note.pitch, dur, dots, group });
       continue;
     }
     // A note with an impossible octave is a length somebody meant to
@@ -11739,12 +11818,23 @@ async function runTyping(line) {
         break;
       }
       if (step.kind !== "rest") {
-        written.push({ at: where.at, marks: Object.keys(on).filter((k) => on[k]) });
+        written.push({
+          at: where.at,
+          marks: Object.keys(on).filter((k) => on[k]),
+          // Which word it was typed in, and whether it is a length that
+          // has a flag to join to the next one.
+          group: step.group,
+          beamed: beamedLengths.has(step.dur || state.tool.duration),
+        });
       }
       wrote++;
     }
     if (!failed) {
       const why = await applyTypedMarks(written);
+      if (why) failed = why;
+    }
+    if (!failed) {
+      const why = await applyTypedBeams(written);
       if (why) failed = why;
     }
   } finally {
@@ -11890,6 +11980,42 @@ async function applyTypedMarks(written) {
         { method: "POST" });
       if (!res.ok) return (await res.text()).trim();
     }
+  }
+  return "";
+}
+
+// beamedLengths are the lengths that have a flag to join to the next note.
+// A quarter note has none, so nothing a typed line says about it is a
+// statement about beams.
+const beamedLengths = new Set(["eighth", "sixteenth", "32nd", "64th"]);
+
+// applyTypedBeams beams each run of notes written without spaces between
+// them, and breaks the beam wherever there was a space.
+//
+// "32 abcd bcde" is two groups of four. The engraver cannot know that:
+// left to itself it groups by beat, and eight thirty-seconds are one beat,
+// so it writes them as one beam of eight. The spacing of a typed line is
+// the only phrasing mark it has, and this is what reads it.
+//
+// A note standing alone between spaces is taken off the beam rather than
+// left to the engraver, because the space either side of it is where the
+// beam was asked to break. That is the same statement said twice and it
+// has to be, or "8 a b c d" would come out as the two beamed pairs the
+// beat says, which is the opposite of what was typed.
+async function applyTypedBeams(written) {
+  let i = 0;
+  while (i < written.length) {
+    let j = i;
+    while (j + 1 < written.length && written[j + 1].group === written[i].group) j++;
+    const run = written.slice(i, j + 1).filter((n) => n.beamed);
+    i = j + 1;
+    if (!run.length) continue;
+    const p = new URLSearchParams({
+      beam: run.length > 1 ? "join" : "none",
+      sel: run.map((n) => n.at).join(","),
+    });
+    const res = await fetch("/api/beam?" + p.toString(), { method: "POST" });
+    if (!res.ok) return (await res.text()).trim();
   }
   return "";
 }

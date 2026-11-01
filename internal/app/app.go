@@ -187,6 +187,11 @@ func NewBook(scores []*model.Score, filename string) *App {
 	// around; pagination is for printing. The editor opens in the strip.
 	eo.Mode = engrave.Strip
 	eo.ShowPartNames = nameTheStaves(s)
+	// This is the editor, so a bar that is half written keeps the room for
+	// the rest of it: that room is where the caret goes for the next note.
+	// What is printed is engraved from options of its own and keeps the
+	// tight spacing.
+	eo.RoomToWrite = true
 
 	reg := symbol.NewRegistry()
 	ro.Symbols = reg

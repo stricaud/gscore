@@ -538,3 +538,54 @@ test("a lone colon is not a barline", () => {
   const { steps } = parse("8 a :");
   assert.equal(steps[steps.length - 1].kind, "command");
 });
+
+// The spacing of a typed line is the only phrasing mark it has.
+//
+// "32 abcd bcde" is two groups of four. The engraver cannot know that: left
+// to itself it groups by beat, and eight thirty-seconds are one beat, so it
+// writes them as one beam of eight.
+test("which word each note was typed in is remembered", () => {
+  const { steps } = parse("32 abcd bcde");
+  assert.equal(steps.length, 8, "eight notes were not read");
+  assert.deepEqual(steps.map((s) => s.group), [2, 2, 2, 2, 3, 3, 3, 3],
+    "the two runs did not come out as two groups");
+});
+
+test("a note typed on its own is a group of its own", () => {
+  const { steps } = parse("8 a b cd");
+  assert.deepEqual(steps.map((s) => s.group), [2, 3, 4, 4]);
+});
+
+test("a chord belongs to the word it was typed in", () => {
+  const { steps } = parse("8[ceg]d f");
+  assert.deepEqual(steps.map((s) => [s.kind, s.group]),
+    [["chord", 1], ["note", 1], ["note", 2]]);
+});
+
+// Joined where they were written together, broken where there was a space.
+// A note standing alone is taken off the beam rather than left to the
+// engraver, or "8 a b c d" would come out as the two beamed pairs the beat
+// says — the opposite of what was typed.
+test("a run is beamed together and a space breaks the beam", () => {
+  const fn = grab("applyTypedBeams");
+  assert.match(fn, /api\/beam/, "it never asks for a beam");
+  assert.match(fn, /run\.length > 1 \? "join" : "none"/,
+    "a run is not joined, or a note on its own is not taken off the beam");
+  assert.match(fn, /written\[j \+ 1\]\.group === written\[i\]\.group/,
+    "it does not group the notes by the word they were typed in");
+});
+
+test("only lengths that have a flag are beamed", () => {
+  const lengths = konst("beamedLengths");
+  for (const name of ["eighth", "sixteenth", "32nd", "64th"]) {
+    assert.ok(lengths.has(name), name + " has a flag and is not beamed");
+  }
+  for (const name of ["whole", "half", "quarter"]) {
+    assert.ok(!lengths.has(name), name + " has no flag to join");
+  }
+});
+
+test("the beams are asked for once the line is written", () => {
+  const fn = grab("runTyping");
+  assert.match(fn, /applyTypedBeams\(written\)/, "the beams are never applied");
+});

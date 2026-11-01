@@ -83,13 +83,65 @@ test("a whole bar picked up is not a note to move", () => {
   }), false);
 });
 
+// A note written this moment is selected, because a dynamic or a stem
+// change typed straight after it has to land on it. It is not picked up to
+// be moved, though: the gesture after writing a note is to go up or down
+// and write the next one, and the arrows have to move the caret for that.
+function holding(state) {
+  const scope = { state };
+  const body = grab("pickedNotes") + "\n" + grab("heldForMoving") +
+    "\nreturn heldForMoving;";
+  return new Function(...Object.keys(scope), body)(...Object.values(scope))();
+}
+
+test("a note just written is not held for moving", () => {
+  const sel = { part: 0, measure: 0, at: 1, ref: 7, wrote: true };
+  assert.equal(asking({ multi: [], selection: sel }), true,
+               "it is still selected, so a dynamic can land on it");
+  assert.equal(holding({ multi: [], selection: sel }), false,
+               "the arrow moved the note instead of the caret");
+});
+
+test("a note picked up by clicking it is held for moving", () => {
+  assert.equal(holding({ multi: [], selection: { part: 0, measure: 0, at: 1, ref: 7 } }),
+               true);
+});
+
+test("a dragged run is held however it was made", () => {
+  assert.equal(holding({
+    multi: [{ part: 0, measure: 0, index: 0 }, { part: 0, measure: 0, index: 1 }],
+    selection: { part: 0, measure: 0, at: 1, ref: 7, wrote: true },
+  }), true);
+});
+
+// Writing is the only thing that sets it, and clicking a note builds the
+// selection afresh, so what was written stops being the written one as soon
+// as anything else is picked up.
+test("writing a note is what marks it as just written", () => {
+  const insert = grab("insertAtSelection");
+  assert.match(insert, /sel\.wrote = true/,
+               "a note written from the keyboard is not marked as just written");
+});
+
 // The bindings themselves, so that the question they ask stays this one.
-test("the arrows ask whether music is picked up, not whether a drag happened", () => {
+test("the arrows ask whether music is held, not whether a drag happened", () => {
   for (const id of ["cursor-up", "cursor-down", "cursor-up-octave", "cursor-down-octave"]) {
     const m = src.match(new RegExp(`\\{ id: "${id}",[\\s\\S]*?\\n  \\},?\\n`));
     assert.ok(m, "no binding for " + id);
-    assert.match(m[0], /pickedNotes\(\)/, id + " asks the wrong question");
+    assert.match(m[0], /heldForMoving\(\)/, id + " asks the wrong question");
     assert.ok(!/state\.multi\.length/.test(m[0]),
               id + " still asks whether a run was dragged");
+  }
+});
+
+// Alt with an arrow is the way to move a note whatever is selected, which
+// is what makes the rule above safe: the note just written can still be
+// nudged, by asking for that outright.
+test("alt with an arrow moves the note, written this moment or not", () => {
+  for (const id of ["nudge-up", "nudge-down"]) {
+    const m = src.match(new RegExp(`\\{ id: "${id}",[\\s\\S]*?\\n  \\},?\\n`));
+    assert.ok(m, "no binding for " + id);
+    assert.ok(!/heldForMoving|pickedNotes/.test(m[0]),
+              id + " asks whether the note is held, and it should just move it");
   }
 });

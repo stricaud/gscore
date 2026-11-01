@@ -174,3 +174,43 @@ func TestATablatureChordIsTakenWhole(t *testing.T) {
 		}
 	}
 }
+
+// Moving one notehead of a chord moves that one.
+//
+// Reported as: clicking a note of a chord and pressing Up moved the whole
+// chord. The one note being corrected came back wrong along with the two
+// that were already right, and the way to fix a single notehead was to
+// take the chord apart and build it again.
+//
+// The endpoint has always been able to do it — a notehead is named by the
+// staff step it sits on, the way an accidental on one notehead is — and
+// the arrows were not telling it which one.
+func TestMovingOneNoteheadLeavesTheOthersAlone(t *testing.T) {
+	h := triad(t) // E4, G4 and B4, on steps 0, 2 and 4
+	h.post("/api/nudge?sel=0:0:0&head=2&steps=1")
+
+	ch := chordAt(t, h, 0, 0)
+	want := []string{"E4", "A4", "B4"}
+	if len(ch.Notes) != len(want) {
+		t.Fatalf("the chord has %d noteheads", len(ch.Notes))
+	}
+	for i, n := range ch.Notes {
+		if n.Pitch.String() != want[i] {
+			t.Errorf("notehead %d is %s, want %s", i, n.Pitch, want[i])
+		}
+	}
+}
+
+// And asking for no notehead in particular still moves the chord, which is
+// what a dragged selection of whole chords means.
+func TestMovingAChordWithNoNoteheadNamedMovesAllOfIt(t *testing.T) {
+	h := triad(t)
+	h.post("/api/nudge?sel=0:0:0&steps=1")
+
+	want := []string{"F4", "A4", "C5"}
+	for i, n := range chordAt(t, h, 0, 0).Notes {
+		if n.Pitch.String() != want[i] {
+			t.Errorf("notehead %d is %s, want %s", i, n.Pitch, want[i])
+		}
+	}
+}

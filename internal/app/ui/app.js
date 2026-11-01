@@ -9684,9 +9684,26 @@ async function nudge(steps) {
     status("Click a note first");
     return;
   }
-  await mark("nudge", { steps: String(steps) },
+  // The notehead that was clicked, where one was: clicking a note of a
+  // chord and pressing Up means that note, not the chord. Without it the
+  // whole chord went up a step and the one note somebody was correcting
+  // came back wrong along with the two that were already right.
+  //
+  // Nothing on a single note, which has one notehead and moves whichever
+  // way it is asked, and nothing on a dragged run, where what is picked
+  // up is whole chords.
+  const head = pickedHead();
+  const d = await mark("nudge", { steps: String(steps), ...head },
              steps > 0 ? (steps === 7 ? "Up an octave" : "Up")
                        : (steps === -7 ? "Down an octave" : "Down"));
+  // A notehead is named by where it sits, so moving it moves its name
+  // with it. Left alone, a second press would be aimed at the line the
+  // note has just left — which holds nothing, or worse, holds another
+  // note of the same chord.
+  if (d && head.head !== undefined && state.selection) {
+    state.selection.head = Number(head.head) + steps;
+    markSelection();
+  }
 }
 
 // moveCursorBy steps the selection along the music, one element at a time,

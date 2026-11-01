@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/stricaud/gscore/internal/model"
 )
@@ -411,4 +412,31 @@ func TestAnEmptyScoreStillCompiles(t *testing.T) {
 			Measures: []*model.Measure{{Voices: []*model.Voice{{}}}}}},
 	}
 	compiles(t, render(t, s))
+}
+
+// A name is shortened by letters, not by bytes.
+//
+// Reported from the flute solo: exporting a part called "Flöte" wrote a
+// short name of "Fl" and the first half of an o-umlaut, and LilyPond
+// stopped on the file with "input locale conversion error" — the bytes it
+// choked on were F, l, 0xC3, full stop. Any name with an accent in it did
+// it, which is most names outside English.
+func TestAShortNameIsCutByLettersNotBytes(t *testing.T) {
+	for _, c := range []struct{ name, want string }{
+		{"Flöte", "Flö."},
+		{"Fløyte", "Flø."},
+		{"Clarinet", "Cla."},
+		{"Alto Sax", "As"},
+		{"Flûte traversière", "Ft"},
+		{"Horn", "Horn"},
+		{"Übung", "Übu."}, // five letters, so it does shorten
+	} {
+		got := shortName(c.name)
+		if got != c.want {
+			t.Errorf("%q came out as %q, want %q", c.name, got, c.want)
+		}
+		if !utf8.ValidString(got) {
+			t.Errorf("%q came out as bytes that are not text: %q", c.name, got)
+		}
+	}
 }

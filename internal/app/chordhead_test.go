@@ -214,3 +214,81 @@ func TestMovingAChordWithNoNoteheadNamedMovesAllOfIt(t *testing.T) {
 		}
 	}
 }
+
+// Deleting one notehead of a chord deletes that one.
+//
+// Reported as: click a note of a chord, press Backspace, and the whole
+// chord goes. The two notes that were right have to be written again, and
+// the one being corrected is the only one that was asked for.
+func TestDeletingOneNoteheadLeavesTheChord(t *testing.T) {
+	h := triad(t) // E4, G4 and B4, on steps 0, 2 and 4
+	h.post("/api/delete?part=0&measure=0&at=0&head=2")
+
+	ch := chordAt(t, h, 0, 0)
+	want := []string{"E4", "B4"}
+	if len(ch.Notes) != len(want) {
+		t.Fatalf("the chord has %d noteheads, want two", len(ch.Notes))
+	}
+	for i, n := range ch.Notes {
+		if n.Pitch.String() != want[i] {
+			t.Errorf("notehead %d is %s, want %s", i, n.Pitch, want[i])
+		}
+	}
+}
+
+// A chord of two that loses one is a note, not a chord of one.
+func TestAChordLeftWithOneNoteheadBecomesANote(t *testing.T) {
+	h := newHarness(t)
+	h.note(0, 0, 0, "quarter")
+	h.post("/api/addpitch?part=0&measure=0&index=0&step=4")
+	// Something written on the chord, which belongs to the sound and so
+	// stays with the note that is left.
+	h.post("/api/articulation?articulation=staccato&sel=0:0:0")
+	h.post("/api/delete?part=0&measure=0&at=0&head=4")
+
+	el := h.app.score.Parts[0].Measures[0].Voices[0].Elements[0]
+	n, ok := el.(*model.Note)
+	if !ok {
+		t.Fatalf("what is left is a %T, want a note", el)
+	}
+	if n.Pitch.String() != "E4" {
+		t.Errorf("the note left is %s, want E4", n.Pitch)
+	}
+	if n.Dur.Cmp(model.Duration{Num: 1, Den: 4}) != 0 {
+		t.Errorf("it is %v long, want the chord's quarter", n.Dur)
+	}
+	if len(n.Articulations) != 1 {
+		t.Errorf("the staccato the chord carried was dropped")
+	}
+}
+
+// Naming no notehead still deletes the whole thing, which is what
+// Backspace on a chord picked up as a whole means.
+func TestDeletingWithNoNoteheadNamedTakesTheChord(t *testing.T) {
+	h := triad(t)
+	h.post("/api/delete?part=0&measure=0&at=0")
+	if n := len(h.app.score.Parts[0].Measures[0].Voices[0].Elements); n != 0 {
+		t.Errorf("%d things left in the bar, want none", n)
+	}
+}
+
+// A note has one notehead, and taking that away is taking the note away.
+func TestDeletingTheNoteheadOfASingleNoteTakesTheNote(t *testing.T) {
+	h := newHarness(t)
+	h.note(0, 0, 0, "quarter")
+	h.post("/api/delete?part=0&measure=0&at=0&head=0")
+	if n := len(h.app.score.Parts[0].Measures[0].Voices[0].Elements); n != 0 {
+		t.Errorf("%d things left in the bar, want none", n)
+	}
+}
+
+// A line nothing is written on is not a notehead to delete.
+func TestDeletingANoteheadThatIsNotThereTakesTheChord(t *testing.T) {
+	h := triad(t)
+	// Step 1 is the space between the E and the G, where nothing sits.
+	h.post("/api/delete?part=0&measure=0&at=0&head=1")
+	if n := len(h.app.score.Parts[0].Measures[0].Voices[0].Elements); n != 0 {
+		t.Errorf("%d things left, want the chord gone as it would be with "+
+			"no notehead named", n)
+	}
+}

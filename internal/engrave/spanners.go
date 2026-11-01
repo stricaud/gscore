@@ -494,17 +494,73 @@ const (
 	// phrase that climbs away from it. Further than this and the curve is
 	// no longer attached to anything a reader can see.
 	slurEndLift = 4.0
-	// slurRunSpan is how wide a slur has to be before its ends are allowed
-	// to leave their notes at all. A slur over two notes is read as
-	// belonging to them and has to touch them; only a phrase long enough
-	// to climb away from where it began can ask for anything else.
-	slurRunSpan = 16.0
+	// slurOffCentre is how far from the middle of a slur the worst of what
+	// it has to clear must stand before the ends are lifted rather than the
+	// arch raised.
+	//
+	// Which of the two to move is not a matter of taste. A quadratic's
+	// control point moves the curve by twice t(1-t): the whole of it in the
+	// middle, and less and less towards the ends, so clearing a note at the
+	// middle costs twice its height in control point and clearing one a
+	// sixth of the way along costs six times. In the middle the arch is the
+	// cheap answer and the ends should stay on their notes; out towards an
+	// end it is ruinous — the Altes has a five-note phrase over a beam two
+	// thirds of the way along, and arching over that one beam threw the
+	// middle of the curve eight spaces above the staff. There the ends are
+	// the cheap answer.
+	//
+	// This replaced a rule that asked how wide the slur was. Width says
+	// nothing about the question: a slur over two whole notes is wider than
+	// a run of five eighths, and it was the run — refused its lift — that
+	// came out as a spike.
+	slurOffCentre = 0.15
+
+	// slurShoulderLift is the most a slur's end may rise off its own note to
+	// get over what stands beside it.
+	//
+	// Much less than slurEndLift, and for a different reason. That one is a
+	// phrase climbing away from where it began, and the whole curve goes
+	// with it; this is one beam or one stem next to the note the slur ends
+	// on, and the curve comes back down to the staff straight afterwards.
+	// An end raised far for a local obstacle reads as belonging to no note
+	// at all.
+	slurShoulderLift = 2.0
+
+	// slurColumnLift is the most a slur's end may rise to clear what else
+	// is written in its own note's column.
+	//
+	// The length of a stem and a little over, because a stem with a beam
+	// on the end of it is the tallest thing a note's column can hold, and
+	// an end that has risen past the top of that is no longer rising over
+	// anything.
+	slurColumnLift = stemLength + 1.5
+
+	// slurOwnColumn is how much of each end of a slur is its own note's,
+	// and so not something the curve has to clear: a notehead and the stem
+	// alongside it.
+	slurOwnColumn = 1.6
+	// slurShoulderIn is how far in from each end the arch takes over. What
+	// lies outside it, between the end's own note and that point, is the
+	// shoulder, and is cleared by raising the end rather than by arching.
+	slurShoulderIn = 0.25
 
 	// archPerWidth is the most of its own width a curve may rise by, which
 	// is what keeps a very short one — the stub left at a line break — an
 	// arc rather than a spike.
 	archPerWidth = 0.35
 )
+
+// stemSlurInset is how far inside the stem's end a slur hangs.
+//
+// Not level with the tip: a curve that starts exactly at the end of the
+// stem reads as part of it. A little way down the stem and the two are
+// plainly different things, which is where printed music puts it.
+func stemSlurInset(above bool) float64 {
+	if above {
+		return 0.4
+	}
+	return -0.4
+}
 
 // slurAt handles a slur or a tie opening or closing at one element.
 func (e *engraver) slurAt(part *model.Part, m *model.Marks, p *placed, measure int) {
@@ -561,10 +617,37 @@ func (e *engraver) slurAt(part *model.Part, m *model.Marks, p *placed, measure i
 		if !sl.above {
 			edge, toEdge = sl.fromLo, p.lo
 		}
-		// And each end outside whatever is written on its own note.
-		sl.y = e.slurEndClear(sl.x, e.y+stepY(float64(edge)), sl.above)
+		// From the stem, where the slur is on the side the stems are on.
+		//
+		// A slur goes away from the stems and usually that settles it, but
+		// two lines of music on one staff do not allow it: the upper voice
+		// stems up and is slurred above all the same. Anchored at the
+		// notehead there, the curve has to climb over its own stems, and a
+		// phrase of three notes came out as a dome higher than the staff.
+		// Printed music hangs it off the stem ends instead, which is what
+		// makes those slurs the shallow arcs they are.
+		fromY := e.y + stepY(float64(edge))
+		fromOnStem := sl.above == sl.fromStemUp
+		if fromOnStem {
+			fromY = sl.fromStemY + stemSlurInset(sl.above)
+		}
+		toUp := e.stemUp(p)
+		toBase := e.y + stepY(float64(toEdge))
+		toStemY := e.stemEnd(e.y+stepY(float64(p.hi)), toUp)
+		if !toUp {
+			toStemY = e.stemEnd(e.y+stepY(float64(p.lo)), toUp)
+		}
+		toOnStem := sl.above == toUp
+		if toOnStem {
+			toBase = toStemY + stemSlurInset(sl.above)
+		}
+		// And each end outside whatever else is written in its own note's
+		// column, and outside the marks on the note itself.
+		fromY = e.slurEndColumn(sl.x, fromY, sl.fromStemY, sl.above, fromOnStem)
+		toBase = e.slurEndColumn(x, toBase, toStemY, sl.above, toOnStem)
+		sl.y = e.slurEndClear(sl.x, fromY, sl.above)
 		sl.toRef = p.index
-		toY := e.slurEndClear(x, e.y+stepY(float64(toEdge)), sl.above)
+		toY := e.slurEndClear(x, toBase, sl.above)
 		e.drawTieOrSlur(sl, x, toY, slurLift, true, true)
 		open.slur = nil
 	}
@@ -574,9 +657,15 @@ func (e *engraver) slurAt(part *model.Part, m *model.Marks, p *placed, measure i
 			edge = p.lo
 		}
 		y := e.y + stepY(float64(edge))
+		up := e.stemUp(p)
+		base := e.y + stepY(float64(p.hi))
+		if !up {
+			base = e.y + stepY(float64(p.lo))
+		}
 		open.slur = &openSpan{
 			x: x, y: y, rel: y - e.y, above: above,
 			fromHi: p.hi, fromLo: p.lo,
+			fromStemUp: up, fromStemY: e.stemEnd(base, up),
 			ref: p.index, part: e.partIndex, measure: measure,
 		}
 		if e.stemUp(p) {
@@ -807,6 +896,54 @@ func (e *engraver) slurEndClear(x, y float64, above bool) float64 {
 	return y
 }
 
+// slurEndColumn moves a slur's end out past whatever else is written in the
+// same column of the staff as the note it begins or ends on.
+//
+// Two voices on one staff is what this is for. A slur goes away from the
+// stems of the notes it covers, and with two voices under it there is no
+// such side: the lower voice stems up, the upper voice stems down, and the
+// slur over the upper one is drawn on the side the lower one's stems are
+// on. Bar 48 of the eighth Altes solo, in the piano: both voices slurred
+// between the same two chords, and the upper slur — started at its own
+// notehead, with the lower voice's stems standing three spaces over it —
+// came out as a lens with two stems run through it.
+//
+// It is the note's own column and not its neighbourhood: half a notehead
+// either way, which is what is written on the note rather than beside it.
+// What is beside it is slurShoulder's, and what is between the two notes is
+// the arch's.
+//
+// onStem says the slur is on the side its own note's stem points, and then
+// that stem is the tallest thing in the column and is not in the way: the
+// curve is hung off the end of it on purpose. Only something standing past
+// it counts.
+func (e *engraver) slurEndColumn(x, y, ownStem float64, above, onStem bool) float64 {
+	const near = 0.6
+	ink := e.staffInkline().reach(x-near, x+near, !above)
+	if math.IsInf(ink, 0) {
+		return y // nothing drawn there at all
+	}
+	if onStem && ((above && ink >= ownStem) || (!above && ink <= ownStem)) {
+		return y
+	}
+	// No air asked for here: drawTieOrSlur lifts every end by slurLift
+	// afterwards, and that is the air.
+	lift := y - ink
+	if !above {
+		lift = ink - y
+	}
+	if lift <= 0 {
+		return y
+	}
+	if lift > slurColumnLift {
+		lift = slurColumnLift
+	}
+	if above {
+		return y - lift
+	}
+	return y + lift
+}
+
 // fitSlur places a slur so that it clears the music it arcs over.
 //
 // A curve fitted to its two ends alone is clear of a phrase that happens
@@ -815,23 +952,32 @@ func (e *engraver) slurEndClear(x, y float64, above bool) float64 {
 // the last one goes straight through everything between — which is where
 // the line a slur draws must never be, because that line is the phrase.
 //
-// Two things are adjusted, in that order:
+// Three things are adjusted, in that order:
 //
+//	the shoulders what stands beside the slur's own two notes, in the
+//	             quarter of the span nearest each end. A control point
+//	             barely reaches there, so each end is lifted over its own
+//	             neighbour rather than arched over it — see slurShoulder.
 //	the arch     the middle is free, so it is lifted until the curve
 //	             clears every place along it, not merely at its own
 //	             middle where a quadratic stands furthest from the
 //	             straight line between its ends.
 //	the ends     and where that alone would need an arch taller than a
-//	             slur should ever be, the ends come up to meet the music
+//	             slur should ever be, and the worst of what it is clearing
+//	             is off to one side, the ends come up to meet the music
 //	             instead. They stay over their own notes — the reader
 //	             picks the phrase up from the note it starts on — but
 //	             they rise off them, which is what an engraver does with
 //	             a run that climbs away from where it began.
 func (e *engraver) fitSlur(x0, x1, y1, y2, dir float64) (float64, float64, float64) {
-	cy := (y1+y2)/2 + dir*e.slurArchFor(x1-x0)*2
 	if x1 <= x0 {
-		return y1, y2, cy
+		return y1, y2, (y1+y2)/2 + dir*e.slurArchFor(x1-x0)*2
 	}
+	// The shoulders first, because the arch is fitted to the ends and has
+	// to be fitted to where they finally are.
+	y1 = e.slurShoulder(x0+slurOwnColumn, x0+(x1-x0)*slurShoulderIn, y1, dir)
+	y2 = e.slurShoulder(x1-(x1-x0)*slurShoulderIn, x1-slurOwnColumn, y2, dir)
+	cy := (y1+y2)/2 + dir*e.slurArchFor(x1-x0)*2
 	// Twice: lifting the ends changes what the arch has to be, and the
 	// new arch is what says whether the ends are high enough yet.
 	for pass := 0; pass < 2; pass++ {
@@ -839,7 +985,7 @@ func (e *engraver) fitSlur(x0, x1, y1, y2, dir float64) (float64, float64, float
 		cy = need
 		rise := ((y1+y2)/2 - (0.25*y1 + 0.5*cy + 0.25*y2)) * -dir
 		over := rise - slurRiseMax
-		if over <= 0 || pass == 1 || x1-x0 < slurRunSpan {
+		if over <= 0 || pass == 1 || math.Abs(at-0.5) < slurOffCentre {
 			break
 		}
 		// The ends share the lift by how much each of them moves the
@@ -859,6 +1005,40 @@ func (e *engraver) fitSlur(x0, x1, y1, y2, dir float64) (float64, float64, float
 		cy = (y1+y2)/2 + dir*e.slurArchFor(x1-x0)*2
 	}
 	return y1, y2, cy
+}
+
+// slurShoulder lifts one end of a slur over whatever stands just inside
+// it, and says where that end now is.
+//
+// The arch cannot do this. A quadratic's control point moves the curve by
+// twice t(1-t), which is the whole arch in the middle and nothing at all at
+// the ends, so clearing something a tenth of the way along by arching asks
+// for a control point five times as far out as the thing being cleared —
+// and a run of beamed notes ending on a low one came out as a spike over
+// the staff for the sake of the last beam before it. The end is the part of
+// the curve that is there, so the end is what moves.
+//
+// It moves by no more than slurShoulderLift, and that is on purpose: past
+// that the curve has left its own note and the reader can no longer see
+// where the phrase begins. A slur that cannot clear what is beside it
+// grazes it, which is the lesser of the two faults.
+func (e *engraver) slurShoulder(a, b, y, dir float64) float64 {
+	if b <= a {
+		return y
+	}
+	edge := e.staffInkline().reach(a, b, dir > 0)
+	if math.IsInf(edge, 0) {
+		return y // nothing drawn there at all
+	}
+	want := edge + dir*slurClearance
+	lift := (y - want) * dir
+	if lift <= 0 {
+		return y
+	}
+	if lift > slurShoulderLift {
+		lift = slurShoulderLift
+	}
+	return y + dir*lift
 }
 
 // slurArchFor is the arch a slur of this width starts with, before the
@@ -891,7 +1071,9 @@ func (e *engraver) slurArchFor(span float64) float64 {
 // arithmetic below is the Bézier read backwards for the control point.
 func (e *engraver) archOver(x0, x1, y1, y2, cy, dir float64) (float64, float64) {
 	above := dir < 0
-	sky := e.staffOutline()
+	// The music, without the staff: a slur is drawn among the notes and
+	// has no business clearing the lines they are written on.
+	sky := e.staffInkline()
 
 	// Only what lies between the ends: the notes the slur starts and ends
 	// on are its own, and a slur is drawn from them, not over them.
@@ -901,7 +1083,11 @@ func (e *engraver) archOver(x0, x1, y1, y2, cy, dir float64) (float64, float64) 
 	// asks for a control point four times as far out — and a stem that
 	// belongs to the slur's own first note would throw the whole curve
 	// across the page.
-	inset := (x1 - x0) * 0.25
+	//
+	// The quarter at each end is not ignored; it is the end's own business.
+	// A control point has almost no purchase that near a corner, so what
+	// lies there is cleared by lifting the end over it — see slurShoulder.
+	inset := (x1 - x0) * slurShoulderIn
 	a, b := x0+inset, x1-inset
 	if b <= a {
 		return cy, 0.5
@@ -913,6 +1099,9 @@ func (e *engraver) archOver(x0, x1, y1, y2, cy, dir float64) (float64, float64) 
 	for i := 0; i <= steps; i++ {
 		x := a + float64(i)*width
 		edge := sky.reach(x-width/2, x+width/2, !above)
+		if math.IsInf(edge, 0) {
+			continue // nothing drawn here at all
+		}
 		if above {
 			edge -= slurClearance
 		} else {

@@ -320,3 +320,258 @@ func TestNoSlurInTheSamplesCutsANote(t *testing.T) {
 		}
 	}
 }
+
+// quadBand is how far a four-sided shape reaches up and down at one x,
+// read by walking its edges.
+//
+// Beams are what these are, and a beam is a sloping parallelogram: its top
+// and bottom at any x are both somewhere between where they are at its two
+// ends, so neither can be had from the shape's bounding box without
+// claiming the whole corner of the page a steep beam cuts across.
+func quadBand(q Quad, x float64) (top, bottom float64, ok bool) {
+	top, bottom = math.Inf(1), math.Inf(-1)
+	n := len(q.X)
+	for i := 0; i < n; i++ {
+		j := (i + 1) % n
+		x1, y1, x2, y2 := q.X[i], q.Y[i], q.X[j], q.Y[j]
+		if x1 == x2 {
+			if x != x1 {
+				continue
+			}
+		} else if x < math.Min(x1, x2) || x > math.Max(x1, x2) {
+			continue
+		}
+		y := y1
+		if x1 != x2 {
+			y = y1 + (y2-y1)*(x-x1)/(x2-x1)
+		}
+		top, bottom = math.Min(top, y), math.Max(bottom, y)
+		ok = true
+	}
+	return top, bottom, ok
+}
+
+// worstBeamCut is the deepest a slur runs into a beam anywhere in a
+// drawing, and where.
+func worstBeamCut(lay *Layout) (float64, float64) {
+	worst, where := 0.0, 0.0
+	for _, a := range lay.Arcs {
+		if a.Kind != "slur" {
+			continue
+		}
+		c := Curve{X1: a.X1, Y1: a.Y1, CX: a.CX, CY: a.CY, X2: a.X2, Y2: a.Y2}
+		for _, q := range lay.Quads {
+			if len(q.X) == 0 {
+				continue
+			}
+			lo, hi := q.X[0], q.X[0]
+			for _, x := range q.X {
+				lo, hi = math.Min(lo, x), math.Max(hi, x)
+			}
+			const steps = 12
+			for i := 0; i <= steps; i++ {
+				x := lo + (hi-lo)*float64(i)/steps
+				// The beam over the slur's own last note is drawn from the
+				// same stem the curve ends at, so they meet there by
+				// construction and that is not the curve cutting it.
+				if x < c.X1+noteheadMid*2 || x > c.X2-noteheadMid*2 {
+					continue
+				}
+				y, ok := curveY(c, x)
+				if !ok {
+					continue
+				}
+				top, bottom, ok := quadBand(q, x)
+				if !ok || y < top || y > bottom {
+					continue
+				}
+				if cut := math.Min(y-top, bottom-y); cut > worst {
+					worst, where = cut, x
+				}
+			}
+		}
+	}
+	return worst, where
+}
+
+// A slur must clear the beams as well as the noteheads.
+//
+// Bar 58 of the eighth Altes solo: a run of beamed eighths climbing well
+// above the staff, and the slur ending on the note after them, which is
+// low. The arch was fitted to the middle half of the span only, so the
+// beam standing in the last quarter of it was not there to be cleared, and
+// the curve came down over the final note straight through the beam.
+//
+// What sits that near an end is the end's business and not the arch's: a
+// control point has next to no purchase a tenth of the way from a corner,
+// and asking it to lift the curve there throws the middle of the slur off
+// the top of the page. So the end rises over it instead — see slurShoulder.
+func TestASlurClearsTheBeamBesideItsLastNote(t *testing.T) {
+	s := model.NewScore()
+	m := s.Parts[0].Measures[0]
+	// Four eighths climbing from low to high: most of them are under the
+	// middle line, so the group's stems point up and its beam has to be
+	// carried above the top of the climb. Then one more eighth, just over
+	// the middle line, whose own stem points down — so the stems disagree,
+	// the slur goes above, and it has to come down from the beam to a note
+	// five spaces below it, in the width of one eighth note.
+	//
+	// A rest after that one, to keep it out of the beam: a note the beam
+	// reaches is a note the curve may meet the beam at, and then there is
+	// nothing to see.
+	type at struct {
+		step   model.Step
+		octave int
+		den    int
+	}
+	for _, n := range []at{
+		{model.StepC, 4, 8}, {model.StepD, 4, 8},
+		{model.StepE, 4, 8}, {model.StepG, 5, 8},
+		{model.StepC, 5, 8},
+	} {
+		m.Voices[0].Elements = append(m.Voices[0].Elements, &model.Note{
+			Pitch: model.Pitch{Step: n.step, Octave: n.octave},
+			Dur:   model.Duration{Num: 1, Den: n.den},
+		})
+	}
+	m.Voices[0].Elements = append(m.Voices[0].Elements,
+		&model.Rest{Dur: model.Duration{Num: 1, Den: 8}},
+		&model.Rest{Dur: model.Duration{Num: 1, Den: 4}})
+	els := m.Voices[0].Elements
+	els[0].(*model.Note).Marks.SlurStart = true
+	els[4].(*model.Note).Marks.SlurStop = true
+
+	lay := Engrave(s, DefaultOptions())
+	if len(lay.Quads) == 0 {
+		t.Fatal("nothing beamed, so there is no beam to clear")
+	}
+	if worst, where := worstBeamCut(lay); worst > 0.25 {
+		t.Errorf("the slur runs %.2f spaces through a beam at x=%.1f",
+			worst, where)
+	}
+
+	// And it clears the beam by rising over it, not by arching over it.
+	// Arching is what it used to do, and the beam being two thirds of the
+	// way along is what made that so expensive: the curve stood eight
+	// spaces off the line between its own ends, a spike over the staff
+	// rather than a slur. Clearing the beam and looking like that is not
+	// passing this test.
+	sl := theSlur(t, lay)
+	apex := 0.25*sl.Y1 + 0.5*sl.CY + 0.25*sl.Y2
+	if rise := (sl.Y1+sl.Y2)/2 - apex; rise > 5 {
+		t.Errorf("the slur stands %.2f spaces off the line between its ends, "+
+			"which is a spike and not a slur", rise)
+	}
+}
+
+// And the same over every sample, as the noteheads are checked above.
+func TestNoSlurInTheSamplesCutsABeam(t *testing.T) {
+	files, err := filepath.Glob("../../samples/*.abc")
+	if err != nil || len(files) == 0 {
+		t.Skip("the samples are not here")
+	}
+	for _, path := range files {
+		f, err := os.Open(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		imp, err := format.ImporterFor(path)
+		if err != nil {
+			f.Close()
+			continue
+		}
+		s, _ := imp.Import(f)
+		f.Close()
+		if s == nil {
+			continue
+		}
+
+		o := DefaultOptions()
+		o.Mode = Strip
+		o.WriteAhead = false
+		lay := Engrave(s, o)
+
+		worst, where := worstBeamCut(lay)
+		at := filepath.Base(path)
+
+		// A hair is the curve's thickness meeting a beam's corner; a
+		// quarter of a space is the curve drawn through it.
+		if worst > 0.25 {
+			t.Errorf("%s: a slur runs %.2f spaces through a beam at x=%.1f",
+				at, worst, where)
+		}
+	}
+}
+
+// A slur clears the other voice's stems at its own two notes.
+//
+// Reported from bar 48 of the eighth Altes solo, in the piano: two voices
+// on one staff, both slurred between the same two chords, and the two
+// curves drawn as a lens with the lower voice's stems run straight through
+// the upper one.
+//
+// A slur goes on the side away from the stems of the notes it covers, and
+// with two voices there is no such side — one points up and the other
+// down. The curve of the voice that stems down is drawn above, which is
+// where the other voice's stems are, and the ends of that curve sit in the
+// same two columns of the staff as those stems. What is between the ends
+// is lifted over by the arch; the ends are the ones that have to be told.
+func TestASlurClearsTheOtherVoicesStems(t *testing.T) {
+	s := model.NewScore()
+	m := s.Parts[0].Measures[0]
+	half := model.Duration{Num: 1, Den: 2}
+	// The voice that stems up, written above.
+	up := &model.Voice{}
+	for i := 0; i < 2; i++ {
+		n := &model.Note{Pitch: model.Pitch{Step: model.StepC, Octave: 5}, Dur: half}
+		n.Marks.Stem = model.StemUp
+		up.Elements = append(up.Elements, n)
+	}
+	// And the one that stems down, slurred, whose curve therefore goes
+	// above and into the other voice's stems.
+	down := &model.Voice{}
+	for i := 0; i < 2; i++ {
+		n := &model.Note{Pitch: model.Pitch{Step: model.StepA, Octave: 4}, Dur: half}
+		n.Marks.Stem = model.StemDown
+		down.Elements = append(down.Elements, n)
+	}
+	down.Elements[0].(*model.Note).Marks.SlurStart = true
+	down.Elements[1].(*model.Note).Marks.SlurStop = true
+	m.Voices = []*model.Voice{up, down}
+
+	lay := Engrave(s, DefaultOptions())
+	sl := theSlur(t, lay)
+	if sl.CY >= (sl.Y1+sl.Y2)/2 {
+		t.Fatalf("the slur is not above: ends %.2f..%.2f, arch %.2f",
+			sl.Y1, sl.Y2, sl.CY)
+	}
+
+	// The tops of the other voice's stems, in the two columns the slur
+	// ends in. A stem is a vertical line; the ledger lines a low note
+	// carries are horizontal and are not.
+	top := func(x float64) float64 {
+		out := math.Inf(1)
+		for _, l := range lay.Lines {
+			if l.X1 != l.X2 || math.Abs(l.X1-x) > 1 {
+				continue
+			}
+			out = math.Min(out, math.Min(l.Y1, l.Y2))
+		}
+		return out
+	}
+	for _, end := range []struct {
+		what string
+		x, y float64
+	}{{"begins", sl.X1, sl.Y1}, {"ends", sl.X2, sl.Y2}} {
+		stem := top(end.x)
+		if math.IsInf(stem, 0) {
+			t.Fatalf("no stem found in the column the slur %s in", end.what)
+		}
+		// y grows downward, so clear of the stem means above its top.
+		if end.y > stem {
+			t.Errorf("the slur %s at %.2f and the other voice's stem there "+
+				"reaches %.2f, so the stem is drawn through the curve",
+				end.what, end.y, stem)
+		}
+	}
+}

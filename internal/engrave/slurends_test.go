@@ -81,15 +81,20 @@ func TestASlurBeginsOnItsOwnFirstNote(t *testing.T) {
 	if highest >= first {
 		t.Fatalf("the test's own notes are not where it thinks: heads %v", heads)
 	}
-	// The curve leaves from near its first note, not from the top of the
-	// phrase. Two spaces of lift is the most it is allowed.
-	if math.Abs(sl.Y1-first) > 2.5 {
-		t.Errorf("the slur begins at %.2f and its first note is at %.2f; the "+
-			"highest note under it is at %.2f, which is where it used to begin",
-			sl.Y1, first, highest)
+	// The curve leaves from its own first note, not from the top of the
+	// phrase. These notes are low, so their stems point up — and the slur
+	// is above them, on the side the stems are on, so where it belongs on
+	// its own note is the end of that stem rather than the notehead. Half a
+	// space either way of that is the most it is allowed.
+	fromAnchor, toAnchor := first-stemLength, last-stemLength
+	if math.Abs(sl.Y1-fromAnchor) > 2.5 {
+		t.Errorf("the slur begins at %.2f and its first note's stem ends at "+
+			"%.2f; the highest note under it is at %.2f, which is where it "+
+			"used to begin", sl.Y1, fromAnchor, highest)
 	}
-	if math.Abs(sl.Y2-last) > 2.5 {
-		t.Errorf("the slur ends at %.2f and its last note is at %.2f", sl.Y2, last)
+	if math.Abs(sl.Y2-toAnchor) > 2.5 {
+		t.Errorf("the slur ends at %.2f and its last note's stem ends at %.2f",
+			sl.Y2, toAnchor)
 	}
 	// And it still clears what it arcs over: the control point is pulled
 	// well above the highest note between the ends.

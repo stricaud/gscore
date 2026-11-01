@@ -629,7 +629,7 @@ func (a *App) handleDelete(w http.ResponseWriter, r *http.Request) {
 	a.lock()
 	defer a.mu.Unlock()
 
-	_, m, err := a.locate(partIdx, measIdx)
+	p, m, err := a.locate(partIdx, measIdx)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -639,8 +639,78 @@ func (a *App) handleDelete(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "nothing there to delete", http.StatusBadRequest)
 		return
 	}
+
+	// One notehead of a chord, where that is what was picked up.
+	//
+	// A notehead is named by the step it sits on, the way an accidental on
+	// one notehead is and the way moving one is. Clicking a note of a
+	// chord and pressing Backspace means that note: taking the whole chord
+	// away and leaving the two that were right to be written again is not
+	// what anybody is asking for.
+	if v, ok := q["head"]; ok && len(v) > 0 && v[0] != "" {
+		head, err := strconv.Atoi(v[0])
+		if err != nil {
+			http.Error(w, "a notehead is named by its staff step",
+				http.StatusBadRequest)
+			return
+		}
+		if gone, left := removeNotehead(p, m, measIdx, at, head); gone {
+			writeJSON(w, map[string]any{"status": "ok", "left": left})
+			return
+		}
+	}
+
 	v.Elements = append(v.Elements[:at], v.Elements[at+1:]...)
 	writeJSON(w, map[string]string{"status": "ok"})
+}
+
+// removeNotehead takes one notehead out of a chord, and says whether it
+// found one and how many are left.
+//
+// A chord of two that loses one is not a chord of one: it is a note, and
+// is turned back into one so that everything downstream — the stem, the
+// playback, the next notehead added to it — sees what it is. The marks the
+// chord carried belong to the sound rather than to a notehead, so they go
+// with it; the tie belongs to the notehead and stays with the note left.
+//
+// Anything that is not a chord is left alone and the caller deletes it
+// whole: a note has one notehead, and taking that away is taking the note
+// away.
+func removeNotehead(p *model.Part, m *model.Measure, index, at, head int) (bool, int) {
+	v := m.Voices[0]
+	ch, ok := v.Elements[at].(*model.Chord)
+	if !ok {
+		return false, 0
+	}
+	clef := p.ClefAt(index)
+	// The first notehead on that line, and only it. Two can share a line —
+	// a C sharp and a C flat are both written on the C — and taking both
+	// away would be answering a click on one of them with two deletions.
+	cut := -1
+	for i, n := range ch.Notes {
+		if engrave.StaffStep(clef, n.Pitch) == head {
+			cut = i
+			break
+		}
+	}
+	if cut < 0 {
+		return false, 0
+	}
+	ch.Notes = append(ch.Notes[:cut], ch.Notes[cut+1:]...)
+	switch len(ch.Notes) {
+	case 0:
+		v.Elements = append(v.Elements[:at], v.Elements[at+1:]...)
+		return true, 0
+	case 1:
+		n := ch.Notes[0]
+		n.Dur = ch.Dur
+		marks := ch.Marks
+		marks.TieStart, marks.TieStop = n.TieStart, n.TieStop
+		n.Marks = marks
+		v.Elements[at] = n
+		return true, 1
+	}
+	return true, len(ch.Notes)
 }
 
 // handleDeleteSelection removes everything in a dragged selection.

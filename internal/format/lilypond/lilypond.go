@@ -1115,15 +1115,25 @@ func spellNumber(n int) string {
 	return b.String()
 }
 
+// shortName is the name in the margin of every system after the first.
+//
+// Counted in letters, not in bytes. "Flöte" cut after three bytes is "Fl"
+// and half of an o-umlaut, which is not text at all: LilyPond stopped on
+// it with "input locale conversion error" and the file would not typeset.
+// Any name with an accent in it does that, which is most of them outside
+// English.
 func shortName(s string) string {
-	if len(s) <= 4 {
+	r := []rune(s)
+	if len(r) <= 4 {
 		return s
 	}
 	f := strings.Fields(s)
 	if len(f) > 1 {
-		return strings.ToUpper(f[0][:1]) + strings.ToLower(f[1][:1])
+		first := []rune(f[0])
+		second := []rune(f[1])
+		return strings.ToUpper(string(first[:1])) + strings.ToLower(string(second[:1]))
 	}
-	return s[:3] + "."
+	return string(r[:3]) + "."
 }
 
 func lastBarline(p *model.Part) model.BarlineStyle {

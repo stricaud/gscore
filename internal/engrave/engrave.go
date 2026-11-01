@@ -850,6 +850,7 @@ type engraver struct {
 	// staffSky is that staff's outline so far, and staffSkyAt how much of
 	// the drawing has gone into it. See staffOutline.
 	staffSky   *skyline
+	staffInk   *skyline
 	staffSkyAt mark
 	// headingTop is where the heading of the movement about to be drawn
 	// began, so that the system records its territory as starting there and
@@ -963,6 +964,13 @@ type openSpan struct {
 	// through the staff to the last one. The ends belong to their notes.
 	// What is between them is the arch's business — see clearArch.
 	fromHi, fromLo int
+
+	// fromStemUp is which way the first note's stem went, and fromStemY
+	// where it ended. A slur on the side the stems are on is drawn from
+	// the stem rather than from the notehead — see slurAt — and by the
+	// time the slur closes the note it began on is long gone.
+	fromStemUp bool
+	fromStemY  float64
 
 	// rel is that same height measured from the top of its staff rather than
 	// from the top of the whole drawing. A curve cut at a line break is
@@ -2755,7 +2763,7 @@ func (e *engraver) drawSystem(parts []*model.Part, boxes [][]measureBox,
 		e.staffMark, e.staffTop = staffMark, staffTop
 		e.staffX0, e.staffX1 = sp.Margin, right
 		// A new staff, so the outline kept for the last one is of no use.
-		e.staffSky = nil
+		e.staffSky, e.staffInk = nil, nil
 		staffTops = append(staffTops, e.y)
 		// Each staff's clef starts far enough right that its own key and
 		// meter end where everybody else's do, so a staff in C major and one

@@ -11,6 +11,16 @@
 import AppKit
 import CoreText
 
+/// say puts a line on the error stream.
+///
+/// Not NSLog: that goes to the system's log, which is one more place to go
+/// and look, and from a terminal it may show nothing at all. Anybody
+/// running the application to find out why it is not drawing something
+/// wants the answer in front of them.
+func say(_ message: String) {
+    FileHandle.standardError.write(Data(("gscore: " + message + "\n").utf8))
+}
+
 /// The little pictures beside the menu entries.
 ///
 /// gscore 0.0.9 put one next to every entry that writes something, and the
@@ -25,6 +35,21 @@ import CoreText
 /// so there is one list of what each command looks like and two places that
 /// draw from it. Copying it would be a list that is right on the day it is
 /// written and wrong a week later.
+///
+/// Nothing of this reaches the screen on macOS 27, and the fault is not
+/// here. Measured on 2026-11-01: the font arrives, every codepoint in the
+/// table resolves to a glyph with ink, an image is made for each of the
+/// sixty-four entries that asks for one, and all sixty-four are on the
+/// menu bar when it is read back — and none of them is drawn. A stock
+/// system symbol put on the same entry is not drawn either, while the
+/// three entries macOS inserts into the Edit menu itself keep their
+/// icons. So this system does not draw an application's own menu-item
+/// pictures, and no change here will make it.
+///
+/// Left in place rather than deleted: it is correct, it costs one fetch
+/// at launch, and an older or newer system may well draw them. Anybody
+/// finding the menus bare should read this paragraph before reading the
+/// code.
 ///
 /// Drawn rather than received as a picture, because a menu is the system's
 /// and not ours: the words beside these are set in whatever the system is
@@ -78,11 +103,33 @@ enum Glyphs {
     /// Bravura in every other application's font menu for as long as gscore
     /// is open.
     static func load(from base: URL, then: @escaping () -> Void) {
-        guard let url = URL(string: "font.otf", relativeTo: base) else { return }
-        URLSession.shared.dataTask(with: url) { data, _, _ in
-            guard let data,
-                  let provider = CGDataProvider(data: data as CFData),
-                  let face = CGFont(provider) else { return }
+        guard let url = URL(string: "font.otf", relativeTo: base) else {
+            say("no address for the music font under \(base.absoluteString)")
+            return
+        }
+        URLSession.shared.dataTask(with: url) { data, response, error in
+            // Said out loud, because every way this can fail ends in a menu
+            // bar with no pictures in it and nothing anywhere saying why.
+            // Three silent guards is an afternoon spent reading the drawing
+            // code, which was never the part that was wrong.
+            if let error {
+                say("the music font did not arrive from \(url.absoluteString): "
+                     + error.localizedDescription)
+                return
+            }
+            if let http = response as? HTTPURLResponse, http.statusCode != 200 {
+                say("\(url.absoluteString) answered \(http.statusCode) for the music font")
+                return
+            }
+            guard let data, !data.isEmpty else {
+                say("the music font came back empty from \(url.absoluteString)")
+                return
+            }
+            guard let provider = CGDataProvider(data: data as CFData),
+                  let face = CGFont(provider) else {
+                say("the \(data.count) bytes at \(url.absoluteString) are not a font this can read")
+                return
+            }
             DispatchQueue.main.async {
                 font = face
                 then()

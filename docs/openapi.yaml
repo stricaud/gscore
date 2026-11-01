@@ -678,11 +678,19 @@ paths:
   /api/delete:
     post:
       tags: [write]
-      summary: Take out one element
+      summary: Take out one element, or one notehead of a chord
       parameters:
         - $ref: "#/components/parameters/part"
         - $ref: "#/components/parameters/measure"
         - $ref: "#/components/parameters/at"
+        - name: head
+          in: query
+          description: >
+            The staff step of one notehead of a chord. Given, only that
+            notehead goes and the chord stays — and a chord left with one
+            notehead becomes a note again. Left off, the whole element
+            goes.
+          schema: { type: integer }
       responses:
         "200": { $ref: "#/components/responses/Status" }
         "400": { $ref: "#/components/responses/Error" }

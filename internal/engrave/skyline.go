@@ -13,6 +13,7 @@ package engrave
 import (
 	"math"
 	"sort"
+	"strings"
 
 	"github.com/stricaud/gscore/internal/smufl"
 )
@@ -59,6 +60,28 @@ type skyline struct {
 
 // newSkyline starts an outline over a range, with nothing in it but the
 // staff itself, from its top line to its bottom one.
+// newInkline is an outline of the ink alone, with no staff under it.
+//
+// The one above is seeded with the staff's own box, because what is placed
+// against it goes outside the staff: a dynamic or a bar number is measured
+// from the staff, not from the nearest notehead. A slur is the other case.
+// It belongs among the notes and is drawn inside the staff whenever they
+// are, so measuring it against a box that includes the staff told it there
+// was something in the way everywhere — and a phrase low in the staff was
+// arched clear over the top line to miss a line that is not in its way.
+func newInkline(x0, x1 float64) *skyline {
+	n := int((x1-x0)/skylineStep) + 2
+	if n < 1 {
+		n = 1
+	}
+	s := &skyline{x0: x0, up: make([]float64, n), down: make([]float64, n)}
+	for i := range s.up {
+		s.up[i] = math.Inf(1)
+		s.down[i] = math.Inf(-1)
+	}
+	return s
+}
+
 func newSkyline(x0, x1, top, height float64) *skyline {
 	n := int((x1-x0)/skylineStep) + 2
 	if n < 1 {
@@ -203,11 +226,22 @@ func (e *engraver) outline(from mark, x0, x1, top float64) *skyline {
 func (e *engraver) staffOutline() *skyline {
 	if e.staffSky == nil {
 		e.staffSky = newSkyline(e.staffX0, e.staffX1, e.staffTop, e.staffH())
+		e.staffInk = newInkline(e.staffX0, e.staffX1)
 		e.staffSkyAt = e.staffMark
 	}
+	// Both from the same mark, and the mark moved once: the two outlines
+	// hold the same ink and differ only in what they start from.
 	e.addSince(e.staffSky, e.staffSkyAt)
+	e.addSince(e.staffInk, e.staffSkyAt)
 	e.staffSkyAt = e.marked()
 	return e.staffSky
+}
+
+// staffInkline is the same outline without the staff under it, for the
+// marks that live among the notes rather than outside them.
+func (e *engraver) staffInkline() *skyline {
+	e.staffOutline()
+	return e.staffInk
 }
 
 // addSince registers everything drawn since a mark on an outline.
@@ -284,9 +318,17 @@ func glyphReach(name string) (up, down float64) {
 	case has(name, "rest"):
 		return 1.2, 1.2
 	case has(name, "flag"):
-		// A flag hangs from the end of a stem, on one side only, but which
-		// side is in its name and the stem has already claimed that reach.
-		return 1.2, 1.2
+		// A flag is drawn at the end of its stem and hangs back along it,
+		// so it reaches one way only and the name says which: an Up flag
+		// is on a stem pointing up and hangs down from the tip of it.
+		//
+		// A space and a fifth both ways was the old answer, and it put a
+		// space and a fifth of nothing above every flagged note. A slur
+		// ending on one started that far over the stem it belongs to.
+		if strings.HasSuffix(name, "Up") {
+			return 0.1, 1.2
+		}
+		return 1.2, 0.1
 	case has(name, "dynamic"):
 		return 0.9, 0.5
 	case has(name, "tremolo"), has(name, "buzzRoll"):

@@ -121,6 +121,9 @@ test("every menu entry gets an icon box, and the right glyph in it", () => {
   };
   const icons = app.match(/^const MENU_ICONS = \{[\s\S]*?^\};$/m);
   assert.ok(icons, "app.js has no menu icon table");
+  // The entries that are not music carry a drawing of their own instead.
+  const drawings = app.match(/^const MENU_DRAWINGS = \{[\s\S]*?^\};$/m);
+  assert.ok(drawings, "app.js has no table of drawn icons");
   const size = app.match(/^const menuIconSize = .*?;$/m);
   assert.ok(size, "app.js has no menuIconSize");
 
@@ -128,6 +131,7 @@ test("every menu entry gets an icon box, and the right glyph in it", () => {
     { dataset: { action: "artic-staccato" } },
     { dataset: { action: "open" } },
     { dataset: { action: "dyn-ff" } },
+    { dataset: { action: "cut" } },
   ].map((b) => ({
     ...b,
     kids: [],
@@ -141,7 +145,7 @@ test("every menu entry gets an icon box, and the right glyph in it", () => {
       querySelectorAll: (sel) => (sel === "[data-action]" ? buttons : []),
       createElement: (name) => {
         const n = {
-          name, className: "", dataset: {}, textContent: "",
+          name, className: "", dataset: {}, textContent: "", innerHTML: "",
           classes: [],
           classList: { add(c) { n.classes.push(c); } },
         };
@@ -151,11 +155,12 @@ test("every menu entry gets an icon box, and the right glyph in it", () => {
     },
     fitGlyphs() {},
   };
-  const body = [icons[0], size[0], grabApp("syncMenuIcons")].join("\n") +
+  const body = [icons[0], drawings[0], grabApp("menuDrawing"),
+                size[0], grabApp("syncMenuIcons")].join("\n") +
     "\nreturn { syncMenuIcons };";
   new Function(...Object.keys(scope), body)(...Object.values(scope)).syncMenuIcons();
 
-  assert.equal(made.length, 3, "not every entry got a box");
+  assert.equal(made.length, 4, "not every entry got a box");
   for (const n of made) assert.equal(n.className, "menu-icon");
 
   // A staccato is a note with the dot under it: the note in the box and
@@ -300,4 +305,29 @@ test("a mark on its own is one glyph", () => {
   assert.equal(svg.children.length, 1);
   assert.equal(svg.children[0].attrs.fill, "currentColor",
                "its colour is set on the element, not in the drawing");
+});
+
+// Cut, copy, paste and the rest are not notation, so there is no glyph in
+// a music font for them and they are drawn instead — in the colour of the
+// words, because they write nothing on the music.
+test("an entry that is not music gets a drawing of its own", () => {
+  const app = readFileSync(new URL("./app.js", import.meta.url), "utf8");
+  const drawings = app.match(/^const MENU_DRAWINGS = \{[\s\S]*?^\};$/m);
+  assert.ok(drawings, "app.js has no table of drawn icons");
+  const table = new Function("return (" + drawings[0].replace(/^const MENU_DRAWINGS = /, "").replace(/;$/, "") + ")")();
+
+  for (const name of ["undo", "redo", "cut", "copy", "paste", "delete",
+                      "select-all", "select-region"]) {
+    assert.ok(table[name], `${name} has no picture`);
+    assert.match(table[name], /<(path|rect|circle)/,
+                 `${name} is not drawn with anything`);
+  }
+
+  // None of them is in the music table as well: one picture per entry, and
+  // the two tables must not disagree about which.
+  const icons = app.match(/^const MENU_ICONS = \{[\s\S]*?^\};$/m)[0];
+  for (const name of Object.keys(table)) {
+    assert.ok(!new RegExp(`"${name}":`).test(icons),
+              `${name} is in both tables`);
+  }
 });

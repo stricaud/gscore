@@ -4115,13 +4115,29 @@ async function deleteSelected() {
   }
   const p = new URLSearchParams({
     part: String(sel.part), measure: String(sel.measure), at: String(sel.at - 1),
+    // The notehead that was clicked, where one was: a note of a chord
+    // picked up and deleted is that note, not the chord it is in.
+    ...pickedHead(),
   });
   const res = await fetch("/api/delete?" + p.toString(), { method: "POST" });
   if (!res.ok) {
     status("Could not delete: " + (await res.text()).trim());
     return;
   }
+  const d = await res.json().catch(() => ({}));
+  // What is left says what happened. A notehead taken out of a chord
+  // leaves the chord there and the caret where it was; anything else
+  // leaves a gap, and the caret steps back into it.
+  if (d && d.left > 0) {
+    sel.head = null;
+    await refreshScore();
+    markSelection();
+    status(d.left === 1 ? "Notehead removed — one note left"
+                        : `Notehead removed — ${d.left} left`);
+    return;
+  }
   sel.at -= 1;
+  sel.head = null;
   await refreshScore();
   status("Deleted");
 }
@@ -9319,6 +9335,15 @@ function shortcutText(chord, compact) {
  * can be checked against the font rather than taken on trust.
  */
 const MENU_ICONS = {
+  // Going somewhere, and taking music with you.
+  //
+  // The arrow pointing along is what the old program put beside "jump to
+  // measure", and it is the right picture: the others here move a note up
+  // or down and this one moves you along the piece. Transposing is the
+  // music moving up and along at once, which is what the diagonal says.
+  "jump": "\ueb62",               // arrowBlackRight
+  "transpose": "\ueb61",          // arrowBlackUpRight
+
   // Moving a note up and down the staff.
   "pitch-up": "\ueb60",            // arrowBlackUp
   "pitch-down": "\ueb64",          // arrowBlackDown
@@ -9438,6 +9463,10 @@ function syncMenuIcons() {
       if (mark) i.dataset.mark = mark;
       else i.classList.add("is-mark");
       i.dataset.size = String(menuIconSize);
+    } else if (MENU_DRAWINGS[b.dataset.action]) {
+      // Not music, so not the music font and not the marks' colour: a
+      // drawing of our own, in the ink the words are written in.
+      i.innerHTML = menuDrawing(MENU_DRAWINGS[b.dataset.action]);
     }
     b.insertBefore(i, b.firstChild);
   }
@@ -11711,6 +11740,47 @@ const typeHint =
 // is for. A thousand would be a mistake, and a mistake that takes a thousand
 // notes back one at a time is a mistake nobody forgives.
 const typeBudget = 256;
+
+// MENU_DRAWINGS are the pictures for the entries that are not music.
+//
+// Cut, copy, paste, undo and the rest are not notation: a music font has
+// no glyph for them, because scissors are not a thing anybody writes on a
+// staff. They are drawn here instead, into the same 24-point square the
+// music glyphs are fitted into, so the column of pictures stays a column.
+//
+// In the colour of the words rather than the red kept for marks. That red
+// means "this is what the entry writes on the music"; these write nothing
+// on the music, they move it about.
+//
+// Line drawings, one weight, no fill: at this size a solid shape is a
+// blob, and the music glyphs beside them are strokes too.
+const MENU_DRAWINGS = {
+  undo: '<path d="M4.5 11h9.5a5 5 0 0 1 0 10H9"/><path d="M8.5 6.5 4 11l4.5 4.5"/>',
+  redo: '<path d="M19.5 11H10a5 5 0 0 0 0 10h4.5"/><path d="M15.5 6.5 20 11l-4.5 4.5"/>',
+  // Blades and handles, which is the one picture everybody reads as cut.
+  cut: '<circle cx="6.5" cy="18" r="2.7"/><circle cx="17.5" cy="18" r="2.7"/>' +
+    '<path d="M8.4 16 18 4"/><path d="M15.6 16 6 4"/>',
+  copy: '<rect x="9" y="9" width="11" height="12" rx="2"/>' +
+    '<path d="M15 6V5a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h1"/>',
+  paste: '<path d="M9 4H7a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2h-2"/>' +
+    '<rect x="9" y="2.5" width="6" height="4" rx="1"/>',
+  // The key it is on, with what it does to what is under it.
+  delete: '<path d="M21 5H9l-6 7 6 7h12a1 1 0 0 0 1-1V6a1 1 0 0 0-1-1z"/>' +
+    '<path d="M12.5 9.5 18 15M18 9.5l-5.5 5.5"/>',
+  // What is being picked up, with the dashes that mean picked up: a whole
+  // staff, and a stretch of one.
+  "select-all": '<path d="M4 9h16M4 13h16" opacity=".55"/>' +
+    '<rect x="2" y="5" width="20" height="14" rx="2" stroke-dasharray="3 2.5"/>',
+  "select-region": '<path d="M2 12h20" opacity=".55"/>' +
+    '<rect x="7" y="5" width="10" height="14" rx="2" stroke-dasharray="3 2.5"/>',
+};
+
+// menuDrawing wraps one of those in the square it is drawn in.
+function menuDrawing(body) {
+  return '<svg viewBox="0 0 24 24" width="24" height="23" fill="none" ' +
+    'stroke="currentColor" stroke-width="2" stroke-linecap="round" ' +
+    'stroke-linejoin="round">' + body + "</svg>";
+}
 
 // typeNote reads one token as a note, and says nothing for anything else.
 //

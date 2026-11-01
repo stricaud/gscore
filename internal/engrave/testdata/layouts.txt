@@ -2,12 +2,12 @@
 # drawing, and how many marks are on the page. Written by
 #     go test ./internal/engrave -run Golden -update
 # A diff here is a change in the engraver. Read it before committing.
-abc/boite-musique.abc 1a493d1536160cb4 514
+abc/boite-musique.abc 04c39edf984088c2 514
 abc/decoration.abc c1c6eea6d301c988 32
 abc/pitch.abc 3041e2426fc05ef5 236
 abc/sunshine.abc 69bfa806c0455e29 136
-samples/altes-10e-solo.abc 875862bdaa14d1ff 12446
-samples/boite-musique.abc 1a493d1536160cb4 514
+samples/altes-10e-solo.abc 6dee233da3e0241d 12446
+samples/boite-musique.abc 04c39edf984088c2 514
 suite/01a-Pitches-Pitches.musicxml ac9b5a16d2ed23a9 555
 suite/01b-Pitches-Intervals.musicxml 10c7ac11bad1da6c 412
 suite/01c-Pitches-NoVoiceElement.musicxml eac9833cd7fda241 13
@@ -70,12 +70,12 @@ suite/23c-Tuplet-Display-NonStandard.musicxml 6281d2b7f0cf2238 75
 suite/23d-Tuplets-Nested.musicxml 93c97faca75b0970 73
 suite/23e-Tuplets-Tremolo.musicxml 775dbecf7e5d8917 66
 suite/23f-Tuplets-DurationButNoBracket.musicxml f76cca5b7368916d 146
-suite/24a-GraceNotes.musicxml 282435cc6739319f 83
+suite/24a-GraceNotes.musicxml 0df5b92ab96e8613 83
 suite/24b-ChordAsGraceNote.musicxml 8fafe8e4886091fe 42
 suite/24c-GraceNote-MeasureEnd.musicxml bb0602813bcd4de9 15
 suite/24d-AfterGrace.musicxml 1aef0b3bb09a0e2e 24
 suite/24e-GraceNote-StaffChange.musicxml 4240bbeb7d5a8ccb 116
-suite/24f-GraceNote-Slur.musicxml c27fdc3779aa0d89 18
+suite/24f-GraceNote-Slur.musicxml ba0bec12161d9fb6 18
 suite/24g-GraceNote-Dynamics.musicxml 9be537efb832a86e 23
 suite/24h-GraceNote-Simultaneous.musicxml ca92fb7610515726 234
 suite/31a-Directions.musicxml a1de9e8ae4037552 216
@@ -89,9 +89,9 @@ suite/32c-MultipleNotationChildren.musicxml e0dfe50762fe0750 23
 suite/32d-Arpeggio.musicxml dbb81591f6d06d03 50
 suite/32e-Arpeggios-Cross.musicxml 9e022cfc6717c88c 167
 suite/32e-Fermatas.musicxml b6cdae42d565049b 38
-suite/33a-Spanners.musicxml e30efaf99d67a66c 200
+suite/33a-Spanners.musicxml 1365b4087576207b 200
 suite/33b-Spanners-Tie.musicxml 35bb1a123552be56 15
-suite/33c-Spanners-Slurs.musicxml 8c7fba8e06a7bae5 44
+suite/33c-Spanners-Slurs.musicxml db1c8aa7e750e39a 44
 suite/33d-Spanners-OctaveShifts.musicxml a873e45a86a1bcc5 51
 suite/33e-Spanners-OctaveShifts-InvalidSize.musicxml a6a26e93b45bed66 29
 suite/33f-Trill-EndingOnGraceNote.musicxml cdd8b7a452754054 120
@@ -100,7 +100,7 @@ suite/33h-Spanners-Glissando.musicxml 616de9fc292ddbd4 56
 suite/33i-Ties-NotEnded.musicxml 4e3515703cd81d7d 22
 suite/33j-Beams-Tremolos.musicxml 2fa9bcd128f917b4 56
 suite/33k-Tie-Types.musicxml e425cae79cc12a14 63
-suite/34a-Print-Object-Spanners.musicxml f1b549ba345ba16b 120
+suite/34a-Print-Object-Spanners.musicxml cbb3c4f857beed1b 120
 suite/34b-Colors.musicxml ad6f639eb8994f12 268
 suite/34c-Font-Size.musicxml 1e3ff41e69f79382 195
 suite/34d-Note-Attributes.musicxml 7940fae8b5386f48 66
@@ -117,14 +117,14 @@ suite/41i-PartNameDisplay-Override.musicxml 68e2a76b1b1aac0c 30
 suite/41j-PartNameDisplay-Multiple-DisplayText-Children.musicxml 03714a78934d7255 13
 suite/41k-PartName-Print.musicxml f02000eaf2e248dc 16
 suite/41l-GroupNameDisplay-Override.musicxml 394e1a5af4372582 58
-suite/42a-MultiVoice-TwoVoicesOnStaff-Lyrics.musicxml ef5b8e1785341d89 54
-suite/42b-MultiVoice-MidMeasureClefChange.musicxml ceb2e67097b3ca6f 187
+suite/42a-MultiVoice-TwoVoicesOnStaff-Lyrics.musicxml 6d69b159fb3a6f52 54
+suite/42b-MultiVoice-MidMeasureClefChange.musicxml cdd0b53c4fe21a80 187
 suite/43a-PianoStaff.musicxml 16c72234de1b1475 104
 suite/43b-MultiStaff-DifferentKeys.musicxml c7f770a0ac961810 108
 suite/43c-MultiStaff-DifferentKeysAfterBackup.musicxml c7f770a0ac961810 108
 suite/43d-MultiStaff-StaffChange.musicxml a980f7e0d68edf92 156
 suite/43e-Multistaff-ClefDynamics.musicxml 1e2fa2b2775ac21b 195
-suite/43f-MultiStaff-Lyrics.musicxml e0884e1907bb6bd2 145
+suite/43f-MultiStaff-Lyrics.musicxml 25d754fa81205f2d 145
 suite/43g-MultiStaff-PartSymbol.musicxml aec0eb9dc94665ba 137
 suite/43h-MultiStaff-Chords.musicxml bdfc1a74f4a07857 253
 suite/43i-MultiStaff-StaffChange-SingleVoice.musicxml f922f504e597c6c3 123
@@ -163,11 +163,11 @@ suite/52b-Breaks.musicxml 2364150ecde5fa02 15
 suite/61a-Lyrics.musicxml ea7e9ee5fd094209 35
 suite/61b-MultipleLyrics.musicxml 223ad69f9304cd12 28
 suite/61c-Lyrics-Pianostaff.musicxml 8d65b9441aaa2324 118
-suite/61d-Lyrics-Melisma.musicxml 60b9f1699dcc2295 33
+suite/61d-Lyrics-Melisma.musicxml 93b380460121c9f2 33
 suite/61e-Lyrics-Chords.musicxml cfda34197c8be040 23
-suite/61f-Lyrics-GracedNotes.musicxml ee2111535c4537aa 45
+suite/61f-Lyrics-GracedNotes.musicxml ef07d9228dcabf60 45
 suite/61g-Lyrics-NameNumber.musicxml 3ddb2921b5161279 24
-suite/61h-Lyrics-BeamsMelismata.musicxml fa41c0d0351276a8 94
+suite/61h-Lyrics-BeamsMelismata.musicxml 8b9d4554c31b1df3 94
 suite/61i-Lyrics-Chords.musicxml 2e19c4ca420c20c7 14
 suite/61j-Lyrics-Elisions.musicxml 53f127ce4012630d 18
 suite/61k-Lyrics-SpannersExtenders.musicxml 3f3dd8ce2f77c60d 36
@@ -188,5 +188,5 @@ suite/74b-FiguredBass.invalid.musicxml c585b377a29a1d4e 27
 suite/75a-AccordionRegistrations.musicxml fdb01983a0e2af79 62
 suite/75b-Accordion.invalid.musicxml 50933e4e9c294e0d 23
 suite/99a-Sibelius5-IgnoreBeaming.musicxml e69fd94fb247265c 51
-suite/99b-Lyrics-BeamsMelismata-IgnoreBeams.musicxml fa41c0d0351276a8 94
+suite/99b-Lyrics-BeamsMelismata-IgnoreBeams.musicxml 8b9d4554c31b1df3 94
 suite/99c-Wavy-Lines-No-Numbers.musicxml 8756ce6e5823b005 17

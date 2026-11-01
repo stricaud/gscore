@@ -485,6 +485,21 @@ const (
 	// arcs over.
 	slurClearance = 0.6
 
+	// slurRiseMax is how far the middle of a slur may stand off the line
+	// between its ends before the ends are brought up to the music
+	// instead. Past this a curve stops reading as a slur and starts
+	// reading as a dome over the staff.
+	slurRiseMax = 2.6
+	// slurEndLift is the most an end may rise off its own note to meet a
+	// phrase that climbs away from it. Further than this and the curve is
+	// no longer attached to anything a reader can see.
+	slurEndLift = 4.0
+	// slurRunSpan is how wide a slur has to be before its ends are allowed
+	// to leave their notes at all. A slur over two notes is read as
+	// belonging to them and has to touch them; only a phrase long enough
+	// to climb away from where it began can ask for anything else.
+	slurRunSpan = 16.0
+
 	// archPerWidth is the most of its own width a curve may rise by, which
 	// is what keeps a very short one — the stub left at a line break — an
 	// arc rather than a spike.
@@ -707,36 +722,15 @@ func (e *engraver) drawTieOrSlur(from *openSpan, toX, toY, lift float64, slur, c
 	y2 := toY + dir*lift
 
 	span := toX - from.x
-	arch := tieArch
-	if slur {
-		arch = slurArch + span*slurArchPerSpace
-		if arch > slurArchMax {
-			arch = slurArchMax
-		}
+	// A tie joins two noteheads of one pitch: it is short, flat, and has
+	// nothing between its ends to clear. A slur covers a phrase and is
+	// placed against what that phrase does — see fitSlur.
+	cy := (y1+y2)/2 + dir*tieArch*2
+	if lid := span * archPerWidth; tieArch > lid {
+		cy = (y1+y2)/2 + dir*lid*2
 	}
-	// An arc is only an arc while it is wider than it is tall. The stub a
-	// tie leaves at a line break is barely wider than a notehead, and rising
-	// its full height over that reads as a caret stabbing the note rather
-	// than as a curve — which is what it was drawn as.
-	if lid := span * archPerWidth; arch > lid {
-		arch = lid
-	}
-	// The control point of a quadratic pulls the curve about halfway
-	// towards it, so it is set twice as far out as the curve should go.
-	cy := (y1+y2)/2 + dir*arch*2
-
-	// A slur has to clear the music it arcs over.
-	//
-	// Its ends belong to its notes and stay there, but its middle is free,
-	// and an arch of a fixed height is only clear of a phrase that happens
-	// to be flat. Over a rising run it cut straight through the notes
-	// between its ends — which is exactly where a slur must not be, because
-	// the line it draws is the phrase.
-	//
-	// Not a tie: a tie joins two noteheads of one pitch and there is nothing
-	// between them to clear.
 	if slur {
-		cy = e.clearArch(from.x, toX, y1, y2, cy, dir)
+		y1, y2, cy = e.fitSlur(from.x, toX, y1, y2, dir)
 	}
 
 	e.lay.Curves = append(e.lay.Curves, Curve{
@@ -813,42 +807,130 @@ func (e *engraver) slurEndClear(x, y float64, above bool) float64 {
 	return y
 }
 
-// clearArch lifts a slur's control point until the curve clears what it arcs
-// over, and leaves it alone when it already does.
+// fitSlur places a slur so that it clears the music it arcs over.
 //
-// A quadratic passes through the point a quarter of the way from each end
-// and half of the way towards the control point, so the height of the arch
-// at its middle is that average; turning the wanted middle back into a
-// control point is the same arithmetic the other way round.
-func (e *engraver) clearArch(x0, x1, y1, y2, cy, dir float64) float64 {
+// A curve fitted to its two ends alone is clear of a phrase that happens
+// to be flat and of nothing else. A run climbing two octaves leaves its
+// first note behind in a few notes, and a curve drawn from that note to
+// the last one goes straight through everything between — which is where
+// the line a slur draws must never be, because that line is the phrase.
+//
+// Two things are adjusted, in that order:
+//
+//	the arch     the middle is free, so it is lifted until the curve
+//	             clears every place along it, not merely at its own
+//	             middle where a quadratic stands furthest from the
+//	             straight line between its ends.
+//	the ends     and where that alone would need an arch taller than a
+//	             slur should ever be, the ends come up to meet the music
+//	             instead. They stay over their own notes — the reader
+//	             picks the phrase up from the note it starts on — but
+//	             they rise off them, which is what an engraver does with
+//	             a run that climbs away from where it began.
+func (e *engraver) fitSlur(x0, x1, y1, y2, dir float64) (float64, float64, float64) {
+	cy := (y1+y2)/2 + dir*e.slurArchFor(x1-x0)*2
 	if x1 <= x0 {
-		return cy
+		return y1, y2, cy
 	}
+	// Twice: lifting the ends changes what the arch has to be, and the
+	// new arch is what says whether the ends are high enough yet.
+	for pass := 0; pass < 2; pass++ {
+		need, at := e.archOver(x0, x1, y1, y2, cy, dir)
+		cy = need
+		rise := ((y1+y2)/2 - (0.25*y1 + 0.5*cy + 0.25*y2)) * -dir
+		over := rise - slurRiseMax
+		if over <= 0 || pass == 1 || x1-x0 < slurRunSpan {
+			break
+		}
+		// The ends share the lift by how much each of them moves the
+		// curve where the trouble is: a quadratic near its start is
+		// nearly all its first end, and near its finish nearly all its
+		// last.
+		if over > slurEndLift {
+			over = slurEndLift
+		}
+		w0, w1 := (1-at)*(1-at), at*at
+		most := math.Max(w0, w1)
+		if most <= 0 {
+			break
+		}
+		y1 += dir * over * w0 / most
+		y2 += dir * over * w1 / most
+		cy = (y1+y2)/2 + dir*e.slurArchFor(x1-x0)*2
+	}
+	return y1, y2, cy
+}
+
+// slurArchFor is the arch a slur of this width starts with, before the
+// music under it has had its say.
+func (e *engraver) slurArchFor(span float64) float64 {
+	arch := slurArch + span*slurArchPerSpace
+	if arch > slurArchMax {
+		arch = slurArchMax
+	}
+	// An arc is only an arc while it is wider than it is tall. The stub a
+	// tie leaves at a line break is barely wider than a notehead, and
+	// rising its full height over that reads as a caret stabbing the note
+	// rather than as a curve.
+	if lid := span * archPerWidth; arch > lid {
+		arch = lid
+	}
+	return arch
+}
+
+// archOver is the control point that clears everything under the curve,
+// and where along it the worst of it was.
+//
+// Every place along the span is asked, not only the middle. A quadratic
+// stands at its furthest from the line between its ends in the middle and
+// has barely left that line near its ends, so the note that a curve cuts
+// through is rarely the highest one: it is the high one nearest an end.
+//
+// The curve's control point sits at the middle in x, which makes x move
+// evenly with t, so the place along the span is the parameter and the
+// arithmetic below is the Bézier read backwards for the control point.
+func (e *engraver) archOver(x0, x1, y1, y2, cy, dir float64) (float64, float64) {
+	above := dir < 0
 	sky := e.staffOutline()
 
 	// Only what lies between the ends: the notes the slur starts and ends
 	// on are its own, and a slur is drawn from them, not over them.
-	inset := (x1 - x0) * 0.15
+	//
+	// A quarter in from each end, not a tenth. A curve has barely left its
+	// first note at a tenth of the way along, so clearing something there
+	// asks for a control point four times as far out — and a stem that
+	// belongs to the slur's own first note would throw the whole curve
+	// across the page.
+	inset := (x1 - x0) * 0.25
 	a, b := x0+inset, x1-inset
 	if b <= a {
-		return cy
+		return cy, 0.5
 	}
 
-	above := dir < 0
-	want := sky.reach(a, b, !above)
-	if above {
-		want -= slurClearance
-	} else {
-		want += slurClearance
+	const steps = 24
+	width := (b - a) / steps
+	want, at := cy, 0.5
+	for i := 0; i <= steps; i++ {
+		x := a + float64(i)*width
+		edge := sky.reach(x-width/2, x+width/2, !above)
+		if above {
+			edge -= slurClearance
+		} else {
+			edge += slurClearance
+		}
+		t := (x - x0) / (x1 - x0)
+		pull := 2 * t * (1 - t)
+		if pull < 1e-6 {
+			continue
+		}
+		// What the control point would have to be for the curve to pass
+		// exactly there.
+		need := (edge - (1-t)*(1-t)*y1 - t*t*y2) / pull
+		if (above && need < want) || (!above && need > want) {
+			want, at = need, t
+		}
 	}
-
-	// The middle of the curve as it stands, and the control point that would
-	// put the middle where it is wanted instead.
-	mid := 0.25*y1 + 0.5*cy + 0.25*y2
-	if (above && want >= mid) || (!above && want <= mid) {
-		return cy // already clear
-	}
-	return 2*want - 0.5*(y1+y2)
+	return want, at
 }
 
 // drawTrill writes "tr" and the wavy line that holds it.

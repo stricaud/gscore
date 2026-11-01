@@ -362,6 +362,11 @@
       <hr>
       <button data-action="view-names"><span>Staff names</span><kbd id="names-tick"></kbd></button>
       <button data-action="view-numbers"><span>Measure numbers</span><kbd id="numbers-tick"></kbd></button>
+      <!-- Bars of rest counted rather than drawn one by one. Off while
+           writing: a bar that is not drawn is a bar there is nowhere to
+           click in. It is here so that what will be printed can be looked
+           at without printing it. -->
+      <button data-action="view-multirest"><span>Multi-measure rests</span><kbd id="multirest-tick"></kbd></button>
       <hr>
       <div class="submenu">
         <button class="submenu-title"><span>Fingering</span><kbd>▸</kbd></button>
@@ -911,6 +916,15 @@
         <span><b>Every tune in the file</b><em>Each one starting on its own page.</em></span></label>
       <label id="print-parts-row" hidden><input type="radio" name="what" value="parts">
         <span><b>Score and parts</b><em>The full score, then each staff alone, for the players.</em></span></label>
+    </div>
+    <!-- Not in the paper section below: this is about the music rather than
+         about the sheet, and it is wanted as much when printing, where the
+         paper is the system's own business, as when exporting. -->
+    <div class="choices">
+      <label><input type="checkbox" id="print-multirest">
+        <span><b>Multi-measure rests</b><em>A stretch where every staff rests is
+          printed as one bar with the count over it, instead of as that many empty
+          bars. What a player reads from; not what you write in.</em></span></label>
     </div>
     <div class="choices" id="print-paper" hidden>
       <label><input type="checkbox" id="print-landscape">

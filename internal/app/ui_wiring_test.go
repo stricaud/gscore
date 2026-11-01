@@ -823,3 +823,53 @@ func TestTheMacMenuBarIsGivenTheIcons(t *testing.T) {
 		}
 	}
 }
+
+// Counting bars of rest is asked for in three places and travels by string
+// to all of them: a checkbox in one file, a query parameter built in
+// another, and a handler reading it in a third.
+//
+// Nothing compiles that path. A renamed parameter leaves a checkbox that
+// ticks and does nothing, which looks exactly like a program that has
+// decided your score has no bars of rest worth counting.
+func TestTheMultiMeasureRestBoxReachesThePrinterAndTheExporter(t *testing.T) {
+	html := readUI(t, "index.html")
+	js := readUI(t, "app.js")
+
+	if !strings.Contains(html, `id="print-multirest"`) {
+		t.Fatal("the print dialog has no multi-measure rest box")
+	}
+	// Outside the paper section, which is hidden when printing: the option
+	// is about the music and is wanted on paper as much as in a PDF.
+	paper := strings.Index(html, `id="print-paper"`)
+	box := strings.Index(html, `id="print-multirest"`)
+	if paper >= 0 && box > paper {
+		t.Error("the box is inside the paper section, so printing never shows it")
+	}
+
+	if !strings.Contains(js, `multiRests: $("#print-multirest").checked`) {
+		t.Error("the dialog does not read the box")
+	}
+	for _, want := range []string{
+		`q.set("multirest", "1")`, // the PDF export
+		`"&multirest=1"`,          // the printed page
+	} {
+		if !strings.Contains(js, want) {
+			t.Errorf("nothing sends %s", want)
+		}
+	}
+
+	// And both ends read it: the printed page and the exported PDF each
+	// build their own engraving options.
+	for file, want := range map[string]string{
+		"app.go":        `r.URL.Query().Get("multirest") == "1"`,
+		"filedialog.go": `q.Get("multirest") == "1"`,
+	} {
+		b, err := os.ReadFile(file)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(b), want) {
+			t.Errorf("%s does not read the option: want %s", file, want)
+		}
+	}
+}

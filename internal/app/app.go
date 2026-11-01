@@ -1068,6 +1068,10 @@ func (a *App) handlePrint(w http.ResponseWriter, r *http.Request) {
 	eopt := engrave.DefaultOptions()
 	eopt.Mode = engrave.Paginated
 	eopt.LineWidth = 150
+	// Asked for in the print dialog rather than taken from the editor: the
+	// page a player reads from and the page being written are not the same
+	// page, and the whole point of counting bars of rest is the first one.
+	eopt.MultiRests = r.URL.Query().Get("multirest") == "1"
 
 	ropt := svg.DefaultOptions()
 	ropt.Symbols = symbols

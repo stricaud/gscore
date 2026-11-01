@@ -246,6 +246,7 @@ const MESSAGES = {
   "Marks": "Signes",
   "Measure": "Mesure",
   "Measure numbers": "Numéros de mesure",
+  "Multi-measure rests": "Silences multimesures",
   "Melodic shape": "Profil mélodique",
   "Melodic shape…": "Profil mélodique…",
   "MIT licence. The music font is Bravura, under the SIL Open Font License.": "Licence MIT. La police musicale est Bravura, sous licence SIL Open Font.",

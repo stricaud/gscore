@@ -2473,11 +2473,19 @@ func (a *App) handleView(w http.ResponseWriter, r *http.Request) {
 		a.engraveOpt.ShowMeasureNumbers = v == "1"
 		changed = append(changed, "numbers")
 	}
+	// Bars of rest counted rather than drawn one by one. Off while writing,
+	// because a bar that is not drawn is a bar there is nowhere to click in
+	// — but worth having while looking at what will be printed.
+	if v := q.Get("multirest"); v != "" {
+		a.engraveOpt.MultiRests = v == "1"
+		changed = append(changed, "multirest")
+	}
 	writeJSON(w, map[string]any{
-		"status":  "ok",
-		"changed": changed,
-		"names":   a.engraveOpt.ShowPartNames,
-		"numbers": a.engraveOpt.ShowMeasureNumbers,
+		"status":    "ok",
+		"changed":   changed,
+		"names":     a.engraveOpt.ShowPartNames,
+		"numbers":   a.engraveOpt.ShowMeasureNumbers,
+		"multirest": a.engraveOpt.MultiRests,
 	})
 }
 

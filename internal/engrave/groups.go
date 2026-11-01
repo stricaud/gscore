@@ -614,6 +614,13 @@ func (e *engraver) drawMeasureNumbers(columns []float64, start, end int) {
 		return
 	}
 	for mi := start; mi < end && mi-start < len(columns); mi++ {
+		// A bar swallowed by a multi-measure rest is not numbered: its
+		// column is the one the run ends in, and the number would be
+		// printed on top of the next bar's. The run keeps the number of
+		// the bar it begins at, which is the one a player counts from.
+		if e.multiHidden[mi] {
+			continue
+		}
 		write(e.barNumber(mi), columns[mi-start])
 	}
 }

@@ -86,7 +86,7 @@ const state = {
   // Measure numbers are on: the engraver's DefaultOptions says so, and this
   // has to say the same thing or the tick beside "Measure numbers" in the
   // View menu starts out contradicting the page.
-  view: { names: false, numbers: true },
+  view: { names: false, numbers: true, multirest: false },
   // Whether a bar that is too long has its last notes moved along. Read from
   // the server at startup, because it is remembered between sessions.
   trackBarlines: true,
@@ -731,6 +731,7 @@ async function action(name) {
 
     case "view-names": await setView("names", !state.view.names); break;
     case "view-numbers": await setView("numbers", !state.view.numbers); break;
+    case "view-multirest": await setView("multirest", !state.view.multirest); break;
 
     case "insert-chord": await chordSymbolDialog(); break;
     case "insert-text": await textDialog(); break;
@@ -1604,6 +1605,7 @@ async function exportPDF() {
   const q = new URLSearchParams({ as: "pdf", what: choice.what });
   if (choice.landscape) q.set("orientation", "landscape");
   if (!choice.pageNumbers) q.set("pagenumbers", "0");
+  if (choice.multiRests) q.set("multirest", "1");
 
   if (state.info?.local) {
     let res = await fetch("/api/save?" + q.toString(), { method: "POST" });
@@ -5928,17 +5930,26 @@ async function setView(what, on) {
   const d = await res.json();
   state.view.names = !!d.names;
   state.view.numbers = !!d.numbers;
+  state.view.multirest = !!d.multirest;
   markViewTicks();
   await refreshScore();
-  status(what === "names"
-    ? (on ? "Staff names shown" : "Staff names hidden")
-    : (on ? "Measure numbers shown" : "Measure numbers hidden"));
+  const said = {
+    names: on ? "Staff names shown" : "Staff names hidden",
+    numbers: on ? "Measure numbers shown" : "Measure numbers hidden",
+    // Said in full, because what it does to the page is not obvious from
+    // the words: the bars are still there, and still played.
+    multirest: on
+      ? "Bars of rest counted — they are still there, and still played"
+      : "Every bar drawn",
+  };
+  status(said[what] || "Ready");
 }
 
 function markViewTicks() {
-  const n = $("#names-tick"), m = $("#numbers-tick");
+  const n = $("#names-tick"), m = $("#numbers-tick"), r = $("#multirest-tick");
   if (n) n.textContent = state.view.names ? "✓" : "";
   if (m) m.textContent = state.view.numbers ? "✓" : "";
+  if (r) r.textContent = state.view.multirest ? "✓" : "";
   const w = $("#mouse-tick");
   if (w) w.textContent = state.mouseWrites ? "✓" : "";
 }
@@ -6821,7 +6832,8 @@ async function printScore() {
   const choice = await askPrint(many, parts, "Print", "Print");
   if (!choice) return;
 
-  const path = "/print?what=" + encodeURIComponent(choice.what);
+  const path = "/print?what=" + encodeURIComponent(choice.what) +
+    (choice.multiRests ? "&multirest=1" : "");
 
   // A native window has no print machinery and window.open returns nothing
   // without a UI delegate, so printing is handed to the real browser, which
@@ -6877,6 +6889,10 @@ function askPrint(many, parts, title, verb, paper) {
   // offer, so the default is whichever is the obvious answer.
   const want = many ? "book" : "tune";
   $$('#print-what input[name="what"]').forEach((r) => (r.checked = r.value === want));
+  // Starting from what is on the screen: somebody looking at the counted
+  // bars is about to print them, and somebody who has never turned them on
+  // is not asking for them by opening this.
+  $("#print-multirest").checked = !!state.view.multirest;
 
   return new Promise((resolve) => {
     const done = () => {
@@ -6890,6 +6906,7 @@ function askPrint(many, parts, title, verb, paper) {
         what: picked ? picked.value : "tune",
         landscape: paper && $("#print-landscape").checked,
         pageNumbers: !paper || $("#print-numbers").checked,
+        multiRests: $("#print-multirest").checked,
       });
     };
     dlg.addEventListener("close", done);

@@ -450,6 +450,7 @@ func (a *App) renderPDF(w io.Writer, r *http.Request) error {
 	eopt := engrave.DefaultOptions()
 	eopt.Mode = engrave.Paginated
 	eopt.ShowMeasureNumbers = q.Get("numbers") != "0"
+	eopt.MultiRests = q.Get("multirest") == "1"
 	eopt.ShowPartNames = len(score.Parts) > 1
 	// Not fitted here: what the paper says about type size and line length
 	// is settled per piece below, because the pieces are different sizes of

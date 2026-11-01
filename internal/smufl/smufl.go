@@ -559,10 +559,15 @@ func TimeSignatureGlyphs(t model.TimeSignature) (num, den []string, symbol strin
 	case model.TimeCut:
 		return nil, nil, "timeSigCutCommon"
 	}
-	return digitGlyphs(t.Beats), digitGlyphs(t.BeatValue), ""
+	return DigitGlyphs(t.Beats), DigitGlyphs(t.BeatValue), ""
 }
 
-func digitGlyphs(n int) []string {
+// DigitGlyphs spells a number in the figures a time signature is set in.
+//
+// Exported because they are not only a time signature's: the count over a
+// multi-measure rest is written in the same figures, for the same reason —
+// they are the music font's own numerals and they match the page.
+func DigitGlyphs(n int) []string {
 	s := strconv.Itoa(n)
 	out := make([]string, 0, len(s))
 	for _, c := range s {

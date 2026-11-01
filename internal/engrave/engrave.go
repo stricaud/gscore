@@ -544,6 +544,16 @@ type Options struct {
 	// above the first staff.
 	ShowTempoMark bool
 
+	// MultiRests draws a run of bars in which every staff rests as one bar
+	// with the count over it, instead of as that many empty bars.
+	//
+	// Off by default, and off in the editor: a bar that is not drawn cannot
+	// be clicked in or written in, and the editor is where bars are written
+	// in. It is the printed page that wants them — a player counting
+	// fourteen empty bars is a player who loses count — so the print and
+	// export dialogs ask for it there.
+	MultiRests bool
+
 	// WriteAhead draws one empty bar past the end of the music, so there is
 	// somewhere to click to carry on writing.
 	//
@@ -769,6 +779,12 @@ type engraver struct {
 	// not change the score, so one pass down each part holds good for the
 	// whole of it.
 	clefs map[*model.Part][]model.Clef
+	// multi is the run of silent bars that begins at a bar, where one does,
+	// and multiHidden the bars those runs swallow: drawn as nothing at all,
+	// because the bar before them is standing for them. Both are empty
+	// unless the option asked for them. See multirest.go.
+	multi       map[int]multiRest
+	multiHidden map[int]bool
 	// verses is how many lines of words go under each part, counted once.
 	// Counting walks the whole part, and it was counted again for every
 	// system on it.
@@ -1435,6 +1451,11 @@ func (e *engraver) layout() {
 		}
 	}
 
+	// The bars of rest that are to be counted rather than drawn, worked out
+	// before the bar past the end of the music is added: that one is not a
+	// bar of the piece and has nothing to do with the counting.
+	realBars := maxMeasures
+
 	// Room to carry on writing, when the piece has not been declared over.
 	if e.writesAhead(parts, maxMeasures) {
 		for pi, p := range parts {
@@ -1452,6 +1473,27 @@ func (e *engraver) layout() {
 		for pi := range parts {
 			if mi < len(boxes[pi]) && boxes[pi][mi].ideal > widths[mi] {
 				widths[mi] = boxes[pi][mi].ideal
+			}
+		}
+	}
+
+	// A run of silent bars takes the room of one sign, and the bars it
+	// swallows take none: their columns collapse onto the end of the run,
+	// so everything that places itself by a column — the barlines, the
+	// brackets, the numbers — goes on working without knowing about any of
+	// this.
+	if e.opt.MultiRests {
+		e.multi, e.multiHidden = planMultiRests(parts, realBars)
+		for at, run := range e.multi {
+			head := 0.0
+			for pi := range parts {
+				if at < len(boxes[pi]) && boxes[pi][at].prefix > head {
+					head = boxes[pi][at].prefix
+				}
+			}
+			widths[at] = multiRestWidth(run.count) + head
+			for i := at + 1; i < at+run.count; i++ {
+				widths[i] = 0
 			}
 		}
 	}
@@ -2551,6 +2593,12 @@ func (e *engraver) drawSystem(parts []*model.Part, boxes [][]measureBox,
 		if !real {
 			continue
 		}
+		// A bar swallowed by a multi-measure rest has no band of its own:
+		// its column has no width, so a band over it would be a line with
+		// nothing in it standing where the run's own band already is.
+		if e.multiHidden[mi] {
+			continue
+		}
 		e.lay.Strips = append(e.lay.Strips, StripPos{
 			Measure: mi,
 			X0:      columns[mi-start],
@@ -2715,8 +2763,19 @@ func (e *engraver) drawSystem(parts []*model.Part, boxes [][]measureBox,
 			if mi >= len(boxes[pi]) {
 				continue // this part has run out of music before the others
 			}
+			if e.multiHidden[mi] {
+				continue // the run before it is standing for this bar
+			}
 			b := boxes[pi][mi]
 			e.partIndex = e.staffNumber(pi)
+			if run, ok := e.multi[mi]; ok {
+				if mi == start && b.prefix > 0 {
+					// Already written in the system's head.
+					b.prefix = 0
+				}
+				e.drawMultiRest(p, b, columns[mi-start], columns[mi-start+1], run)
+				continue
+			}
 			// A change in the measure that opens a system is already written
 			// in the system's head: a new key is announced once, not twice.
 			ideal := b.ideal

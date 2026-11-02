@@ -298,3 +298,45 @@ func TestAScoreWithNoEngravingSettingsWritesNone(t *testing.T) {
 		t.Error("a score that set nothing wrote an engraving block anyway")
 	}
 }
+
+// How the bars are numbered travels with the score.
+//
+// Where the numbers fall is a decision somebody made about this piece —
+// often enough to rehearse by, boxed enough to find — and a file that
+// forgot it would print differently every time it was opened.
+func TestNumberingSurvivesARoundTrip(t *testing.T) {
+	s := model.NewScore()
+	s.Numbering = model.MeasureNumbering{Every: 5, Boxed: true}
+	at := 12
+	s.Parts[0].Measures[0].NumberFrom = &at
+
+	var b bytes.Buffer
+	if err := Write(&b, s, nil); err != nil {
+		t.Fatalf("writing: %v", err)
+	}
+	back, _, err := Read(bytes.NewReader(b.Bytes()))
+	if err != nil {
+		t.Fatalf("reading: %v", err)
+	}
+	if back.Numbering != s.Numbering {
+		t.Errorf("the numbering came back as %+v, want %+v", back.Numbering, s.Numbering)
+	}
+	got := back.Parts[0].Measures[0].NumberFrom
+	if got == nil || *got != 12 {
+		t.Errorf("the restart came back as %v, want 12", got)
+	}
+}
+
+// A score that has said nothing about its numbering writes nothing, rather
+// than a key in every file ever saved.
+func TestAScoreWithNoNumberingWritesNone(t *testing.T) {
+	var b bytes.Buffer
+	if err := Write(&b, model.NewScore(), nil); err != nil {
+		t.Fatalf("writing: %v", err)
+	}
+	for _, key := range []string{"\"numbering\"", "\"numberFrom\""} {
+		if bytes.Contains(b.Bytes(), []byte(key)) {
+			t.Errorf("a score that said nothing wrote %s anyway", key)
+		}
+	}
+}

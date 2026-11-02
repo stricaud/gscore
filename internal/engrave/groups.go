@@ -36,6 +36,8 @@ const (
 	bracketThickness = 0.5
 	// measureNumberSize is the type a bar number is set in.
 	measureNumberSize = 1.5
+	// numberBoxPad is the air between a boxed bar number and its box.
+	numberBoxPad = 0.4
 	// stripHeight is how tall the band over a bar is: enough to hit without
 	// aiming, and no taller than the bar numbers that sit in it.
 	stripHeight = 2.4
@@ -485,17 +487,51 @@ func (e *engraver) drawRehearsalMark(text string, x, row float64) float64 {
 // whatever else is written over the bar starts after it rather than through
 // it. Zero where no number is written there.
 func (e *engraver) numberWidth(mi, start int) float64 {
+	n, ok := e.numberedAt(mi, start)
+	if !ok {
+		return 0
+	}
+	w := textWidth(itoa(n), measureNumberSize) + 0.6
+	if e.score != nil && e.score.Numbering.Boxed {
+		w += numberBoxPad * 2
+	}
+	return w
+}
+
+// numberedAt says whether a bar carries a printed number, and what it is.
+//
+// One answer for both the drawing and the room reserved beside it. They
+// were two pieces of arithmetic that had to agree, and the moment a score
+// could ask for its own numbering they stopped agreeing: a rehearsal mark
+// was pushed aside for a number that was not printed there, or printed on
+// top of one that was.
+func (e *engraver) numberedAt(mi, start int) (int, bool) {
 	if !e.opt.ShowMeasureNumbers {
-		return 0
+		return 0, false
 	}
-	// Paginated, only the bar that opens a system is numbered.
+	// A bar swallowed by a multi-measure rest is not numbered: its column
+	// is the one the run ends in, and the number would be printed on top
+	// of the next bar's. The run keeps the number of the bar it begins
+	// at, which is the one a player counts from.
+	if e.multiHidden[mi] {
+		return 0, false
+	}
+	n := e.barNumber(mi)
+	if n <= 1 {
+		return 0, false // bar one needs no telling
+	}
+	// Counted on the printed number and not on how far through the piece
+	// the bar is, so "every five" means the bars called 5, 10, 15 — which
+	// is what somebody calling them out is reading.
+	if every := e.numberEvery(); every > 0 {
+		return n, n%every == 0
+	}
+	// Nothing asked for: the first bar of each system on a page, and
+	// every bar in the strip.
 	if e.opt.Mode != Strip && mi != start {
-		return 0
+		return 0, false
 	}
-	if e.barNumber(mi) <= 1 {
-		return 0
-	}
-	return textWidth(itoa(e.barNumber(mi)), measureNumberSize) + 0.6
+	return n, true
 }
 
 // barNumber is the number printed over a bar.
@@ -508,6 +544,12 @@ func (e *engraver) numberWidth(mi, start int) float64 {
 // which is the kind of difference that only shows when two people are
 // reading from different copies and one of them says "from bar sixty-five".
 func (e *engraver) barNumber(mi int) int {
+	// A restart the writer asked for beats everything else, because it is
+	// the only one of these somebody said out loud. A movement restarting
+	// the count is inferred; this is stated.
+	if from, n, ok := e.numberRestart(mi); ok {
+		return n + (mi - from)
+	}
 	from := e.sectionFrom(mi)
 	at := mi - from
 	if from == 0 {
@@ -521,6 +563,28 @@ func (e *engraver) barNumber(mi int) int {
 		return at
 	}
 	return at + 1
+}
+
+// numberRestart is the nearest bar at or before this one where the writer
+// restarted the numbering, and the number they restarted it at.
+//
+// At or before, so that every bar after a restart counts on from it until
+// the next one. Walked backwards from the bar being asked about rather
+// than built into a table: a score has a handful of these or none, and a
+// table would be one entry per bar of the piece to hold them.
+//
+// Read from whichever staff carries it, the way a rehearsal mark is: "bar
+// forty" has to mean the same bar to everybody in the room, so a restart
+// written on one staff is a restart for the score.
+func (e *engraver) numberRestart(mi int) (from, number int, ok bool) {
+	for i := mi; i >= 0; i-- {
+		for _, p := range e.score.Parts {
+			if i < len(p.Measures) && p.Measures[i].NumberFrom != nil {
+				return i, *p.Measures[i].NumberFrom, true
+			}
+		}
+	}
+	return 0, 0, false
 }
 
 // sectionFrom is the first bar of the movement a bar belongs to.
@@ -594,35 +658,65 @@ func (e *engraver) drawMeasureNumbers(columns []float64, start, end int) {
 	if !e.opt.ShowMeasureNumbers {
 		return
 	}
+	boxed := e.score != nil && e.score.Numbering.Boxed
 	write := func(n int, x float64) {
-		if n <= 1 {
-			return // bar one needs no telling
-		}
 		w := textWidth(itoa(n), measureNumberSize)
+		// Room for the box, where there is one, so that the thing placed
+		// above this clears the box and not just the numeral inside it.
+		h := measureNumberSize
+		if boxed {
+			w += numberBoxPad * 2
+			h = markBoxHeight
+		}
 		e.wait(waitingMark{
-			x0: x, x1: x + w, height: measureNumberSize, gap: 0.5,
+			x0: x, x1: x + w, height: h, gap: 0.5,
 			rank: rankBarNumber,
 			draw: func(y float64) {
+				if boxed {
+					e.drawNumberBox(itoa(n), x, y)
+					return
+				}
 				e.lay.Texts = append(e.lay.Texts, Text{
 					S: itoa(n), X: x, Y: y, Size: measureNumberSize, Anchor: "start",
 				})
 			},
 		})
 	}
-	if e.opt.Mode != Strip {
-		write(e.barNumber(start), columns[0])
-		return
-	}
+
 	for mi := start; mi < end && mi-start < len(columns); mi++ {
-		// A bar swallowed by a multi-measure rest is not numbered: its
-		// column is the one the run ends in, and the number would be
-		// printed on top of the next bar's. The run keeps the number of
-		// the bar it begins at, which is the one a player counts from.
-		if e.multiHidden[mi] {
-			continue
+		if n, ok := e.numberedAt(mi, start); ok {
+			write(n, columns[mi-start])
 		}
-		write(e.barNumber(mi), columns[mi-start])
 	}
+}
+
+// numberEvery is how often this score asks for a bar number, or zero where
+// it has not said.
+func (e *engraver) numberEvery() int {
+	if e.score == nil || e.score.Numbering.Every <= 0 {
+		return 0
+	}
+	return e.score.Numbering.Every
+}
+
+// drawNumberBox writes a bar number inside a rectangle.
+//
+// The same box a rehearsal mark gets, and for the same reason: on a dense
+// page a bare numeral is lost among the music, and a conductor calling
+// "from forty-one" needs it found at a glance rather than read for.
+func (e *engraver) drawNumberBox(text string, x, y float64) {
+	e.lay.Texts = append(e.lay.Texts, Text{
+		S: text, X: x + numberBoxPad, Y: y,
+		Size: measureNumberSize, Anchor: "start",
+	})
+	w := textWidth(text, measureNumberSize) + numberBoxPad*2
+	t := e.opt.Defaults.StaffLineThickness * 1.3
+	y0, y1 := y-measureNumberSize, y+measureNumberSize*0.25
+	e.lay.Lines = append(e.lay.Lines,
+		Line{X1: x, Y1: y0, X2: x + w, Y2: y0, Thickness: t},
+		Line{X1: x, Y1: y1, X2: x + w, Y2: y1, Thickness: t},
+		Line{X1: x, Y1: y0, X2: x, Y2: y1, Thickness: t},
+		Line{X1: x + w, Y1: y0, X2: x + w, Y2: y1, Thickness: t})
 }
 
 func itoa(n int) string {

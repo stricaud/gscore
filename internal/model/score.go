@@ -289,6 +289,18 @@ type Measure struct {
 	// places the directions below refer to.
 	Sign Sign
 
+	// NumberFrom restarts the bar numbering here, at the number it holds.
+	//
+	// A movement already restarts the count on its own, and that covers
+	// most of what anybody needs. This is the rest: a piece printed in
+	// sections numbered separately, a part whose publisher began again at
+	// 1 after a long introduction, an exercise book where every study
+	// starts afresh. Nothing can infer those — somebody has to say so.
+	//
+	// A pointer, because restarting at bar one is a thing you can mean and
+	// zero cannot otherwise be told from "not set".
+	NumberFrom *int
+
 	// Jump is the direction written at the end of this bar — D.C., D.S. and
 	// their al Fine and al Coda forms — which sends the player back.
 	//
@@ -708,6 +720,33 @@ type Score struct {
 	// measurements the engraver works the places out from, which is why
 	// they can live on a score without the model knowing what a page is.
 	Engraving map[string]float64
+
+	// Numbering is how often the bar numbers are printed and whether they
+	// are boxed.
+	//
+	// Separate from Engraving, which holds measurements. These are not
+	// numbers to be tuned but a decision about what the page says, and
+	// they are not floats: a conductor rehearsing a long score wants a
+	// number on every bar or every five, and wants them boxed so they are
+	// not lost among the music. A song wants one at the head of each line
+	// and nothing more.
+	Numbering MeasureNumbering
+}
+
+// MeasureNumbering is how a score's bars are numbered.
+type MeasureNumbering struct {
+	// Every is how often a number is printed: every nth bar.
+	//
+	// Zero is the default and does not mean "never". It means "wherever
+	// they are wanted", which is the first bar of each system on a page
+	// and every bar in the editor's strip — the two places the question
+	// "which bar is this" gets asked, and the answers differ. A score
+	// that wants something else puts a number here and gets it in both.
+	Every int
+
+	// Boxed draws a rectangle round each number, the way a rehearsal mark
+	// is boxed.
+	Boxed bool
 }
 
 // Script is one saved program, with the name its author gave it.

@@ -47,6 +47,17 @@ type scoreDoc struct {
 	// was changed: a file that wrote down every default would freeze the
 	// day's defaults into itself and never see an improvement to them.
 	Engraving map[string]float64 `json:"engraving,omitempty"`
+
+	// Numbering is how often the bar numbers are printed and whether they
+	// are boxed. Omitted where the score has not said, which is the
+	// ordinary case.
+	Numbering *numberingDoc `json:"numbering,omitempty"`
+}
+
+// How a score's bars are numbered.
+type numberingDoc struct {
+	Every int  `json:"every,omitempty"`
+	Boxed bool `json:"boxed,omitempty"`
 }
 
 type scriptDoc struct {
@@ -126,7 +137,10 @@ type measureDoc struct {
 	// Marker is a rehearsal mark, and Repeat the sign that says to play the
 	// bar before again.
 	Marker string `json:"marker,omitempty"`
-	Repeat int    `json:"repeat,omitempty"`
+	// NumberFrom restarts the bar numbering at this bar, at the number it
+	// holds. A pointer, because restarting at 1 is a thing you can mean.
+	NumberFrom *int `json:"numberFrom,omitempty"`
+	Repeat     int  `json:"repeat,omitempty"`
 
 	// Sign is the segno, coda, Fine or To Coda written at this bar, and Jump
 	// the direction written at the end of it. Both are stored by name rather
@@ -360,6 +374,11 @@ func encodeScore(s *model.Score) *scoreDoc {
 			Barlines: g.Barlines, Name: g.Name,
 		})
 	}
+	if s.Numbering != (model.MeasureNumbering{}) {
+		doc.Numbering = &numberingDoc{
+			Every: s.Numbering.Every, Boxed: s.Numbering.Boxed,
+		}
+	}
 	if len(s.Engraving) > 0 {
 		doc.Engraving = make(map[string]float64, len(s.Engraving))
 		for k, v := range s.Engraving {
@@ -411,6 +430,7 @@ func encodeScore(s *model.Score) *scoreDoc {
 				}
 			}
 			md.Marker, md.Repeat = m.Marker, m.Repeat
+			md.NumberFrom = m.NumberFrom
 			if m.Sign != model.NoSign {
 				md.Sign = m.Sign.String()
 			}
@@ -594,6 +614,11 @@ func decodeScore(doc *scoreDoc) (*model.Score, error) {
 		}
 	}
 
+	if doc.Numbering != nil {
+		s.Numbering = model.MeasureNumbering{
+			Every: doc.Numbering.Every, Boxed: doc.Numbering.Boxed,
+		}
+	}
 	if len(doc.Engraving) > 0 {
 		s.Engraving = make(map[string]float64, len(doc.Engraving))
 		for k, v := range doc.Engraving {
@@ -650,6 +675,7 @@ func decodeScore(doc *scoreDoc) (*model.Score, error) {
 				}
 			}
 			m.Marker, m.Repeat = md.Marker, md.Repeat
+			m.NumberFrom = md.NumberFrom
 			if sign, ok := model.SignFromName(md.Sign); ok {
 				m.Sign = sign
 			}

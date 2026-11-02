@@ -100,6 +100,10 @@ func (m *Measure) Clone() *Measure {
 		}
 		out.Ending = &e
 	}
+	if m.NumberFrom != nil {
+		n := *m.NumberFrom
+		out.NumberFrom = &n
+	}
 	if m.Jump != nil {
 		j := *m.Jump
 		out.Jump = &j

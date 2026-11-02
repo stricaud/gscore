@@ -1962,6 +1962,10 @@ dialog.wide { max-width: 640px; }
 }
 .map-busy { width: 100%; height: 9px; display: block; }
 .map-rest { fill: var(--line); fill-opacity: .35; }
+/* How much is going on in a stretch of the piece. Set here rather than on
+   the rect, because a custom property in an SVG presentation attribute is
+   not resolved and the blocks came out black. */
+.map-busy { fill: var(--accent); }
 
 .map-echo {
   display: grid; grid-template-columns: 1fr auto; gap: 8px;
@@ -2026,6 +2030,10 @@ dialog.wide { max-width: 640px; }
 
 #range-body { flex: 1; min-height: 0; overflow-y: auto; padding-right: 4px; }
 
+/* The stretch a part mostly sits in. A style rule and not a fill
+   attribute: a custom property in a presentation attribute is not
+   resolved, and the bar came out black in both themes. */
+.range-tessitura { fill: var(--accent); }
 .range-staff { padding: 9px 0; border-bottom: 1px solid var(--line); }
 .range-staff:last-child { border-bottom: 0; }
 .range-name { display: flex; align-items: baseline; gap: 8px; }
@@ -2165,3 +2173,15 @@ dialog.wide { max-width: 640px; }
   align-items: center;
 }
 .knob-picture svg { max-width: 72px; height: auto; }
+
+/* The part of a picture that is what the field changes, in the red the
+   menu icons use for the same thing.
+ *
+ * Here and not on the shapes themselves, because a custom property in an
+ * SVG presentation attribute is not resolved: stroke="var(--mark)" is
+ * thrown away and the shape falls back to what it inherits. As a style
+ * rule it is an ordinary declaration and works, and it follows the theme
+ * — which is the whole point, since the light theme's red is unreadable
+ * on a dark ground. */
+.knob-pic .mark { stroke: var(--mark); }
+.knob-pic text.mark { fill: var(--mark); stroke: none; }

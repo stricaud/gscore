@@ -88,8 +88,11 @@ test("resting and playing are told apart", () => {
   }).get("#map-body").innerHTML;
 
   // Only the rectangles drawn for music, not the pale one behind them.
+  // Found by their class: the colour is set in the stylesheet, because a
+  // custom property in an SVG presentation attribute is not resolved and
+  // these came out black.
   const playing = [...svg.matchAll(
-    /<rect x="(\d+)" y="0" width="(\d+)" height="\d+" fill="var\(--accent\)"/g)]
+    /<rect x="(\d+)" y="0" width="(\d+)" height="\d+" class="map-busy"/g)]
     .map((m) => [Number(m[1]), Number(m[2])]);
   assert.equal(playing.length, 1,
     "a staff that plays for one unbroken half was drawn in more than one piece");
@@ -109,7 +112,7 @@ test("one busy bar among many quiet ones still shows", () => {
     staves: [{ part: 0, name: "Piccolo", bars: counts }],
     echoes: [],
   }).get("#map-body").innerHTML;
-  assert.match(svg, /fill="var\(--accent\)"/,
+  assert.match(svg, /class="map-busy"/,
     "a single bar among two thousand was averaged away to nothing");
 });
 

@@ -927,6 +927,69 @@ paths:
                   knobs: { type: array, items: { type: object } }
         "400": { $ref: "#/components/responses/Error" }
 
+  /api/numbering:
+    get:
+      tags: [read]
+      summary: How this score's bars are numbered
+      responses:
+        "200":
+          description: How often, whether boxed, and where the count restarts.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  every:
+                    type: integer
+                    description: >
+                      Every nth bar carries a number. Zero is the default
+                      and does not mean never: it means wherever the
+                      engraver puts them, which is the first bar of each
+                      system on a page and every bar in the editor's strip.
+                  boxed:
+                    type: boolean
+                    description: A rectangle round each number, as a rehearsal mark has.
+                  restarts:
+                    type: object
+                    description: >
+                      The bars where the count begins again, by bar index,
+                      and the number each begins at.
+                    additionalProperties: { type: integer }
+    post:
+      tags: [write]
+      summary: Change how this score's bars are numbered
+      description: >
+        `every` and `boxed` belong to the score. `at` with `number` restarts
+        the count at a bar, and `at` with `number` empty or "none" takes
+        that restart away. A restart is written on every staff, because
+        "from bar forty" has to mean the same bar to everybody in the room.
+      parameters:
+        - name: every
+          in: query
+          description: Every nth bar carries a number; 0 to leave it to the engraver.
+          schema: { type: integer }
+        - name: boxed
+          in: query
+          description: 1 to box the numbers, 0 to leave them bare.
+          schema: { type: string }
+        - name: at
+          in: query
+          description: The bar a restart is written at, by index.
+          schema: { type: integer }
+        - name: number
+          in: query
+          description: >
+            The number that bar is called; empty or "none" removes the
+            restart.
+          schema: { type: string }
+      responses:
+        "200":
+          description: How the bars are numbered, as it now stands.
+          content:
+            application/json:
+              schema: { type: object }
+        "400": { $ref: "#/components/responses/Error" }
+
   /api/transpose:
     post:
       tags: [write]

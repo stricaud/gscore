@@ -315,6 +315,7 @@
            bar one is the first full bar. -->
       <button data-action="set-pickup"><span>Pickup measure…</span></button>
       <button data-action="set-time"><span>Time signature from here…</span></button>
+      <button data-action="set-numbering"><span>Bar numbers…</span></button>
       <hr>
       <!-- Whether a bar that is too long has its last notes moved into the
            next one. On is what makes typing music in feel like typing; off
@@ -867,6 +868,54 @@
     <div class="ask-buttons">
       <button value="ok" type="submit" class="primary">Pick up</button>
       <button value="cancel" type="submit">Cancel</button>
+    </div>
+  </form>
+</dialog>
+
+<!-- How the bars are numbered.
+     On or off was all a score could say, and where the numbers fell was
+     the engraver's decision. That is right for a song and not for a long
+     score, where rehearsing is most of what the numbers are for. -->
+<dialog id="numbering">
+  <h2>Bar numbers</h2>
+  <p class="small">Where the numbers are printed. A long score being
+     rehearsed wants them often and boxed; a song wants one at the head of
+     each line.</p>
+  <form method="dialog" id="numbering-form">
+    <label class="tempo-bar" for="numbering-every">
+      <span>Print a number</span>
+      <select id="numbering-every">
+        <option value="0">where they are wanted</option>
+        <option value="1">on every bar</option>
+        <option value="2">every 2 bars</option>
+        <option value="4">every 4 bars</option>
+        <option value="5">every 5 bars</option>
+        <option value="8">every 8 bars</option>
+        <option value="10">every 10 bars</option>
+      </select>
+    </label>
+    <label class="tempo-bar" for="numbering-boxed">
+      <span>Box them</span>
+      <input type="checkbox" id="numbering-boxed">
+    </label>
+    <hr>
+    <p class="small">Numbering already starts again at each movement. This
+       is for the rest: a section the publisher numbered separately, or a
+       study that begins again at one.</p>
+    <label class="tempo-bar" for="numbering-at">
+      <span>Start again at bar</span>
+      <input type="number" id="numbering-at" min="1" step="1">
+    </label>
+    <label class="tempo-bar" for="numbering-number">
+      <span>and call it</span>
+      <input type="number" id="numbering-number" min="0" step="1">
+    </label>
+    <div id="numbering-list" class="small"></div>
+    <p class="small">How often and the box take effect as you change them;
+       this button is for the restart above.</p>
+    <div class="ask-buttons">
+      <button value="ok" type="submit" class="primary">Start again there</button>
+      <button value="cancel" type="submit">Close</button>
     </div>
   </form>
 </dialog>

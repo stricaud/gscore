@@ -695,6 +695,9 @@ async function action(name) {
     case "score-options":
       await engravingDialog();
       break;
+    case "set-numbering":
+      await numberingDialog();
+      break;
     case "select-all":
       selectAll();
       break;
@@ -5651,6 +5654,109 @@ async function pickupDialog() {
     : "The first bar is an upbeat — bar one is the first full bar");
 }
 
+/* ---------- how the bars are numbered ---------- */
+
+// numberingDialog settles where the bar numbers are printed.
+//
+// Three things, and the third is a different shape from the other two: how
+// often and whether boxed belong to the score, while starting the count
+// again belongs to a bar. So the window has a list of the restarts already
+// written, each of which can be taken away — without it there would be no
+// way to find one again except by scrolling the score looking for a number
+// that goes backwards.
+async function numberingDialog() {
+  const dlg = $("#numbering");
+  const every = $("#numbering-every");
+  const boxed = $("#numbering-boxed");
+  const at = $("#numbering-at");
+  const number = $("#numbering-number");
+  const list = $("#numbering-list");
+
+  const show = (d) => {
+    every.value = String(d.every || 0);
+    boxed.checked = !!d.boxed;
+    const bars = Object.keys(d.restarts || {})
+      .map(Number).sort((a, b) => a - b);
+    list.innerHTML = "";
+    if (!bars.length) {
+      list.textContent = t("The count runs straight through.");
+      return;
+    }
+    for (const bar of bars) {
+      const row = document.createElement("div");
+      row.className = "tempo-bar";
+      const says = document.createElement("span");
+      // The bar as the editor names it, which is not the same as the index
+      // it is stored under: a piece with an upbeat counts from zero.
+      says.textContent = `${t("Bar")} ${barNumberOf(bar)} → ${d.restarts[bar]}`;
+      row.appendChild(says);
+      const drop = document.createElement("button");
+      drop.type = "button";
+      drop.className = "linklike";
+      drop.textContent = t("Remove");
+      drop.onclick = () => void send({ at: String(bar), number: "none" });
+      row.appendChild(drop);
+      list.appendChild(row);
+    }
+  };
+
+  const send = async (params) => {
+    const res = await fetch("/api/numbering?" + new URLSearchParams(params),
+                            { method: "POST" });
+    if (!res.ok) {
+      status("Could not set it: " + (await res.text()).trim());
+      return false;
+    }
+    show(await res.json());
+    await refreshScore();
+    return true;
+  };
+
+  // How often and whether boxed take effect as they are changed, because
+  // what they do is only visible on the page behind the window.
+  every.onchange = () => void send({ every: every.value });
+  boxed.onchange = () => void send({ boxed: boxed.checked ? "1" : "0" });
+
+  const res = await fetch("/api/numbering");
+  if (!res.ok) {
+    status("Could not read the numbering");
+    return;
+  }
+  show(await res.json());
+  at.value = String(barNumberOf(state.selection?.measure ?? 0));
+  // Left empty on purpose. Enter confirms this window, and somebody who
+  // opened it to change how often the numbers are printed should not get
+  // a restart written at whatever bar they happened to be standing on.
+  number.value = "";
+
+  const answer = await new Promise((resolve) => {
+    const done = () => {
+      dlg.removeEventListener("close", done);
+      resolve(dlg.returnValue);
+    };
+    dlg.addEventListener("close", done);
+    dlg.showModal();
+  });
+  if (answer !== "ok" || number.value.trim() === "") {
+    status("Ready");
+    return;
+  }
+  // The field asks for the bar by the name the score calls it; the
+  // endpoint wants the index it is stored under. The same conversion the
+  // Go-to-measure dialog uses, and within the movement the cursor is in,
+  // because that is what the number in the field means to the person who
+  // typed it.
+  const bar = barIndexOf(Number(at.value), movementHere());
+  if (!Number.isInteger(bar) || bar < 0) {
+    status(`There is no bar ${at.value}`);
+    return;
+  }
+  if (await send({ at: String(bar), number: number.value })) {
+    status(`Bar ${at.value} is now called ${number.value}`);
+  }
+}
+
+
 /* ---------- what each engraving measurement does ---------- */
 
 // A picture for each measurement, showing which gap it is.
@@ -5782,15 +5888,24 @@ function knobPicture(spec) {
   // and four below for what is written there — a stem, a ledger line, an
   // octave line, a hairpin.
   const sy = (step) => h / 2 - step / 2;
-  const ink = (red) => (red ? 'var(--mark)' : 'currentColor');
+  // The colour goes on as a class, not as an attribute.
+  //
+  // stroke="var(--mark)" does not work: a presentation attribute is not a
+  // CSS declaration, and a custom property in one is not resolved — the
+  // attribute is thrown away and the shape falls back to whatever it
+  // inherits. In dark mode that left the beams and the measure marks
+  // drawn in the light theme's ink on a dark ground. currentColor is a
+  // real attribute keyword and does work, which is why the staff lines
+  // were right and nothing else was.
+  const mark = (red) => (red ? ' class="mark"' : '');
   const out = [];
 
   const staffAt = (at, redLine) => {
     for (let i = -4; i <= 4; i += 2) {
       const on = redLine !== undefined && i === redLine;
-      out.push(`<line x1="0.3" y1="${sy(at + i)}" x2="${w - 0.3}" y2="${sy(at + i)}" ` +
-        `stroke="${ink(on)}" stroke-width="${on ? 0.22 : 0.1}" ` +
-        `opacity="${on ? 1 : 0.55}"/>`);
+      out.push(`<line${mark(on)} x1="0.3" y1="${sy(at + i)}" x2="${w - 0.3}" ` +
+        `y2="${sy(at + i)}" stroke="currentColor" ` +
+        `stroke-width="${on ? 0.22 : 0.1}" opacity="${on ? 1 : 0.55}"/>`);
     }
   };
   if (spec.page) {
@@ -5816,22 +5931,24 @@ function knobPicture(spec) {
   }
 
   for (const [x0, s0, x1, s1, t, red] of spec.l || []) {
-    out.push(`<line x1="${x0}" y1="${sy(s0)}" x2="${x1}" y2="${sy(s1)}" ` +
-      `stroke="${ink(red)}" stroke-width="${t}" stroke-linecap="butt"/>`);
+    out.push(`<line${mark(red)} x1="${x0}" y1="${sy(s0)}" x2="${x1}" ` +
+      `y2="${sy(s1)}" stroke="currentColor" stroke-width="${t}" ` +
+      `stroke-linecap="butt"/>`);
   }
   for (const [x0, s0, x1, s1, cx, cs, red] of spec.c || []) {
-    out.push(`<path d="M${x0} ${sy(s0)} Q${cx} ${sy(cs)} ${x1} ${sy(s1)}" ` +
-      `fill="none" stroke="${ink(red)}" stroke-width="0.16"/>`);
+    out.push(`<path${mark(red)} d="M${x0} ${sy(s0)} Q${cx} ${sy(cs)} ` +
+      `${x1} ${sy(s1)}" fill="none" stroke="currentColor" stroke-width="0.16"/>`);
   }
   for (const [ch, x, step, red] of spec.g || []) {
-    out.push(`<text x="${x}" y="${sy(step)}" font-family="Bravura" font-size="4" ` +
-      `fill="${ink(red)}">${ch}</text>`);
+    out.push(`<text${mark(red)} x="${x}" y="${sy(step)}" font-family="Bravura" ` +
+      `font-size="4" fill="currentColor">${ch}</text>`);
   }
 
   // The red mark for a distance. End ticks and not an arrowhead: at this
   // size an arrow is a blob, and two ticks say "from here to here" just as
   // plainly.
-  const red = 'stroke="var(--mark)" stroke-width="0.14" stroke-linecap="butt"';
+  const red = 'class="mark" stroke="currentColor" stroke-width="0.14" ' +
+    'stroke-linecap="butt"';
   const across = (x0, x1, step) => {
     const y = sy(step);
     out.push(`<line x1="${x0}" y1="${y}" x2="${x1}" y2="${y}" ${red}/>`);
@@ -9777,9 +9894,7 @@ const MENU_ICONS = {
   "split-measure": "\ue036",       // barlineDashed
   "track-barlines": "\ue030",      // barlineSingle
 
-  // The signs a reader jumps by, and the chord symbols written over them.
-  "insert-marker": "\ue048",       // coda
-  "insert-chord": "\ue873",        // csymMajorSeventh
+  // The guitar frame, which is the one of these the font really has.
   "chord-builder": "\ue856",       // fretboard6String
 
   // The tempo mark, which is written as a note and a number.
@@ -11354,7 +11469,7 @@ function rangeStrip(p) {
   if (p.tessitura) {
     parts.push(`<rect x="${x(p.tessitura.low).toFixed(1)}" y="6" ` +
       `width="${Math.max(2, x(p.tessitura.high) - x(p.tessitura.low)).toFixed(1)}" ` +
-      `height="8" rx="2" fill="var(--accent)"/>`);
+      `height="8" rx="2" class="range-tessitura"/>`);
   }
   // The two ends, so the extremes are not lost in the band.
   for (const end of [p.lowest, p.highest]) {
@@ -11620,7 +11735,7 @@ function mapStrip(counts, bars, busiest) {
     if (here > 0) {
       const shade = 0.22 + (here / (mapLevels - 1)) * 0.78;
       parts.push(`<rect x="${at}" y="0" width="${end - at}" height="${H}" ` +
-        `fill="var(--accent)" fill-opacity="${shade.toFixed(2)}"/>`);
+        `class="map-busy" fill-opacity="${shade.toFixed(2)}"/>`);
     }
     at = end;
   }
@@ -12316,6 +12431,21 @@ const MENU_DRAWINGS = {
     '<path d="M19 20V5"/><path d="M15.5 8.5 19 5l3.5 3.5"/>',
   "staff-down": '<path d="M3 5h12M3 8h12M3 11h12M3 14h12" opacity=".7"/>' +
     '<path d="M19 4v15"/><path d="M15.5 15.5 19 19l3.5-3.5"/>',
+  /* A rehearsal mark and a chord symbol: the two things written over a
+   * staff that are letters rather than signs.
+   *
+   * Neither is in the music font, which carries the coda, the segno and
+   * the chord qualities but not the letters they are written beside — so
+   * the font table had a coda standing for the rehearsal mark and a bare
+   * major-seventh triangle standing for a chord symbol, and neither says
+   * what the entry does. Drawn, they can be what they are. */
+  "insert-marker": '<rect x="3.5" y="4.5" width="17" height="15" rx="1.5"/>' +
+    '<path d="M8 16.3 12 7.7l4 8.6"/><path d="M9.4 13.4h5.2"/>',
+  // A letter and the figure beside it, which is the shape of every chord
+  // symbol ever written and belongs to nothing else.
+  "insert-chord": '<path d="M13.8 8.6a6 6 0 1 0 0 7.4"/>' +
+    '<path d="M16.4 5.2h5l-3.2 6.4"/>',
+
   // The instrument itself: a tube, its keys and the bell on the end.
   //
   // Not a clef, which is what this was. A clef is a thing written on a
@@ -12347,6 +12477,13 @@ const MENU_DRAWINGS = {
     '<path d="M7.5 10.5h6"/>',
   "zoom-reset": '<circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.3 15.3 21 21"/>' +
     '<path d="M8.6 9.3 10.5 8v5.5"/>',
+  // A number written over a bar, which is what the entry decides the
+  // printing of.
+  "set-numbering": '<path d="M4 13h16M4 17h16M4 21h16" opacity=".6"/>' +
+    '<path d="M4 13V21M12 13v8M20 13v8" opacity=".6"/>' +
+    '<path d="M5.4 4.4 7 3.2V10"/>' +
+    '<path d="M12.6 4.6a2.3 2.3 0 1 1 4.1 1.6L12.6 10h4.6"/>',
+
   // A label, which is what a staff name is.
   "view-names": '<path d="M3 8.5a2 2 0 0 1 2-2h8l6 5.5-6 5.5H5a2 2 0 0 1-2-2z"/>' +
     '<circle cx="7" cy="12" r="1.1"/>',

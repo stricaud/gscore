@@ -150,3 +150,45 @@ test("every menu entry has a picture", () => {
   }
   assert.deepEqual(missing, [], "menu entries with no picture beside them");
 });
+
+// No theme colour is passed as an SVG presentation attribute.
+//
+// `stroke="var(--mark)"` looks like it should work and does not: a
+// presentation attribute is not a CSS declaration, so a custom property in
+// one is never resolved. The attribute is thrown away and the shape falls
+// back to what it inherits — which is how the engraving window's beams and
+// measure marks came to be drawn in the light theme's ink on a dark
+// ground, while the staff lines beside them were right because
+// currentColor is a real attribute keyword.
+//
+// The fix is always the same: give the shape a class and put the colour in
+// the stylesheet. This is here because the failure is silent and looks
+// like a theme problem rather than a markup one.
+test("no theme colour is written into an SVG attribute", () => {
+  const bad = [];
+  src.split("\n").forEach((line, i) => {
+    // Not the prose. The paragraph above this test names the pattern it
+    // forbids, which is the useful thing to write down and not a use of
+    // it; a lint that cannot tell them apart would forbid explaining
+    // itself.
+    const code = line.trim();
+    if (code.startsWith("//") || code.startsWith("*")) return;
+    const m = /\b(fill|stroke|color|stop-color)\s*=\s*["'`][^"'`]*var\(/.exec(line);
+    if (m) bad.push(`app.js:${i + 1}: ${m[0].trim()}…`);
+  });
+  assert.deepEqual(bad, [],
+    "use a class and style it in style.css; var() is not resolved here");
+});
+
+// And the classes that replaced those attributes are actually styled.
+//
+// Moving a colour out of an attribute and into a class fixes nothing if
+// the rule is never written: the shape falls back to black exactly as
+// before, and the markup now looks correct while the page does not.
+test("every colour class the drawings use has a rule", () => {
+  const css = readFileSync(new URL("./style.css", import.meta.url), "utf8");
+  for (const cls of ["knob-pic .mark", "map-busy", "range-tessitura"]) {
+    assert.match(css, new RegExp("\\." + cls.replace(" ", " .?") + "\\s*\\{"),
+      `.${cls} is used in app.js but has no rule in style.css`);
+  }
+});

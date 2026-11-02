@@ -77,6 +77,9 @@ func main() {
 				"writing it into the page")
 		noPlay = flag.Bool("noplay", false,
 			"for -o to .html: leave the player out, so the page is a drawing")
+		audioURL = flag.String("audio", "",
+			"for -o to .html: play a recording fetched from this address — made "+
+				"with -o to a .flac — instead of synthesising the music in the page")
 		soundFont = flag.String("soundfont", "",
 			"the soundfont to record through, for -o to a .flac")
 
@@ -138,7 +141,7 @@ func main() {
 		fmt.Printf("wrote %s\n", *convert)
 	case *out != "":
 		if err := renderFile(score, *out, *strip, *space, *landscape,
-			*fontURL, *scriptURL, *soundFont, !*noPlay); err != nil {
+			*fontURL, *scriptURL, *soundFont, *audioURL, !*noPlay); err != nil {
 			fmt.Fprintf(os.Stderr, "gscore: %v\n", err)
 			os.Exit(1)
 		}
@@ -188,6 +191,9 @@ usage:
   gscore -o OUT.js         write the player on its own, to serve beside pages
   gscore -o OUT.mid FILE   the performance as a MIDI file, for rendering with
                            a soundfont or opening in a sequencer
+  gscore -o OUT.flac FILE  the performance recorded through -soundfont, which
+                           a page made with -audio plays instead of making
+                           the sound itself
   gscore -serve :8080    run as a web server
   gscore -describe FILE  print what FILE contains
   gscore -convert OUT.musicxml FILE   convert between formats
@@ -279,7 +285,8 @@ func sayIfDivided(s *model.Score, lay *engrave.Layout, popt gpdf.Options) {
 // PDF is paginated whatever -strip says: a continuous strip has no page breaks
 // to print at, and a PDF is pages or it is nothing.
 func renderFile(s *model.Score, path string, strip bool, space float64,
-	landscape bool, fontURL, scriptURL, soundFont string, play bool) error {
+	landscape bool, fontURL, scriptURL, soundFont, audioURL string,
+	play bool) error {
 	ext := strings.ToLower(filepath.Ext(path))
 	wantPDF := ext == ".pdf"
 	wantPage := ext == ".html" || ext == ".htm"
@@ -372,6 +379,7 @@ func renderFile(s *model.Score, path string, strip bool, space float64,
 		hopt.SVG = ropt
 		hopt.FontURL = fontURL
 		hopt.ScriptURL = scriptURL
+		hopt.AudioURL = audioURL
 		if play {
 			hopt.Sound = app.PageSound(s, lay, ropt.StaffSpace)
 		}

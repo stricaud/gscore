@@ -149,6 +149,62 @@ func TestAPageCanPlayItself(t *testing.T) {
 	}
 }
 
+// A page given a recording plays that instead of imitating the instruments,
+// and carries only what it still needs: where the bars are, and which head to
+// light up when.
+func TestAPageCanPlayARecordingOfItself(t *testing.T) {
+	s := tune()
+	lay := engrave.Engrave(s, engrave.DefaultOptions())
+	opt := DefaultOptions()
+	opt.AudioURL = "../audio.flac"
+	opt.Sound = &Sound{
+		Duration: 4, Tempo: 96,
+		Notes: []Note{
+			{Start: 0, Dur: 1, MIDI: 60, Velocity: 80, Family: "flute", Ref: 1},
+			// A note that lights nothing up is of no use to such a page.
+			{Start: 1, Dur: 1, MIDI: 62, Velocity: 80, Family: "flute"},
+		},
+		Bars:  []Bar{{Index: 0, Start: 0, Dur: 3}},
+		Boxes: Boxes(lay, opt.SVG.StaffSpace),
+	}
+	var b bytes.Buffer
+	if err := Render(&b, lay, s, nil, opt); err != nil {
+		t.Fatal(err)
+	}
+	text := b.String()
+
+	if !strings.Contains(text, `id="gscore-audio"`) {
+		t.Error("the page has no recording to play")
+	}
+	if !strings.Contains(text, `src="../audio.flac"`) {
+		t.Error("the recording is not the one that was asked for")
+	}
+	// An hour of orchestra must not be fetched by opening the page.
+	if !strings.Contains(text, `preload="none"`) {
+		t.Error("the page would fetch the recording before anybody pressed play")
+	}
+	// Still a drawing that follows itself.
+	if !strings.Contains(text, `id="gscore-sound"`) || !strings.Contains(text, "data-ref=") {
+		t.Error("the page cannot follow the music it is playing")
+	}
+
+	// What a synthesiser would have wanted is gone, and what the highlight
+	// needs is not.
+	sound := text[strings.Index(text, `id="gscore-sound"`):]
+	sound = sound[:strings.Index(sound, "</script>")]
+	for _, gone := range []string{`"m":`, `"v":`, `"f":`} {
+		if strings.Contains(sound, gone) {
+			t.Errorf("the notes still carry %s, which nothing in the page reads", gone)
+		}
+	}
+	if !strings.Contains(sound, `"r":1`) {
+		t.Error("the note that lights a head up was dropped")
+	}
+	if strings.Contains(sound, `"t":1,`) {
+		t.Error("a note that lights nothing up was kept")
+	}
+}
+
 // Every bar gets a box, so the cursor has somewhere to be in each of them.
 func TestEveryBarHasAPlaceOnThePage(t *testing.T) {
 	s := tune()

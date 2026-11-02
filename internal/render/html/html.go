@@ -74,6 +74,24 @@ type Options struct {
 	//
 	// It is only used when there is a player to fetch.
 	ScriptURL string
+
+	// AudioURL plays a recording of the score instead of synthesising it.
+	//
+	// The player that travels with a page is one oscillator a note, because
+	// that is what fits in a file somebody can email. It sounds like what it
+	// is. A recording made by this program through a soundfont — the same
+	// one the editor plays through — sounds like the instruments, asks the
+	// page for no synthesis at all, and is streamed rather than parsed, so a
+	// symphony begins playing before it has finished arriving.
+	//
+	// It is for a page on a site that can serve the recording beside it. A
+	// file sent to somebody has nowhere to fetch one from, which is why this
+	// is an address rather than bytes, and why a page without it still
+	// plays.
+	//
+	// With a recording the notes are wanted only for lighting up noteheads,
+	// so what is written into the page is trimmed to that.
+	AudioURL string
 }
 
 // DefaultOptions draws the music at a readable size, standing on its own.
@@ -135,6 +153,15 @@ func Render(w io.Writer, lay *engrave.Layout, score *model.Score,
 	b.WriteString("<body>\n")
 	if opt.Sound != nil {
 		b.WriteString(playerHTML)
+		if opt.AudioURL != "" {
+			// The recording, which the player uses as its transport and as
+			// its clock. preload="none" so that opening the page does not
+			// begin fetching an hour of orchestra nobody has asked to hear
+			// yet; pressing play is what asks.
+			fmt.Fprintf(&b,
+				"<audio id=\"gscore-audio\" src=%q preload=\"none\"></audio>\n",
+				opt.AudioURL)
+		}
 	}
 	b.WriteString("<main>\n")
 	b.Write(art.Bytes())
@@ -145,7 +172,15 @@ func Render(w io.Writer, lay *engrave.Layout, score *model.Score,
 	fmt.Fprintf(&b, "<footer>Engraved with %s</footer>\n", brand.Name)
 
 	if opt.Sound != nil {
-		data, err := soundJSON(opt.Sound)
+		// With a recording beside it, nothing in the page makes a sound, so
+		// what each note is made of is not written into it.
+		var data []byte
+		var err error
+		if opt.AudioURL != "" {
+			data, err = playingJSON(opt.Sound)
+		} else {
+			data, err = soundJSON(opt.Sound)
+		}
 		if err != nil {
 			return err
 		}

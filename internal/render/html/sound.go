@@ -118,3 +118,51 @@ func round(v float64) float64 { return math.Round(v*10) / 10 }
 
 // soundJSON is the whole thing as the player reads it.
 func soundJSON(s *Sound) ([]byte, error) { return json.Marshal(s) }
+
+// cue is a note as a page with a recording of itself needs one: when to light
+// a notehead up, and for how long.
+//
+// The names are the ones a note already uses, so the player reads a cue and a
+// note the same way and never has to know which it was handed.
+type cue struct {
+	Start float64 `json:"t"`
+	Dur   float64 `json:"d"`
+	Ref   int     `json:"r,omitempty"`
+}
+
+// playing is a Sound for a page that does not make its own.
+type playing struct {
+	Notes    []cue   `json:"notes"`
+	Bars     []Bar   `json:"bars"`
+	Boxes    []Box   `json:"boxes"`
+	Duration float64 `json:"duration"`
+	Tempo    int     `json:"tempo"`
+}
+
+// playingJSON is the same thing for a page that plays a recording.
+//
+// Everything a synthesiser would have needed is dropped. The pitch, the
+// loudness, how much of the written length sounds and what family of
+// instrument it is all answer "how should this be made to sound", and the
+// recording has settled that already. What is left is the one thing the page
+// still does with a note: show which head is sounding. A note that lights
+// nothing up — it carries no number — goes too.
+//
+// On the ninth symphony this is the difference between ten megabytes of notes
+// and about three.
+func playingJSON(s *Sound) ([]byte, error) {
+	p := playing{
+		Notes:    make([]cue, 0, len(s.Notes)),
+		Bars:     s.Bars,
+		Boxes:    s.Boxes,
+		Duration: s.Duration,
+		Tempo:    s.Tempo,
+	}
+	for _, n := range s.Notes {
+		if n.Ref == 0 {
+			continue
+		}
+		p.Notes = append(p.Notes, cue{Start: n.Start, Dur: n.Dur, Ref: n.Ref})
+	}
+	return json.Marshal(p)
+}

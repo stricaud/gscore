@@ -8694,6 +8694,10 @@ async function playNow(opts) {
   // Starting is asking to be shown the music, so the page follows again
   // however it was left.
   userScrolled = false;
+  followTop = null;
+  // Starting anywhere but where we stopped means the walk down the bars has
+  // to begin again rather than carry on from the last playing.
+  cursorFrom = 0;
   $("#play-btn").classList.add("active");
   const where = from > 0
     ? ` from measure ${(cursorAt(pb.measures, from)?.measure ?? 0) + 1}`
@@ -8733,6 +8737,9 @@ function measureBox(index) {
   return { x0, x1, top, bottom };
 }
 
+// How far down the bars the last search for the moment got. See cursorAt.
+let cursorFrom = 0;
+
 // cursorAt converts a moment into a place on the page.
 //
 // The cursor follows the timeline, not the notes. A score has one clock and
@@ -8743,11 +8750,26 @@ function measureBox(index) {
 function cursorAt(measures, now) {
   if (!measures || !measures.length) return null;
 
-  let m = measures[0];
-  for (const cand of measures) {
-    if (now >= cand.start) m = cand;
-    else break;
+  // Walked on from where the last frame left off, not from the first bar.
+  //
+  // Starting at the beginning every time costs what the music has already
+  // played: by the last movement of the ninth that is three thousand bars
+  // looked at sixty times a second, and the following got heavier the
+  // further in you went — worst exactly where the music is busiest.
+  //
+  // Playback only moves forward, so the next frame's bar is this one's or a
+  // later one. A moment earlier than the last — somebody seeking, or a
+  // repeat going back — starts the walk again. The bars are in playing
+  // order, so their starts only ever increase even where their numbers do
+  // not.
+  if (cursorFrom >= measures.length || measures[cursorFrom].start > now) {
+    cursorFrom = 0;
   }
+  while (cursorFrom + 1 < measures.length &&
+         measures[cursorFrom + 1].start <= now) {
+    cursorFrom++;
+  }
+  const m = measures[cursorFrom];
   const box = measureBox(m.index);
   if (!box) return null;
 
@@ -9118,15 +9140,27 @@ function followCursor(pt) {
     // The music is on screen. Whatever you were looking at, you are looking
     // at it again, so following takes over from here.
     userScrolled = false;
+    followTop = null;
     return;
   }
   // Out of view, which is either the music having moved on or you having
   // gone to look at something else. Only the first is ours to answer.
   if (userScrolled) return;
-  wrap.scrollTo({
-    top: Math.max(0, top - wrap.clientHeight * 0.3),
-    behavior: "smooth",
-  });
+
+  const target = Math.max(0, top - wrap.clientHeight * 0.3);
+  // Asked for once per move, not once per frame.
+  //
+  // A smooth scroll takes a few hundred milliseconds to arrive, and for the
+  // first of them the cursor is still outside the view that is on its way —
+  // so this asked for the same scroll again on the next frame, and the one
+  // after, each request restarting the easing from wherever the last had
+  // got to. The view crept towards the new system instead of going to it,
+  // and because the easing began again every frame it was always slowest
+  // just as it should have been arriving. Sideways has never had the
+  // problem, for the reason written above it: it is set, not animated.
+  if (followTop !== null && Math.abs(followTop - target) < 1) return;
+  followTop = target;
+  wrap.scrollTo({ top: target, behavior: "smooth" });
 }
 
 // Whether the page belongs to the music or to the person reading it.
@@ -9142,6 +9176,10 @@ function followCursor(pt) {
 // press either way. Sideways is not affected: the strip is one long line and
 // the cursor has to be kept on screen or there is nothing to watch.
 let userScrolled = false;
+
+// Where the view was last sent, so that one move down the page is one
+// scroll and not one on every frame of it. See followCursor.
+let followTop = null;
 
 // setupFollowRelease watches for the scrolling being somebody's own.
 //

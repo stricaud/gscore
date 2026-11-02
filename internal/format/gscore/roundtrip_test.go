@@ -24,6 +24,12 @@ func TestRoundTripKeepsEverything(t *testing.T) {
 	n.Octave = &model.OctaveShift{Amount: 1, Start: true}
 	n.Lyrics = []model.Lyric{{Text: "Glo", Verse: 1, Syllabic: model.SyllableBegin}}
 	n.Trill = &model.Trill{Start: true}
+	n.Arpeggio = &model.Arpeggio{Down: true}
+	n.Break = model.BreathComma
+	n.Fingering = []string{"1-2", "4"}
+	n.Glissando = &model.Glissando{Start: true, Wavy: true, Text: "gliss."}
+	n.Pedal = &model.PedalMark{Start: true, Half: true}
+	n.Small = true
 
 	m2 := &model.Note{
 		Pitch: model.Pitch{Step: model.StepA, Octave: 4}, Dur: model.Duration{Num: 1, Den: 4},
@@ -31,6 +37,9 @@ func TestRoundTripKeepsEverything(t *testing.T) {
 	m2.Hairpin = &model.Hairpin{Kind: model.Crescendo, Stop: true}
 	m2.Octave = &model.OctaveShift{Amount: 1, Stop: true}
 	m2.Lyrics = []model.Lyric{{Text: "ri", Verse: 1, Syllabic: model.SyllableEnd, Extend: true}}
+	m2.Glissando = &model.Glissando{Stop: true, Wavy: true}
+	m2.Pedal = &model.PedalMark{Stop: true}
+	m2.Break = model.Caesura
 
 	p.Measures[0].Voices[0].Elements = []model.Element{n, m2}
 

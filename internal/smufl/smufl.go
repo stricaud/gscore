@@ -506,6 +506,25 @@ func DynamicGlyph(d model.Dynamic) string {
 }
 
 // ArticulationGlyph returns the glyph for an articulation on the given side.
+// BreathGlyph is the sign for the pause taken after a note.
+//
+// A comma for a breath, a tick where a comma would be lost among other
+// marks, and the two strokes of a caesura where the music stops rather than
+// the player breathing.
+func BreathGlyph(b model.Breath) string {
+	switch b {
+	case model.BreathComma:
+		return "breathMarkComma"
+	case model.BreathTick:
+		return "breathMarkTick"
+	case model.Caesura:
+		return "caesura"
+	case model.CaesuraCurved:
+		return "caesuraCurved"
+	}
+	return ""
+}
+
 func ArticulationGlyph(a model.Articulation, above bool) string {
 	side := "Below"
 	if above {

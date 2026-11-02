@@ -101,16 +101,12 @@ func scoreOf(t *testing.T, time model.TimeSignature, durs ...model.Duration) *mo
 func TestBeamGroupingFollowsTheBeat(t *testing.T) {
 	eighth := model.Duration{Num: 1, Den: 8}
 
-	// In 2/4 the beat is a quarter, so eighths group in twos.
+	// Simple duple is read as one unit: the handbooks beam the whole bar.
 	items := placedRun(model.TimeSignature{Beats: 2, BeatValue: 4}, eighth, 4)
 	groups := beamGroups(items, model.TimeSignature{Beats: 2, BeatValue: 4})
-	if len(groups) != 2 {
-		t.Fatalf("4 eighths in 2/4 gave %d groups, want 2", len(groups))
-	}
-	for i, g := range groups {
-		if len(g) != 2 {
-			t.Errorf("group %d has %d notes, want 2", i, len(g))
-		}
+	if len(groups) != 1 || len(groups[0]) != 4 {
+		t.Fatalf("4 eighths in 2/4 gave %d groups, want the bar in one",
+			len(groups))
 	}
 
 	// In 6/8 the beat is a dotted quarter, so they group in threes.

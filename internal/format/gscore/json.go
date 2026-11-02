@@ -263,6 +263,34 @@ type marksDoc struct {
 	Beam          string      `json:"beam,omitempty"`
 	Chord         *chordDoc   `json:"chord,omitempty"`
 	Texts         []textDoc   `json:"texts,omitempty"`
+	// Arpeggio rolls the chord, Break is the breath or pause after the
+	// note, Fingering which fingers play it, Glissando the slide to the
+	// next, Pedal the sustaining pedal, and Small draws it at cue size.
+	Arpeggio  *arpeggioDoc `json:"arpeggio,omitempty"`
+	Break     string       `json:"break,omitempty"`
+	Fingering []string     `json:"fingering,omitempty"`
+	Glissando *glissDoc    `json:"glissando,omitempty"`
+	Pedal     *pedalDoc    `json:"pedal,omitempty"`
+	Small     bool         `json:"small,omitempty"`
+}
+
+type arpeggioDoc struct {
+	Down bool `json:"down,omitempty"`
+}
+
+type glissDoc struct {
+	Start bool   `json:"start,omitempty"`
+	Stop  bool   `json:"stop,omitempty"`
+	Wavy  bool   `json:"wavy,omitempty"`
+	Text  string `json:"text,omitempty"`
+}
+
+type pedalDoc struct {
+	Start  bool `json:"start,omitempty"`
+	Stop   bool `json:"stop,omitempty"`
+	Change bool `json:"change,omitempty"`
+	Text   bool `json:"text,omitempty"`
+	Half   bool `json:"half,omitempty"`
 }
 
 type chordDoc struct {
@@ -582,7 +610,10 @@ func encodeMarks(m *model.Marks) *marksDoc {
 		m.Stem == model.StemAuto && m.Dynamic == model.DynamicNone &&
 		m.Hairpin == nil && m.Octave == nil && len(m.Lyrics) == 0 &&
 		m.Tremolo == nil && m.Trill == nil &&
-		m.Beam == model.BeamAuto && m.Chord == nil && len(m.Texts) == 0 {
+		m.Beam == model.BeamAuto && m.Chord == nil && len(m.Texts) == 0 &&
+		m.Arpeggio == nil && m.Break == model.NoBreath &&
+		len(m.Fingering) == 0 && m.Glissando == nil && m.Pedal == nil &&
+		!m.Small {
 		return nil
 	}
 	out := &marksDoc{
@@ -617,6 +648,27 @@ func encodeMarks(m *model.Marks) *marksDoc {
 			Amount: m.Octave.Amount, Start: m.Octave.Start, Stop: m.Octave.Stop,
 		}
 	}
+	if m.Arpeggio != nil {
+		out.Arpeggio = &arpeggioDoc{Down: m.Arpeggio.Down}
+	}
+	if m.Break != model.NoBreath {
+		out.Break = m.Break.String()
+	}
+	if len(m.Fingering) > 0 {
+		out.Fingering = append([]string(nil), m.Fingering...)
+	}
+	if g := m.Glissando; g != nil {
+		out.Glissando = &glissDoc{
+			Start: g.Start, Stop: g.Stop, Wavy: g.Wavy, Text: g.Text,
+		}
+	}
+	if pd := m.Pedal; pd != nil {
+		out.Pedal = &pedalDoc{
+			Start: pd.Start, Stop: pd.Stop, Change: pd.Change,
+			Text: pd.Text, Half: pd.Half,
+		}
+	}
+	out.Small = m.Small
 	if m.Trill != nil {
 		out.Trill = &trillDoc{Start: m.Trill.Start, Stop: m.Trill.Stop}
 	}
@@ -942,6 +994,27 @@ func decodeMarks(md *marksDoc, m *model.Marks) {
 	if tr := md.Trill; tr != nil {
 		m.Trill = &model.Trill{Start: tr.Start, Stop: tr.Stop}
 	}
+	if ad := md.Arpeggio; ad != nil {
+		m.Arpeggio = &model.Arpeggio{Down: ad.Down}
+	}
+	if b, ok := model.BreathFromName(md.Break); ok {
+		m.Break = b
+	}
+	if len(md.Fingering) > 0 {
+		m.Fingering = append([]string(nil), md.Fingering...)
+	}
+	if g := md.Glissando; g != nil {
+		m.Glissando = &model.Glissando{
+			Start: g.Start, Stop: g.Stop, Wavy: g.Wavy, Text: g.Text,
+		}
+	}
+	if pd := md.Pedal; pd != nil {
+		m.Pedal = &model.PedalMark{
+			Start: pd.Start, Stop: pd.Stop, Change: pd.Change,
+			Text: pd.Text, Half: pd.Half,
+		}
+	}
+	m.Small = md.Small
 	if b, ok := model.BeamFromName(md.Beam); ok {
 		m.Beam = b
 	}

@@ -286,3 +286,526 @@ func handbookLayout(t *testing.T, path string) *Layout {
 	o.WriteAhead = false
 	return Engrave(s, o)
 }
+
+/*
+ * Beams grouped into the unit the metre is read in.
+ *
+ * Breaking at every beat is readable and is not what printed music does.
+ * Simple quadruple is two units of duple and "these two units must always be
+ * clearly distinguished"; simple duple is one unit of the whole bar; simple
+ * triple keeps its three beats and must not come out looking like compound
+ * duple. A beat that is uneven is not joined to its neighbour, because a
+ * unit of mixed values beamed as one says the bar is in some other metre.
+ */
+func TestBeamsFollowTheMetricalUnit(t *testing.T) {
+	eighth := model.Duration{Num: 1, Den: 8}
+	sixteenth := model.Duration{Num: 1, Den: 16}
+
+	sizes := func(t model.TimeSignature, d model.Duration, n int) []int {
+		var out []int
+		for _, g := range beamGroups(placedRun(t, d, n), t) {
+			out = append(out, len(g))
+		}
+		return out
+	}
+	same := func(got []int, want ...int) bool {
+		if len(got) != len(want) {
+			return false
+		}
+		for i := range want {
+			if got[i] != want[i] {
+				return false
+			}
+		}
+		return true
+	}
+
+	four := model.TimeSignature{Beats: 4, BeatValue: 4}
+	if got := sizes(four, eighth, 8); !same(got, 4, 4) {
+		t.Errorf("eight eighths in 4/4 came out as %v, want two units of four: "+
+			"beats two and three must never be beamed together", got)
+	}
+	if got := sizes(four, sixteenth, 16); !same(got, 8, 8) {
+		t.Errorf("sixteen sixteenths in 4/4 came out as %v, want 8 and 8", got)
+	}
+
+	two := model.TimeSignature{Beats: 2, BeatValue: 4}
+	if got := sizes(two, eighth, 4); !same(got, 4) {
+		t.Errorf("four eighths in 2/4 came out as %v, want the bar in one", got)
+	}
+
+	// Simple triple keeps its beats: beamed in threes it would read as 6/8,
+	// which the handbooks call out by name.
+	three := model.TimeSignature{Beats: 3, BeatValue: 4}
+	if got := sizes(three, eighth, 6); !same(got, 2, 2, 2) {
+		t.Errorf("six eighths in 3/4 came out as %v, want three beats of two: "+
+			"anything else reads as compound duple", got)
+	}
+
+	// Compound is grouped by its pulse, which it already was.
+	six := model.TimeSignature{Beats: 6, BeatValue: 8}
+	if got := sizes(six, eighth, 6); !same(got, 3, 3) {
+		t.Errorf("six eighths in 6/8 came out as %v, want two pulses of three", got)
+	}
+}
+
+// An uneven beat is not joined to the one beside it.
+func TestAnUnevenBeatKeepsItsOwnBeam(t *testing.T) {
+	four := model.TimeSignature{Beats: 4, BeatValue: 4}
+	// A dotted eighth and a sixteenth on beat one, two eighths on beat two:
+	// one unit of the metre, but not one beam.
+	var items []*placed
+	at := model.Duration{Num: 0, Den: 1}
+	add := func(num, den, dots int) {
+		d := model.Duration{Num: num, Den: den}
+		v, dd := written(d)
+		items = append(items, &placed{
+			value: v, dots: dd, start: at, note: &model.Note{},
+		})
+		at = at.Add(d)
+	}
+	add(3, 16, 1)
+	add(1, 16, 0)
+	add(1, 8, 0)
+	add(1, 8, 0)
+
+	got := beamGroups(items, four)
+	if len(got) != 2 {
+		var sizes []int
+		for _, g := range got {
+			sizes = append(sizes, len(g))
+		}
+		t.Errorf("a dotted beat and an even one came out as %v, want them "+
+			"beamed apart", sizes)
+	}
+}
+
+/*
+ * The marks that hang off a note and are not articulations.
+ */
+
+// An arpeggio is a wavy line in front of the chord, reaching all of it.
+// A chord whose line stopped short of its top note would be asking for half
+// a roll.
+func TestAnArpeggioReachesTheWholeChord(t *testing.T) {
+	q := model.Duration{Num: 1, Den: 4}
+	ch := &model.Chord{Dur: q, Notes: []*model.Note{
+		{Pitch: model.Pitch{Step: model.StepC, Octave: 4}},
+		{Pitch: model.Pitch{Step: model.StepE, Octave: 4}},
+		{Pitch: model.Pitch{Step: model.StepG, Octave: 4}},
+	}}
+	ch.Marks.Arpeggio = &model.Arpeggio{}
+	s := model.NewScore()
+	s.Parts[0].Measures = []*model.Measure{{
+		Voices:       []*model.Voice{{Elements: []model.Element{ch}}},
+		RightBarline: model.BarSingle,
+	}}
+
+	lay := Engrave(s, DefaultOptions())
+	var line []Glyph
+	var heads []Glyph
+	for _, g := range lay.Glyphs {
+		switch {
+		case g.Name == "arpeggiato":
+			line = append(line, g)
+		case strings.HasPrefix(g.Name, "notehead"):
+			heads = append(heads, g)
+		}
+	}
+	if len(line) < 2 {
+		t.Fatalf("the line is %d segments, which is not a line", len(line))
+	}
+	if len(heads) != 3 {
+		t.Fatalf("%d noteheads", len(heads))
+	}
+	// In front of the chord, not through it.
+	for _, g := range line {
+		for _, h := range heads {
+			if g.X >= h.X {
+				t.Errorf("a segment at x=%.2f is not in front of a notehead "+
+					"at x=%.2f", g.X, h.X)
+				break
+			}
+		}
+	}
+	// And reaching from the bottom note to the top.
+	top, bottom := math.Inf(1), math.Inf(-1)
+	for _, g := range line {
+		top = math.Min(top, g.Y-arpeggioHeight)
+		bottom = math.Max(bottom, g.Y)
+	}
+	hTop, hBottom := math.Inf(1), math.Inf(-1)
+	for _, h := range heads {
+		hTop = math.Min(hTop, h.Y)
+		hBottom = math.Max(hBottom, h.Y)
+	}
+	if top > hTop {
+		t.Errorf("the line stops at %.2f and the top note is at %.2f", top, hTop)
+	}
+	if bottom < hBottom {
+		t.Errorf("the line starts at %.2f and the bottom note is at %.2f",
+			bottom, hBottom)
+	}
+}
+
+// Rolling downward is said with an arrowhead at the foot of the line, and
+// rolling upward with no arrow at all — which is what makes the arrow mean
+// something.
+func TestADownwardRollSaysSoWithAnArrow(t *testing.T) {
+	roll := func(down bool) bool {
+		q := model.Duration{Num: 1, Den: 4}
+		ch := &model.Chord{Dur: q, Notes: []*model.Note{
+			{Pitch: model.Pitch{Step: model.StepC, Octave: 4}},
+			{Pitch: model.Pitch{Step: model.StepG, Octave: 4}},
+		}}
+		ch.Marks.Arpeggio = &model.Arpeggio{Down: down}
+		s := model.NewScore()
+		s.Parts[0].Measures = []*model.Measure{{
+			Voices:       []*model.Voice{{Elements: []model.Element{ch}}},
+			RightBarline: model.BarSingle,
+		}}
+		for _, g := range Engrave(s, DefaultOptions()).Glyphs {
+			if g.Name == "arpeggiatoDown" {
+				return true
+			}
+		}
+		return false
+	}
+	if roll(false) {
+		t.Error("an upward roll was given an arrowhead")
+	}
+	if !roll(true) {
+		t.Error("a downward roll was drawn without one")
+	}
+}
+
+// A breath goes over the staff after the note, and never past the barline:
+// at the end of a measure it is set just before the line.
+func TestABreathSitsOverTheStaffBeforeTheBarline(t *testing.T) {
+	q := model.Duration{Num: 1, Den: 4}
+	last := &model.Note{Pitch: model.Pitch{Step: model.StepE, Octave: 4}, Dur: q}
+	last.Marks.Break = model.BreathComma
+	s := model.NewScore()
+	s.Parts[0].Measures = []*model.Measure{{
+		Voices: []*model.Voice{{Elements: []model.Element{
+			&model.Note{Pitch: model.Pitch{Step: model.StepC, Octave: 4}, Dur: q},
+			&model.Note{Pitch: model.Pitch{Step: model.StepD, Octave: 4}, Dur: q},
+			&model.Note{Pitch: model.Pitch{Step: model.StepE, Octave: 4}, Dur: q},
+			last,
+		}}},
+		RightBarline: model.BarSingle,
+	}}
+
+	lay := Engrave(s, DefaultOptions())
+	var mark *Glyph
+	for i, g := range lay.Glyphs {
+		if g.Name == "breathMarkComma" {
+			mark = &lay.Glyphs[i]
+		}
+	}
+	if mark == nil {
+		t.Fatal("no breath mark was drawn")
+	}
+	// Over the staff: above the top line, whichever way the stems point.
+	top := math.Inf(1)
+	for _, l := range lay.Lines {
+		if l.Y1 == l.Y2 && l.Y1 < top {
+			top = l.Y1
+		}
+	}
+	if mark.Y >= top {
+		t.Errorf("the breath is at %.2f and the top line at %.2f: it belongs "+
+			"over the staff", mark.Y, top)
+	}
+	// And inside the bar. The barline is the rightmost vertical line.
+	bar := 0.0
+	for _, l := range lay.Lines {
+		if l.X1 == l.X2 && l.X1 > bar {
+			bar = l.X1
+		}
+	}
+	if mark.X > bar {
+		t.Errorf("the breath is at x=%.2f, past the barline at %.2f",
+			mark.X, bar)
+	}
+}
+
+// A chord's fingerings stand in a column beside it, one per notehead from
+// the bottom up. Centred over the noteheads they would be printed on the
+// notes above them, which on a chord a third apart is every figure but the
+// top one.
+func TestAChordsFingeringsStandBesideIt(t *testing.T) {
+	q := model.Duration{Num: 1, Den: 4}
+	ch := &model.Chord{Dur: q, Notes: []*model.Note{
+		{Pitch: model.Pitch{Step: model.StepC, Octave: 4}},
+		{Pitch: model.Pitch{Step: model.StepE, Octave: 4}},
+		{Pitch: model.Pitch{Step: model.StepG, Octave: 4}},
+	}}
+	ch.Marks.Fingering = []string{"1", "3", "5"}
+	s := model.NewScore()
+	s.Parts[0].Measures = []*model.Measure{{
+		Voices:       []*model.Voice{{Elements: []model.Element{ch}}},
+		RightBarline: model.BarSingle,
+	}}
+
+	lay := Engrave(s, DefaultOptions())
+	var figs []Text
+	for _, tx := range lay.Texts {
+		if tx.S == "1" || tx.S == "3" || tx.S == "5" {
+			figs = append(figs, tx)
+		}
+	}
+	if len(figs) != 3 {
+		t.Fatalf("%d figures were drawn, want 3", len(figs))
+	}
+	// One column, so every figure at the same x.
+	for _, f := range figs[1:] {
+		if math.Abs(f.X-figs[0].X) > 0.01 {
+			t.Errorf("the figures are at x=%.2f and %.2f, which is not a column",
+				figs[0].X, f.X)
+		}
+	}
+	// Bottom note first: the lowest figure is the one for the lowest note.
+	byY := map[string]float64{}
+	for _, f := range figs {
+		byY[f.S] = f.Y
+	}
+	if !(byY["1"] > byY["3"] && byY["3"] > byY["5"]) {
+		t.Errorf("the figures read %v from the top down, which is not the "+
+			"order a player reads a chord in", byY)
+	}
+}
+
+// The bow and pick strokes go over the staff whichever way the stems point.
+//
+// A down-bow written under a stem-up note reads as belonging to a lower line
+// of music, and the two strokes are the same symbols a guitarist reads as
+// down-stroke and up-stroke, which the handbooks put above the staff without
+// exception.
+func TestBowAndPickStrokesGoOverTheStaff(t *testing.T) {
+	q := model.Duration{Num: 1, Den: 4}
+	// A low note, so the stem goes up and the old rule would have put the
+	// mark underneath.
+	n := &model.Note{Pitch: model.Pitch{Step: model.StepC, Octave: 4}, Dur: q}
+	n.Marks.Articulations = []model.Articulation{model.DownBow, model.Staccato}
+	s := model.NewScore()
+	s.Parts[0].Measures = []*model.Measure{{
+		Voices:       []*model.Voice{{Elements: []model.Element{n}}},
+		RightBarline: model.BarSingle,
+	}}
+
+	lay := Engrave(s, DefaultOptions())
+	top := math.Inf(1)
+	for _, l := range lay.Lines {
+		if l.Y1 == l.Y2 && l.Y1 < top {
+			top = l.Y1
+		}
+	}
+	var bow, dot *Glyph
+	for i, g := range lay.Glyphs {
+		switch {
+		case strings.Contains(g.Name, "DownBow"):
+			bow = &lay.Glyphs[i]
+		case strings.Contains(g.Name, "staccato"):
+			dot = &lay.Glyphs[i]
+		}
+	}
+	if bow == nil {
+		t.Fatal("no bow mark was drawn")
+	}
+	if bow.Y >= top {
+		t.Errorf("the bow mark is at %.2f and the top line at %.2f", bow.Y, top)
+	}
+	// And the staccato dot stays where it belongs, on the notehead's own
+	// side: it is a mark on the note and not a direction over the staff.
+	if dot != nil && dot.Y < top {
+		t.Error("the staccato dot was moved over the staff with the bow mark")
+	}
+}
+
+/*
+ * The two spanners that are lines rather than arcs.
+ */
+
+// A pedal mark is read under the staff, always: a line with a hook turned
+// up at each end and a V wherever the player changes it.
+func TestAPedalMarkRunsUnderTheStaff(t *testing.T) {
+	q := model.Duration{Num: 1, Den: 4}
+	a := &model.Note{Pitch: model.Pitch{Step: model.StepC, Octave: 4}, Dur: q}
+	b := &model.Note{Pitch: model.Pitch{Step: model.StepE, Octave: 4}, Dur: q}
+	c := &model.Note{Pitch: model.Pitch{Step: model.StepG, Octave: 4}, Dur: q}
+	a.Marks.Pedal = &model.PedalMark{Start: true}
+	b.Marks.Pedal = &model.PedalMark{Change: true}
+	c.Marks.Pedal = &model.PedalMark{Stop: true}
+	s := model.NewScore()
+	s.Parts[0].Measures = []*model.Measure{{
+		Voices: []*model.Voice{{Elements: []model.Element{
+			a, b, c, &model.Rest{Dur: q},
+		}}},
+		RightBarline: model.BarSingle,
+	}}
+
+	lay := Engrave(s, DefaultOptions())
+	var span *SpanPos
+	for i := range lay.Spans {
+		if lay.Spans[i].Kind == "pedal" {
+			span = &lay.Spans[i]
+		}
+	}
+	if span == nil {
+		t.Fatal("no pedal mark was recorded, so nothing could be clicked to " +
+			"take it away")
+	}
+	// The staff's own bottom line, not merely the lowest horizontal line
+	// drawn: the pedal mark is itself a horizontal line, and down there.
+	// The staff lines are the ones that begin at the left margin.
+	left := math.Inf(1)
+	for _, l := range lay.Lines {
+		if l.Y1 == l.Y2 && l.X1 < left {
+			left = l.X1
+		}
+	}
+	bottom := 0.0
+	for _, l := range lay.Lines {
+		if l.Y1 == l.Y2 && math.Abs(l.X1-left) < 0.01 && l.Y1 > bottom {
+			bottom = l.Y1
+		}
+	}
+	if span.Y2 <= bottom {
+		t.Errorf("the pedal line is at %.2f and the bottom staff line at %.2f: "+
+			"it belongs under the staff", span.Y2, bottom)
+	}
+	// And it runs from the note it opened on to the one it closed on.
+	if span.X2 <= span.X1 {
+		t.Errorf("it runs from %.2f to %.2f", span.X1, span.X2)
+	}
+	// The V in the middle: two short strokes rising off the line between
+	// its ends, which nothing else down there draws.
+	notch := 0
+	for _, l := range lay.Lines {
+		if l.X1 == l.X2 || l.Y1 == l.Y2 {
+			continue
+		}
+		if l.X1 > span.X1 && l.X2 < span.X2 && l.Y1 > bottom {
+			notch++
+		}
+	}
+	if notch != 2 {
+		t.Errorf("the pedal change is drawn with %d strokes, want the two of "+
+			"a V", notch)
+	}
+}
+
+// The old form is "Ped." under the first note and a star under the last.
+// A great deal of printed music has it, and a program that cannot show it
+// cannot show that music.
+func TestTheOldPedalFormIsDrawnWhenAskedFor(t *testing.T) {
+	q := model.Duration{Num: 1, Den: 4}
+	a := &model.Note{Pitch: model.Pitch{Step: model.StepC, Octave: 4}, Dur: q}
+	b := &model.Note{Pitch: model.Pitch{Step: model.StepE, Octave: 4}, Dur: q}
+	a.Marks.Pedal = &model.PedalMark{Start: true, Text: true, Half: true}
+	b.Marks.Pedal = &model.PedalMark{Stop: true, Text: true}
+	s := model.NewScore()
+	s.Parts[0].Measures = []*model.Measure{{
+		Voices:       []*model.Voice{{Elements: []model.Element{a, b}}},
+		RightBarline: model.BarSingle,
+	}}
+
+	lay := Engrave(s, DefaultOptions())
+	var ped, up bool
+	for _, g := range lay.Glyphs {
+		switch g.Name {
+		case "keyboardPedalPed":
+			ped = true
+		case "keyboardPedalUp":
+			up = true
+		}
+	}
+	if !ped || !up {
+		t.Errorf("Ped.=%v star=%v: the old form was asked for and not drawn",
+			ped, up)
+	}
+	// And the half pedal says so.
+	half := false
+	for _, tx := range lay.Texts {
+		if tx.S == "1/2" {
+			half = true
+		}
+	}
+	if !half {
+		t.Error("a half pedal was not marked as one")
+	}
+}
+
+// A slide runs between the two noteheads it joins, clear of both: a line
+// that touched either would read as a tie gone wrong.
+func TestASlideRunsBetweenItsTwoNotes(t *testing.T) {
+	for _, wavy := range []bool{false, true} {
+		q := model.Duration{Num: 1, Den: 4}
+		a := &model.Note{Pitch: model.Pitch{Step: model.StepC, Octave: 4}, Dur: q}
+		b := &model.Note{Pitch: model.Pitch{Step: model.StepG, Octave: 5}, Dur: q}
+		a.Marks.Glissando = &model.Glissando{Start: true, Wavy: wavy, Text: "gliss."}
+		b.Marks.Glissando = &model.Glissando{Stop: true, Wavy: wavy}
+		s := model.NewScore()
+		s.Parts[0].Measures = []*model.Measure{{
+			Voices:       []*model.Voice{{Elements: []model.Element{a, b}}},
+			RightBarline: model.BarSingle,
+		}}
+
+		lay := Engrave(s, DefaultOptions())
+		var span *SpanPos
+		for i := range lay.Spans {
+			if lay.Spans[i].Kind == "glissando" {
+				span = &lay.Spans[i]
+			}
+		}
+		if span == nil {
+			t.Fatalf("wavy=%v: no slide was recorded", wavy)
+		}
+		// Between the two noteheads, and not reaching either of them.
+		var first, last Glyph
+		for _, g := range lay.Glyphs {
+			if !strings.HasPrefix(g.Name, "notehead") {
+				continue
+			}
+			if first.Name == "" || g.X < first.X {
+				first = g
+			}
+			if g.X > last.X {
+				last = g
+			}
+		}
+		// Clear of both, measured as distance from each notehead's middle:
+		// on a steep slide most of that clearance is vertical, so a test
+		// on x alone says nothing.
+		mid := noteheadWidth(model.Quarter) / 2
+		for _, h := range []Glyph{first, last} {
+			d := math.Min(
+				math.Hypot(span.X1-(h.X+mid), span.Y1-h.Y),
+				math.Hypot(span.X2-(h.X+mid), span.Y2-h.Y))
+			if d < glissGap*0.9 {
+				t.Errorf("wavy=%v: the slide comes within %.2f of the notehead "+
+					"at %.2f, and has to start and finish clear of it",
+					wavy, d, h.X)
+			}
+		}
+		if span.X1 >= span.X2 {
+			t.Errorf("wavy=%v: the slide runs %.2f..%.2f", wavy, span.X1, span.X2)
+		}
+		// The word over it, on the upper side whichever way the slide runs.
+		var label *Text
+		for i := range lay.Texts {
+			if lay.Texts[i].S == "gliss." {
+				label = &lay.Texts[i]
+			}
+		}
+		if label == nil {
+			t.Fatalf("wavy=%v: the word over the slide was not drawn", wavy)
+		}
+		midY := (span.Y1 + span.Y2) / 2
+		if label.Y >= midY {
+			t.Errorf("wavy=%v: the word is at %.2f and the middle of the line "+
+				"at %.2f, so it is printed under it", wavy, label.Y, midY)
+		}
+	}
+}

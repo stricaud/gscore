@@ -141,6 +141,43 @@ func (e *engraver) spanAt(m *model.Marks, p *placed, measure int) {
 		}
 	}
 
+	// A slide from this note to the next. Drawn at the moment it closes,
+	// because a line between two noteheads needs both of them placed.
+	if g := m.Glissando; g != nil {
+		if g.Start && open.gliss == nil {
+			open.gliss = &openSpan{
+				x: x, y: e.y + stepY(float64(p.step)), ref: p.index,
+				part: e.partIndex, measure: measure,
+				label: g.Text, above: g.Wavy,
+			}
+		}
+		if g.Stop && open.gliss != nil {
+			open.gliss.toRef = p.index
+			e.drawGlissando(open.gliss, x, e.y+stepY(float64(p.step)), p)
+			open.gliss = nil
+		}
+	}
+
+	// The sustaining pedal.
+	if pd := m.Pedal; pd != nil {
+		if pd.Start && open.pedal == nil {
+			open.pedal = &openSpan{
+				x: x, ref: p.index, part: e.partIndex, measure: measure,
+				above: pd.Text, amount: boolToInt(pd.Half),
+			}
+			open.notches = nil
+		}
+		if pd.Change && open.pedal != nil {
+			open.notches = append(open.notches, x)
+		}
+		if pd.Stop && open.pedal != nil {
+			open.pedal.toRef = p.index
+			e.drawPedal(open.pedal, x, open.notches, true)
+			open.pedal = nil
+			open.notches = nil
+		}
+	}
+
 	if o := m.Octave; o != nil {
 		if o.Start && open.octave == nil {
 			open.octave = &openSpan{x: x - 0.5, amount: o.Amount, label: o.Label()}

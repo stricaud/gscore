@@ -300,6 +300,12 @@ func (e *engraver) drawMeasure(part *model.Part, b measureBox, x, end float64, s
 
 	// Noteheads first, then stems and beams, which need the whole group.
 	for _, p := range items {
+		// The arpeggio goes in before the noteheads it rolls, because the
+		// room for it was booked in front of the column and the line is
+		// read before them.
+		if m := p.marks(); m != nil {
+			e.drawArpeggio(p, m.Arpeggio)
+		}
 		e.drawHeads(part, p)
 		e.drawGrace(part, p)
 	}
@@ -312,6 +318,10 @@ func (e *engraver) drawMeasure(part *model.Part, b measureBox, x, end float64, s
 			e.slurAt(part, m, p, b.index)
 			e.drawLyrics(m, p)
 			e.drawTexts(m, p)
+			e.drawFingering(p, m.Fingering)
+			// After the beams and the articulations, so a breath taken over
+			// a high run is set clear of them rather than through them.
+			e.drawBreath(p, m.Break, x)
 			e.waitChord(m.Chord, p.x, b.index, p.index)
 		}
 	}
@@ -1068,7 +1078,117 @@ func beamGroupsOfOne(items []*placed, t model.TimeSignature) [][]*placed {
 		}
 	}
 	flush()
+	return mergeBeamUnits(out, t)
+}
+
+/*
+ * Beats joined into the unit the metre is read in.
+ *
+ * Breaking a beam at every beat is readable and is not what printed music
+ * does. The handbooks are specific about it: simple quadruple metre is read
+ * as two units of duple — beats one and two, then three and four — and
+ * "these two units must always be clearly distinguished", which means eight
+ * eighths in four four are beamed four and four, never eight ones and twos.
+ * Simple duple is one unit of the whole bar. Simple triple keeps its three
+ * beats and must not be beamed as compound duple, which is why three four is
+ * left alone. Compound metre is already grouped by its pulse, because
+ * beatDuration gives a dotted beat there.
+ *
+ * The exception, and it is the reason this is a second pass rather than a
+ * wider beat: a beat that is uneven is not joined to its neighbour. A unit
+ * of a dotted eighth, a sixteenth and two eighths beamed as one says the bar
+ * is in something other than what it is in — and a unit of all the same
+ * value says exactly what it is. So the test is that every note across the
+ * two beats is written the same, which is what the examples in the books all
+ * have in common.
+ */
+
+// beamUnitBeats is how many beats are read as one unit in this metre.
+func beamUnitBeats(t model.TimeSignature) int {
+	// Compound is grouped by pulse already: beatDuration returns the dotted
+	// beat, so one of those beats is the three the handbooks join.
+	if t.Beats%3 == 0 && t.Beats > 3 {
+		return 1
+	}
+	switch t.Beats {
+	case 2, 4:
+		return 2
+	}
+	return 1
+}
+
+// mergeBeamUnits joins the beat-runs that belong to one metrical unit.
+func mergeBeamUnits(groups [][]*placed, t model.TimeSignature) [][]*placed {
+	per := beamUnitBeats(t)
+	if per < 2 || len(groups) < 2 {
+		return groups
+	}
+	beat := beatDuration(t)
+	if beat.Float() == 0 {
+		return groups
+	}
+	unitOf := func(p *placed) int {
+		return int(math.Floor(p.start.Float()/(beat.Float()*float64(per)) + 1e-9))
+	}
+
+	out := make([][]*placed, 0, len(groups))
+	for _, g := range groups {
+		if len(out) == 0 {
+			out = append(out, g)
+			continue
+		}
+		last := out[len(out)-1]
+		if joinableBeamUnit(last, g, unitOf) {
+			out[len(out)-1] = append(last, g...)
+			continue
+		}
+		out = append(out, g)
+	}
 	return out
+}
+
+// writtenLength is how long an element is as it is written: its value, and
+// half as much again for each dot.
+func writtenLength(p *placed) model.Duration {
+	d := p.value.Duration()
+	for i := 0; i < p.dots; i++ {
+		d = model.Duration{Num: d.Num * 3, Den: d.Den * 2}.Reduced()
+	}
+	return d
+}
+
+// joinableBeamUnit says whether one beat's beam carries on into the next.
+func joinableBeamUnit(a, b []*placed, unitOf func(*placed) int) bool {
+	if len(a) == 0 || len(b) == 0 {
+		return false
+	}
+	// The same unit of the metre, or there is nothing to join.
+	if unitOf(a[0]) != unitOf(b[0]) {
+		return false
+	}
+	// Touching in time: anything between them — a rest, a longer note — is
+	// a break somebody can see, and beaming over it would deny it.
+	if a[len(a)-1].start.Add(writtenLength(a[len(a)-1])).Cmp(b[0].start) != 0 {
+		return false
+	}
+	// All of one value. An uneven beat joined to its neighbour reads as a
+	// bar in some other metre.
+	v, d := a[0].value, a[0].dots
+	for _, p := range append(append([]*placed{}, a...), b...) {
+		if p.value != v || p.dots != d {
+			return false
+		}
+		// A beam somebody wrote by hand is theirs, and the metre does not
+		// get to extend it.
+		if m := p.marks(); m != nil && m.Beam != model.BeamAuto {
+			return false
+		}
+		// And a tuplet is one thing already.
+		if m := p.marks(); m != nil && m.Tuplet != nil {
+			return false
+		}
+	}
+	return true
 }
 
 // setStemDirections settles which way every stem in a measure points.
@@ -2182,9 +2302,29 @@ func (e *engraver) drawArticulations(m *model.Marks, x float64, lo, hi int, stem
 			y += gap
 		}
 	}
+	// The bow and pick strokes go over the staff whichever way the stems
+	// point, so they are stacked from there rather than with the rest.
+	//
+	// Always above: a down-bow written under a stem-up note would be read
+	// as belonging to a lower line of music, and the two strokes are the
+	// same symbols a guitarist reads as down-stroke and up-stroke, which
+	// the handbooks put above the staff without exception. Everything else
+	// — the staccato dot, the accent, the tenuto — belongs to the notehead
+	// and sits on the side away from the stem.
+	overY := math.Min(e.y-1.2, e.y+stepY(float64(hi))-gap)
+	overY = e.clearOfNoteheads(x, overY, true)
 	for _, a := range m.Articulations {
 		if a.Ornament() {
 			e.ornament(a, x)
+			continue
+		}
+		if a == model.UpBow || a == model.DownBow {
+			if name := smufl.ArticulationGlyph(a, true); name != "" {
+				e.lay.Glyphs = append(e.lay.Glyphs, Glyph{
+					Name: name, X: x, Y: overY,
+				})
+				overY -= gap
+			}
 			continue
 		}
 		emit(smufl.ArticulationGlyph(a, above))

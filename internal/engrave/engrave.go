@@ -178,6 +178,11 @@ type Layout struct {
 
 	// Hairpins are where the swells ended up, so one can be clicked.
 	Hairpins []HairpinPos `json:"hairpins"`
+	// Spans are the other lines drawn between two notes — a pedal mark, a
+	// slide — recorded so each can be pointed at and taken away. A spanner
+	// belongs to no single note on the page, which is why nothing in the
+	// music could be clicked to reach one.
+	Spans []SpanPos `json:"spans,omitempty"`
 
 	// Tremolos are where the beams of a two-note tremolo ended up.
 	//
@@ -261,6 +266,21 @@ type HairpinPos struct {
 	Width   float64 `json:"width"`
 	Height  float64 `json:"height"`
 	Kind    string  `json:"kind"`
+}
+
+// SpanPos is one line drawn between two notes, in staff spaces: where it
+// is, and which elements it runs between.
+type SpanPos struct {
+	// Kind is what it is: "pedal" or "glissando".
+	Kind    string  `json:"kind"`
+	Part    int     `json:"part"`
+	Measure int     `json:"measure"`
+	From    int     `json:"from"`
+	To      int     `json:"to"`
+	X1      float64 `json:"x1"`
+	Y1      float64 `json:"y1"`
+	X2      float64 `json:"x2"`
+	Y2      float64 `json:"y2"`
 }
 
 // ArcPos is one tie or slur on the page, in staff spaces.
@@ -906,6 +926,12 @@ type openSpans struct {
 	octave  *openSpan
 	slur    *openSpan
 	trill   *openSpan
+	// gliss is the slide in progress, and pedal the sustaining pedal held
+	// down. The pedal keeps the places it was changed at along the way, so
+	// that the notch is drawn where the player is told to change it.
+	gliss   *openSpan
+	pedal   *openSpan
+	notches []float64
 	// ties are kept per notehead, keyed by the staff step they left. A
 	// chord is tied notehead by notehead — every voice in it carries on
 	// sounding — so one curve for the chord would be one curve short for
@@ -2160,7 +2186,8 @@ func (e *engraver) measureBox(p *model.Part, m *model.Measure, index int) measur
 				// left needs the room, and so does the accidental column,
 				// which is drawn clear of the whole chord and moves left
 				// with it.
-				lead: e.accidentalLead(el) + graceLead(el) + chordStepOut(el),
+				lead: e.accidentalLead(el) + graceLead(el) + chordStepOut(el) +
+					arpeggioLead(el),
 				room: flags[i],
 			})
 			at = at.Add(el.Duration())

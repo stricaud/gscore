@@ -435,6 +435,32 @@ type Marks struct {
 	// that has one overflow.
 	Grace *GraceGroup
 
+	// Arpeggio rolls the chord: a wavy line in front of it, played bottom
+	// to top unless the arrow says otherwise.
+	Arpeggio *Arpeggio
+
+	// Break is the breath or pause taken after this note: a comma, a tick,
+	// or the two strokes of a caesura.
+	Break Breath
+
+	// Fingering is which fingers play this note, printed as the figures a
+	// player reads: 1 to 5 for a keyboard, 0 to 4 for a string.
+	//
+	// Written as the text it is rather than as numbers, because a fingering
+	// is not always a number: "1-2" is a substitution on one key, "4/5" a
+	// choice, and a dash between two of them a slide. Numbers would make
+	// the common case tidy and the real cases impossible.
+	//
+	// One per notehead of a chord, from the bottom up, which is how a
+	// pianist reads a chord's fingering.
+	Fingering []string
+
+	// Glissando slides from this note to the next, and Pedal is the
+	// sustaining pedal held across a stretch of music. Both are spans: see
+	// Glissando and PedalMark.
+	Glissando *Glissando
+	Pedal     *PedalMark
+
 	// Small draws the element at cue size: a note that is printed but is
 	// not yours to play.
 	//
@@ -449,6 +475,85 @@ type Marks struct {
 	// is drawn from and never on the score itself, where somebody else's
 	// line already stands on its own staff at full size.
 	Small bool
+}
+
+// Arpeggio is the wavy line in front of a chord that says to roll it.
+//
+// Upward unless Down says otherwise, which is why the field is named for the
+// exception: a plain wavy line means bottom to top, and an arrowhead at its
+// foot is what says to come down through the chord instead.
+type Arpeggio struct {
+	Down bool
+}
+
+// Breath is the pause taken after a note.
+type Breath int
+
+const (
+	NoBreath Breath = iota
+	// BreathComma is the ordinary breath mark, a comma over the top line.
+	BreathComma
+	// BreathTick is the stroke used where a comma would be lost among
+	// other marks, and in string music.
+	BreathTick
+	// Caesura is the two strokes — "railroad tracks" — that stop the music
+	// altogether rather than asking for a breath.
+	Caesura
+	// CaesuraCurved is the same pause drawn with curved strokes, which some
+	// houses prefer.
+	CaesuraCurved
+)
+
+var breathNames = [...]string{"none", "comma", "tick", "caesura", "curved caesura"}
+
+// BreathFromName reads back what String wrote, for a file.
+func BreathFromName(s string) (Breath, bool) {
+	for i, n := range breathNames {
+		if n == s {
+			return Breath(i), true
+		}
+	}
+	return NoBreath, false
+}
+
+func (b Breath) String() string {
+	if int(b) < len(breathNames) {
+		return breathNames[b]
+	}
+	return "none"
+}
+
+// Glissando is a slide from one note to another.
+//
+// Start and Stop mark its two ends, the way a slur's do. Wavy is the
+// difference between a glissando and a portamento as most houses draw them —
+// a wavy line for a slide that sounds the notes between, a straight one for
+// one that does not — and Text is what is written over it, usually "gliss."
+// and sometimes nothing at all.
+type Glissando struct {
+	Start, Stop bool
+	Wavy        bool
+	Text        string
+}
+
+// PedalMark is the sustaining pedal, held across a stretch of music.
+//
+// Start and Stop are the two ends and Change is a release and re-press at
+// one note — the notch in the middle of a pedal line, which is how a pianist
+// is told to change the pedal on a beat without lifting the phrase.
+//
+// Text draws the old form, "Ped." under the first note and a star under the
+// last, instead of the line. The books call that method somewhat obsolete
+// and so does everybody who has had to read a page of it, but it is what a
+// great deal of printed music has and a score that cannot show it cannot
+// show that music.
+//
+// Half says the pedal is only half down, written as "1/2" beside the mark.
+type PedalMark struct {
+	Start, Stop bool
+	Change      bool
+	Text        bool
+	Half        bool
 }
 
 // GraceGroup is the small notes played before the note they belong to.

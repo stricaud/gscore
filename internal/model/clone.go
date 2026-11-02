@@ -228,6 +228,21 @@ func CloneMarks(m Marks) Marks {
 		t := *m.Trill
 		out.Trill = &t
 	}
+	if m.Arpeggio != nil {
+		a := *m.Arpeggio
+		out.Arpeggio = &a
+	}
+	if m.Glissando != nil {
+		g := *m.Glissando
+		out.Glissando = &g
+	}
+	if m.Pedal != nil {
+		p := *m.Pedal
+		out.Pedal = &p
+	}
+	if m.Fingering != nil {
+		out.Fingering = append([]string(nil), m.Fingering...)
+	}
 	if m.Chord != nil {
 		c := *m.Chord
 		if m.Chord.Frame != nil {

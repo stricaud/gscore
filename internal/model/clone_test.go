@@ -27,6 +27,12 @@ func populated() *Score {
 	n.Stem = StemUp
 	n.Dynamic = MF
 	n.TieStart = true
+	n.Arpeggio = &Arpeggio{Down: true}
+	n.Break = BreathComma
+	n.Fingering = []string{"1-2", "4"}
+	n.Glissando = &Glissando{Start: true, Wavy: true, Text: "gliss."}
+	n.Pedal = &PedalMark{Start: true, Half: true}
+	n.Small = true
 	n.Chord = &ChordSymbol{
 		Root: "B", Quality: "7sus4", Bass: "F",
 		Frame: &ChordFrame{

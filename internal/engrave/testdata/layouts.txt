@@ -3,8 +3,8 @@
 #     go test ./internal/engrave -run Golden -update
 # A diff here is a change in the engraver. Read it before committing.
 abc/boite-musique.abc 84a778127d158b86 514
-abc/decoration.abc c1c6eea6d301c988 32
-abc/pitch.abc 2af7bbbbcacf754b 236
+abc/decoration.abc dd0d53d1a96528ca 31
+abc/pitch.abc 7cf41b23d8ff2a5e 227
 abc/sunshine.abc 31303b321c36b2eb 136
 samples/altes-10e-solo.abc e3e355e46f58c7d3 12446
 samples/boite-musique.abc 84a778127d158b86 514
@@ -27,7 +27,7 @@ suite/03b-Rhythm-Backup.musicxml b34a28afcf55aa7e 24
 suite/03c-Rhythm-DivisionChange.musicxml c9805545c4204e2c 27
 suite/03d-Rhythm-DottedDurations-Factors.musicxml edbd02d29a62c713 71
 suite/03e-Rhythm-No-Divisions.musicxml 03714a78934d7255 13
-suite/03e-Rhythm-SecondaryBeamBreaks.musicxml 33ba7efe19dc95db 91
+suite/03e-Rhythm-SecondaryBeamBreaks.musicxml 03bb077949c6e901 85
 suite/03f-Rhythm-Forward.musicxml 822dc51d1e647f67 21
 suite/11a-TimeSignatures.musicxml c254cc798fa070ac 46
 suite/11b-TimeSignatures-NoTime.musicxml 8ca8b50a9a9a6a4c 114
@@ -39,7 +39,7 @@ suite/11e-TimeSignatures-ComplexMixed.musicxml 121db6035fd0dc6b 31
 suite/11e-TimeSignatures-CompoundMixed.musicxml 121db6035fd0dc6b 31
 suite/11f-TimeSignatures-SymbolMeaning.musicxml 659ec5eea6d487f6 21
 suite/11g-TimeSignatures-SingleNumber.musicxml f9961a6bc7025b81 37
-suite/11h-TimeSignatures-SenzaMisura.musicxml 69e6733c342f2f9b 71
+suite/11h-TimeSignatures-SenzaMisura.musicxml d372203f5f5b9672 67
 suite/11i-TimeSignatures-Alternate.musicxml 1b6d075b4942ed22 29
 suite/12a-Clefs.musicxml 002c0763cba3a643 68
 suite/12b-Clefs-NoKeyOrClef.musicxml f02000eaf2e248dc 16
@@ -92,7 +92,7 @@ suite/32e-Fermatas.musicxml b6cdae42d565049b 38
 suite/33a-Spanners.musicxml f374240c0926e0bb 210
 suite/33b-Spanners-Tie.musicxml 35bb1a123552be56 15
 suite/33c-Spanners-Slurs.musicxml bbf9b2bba38d0619 44
-suite/33d-Spanners-OctaveShifts.musicxml 0534d5929d82e6cd 51
+suite/33d-Spanners-OctaveShifts.musicxml 9383ede393d11aa5 50
 suite/33e-Spanners-OctaveShifts-InvalidSize.musicxml a6a26e93b45bed66 29
 suite/33f-Trill-EndingOnGraceNote.musicxml 5e6b3ee7dfb9217a 121
 suite/33g-Slur-ChordedNotes.musicxml fec9a9712ea7b2de 23
@@ -100,7 +100,7 @@ suite/33h-Spanners-Glissando.musicxml 616de9fc292ddbd4 56
 suite/33i-Ties-NotEnded.musicxml 4e3515703cd81d7d 22
 suite/33j-Beams-Tremolos.musicxml 6cd67fc325e1b2cb 66
 suite/33k-Tie-Types.musicxml ec9a0dfbe2f8132d 63
-suite/34a-Print-Object-Spanners.musicxml 3e198e844a332076 135
+suite/34a-Print-Object-Spanners.musicxml 8d1f94845efed9f9 133
 suite/34b-Colors.musicxml f3844d8864401bb2 269
 suite/34c-Font-Size.musicxml 464d6d4b4207ce4c 194
 suite/34d-Note-Attributes.musicxml 7940fae8b5386f48 66
@@ -167,7 +167,7 @@ suite/61d-Lyrics-Melisma.musicxml b664414f5b090d69 33
 suite/61e-Lyrics-Chords.musicxml a8be60d2715f7e1a 23
 suite/61f-Lyrics-GracedNotes.musicxml 39ad594c934ebe76 45
 suite/61g-Lyrics-NameNumber.musicxml 3ddb2921b5161279 24
-suite/61h-Lyrics-BeamsMelismata.musicxml d17f13e428363db4 94
+suite/61h-Lyrics-BeamsMelismata.musicxml 38f2f74a91f63432 90
 suite/61i-Lyrics-Chords.musicxml 2e19c4ca420c20c7 14
 suite/61j-Lyrics-Elisions.musicxml 53f127ce4012630d 18
 suite/61k-Lyrics-SpannersExtenders.musicxml 3f3dd8ce2f77c60d 36
@@ -188,5 +188,5 @@ suite/74b-FiguredBass.invalid.musicxml 53c0c656820ca058 27
 suite/75a-AccordionRegistrations.musicxml fdb01983a0e2af79 62
 suite/75b-Accordion.invalid.musicxml 50933e4e9c294e0d 23
 suite/99a-Sibelius5-IgnoreBeaming.musicxml 898652ad3e336587 51
-suite/99b-Lyrics-BeamsMelismata-IgnoreBeams.musicxml d17f13e428363db4 94
+suite/99b-Lyrics-BeamsMelismata-IgnoreBeams.musicxml 38f2f74a91f63432 90
 suite/99c-Wavy-Lines-No-Numbers.musicxml 8756ce6e5823b005 17

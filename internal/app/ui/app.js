@@ -6600,6 +6600,22 @@ function knobPicture(spec) {
 // of 0.55 looks like; they know whether the page in front of them looks
 // right. The score is redrawn behind the open window after every change,
 // which is the whole point of doing it this way.
+// knobTitle is what hovering a measurement says: what it is now, what the
+// house style is, and the range most scores are in.
+//
+// The range is advice and says so. It used to be the range the field would
+// take, which made it a rule — and a rule about somebody's house style is
+// not the program's to have.
+function knobTitle(k) {
+  const unit = k.unit ? " " + k.unit : "";
+  const usual = `Most scores are between ${k.min} and ${k.max}${unit}, ` +
+    "but you can set what you like.";
+  return k.set
+    ? `${t(k.label)}: ${k.value}${unit} — the house style is ${k.default}. ` +
+      `Empty the field to go back to it. ${usual}`
+    : `${t(k.label)}: the house style, ${k.default}${unit}. ${usual}`;
+}
+
 async function engravingDialog() {
   const dlg = $("#engraving");
   const cats = $("#engraving-cats");
@@ -6608,7 +6624,18 @@ async function engravingDialog() {
   // does not throw you back to the first page of the window.
   let open = null;
 
+  // The fields on the screen, by the measurement each one sets.
+  //
+  // Kept so that a change can be shown without building the window again.
+  // Building it again was the bug this exists to prevent: a number field
+  // that is replaced while somebody is clicking its arrows is an arrow that
+  // answers once and then does nothing, because the thing under their
+  // finger has gone. It looked like a measurement that would not go past
+  // 0.91.
+  const fields = new Map();
+
   const draw = (knobs) => {
+    fields.clear();
     const groups = [];
     for (const k of knobs) {
       let g = groups.find((x) => x.name === k.group);
@@ -6622,6 +6649,10 @@ async function engravingDialog() {
       const b = document.createElement("button");
       b.type = "button";
       b.textContent = t(g.name);
+      // The heading's own name, kept where a later change can find it: the
+      // dot that says "something is set under here" is drawn by the
+      // stylesheet, so reading it back off the text would not work.
+      b.dataset.group = g.name;
       b.className = g.name === open ? "on" : "";
       // A heading with something set under it says so, so that a score's
       // own choices can be found without opening every page in turn.
@@ -6643,8 +6674,13 @@ async function engravingDialog() {
       const field = document.createElement("input");
       field.type = "number";
       field.id = "engraving-" + k.name;
-      field.min = String(k.min);
-      field.max = String(k.max);
+      // What the number may be, which is what can be drawn — not what is
+      // usual. A field that will not take the number somebody wants is a
+      // window telling them their taste is wrong, which is not its place:
+      // the usual range is in the tooltip, as advice, and the arrows step
+      // through it.
+      field.min = String(k.floor ?? k.min);
+      field.max = String(k.ceiling ?? k.max);
       // A hundredth of a staff space: the difference between a beam of
       // 0.5 and one of 0.55 is one somebody can see.
       field.step = "0.01";
@@ -6655,13 +6691,10 @@ async function engravingDialog() {
       // nobody dares touch.
       field.placeholder = String(k.default);
       if (k.set) field.classList.add("is-set");
-      field.title = k.set
-        ? `${k.label}: ${k.value}${k.unit ? " " + k.unit : ""}` +
-          ` — the house style is ${k.default}. Empty the field to go back to it.`
-        : `${k.label}: the house style, ${k.default}` +
-          `${k.unit ? " " + k.unit : ""}. Between ${k.min} and ${k.max}.`;
+      field.title = knobTitle(k);
       field.addEventListener("change", () => void set(k.name, field.value));
       row.appendChild(field);
+      fields.set(k.name, field);
 
       const pic = document.createElement("i");
       pic.className = "knob-picture";
@@ -6672,12 +6705,51 @@ async function engravingDialog() {
     }
   };
 
+  const said = (d) => {
+    const knobs = d.knobs || [];
+    const n = knobs.filter((k) => k.set).length;
+    const whose = d.of ? `the ${d.of} part` : "this score";
+    // Whose measurements these are. The window writes to whatever is on
+    // the screen, so a part being looked at is a part being engraved, and
+    // saying "this score" over a part's numbers would be a lie.
+    const line = $("#engraving-whose");
+    if (line && d.of) {
+      line.textContent = t("What this part is engraved by, in staff spaces. Its own, over the score's: empty a field to go back to what the score says.");
+    }
+    status(n
+      ? `Engraving — ${n} ${n === 1 ? "measurement" : "measurements"} set for ${whose}`
+      : `Engraving — ${whose} is on the house style`);
+  };
+
   const show = (d) => {
     draw(d.knobs || []);
-    const n = (d.knobs || []).filter((k) => k.set).length;
-    status(n
-      ? `Engraving — ${n} ${n === 1 ? "measurement" : "measurements"} set for this score`
-      : "Engraving — this score is on the house style");
+    said(d);
+  };
+
+  // patch shows what changed without building the window again: which
+  // headings have something set under them, which fields say so, and what
+  // each one now holds.
+  const patch = (d) => {
+    for (const k of d.knobs || []) {
+      const field = fields.get(k.name);
+      if (!field) continue;
+      field.classList.toggle("is-set", !!k.set);
+      field.title = knobTitle(k);
+      // Only when it really differs, so that a field somebody is still
+      // typing in is not rewritten underneath them — and when it does
+      // differ it is written, because a number the engraver would not take
+      // has to be seen rather than left sitting there looking as though it
+      // took.
+      if (Number(field.value) !== k.value) field.value = String(k.value);
+    }
+    const under = {};
+    for (const k of d.knobs || []) {
+      under[k.group] = under[k.group] || k.set;
+    }
+    for (const b of cats.querySelectorAll("button")) {
+      b.classList.toggle("has-set", !!under[b.dataset.group]);
+    }
+    said(d);
   };
 
   const set = async (name, value) => {
@@ -6691,7 +6763,7 @@ async function engravingDialog() {
       await load();
       return;
     }
-    show(await res.json());
+    patch(await res.json());
     await refreshScore();
   };
 

@@ -10,7 +10,11 @@
 
 package engrave
 
-import "github.com/stricaud/gscore/internal/model"
+import (
+	"math"
+
+	"github.com/stricaud/gscore/internal/model"
+)
 
 // The measurements a score may set for itself.
 //
@@ -41,10 +45,16 @@ type Knob struct {
 	// under.
 	Label string
 	Group string
-	// Min and Max are what the number may be. Not taste — these are the
-	// bounds outside which the engraver draws something that is wrong
-	// rather than merely ugly: a note slot narrower than a notehead, a
-	// beam thicker than the space between two staff lines.
+	// Min and Max are the range this measurement is usually in: what the
+	// window's arrows step through and what it says in the tooltip, so that
+	// somebody setting a beam thickness is told that most scores are
+	// between 0.2 and 0.9 of a space.
+	//
+	// Advice, not a wall. They were a wall, and that was wrong: a house
+	// style is somebody's taste and the program has no business telling
+	// them their taste is out of range. A number outside this is accepted
+	// and drawn — see Clamp, which refuses only what cannot be drawn at
+	// all.
 	Min, Max float64
 	// Unit is what the number is in, for the dialog to show after the
 	// field. Nearly everything here is in staff spaces.
@@ -203,13 +213,40 @@ func (k Knob) Default() float64 {
 	return k.get(&o)
 }
 
-// Clamp brings a number inside what the knob allows.
-func (k Knob) Clamp(v float64) float64 {
-	if v < k.Min {
-		return k.Min
+// Limits are the numbers this measurement may actually take: not what is
+// usual, but what can be drawn at all.
+//
+// Nothing here is a matter of taste. A negative space is not a small space,
+// it is shapes drawn through each other backwards; and a bar some thousands
+// of staff spaces wide is a drawing nothing can show, which on a long score
+// is megabytes of shapes nobody asked for. Everything between those two is
+// somebody's house style and none of the program's business, however odd it
+// looks — see Min and Max, which are what is usual and are only advice.
+func (k Knob) Limits() (float64, float64) {
+	// The one measurement that is not a length: how width follows
+	// duration, which is an exponent. Past four a whole note is hundreds of
+	// times a sixteenth and the bar cannot be laid out.
+	if k.Unit == "" {
+		return 0, 4
 	}
-	if v > k.Max {
-		return k.Max
+	return 0, 200
+}
+
+// Clamp brings a number inside what can be drawn, leaving taste alone.
+func (k Knob) Clamp(v float64) float64 {
+	lo, hi := k.Limits()
+	// A number that is not a number at all — the field was emptied, or
+	// something unparseable arrived — is not clamped to a bound, because
+	// there is nothing to clamp. The caller reads NaN as "go back to the
+	// house style for this one".
+	if math.IsNaN(v) {
+		return v
+	}
+	if v < lo {
+		return lo
+	}
+	if v > hi {
+		return hi
 	}
 	return v
 }

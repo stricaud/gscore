@@ -144,8 +144,12 @@ func TestAMeasurementOutOfBoundsIsRefusedWhole(t *testing.T) {
 	// One good and one impossible, together. Nothing may be applied: half
 	// of a request is the worst answer, because the page moves and the
 	// refusal says nothing about which half took.
-	if why := h.postFails("/api/engraving?noteBase=3.4&beamThickness=99"); why == "" {
-		t.Fatal("a beam ninety-nine spaces thick was accepted")
+	//
+	// Impossible means impossible, not merely unusual: a beam thicker than
+	// anybody would print is somebody's own business and is accepted, and
+	// what is refused here is a measurement nothing could be drawn at.
+	if why := h.postFails("/api/engraving?noteBase=3.4&beamThickness=100000"); why == "" {
+		t.Fatal("a beam of a hundred thousand spaces was accepted")
 	}
 	by := knobsNow(t, h)
 	if by["noteBase"].Set {
@@ -161,6 +165,42 @@ func TestAMeasurementOutOfBoundsIsRefusedWhole(t *testing.T) {
 	}
 	if why := h.postFails("/api/engraving?noteBase=wide"); why == "" {
 		t.Error("a word was accepted as a measurement")
+	}
+}
+
+// A measurement outside what is usual is somebody's house style, and the
+// window has no business overruling it.
+//
+// The ranges in the table used to be a wall. Somebody setting the space
+// after a clef found they could not go past three, which is not a limit of
+// the engraver — it is a guess at what they would want, enforced.
+func TestAnUnusualMeasurementIsAccepted(t *testing.T) {
+	h := newHarness(t)
+	after, _ := engrave.KnobNamed("clefAfter")
+	beyond := after.Max + 4
+
+	h.post("/api/engraving?clefAfter=" + trimFloat(beyond))
+	by := knobsNow(t, h)
+	if got := by["clefAfter"].Value; got != beyond {
+		t.Errorf("a clef space of %v came out as %v", beyond, got)
+	}
+	if !by["clefAfter"].Set {
+		t.Error("it was not recorded as the score's own")
+	}
+	// The window is told both: what it may be, and what is usual.
+	if by["clefAfter"].Ceiling <= after.Max {
+		t.Errorf("the field is held to %v, which is no wider than the usual "+
+			"%v", by["clefAfter"].Ceiling, after.Max)
+	}
+	if by["clefAfter"].Floor < 0 {
+		t.Error("the field would take a negative space")
+	}
+
+	// And it really reaches the page.
+	o := engrave.Engrave(h.app.score, engrave.DefaultOptions())
+	_ = o
+	if v := engrave.Settings(h.app.score)["clefAfter"]; v != beyond {
+		t.Errorf("the score records %v", v)
 	}
 }
 

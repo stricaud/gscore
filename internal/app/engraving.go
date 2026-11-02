@@ -39,12 +39,21 @@ import (
 
 // engravingKnob is one measurement as the editor sees it.
 type engravingKnob struct {
-	Name  string  `json:"name"`
-	Label string  `json:"label"`
-	Group string  `json:"group"`
-	Unit  string  `json:"unit,omitempty"`
-	Min   float64 `json:"min"`
-	Max   float64 `json:"max"`
+	Name  string `json:"name"`
+	Label string `json:"label"`
+	Group string `json:"group"`
+	Unit  string `json:"unit,omitempty"`
+	// Min and Max are the range this measurement is usually in, which is
+	// what the window's arrows step through and what it says in the
+	// tooltip. Advice: a house style is somebody's taste.
+	Min float64 `json:"min"`
+	Max float64 `json:"max"`
+	// Floor and Ceiling are what it may actually be — what can be drawn at
+	// all — which is what the field itself is held to. Far outside Min and
+	// Max on purpose: the window must not stop somebody typing a number
+	// they want.
+	Floor   float64 `json:"floor"`
+	Ceiling float64 `json:"ceiling"`
 	// Value is what this score engraves at, and Default what it would
 	// engrave at if it said nothing. The dialog shows both: a field with
 	// no way of telling whether 2.8 was chosen or merely inherited is a
@@ -118,9 +127,14 @@ func (a *App) engravingSet(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, raw+" is not a measurement", http.StatusBadRequest)
 			return
 		}
-		if v < k.Min || v > k.Max {
+		// What can be drawn, not what is usual. A number outside the usual
+		// range is somebody's house style and none of this endpoint's
+		// business; a negative space or one of some thousands of staff
+		// spaces is a drawing nothing can show, and that is refused.
+		lo, hi := k.Limits()
+		if v < lo || v > hi {
 			http.Error(w, k.Label+" has to be between "+
-				trimFloat(k.Min)+" and "+trimFloat(k.Max), http.StatusBadRequest)
+				trimFloat(lo)+" and "+trimFloat(hi), http.StatusBadRequest)
 			return
 		}
 		changed[name] = v
@@ -160,9 +174,10 @@ func (a *App) writeEngraving(w http.ResponseWriter) {
 		} else {
 			v = k.Clamp(v)
 		}
+		lo, hi := k.Limits()
 		out = append(out, engravingKnob{
 			Name: k.Name, Label: k.Label, Group: k.Group, Unit: k.Unit,
-			Min: k.Min, Max: k.Max,
+			Min: k.Min, Max: k.Max, Floor: lo, Ceiling: hi,
 			Value: v, Default: k.Get(opt), Set: set,
 		})
 	}

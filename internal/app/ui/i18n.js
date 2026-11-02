@@ -442,6 +442,7 @@ const MESSAGES = {
   "Script console…": "Console de script…",
   "Scripts": "Scripts",
   "Parts": "Parties",
+  "What this part is engraved by, in staff spaces. Its own, over the score's: empty a field to go back to what the score says.": "Ce qui grave cette partie, en interlignes. Les siens, par-dessus ceux de la partition\u00a0: videz un champ pour revenir \u00e0 ce que dit la partition.",
   "Cues": "Repères",
   "None yet.": "Aucun pour l’instant.",
   "Take it away": "Supprimer",

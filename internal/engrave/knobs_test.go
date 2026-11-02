@@ -79,10 +79,15 @@ func TestEachKnobReadsWhatItWrites(t *testing.T) {
 	}
 }
 
-// A score's settings reach the engraver, and are held to the bounds on the
-// way: a file can be edited by hand, and a beam ninety-nine spaces thick
-// must not be able to come out of one.
-func TestAScoresSettingsAreAppliedAndClamped(t *testing.T) {
+// A score's settings reach the engraver.
+//
+// All of them, including the ones outside what is usual. A house style is
+// somebody's taste and the program has no business overruling it: a beam
+// thicker than anybody would print is a thing they will see on the page the
+// moment they set it, and emptying the field puts it back. What used to
+// happen was that the number was quietly held to a bound and the page did
+// not change, which reads as a window that does not work.
+func TestAScoresSettingsAreApplied(t *testing.T) {
 	s := model.NewScore()
 	s.Engraving = map[string]float64{
 		"noteBase":      4.5,
@@ -94,15 +99,55 @@ func TestAScoresSettingsAreAppliedAndClamped(t *testing.T) {
 	if o.Spacings.NoteBase != 4.5 {
 		t.Errorf("the note width came out as %v, want 4.5", o.Spacings.NoteBase)
 	}
-	beam, _ := KnobNamed("beamThickness")
-	if o.Defaults.BeamThickness != beam.Max {
-		t.Errorf("a beam of 99 came out as %v, want it held to %v",
-			o.Defaults.BeamThickness, beam.Max)
+	if o.Defaults.BeamThickness != 99 {
+		t.Errorf("a beam of 99 came out as %v: somebody's own measurement was "+
+			"overruled", o.Defaults.BeamThickness)
 	}
 	// A name this version does not know is skipped, not refused: a file
 	// from a later gscore has to open here.
 	if o.Spacings.MinNote != DefaultSpacings().MinNote {
 		t.Error("an unknown measurement changed something")
+	}
+}
+
+// What is held is what cannot be drawn at all.
+//
+// A negative space is not a small space, it is shapes drawn through each
+// other backwards; and a bar some thousands of staff spaces wide is a
+// drawing nothing can show, which on a long score is megabytes of shapes
+// nobody asked for. A file can be edited by hand, so neither can be allowed
+// to arrive from one.
+func TestWhatCannotBeDrawnIsHeld(t *testing.T) {
+	for _, k := range Knobs {
+		lo, hi := k.Limits()
+		if lo < 0 {
+			t.Errorf("%s may be negative, which is not a small measurement "+
+				"but a backwards one", k.Name)
+		}
+		if got := k.Clamp(-5); got != lo {
+			t.Errorf("%s took -5 and came out as %v", k.Name, got)
+		}
+		if got := k.Clamp(1e9); got != hi {
+			t.Errorf("%s took a billion and came out as %v", k.Name, got)
+		}
+		// And what is usual is inside what is possible, or the window's
+		// arrows would step somewhere the number cannot go.
+		if k.Min < lo || k.Max > hi {
+			t.Errorf("%s says %v to %v is usual, which is outside the %v to %v "+
+				"it can be", k.Name, k.Min, k.Max, lo, hi)
+		}
+	}
+
+	s := model.NewScore()
+	s.Engraving = map[string]float64{"margin": -40, "noteBase": 1e9}
+	o := withScoreSettings(s, DefaultOptions())
+	if o.Spacings.Margin < 0 {
+		t.Errorf("the margin came out as %v", o.Spacings.Margin)
+	}
+	base, _ := KnobNamed("noteBase")
+	_, hi := base.Limits()
+	if o.Spacings.NoteBase != hi {
+		t.Errorf("a note slot of a billion came out as %v", o.Spacings.NoteBase)
 	}
 }
 

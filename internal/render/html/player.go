@@ -115,12 +115,27 @@ const playerJS = `
     bowed:     { wave: "sawtooth", cut: 2000, a: 0.060, d: 0.14, s: 0.80, r: 0.18 },
     sustained: { wave: "sawtooth", cut: 2600, a: 0.040, d: 0.12, s: 0.75, r: 0.14 },
     plucked:   { wave: "triangle", cut: 3200, a: 0.004, d: 0.22, s: 0.0,  r: 0.10 },
-    tuned:     { wave: "triangle", cut: 3600, a: 0.002, d: 0.30, s: 0.0,  r: 0.08 }
+    tuned:     { wave: "triangle", cut: 3600, a: 0.002, d: 0.30, s: 0.0,  r: 0.08 },
+    // Struck and left to ring, which is not the same as plucked.
+    //
+    // The model keeps these two apart and says why: a plectrum is bright at
+    // the moment it picks and gone very soon after, where a hammer is softer
+    // at the front and the note rings on for as long as it is written. There
+    // was no piano here, so every piano in every shared page fell through to
+    // the pluck below and came out buzzing and then cut off halfway through
+    // the note — on a song for voice and piano, which is most of what a
+    // shelf holds, that is nearly all of what you hear.
+    //
+    // The editor worked this out already; these are its numbers. A little
+    // sustain, so the note lasts its written length instead of ringing down
+    // to nothing in the middle of it.
+    piano:     { wave: "triangle", cut: 2400, a: 0.004, d: 0.90, s: 0.16, r: 0.18 }
   };
-  // Anything the score does not name is played as a piano, which is what a keyboard with nothing else said about it
-  // should sound like. Sustained — an organ — was the old answer, and a
-  // score that said nothing about its instrument came out droning.
-  function voiceFor(f) { return VOICES[f] || VOICES.plucked; }
+  // Anything the score does not name is played as a piano, which is what a
+  // keyboard with nothing else said about it should sound like. Sustained —
+  // an organ — was the old answer, and a score that said nothing about its
+  // instrument came out droning. Then it was the pluck, which buzzed.
+  function voiceFor(f) { return VOICES[f] || VOICES.piano; }
 
   // A recording of the score, served beside the page, if there is one.
   //
@@ -230,11 +245,20 @@ const playerJS = `
     var g = gain.gain;
     g.setValueAtTime(0, when);
     g.linearRampToValueAtTime(peak, when + v.a);
+    // The decay cannot outlast the note it is decaying through.
+    //
+    // A piano falls away over nine tenths of a second, which is longer than
+    // half the notes in a song: left uncapped, the fall was aimed at a moment
+    // past the end of the note and the fade-out before it, so the events
+    // arrived out of order and the note did not fade at all. Capped at half
+    // the note, a short one decays quickly and a long one rings, which is
+    // what a piano does.
+    var decay = Math.min(v.d, dur * 0.5);
     if (v.s === 0) {
-      g.exponentialRampToValueAtTime(0.0005, when + Math.min(dur, v.d) + 0.01);
+      g.exponentialRampToValueAtTime(0.0005, when + Math.min(dur, decay) + 0.01);
     } else {
-      g.linearRampToValueAtTime(peak * v.s, when + v.a + v.d);
-      g.setValueAtTime(peak * v.s, Math.max(when + v.a + v.d, when + dur - v.r));
+      g.linearRampToValueAtTime(peak * v.s, when + v.a + decay);
+      g.setValueAtTime(peak * v.s, Math.max(when + v.a + decay, when + dur - v.r));
       g.linearRampToValueAtTime(0, when + dur);
     }
     osc.connect(filter); filter.connect(gain); gain.connect(master);

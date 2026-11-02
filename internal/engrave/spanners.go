@@ -1031,7 +1031,17 @@ func (e *engraver) slurShoulder(a, b, y, dir float64) float64 {
 		return y // nothing drawn there at all
 	}
 	want := edge + dir*slurClearance
-	lift := (y - want) * dir
+	// How far the end has to move to get there, in the direction the slur
+	// arches. Positive means there is something to clear.
+	//
+	// (want - y), not (y - want): with the subtraction the other way round
+	// this came out negative whenever there was anything to clear and
+	// positive when there was not, so the shoulder never lifted an end in
+	// either direction. It read as working because the arch clears most of
+	// what the shoulder is for, and only showed up where the arch cannot
+	// reach — a note just inside the end, which is exactly the case this
+	// function exists for.
+	lift := (want - y) * dir
 	if lift <= 0 {
 		return y
 	}

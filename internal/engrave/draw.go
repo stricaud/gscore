@@ -698,7 +698,14 @@ func (e *engraver) stemUp(p *placed) bool {
 	}
 	// Otherwise the middle line is the pivot, generalised to a chord by
 	// taking whichever outer note is furthest from it.
-	return (middleStep - p.lo) >= (p.hi - middleStep)
+	//
+	// Strictly furthest, so that a tie goes down: a note sitting on the
+	// middle line stems down, and so does a chord whose outer notes are the
+	// same distance either side of it. That is the rule every book states —
+	// "for notes on the middle line and above, the stem is down" — and it
+	// was ">=" here, which stemmed the middle line up. One character, and
+	// it was wrong on the commonest note on a treble staff.
+	return (middleStep - p.lo) > (p.hi - middleStep)
 }
 
 // drawHeads draws an element's noteheads, at whatever size that element is
@@ -1491,6 +1498,25 @@ func (e *engraver) drawBeamGroup(g []*placed) {
 		x, y float64
 		p    *placed
 	}
+	// How many beams the group carries, which the stems have to be long
+	// enough for.
+	//
+	// Beams stack inwards, towards the noteheads, so a third and a fourth
+	// crowd the very notes they belong to: a run of 32nds came out with its
+	// lowest beam sitting on the noteheads. The stems grow by the height of
+	// the stack past two, which is about the staff space the handbooks say
+	// to add.
+	deepest := 0
+	for _, p := range g {
+		if f := p.flags(); f > deepest {
+			deepest = f
+		}
+	}
+	extra := 0.0
+	if deepest > 2 {
+		extra = float64(deepest-2) * (e.beamTh() + e.beamGap())
+	}
+
 	ends := make([]end, 0, len(g))
 	for _, p := range g {
 		head := e.headW(p.value)
@@ -1500,7 +1526,16 @@ func (e *engraver) drawBeamGroup(g []*placed) {
 			sx = p.x + e.stemTh()/2
 			base = e.y + stepY(float64(p.lo))
 		}
-		ends = append(ends, end{x: sx, y: e.stemEnd(base, up), p: p})
+		// Past the middle line the stem already reaches, rather than
+		// instead of it: stemEnd lengthens a stem to touch that line and
+		// this lengthens it again for the beams beyond the second.
+		y := e.stemEnd(base, up)
+		if up {
+			y -= extra
+		} else {
+			y += extra
+		}
+		ends = append(ends, end{x: sx, y: y, p: p})
 	}
 
 	// The beam is a straight line through the outermost stem ends, with its
@@ -1517,6 +1552,20 @@ func (e *engraver) drawBeamGroup(g []*placed) {
 			slope = -maxSlope
 		}
 		y1 = y0 + slope*(x1-x0)
+		// And then held to what the interval between the two ends allows.
+		//
+		// The slope cap alone bounds how steep a beam is and not how far it
+		// falls, which on a wide group is not a bound at all: a run across
+		// a bar of the Altes came out slanting 3.8 staff spaces, where the
+		// books say half a space to two and very seldom more. See
+		// beamSlantFor, which is the table they give.
+		if most := e.beamSlantFor(g, up); math.Abs(y1-y0) > most {
+			if y1 > y0 {
+				y1 = y0 + most
+			} else {
+				y1 = y0 - most
+			}
+		}
 	}
 	beamY := func(x float64) float64 {
 		if x1 == x0 {
@@ -1612,7 +1661,12 @@ func (e *engraver) drawBeamGroup(g []*placed) {
 			if i == j {
 				// A lone note at this level gets a stub, pointing back toward
 				// the group it belongs to.
-				stub := 1.0
+				//
+				// As long as a notehead is wide, which is what the handbooks
+				// give: it was a flat one space, which is a little short of a
+				// notehead and read as a clipped beam rather than a
+				// deliberate fractional one.
+				stub := e.headW(g[i].value)
 				if i > 0 {
 					bx0 = ends[i].x - stub
 				} else {
@@ -1641,6 +1695,69 @@ func (e *engraver) drawBeamGroup(g []*placed) {
 			bottom = math.Max(bottom, math.Max(y0, y1)+math.Max(0, dir*e.beamTh()))
 		}
 		e.markTremolo(g, tr, x0, top, x1-x0, bottom-top)
+	}
+}
+
+/*
+ * How far a beam may fall across its group.
+ *
+ * Plate engravers set this from the interval between the notes at the two
+ * ends, not from the geometry: a beam that followed the notes exactly would
+ * stand on end over a wide leap and lie flat over a narrow one spread across
+ * a bar. The table below is the one printed in the notation handbooks —
+ * roughly half a space for a second, one for a third, up to two for an
+ * octave or more — and it is a ceiling rather than a target, because the
+ * same books say the slant decreases as the notes are given more room.
+ *
+ * So this only ever reduces a slant. A group whose stems already sit nearly
+ * level is left alone; one that was about to fall four staff spaces is held
+ * to what its interval allows.
+ */
+
+// beamSlantFor is the most a beam may fall across this group, in staff
+// spaces.
+func (e *engraver) beamSlantFor(g []*placed, up bool) float64 {
+	if len(g) < 2 {
+		return 0
+	}
+	// The note at each end that the beam is drawn from: the top one of a
+	// chord for a beam above, the bottom one for a beam below. A chord's
+	// other notes do not decide where the beam goes.
+	side := func(p *placed) int {
+		if up {
+			return p.hi
+		}
+		return p.lo
+	}
+	first, last := side(g[0]), side(g[len(g)-1])
+
+	// Notes out on ledger lines slant half a space, whatever the interval:
+	// the stems there are long and a steep beam over them reads as a wedge.
+	for _, p := range g {
+		if p.lo < 0 || p.hi > 8 {
+			return 0.5
+		}
+	}
+
+	// Diatonic steps between the two ends, which is the interval: one step
+	// is a second, two a third, seven an octave.
+	d := last - first
+	if d < 0 {
+		d = -d
+	}
+	switch {
+	case d == 0:
+		// The same pitch at both ends is a horizontal beam, which every
+		// book states outright.
+		return 0
+	case d == 1: // a second
+		return 0.5
+	case d == 2: // a third
+		return 1
+	case d <= 6: // a fourth through a seventh
+		return 1.5
+	default: // an octave or more
+		return 2
 	}
 }
 

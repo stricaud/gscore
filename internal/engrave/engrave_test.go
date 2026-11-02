@@ -170,15 +170,19 @@ func TestQuartersAreNotBeamed(t *testing.T) {
 
 func TestStemDirectionPivotsOnTheMiddleLine(t *testing.T) {
 	e := &engraver{opt: DefaultOptions()}
-	// The rule carried over from realize_area.c: below the middle line the
-	// stem goes up, on it or above it the stem goes down.
-	// A note on the middle line stems up. That is gscore's own rule: in
-	// realize_area.c the test is "y < middle", so a note exactly on the line
-	// falls to the else branch and gets an upward stem.
+	// Below the middle line the stem goes up; on it or above it the stem
+	// goes down.
+	//
+	// On it included. gscore used to stem the middle line up, carried over
+	// from realize_area.c where the test is "y < middle" so a note exactly
+	// on the line fell to the else branch — and this test wrote that down
+	// as gscore's own rule, in the same breath as stating the real one two
+	// lines above. It is not a rule, it is an off-by-one on the commonest
+	// note of a treble staff: every book says the middle line stems down.
 	cases := []struct {
 		step int
 		up   bool
-	}{{0, true}, {3, true}, {4, true}, {5, false}, {8, false}, {-3, true}}
+	}{{0, true}, {3, true}, {4, false}, {5, false}, {8, false}, {-3, true}}
 	for _, c := range cases {
 		p := &placed{lo: c.step, hi: c.step}
 		if got := e.stemUp(p); got != c.up {

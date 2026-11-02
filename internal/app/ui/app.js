@@ -461,6 +461,13 @@ async function action(name) {
     await openRecent(recentPaths[Number(name.slice("open-recent-".length))]);
     return;
   }
+  // The scripts in the plugins folder, which are a list that changes for the
+  // same reason: they are named by their file, so that two plugins calling
+  // themselves the same thing are still two commands.
+  if (name.startsWith("plugin:")) {
+    await runPlugin(name.slice("plugin:".length));
+    return;
+  }
   switch (name) {
     case "new":
       await fetch("/api/new", { method: "POST" });
@@ -1396,6 +1403,10 @@ async function loadInfo() {
   // And the things that need a disk with the person's own files on it.
   $$("[data-needs-files]").forEach((el) => (el.hidden = !i.local));
   if (i.local) void loadRecent();
+  // And the scripts in the plugins folder, read once when the window opens:
+  // the folder is the person's and nothing in the page changes it, so there
+  // is nothing to keep in step while they work.
+  if (i.local) void loadPlugins();
   $("#version").textContent = "Gscore " + i.version;
   $("#about-version").textContent = "Version " + i.version;
   // A star beside the name while there is work that is not on the disk yet,
@@ -2160,6 +2171,127 @@ async function loadRecent() {
   // The native menu bar is built from this one, so it has to be told that
   // what it copied has changed.
   rebuildNativeMenus();
+}
+
+/* ---------- the scripts in the plugins folder ---------- */
+
+// The plugins, as the server last read them out of the folder.
+let plugins = [];
+let pluginsFolder = "";
+
+// loadPlugins fills the Scripts menu out of Gscore/plugins.
+//
+// Built from the folder rather than from a list the editor keeps, for the
+// same reason the recent files are: the folder is the installation. A file
+// dropped in there is on the menu next time the window opens, and a file
+// deleted is gone, with nothing to register and nothing to tidy up.
+//
+// What each one is called comes out of a comment at the top of the file,
+// which the server reads without running any of it. A menu built by
+// executing what is in a folder to find out what it is called would be a
+// menu that runs everything in the folder every time the editor starts.
+async function loadPlugins() {
+  const items = $("#scripts-items");
+  if (!items) return;
+
+  plugins = [];
+  pluginsFolder = "";
+  try {
+    const res = await fetch("/api/plugins");
+    if (res.ok) {
+      const d = await res.json();
+      plugins = d.plugins || [];
+      pluginsFolder = d.folder || "";
+    }
+  } catch (_) {
+    /* no folder is the same as an empty one */
+  }
+
+  items.innerHTML = "";
+  const item = (label, command, title) => {
+    const b = document.createElement("button");
+    b.innerHTML = "<span></span>";
+    b.querySelector("span").textContent = label;
+    if (command) {
+      b.dataset.action = command;
+      // Wired here and not by setupMenus, which ran before these existed.
+      b.addEventListener("click", () => {
+        if (b.disabled) return;
+        closeMenus();
+        void action(command);
+      });
+    }
+    if (title) b.title = title;
+    items.append(b);
+    return b;
+  };
+
+  // Only the ones that asked to be on a menu. A file with no @menu in it is
+  // a half-written script, or one of the pieces another of them reads, and
+  // either way it is in the folder on purpose and not on the menu.
+  const onMenu = plugins.filter((p) => p.menu);
+  if (!onMenu.length) {
+    item("No scripts in the plugins folder", "").disabled = true;
+  } else {
+    for (const p of onMenu) {
+      item(p.name, "plugin:" + p.file, p.about || p.file);
+    }
+  }
+  items.append(document.createElement("hr"));
+  // Where they live, said rather than opened: there is no asking the system
+  // to show a folder from inside the page, and a path somebody can read is
+  // more use than a menu entry that does nothing.
+  item(pluginsFolder || "Scripts live in Gscore/plugins", "").disabled = true;
+  item("Script console…", "console");
+
+  // These were made after the menus were drawn, so they have no pictures
+  // beside them yet. Half a column of pictures reads worse than none.
+  syncMenuIcons();
+  // The native menu bar is built from this one, so it has to be told that
+  // what it copied has changed.
+  rebuildNativeMenus();
+}
+
+// runPlugin runs one of them, with the console open on it.
+//
+// Open on it, which is the point: what ran is on the screen, in full, with
+// whatever it said underneath. A plugin that reported five parallel fifths
+// has somewhere to report them, and a plugin that did something surprising
+// can be read afterwards to find out what.
+//
+// It runs, where a script carried by a score is only ever opened. The
+// difference is whose file it is: a score arrives from anybody and may not
+// run anything, and this folder is yours — putting a file in it is the
+// consent, and clicking its name is the asking.
+async function runPlugin(file) {
+  const found = plugins.find((p) => p.file === file);
+  if (!found) {
+    status("There is no script called " + file + " in the plugins folder");
+    return;
+  }
+  // Put it in the console box without opening the window, so that "Open in
+  // the console" from the result panel has it there to read, and so that
+  // opening the console after a plugin ran shows what ran.
+  const source = $("#console-source");
+  if (source) source.value = found.body;
+  const name = $("#console-name");
+  if (name) name.value = found.name;
+  await runConsoleAndShow(found.body, found.name, found.about);
+}
+
+// setupScriptResult wires the corner panel's two buttons.
+function setupScriptResult() {
+  $("#script-result-again")?.addEventListener("click", () => {
+    if (lastScript.source) {
+      void runConsoleAndShow(lastScript.source, lastScript.name, lastScript.about);
+    }
+  });
+  $("#script-result-open")?.addEventListener("click", () => {
+    $("#script-result")?.close();
+    const source = $("#console-source");
+    if (source) source.value = lastScript.source;
+    void openConsole();
+  });
 }
 
 // documentName is what the score is called, with a star while there is work
@@ -10249,10 +10381,18 @@ function syncMenuIcons() {
       if (mark) i.dataset.mark = mark;
       else i.classList.add("is-mark");
       i.dataset.size = String(menuIconSize);
-    } else if (MENU_DRAWINGS[b.dataset.action]) {
+    } else {
       // Not music, so not the music font and not the marks' colour: a
       // drawing of our own, in the ink the words are written in.
-      i.innerHTML = menuDrawing(MENU_DRAWINGS[b.dataset.action]);
+      //
+      // A command made at run time — one of the scripts in the plugins
+      // folder — is named for the file it is in, which nobody can draw a
+      // picture of in advance. Those are named kind:rest, so the kind in
+      // front of the colon carries the drawing and every one of them gets
+      // it.
+      const kind = b.dataset.action.split(":")[0];
+      const drawing = MENU_DRAWINGS[b.dataset.action] || MENU_DRAWINGS[kind];
+      if (drawing) i.innerHTML = menuDrawing(drawing);
     }
     b.insertBefore(i, b.firstChild);
   }
@@ -11136,6 +11276,7 @@ async function main() {
   setupMelodyClicks();
   setupTypeBar();
   setupConsole();
+  setupScriptResult();
   setupPanning();
   setupMarquee();
   setupSymbolDragging();
@@ -12681,6 +12822,13 @@ const MENU_DRAWINGS = {
     '<circle cx="8.5" cy="7.5" r="2.2"/><path d="M10.7 7.5V2.5"/>',
   "console": '<rect x="2.5" y="4.5" width="19" height="15" rx="2"/>' +
     '<path d="M6.5 9.5 9.5 12l-3 2.5"/><path d="M12 15h5.5"/>',
+  /* One of the scripts in the plugins folder: a page with a few lines on it
+   * and the arrow that runs it. Shared by every entry on the Scripts menu,
+   * which is why it is keyed by the word in front of the colon — the
+   * entries themselves are named after files nobody can draw in advance. */
+  "plugin": '<path d="M5.5 3.5h8.5l4.5 4.5v12.5h-13z"/>' +
+    '<path d="M14 3.5v5h4.5"/><path d="M8 12.5h5M8 15.5h3"/>' +
+    '<polygon points="14,14.5 18,16.75 14,19"/>',
   "insert-text": '<path d="M5.5 7V5h13v2"/><path d="M12 5v14"/><path d="M9 19h6"/>',
 
   /* The bracket over the bars of a repeat, with the time through it covers.
@@ -13215,7 +13363,10 @@ async function runABC(text) {
   return true;
 }
 
-async function runTyping(line) {
+// fromScript is true when the line came from the console rather than from
+// somebody typing it, which changes one thing: a bare word in a typed line
+// is a command, and a script may not run every command a person may.
+async function runTyping(line, fromScript) {
   // "abc" and a space hands the rest of the line to ABC notation. The
   // editor's own shorthand stays what a bare line is read as, because it is
   // the shorter of the two and the one the hint under the box describes.
@@ -13254,6 +13405,13 @@ async function runTyping(line) {
         if (!cmd) {
           failed = `there is no ${step.name}`;
           break;
+        }
+        if (fromScript) {
+          const why = scriptRefusal(cmd);
+          if (why) {
+            failed = why;
+            break;
+          }
         }
         await cmd.run();
         wrote++;
@@ -13539,6 +13697,57 @@ const WORD_COMMANDS = [
     run: () => action("select-region") },
 ];
 
+/*
+ * Which of them a script may run.
+ *
+ * run("tie") is most of what a plug-in in any other program does: the
+ * editing is already written and named, and a script that could not reach
+ * it would have to ask the server for everything again in its own words.
+ * So the commands are open to a script — but not all of them, and the
+ * line is not where it first looks.
+ *
+ * What is kept back is not what is dangerous to the music; it is what is
+ * not the script's to decide. The file commands are the ones a script has
+ * no business having: a script that can save is a script that can write
+ * over your work from a score somebody sent you, and that is exactly the
+ * door this console does not have. Undo and redo are the person's hands
+ * on the last thing that happened, and a script runs as one undo —
+ * undoing from inside it undoes the bar before and then goes on writing
+ * on top of it. Playing, zooming and the typing bar are the editor rather
+ * than the score; a script that left the window somewhere else has done
+ * something nobody asked it for.
+ *
+ * Named by the group they are listed under rather than one by one, so
+ * that a command added to the file menu tomorrow is refused by having
+ * been added there, and not by somebody remembering to come back here.
+ */
+const SCRIPT_GROUPS = new Set([
+  "Writing", "Note lengths", "Accidentals", "Marks", "Tuplets",
+  "Selecting and moving",
+]);
+
+// The few inside those groups that are still not a script's: two modes,
+// which a script would leave switched on behind it, and the go-to-bar
+// window, which is at(bar) said with a dialog in the way.
+const SCRIPT_NOT = new Set(["mouse-writes", "type-music", "jump", "jump-mod"]);
+
+// And the ones with no group, which are the commands that answer only to
+// their name. Listed rather than allowed wholesale: the others open a
+// window and wait, which is not something to do in the middle of a queue.
+const SCRIPT_ALSO = new Set(["transpose-up", "transpose-down"]);
+
+function scriptMayRun(cmd) {
+  if (!cmd || SCRIPT_NOT.has(cmd.id)) return false;
+  return SCRIPT_GROUPS.has(cmd.group || "") || SCRIPT_ALSO.has(cmd.id);
+}
+
+// scriptRefusal is what the console says about a command it will not run.
+function scriptRefusal(cmd) {
+  if (scriptMayRun(cmd)) return "";
+  return `${cmd.id} is not a script's to run — a script writes music; ` +
+    "the file, undo, playing and the window stay yours";
+}
+
 function commandNamed(name) {
   const all = KEY_BINDINGS.concat(WORD_COMMANDS);
   const exact = all.find((c) => c.id === name);
@@ -13798,7 +14007,15 @@ const consoleBudget = { steps: 4000, ms: 3000 };
 // — with no await anywhere to forget. The cost is that what a script reads
 // is the score as it stood when the script began, which is said plainly in
 // the help.
-function consoleVerbs(out, said, read, question) {
+// given is everything else that was read before the script ran: what the
+// person had picked up, and what the server says a chord is made of. Both
+// are read once for the same reason the music is — the verbs are
+// synchronous, and a synchronous verb cannot go and ask.
+// drawings is where draw() puts its pictures, beside said: both are what the
+// script has to show when it has finished, and they are shown together.
+function consoleVerbs(out, said, read, question, given, drawings = []) {
+  const picked = given && given.picked ? given.picked : null;
+  const chords = given && given.chords ? given.chords : null;
   const started = Date.now();
   // How many staves the script has asked for so far, so that staff() can
   // say which number the next one will be without waiting to find out.
@@ -13811,6 +14028,10 @@ function consoleVerbs(out, said, read, question) {
   // first one — which is the one script in the editor that cannot possibly
   // be in a loop, because it is waiting for them.
   let waited = 0;
+  // When the progress bar was last drawn, so that a script calling for it
+  // every bar of a long score hands back a frame a few times a second
+  // rather than a few thousand times.
+  let drawn = 0;
   // A score that has just been made is one staff with nothing on it. A
   // script writing for four instruments should finish with four staves and
   // not five, so the first one it asks for moves into the staff that is
@@ -13842,6 +14063,32 @@ function consoleVerbs(out, said, read, question) {
       spend();
       out.push({ do: "line", line: String(line) });
     },
+    // run does one of the editor's own commands, by the name the
+    // shortcuts window lists it under: run("tie"), run("beam"),
+    // run("artic-staccato"). The start of what it is called will do, the
+    // same way the typing bar takes it.
+    //
+    // This is most of what a plug-in elsewhere is made of. Everything the
+    // editor can do to the music is already written and named, and a
+    // script that could not reach it would be reduced to asking the
+    // server for each of them again in its own words.
+    //
+    // Which commands is decided where the commands are, not here: the
+    // file, undo, playing and the window are not a script's to run, and
+    // the reason is written beside the rule.
+    run(name) {
+      spend();
+      const want = String(name).trim().toLowerCase();
+      if (!want) throw new Error("run needs the name of a command");
+      // Looked up now rather than when the queue is written, so that a
+      // misspelled command is an error where it was written and nothing
+      // has been done to the score yet.
+      const cmd = commandNamed(want);
+      if (!cmd) throw new Error(`there is no command called ${want}`);
+      const why = scriptRefusal(cmd);
+      if (why) throw new Error(why);
+      out.push({ do: "run", name: cmd.id });
+    },
     note(pitch, len) {
       spend();
       out.push({ do: "note", pitch: String(pitch), dur: lengthOf(len) });
@@ -13855,6 +14102,175 @@ function consoleVerbs(out, said, read, question) {
       const all = [].concat(pitches).map(String);
       if (!all.length) throw new Error("a chord needs notes in it");
       out.push({ do: "chord", pitches: all, dur: lengthOf(len) });
+    },
+    // measure reads what is written on a bar rather than in it: the clef,
+    // the key, the meter, the rehearsal mark, the tempo, the barline
+    // that closes it.
+    //
+    // Separate from notes() because they are separate questions. "Which
+    // bars have no dynamic" walks the notes; "which bars are marked a
+    // tempo" does not look at a note at all.
+    // Called measure and not bar because bar() already writes one. The
+    // two words mean the same thing and the score model uses this one.
+    measure(n, staff) {
+      const staves = read.staves || [];
+      const si = staff === undefined
+        ? (state.selection?.part ?? 0)
+        : Math.max(0, Math.trunc(Number(staff)) - 1);
+      const bi = Math.max(0, Math.trunc(Number(n)) - 1);
+      const got = (staves[si]?.measures || [])[bi];
+      if (!got) return null;
+      // A copy, so a script may do as it likes with what it is given.
+      return { ...got, notes: got.notes.map((x) => ({ ...x })) };
+    },
+    // draw puts a picture in what the script has to show, under what it
+    // has said. A drawing and a caption: draw(svg, "Bar 12").
+    //
+    // Because a great deal of what a script finds out is not a sentence. A
+    // flute fingering is a row of circles, some of them filled in; a chart
+    // of where the parallel fifths are is a row of bars; a key map is a
+    // colour. Said in words — "Th 1 2 3 | 1 2 3 D#" — it is something to
+    // decode rather than something to read, and a player reading it at the
+    // stand has no time for that.
+    //
+    // SVG, because that is what the rest of the editor draws in and what
+    // the window can show at any size. The markup goes in as the script
+    // wrote it: a script is already running in this page and could reach
+    // the window anyway, so what is kept here is a vocabulary, not a cage
+    // — the promise gscore makes is that nothing runs until you have read
+    // it, and that is a promise about running, not about drawing.
+    draw(picture, caption) {
+      spend();
+      const svg = String(picture);
+      if (!svg.trim()) throw new Error("draw needs something to draw");
+      if (drawings.length >= 200) {
+        throw new Error("a script may draw 200 pictures; this one is still going");
+      }
+      drawings.push({
+        svg,
+        caption: caption === undefined ? "" : String(caption),
+      });
+    },
+    // progress says how far the script has got, as a bar in the console's
+    // own window.
+    //
+    // await progress(i, n) — because of what the await is for. A script
+    // runs on the same thread that draws the window, so a loop over two
+    // and a half thousand bars holds the screen exactly as it was until it
+    // finishes: a progress bar written without yielding is a progress bar
+    // nobody ever sees move. The await hands the frame back, the bar is
+    // drawn, and the script carries on.
+    //
+    // Called without the await it still works and still shows nothing
+    // until the script next waits for something, which is honest enough:
+    // it is the yielding that makes it visible, not the telling.
+    //
+    // The reading time is not the script's, the same way a question's is
+    // not: a script stopped for having spent its three seconds drawing the
+    // bar it was asked to draw would be a trap rather than a budget. What
+    // is not given away is the counting — a frame is handed back at most
+    // every fiftieth of a second, so a script calling this in a tight loop
+    // is still a script on the clock.
+    progress(done, total) {
+      // Synchronously, before any promise: a script that calls this
+      // without awaiting it should still be stopped by the budget, and a
+      // throw inside a promise nobody waits for stops nothing.
+      spend();
+      const n = Math.max(0, Math.trunc(Number(done)) || 0);
+      const all = total === undefined || total === null
+        ? 0 : Math.max(0, Math.trunc(Number(total)) || 0);
+      const now = Date.now();
+      if (now - drawn < 50) return Promise.resolve();
+      drawn = now;
+      if (typeof showConsoleProgress === "function") {
+        showConsoleProgress(n, all);
+      }
+      return new Promise((go) => {
+        const back = () => {
+          waited += Date.now() - now;
+          go();
+        };
+        if (typeof requestAnimationFrame === "function") {
+          requestAnimationFrame(back);
+        } else {
+          setTimeout(back, 0);
+        }
+      });
+    },
+    // selection is what the person picked up before pressing Run.
+    //
+    // The commonest shape a script has anywhere is "do this to what I have
+    // selected", and without this a script can only be told about the
+    // whole piece. It is what makes run() worth having too: a command acts
+    // on the selection, so a script that walks a passage has to know where
+    // the passage is.
+    //
+    // Nothing picked up gives back nothing, which is a script's cue to say
+    // so rather than quietly going over the whole score.
+    //
+    // As it was when the script began, for the same reason the music is:
+    // the verbs queue, and the cursor moves as the queue is written. A
+    // script that wants to put it back where it found it says
+    // at(was.bar, was.staff, was.at).
+    selection() {
+      if (!picked) return null;
+      return {
+        ...picked,
+        from: picked.from ? { ...picked.from } : null,
+        to: picked.to ? { ...picked.to } : null,
+      };
+    },
+    // chordNotes says what a chord symbol is made of: chordNotes("Cmaj7")
+    // is ["cn4", "en4", "gn4", "bn4"], ready to hand to chord().
+    //
+    // This is what makes a lead sheet playable from a script. Every verb
+    // here could already write a chord; none of them could say which notes
+    // "Bbm7b5" is, and working that out in the script means a table of
+    // chord spellings in every script anybody writes.
+    //
+    // The second number is the octave the root goes in, four by default —
+    // middle C's. Notes above the root climb out of it as they must, so
+    // the ninth of a chord is in the octave above whatever its root is in.
+    //
+    // Spelled out, accidental or natural on every note, because the staff
+    // it is going on may be in a key the script was not thinking in.
+    // Nothing is guessed: a quality gscore does not know gives back
+    // nothing rather than the triad somebody probably meant.
+    chordNotes(symbol, octave) {
+      if (!chords) {
+        throw new Error("the chords could not be read from the score");
+      }
+      return chordNotesOf(symbol, octave, chords);
+    },
+    // latinSyllables divides a Latin word the way it is sung:
+    // latinSyllables("alleluia") is ["al", "le", "lu", "ia"].
+    //
+    // Setting a text under music means knowing where the words break, and
+    // a Mass is four hundred words to hyphenate before a note of it can be
+    // typed. Latin divides by rule and English does not — heav-en and
+    // bea-ver are the same shape — so this is Latin, and the name says so
+    // rather than a comment somewhere saying so.
+    //
+    // Nothing is guessed. A word that cannot be Latin at all, and anything
+    // that is not a word, comes back as nothing.
+    latinSyllables(word) {
+      return latinSyllables(word);
+    },
+    // staves lists what each staff is: its name, its instrument, the clef
+    // and key and meter it starts in, and how far its written pitches sit
+    // from what is heard. A script checking whether the clarinet goes
+    // over its range has to know the staff is a clarinet.
+    staves() {
+      return (read.staves || []).map((st, i) => ({
+        number: i + 1,
+        name: st.name,
+        instrument: st.instrument || "",
+        clef: st.clef || "",
+        key: st.key || "",
+        time: st.time || "",
+        transpose: st.transpose || 0,
+        bars: (st.measures || []).length,
+      }));
     },
     // step moves from the note before by an interval, which is how a
     // melody is thought about: up a third, down a step.
@@ -13914,12 +14330,19 @@ function consoleVerbs(out, said, read, question) {
       spend();
       out.push({ do: "dynamic", name: String(name) });
     },
-    at(bar, staff) {
+    // at moves the cursor to a bar, and with a third number to a place
+    // inside it — how many things are before the cursor there, counted the
+    // way selection() reports it. Without one it goes to the start of the
+    // bar, which is where a script that is about to write wants it; with
+    // one, at(was.bar, was.staff, was.at) is how a script that moved the
+    // cursor puts it back where it found it.
+    at(bar, staff, place) {
       spend();
       out.push({
         do: "at",
         bar: Math.max(0, Math.trunc(Number(bar)) - 1),
         staff: staff === undefined ? undefined : Math.max(0, Math.trunc(Number(staff)) - 1),
+        place: place === undefined ? undefined : Math.max(0, Math.trunc(Number(place))),
       });
     },
     // notes reads a bar: what is written there, as it stood when the
@@ -13994,8 +14417,84 @@ function consoleVerbs(out, said, read, question) {
 // writes nothing: it fills a queue. Then the queue is sent, in order, inside
 // one undo. A script that throws halfway has asked for nothing, so nothing
 // has happened, and the error is the only thing that reaches the score.
+// showConsoleProgress says how far a script has got, or takes the line away
+// when called with nothing.
+//
+// In the console's own window rather than over the whole editor with
+// Gilbert: the window is open and being watched, and a mascot covering the
+// script somebody is halfway through reading is the wrong place for the
+// news. The bar is the browser's own, so it needs no drawing and reads
+// right in both themes.
+function showConsoleProgress(done, total) {
+  const box = $("#console-progress");
+  if (!box) return;
+  if (done === undefined || done === null) {
+    box.hidden = true;
+    return;
+  }
+  box.hidden = false;
+  const bar = $("#console-progress-bar");
+  const text = $("#console-progress-text");
+  if (total > 0) {
+    if (bar) {
+      bar.max = total;
+      bar.value = Math.min(done, total);
+      bar.removeAttribute("data-waiting");
+    }
+    if (text) text.textContent = `${done} of ${total}`;
+    return;
+  }
+  // No total: a script that knows how far it has got and not how far there
+  // is to go. The bar has nothing to show, so it shows nothing.
+  if (bar) {
+    bar.max = 1;
+    bar.value = 0;
+    bar.setAttribute("data-waiting", "1");
+  }
+  if (text) text.textContent = String(done);
+}
+
+// pickedSelection says what is picked up, in the numbers a script counts in.
+//
+// Staves and bars from one, the way the page is numbered and the way every
+// other verb takes them. The editor counts from nought inside itself, and a
+// script that had to know which of the two it was being handed would get it
+// wrong once and never find out: an off-by-one in a bar number is a report
+// about the wrong bar, not an error.
+//
+// from and to are the ends of a stretch, in reading order. A bare cursor is
+// not a stretch — there is a place but nothing picked up — so it has none,
+// and count says which of the two it is.
+function pickedSelection() {
+  const sel = state.selection;
+  const multi = state.multi || [];
+  if (!sel && !multi.length) return null;
+
+  const where = (s) => ({
+    staff: s.part + 1, bar: s.measure + 1, index: s.index,
+  });
+  let from = null, to = null;
+  if (multi.length) {
+    // In reading order: the list is kept in it, but a selection grown by
+    // dragging backwards is put back in order rather than trusted.
+    const sorted = multi.slice().sort((a, b) =>
+      a.part - b.part || a.measure - b.measure || a.index - b.index);
+    from = where(sorted[0]);
+    to = where(sorted[sorted.length - 1]);
+  }
+  return {
+    staff: sel ? sel.part + 1 : from.staff,
+    bar: sel ? sel.measure + 1 : from.bar,
+    // How many things are before the cursor in its bar, which is what at()
+    // takes back.
+    at: sel ? (sel.at || 0) : 0,
+    count: multi.length,
+    from, to,
+  };
+}
+
 async function runConsole(source) {
-  const queue = [], said = [];
+  const queue = [], said = [], drawings = [];
   // The score as it stands, read once before the script runs. The verbs
   // are synchronous so that a script reads as music rather than as
   // plumbing, and a synchronous verb cannot go and ask.
@@ -14006,7 +14505,18 @@ async function runConsole(source) {
   } catch (_) {
     // A script that writes without reading still works.
   }
-  const verbs = consoleVerbs(queue, said, read, ask);
+  // What a chord is made of, which the server owns: the one place in the
+  // program that says what maj7 means.
+  let chords = null;
+  try {
+    const res = await fetch("/api/chordqualities");
+    if (res.ok) chords = (await res.json()).qualities || null;
+  } catch (_) {
+    // A script that never asks about a chord does not need it, and one
+    // that does is told it could not be read rather than given a guess.
+  }
+  const verbs = consoleVerbs(queue, said, read, ask,
+                             { picked: pickedSelection(), chords }, drawings);
 
   // What the score looked like when the script began, for a script that
   // wants to know. It does not change as the queue is written, which the
@@ -14018,18 +14528,23 @@ async function runConsole(source) {
   };
 
   try {
-    // Run as an async function, so that a script may await a question. The
-    // writing verbs stay synchronous and queue; await is for ask and for
-    // nothing else, which is why there is no await to forget in a loop.
+    // Run as an async function, so that a script may await a question or
+    // the drawing of its progress. The writing verbs stay synchronous and
+    // queue, so there is no await to forget in a loop that writes.
     const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
     const run = new AsyncFunction(...Object.keys(verbs), "score", "Math", "JSON",
       `"use strict";\n${source}\n`);
     await run(...Object.values(verbs), look, Math, JSON);
   } catch (e) {
-    return { said, error: String(e && e.message ? e.message : e) };
+    return { said, drawings, error: String(e && e.message ? e.message : e) };
+  } finally {
+    // Whatever the script showed about how far it had got, it has got
+    // there. A bar left at four fifths after the script has stopped is a
+    // script that looks as though it is still going.
+    showConsoleProgress(null);
   }
   if (!queue.length) {
-    return { said, wrote: 0 };
+    return { said, drawings, wrote: 0 };
   }
 
   await fetch("/api/script/begin", { method: "POST" });
@@ -14049,15 +14564,102 @@ async function runConsole(source) {
   }
   await refreshScore();
   markSelection();
-  return { said, wrote, error };
+  return { said, drawings, wrote, error };
+}
+
+// What was run last, so that the result panel can run it again without
+// anybody having to find it on the menu a second time.
+let lastScript = { source: "", name: "", about: "" };
+
+// runConsoleAndShow runs a script and shows what it had to show.
+//
+// One place, because there are three ways in — the Run button, a plugin
+// picked off the Scripts menu, and Run it again — and a script run one way
+// that said nothing where the same script run another way said five things
+// would be a script that looked broken.
+//
+// The console window closes first. A script is about the music, and the
+// window it was started from sits squarely over the music: the thing a
+// script wrote cannot be seen until the window is out of the way, and the
+// thing it found out is about bars you want to be looking at. So what it
+// said and drew goes to a panel in the corner instead, which leaves the
+// score usable underneath it.
+async function runConsoleAndShow(source, called, about) {
+  lastScript = { source, name: called || "Script", about: about || "" };
+  const dlg = $("#console");
+  if (dlg && dlg.open) dlg.close();
+
+  const got = await runConsole(source);
+  const lines = [...got.said];
+  if (got.error) lines.push(got.error);
+  else if (got.wrote) {
+    lines.push(`Wrote ${got.wrote} thing${got.wrote === 1 ? "" : "s"}.`);
+  }
+  // The console keeps its own copy, for whoever reopens it to carry on
+  // writing: the panel is the result, the box is the workshop.
+  consoleSay(lines.join("\n") || "Nothing to do.", !!got.error);
+  showScriptResult(lastScript, lines, got.drawings || [], !!got.error);
+  return got;
+}
+
+// showScriptResult puts what a script said and drew in the corner panel.
+//
+// Always, even when there is nothing to say. "I ran it and nothing
+// happened" is the complaint a script that silently did nothing earns, and
+// a panel that says in as many words that the script looked and found
+// nothing is the answer to it.
+function showScriptResult(what, lines, drawings, bad) {
+  const dlg = $("#script-result");
+  if (!dlg) return;
+  $("#script-result-name").textContent = what.name || "Script";
+  const about = $("#script-result-about");
+  about.textContent = what.about || "";
+  about.hidden = !what.about;
+
+  const said = $("#script-result-said");
+  said.textContent = lines.join("\n");
+  said.classList.toggle("console-bad", !!bad);
+
+  const drawn = $("#script-result-drawn");
+  drawn.innerHTML = "";
+  for (const picture of drawings) {
+    const fig = document.createElement("figure");
+    // The drawing as the script wrote it. A script already runs in this
+    // page and could reach the window without asking, so nothing is gained
+    // by picking its markup apart here — what gscore promises is that
+    // nothing runs until you have read it.
+    fig.innerHTML = picture.svg;
+    if (picture.caption) {
+      const cap = document.createElement("figcaption");
+      cap.textContent = picture.caption;
+      fig.append(cap);
+    }
+    drawn.append(fig);
+  }
+
+  // Shown, not shown modally: the score behind it stays scrollable,
+  // clickable and playable while the report is up, which is the whole
+  // reason the report is not in the window it was started from.
+  if (!dlg.open) dlg.show();
 }
 
 // doConsoleStep carries out one thing the script asked for.
 async function doConsoleStep(step) {
   switch (step.do) {
     case "line":
-      // The typing language, so everything it can say the console can say.
-      return (await runTyping(step.line)) ? "" : "could not write " + step.line;
+      // The typing language, so everything it can say the console can say
+      // — under the same rule about which commands a script may run, since
+      // a bare word in a typed line is a command like any other.
+      return (await runTyping(step.line, true))
+        ? "" : "could not write " + step.line;
+    case "run": {
+      const cmd = commandNamed(step.name);
+      if (!cmd) return "there is no command called " + step.name;
+      const why = scriptRefusal(cmd);
+      if (why) return why;
+      await cmd.run();
+      return "";
+    }
     case "at": {
       const sel = state.selection || { part: 0, measure: 0, step: 4 };
       const part = step.staff === undefined ? sel.part : step.staff;
@@ -14066,7 +14668,9 @@ async function doConsoleStep(step) {
         await loadHits();
       }
       state.selection = {
-        ...sel, part, measure: step.bar, at: 0, ref: null, replace: false,
+        ...sel, part, measure: step.bar,
+        at: step.place === undefined ? 0 : step.place,
+        ref: null, replace: false,
       };
       return "";
     }
@@ -14167,13 +14771,31 @@ async function drumKeyFor(which) {
   return pad ? pad.key : 0;
 }
 
-// consoleHelp is the vocabulary, said in one line beside the buttons. The
-// whole of it fits there, which is the point of there being so few words.
-const consoleHelp =
-  "note(\"c4\", 8) · rest(4) · chord([…], 2) · step(+3) · bar() · " +
-  "at(bar, staff) · staff(\"flute\") · key(4) · dynamic(\"sfz\") · " +
-  "drum(\"snare drum\") · write(\"8abc\") · notes(bar, staff) · " +
-  "transpose(\"c4\", 4) · ask(q, […]) · say(…) · score.bars";
+// consoleHelp is the vocabulary, beside the buttons.
+//
+// Two lines, where it was one and was getting longer every time a word was
+// added. One line was the right shape while every word wrote music: a dozen
+// verbs that do one kind of thing read as a sentence. Then the console
+// learned to read the score and to run the editor's own commands, and the
+// line was carrying two unrelated languages end to end — a script writer
+// looking for "how do I ask what is in this bar" had to read past eleven
+// ways of writing a note to find out.
+//
+// So the split is the one the language actually has, and it is a better
+// answer than a longer line: what writes music, what asks about it, what
+// shows you the answer. Three short labelled lines read faster than one
+// long one, which is the test — not the count. A line long enough to need
+// reading twice is the thing to avoid, and the answer to that would be a
+// help that is not the bar at the bottom of the window.
+const consoleHelp = [
+  "Writing: note(\"c4\", 8) · rest(4) · chord(…, 2) · step(+3) · bar() · " +
+  "at(bar) · staff(name) · key(4) · dynamic(name) · drum(name) · " +
+  "write(\"8abc\") · run(\"tie\")",
+  "Asking: notes(bar) · measure(bar) · staves() · selection() · " +
+  "score.bars · transpose(\"c4\", 4) · chordNotes(\"Cmaj7\") · " +
+  "latinSyllables(\"alleluia\") · ask(q)",
+  "Showing: say(…) · draw(svg, caption) · await progress(i, n)",
+];
 
 // consoleExamples are whole scripts to start from, built into the editor.
 //
@@ -14853,7 +15475,14 @@ async function loadScripts() {
   drawSavedScripts();
   drawExamples();
   const help = $("#console-help");
-  if (help) help.textContent = consoleHelp;
+  if (help) {
+    help.textContent = "";
+    for (const line of consoleHelp) {
+      const row = document.createElement("div");
+      row.textContent = line;
+      help.append(row);
+    }
+  }
   return state.scripts;
 }
 
@@ -14916,13 +15545,8 @@ function setupConsole() {
   if (!dlg) return;
   const source = $("#console-source");
 
-  $("#console-run")?.addEventListener("click", async () => {
-    const got = await runConsole(source?.value ?? "");
-    const lines = [...got.said];
-    if (got.error) lines.push(got.error);
-    else lines.push(`Wrote ${got.wrote} thing${got.wrote === 1 ? "" : "s"}.`);
-    consoleSay(lines.join("\n") || "Nothing to do.", !!got.error);
-  });
+  $("#console-run")?.addEventListener("click", () =>
+    void runConsoleAndShow(source?.value ?? ""));
 
   $("#console-save")?.addEventListener("click", () => void saveScript());
 
@@ -14967,6 +15591,263 @@ function setupConsole() {
 // semitones will tell you which of those was meant. Any accidental written
 // on the note is dropped for the same reason — the key signature spells the
 // answer, exactly as it does for a note written by hand.
+/*
+ * Dividing a Latin word into the syllables it is sung on.
+ *
+ * Setting a text under music means knowing where the words break, and
+ * doing it by hand is the slowest part of entering a chorus: a Mass is
+ * four hundred words and every one of them has to be hyphenated before a
+ * note of it can be typed.
+ *
+ * Latin only, and it says so in its name. Latin can be divided by rule —
+ * the rules below are the ones printed at the front of the Liber Usualis
+ * and are what choral editions follow — and English cannot: "heaven" is
+ * heav-en and "beaver" is bea-ver, and nothing in the letters says which.
+ * English needs a hyphenation dictionary, which is a different piece of
+ * work; a guesser that was right four words in five would leave every
+ * word to be checked by eye, which is the work this is meant to save.
+ *
+ * It cannot tell Latin from English by looking — "mea" and "idea" are the
+ * same shape — so the name is the contract. What it does refuse is a word
+ * that cannot be Latin at all, and anything that is not a word.
+ *
+ * The rules, in the order they are applied:
+ *
+ *	ch ph th rh gn	one consonant, never divided: a-gnus, ma-chi-na
+ *	qu, and gu after n	the u belongs to the consonant: a-qua, lin-gua
+ *	i before a vowel	a consonant where it begins a word or stands
+ *			between two vowels: Je-sus, al-le-lu-ia
+ *	ae oe au	sung on one note, so one syllable: cae-lum, lau-da
+ *	x		closes the syllable before it: dix-it, ex-cel-sis
+ *	one consonant	begins the next syllable: Do-mi-nus
+ *	two consonants	divided, the first closing: om-nis, ec-ce
+ *	 but s+consonant,
+ *	 mute+l or r	not divided: ho-stis, pa-tris
+ *	three or more	the first closes, the rest begin: san-ctus, mon-stro
+ *
+ * Two places where editions disagree with each other rather than with
+ * this: "eu" is a diphthong in words taken from Greek and two syllables in
+ * Latin's own — De-us, me-us, but Eu-cha-ri-sti-a — and nothing in the
+ * letters says which, so it is read as two; and "ct" is divided here by
+ * the two-consonant rule, where editions set in Italy often keep it
+ * together as di-ctus.
+ */
+
+// The letters Latin is written in, with the accents chant books mark the
+// stress with, each against the plain letter it is.
+const latinPlain = {
+  à: "a", á: "a", â: "a", ä: "a", ā: "a",
+  è: "e", é: "e", ê: "e", ë: "e", ē: "e",
+  ì: "i", í: "i", î: "i", ï: "i", ī: "i",
+  ò: "o", ó: "o", ô: "o", ö: "o", ō: "o",
+  ù: "u", ú: "u", û: "u", ü: "u", ū: "u",
+  ý: "y", ÿ: "y",
+};
+const latinVowels = "aeiouyæœ";
+// A mute followed by a liquid is not divided: pa-tris, du-plex, a-gri.
+const latinMutes = "bcdfgpt";
+// And s before one of these is not divided: ho-stis, Chri-stus, pa-schae.
+// These and not every consonant, because Latin begins words with st, sp and
+// sc and never with sr or sl — the broader rule divided Is-ra-el as I-sra-el.
+const latinAfterS = "cptq";
+
+// latinSyllables divides a Latin word, giving back its syllables in order,
+// or nothing where the word cannot be Latin.
+//
+// The syllables come back spelled as they were given, accents and capitals
+// and all, so that joining them with hyphens gives the word back.
+function latinSyllables(word) {
+  const raw = String(word).trim();
+  if (!raw) return null;
+  const letters = [...raw];
+  const plain = letters.map((ch) => {
+    const low = ch.toLowerCase();
+    return latinPlain[low] || low;
+  });
+  // A word, and a word that could be Latin. W is the one letter Latin has
+  // no use for at all; j and k and y it has, in the words it took from
+  // Greek and in the spellings modern books print.
+  for (const ch of plain) {
+    if (ch < "a" || ch > "z") {
+      if (ch !== "æ" && ch !== "œ") return null;
+    }
+    if (ch === "w") return null;
+  }
+
+  const isVowel = (i) => i >= 0 && i < plain.length &&
+    latinVowels.includes(plain[i]);
+
+  // Which letters are vowels, once the ones that are standing in for
+  // consonants have been taken out of the count.
+  const vowel = plain.map((ch, i) => latinVowels.includes(ch));
+  for (let i = 0; i < plain.length; i++) {
+    if (plain[i] === "i" && isVowel(i + 1)) {
+      // The consonant the English alphabet writes J. It begins a word, or
+      // stands between two vowels; an i after a consonant is a vowel, so
+      // the i of "Gloria" is not this.
+      if (i === 0 || isVowel(i - 1)) vowel[i] = false;
+    }
+    if (plain[i] === "u" && i > 0) {
+      // The u of qu, and of the ngu in lingua, belongs to the consonant
+      // before it rather than being a syllable of its own.
+      if (plain[i - 1] === "q") vowel[i] = false;
+      if (plain[i - 1] === "g" && plain[i - 2] === "n" && isVowel(i + 1)) {
+        vowel[i] = false;
+      }
+    }
+  }
+
+  // The nuclei: one per syllable, each the vowel or the pair of vowels it
+  // is sung on. Everything between them is the consonants to be divided.
+  const pairs = ["ae", "oe", "au"];
+  const spelled = plain.join("");
+  const nuclei = [];
+  for (let i = 0; i < plain.length; i++) {
+    if (!vowel[i]) continue;
+    let end = i;
+    if (vowel[i + 1] && pairs.includes(plain[i] + plain[i + 1])) {
+      end = i + 1;
+      // Except in the Hebrew names, where the two vowels are sung
+      // separately: Is-ra-el, Mi-cha-el, Ra-pha-el, Na-tha-na-el. They all
+      // end in -ael, which is as near a rule as there is — Latin's own
+      // words have no such ending, and nothing else in the letters
+      // distinguishes the two. (The word for air is the one that gets
+      // away: a-er, read here as one syllable.)
+      if (plain[i] === "a" && plain[i + 1] === "e" && spelled.endsWith("ael") &&
+          i + 2 === plain.length - 1) {
+        end = i;
+      }
+    }
+    nuclei.push({ from: i, to: end });
+    i = end;
+  }
+  if (!nuclei.length) return null; // no vowel in it, so not a word
+
+  // Where each syllable begins. The first one begins at the beginning,
+  // whatever consonants are in front of its vowel.
+  const cuts = [0];
+  for (let n = 1; n < nuclei.length; n++) {
+    const after = nuclei[n - 1].to + 1;
+    const before = nuclei[n].from;
+    cuts.push(after + latinCarry(plain, after, before));
+  }
+
+  const out = [];
+  for (let i = 0; i < cuts.length; i++) {
+    const end = i + 1 < cuts.length ? cuts[i + 1] : letters.length;
+    out.push(letters.slice(cuts[i], end).join(""));
+  }
+  return out;
+}
+
+// latinCarry says how many of the consonants between two vowels stay with
+// the first of them.
+function latinCarry(plain, from, to) {
+  const run = plain.slice(from, to);
+  if (!run.length) return 0;
+  // x is two sounds in one letter and closes the syllable it follows:
+  // dix-it, ex-cel-sis.
+  if (run[0] === "x") return 1;
+
+  // The pairs that are one consonant. Counted as one so that the rule
+  // about two consonants is not applied to the two halves of a single
+  // sound: a-gnus and ma-chi-na, not ag-nus and mach-i-na.
+  const digraphs = ["ch", "ph", "th", "rh", "gn", "qu"];
+  const units = [];
+  for (let i = 0; i < run.length; i++) {
+    if (i + 1 < run.length && digraphs.includes(run[i] + run[i + 1])) {
+      units.push(run[i] + run[i + 1]);
+      i++;
+      continue;
+    }
+    units.push(run[i]);
+  }
+
+  if (units.length === 1) return 0; // one consonant begins the next syllable
+  if (units.length === 2) {
+    const [a, b] = units;
+    // s before a mute, and a mute before l or r, are never divided:
+    // ho-stis, Chri-stus, pa-schae, pa-tris.
+    //
+    // Before a mute, not before any consonant: Latin begins words with st,
+    // sp and sc and never with sr or sl, and the broader rule divided
+    // Is-ra-el as I-sra-el.
+    if (a === "s" && latinAfterS.includes(b[0])) return 0;
+    if (a.length === 1 && latinMutes.includes(a) && (b === "l" || b === "r")) {
+      return 0;
+    }
+    return a.length; // divided, the first closing the syllable
+  }
+  // Three or more: the first closes the syllable and the rest begin the
+  // next one — san-ctus, mon-stro, ex-em-plum.
+  return units[0].length;
+}
+
+// How many semitones above C each letter sits, naturally.
+const letterSemis = { c: 0, d: 2, e: 4, f: 5, g: 7, a: 9, b: 11 };
+
+// chordNotesOf spells a chord symbol out as the notes it is made of.
+//
+// qualities is the table from the server, which owns what a chord is; this
+// owns the letters. Nothing here knows that maj7 has an eleventh in it, and
+// nothing there knows that the third of E flat is spelled G.
+//
+// The spelling is the point. Four semitones above C is E or F flat, and the
+// difference between the two is the difference between a chord and a puzzle:
+// what makes it E is being the third, so each tone is spelled on the letter
+// its degree lands on and given whatever accidental makes it sound right.
+// Doing it the other way about — picking the nearest black note and calling
+// it a sharp — gives Cmaj7 a B and E flat major a D sharp, and a page of
+// those is a page nobody can read.
+//
+// A quality the table does not know gives back nothing, because a chord
+// filled in with the triad somebody probably meant is a chord that will be
+// read, believed and played.
+function chordNotesOf(symbol, octave, qualities) {
+  if (!qualities) return null;
+  const text = String(symbol).trim();
+  // The root, and everything after it. A flat or a sharp belongs to the
+  // root; a lower-case "b" straight after a letter is the flat and not the
+  // start of the quality, which is why the accidentals are spelled out here
+  // rather than left to a looser pattern.
+  const m = /^([A-Ga-g])(##|bb|#|b|x|♯|♭|𝄪|𝄫)?(.*)$/.exec(text);
+  if (!m) return null;
+  // A slash bass is where the chord sits, not what it is made of. The
+  // notes are the same either way, so the bass is dropped rather than
+  // guessed at.
+  const after = m[3].split("/")[0];
+  const tones = qualities[after] ?? qualities[after.toLowerCase()];
+  if (!tones) return null;
+
+  const letters = "cdefgab";
+  const letter = m[1].toLowerCase();
+  const alter = { "#": 1, "♯": 1, "##": 2, x: 2, "𝄪": 2,
+                  b: -1, "♭": -1, bb: -2, "𝄫": -2 }[m[2]] || 0;
+  const from = letters.indexOf(letter);
+  const oct = octave === undefined || octave === null ? 4 : Math.trunc(Number(octave));
+  const rootSemi = letterSemis[letter] + alter;
+
+  const marks = { 2: "x", 1: "#", 0: "n", "-1": "b", "-2": "bb" };
+  const out = [];
+  for (const t of tones) {
+    const deg = from + t.degree;
+    const up = letters[deg % 7];
+    // Where the letter has crossed a C, and so an octave, on the way.
+    const crossed = Math.floor(deg / 7);
+    // What that letter sounds at, counted from the root's own C, and what
+    // it has to be sharpened or flattened by to land where the chord says.
+    const plain = letterSemis[up] + 12 * crossed;
+    const want = rootSemi + t.semitones;
+    const need = want - plain;
+    if (!(need in marks)) return null; // nothing anybody would write
+    // Every note spelled out, accidental or natural, because a script may
+    // be writing onto a staff whose key signature is not the one it was
+    // thinking in — a plain letter there is a different note.
+    out.push(up + marks[need] + String(oct + crossed));
+  }
+  return out;
+}
+
 function transposeName(pitch, steps) {
   const m = /^([a-gA-G])([#sbxnSBXN]*)(-?\d+)?$/.exec(String(pitch).trim());
   if (!m) return pitch;

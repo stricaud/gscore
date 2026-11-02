@@ -1721,7 +1721,62 @@ dialog.wide { max-width: 640px; }
   border-radius: 5px; border: 1px solid var(--line);
   background: var(--panel-dark); color: var(--ink);
 }
-#console-help { font-size: 11px; color: var(--muted); flex: 1; min-width: 0; }
+#console-help {
+  font-size: 11px; color: var(--muted); flex: 1; min-width: 0;
+  line-height: 1.5;
+}
+
+/* ---- what a script said, and what it drew ---- */
+
+/* In the corner rather than in the middle, and shown rather than shown
+   modally: the thing a report is about is the music behind it, and a window
+   that has to be closed before the music can be looked at is a window that
+   gets closed before the report is read. */
+#script-result {
+  position: fixed;
+  inset: auto 16px 16px auto;
+  margin: 0;
+  width: min(460px, calc(100vw - 32px));
+  max-width: none;
+  max-height: min(70vh, 640px);
+  padding: 14px 16px;
+  display: none;
+  flex-direction: column;
+  gap: 8px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, .28);
+}
+#script-result[open] { display: flex; }
+/* No dimming: there is nothing to dim, since the score stays usable. */
+#script-result::backdrop { background: none; }
+#script-result-said {
+  flex: none; margin: 0; max-height: 14em; overflow-y: auto;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px; line-height: 1.5; white-space: pre-wrap;
+  padding: 6px 10px; border-radius: 6px;
+  background: var(--panel-dark); color: var(--ink);
+}
+#script-result-said:empty { display: none; }
+#script-result-drawn {
+  flex: 1; min-height: 0; overflow-y: auto;
+  display: flex; flex-direction: column; gap: 10px;
+}
+#script-result-drawn:empty { display: none; }
+#script-result-drawn figure { margin: 0; }
+#script-result-drawn figcaption {
+  font-size: 11px; color: var(--muted); margin-top: 2px;
+}
+#script-result-drawn svg { max-width: 100%; height: auto; display: block; }
+#script-result-bar { display: flex; gap: 8px; flex-wrap: wrap; }
+#script-result-bar button { margin-top: 0; font-size: 12px; }
+
+#console-progress { display: flex; align-items: center; gap: 8px; }
+#console-progress progress { flex: 1; min-width: 0; height: 6px; }
+#console-progress-text {
+  font-size: 11px; color: var(--muted);
+  /* Wide enough for the longest count it will show, so the bar beside it
+     does not shuffle sideways every time the number grows a digit. */
+  min-width: 10em; text-align: right;
+}
 
 #console-out {
   flex: none; max-height: 9em; overflow-y: auto; margin: 0;

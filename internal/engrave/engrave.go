@@ -864,6 +864,10 @@ type engraver struct {
 	// to. Worked out once. See sectionFrom.
 	sections []int
 
+	// numbers is the printed number of every bar, worked out once. See
+	// BarNumbers, which is the one place the rule lives.
+	numbers []int
+
 	// waiting are the marks that go outside the staff and cannot be placed
 	// where they are met.
 	//

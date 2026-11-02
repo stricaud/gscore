@@ -4873,6 +4873,103 @@ func (a *App) handleScripts(w http.ResponseWriter, r *http.Request) {
 // for a file: a score is music with a note attached, not a source tree.
 const maxScript = 64 * 1024
 
+// Everything written on a note, not only its pitch and length.
+//
+// It was those two and nothing else, which made the console a thing
+// that writes music and cannot read it: a script could generate a row
+// but could not find the bars with no dynamic in them, or the lyric
+// with no hyphen, or the note the horn goes above its range on. Most
+// of what anybody wants a script for is looking rather than writing.
+//
+// Flat, and every field left out when it is not there. A script walks
+// this with ordinary JavaScript — the power is in the language — so
+// what it wants is plain data and not an object model to learn.
+type noteContents struct {
+	Pitch  string `json:"pitch"`
+	Length int    `json:"length"`
+	Dots   int    `json:"dots,omitempty"`
+	Rest   bool   `json:"rest,omitempty"`
+	// Chord carries the other notes of a chord, the lowest first.
+	Chord []string `json:"chord,omitempty"`
+	// MIDI is the pitch as a number, and ChordMIDI the rest of a chord
+	// the same way.
+	//
+	// Given rather than left to the script, because every script that
+	// compares pitches would otherwise parse "Bb3" itself — the letter,
+	// any number of accidentals, the octave — and they would each get
+	// the double flats wrong in their own way. Comparing two notes is
+	// the commonest thing an analysis does.
+	MIDI      int   `json:"midi,omitempty"`
+	ChordMIDI []int `json:"chordMidi,omitempty"`
+	// Voice is which line of the staff it belongs to, counted from 1.
+	Voice int `json:"voice,omitempty"`
+	// Where it falls in its bar and how long it sounds, as fractions
+	// of a whole note. A script asking "what is on beat three" should
+	// not have to add the lengths up itself.
+	At    string `json:"at,omitempty"`
+	Beats string `json:"beats,omitempty"`
+
+	// What is written on it.
+	Accidental    string   `json:"accidental,omitempty"`
+	Articulations []string `json:"articulations,omitempty"`
+	Dynamic       string   `json:"dynamic,omitempty"`
+	Stem          string   `json:"stem,omitempty"`
+	Lyrics        []string `json:"lyrics,omitempty"`
+	Text          []string `json:"text,omitempty"`
+	ChordSymbol   string   `json:"chordSymbol,omitempty"`
+	Fingering     []string `json:"fingering,omitempty"`
+
+	// Where a mark begins and ends. A script looking for unslurred
+	// phrases wants the ends, not a slur object.
+	TieStart  bool   `json:"tieStart,omitempty"`
+	TieStop   bool   `json:"tieStop,omitempty"`
+	SlurStart bool   `json:"slurStart,omitempty"`
+	SlurStop  bool   `json:"slurStop,omitempty"`
+	Hairpin   string `json:"hairpin,omitempty"`
+	Octave    string `json:"octave,omitempty"`
+	Trill     bool   `json:"trill,omitempty"`
+	Grace     int    `json:"grace,omitempty"`
+	Tremolo   int    `json:"tremolo,omitempty"`
+	// Tuplet is the ratio written over the group — "3:2", "11:6" —
+	// on every note of it, so a script need not hunt for the start.
+	Tuplet string `json:"tuplet,omitempty"`
+}
+
+// What is written on a bar rather than on a note in it.
+type barContents struct {
+	// Number is what is printed over the bar, which is not the same as
+	// where it sits in the score: an upbeat is not counted, and a
+	// movement starts again at one.
+	Number  int            `json:"number"`
+	Clef    string         `json:"clef,omitempty"`
+	Key     string         `json:"key,omitempty"`
+	Time    string         `json:"time,omitempty"`
+	Barline string         `json:"barline,omitempty"`
+	Marker  string         `json:"marker,omitempty"`
+	Section string         `json:"section,omitempty"`
+	Tempo   string         `json:"tempo,omitempty"`
+	Ending  []int          `json:"ending,omitempty"`
+	Repeat  int            `json:"repeat,omitempty"`
+	Notes   []noteContents `json:"notes"`
+}
+type staffContents struct {
+	Name string `json:"name"`
+	// What the staff is and how it reads, which a script checking a
+	// player's range has to know before it can say anything useful.
+	Instrument string `json:"instrument,omitempty"`
+	Clef       string `json:"clef,omitempty"`
+	Key        string `json:"key,omitempty"`
+	Time       string `json:"time,omitempty"`
+	// Transpose is how far the written pitch is from the sounding
+	// one, in semitones: -2 for a B flat clarinet.
+	Transpose int `json:"transpose,omitempty"`
+	// Bars holds the notes alone, as it always did, so that scripts
+	// written against the old shape go on working. Measures holds the
+	// same notes and everything written on the bar around them.
+	Bars     [][]noteContents `json:"bars"`
+	Measures []barContents    `json:"measures"`
+}
+
 // handleContents says what is written in the score, bar by bar.
 //
 // The one thing the editor could not be asked. Everything else answers a
@@ -4888,52 +4985,103 @@ func (a *App) handleContents(w http.ResponseWriter, r *http.Request) {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
 
-	type noteDoc struct {
-		Pitch  string `json:"pitch"`
-		Length int    `json:"length"`
-		Dots   int    `json:"dots,omitempty"`
-		Rest   bool   `json:"rest,omitempty"`
-		// Chord carries the other notes of a chord, the lowest first.
-		Chord []string `json:"chord,omitempty"`
-	}
-	type staffDoc struct {
-		Name string      `json:"name"`
-		Bars [][]noteDoc `json:"bars"`
-	}
+	// What each bar is called, from the engraver, which owns the rule.
+	// A script saying "a parallel fifth in bar 41" has to name the bar a
+	// player would read.
+	numbers := engrave.BarNumbers(a.score)
 
-	out := make([]staffDoc, 0, len(a.score.Parts))
+	out := make([]staffContents, 0, len(a.score.Parts))
 	for pi, p := range a.score.Parts {
 		name := p.Name
 		if name == "" {
 			name = "Staff " + strconv.Itoa(pi+1)
 		}
-		st := staffDoc{Name: name, Bars: make([][]noteDoc, len(p.Measures))}
+		st := staffContents{
+			Name:       name,
+			Instrument: p.Instrument.String(),
+			Clef:       p.Clef.String(),
+			Key:        keyText(p.Key),
+			Time:       p.Time.String(),
+			Transpose:  p.Transpose.Chromatic + 12*p.Transpose.OctaveChange,
+			Bars:       make([][]noteContents, len(p.Measures)),
+			Measures:   make([]barContents, len(p.Measures)),
+		}
 		for mi, m := range p.Measures {
-			bar := []noteDoc{}
-			for _, v := range m.Voices {
+			bd := barContents{Number: barNumberAt(numbers, mi), Notes: []noteContents{}}
+			if m.Clef != nil {
+				bd.Clef = m.Clef.String()
+			}
+			if m.Key != nil {
+				bd.Key = keyText(*m.Key)
+			}
+			if m.Time != nil {
+				bd.Time = m.Time.String()
+			}
+			if m.RightBarline != model.BarSingle {
+				bd.Barline = m.RightBarline.String()
+			}
+			bd.Marker, bd.Section, bd.Repeat = m.Marker, m.SectionTitle, m.Repeat
+			if m.Tempo != nil {
+				bd.Tempo = tempoText(*m.Tempo)
+			}
+			if m.Ending != nil {
+				bd.Ending = append([]int(nil), m.Ending.Numbers...)
+			}
+
+			for vi, v := range m.Voices {
+				// Where in the bar each element falls, added up as it
+				// goes: a script asking what is on beat three should not
+				// have to do this itself.
+				// One over one, not the zero value: adding to a
+				// duration of nought over nought gives nought over
+				// nought, so every note came back at the start of the bar.
+				at := model.Duration{Num: 0, Den: 1}
 				for _, el := range v.Elements {
 					d := el.Duration()
-					n := noteDoc{Length: lengthNumber(d), Dots: dotsOf(d)}
+					// The length as it is written, which for a note in a
+					// tuplet is not the time it sounds: eleven in the time
+					// of six are written as eighths and sound as elevenths
+					// of six of them. A script reporting "an eighth" is
+					// reading the page; beats below is the time.
+					written := d
+					if mk := marksOn(el); mk != nil {
+						written = mk.WrittenDuration(d)
+					}
+					n := noteContents{
+						Length: lengthNumber(written), Dots: dotsOf(written),
+						Voice: vi + 1,
+						At:    at.String(), Beats: d.String(),
+					}
+					at = at.Add(d)
 					switch e := el.(type) {
 					case *model.Rest:
 						n.Rest = true
 					case *model.Note:
 						n.Pitch = e.Pitch.String()
+						n.MIDI = e.Pitch.MIDI()
+						n.Accidental = accidentalWord(e.Accidental)
 					case *model.Chord:
 						for i, cn := range e.Notes {
 							if i == 0 {
 								n.Pitch = cn.Pitch.String()
+								n.MIDI = cn.Pitch.MIDI()
+								n.Accidental = accidentalWord(cn.Accidental)
 								continue
 							}
 							n.Chord = append(n.Chord, cn.Pitch.String())
+							n.ChordMIDI = append(n.ChordMIDI, cn.Pitch.MIDI())
 						}
 					default:
 						continue
 					}
-					bar = append(bar, n)
+					readMarks(&n, marksOn(el))
+					bd.Notes = append(bd.Notes, n)
 				}
 			}
-			st.Bars[mi] = bar
+			st.Measures[mi] = bd
+			// The notes alone as well, which is the shape scripts were
+			// written against before there was anything else to say.
+			st.Bars[mi] = bd.Notes
 		}
 		out = append(out, st)
 	}
@@ -4963,16 +5111,36 @@ func plainLength(d model.Duration) (length, dots int) {
 	if d.Num == 0 || d.Den == 0 {
 		return 0, 0
 	}
-	for dots = 0; dots < 3; dots++ {
-		if d.Num == 1 {
-			return d.Den, dots
+	// A value with k dots lasts (2^(k+1) - 1) / 2^k of the plain one: a
+	// dot adds half, a second dot a quarter. So the plain value is found
+	// by multiplying back by the other way round, and the answer is the
+	// first k that leaves a length a notehead spells.
+	//
+	// Undotting one dot at a time looks simpler and is wrong: it divides
+	// by three each time, and a double-dotted eighth is seven
+	// thirty-seconds, which is not divisible by three. Every
+	// double-dotted note in the score was reported as having no length at
+	// all — the Altes has one in its second bar.
+	for k := 0; k <= 3; k++ {
+		pow := 1 << k
+		plain := model.Duration{Num: d.Num * pow, Den: d.Den * (pow*2 - 1)}.Reduced()
+		if plain.Num == 1 && powerOfTwo(plain.Den) {
+			return plain.Den, k
 		}
-		if d.Num%3 != 0 {
-			return 0, 0
-		}
-		d = model.Duration{Num: d.Num / 3 * 2, Den: d.Den}.Reduced()
 	}
 	return 0, 0
+}
+
+// powerOfTwo says whether a length is one a notehead spells.
+//
+// Every written value halves the one before it, so the figure under the
+// one is a power of two. A twelfth of a whole note is a third of a
+// quarter — a triplet — and there is no notehead for it: what is written
+// is a quarter, and the three over the group says the rest. Answering
+// "twelve" there is answering with a number that means nothing, which is
+// worse than saying there is no answer.
+func powerOfTwo(n int) bool {
+	return n > 0 && n&(n-1) == 0
 }
 
 // handleABC writes a line of ABC notation in at the cursor.
@@ -5092,4 +5260,100 @@ func abcTrouble(err error) string {
 	// The parser says "abc: ..." because a file is being named; here the
 	// line is the file and the prefix is noise.
 	return strings.TrimPrefix(err.Error(), "abc: ")
+}
+
+// readMarks copies what is written on an element into what a script sees.
+//
+// Everything in one place, and every field left out when it is not there:
+// a script walks this with ordinary JavaScript, so what it wants is plain
+// data rather than an object model to learn.
+func readMarks(n *noteContents, m *model.Marks) {
+	if m == nil {
+		return
+	}
+	for _, a := range m.Articulations {
+		n.Articulations = append(n.Articulations, a.String())
+	}
+	if m.Dynamic != model.DynamicNone {
+		n.Dynamic = m.Dynamic.String()
+	}
+	if m.Stem != model.StemAuto {
+		n.Stem = m.Stem.String()
+	}
+	for _, l := range m.Lyrics {
+		n.Lyrics = append(n.Lyrics, l.Text)
+	}
+	for _, t := range m.Texts {
+		n.Text = append(n.Text, t.Text)
+	}
+	if m.Chord != nil {
+		n.ChordSymbol = m.Chord.String()
+	}
+	n.TieStart, n.TieStop = m.TieStart, m.TieStop
+	n.SlurStart, n.SlurStop = m.SlurStart, m.SlurStop
+	if m.Hairpin != nil {
+		n.Hairpin = hairpinWord(m.Hairpin)
+	}
+	if m.Octave != nil {
+		n.Octave = octaveWord(m.Octave)
+	}
+	n.Trill = m.Trill != nil
+	if m.Grace != nil {
+		n.Grace = len(m.Grace.Notes)
+	}
+	if m.Tremolo.Beams() > 0 {
+		n.Tremolo = m.Tremolo.Beams()
+	}
+	if num, den, ok := m.Tuplet.Ratio(); ok {
+		n.Tuplet = strconv.Itoa(num) + ":" + strconv.Itoa(den)
+	}
+}
+
+// barNumberAt is one bar's printed number, or where it sits if the score
+// is shorter than it was when the numbers were worked out.
+func barNumberAt(numbers []int, at int) int {
+	return engrave.NumberOf(numbers, at)
+}
+
+// tempoText is a tempo as it is written: the word, the mark, or both.
+func tempoText(t model.Tempo) string {
+	mark := ""
+	if t.BPM > 0 {
+		mark = t.Unit.String() + " = " + strconv.Itoa(t.BPM)
+	}
+	switch {
+	case t.Text != "" && mark != "":
+		return t.Text + " (" + mark + ")"
+	case t.Text != "":
+		return t.Text
+	}
+	return mark
+}
+
+// hairpinWord and octaveWord name a swell and an octave line the way they
+// are spoken about, rather than as the numbers they are stored as.
+func hairpinWord(h *model.Hairpin) string {
+	if h == nil {
+		return ""
+	}
+	if h.Kind == model.Diminuendo {
+		return "diminuendo"
+	}
+	return "crescendo"
+}
+
+func octaveWord(o *model.OctaveShift) string {
+	if o == nil {
+		return ""
+	}
+	return strconv.Itoa(o.Amount*7+1) + "va"
+}
+
+// accidentalWord names an accidental, and says nothing where none is
+// written — which is most notes, and not the same as a natural.
+func accidentalWord(a model.Accidental) string {
+	if a == model.NoAccidental {
+		return ""
+	}
+	return a.String()
 }

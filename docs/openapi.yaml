@@ -1675,6 +1675,70 @@ paths:
                   found: { type: boolean }
                   frets: { type: string }
 
+  /api/chordqualities:
+    get:
+      tags: [marks]
+      summary: What every chord quality is made of
+      description: >
+        Each spelling anybody types for a quality — "m7", "maj7", "M7",
+        "sus4", "7b9" — against the notes it means. A tone is a degree and a
+        distance: degree is how many letters above the root it is spelled
+        (0 the root, 2 the third, 4 the fifth, 6 the seventh, 8 the ninth)
+        and semitones how far above the root it sounds. Both, because four
+        semitones above C is E or F flat and only the degree says which.
+        The whole table at once, for a caller that has to look a chord up
+        without being able to ask again.
+      responses:
+        "200":
+          description: The table.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  qualities:
+                    type: object
+                    additionalProperties:
+                      type: array
+                      items:
+                        type: object
+                        properties:
+                          degree: { type: integer }
+                          semitones: { type: integer }
+
+  /api/plugins:
+    get:
+      tags: [scripts]
+      summary: The scripts in the plugins folder
+      description: >
+        What is in Gscore/plugins, which is where scripts that belong to the
+        person rather than to a score are kept. Each one carries what it
+        says about itself in a comment at the top of the file — @name, @about
+        and @menu — which is read and never run: the menu is built out of the
+        folder without any of the scripts having been executed. A plugin with
+        no @menu is in the folder and not on a menu. Empty where gscore is
+        not the application on this machine: the folder is then the server's
+        and its scripts are its owner's.
+      responses:
+        "200":
+          description: The plugins, in the order a menu shows them.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  folder: { type: string }
+                  plugins:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        name: { type: string }
+                        about: { type: string }
+                        menu: { type: string }
+                        file: { type: string }
+                        body: { type: string }
+
   /api/chordpreview:
     get:
       tags: [marks, render]

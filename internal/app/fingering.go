@@ -14,6 +14,8 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+
+	"github.com/stricaud/gscore/internal/analysis"
 )
 
 // Where a guitarist's hand goes for a named chord.
@@ -283,4 +285,20 @@ func (a *App) handleChordFingering(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{
 		"chord": sym.String(), "frets": frets, "found": frets != "",
 	})
+}
+
+// handleChordQualities hands over what every chord quality is made of.
+//
+// The whole table at once, because of who asks for it: a script in the
+// console reads it before it runs and then works from that. The verbs there
+// are synchronous so a script reads as music rather than as plumbing, and a
+// synchronous verb cannot go and ask — so what it might ask about has to be
+// in its hands already. There are seventy spellings of a few dozen chords,
+// which is smaller than the list of instruments the editor already sends.
+//
+// Degrees and semitones both, because spelling a chord needs the degree:
+// four semitones above C is E or F flat, and only "it is the third" says
+// which.
+func (a *App) handleChordQualities(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, map[string]any{"qualities": analysis.ChordQualities()})
 }

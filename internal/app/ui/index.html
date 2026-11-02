@@ -426,6 +426,16 @@
     </div>
   </div>
 
+  <!-- The scripts in Gscore/plugins, which are the person's own rather than
+       any one score's. Its entries are built when the page loads, out of
+       what is actually in the folder: putting a file there is installing it.
+       Served to a browser somewhere else the folder is the server's, so the
+       whole menu goes — the same rule the recent files live under. -->
+  <div class="menu" data-menu="scripts" data-needs-files hidden>
+    <button class="menu-title">Scripts</button>
+    <div class="menu-items" id="scripts-items"></div>
+  </div>
+
   <div class="menu" data-menu="help">
     <button class="menu-title">Help</button>
     <div class="menu-items">
@@ -1262,6 +1272,29 @@
      The scripts a score carries are shown here when it is opened. They are
      never run. A document that executes code on being opened is a document
      that can attack whoever opens it. -->
+<!-- What a script said, and what it drew.
+     Not inside the console window and not modal: a script reports about the
+     music, and a report you cannot read without closing the music is a
+     report nobody reads. This sits in the corner, over the score, and the
+     score can be scrolled, clicked and played while it is up. -->
+<dialog id="script-result">
+  <div class="dlg-head">
+    <div>
+      <h2 id="script-result-name">Script</h2>
+      <p class="small" id="script-result-about"></p>
+    </div>
+    <form method="dialog">
+      <button value="close" type="submit" class="dlg-close" aria-label="Close">✕</button>
+    </form>
+  </div>
+  <pre id="script-result-said" aria-live="polite"></pre>
+  <div id="script-result-drawn"></div>
+  <div id="script-result-bar">
+    <button type="button" id="script-result-again">Run it again</button>
+    <button type="button" id="script-result-open">Open in the console</button>
+  </div>
+</dialog>
+
 <dialog id="console" class="wide">
   <div class="dlg-head">
     <div>
@@ -1284,6 +1317,14 @@
       <input type="text" id="console-name" placeholder="name it" size="14"
              aria-label="What to call this script">
       <span id="console-help"></span>
+    </div>
+    <!-- How far a long script has got. A script that walks two and a half
+         thousand bars takes a moment, and a window that says nothing for
+         that moment is a window that looks stuck. Hidden until a script
+         asks for it with progress(). -->
+    <div id="console-progress" hidden>
+      <progress id="console-progress-bar" max="1" value="0"></progress>
+      <span id="console-progress-text" aria-live="polite"></span>
     </div>
     <pre id="console-out" aria-live="polite"></pre>
   </div>

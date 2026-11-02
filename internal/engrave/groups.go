@@ -544,25 +544,100 @@ func (e *engraver) numberedAt(mi, start int) (int, bool) {
 // which is the kind of difference that only shows when two people are
 // reading from different copies and one of them says "from bar sixty-five".
 func (e *engraver) barNumber(mi int) int {
-	// A restart the writer asked for beats everything else, because it is
-	// the only one of these somebody said out loud. A movement restarting
-	// the count is inferred; this is stated.
-	if from, n, ok := e.numberRestart(mi); ok {
-		return n + (mi - from)
+	if e.numbers == nil {
+		e.numbers = BarNumbers(e.score)
 	}
-	from := e.sectionFrom(mi)
-	at := mi - from
-	if from == 0 {
-		if e.pickup {
-			return at
-		}
+	return numberOf(e.numbers, mi)
+}
+
+// NumberOf reads one bar's number out of the list, and counts on past
+// the end of it.
+//
+// Past the end is a real place: the strip keeps an empty bar open after
+// the music for the next note to go in, and it is numbered like any
+// other. Starting again from where it sits in the score rather than
+// counting on gave a piece with an upbeat the numbers 2, 3, then 5.
+func NumberOf(numbers []int, at int) int {
+	switch {
+	case at < 0 || len(numbers) == 0:
 		return at + 1
+	case at < len(numbers):
+		return numbers[at]
 	}
-	// A movement of its own: its own first bar, and its own upbeat.
-	if pickupAt(e.score, from) {
-		return at
+	last := len(numbers) - 1
+	return numbers[last] + (at - last)
+}
+
+func numberOf(numbers []int, at int) int { return NumberOf(numbers, at) }
+
+// BarNumbers is the number printed over each bar of a score.
+//
+// Exported, and worked out in one pass, because more than the engraver
+// needs the answer: a script that reports "a parallel fifth in bar 41"
+// has to say the number a player would read, and a second copy of this
+// arithmetic somewhere else is a report that sends them to the wrong
+// page. There was one, and it was already wrong — it did not know about
+// a numbering the file had stated for itself, so a Chopin nocturne came
+// back one short all the way through.
+//
+// The rule, in the order it is applied:
+//
+//	a restart        the writer said this bar is called n, so it is, and
+//	                 the ones after it count on from there. Stated beats
+//	                 inferred, because somebody said it out loud.
+//	a movement       numbering starts again at each one: the Presto's
+//	                 fourth bar is its own fourth, not the sonata's
+//	                 hundred and thirty-seventh.
+//	an upbeat        is not counted, so bar one is the first full bar.
+func BarNumbers(s *model.Score) []int {
+	if s == nil {
+		return nil
 	}
-	return at + 1
+	n := s.MeasureCount()
+	out := make([]int, n)
+
+	// Where each bar's movement begins, in one pass.
+	from := 0
+	starts := make([]int, n)
+	for i := 0; i < n; i++ {
+		starts[i] = from
+		for _, p := range s.Parts {
+			if i < len(p.Measures) && p.Measures[i].EndsSection {
+				from = i + 1
+				break
+			}
+		}
+	}
+	// And whether each movement opens with an upbeat, asked once per
+	// movement rather than once per bar.
+	upbeat := map[int]bool{}
+	for i := 0; i < n; i++ {
+		if _, seen := upbeat[starts[i]]; !seen {
+			upbeat[starts[i]] = pickupAt(s, starts[i])
+		}
+	}
+
+	// A restart carries forward until the next one.
+	restartAt, restartTo := -1, 0
+	for i := 0; i < n; i++ {
+		for _, p := range s.Parts {
+			if i < len(p.Measures) && p.Measures[i].NumberFrom != nil {
+				restartAt, restartTo = i, *p.Measures[i].NumberFrom
+				break
+			}
+		}
+		if restartAt >= 0 {
+			out[i] = restartTo + (i - restartAt)
+			continue
+		}
+		at := i - starts[i]
+		if upbeat[starts[i]] {
+			out[i] = at
+		} else {
+			out[i] = at + 1
+		}
+	}
+	return out
 }
 
 // numberRestart is the nearest bar at or before this one where the writer

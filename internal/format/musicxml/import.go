@@ -239,16 +239,48 @@ func convert(doc *scorePartwise, lg *log) (*model.Score, error) {
 				}
 			}
 
-			var barline *barline
+			// Which side of the bar each barline is written on.
+			//
+			// It used to take whichever came last and make it this bar's
+			// right-hand one, with the location ignored. A repeat that opens
+			// a passage is written on the left of the bar it opens, so it
+			// landed on the right of that bar instead — one bar late, and
+			// the music turned back to the wrong place. A bar carrying one
+			// of each lost whichever came first.
+			var barline, opening *barline
 			for _, it := range xm.Content {
 				if it.Barline != nil {
-					barline = it.Barline
+					// No location means the right-hand one: that is the
+					// default in the specification, and most writers leave
+					// it out.
+					if strings.EqualFold(it.Barline.Location, "left") {
+						opening = it.Barline
+					} else {
+						barline = it.Barline
+					}
 				}
 				if it.Direction != nil && !tempoSet {
 					if t, ok := convertTempo(*it.Direction); ok {
 						s.Tempo = t
 						tempoSet = true
 					}
+				}
+			}
+
+			// What opens this bar closes the one before it: in a score the
+			// two are one mark, written between them.
+			//
+			// A repeat opening the very first bar has no bar before it to be
+			// written on. Nothing is lost by letting it go — a passage that
+			// repeats from the beginning repeats from the beginning whether
+			// or not anything says so.
+			if open := convertBarline(opening); open != model.BarSingle {
+				for _, p := range parts {
+					if len(p.Measures) == 0 {
+						continue
+					}
+					prev := p.Measures[len(p.Measures)-1]
+					prev.RightBarline = joinBarlines(prev.RightBarline, open)
 				}
 			}
 
@@ -390,6 +422,29 @@ func convertTempo(d direction) (model.Tempo, bool) {
 		unit = unit.Scale(3, 2)
 	}
 	return model.Tempo{BPM: m.PerMin, Unit: unit, Text: d.Type.Words}, true
+}
+
+// joinBarlines is the one mark written between two bars, from what closes the
+// first and what opens the second.
+//
+// A repeat closing where another opens is one sign — dots, a heavy line,
+// dots — and the model holds it as one style on the bar it stands after. Two
+// separate marks is what MusicXML writes and not what a score shows.
+func joinBarlines(closing, opening model.BarlineStyle) model.BarlineStyle {
+	if opening != model.BarRepeatStart {
+		return closing
+	}
+	switch closing {
+	case model.BarRepeatEnd, model.BarRepeatBoth:
+		return model.BarRepeatBoth
+	case model.BarSingle, model.BarNone:
+		return model.BarRepeatStart
+	}
+	// A repeat opening straight after a double or a final bar is not
+	// something one mark can say, and the bar that is already written is the
+	// more important of the two. Rare enough to leave alone rather than
+	// guess at.
+	return closing
 }
 
 func convertBarline(b *barline) model.BarlineStyle {

@@ -9872,6 +9872,20 @@ function followCursor(pt) {
   const z = state.zoom;
   const off = tuneOffsetY();
 
+  // Hands off while the page is being moved by the person reading it.
+  //
+  // Setting a scroll offset does not merely move the page: it ends whatever
+  // scrolling was already under way, momentum and all. Following sets the
+  // sideways offset on every frame, so a two-finger scroll down the staves
+  // was being cancelled sixty times a second — the gesture arrived, moved
+  // the page a hair, and was killed before it could carry. From the chair
+  // it looks as though the score will not scroll at all while it plays,
+  // which is exactly what it was reported as.
+  //
+  // So for a moment after each gesture the music does not touch the page.
+  // When the reader stops, following picks the cursor up again.
+  if (readerIsScrolling()) return;
+
   const max = Math.max(0, wrap.scrollWidth - wrap.clientWidth);
   const want = Math.min(max, Math.max(0, pt.x * z - wrap.clientWidth * cursorLead));
   // Set rather than animated: it is already a frame at a time, and asking
@@ -9883,6 +9897,18 @@ function followCursor(pt) {
   // one in view.
   const top = pt.top * z + off;
   const bottom = pt.bottom * z + off;
+  // Nothing to bring into view when the music is deeper than the window.
+  //
+  // A system of fifty-three staves is eight thousand pixels of it and the
+  // window holds nine hundred, so no scroll position shows the cursor's
+  // whole band and the test below can never pass. What it did instead was
+  // take the top of the band as the thing to show, which pinned the page to
+  // the first few staves of the score for the whole piece.
+  //
+  // There is no right answer to pick here: which of fifty-three staves to
+  // watch is a decision, and it is the reader's. So the page is left where
+  // they put it.
+  if (bottom - top > wrap.clientHeight) return;
   if (top >= wrap.scrollTop && bottom <= wrap.scrollTop + wrap.clientHeight) {
     // The music is on screen. Whatever you were looking at, you are looking
     // at it again, so following takes over from here.
@@ -9924,6 +9950,24 @@ function followCursor(pt) {
 // the cursor has to be kept on screen or there is nothing to watch.
 let userScrolled = false;
 
+// When the reader last moved the page themselves.
+//
+// Separate from userScrolled, which is about whether to follow down the
+// page at all. This is about not writing to the page while a gesture is
+// still in flight, whichever way it is going: a write ends the gesture.
+let readerScrolledAt = 0;
+
+// readerQuiet is how long after a gesture the music leaves the page alone.
+//
+// Long enough to cover the gaps between the events of one continuous
+// scroll — a trackpad sends them in bursts — and short enough that letting
+// go hands the page back to the music within about a page turn.
+const readerQuiet = 400;
+
+function readerIsScrolling() {
+  return performance.now() - readerScrolledAt < readerQuiet;
+}
+
 // Where the view was last sent, so that one move down the page is one
 // scroll and not one on every frame of it. See followCursor.
 let followTop = null;
@@ -9937,6 +9981,9 @@ function setupFollowRelease() {
   const wrap = $("#canvas-wrap");
   if (!wrap) return;
   const mine = (e) => {
+    // Any gesture at all means the page is theirs for the moment, sideways
+    // included: a write would end that one too.
+    readerScrolledAt = performance.now();
     // A sideways swipe is not looking away.
     if (e.type === "wheel" && !e.deltaY) return;
     if (state.playing) userScrolled = true;

@@ -3279,6 +3279,22 @@ func (e *engraver) drawBarline(style model.BarlineStyle, x float64) {
 		thick(x)
 		thin(x + d.BarlineSeparation + d.ThickBarlineThickness/2)
 		e.repeatDots(x + 1.1)
+	case model.BarRepeatBoth:
+		// One repeat closing where the next opens: the dots of the one that
+		// ends, a heavy line, and the dots of the one that begins.
+		//
+		// It fell through to a plain thin line, so a bar the music turns at
+		// was drawn like every other bar and there was nothing on the page
+		// to say it turned. The Badinerie goes back at bar 17 and showed a
+		// single line there.
+		//
+		// Where the dots go was settled before there was anything to put
+		// there: barlineRoom has reserved 0.7 and a dot to the left and 1.1
+		// and a dot to the right of this style all along, which is the room
+		// for exactly these two groups around one line.
+		e.repeatDots(x - 0.7)
+		thick(x)
+		e.repeatDots(x + 1.1)
 	default:
 		thin(x)
 	}

@@ -84,8 +84,18 @@ func partID(i int) string { return "P" + strconv.Itoa(i+1) }
 func buildPart(s *model.Score, p *model.Part, id string, index, divisions int) xmlPart {
 	out := xmlPart{ID: id}
 
+	// A repeat that opens is written on the left of the bar it opens, so the
+	// style of the bar before decides it. Carried forward rather than looked
+	// back at, because it has to be the first thing in the measure.
+	var opening *barline
+
 	for mi, m := range p.Measures {
 		xm := xmlMeasure{Number: strconv.Itoa(mi + 1)}
+
+		if opening != nil {
+			xm.add(measureItem{Barline: opening})
+			opening = nil
+		}
 
 		// The clef, key and meter are stated once, on the first measure.
 		if mi == 0 {
@@ -119,6 +129,8 @@ func buildPart(s *model.Score, p *model.Part, id string, index, divisions int) x
 		if b := buildBarline(m.RightBarline); b != nil {
 			xm.add(measureItem{Barline: b})
 		}
+		// And what it opens goes at the head of the next one.
+		opening = openingBarline(m.RightBarline)
 		out.Measures = append(out.Measures, xm)
 	}
 	return out
@@ -311,16 +323,43 @@ func applyMarks(out *xmlNote, m *model.Marks) {
 	}
 }
 
+// buildBarline is what closes the measure it is written on.
+//
+// A barline in MusicXML belongs to a measure and to one side of it, and the
+// repeats are the awkward case: the one closing a passage is written on the
+// right of the bar it ends, and the one opening a passage on the *left of the
+// bar it opens*, which is the next measure along. So a style that opens a
+// repeat produces nothing here and comes back from openingBarline instead, to
+// be written at the head of the measure after this one.
 func buildBarline(style model.BarlineStyle) *barline {
 	switch style {
 	case model.BarDouble:
 		return &barline{Location: "right", BarStyle: "light-light"}
 	case model.BarFinal:
 		return &barline{Location: "right", BarStyle: "light-heavy"}
-	case model.BarRepeatEnd:
+	case model.BarNone:
+		// An invisible barline is something a score says on purpose, and
+		// MusicXML has a word for it. Left out, it came back as an ordinary
+		// line and the music had a barline nobody had written.
+		return &barline{Location: "right", BarStyle: "none"}
+	case model.BarRepeatEnd, model.BarRepeatBoth:
 		return &barline{Location: "right", BarStyle: "light-heavy",
 			Repeat: &repeatTag{Direction: "backward"}}
-	case model.BarRepeatStart:
+	}
+	return nil
+}
+
+// openingBarline is what a style puts at the head of the measure after it.
+//
+// Both styles that open a repeat belong here, and neither was exported
+// properly. repeat-start was written as a left-hand barline on the measure it
+// closes — the bar before the one it opens, and appended after that bar's
+// notes, where a left-hand barline cannot be. And repeat-both was not written
+// at all: a bar where one repeat ends and the next begins exported as the
+// ending alone, so the Badinerie's turn at bar 17 came out as nothing.
+func openingBarline(style model.BarlineStyle) *barline {
+	switch style {
+	case model.BarRepeatStart, model.BarRepeatBoth:
 		return &barline{Location: "left", BarStyle: "heavy-light",
 			Repeat: &repeatTag{Direction: "forward"}}
 	}

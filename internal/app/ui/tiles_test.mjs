@@ -330,3 +330,68 @@ test("the sprint buttons do not touch the page to say what it says", () => {
   assert.match(fn, /if \(!box\.hidden\) \{/,
     "the hidden path writes to the page whether or not anything changed");
 });
+
+/*
+ * Being able to look at the rest of the score.
+ *
+ * The music sits in a cell of the window's grid, and a grid cell will not
+ * shrink below the thing inside it unless it is told it may. A score of
+ * fifty-three staves is eight thousand pixels deep: told nothing, the cell
+ * grows to that, the window cuts it off at the fold, and the overflow that
+ * was supposed to give a scrollbar has nothing to do — so every stave but
+ * the first few is on the page and unreachable.
+ *
+ * The width had been said and the height had not, which is exactly how a
+ * long score scrolled along and a tall one did not scroll at all.
+ */
+test("the music can be shorter and narrower than the score", () => {
+  const css = readFileSync(new URL("./style.css", import.meta.url), "utf8");
+  const rule = /#canvas-wrap\s*\{([\s\S]*?)\}/.exec(css);
+  assert.ok(rule, "there is no rule for the music's own cell");
+  const body = rule[1];
+  assert.match(body, /overflow:\s*auto/,
+    "the music cannot be scrolled at all");
+  for (const side of ["min-width", "min-height"]) {
+    assert.match(body, new RegExp(side + ":\\s*0"),
+      `${side} is not held down, so the cell grows to the score and the ` +
+      "part of it past the window cannot be reached");
+  }
+});
+
+/*
+ * Looking at the other staves while the music plays.
+ *
+ * Following drags the page to the cursor, which is what you want while you
+ * are watching it and exactly what you do not want the moment you look
+ * somewhere else — and on a score of fifty-three staves, looking somewhere
+ * else is most of what you do.
+ */
+
+test("the music does not write to the page while a gesture is in flight", () => {
+  const fn = grab("followCursor");
+  assert.match(fn, /if \(readerIsScrolling\(\)\) return;/,
+    "the sideways follow writes a scroll offset on every frame, and a write " +
+    "ends whatever scrolling was already under way — so a two-finger scroll " +
+    "down the staves is cancelled sixty times a second");
+  // Before it writes anything, not after.
+  assert.ok(fn.indexOf("readerIsScrolling()") < fn.indexOf("wrap.scrollLeft = want"),
+    "it writes first and asks afterwards, which is the same as not asking");
+
+  // Any gesture counts, sideways included: a write would end that one too.
+  const watch = grab("setupFollowRelease");
+  assert.match(watch, /readerScrolledAt = performance\.now\(\)/);
+  assert.ok(watch.indexOf("readerScrolledAt") < watch.indexOf("if (e.type === \"wheel\""),
+    "a sideways swipe is not counted, so the music fights that one");
+});
+
+test("music deeper than the window is not followed down the page", () => {
+  const fn = grab("followCursor");
+  assert.match(fn, /if \(bottom - top > wrap\.clientHeight\) return;/,
+    "a system taller than the window has no scroll position that shows all " +
+    "of it, so the test below never passes and the page is pinned to the " +
+    "top of the score for the whole piece");
+  // And that question is asked before the one it would otherwise defeat.
+  assert.ok(fn.indexOf("bottom - top > wrap.clientHeight") <
+            fn.indexOf("top >= wrap.scrollTop"),
+    "the impossible test is reached first");
+});

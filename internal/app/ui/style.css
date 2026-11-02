@@ -403,7 +403,20 @@ kbd {
   background: var(--bg);
   padding: 18px;
   display: block;
+  /* Both ways, and both for the same reason.
+
+     This is a cell of the window's grid, and a grid cell will not shrink
+     below the thing inside it unless it is told it may. Without the width
+     it grows to the length of the score and the panels beside it are
+     squeezed off the window; without the height it grows to the depth of
+     the score and the bottom of it is simply cut off by the window, with
+     nothing to scroll — which on a score of fifty-three staves is every
+     stave but the first few, and no way to reach them.
+
+     The width was there and the height was not, so a long score scrolled
+     along and a tall one did not scroll at all. */
   min-width: 0;
+  min-height: 0;
 }
 
 #canvas {

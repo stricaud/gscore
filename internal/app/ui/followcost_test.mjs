@@ -36,7 +36,8 @@ const grab = (name) => {
 // precisely that they are kept.
 function build(names, scope, prelude = "") {
   const body = prelude + "\n" + names.map(grab).join("\n") +
-    "\nreturn { " + names.join(", ") + ", peek: () => ({ cursorFrom, followTop }) };";
+    "\nreturn { " + names.join(", ") + ", peek: () => ({ cursorFrom, followTop })" +
+    (/setScrolling/.test(prelude) ? ", setScrolling" : "") + " };";
   return new Function(...Object.keys(scope), body)(...Object.values(scope));
 }
 
@@ -145,10 +146,10 @@ test("a frame late in the piece costs no more than a frame early in it", () => {
 });
 
 // ── moving the page down ────────────────────────────────────────────────
-function viewport({ clientHeight = 600, scrollTop = 0 } = {}) {
+function viewport({ clientHeight = 600, scrollTop = 0, scrollWidth = 900 } = {}) {
   const moved = [];
   const wrap = {
-    clientHeight, clientWidth: 900, scrollWidth: 900, scrollHeight: 100000,
+    clientHeight, clientWidth: 900, scrollWidth, scrollHeight: 100000,
     scrollTop, scrollLeft: 0,
     scrollTo: (to) => { moved.push(to); wrap.scrollTop = to.top; },
   };
@@ -162,7 +163,12 @@ function follower(wrap) {
     state: { zoom: 1, showAll: false },
     tuneOffsetY: () => 0,
     cursorLead: 0.32,
-  }, "let userScrolled = false;\nlet followTop = null;\nlet cursorFrom = 0;");
+  }, "let userScrolled = false;\nlet followTop = null;\nlet cursorFrom = 0;\n" +
+     // The reader is not touching the page in these: what is under test is
+     // what the music does when it is left to itself. There is a test of
+     // its own below for what happens when they are.
+     "let scrolling = false;\nfunction readerIsScrolling() { return scrolling; }\n" +
+     "function setScrolling(v) { scrolling = v; }");
 }
 
 test("one move down the page is one scroll, not one on every frame", () => {
@@ -210,4 +216,65 @@ test("sideways is still set every frame, so the cursor is never left behind", ()
   assert.equal(wrap.scrollLeft, 500 - 900 * 0.32);
   api.followCursor({ x: 600, top: 0, bottom: 100, measure: 1 });
   assert.equal(wrap.scrollLeft, 600 - 900 * 0.32);
+});
+
+/*
+ * Looking at the other staves while it plays.
+ */
+
+// The music keeps its hands off the page while the reader is moving it.
+//
+// Setting a scroll offset does not merely move the page: it ends whatever
+// scrolling was already under way, momentum and all. Following sets the
+// sideways offset on every frame, so a two-finger scroll down the staves of
+// a large score was being cancelled sixty times a second — the gesture
+// arrived, moved the page a hair, and was killed before it could carry.
+test("a gesture is not written over by the following", () => {
+  // A score long enough to have somewhere to follow to.
+  const { wrap, moved } = viewport({ scrollWidth: 100000 });
+  const api = follower(wrap);
+
+  // Playing along, with the page to itself: the sideways offset is set.
+  api.followCursor({ x: 2000, top: 10, bottom: 110, measure: 1 });
+  assert.ok(wrap.scrollLeft > 0, "the music did not follow at all");
+
+  // The reader starts scrolling, and puts the page where they want it.
+  api.setScrolling(true);
+  wrap.scrollLeft = 4242;
+  wrap.scrollTop = 1234;
+  for (let f = 0; f < 60; f++) {
+    api.followCursor({ x: 3000, top: 10, bottom: 110, measure: 3 });
+  }
+  assert.equal(wrap.scrollLeft, 4242,
+    "the music wrote over the reader's own scrolling, which on a real page " +
+    "ends the gesture that was under way");
+  assert.equal(wrap.scrollTop, 1234, "and it moved them down the page as well");
+  assert.equal(moved.length, 0, "it asked for a scroll of its own as well");
+
+  // They stop, and the music picks the cursor up again.
+  api.setScrolling(false);
+  api.followCursor({ x: 3000, top: 10, bottom: 110, measure: 3 });
+  assert.ok(wrap.scrollLeft !== 4242, "following never resumed");
+});
+
+// A system deeper than the window has no scroll position that shows all of
+// it, so there is no bringing it into view — which of fifty-three staves to
+// watch is the reader's to choose.
+test("music deeper than the window is left where the reader put it", () => {
+  const { wrap, moved } = viewport({ scrollWidth: 100000 });
+  const api = follower(wrap);
+  wrap.scrollTop = 2500;
+
+  // The band is eight thousand deep and the window six hundred.
+  for (let f = 0; f < 60; f++) {
+    api.followCursor({ x: 2000, top: 0, bottom: 8000, measure: 2 });
+  }
+  assert.equal(moved.length, 0,
+    "it tried to bring a system taller than the window into view, which " +
+    "pins the page to the top of the score for the whole piece");
+  assert.equal(wrap.scrollTop, 2500, "and moved the reader off their staves");
+
+  // Sideways still follows: the strip is one long line and the cursor has
+  // to be kept on screen or there is nothing to watch.
+  assert.ok(wrap.scrollLeft > 0, "it stopped following sideways too");
 });

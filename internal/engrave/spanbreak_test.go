@@ -95,6 +95,85 @@ func TestASlurBrokenOverASystemStaysOnItsOwnSystem(t *testing.T) {
 	}
 }
 
+// A phrase whose notes have stems, and stems pointing both ways, so that the
+// slur is drawn on the side its stems are on. The chain above is whole notes,
+// which have no stems at all: the stem is what the second half of this bug
+// hangs off, and a score of whole notes never reaches it.
+func stemmedPhrase(bars int) *model.Score {
+	p := &model.Part{
+		Clef: model.Treble,
+		Time: model.TimeSignature{Beats: 4, BeatValue: 4},
+	}
+	for i := 0; i < bars; i++ {
+		var els []model.Element
+		for b := 0; b < 4; b++ {
+			// The note the phrase begins on stems up, and the ones after it
+			// stem down, so the slur is drawn above and its first end hangs
+			// off that first stem. That is the case the bug lives in: an end
+			// hung off a stem is placed from the stem's own height on the
+			// page, and the stem is on the system the phrase began on.
+			step, octave := model.StepB, 5
+			if i == 0 && b == 0 {
+				step, octave = model.StepC, 4
+			}
+			els = append(els, &model.Note{
+				Pitch: model.Pitch{Step: step, Octave: octave},
+				Dur:   model.Duration{Num: 1, Den: 4},
+			})
+		}
+		p.Measures = append(p.Measures, &model.Measure{
+			Voices:       []*model.Voice{{Elements: els}},
+			RightBarline: model.BarSingle,
+		})
+	}
+	first := p.Measures[0].Voices[0].Elements[0].(*model.Note)
+	last := p.Measures[bars-1].Voices[0].Elements[3].(*model.Note)
+	first.SlurStart, last.SlurStop = true, true
+	return &model.Score{
+		Tempo: model.Tempo{BPM: 120, Unit: model.Duration{Num: 1, Den: 4}},
+		Parts: []*model.Part{p},
+	}
+}
+
+// Where a slur is cut at a line break, the half drawn on the next system has
+// no note at its left end: that end is the margin the system began at. What
+// closed it worked the end out from the note the phrase began on all the same
+// — its pitch, its stem, its staff — and that note is on the system above, or
+// on the page above. The curve came out as a straight line drawn diagonally
+// across the page, from where the phrase began to where it ends, and the
+// system it crossed was pushed open to make room for it.
+//
+// Quilter's Interlude, Op.8 no.7 has one: a slur the engraver of the file left
+// open in bar 2 of the left hand, which runs on to bar 6 and so over the page
+// turn. The Altes tenth solo has another.
+func TestASlurResumedAfterABreakStartsOnItsOwnSystem(t *testing.T) {
+	opt := DefaultOptions()
+	opt.LineWidth = 40
+	lay := Engrave(stemmedPhrase(16), opt)
+
+	if len(lay.Systems) < 3 {
+		t.Fatalf("got %d systems, want the phrase spread over at least three",
+			len(lay.Systems))
+	}
+
+	// A curve belongs to one system: the one its left end is on. Its right
+	// end has to be on that system too.
+	for i, c := range lay.Curves {
+		for _, sys := range lay.Systems {
+			if c.Y1 < sys.Top || c.Y1 > sys.Bottom {
+				continue
+			}
+			if c.Y2 < sys.Top || c.Y2 > sys.Bottom {
+				t.Errorf("curve %d begins at y=%.2f on a system running "+
+					"%.2f to %.2f and ends at y=%.2f, below it: the slur was "+
+					"drawn from one system to another",
+					i, c.Y1, sys.Top, sys.Bottom, c.Y2)
+			}
+			break
+		}
+	}
+}
+
 // The stub a tie leaves where a system ends, and the one that picks it up on
 // the next, are barely wider than a notehead. Drawn at a tie's full arch they
 // rose further than they reached across, and what printed over the note was a

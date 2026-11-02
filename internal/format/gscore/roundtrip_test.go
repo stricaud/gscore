@@ -373,3 +373,38 @@ func TestSystemBreaksSurviveARoundTrip(t *testing.T) {
 		t.Errorf("the breaks came back at %v, want 2 and 4", at)
 	}
 }
+
+// What a piece is travels with it.
+//
+// Tags are in the file rather than in a folder name or a list kept
+// beside it, so that a score copied, renamed or sent to somebody takes
+// its own description along — which is the whole reason for having them
+// where they are.
+func TestTagsSurviveARoundTrip(t *testing.T) {
+	s := model.NewScore()
+	s.Tags = []string{"advent", "flute duet", "grade 3"}
+
+	var b bytes.Buffer
+	if err := Write(&b, s, nil); err != nil {
+		t.Fatalf("writing: %v", err)
+	}
+	back, _, err := Read(bytes.NewReader(b.Bytes()))
+	if err != nil {
+		t.Fatalf("reading: %v", err)
+	}
+	if len(back.Tags) != 3 || back.Tags[1] != "flute duet" {
+		t.Errorf("the tags came back as %v", back.Tags)
+	}
+}
+
+// A score with no tags writes none, rather than an empty list in every
+// file ever saved.
+func TestAScoreWithNoTagsWritesNone(t *testing.T) {
+	var b bytes.Buffer
+	if err := Write(&b, model.NewScore(), nil); err != nil {
+		t.Fatalf("writing: %v", err)
+	}
+	if bytes.Contains(b.Bytes(), []byte("\"tags\"")) {
+		t.Error("a score with no tags wrote a tags block anyway")
+	}
+}

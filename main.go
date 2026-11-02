@@ -381,6 +381,12 @@ func describeScore(s *model.Score) {
 	if s.Identity.Composer != "" {
 		fmt.Printf("composer  %s\n", s.Identity.Composer)
 	}
+	if len(s.Tags) > 0 {
+		// One line, comma separated, the way they were typed — so that a
+		// shelf built from a directory of scores can read them straight
+		// out of this without opening the files itself.
+		fmt.Printf("tags      %s\n", strings.Join(s.Tags, ", "))
+	}
 	fmt.Printf("tempo     %d x %v per minute\n", s.Tempo.BPM, s.Tempo.Unit)
 	for _, p := range s.Parts {
 		name := p.Name

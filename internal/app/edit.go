@@ -1535,7 +1535,42 @@ func (a *App) handleHeader(w http.ResponseWriter, r *http.Request) {
 	if q.Has("copyright") {
 		a.score.Identity.Copyright = q.Get("copyright")
 	}
+	// Tags come as one line, the way somebody types them, and are split
+	// here rather than in the editor: a shelf built from the files has to
+	// agree with the window about where one tag ends and the next begins,
+	// and the only way to be sure of that is for one of them to decide.
+	if q.Has("tags") {
+		a.score.Tags = parseTags(q.Get("tags"))
+	}
 	writeJSON(w, map[string]string{"status": "ok"})
+}
+
+// parseTags reads a line of tags the way somebody writes one.
+//
+// Separated by commas, because a tag is a phrase — "flute duet", "to
+// learn by Easter" — and splitting on spaces would make three tags of
+// each. Emptied of blanks and of repeats, so that a line typed with a
+// trailing comma or the same word twice does not put either in the file.
+//
+// Compared without regard to capitals when deciding what is a repeat, and
+// kept as typed otherwise: "Advent" and "advent" are one tag, and the one
+// that survives is the one that was written first.
+func parseTags(line string) []string {
+	var out []string
+	seen := map[string]bool{}
+	for _, raw := range strings.Split(line, ",") {
+		t := strings.TrimSpace(raw)
+		if t == "" {
+			continue
+		}
+		key := strings.ToLower(t)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, t)
+	}
+	return out
 }
 
 // handleInstruments lists what a staff can be set to sound as.

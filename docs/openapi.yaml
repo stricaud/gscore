@@ -328,12 +328,26 @@ paths:
   /api/header:
     post:
       tags: [score]
-      summary: Title, subtitle, composer and copyright
+      summary: Title, subtitle, composer, copyright and tags
+      description: >
+        Only what is sent is changed, so a dialog can set one field alone.
       parameters:
         - { name: title, in: query, schema: { type: string } }
         - { name: subtitle, in: query, schema: { type: string } }
         - { name: composer, in: query, schema: { type: string } }
         - { name: copyright, in: query, schema: { type: string } }
+        - name: tags
+          in: query
+          description: >
+            What the piece is, in the words it would be looked for by, as
+            one comma-separated line — "advent, flute duet, grade 3".
+            Split here rather than in the editor, so that a shelf built
+            from the files agrees with the window about where one tag
+            ends and the next begins. Blanks and repeats are dropped;
+            capitals are kept as typed, but two tags differing only in
+            case are one tag. They are saved in the score, so a file
+            carries its own description wherever it is copied to.
+          schema: { type: string }
       responses:
         "200": { $ref: "#/components/responses/Status" }
 

@@ -46,6 +46,11 @@ type scoreDoc struct {
 	// style, by the engraver's own names for those measurements. Only what
 	// was changed: a file that wrote down every default would freeze the
 	// day's defaults into itself and never see an improvement to them.
+	// Tags are what this piece is, in the words whoever keeps it would
+	// look for it by. In the file, so that a score carries its own
+	// description wherever it is copied to.
+	Tags []string `json:"tags,omitempty"`
+
 	Engraving map[string]float64 `json:"engraving,omitempty"`
 
 	// Numbering is how often the bar numbers are printed and whether they
@@ -376,6 +381,9 @@ func encodeScore(s *model.Score) *scoreDoc {
 			Barlines: g.Barlines, Name: g.Name,
 		})
 	}
+	if len(s.Tags) > 0 {
+		doc.Tags = append([]string(nil), s.Tags...)
+	}
 	if s.Numbering != (model.MeasureNumbering{}) {
 		doc.Numbering = &numberingDoc{
 			Every: s.Numbering.Every, Boxed: s.Numbering.Boxed,
@@ -617,6 +625,9 @@ func decodeScore(doc *scoreDoc) (*model.Score, error) {
 		}
 	}
 
+	if len(doc.Tags) > 0 {
+		s.Tags = append([]string(nil), doc.Tags...)
+	}
 	if doc.Numbering != nil {
 		s.Numbering = model.MeasureNumbering{
 			Every: doc.Numbering.Every, Boxed: doc.Numbering.Boxed,

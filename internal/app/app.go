@@ -718,13 +718,17 @@ type info struct {
 	Filename  string `json:"filename"`
 	// Unsaved says the score has been edited since it was last written out.
 	// The interface asks before letting the window close on it.
-	Unsaved  bool       `json:"unsaved"`
-	Title    string     `json:"title"`
-	Subtitle string     `json:"subtitle"`
-	Composer string     `json:"composer"`
-	Tempo    int        `json:"tempo"`
-	Parts    []partInfo `json:"parts"`
-	Formats  []string   `json:"formats"`
+	Unsaved  bool   `json:"unsaved"`
+	Title    string `json:"title"`
+	Subtitle string `json:"subtitle"`
+	Composer string `json:"composer"`
+	// Tags are what this piece is, in the words it would be looked for
+	// by. The window shows them and a shelf built from the files sorts
+	// by them.
+	Tags    []string   `json:"tags"`
+	Tempo   int        `json:"tempo"`
+	Parts   []partInfo `json:"parts"`
+	Formats []string   `json:"formats"`
 
 	// The beat the tempo counts and the words beside it. A number on its own
 	// does not say anything: 120 in 6/8 is a different speed depending on
@@ -808,6 +812,7 @@ func (a *App) handleInfo(w http.ResponseWriter, r *http.Request) {
 		Title:     a.score.Identity.Title,
 		Subtitle:  a.score.Identity.Subtitle,
 		Composer:  a.score.Identity.Composer,
+		Tags:      append([]string{}, a.score.Tags...),
 		Tempo:     a.score.Tempo.BPM,
 	}
 	for _, sec := range a.score.Sections() {

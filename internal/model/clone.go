@@ -43,6 +43,9 @@ func (s *Score) Clone() *Score {
 	if s.Scripts != nil {
 		out.Scripts = append([]Script(nil), s.Scripts...)
 	}
+	if s.Tags != nil {
+		out.Tags = append([]string(nil), s.Tags...)
+	}
 	// And so do the engraving settings, for the same reason: a snapshot
 	// taken for undo is the whole score, and one that dropped these would
 	// put the house style back the first time anything was undone.

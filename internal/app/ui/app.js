@@ -6537,14 +6537,23 @@ async function setHeaderDialog() {
     title: "Composer", label: "Composer", value: i.composer || "",
   });
   if (composer === null) return;
-  const p = new URLSearchParams({ title, composer });
+  // What the piece is, in the words it would be looked for by. Asked for
+  // here rather than in a window of its own because it is the same kind
+  // of thing as the title: what this score is, as against what is in it.
+  const tags = await ask({
+    title: "Tags",
+    label: "Tags, separated by commas",
+    value: (i.tags || []).join(", "),
+  });
+  if (tags === null) return;
+  const p = new URLSearchParams({ title, composer, tags });
   const res = await fetch("/api/header?" + p.toString(), { method: "POST" });
   if (!res.ok) {
     status("Could not set it: " + (await res.text()).trim());
     return;
   }
   await refreshScore();
-  status("Title and composer set");
+  status("Title, composer and tags set");
 }
 
 // The meters worth a button. Everything else is typed, which is what the

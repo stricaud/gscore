@@ -733,6 +733,19 @@ type Score struct {
 	// Not coordinates. Nothing here says where anything goes; they are the
 	// measurements the engraver works the places out from, which is why
 	// they can live on a score without the model knowing what a page is.
+	// Tags are what this piece is, in the words whoever keeps it would
+	// look for it by: "advent", "flute duet", "grade 3", "to learn".
+	//
+	// In the file rather than in a folder name or a list kept beside it,
+	// because a score that is copied, renamed or sent to somebody takes
+	// its own description with it and a list does not. A shelf of scores
+	// can then be sorted by anything without being told anything: the
+	// tags are already in the files.
+	//
+	// Free words and not a fixed set. Nobody can write down in advance
+	// the useful ways to divide up somebody else's music.
+	Tags []string
+
 	Engraving map[string]float64
 
 	// Numbering is how often the bar numbers are printed and whether they

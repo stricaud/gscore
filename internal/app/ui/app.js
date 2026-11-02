@@ -1634,7 +1634,7 @@ async function exportPDF() {
   if (choice.concert) q.set("concert", "1");
 
   if (state.info?.local) {
-    let res = await fetch("/api/save?" + q.toString(), { method: "POST" });
+    let res = await saveRequest(q.toString(), "Writing the file…");
     if (!res.ok) {
       status("Could not export: " + (await res.text()).trim());
       return;
@@ -1651,7 +1651,7 @@ async function exportPDF() {
         return;
       }
       q.set("path", where.trim());
-      res = await fetch("/api/save?" + q.toString(), { method: "POST" });
+      res = await saveRequest(q.toString(), "Writing the file…");
       if (!res.ok) {
         status("Could not export: " + (await res.text()).trim());
         return;
@@ -1681,7 +1681,7 @@ async function exportPDF() {
 async function exportSVG() {
   if (state.info?.local) {
     const p = new URLSearchParams({ as: "svg", mode: state.mode, space: String(state.zoom) });
-    const res = await fetch("/api/save?" + p.toString(), { method: "POST" });
+    const res = await saveRequest(p.toString(), "Writing the file…");
     if (!res.ok) {
       status("Could not export: " + (await res.text()).trim());
       return;
@@ -1710,7 +1710,7 @@ async function exportPage() {
     const p = new URLSearchParams({
       as: "html", mode: state.mode, space: String(state.zoom),
     });
-    const res = await fetch("/api/save?" + p.toString(), { method: "POST" });
+    const res = await saveRequest(p.toString(), "Writing the file…");
     if (!res.ok) {
       status("Could not export: " + (await res.text()).trim());
       return;
@@ -1795,7 +1795,7 @@ async function exportAs(ext, type, what) {
   }
   if (state.info?.local) {
     const p = new URLSearchParams({ as: ext });
-    const res = await fetch("/api/save?" + p.toString(), { method: "POST" });
+    const res = await saveRequest(p.toString(), "Writing the file…");
     if (!res.ok) {
       status("Could not export: " + (await res.text()).trim());
       return;
@@ -1825,7 +1825,7 @@ async function exportAs(ext, type, what) {
 async function exportMIDI() {
   if (state.info?.local) {
     const p = new URLSearchParams({ as: "mid" });
-    const res = await fetch("/api/save?" + p.toString(), { method: "POST" });
+    const res = await saveRequest(p.toString(), "Writing the file…");
     if (!res.ok) {
       status("Could not export: " + (await res.text()).trim());
       return;
@@ -2420,7 +2420,7 @@ async function recordAudio() {
     dlg.close();
     const p = new URLSearchParams({ as: "flac", ...recordSettings() });
     status("Exporting audio… this takes a few seconds");
-    const res = await fetch("/api/save?" + p.toString(), { method: "POST" });
+    const res = await saveRequest(p.toString(), "Writing the file…");
     if (!res.ok) {
       status("Could not export: " + (await res.text()).trim());
       return;
@@ -5275,7 +5275,7 @@ async function saveScore(ask) {
   // the desktop would have written — the drawings and the PDF of the page
   // are in there, which the plain exporter does not carry.
   if (!state.info?.local && !state.info?.native) {
-    const res = await fetch("/api/save", { method: "POST" });
+    const res = await saveRequest("", "Saving…");
     if (!res.ok) {
       status("Could not save: " + (await res.text()).trim());
       return;
@@ -5287,8 +5287,7 @@ async function saveScore(ask) {
   }
 
   if (!ask && here) {
-    const back = await fetch("/api/save?path=" + encodeURIComponent(here),
-                             { method: "POST" });
+    const back = await saveRequest("path=" + encodeURIComponent(here), "Saving…");
     if (back.ok) {
       const d = await back.json();
       await loadInfo();
@@ -5297,7 +5296,7 @@ async function saveScore(ask) {
     }
     // gscore cannot write that format back. Ask where it should go instead.
   }
-  let res = await fetch("/api/save", { method: "POST" });
+  let res = await saveRequest("", "Saving…");
   if (!res.ok) {
     status("Could not save: " + (await res.text()).trim());
     return;
@@ -5318,8 +5317,8 @@ async function saveScore(ask) {
       status("Ready");
       return;
     }
-    res = await fetch("/api/save?path=" + encodeURIComponent(where.trim()),
-                      { method: "POST" });
+    res = await saveRequest("path=" + encodeURIComponent(where.trim()),
+                          "Saving…");
     if (!res.ok) {
       status("Could not save: " + (await res.text()).trim());
       return;
@@ -9347,6 +9346,34 @@ function busy(msg) {
     const el = $("#busy");
     if (el) el.hidden = false;
   }, 250);
+}
+
+// saveRequest asks the server to write a file, with Gilbert over the
+// window while it does.
+//
+// Writing is not instant on a big score. A .gscore carries a PDF of the
+// music inside it, and drawing one of Beethoven's ninth — fifty-three
+// staves of two and a half thousand bars — takes half a minute. For that
+// half minute the window said nothing, which is how somebody comes to
+// look at the folder, see the file not there yet, and think it saved
+// nothing.
+//
+// Gilbert waits a quarter of a second before appearing, so an ordinary
+// save never shows him at all.
+//
+// Where the system's own save panel is part of the request — a save with
+// no path asks the server to put the panel up — he comes up behind it
+// while somebody is still choosing a name. That is the panel's own
+// moment and he is behind it; when it closes he is already there, which
+// is when he is wanted.
+async function saveRequest(query, saying) {
+  busy(saying);
+  try {
+    return await fetch("/api/save" + (query ? "?" + query : ""),
+                       { method: "POST" });
+  } finally {
+    idle();
+  }
 }
 
 function idle() {

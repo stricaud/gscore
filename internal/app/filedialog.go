@@ -269,14 +269,7 @@ func (a *App) handleSave(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	f, err := os.Create(path)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-	defer f.Close()
-
-	if err := a.writeDocument(f, filepath.Ext(path), r); err != nil {
+	if err := a.writeFile(path, r); err != nil {
 		http.Error(w, err.Error(), statusFor(err))
 		return
 	}
@@ -298,6 +291,60 @@ func (a *App) handleSave(w http.ResponseWriter, r *http.Request) {
 	a.remember(path)
 	writeJSON(w, map[string]string{"status": "ok", "path": path})
 }
+
+// writeFile writes the document beside where it is going and moves it
+// into place when it is whole.
+//
+// Not straight onto the path. os.Create truncates what is there before
+// anything has been written, and two things follow from that, both of
+// them bad.
+//
+// A write that fails leaves nothing. Saving a score that came from a
+// MuseScore file writes back to the file it came from, gscore has no
+// exporter for that format, and the refusal arrived after the original
+// had already been emptied: six megabytes of somebody's symphony gone,
+// and the error message said only that the format could not be written.
+//
+// And a write that is slow leaves nothing for as long as it takes. A
+// .gscore carries a PDF of the score inside it, and rendering one of a
+// fifty-three stave symphony takes half a minute — during which the file
+// on disk is there and empty. Anybody who looks sees an empty file,
+// which is what was reported.
+//
+// Beside it rather than in a temporary directory, because the move has to
+// be a rename and not a copy: a rename within one directory is atomic, so
+// the file is either the old one or the new one and never half of either.
+func (a *App) writeFile(path string, r *http.Request) error {
+	dir, name := filepath.Dir(path), filepath.Base(path)
+	tmp, err := os.CreateTemp(dir, "."+name+".*")
+	if err != nil {
+		// Nowhere to write beside it — a read-only directory, most
+		// likely. Said plainly, and nothing of what is there is touched.
+		return writeRefused{err}
+	}
+	defer func() {
+		tmp.Close()
+		os.Remove(tmp.Name()) // a no-op once the rename has happened
+	}()
+
+	if err := a.writeDocument(tmp, filepath.Ext(path), r); err != nil {
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	// The permissions a new file would have had. CreateTemp makes it
+	// readable by its owner alone, which is not what somebody expects of
+	// a score they are about to send to a choir.
+	if err := os.Chmod(tmp.Name(), 0o644); err != nil {
+		return err
+	}
+	return os.Rename(tmp.Name(), path)
+}
+
+// writeRefused is a file that could not be opened to write to, which is
+// the caller's fault rather than the score's.
+type writeRefused struct{ error }
 
 // renderTo draws the score as a standalone SVG, with the font inside it so
 // the file opens correctly anywhere rather than only where gscore is running.
@@ -865,6 +912,12 @@ type unwritable struct{ error }
 func statusFor(err error) int {
 	var u unwritable
 	if errors.As(err, &u) {
+		return http.StatusBadRequest
+	}
+	// Somewhere that cannot be written to is the request's fault, not the
+	// program's: a read-only folder, or one that is not there.
+	var w writeRefused
+	if errors.As(err, &w) {
 		return http.StatusBadRequest
 	}
 	return http.StatusInternalServerError

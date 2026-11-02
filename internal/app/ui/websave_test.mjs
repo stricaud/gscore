@@ -38,6 +38,7 @@ function load({ info, body, headers = {}, ok = true, status = 200 }) {
   const said = [];
   const kept = [];
   let readAsText = false;
+  let busyDepth = 0;
 
   const res = {
     ok,
@@ -52,6 +53,10 @@ function load({ info, body, headers = {}, ok = true, status = 200 }) {
     status: (s) => said.push(s),
     async fetch(url) { asked.push(url); return res; },
     async loadInfo() {},
+    // Gilbert goes up over the window while a file is written. Counted
+    // so the tests can say he is put away again whatever happens.
+    busy() { busyDepth++; },
+    idle() { busyDepth--; },
     confirmThat: async () => true,
     URL: { createObjectURL: () => "blob:x", revokeObjectURL() {} },
     document: {
@@ -61,11 +66,17 @@ function load({ info, body, headers = {}, ok = true, status = 200 }) {
       },
     },
   };
-  const body_ = [grab("keepFile"), grab("saveScore"), grab("exportAs"),
-                 grab("keepsScripts")].join("\n") +
+  const body_ = [grab("keepFile"), grab("saveRequest"), grab("saveScore"),
+                 grab("exportAs"), grab("keepsScripts")].join("\n") +
     "\nreturn { saveScore, exportAs };";
   const api = new Function(...Object.keys(scope), body_)(...Object.values(scope));
-  return { ...api, asked, said, kept, readAsText: () => readAsText };
+  return {
+    ...api, asked, said, kept,
+    readAsText: () => readAsText,
+    // Gilbert has to be put away however the save ended, so the count is
+    // handed back for the tests to check.
+    busyLeft: () => busyDepth,
+  };
 }
 
 const PAGE = { local: false, native: false, title: "Sanctus" };
@@ -129,4 +140,43 @@ test("an export that fails says why and hands over nothing", async () => {
   await t.exportAs("docx", "text/plain", "Word");
   assert.ok(t.said[t.said.length - 1].includes(".docx"), t.said.join(" | "));
   assert.equal(t.kept.length, 0);
+});
+
+/*
+ * Gilbert, while a file is being written.
+ *
+ * A .gscore carries a PDF of the music inside it, and drawing one of
+ * Beethoven's ninth — fifty-three staves of two and a half thousand bars
+ * — takes half a minute. For that half minute the window said nothing,
+ * which is how somebody comes to look at the folder, see the file not
+ * there yet, and report that it saved nothing.
+ */
+
+test("saving says it is working, and stops when it is done", async () => {
+  const t = load({ info: DESKTOP, body: { path: "/tmp/x.gscore" } });
+  await t.saveScore(false);
+  assert.equal(t.busyLeft(), 0,
+               "Gilbert was left up over a window that has finished");
+});
+
+// Left up over a window that has given up is worse than never shown.
+test("a save that fails still puts him away", async () => {
+  const t = load({ info: DESKTOP, body: "no", ok: false, status: 400 });
+  await t.saveScore(false);
+  assert.equal(t.busyLeft(), 0, "Gilbert was left up after a refusal");
+});
+
+test("an export says it is working too", async () => {
+  const t = load({ info: DESKTOP, body: { path: "/tmp/x.pdf" } });
+  await t.exportAs("pdf");
+  assert.equal(t.busyLeft(), 0, "Gilbert was left up after an export");
+});
+
+// Every way of writing a file goes through the one helper, so none of
+// them can be the one that says nothing.
+test("every save goes through the helper that shows him", () => {
+  const raw = [...src.matchAll(/fetch\("\/api\/save/g)];
+  assert.equal(raw.length, 1,
+    `${raw.length} places call /api/save directly; they should call ` +
+    "saveRequest, which is the one that puts Gilbert up");
 });

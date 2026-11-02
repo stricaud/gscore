@@ -29,7 +29,7 @@ const src = readFileSync(process.env.GSCORE_PLAYER, "utf8");
 
 // A page, as the player finds one: a clock we wind by hand, an audio graph
 // that counts what it is asked for, and the few elements it looks up.
-function mount({ notes, duration, recording = false, bars, boxes }) {
+function mount({ notes, duration, recording = false, bars, boxes, bands }) {
   const sound = {
     notes,
     bars: bars || [{ i: 0, t: 0, d: 2 }, { i: 1, t: 2, d: 2 }],
@@ -87,8 +87,18 @@ function mount({ notes, duration, recording = false, bars, boxes }) {
   }));
   // Whatever the player puts on the drawing, so the rings can be counted.
   const added = [];
+  // The drawing. A banded one is the score's full size with nothing in it
+  // until pieces arrive, so it answers for its viewBox and its rendered size
+  // the way a real one does.
+  const drawnWide = 1024, drawnHigh = bands ? 2350422.9 : 1000;
   const svg = {
     firstChild: null,
+    getAttribute: (a) =>
+      (a === "viewBox" ? `0 0 ${drawnWide} ${drawnHigh}` : null),
+    getBoundingClientRect: () => ({
+      top: 0 - (window.scrollY || 0), left: 0,
+      width: drawnWide, height: drawnHigh,
+    }),
     appendChild(el) { added.push(el); el.parentNode = svg; return el; },
     insertBefore(el) { added.push(el); el.parentNode = svg; return el; },
     removeChild(el) {
@@ -124,10 +134,14 @@ function mount({ notes, duration, recording = false, bars, boxes }) {
     getElementById(id) {
       if (id === "gscore-sound") return { textContent: JSON.stringify(sound) };
       if (id === "gscore-audio") return recording ? media : null;
+      if (id === "gscore-bands") {
+        return bands ? { textContent: JSON.stringify(bands) } : null;
+      }
       if (id === "play") return button;
       if (id === "clock") return clockEl;
       return null;
     },
+    importNode: (n) => ({ ...n, imported: true }),
     querySelector: () => svg,
     addEventListener() {},
     createElementNS: (ns, name) => ({
@@ -155,11 +169,40 @@ function mount({ notes, duration, recording = false, bars, boxes }) {
   globalThis.setInterval = (fn) => { pump = fn; pumps++; return 7; };
   globalThis.clearInterval = () => { pump = null; };
 
+  // The pieces of the drawing, served as files.
+  const fetched = [];
+  globalThis.fetch = (url) => {
+    fetched.push(url);
+    return Promise.resolve({
+      ok: true,
+      text: () => Promise.resolve(
+        '<text class="g" x="1" y="2" data-ref="9001"></text>' +
+        '<line x1="0" y1="0" x2="1" y2="1"/>'),
+    });
+  };
+  globalThis.DOMParser = class {
+    parseFromString() {
+      // As many children as the fragment above has. A list that is read
+      // from rather than drained: importNode copies, so a loop that waits
+      // for this to empty never finishes.
+      return {
+        documentElement: { childNodes: [{ tag: "text" }, { tag: "line" }] },
+        getElementsByTagName: () => [],
+      };
+    }
+  };
+
   new Function(src)();
 
   return {
     sound, media, button, clockEl, lit, made, starts, chains, queries,
-    added, rings, scrolls,
+    added, rings, scrolls, fetched,
+    // Which pieces of the drawing are on the page now.
+    onPage: () => added
+      .filter((e) => e.attrs && e.attrs["data-band"] !== undefined)
+      .map((e) => Number(e.attrs["data-band"])).sort((a, b) => a - b),
+    // Let the fetches settle.
+    settle: async () => { for (let i = 0; i < 8; i++) await Promise.resolve(); },
     press: () => button.on.click(),
     tick: () => { if (frame) frame(); },
     wind: (to) => { clock = to; if (pump) pump(); },
@@ -381,6 +424,111 @@ test("the drawing is walked once, not once a frame", () => {
   const narrow = p.queries.filter((q) => q !== "[data-ref]").length;
   assert.ok(broad <= 1, `the drawing was walked ${broad} times`);
   assert.equal(narrow, 0, `${narrow} per-note selectors were run over the drawing`);
+});
+
+// ── the drawing in pieces ───────────────────────────────────────────────
+//
+// A long score is not written into the page: the page carries the shell and
+// fetches the drawing a few systems at a time, because the ninth symphony
+// inline is nine hundred thousand shapes and a browser given all of them has
+// nothing left over to animate with.
+
+// 104 pieces of four systems each, as gscore writes them for the ninth.
+function symphonyBands() {
+  const out = [];
+  let y = 0;
+  for (let i = 0; i < 104; i++) {
+    const h = 22600;
+    out.push({ i, y0: y, y1: y + h, first: i * 25, last: i * 25 + 24,
+               u: `play.${String(i).padStart(3, "0")}.svg` });
+    y += h;
+  }
+  return out;
+}
+
+function symphonyScore(bands) {
+  const bars = [], boxes = [], notes = [];
+  let bar = 0;
+  for (const b of bands) {
+    for (let k = 0; k <= b.last - b.first; k++, bar++) {
+      bars.push({ i: bar, t: bar * 1.36, d: 1.36 });
+      boxes.push({ i: bar, a: 140, b: 900,
+                   c: b.y0 + 180, e: b.y0 + 4950 });
+      notes.push({ t: bar * 1.36, d: 1, r: bar + 1 });
+    }
+  }
+  return { bars, boxes, notes, duration: bar * 1.36 };
+}
+
+test("the page asks only for the pieces of the drawing it needs", async () => {
+  const bands = symphonyBands();
+  const s = symphonyScore(bands);
+  const p = mount({ notes: s.notes, bars: s.bars, boxes: s.boxes,
+                    duration: s.duration, bands });
+  await p.settle();
+
+  assert.ok(p.fetched.length > 0, "no piece of the drawing was asked for");
+  assert.ok(p.fetched.length <= 4,
+    `asked for ${p.fetched.length} of 104 pieces just to open the page`);
+  assert.ok(p.fetched.includes("play.000.svg"),
+    `the first piece was not among ${p.fetched}`);
+  assert.deepEqual(p.onPage(), [0], `pieces on the page: ${p.onPage()}`);
+});
+
+test("playing on brings the next pieces and lets go of the ones behind", async () => {
+  const bands = symphonyBands();
+  const s = symphonyScore(bands);
+  const p = mount({ notes: s.notes, bars: s.bars, boxes: s.boxes,
+                    duration: s.duration, bands });
+  await p.settle();
+  p.press();
+
+  // Play into the fiftieth piece.
+  const intoBand = 50;
+  const at = bands[intoBand].first * 1.36 + 0.5;
+  p.media.currentTime = at;
+  p.wind(at);
+  p.tick();
+  await p.settle();
+
+  const here = p.onPage();
+  assert.ok(here.includes(intoBand),
+    `playing in piece ${intoBand}, but the page holds ${here}`);
+  assert.ok(!here.includes(0),
+    `the first piece is still on the page while playing piece ${intoBand}`);
+  assert.ok(here.length <= 5,
+    `${here.length} pieces are on the page at once`);
+});
+
+test("a piece arriving makes the notehead index be built again", async () => {
+  const bands = symphonyBands();
+  const s = symphonyScore(bands);
+  const p = mount({ notes: s.notes, bars: s.bars, boxes: s.boxes,
+                    duration: s.duration, bands });
+  await p.settle();
+  p.press();
+  p.wind(0.2); p.tick();
+  const before = p.queries.filter((q) => q === "[data-ref]").length;
+
+  // Somewhere else entirely, so the drawing is replaced underneath.
+  const at = bands[60].first * 1.36 + 0.5;
+  p.media.currentTime = at;
+  p.wind(at); p.tick();
+  await p.settle();
+  p.wind(at + 0.1); p.tick();
+
+  const after = p.queries.filter((q) => q === "[data-ref]").length;
+  assert.ok(after > before,
+    "the heads were not looked up again after the drawing changed, so the " +
+    "highlight would be pointing at shapes that have been taken off the page");
+});
+
+test("a score written into the page asks for nothing", async () => {
+  const p = mount({ notes: [{ t: 0, d: 1, m: 60, v: 80, f: "flute", r: 1 }],
+                    duration: 4 });
+  await p.settle();
+  assert.equal(p.fetched.length, 0,
+    `a page carrying its own drawing fetched ${p.fetched}`);
 });
 
 test("a recording that will not load is said so, not played silently", () => {

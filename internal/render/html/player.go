@@ -90,13 +90,19 @@ const playerHTML = `<div id="transport">
 const playerJS = `
 (function () {
   "use strict";
+  // The drawing first, because on a long score it is not in the page: it is
+  // fetched in pieces, and the sooner the first one is asked for the sooner
+  // there is music to look at. See the band machinery below.
+  var svg = document.querySelector("svg.gscore-score");
+  if (!svg) return;
+  startBands();
+
   var el = document.getElementById("gscore-sound");
   if (!el) return;
   var sound = JSON.parse(el.textContent);
-  var svg = document.querySelector("svg.gscore-score");
   var button = document.getElementById("play");
   var clock = document.getElementById("clock");
-  if (!sound || !svg || !button) return;
+  if (!sound || !button) return;
 
   // A voice for each family the score names. Not the editor's — this is
   // what fits in a shared file: one oscillator, one filter, one envelope.
@@ -418,6 +424,137 @@ const playerJS = `
     }
   }
 
+  /*
+   * The drawing, when it comes in pieces.
+   *
+   * A score small enough to carry is written into the page and none of this
+   * runs. A long one is not: the ninth symphony inline is seventy-four
+   * megabytes and nine hundred thousand shapes, which a browser spends
+   * seconds laying out and then has no budget left to animate — the music
+   * played with the page frozen behind it, no cursor and no lit heads.
+   *
+   * So the page carries the drawing's shell and the pieces are fetched as
+   * they are wanted: the stretch on screen, and a screenful either way so
+   * that scrolling and playing both find the music already there. It is what
+   * the editor does against its own server, except that here the answers were
+   * written out beforehand and are sitting on the file host as files.
+   */
+  // Set by startBands, which is called before these lines are reached: the
+  // first piece of a long score should be asked for before anything else
+  // here happens, and a declaration with a value on it would not have run
+  // yet. So they are declared bare and filled in there.
+  //
+  // bandList is the pieces; onPage maps an index to the <g> it was put in,
+  // or to "loading" while it is on its way.
+  var bandList, onPage, drawnWide;
+
+  // The stretch of the drawing the window is looking at, in the drawing's own
+  // units — which are the units the bands and the bar boxes are in, so
+  // nothing has to be converted twice.
+  function onScreen() {
+    var r = svg.getBoundingClientRect();
+    var scale = r.width && drawnWide ? r.width / drawnWide : 1;
+    var top = r.top + (window.scrollY || 0);
+    var y = window.scrollY || 0, h = window.innerHeight || 800;
+    return { y0: (y - top) / scale, y1: (y + h - top) / scale };
+  }
+
+  function haveBands(range) {
+    if (!bandList || !bandList.length) return;
+    // A screenful either way. Less and the music arrives after you have got
+    // to where it should be.
+    var pad = Math.max(range.y1 - range.y0, 1);
+    var keep = {};
+    for (var i = 0; i < bandList.length; i++) {
+      var b = bandList[i];
+      if (b.y1 >= range.y0 - pad && b.y0 <= range.y1 + pad) {
+        keep[i] = true;
+        bandIn(i);
+      }
+    }
+    // Let go of the rest, or a score played through ends with all of itself
+    // on the page and we are back where we started.
+    var going = [];
+    for (var k in onPage) { if (!keep[k]) going.push(k); }
+    for (var g = 0; g < going.length; g++) bandOut(going[g]);
+  }
+
+  function bandIn(i) {
+    if (onPage[i]) return;
+    onPage[i] = "loading";
+    fetch(bandList[i].u).then(function (r) {
+      if (!r.ok) throw new Error("" + r.status);
+      return r.text();
+    }).then(function (text) {
+      // It may have been let go of while it was in the air.
+      if (onPage[i] !== "loading") return;
+      // Parsed as a document rather than assigned as innerHTML: an SVG
+      // fragment put in by innerHTML is parsed as HTML, where <text> and
+      // <line> mean other things or nothing.
+      var doc = new DOMParser().parseFromString(
+        '<svg xmlns="http://www.w3.org/2000/svg">' + text + '</svg>',
+        "image/svg+xml");
+      if (doc.getElementsByTagName("parsererror").length) {
+        delete onPage[i];
+        return;
+      }
+      var g = svgEl("g");
+      g.setAttribute("data-band", String(i));
+      // Counted, not drained. importNode copies and leaves the original
+      // where it was, so draining the list it is read from never empties it:
+      // the page hangs on the first piece it fetches, with the tab pinned at
+      // a hundred per cent and nothing drawn.
+      var kids = doc.documentElement.childNodes;
+      for (var k = 0; k < kids.length; k++) {
+        g.appendChild(document.importNode(kids[k], true));
+      }
+      // Under the playhead and the rings, which are added after it.
+      svg.insertBefore(g, cursor || null);
+      onPage[i] = g;
+      drawingChanged();
+    }).catch(function () { delete onPage[i]; });
+  }
+
+  function bandOut(i) {
+    var g = onPage[i];
+    if (g && g !== "loading" && g.parentNode) g.parentNode.removeChild(g);
+    delete onPage[i];
+    drawingChanged();
+  }
+
+  // The heads were filed from the drawing as it stood, and a piece arriving
+  // or leaving makes that list wrong — it would point at shapes that are no
+  // longer on the page, and miss the ones that now are.
+  function drawingChanged() {
+    heads = null;
+    lit = [];
+  }
+
+  function startBands() {
+    onPage = {};
+    bandList = [];
+    var e = document.getElementById("gscore-bands");
+    if (e) {
+      try { bandList = JSON.parse(e.textContent) || []; } catch (err) { }
+    }
+    var boxAttr = (svg.getAttribute("viewBox") || "").split(/[\s,]+/);
+    drawnWide = parseFloat(boxAttr[2]) || 0;
+
+    if (!bandList.length) return;
+    haveBands(onScreen());
+    var soon = 0;
+    window.addEventListener("scroll", function () {
+      if (soon) return;
+      soon = setTimeout(function () {
+        soon = 0;
+        haveBands(onScreen());
+      }, 120);
+    }, { passive: true });
+    window.addEventListener("resize", function () {
+      haveBands(onScreen());
+    }, { passive: true });
+  }
+
   // Take it off the page when the animation is over — and, for a browser
   // that never says so because it never ran it, shortly afterwards anyway.
   function drop(c) {
@@ -481,6 +618,11 @@ const playerJS = `
     // times a second when the answer can only change once a bar.
     if (pt && pt.bar !== shownBar) {
       shownBar = pt.bar;
+      // Have the music that is about to be played, and the system after it.
+      // Following the playhead rather than the window because the two part
+      // company the moment anybody scrolls away, and the player's business is
+      // the music it is playing.
+      haveBands({ y0: pt.top, y1: pt.bottom });
       keepInView();
     }
     light(now);

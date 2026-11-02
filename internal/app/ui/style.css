@@ -2205,3 +2205,36 @@ dialog.wide { max-width: 640px; }
 .find-hit + .find-hit { border-top: 1px solid var(--line); }
 .find-where { color: var(--muted); }
 #find-what, #find-with { flex: 1; }
+
+/* What this score is.
+   The two free-text fields get a line of their own: a description is a
+   sentence and a row of tags is a list, and neither fits in the narrow
+   column the one-line fields share. */
+.about-wide {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0 0 12px;
+}
+.about-wide > span { font-size: 13px; }
+.about-wide textarea,
+.about-wide input { width: 100%; font: inherit; }
+.about-wide textarea { resize: vertical; min-height: 3.4em; }
+
+/* The tags as they will be stored, read back from the line as it is
+   typed. A comma-separated line is easy to write and easy to get subtly
+   wrong — a stray comma, the same word twice — and this says what gscore
+   made of it before it is saved. */
+#about-tagged {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: -6px 0 12px;
+  min-height: 1.4em;
+}
+#about-tagged span {
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  font-size: 12px;
+}

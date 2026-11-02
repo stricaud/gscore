@@ -722,13 +722,18 @@ type info struct {
 	Title    string `json:"title"`
 	Subtitle string `json:"subtitle"`
 	Composer string `json:"composer"`
-	// Tags are what this piece is, in the words it would be looked for
-	// by. The window shows them and a shelf built from the files sorts
-	// by them.
-	Tags    []string   `json:"tags"`
-	Tempo   int        `json:"tempo"`
-	Parts   []partInfo `json:"parts"`
-	Formats []string   `json:"formats"`
+	// Sent so the window that edits it can open on what is there. Left
+	// out, the box came up empty and saving wrote that emptiness back.
+	Copyright string `json:"copyright"`
+	// Description is a few words about the piece, for a shelf of them,
+	// and Tags are what it is in the words it would be looked for by.
+	// The window shows both and a shelf built from the files sorts by
+	// them.
+	Description string     `json:"description"`
+	Tags        []string   `json:"tags"`
+	Tempo       int        `json:"tempo"`
+	Parts       []partInfo `json:"parts"`
+	Formats     []string   `json:"formats"`
 
 	// The beat the tempo counts and the words beside it. A number on its own
 	// does not say anything: 120 in 6/8 is a different speed depending on
@@ -798,22 +803,24 @@ func (a *App) handleInfo(w http.ResponseWriter, r *http.Request) {
 	defer a.mu.RUnlock()
 
 	out := info{
-		Warning:   a.warning,
-		Log:       a.importLog,
-		Current:   a.current,
-		Native:    a.native,
-		Local:     a.local,
-		InBrowser: a.inBrowser,
-		Version:   version.Version,
-		Filename:  a.filename,
-		Unsaved:   a.unsaved,
-		CanUndo:   len(a.undoStack) > 0,
-		CanRedo:   len(a.redoStack) > 0,
-		Title:     a.score.Identity.Title,
-		Subtitle:  a.score.Identity.Subtitle,
-		Composer:  a.score.Identity.Composer,
-		Tags:      append([]string{}, a.score.Tags...),
-		Tempo:     a.score.Tempo.BPM,
+		Warning:     a.warning,
+		Log:         a.importLog,
+		Current:     a.current,
+		Native:      a.native,
+		Local:       a.local,
+		InBrowser:   a.inBrowser,
+		Version:     version.Version,
+		Filename:    a.filename,
+		Unsaved:     a.unsaved,
+		CanUndo:     len(a.undoStack) > 0,
+		CanRedo:     len(a.redoStack) > 0,
+		Title:       a.score.Identity.Title,
+		Subtitle:    a.score.Identity.Subtitle,
+		Composer:    a.score.Identity.Composer,
+		Copyright:   a.score.Identity.Copyright,
+		Tags:        append([]string{}, a.score.Tags...),
+		Description: a.score.Description,
+		Tempo:       a.score.Tempo.BPM,
 	}
 	for _, sec := range a.score.Sections() {
 		out.Movements = append(out.Movements, movementInfo{

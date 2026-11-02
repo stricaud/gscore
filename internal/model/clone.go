@@ -31,8 +31,10 @@ func (s *Score) Clone() *Score {
 		return nil
 	}
 	out := &Score{
-		Identity: s.Identity,
-		Tempo:    s.Tempo,
+		Identity:    s.Identity,
+		Tempo:       s.Tempo,
+		Description: s.Description,
+		Numbering:   s.Numbering,
 	}
 	if s.Groups != nil {
 		out.Groups = append([]StaffGroup(nil), s.Groups...)

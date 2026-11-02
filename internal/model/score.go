@@ -733,6 +733,14 @@ type Score struct {
 	// Not coordinates. Nothing here says where anything goes; they are the
 	// measurements the engraver works the places out from, which is why
 	// they can live on a score without the model knowing what a page is.
+	// Description is a few words about the piece, for whoever is looking
+	// at a shelf of them: what it is, who it is for, why it is here.
+	//
+	// Not the subtitle, which is printed on the page under the title and
+	// is part of the music. This is not printed at all — it is what the
+	// score says about itself to somebody deciding whether to open it.
+	Description string
+
 	// Tags are what this piece is, in the words whoever keeps it would
 	// look for it by: "advent", "flute duet", "grade 3", "to learn".
 	//

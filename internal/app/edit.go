@@ -1539,6 +1539,9 @@ func (a *App) handleHeader(w http.ResponseWriter, r *http.Request) {
 	// here rather than in the editor: a shelf built from the files has to
 	// agree with the window about where one tag ends and the next begins,
 	// and the only way to be sure of that is for one of them to decide.
+	if q.Has("description") {
+		a.score.Description = q.Get("description")
+	}
 	if q.Has("tags") {
 		a.score.Tags = parseTags(q.Get("tags"))
 	}

@@ -6530,30 +6530,73 @@ function tempoAtBar(bar) {
 }
 
 async function setHeaderDialog() {
+  const dlg = $("#about");
   const i = state.info || {};
-  const title = await ask({ title: "Title", label: "Title", value: i.title || "" });
-  if (title === null) return;
-  const composer = await ask({
-    title: "Composer", label: "Composer", value: i.composer || "",
+  const field = (id, v) => { $("#about-" + id).value = v || ""; };
+  field("title", i.title);
+  field("subtitle", i.subtitle);
+  field("composer", i.composer);
+  field("copyright", i.copyright);
+  field("description", i.description);
+  field("tags", (i.tags || []).join(", "));
+
+  // What gscore will make of the tag line, shown as it is typed.
+  //
+  // A comma-separated line is easy to write and easy to get subtly
+  // wrong — a stray comma, the same word twice, a space that looks like
+  // a separator and is not. Reading it back as the tags it becomes is
+  // the difference between a field somebody trusts and one they check
+  // afterwards by saving and reopening.
+  //
+  // The same rule the server uses, which is the one that counts: this is
+  // a preview of what will be stored, so a second opinion here would be
+  // a lie half the time.
+  const tags = $("#about-tags");
+  const tagged = $("#about-tagged");
+  const preview = () => {
+    tagged.innerHTML = "";
+    const seen = new Set();
+    for (const raw of tags.value.split(",")) {
+      const t = raw.trim();
+      if (!t || seen.has(t.toLowerCase())) continue;
+      seen.add(t.toLowerCase());
+      const chip = document.createElement("span");
+      chip.textContent = t;
+      tagged.appendChild(chip);
+    }
+  };
+  tags.oninput = preview;
+  preview();
+
+  const answer = await new Promise((resolve) => {
+    const done = () => {
+      dlg.removeEventListener("close", done);
+      resolve(dlg.returnValue);
+    };
+    dlg.addEventListener("close", done);
+    dlg.showModal();
+    $("#about-title").focus();
   });
-  if (composer === null) return;
-  // What the piece is, in the words it would be looked for by. Asked for
-  // here rather than in a window of its own because it is the same kind
-  // of thing as the title: what this score is, as against what is in it.
-  const tags = await ask({
-    title: "Tags",
-    label: "Tags, separated by commas",
-    value: (i.tags || []).join(", "),
+  if (answer !== "ok") {
+    status("Ready");
+    return;
+  }
+
+  const p = new URLSearchParams({
+    title: $("#about-title").value,
+    subtitle: $("#about-subtitle").value,
+    composer: $("#about-composer").value,
+    copyright: $("#about-copyright").value,
+    description: $("#about-description").value,
+    tags: tags.value,
   });
-  if (tags === null) return;
-  const p = new URLSearchParams({ title, composer, tags });
   const res = await fetch("/api/header?" + p.toString(), { method: "POST" });
   if (!res.ok) {
     status("Could not set it: " + (await res.text()).trim());
     return;
   }
   await refreshScore();
-  status("Title, composer and tags set");
+  status("Saved what this score is");
 }
 
 // The meters worth a button. Everything else is typed, which is what the

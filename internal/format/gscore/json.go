@@ -46,6 +46,10 @@ type scoreDoc struct {
 	// style, by the engraver's own names for those measurements. Only what
 	// was changed: a file that wrote down every default would freeze the
 	// day's defaults into itself and never see an improvement to them.
+	// Description is a few words about the piece, for whoever is looking
+	// at a shelf of them. Not printed on the page; the subtitle is the
+	// one that is.
+	Description string `json:"description,omitempty"`
 	// Tags are what this piece is, in the words whoever keeps it would
 	// look for it by. In the file, so that a score carries its own
 	// description wherever it is copied to.
@@ -381,6 +385,7 @@ func encodeScore(s *model.Score) *scoreDoc {
 			Barlines: g.Barlines, Name: g.Name,
 		})
 	}
+	doc.Description = s.Description
 	if len(s.Tags) > 0 {
 		doc.Tags = append([]string(nil), s.Tags...)
 	}
@@ -625,6 +630,7 @@ func decodeScore(doc *scoreDoc) (*model.Score, error) {
 		}
 	}
 
+	s.Description = doc.Description
 	if len(doc.Tags) > 0 {
 		s.Tags = append([]string(nil), doc.Tags...)
 	}

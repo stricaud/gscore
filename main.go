@@ -35,6 +35,7 @@ import (
 	ghtml "github.com/stricaud/gscore/internal/render/html"
 	gpdf "github.com/stricaud/gscore/internal/render/pdf"
 	"github.com/stricaud/gscore/internal/render/svg"
+	"github.com/stricaud/gscore/internal/smufl"
 	"github.com/stricaud/gscore/internal/version"
 
 	// Importers register themselves, which is what replaces the dlopen
@@ -289,6 +290,14 @@ func renderFile(s *model.Score, path string, strip bool, space float64,
 	if ext == ".js" {
 		return os.WriteFile(path, []byte(ghtml.PlayerJS()), 0o644)
 	}
+	// And the music font, for the same reason. -font tells a page to
+	// fetch the font from an address instead of carrying it, which saves
+	// most of a megabyte on every page of a shelf of them — and was an
+	// address nobody could put a font at, because there was no way to get
+	// one out of gscore.
+	if ext == ".otf" {
+		return os.WriteFile(path, smufl.FontData(), 0o644)
+	}
 	// A MIDI file is not a drawing, but it is what -o means to anybody who
 	// wants the music handed to something that makes a better noise.
 	if ext == ".mid" || ext == ".midi" {
@@ -380,6 +389,13 @@ func describeScore(s *model.Score) {
 	}
 	if s.Identity.Composer != "" {
 		fmt.Printf("composer  %s\n", s.Identity.Composer)
+	}
+	if s.Description != "" {
+		// On one line, because this is a summary and a shelf built from
+		// it wants a blurb. A description written as paragraphs is shown
+		// here as one; the file keeps it as it was written.
+		fmt.Printf("description %s\n",
+			strings.Join(strings.Fields(s.Description), " "))
 	}
 	if len(s.Tags) > 0 {
 		// One line, comma separated, the way they were typed — so that a

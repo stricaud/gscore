@@ -308,7 +308,7 @@
     <button class="menu-title">Score</button>
     <div class="menu-items">
       <button data-action="set-tempo"><span>Set tempo…</span></button>
-      <button data-action="set-header"><span>Title and composer…</span></button>
+      <button data-action="set-header"><span>About this score…</span></button>
       <hr>
       <button data-action="set-key"><span>Key signature…</span></button>
       <!-- A piece that begins before the first beat. Everything else
@@ -928,6 +928,41 @@
       <button value="ok" type="submit" class="primary">Lay it out</button>
       <button value="clear" type="submit">Let it reflow</button>
       <button value="cancel" type="submit">Close</button>
+    </div>
+  </form>
+</dialog>
+
+<!-- What this score is.
+     Two kinds of thing in one window, because they are asked at the same
+     moment and it would be a strange pair of menu entries. Above the
+     rule is what gets printed on the page; below it is what the score
+     says about itself to somebody looking at a shelf of them, which is
+     never printed. -->
+<dialog id="about">
+  <h2>About this score</h2>
+  <form method="dialog" id="about-form">
+    <p class="small">Printed on the page.</p>
+    <label class="tempo-bar" for="about-title"><span>Title</span>
+      <input type="text" id="about-title" autocomplete="off"></label>
+    <label class="tempo-bar" for="about-subtitle"><span>Subtitle</span>
+      <input type="text" id="about-subtitle" autocomplete="off"></label>
+    <label class="tempo-bar" for="about-composer"><span>Composer</span>
+      <input type="text" id="about-composer" autocomplete="off"></label>
+    <label class="tempo-bar" for="about-copyright"><span>Copyright</span>
+      <input type="text" id="about-copyright" autocomplete="off"></label>
+    <hr>
+    <p class="small">Kept in the file and not printed: what this score is,
+       for finding it again among others.</p>
+    <label class="about-wide" for="about-description"><span>Description</span>
+      <textarea id="about-description" rows="3"
+        placeholder="A few words about this piece"></textarea></label>
+    <label class="about-wide" for="about-tags"><span>Tags</span>
+      <input type="text" id="about-tags" autocomplete="off"
+        placeholder="advent, flute duet, grade 3"></label>
+    <div id="about-tagged" class="small"></div>
+    <div class="ask-buttons">
+      <button value="ok" type="submit" class="primary">Save</button>
+      <button value="cancel" type="submit">Cancel</button>
     </div>
   </form>
 </dialog>

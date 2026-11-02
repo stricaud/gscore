@@ -10156,7 +10156,7 @@ function scrollSelectionIntoView() {
 }
 
 async function copySelection() {
-  const sel = selectionTargets();
+  const sel = selectionTargets() || measureTargets();
   if (!sel) {
     status("Select something to copy");
     return;
@@ -10168,6 +10168,29 @@ async function copySelection() {
   }
   const d = await res.json();
   status(`Copied ${d.copied} ${d.copied === 1 ? "note" : "notes"}`);
+}
+
+// measureTargets is the bar the cursor stands in, for a copy that was asked
+// for with nothing picked up.
+//
+// Being in a bar is being somewhere, and "copy" said about a place with no
+// note picked up has one sensible meaning: this bar. It used to answer
+// "Select something to copy" to somebody who could see perfectly well where
+// they were — and the way to pick a whole bar up, the band over it, is not
+// something anybody finds without being told.
+//
+// Only copy falls back to this. Cut does not: emptying a bar on a keystroke
+// meant for one note is not a mistake anybody would forgive, and Backspace
+// at a cursor already means the note before it, not the bar around it.
+function measureTargets() {
+  const sel = state.selection;
+  if (!sel || state.multi.length) return null;
+  if (sel.ref !== null && sel.ref !== undefined) return null;
+  const hit = state.hits.find(
+    (h) => h.part === sel.part && h.measure === sel.measure);
+  const els = hit?.elements || [];
+  if (!els.length) return null;
+  return els.map((el) => `${sel.part}:${sel.measure}:${el.index}`).join(",");
 }
 
 async function cutSelection() {

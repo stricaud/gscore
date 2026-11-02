@@ -766,6 +766,80 @@ type Score struct {
 	// not lost among the music. A song wants one at the head of each line
 	// and nothing more.
 	Numbering MeasureNumbering
+
+	// Sheets are the parts: the separate documents this score is printed
+	// as, one for each player's stand.
+	//
+	// Empty in most scores, and that is not a score without parts — it is
+	// a score whose part is the score, which is what a piano piece, a song
+	// and a lead sheet are. Sheets are made when somebody asks for them.
+	Sheets []Sheet
+}
+
+// Sheet is one printed document made out of the score: a part.
+//
+// What a part is, and what it is not. It is not a copy of the music. The
+// one thing that goes wrong with parts in every program that has them is
+// that the score and the part come to disagree — a note fixed in one and
+// not the other, and nobody finds out until the rehearsal. So a sheet
+// holds no music at all. It says which staves it prints and how it wants
+// them laid out, and the notes it shows are the score's own: there is
+// nothing to keep in step because there is only one copy of the music.
+//
+// What it does hold is everything about a part that is genuinely not the
+// score's business. A part is engraved larger, because it is read at a
+// stand and not on a conductor's desk. Its page turns fall in different
+// places, because it has a quarter of the staves. It counts its bars of
+// rest instead of printing them, which a score must never do. None of
+// those is a fact about the music, and all of them are facts about the
+// page — which is why they are here and not on the measures.
+type Sheet struct {
+	// Name is what the part is called on its own title page and in the
+	// list of them: "Flute", "Violin I", "Piano".
+	Name string
+
+	// Staves are the staves it prints, by their index in Score.Parts, in
+	// the order they appear on its page.
+	//
+	// Usually one. Two for a piano or a divisi, and occasionally more for
+	// a part a single player reads — a percussionist with four lines.
+	Staves []int
+
+	// Engraving is what this part wants differently from the score, by the
+	// same names and read the same way: see Score.Engraving, which has the
+	// reasoning. Only what was changed, so a part that asks for a wider
+	// note slot and nothing else says exactly that.
+	Engraving map[string]float64
+
+	// StaffSpace is how big the staff is drawn, in the units the renderer
+	// measures in, or zero for the score's own size.
+	//
+	// The one setting that is wrong by default for every part ever
+	// printed. A score is read across a desk at a foot and a half; a part
+	// is read across a stand at arm's length, by somebody whose eyes are
+	// also on a conductor. Parts are engraved larger for that reason and
+	// for no other, and it is not an engraving measurement — nothing about
+	// the layout changes, only how large it comes out.
+	StaffSpace float64
+
+	// Numbering is how this part's bars are numbered. A part wants numbers
+	// more often than a score does: a player who has just counted
+	// thirty-two bars of rest needs to be told where they are.
+	Numbering MeasureNumbering
+
+	// MultiRests counts runs of empty bars instead of printing them, which
+	// is most of what makes a part readable. True for a part made by
+	// gscore; it is here rather than assumed because a part of continuous
+	// music has nothing to count and somebody may not want it.
+	MultiRests bool
+
+	// Breaks are the bars this part begins a system at, by index.
+	//
+	// Its own, and not the score's. Where the page turns is the whole
+	// difference between a part somebody can play and one they cannot: a
+	// turn has to fall where there are bars of rest to turn in, and the
+	// score's turns fall wherever its own fuller systems ran out of room.
+	Breaks []int
 }
 
 // MeasureNumbering is how a score's bars are numbered.

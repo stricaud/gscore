@@ -77,8 +77,17 @@ func (a *App) engravingSet(w http.ResponseWriter, r *http.Request) {
 	a.lock()
 	defer a.mu.Unlock()
 
+	// Whichever document is being looked at. A part is engraved to be read
+	// at a stand and the score to be read at a desk, so they want different
+	// answers — and the window that sets them can only sensibly set them
+	// for the thing on the screen.
+	into := &a.score.Engraving
+	if sh := a.showingSheet(); sh != nil {
+		into = &sh.Engraving
+	}
+
 	if _, ok := q["reset"]; ok {
-		a.score.Engraving = nil
+		*into = nil
 		a.writeEngraving(w)
 		return
 	}
@@ -117,18 +126,18 @@ func (a *App) engravingSet(w http.ResponseWriter, r *http.Request) {
 		changed[name] = v
 	}
 
-	if len(changed) > 0 && a.score.Engraving == nil {
-		a.score.Engraving = map[string]float64{}
+	if len(changed) > 0 && *into == nil {
+		*into = map[string]float64{}
 	}
 	for name, v := range changed {
 		if math.IsNaN(v) {
-			delete(a.score.Engraving, name)
+			delete(*into, name)
 			continue
 		}
-		a.score.Engraving[name] = v
+		(*into)[name] = v
 	}
-	if len(a.score.Engraving) == 0 {
-		a.score.Engraving = nil
+	if len(*into) == 0 {
+		*into = nil
 	}
 	a.writeEngraving(w)
 }
@@ -136,9 +145,16 @@ func (a *App) engravingSet(w http.ResponseWriter, r *http.Request) {
 // writeEngraving sends the list. The caller holds the lock.
 func (a *App) writeEngraving(w http.ResponseWriter) {
 	opt := engrave.DefaultOptions()
+	// What is being looked at, so that the window shows the numbers it
+	// would change rather than the score's while a part is on the screen.
+	have := a.score.Engraving
+	of := ""
+	if sh := a.showingSheet(); sh != nil {
+		have, of = sh.Engraving, sh.Name
+	}
 	out := make([]engravingKnob, 0, len(engrave.Knobs))
 	for _, k := range engrave.Knobs {
-		v, set := a.score.Engraving[k.Name]
+		v, set := have[k.Name]
 		if !set {
 			v = k.Get(opt)
 		} else {
@@ -151,7 +167,9 @@ func (a *App) writeEngraving(w http.ResponseWriter) {
 		})
 	}
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{"knobs": out})
+	// of names the part these belong to, where a part is what is being
+	// looked at, so the window can say whose measurements it is showing.
+	json.NewEncoder(w).Encode(map[string]any{"knobs": out, "of": of})
 }
 
 // trimFloat writes a number the way a person would: 0.4 and not 0.400000.

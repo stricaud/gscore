@@ -48,6 +48,10 @@ func (s *Score) Clone() *Score {
 	if s.Tags != nil {
 		out.Tags = append([]string(nil), s.Tags...)
 	}
+	// And the parts, each of which carries lists of its own.
+	for _, sh := range s.Sheets {
+		out.Sheets = append(out.Sheets, sh.Clone())
+	}
 	// And so do the engraving settings, for the same reason: a snapshot
 	// taken for undo is the whole score, and one that dropped these would
 	// put the house style back the first time anything was undone.
@@ -59,6 +63,29 @@ func (s *Score) Clone() *Score {
 	}
 	for _, p := range s.Parts {
 		out.Parts = append(out.Parts, p.Clone())
+	}
+	return out
+}
+
+// Clone returns a deep copy of one part.
+//
+// It shares nothing, which matters here for the same reason it matters
+// everywhere else in this file: undo restores a snapshot, and a sheet whose
+// list of staves was shared with the snapshot would have its staves changed
+// by the edit that was supposed to have been undone.
+func (sh Sheet) Clone() Sheet {
+	out := sh
+	if sh.Staves != nil {
+		out.Staves = append([]int(nil), sh.Staves...)
+	}
+	if sh.Breaks != nil {
+		out.Breaks = append([]int(nil), sh.Breaks...)
+	}
+	if sh.Engraving != nil {
+		out.Engraving = make(map[string]float64, len(sh.Engraving))
+		for k, v := range sh.Engraving {
+			out.Engraving[k] = v
+		}
 	}
 	return out
 }

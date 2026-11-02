@@ -468,6 +468,12 @@ async function action(name) {
     await runPlugin(name.slice("plugin:".length));
     return;
   }
+  // And the parts, which are a list that changes because the score says
+  // what is in it.
+  if (name.startsWith("show-part-")) {
+    await showSheet(Number(name.slice("show-part-".length)));
+    return;
+  }
   switch (name) {
     case "new":
       await fetch("/api/new", { method: "POST" });
@@ -555,6 +561,9 @@ async function action(name) {
       break;
     case "type-music": toggleTypeBar(); break;
     case "typing-help": openTypingHelp(); break;
+    case "show-score": await showSheet("score"); break;
+    case "part-setup": await partSetupDialog(); break;
+    case "make-parts": await makeParts(); break;
     case "console": await openConsole(); break;
     case "note-input":
       setMouseWrites(!state.mouseWrites);
@@ -1407,6 +1416,8 @@ async function loadInfo() {
   // the folder is the person's and nothing in the page changes it, so there
   // is nothing to keep in step while they work.
   if (i.local) void loadPlugins();
+  // And the parts, which belong to the score and so are read with it.
+  void loadSheets();
   $("#version").textContent = "Gscore " + i.version;
   $("#about-version").textContent = "Version " + i.version;
   // A star beside the name while there is work that is not on the disk yet,
@@ -2171,6 +2182,208 @@ async function loadRecent() {
   // The native menu bar is built from this one, so it has to be told that
   // what it copied has changed.
   rebuildNativeMenus();
+}
+
+/* ---------- the parts ---------- */
+
+// The parts, as the server last read them off the score, and which one is
+// being shown. -1 is the score itself.
+let sheets = [];
+let showingSheet = -1;
+
+// loadSheets fills the Parts menu.
+//
+// Built from the score rather than from the markup, because which parts
+// there are is a fact about the score: a quartet has four and a song has
+// none, and nothing in a menu written by hand could know that.
+async function loadSheets() {
+  const items = $("#parts-items");
+  if (!items) return;
+
+  sheets = [];
+  showingSheet = -1;
+  try {
+    const res = await fetch("/api/sheets");
+    if (res.ok) {
+      const d = await res.json();
+      sheets = d.sheets || [];
+      showingSheet = d.showing ?? -1;
+    }
+  } catch (_) {
+    /* a score with no parts is the same as none read */
+  }
+
+  items.innerHTML = "";
+  const item = (label, command, title) => {
+    const b = document.createElement("button");
+    b.innerHTML = "<span></span>";
+    b.querySelector("span").textContent = label;
+    if (command) {
+      b.dataset.action = command;
+      b.addEventListener("click", () => {
+        if (b.disabled) return;
+        closeMenus();
+        void action(command);
+      });
+    }
+    if (title) b.title = title;
+    items.append(b);
+    return b;
+  };
+
+  // The score is the first thing on the list and is a part of nothing: it
+  // is what you come back to, and it has to be as easy to reach as any of
+  // them.
+  const score = item("Full score", "show-score");
+  if (showingSheet < 0) tickItem(score);
+
+  if (!sheets.length) {
+    items.append(document.createElement("hr"));
+    item("Make a part for every player", "make-parts");
+  } else {
+    items.append(document.createElement("hr"));
+    sheets.forEach((s, i) => {
+      const staves = s.staves.length === 1
+        ? "staff " + (s.staves[0] + 1)
+        : "staves " + s.staves.map((n) => n + 1).join(" and ");
+      const b = item(s.name, "show-part-" + i, staves);
+      if (i === showingSheet) tickItem(b);
+    });
+    items.append(document.createElement("hr"));
+    // Only while a part is on the screen: it is about that part, and an
+    // entry that answers "turn to a part first" is worse than no entry.
+    const setup = item("Part setup…", "part-setup");
+    if (showingSheet < 0) setup.disabled = true;
+  }
+
+  // These were made after the menus were drawn, so they have no pictures
+  // beside them yet.
+  syncMenuIcons();
+  rebuildNativeMenus();
+}
+
+// partSetupDialog is what one part wants of its own page.
+//
+// Only the few things that are a part's and not the score's. Everything
+// else a part can want differently — its spacing, its bar numbers, where
+// its lines end — is set in the window that already sets those: those
+// windows write to whichever document is on the screen, which is the only
+// rule anybody could guess and means there is one spacing window and not
+// two.
+async function partSetupDialog() {
+  if (showingSheet < 0) {
+    status("Turn to a part first — this is the full score");
+    return;
+  }
+  const dlg = $("#part-setup");
+  if (!dlg) return;
+  const sh = sheets[showingSheet];
+  if (!sh) return;
+
+  $("#part-setup h2").textContent = sh.name;
+  $("#part-name").value = sh.name;
+  $("#part-staves").value = sh.staves.map((n) => n + 1).join(", ");
+  $("#part-size").value = sh.staffSpace || "";
+  $("#part-multirest").checked = !!sh.multiRests;
+
+  // Which staves there are to choose from, named, so that "1, 2" is a
+  // choice rather than a guess.
+  const names = (state.info?.parts || [])
+    .map((p, i) => (i + 1) + " " + (p.name || "Staff " + (i + 1)));
+  $("#part-staves-hint").textContent = names.length
+    ? "Of " + names.join(", ")
+    : "";
+
+  if (!dlg.open) dlg.showModal();
+}
+
+async function applyPartSetup() {
+  if (showingSheet < 0) return;
+  const q = new URLSearchParams({
+    at: String(showingSheet),
+    name: $("#part-name").value,
+    staves: $("#part-staves").value,
+    size: $("#part-size").value,
+    multirest: $("#part-multirest").checked ? "1" : "0",
+  });
+  const res = await fetch("/api/sheets?" + q, { method: "POST" });
+  if (!res.ok) {
+    status((await res.text()).trim());
+    return;
+  }
+  $("#part-setup")?.close();
+  await loadSheets();
+  // A different size, different staves or counted rests is a different
+  // page, so the drawing has to be asked for again.
+  await reopen();
+  status("Part set");
+}
+
+async function removeShowingPart() {
+  if (showingSheet < 0) return;
+  const name = sheets[showingSheet]?.name || "that part";
+  const sure = await confirmThat({
+    title: `Take away the ${name} part?`,
+    note: "The music stays in the score; it is the part that goes.",
+    ok: "Take it away",
+  });
+  if (!sure) return;
+  const res = await fetch("/api/sheets?at=" + showingSheet + "&remove=1",
+                          { method: "POST" });
+  if (!res.ok) {
+    status((await res.text()).trim());
+    return;
+  }
+  $("#part-setup")?.close();
+  await loadSheets();
+  await reopen();
+  status("Took away " + name);
+}
+
+function setupPartDialog() {
+  $("#part-apply")?.addEventListener("click", () => void applyPartSetup());
+  $("#part-remove")?.addEventListener("click", () => void removeShowingPart());
+}
+
+// tickItem marks the entry that is the one being shown. A list of things
+// you can switch between has to say which one you are on.
+function tickItem(b) {
+  if (!b) return;
+  const tick = document.createElement("kbd");
+  tick.textContent = "✓";
+  b.append(tick);
+}
+
+// showSheet puts a part on the screen, or the score.
+//
+// It is not an edit: which part is being looked at belongs to the window
+// and not to the file, so nothing here makes the score unsaved.
+async function showSheet(which) {
+  const res = await fetch("/api/sheets?show=" + encodeURIComponent(which),
+                          { method: "POST" });
+  if (!res.ok) {
+    status((await res.text()).trim());
+    return;
+  }
+  await loadSheets();
+  // The whole picture changes — a different number of staves, a different
+  // size, bars of rest counted instead of drawn — so the cursor's bar is
+  // no longer where it was and the layout has to be asked for again.
+  await reopen();
+  const name = which === "score" ? "the full score" : (sheets[which] || {}).name;
+  status("Showing " + (name || "the full score"));
+}
+
+async function makeParts() {
+  const res = await fetch("/api/sheets?make=1", { method: "POST" });
+  if (!res.ok) {
+    status((await res.text()).trim());
+    return;
+  }
+  await loadSheets();
+  status(sheets.length === 1
+    ? "Made 1 part"
+    : "Made " + sheets.length + " parts");
 }
 
 /* ---------- the scripts in the plugins folder ---------- */
@@ -11277,6 +11490,7 @@ async function main() {
   setupTypeBar();
   setupConsole();
   setupScriptResult();
+  setupPartDialog();
   setupPanning();
   setupMarquee();
   setupSymbolDragging();
@@ -12822,6 +13036,19 @@ const MENU_DRAWINGS = {
     '<circle cx="8.5" cy="7.5" r="2.2"/><path d="M10.7 7.5V2.5"/>',
   "console": '<rect x="2.5" y="4.5" width="19" height="15" rx="2"/>' +
     '<path d="M6.5 9.5 9.5 12l-3 2.5"/><path d="M12 15h5.5"/>',
+  /* The score and the parts it is printed as. The score is a stack of
+   * staves braced together; a part is one page with a staff on it; making
+   * them is the score with the pages coming off it. */
+  "show-score": '<path d="M4.5 4.5h15v15h-15z"/>' +
+    '<path d="M7.5 8.5h8M7.5 12h8M7.5 15.5h8"/>',
+  "show-part": '<path d="M6.5 3.5h11v17h-11z"/>' +
+    '<path d="M9.5 9.5h5M9.5 13h5"/>',
+  "part-setup": '<path d="M6.5 3.5h11v17h-11z"/>' +
+    '<circle cx="12" cy="11.5" r="2.6"/>' +
+    '<path d="M12 6.5v1.6M12 14.9v1.6M8.8 11.5h-1.1M16.3 11.5h-1.1"/>',
+  "make-parts": '<path d="M3.5 4.5h11v11h-11z"/>' +
+    '<path d="M6.5 8h5M6.5 11.5h5"/>' +
+    '<path d="M10.5 18.5h10v-10"/><path d="M17.5 5.5 20.5 8.5 17.5 11.5"/>',
   /* One of the scripts in the plugins folder: a page with a few lines on it
    * and the arrow that runs it. Shared by every entry on the Scripts menu,
    * which is why it is keyed by the word in front of the colon — the

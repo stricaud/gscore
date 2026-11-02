@@ -426,6 +426,15 @@
     </div>
   </div>
 
+  <!-- The parts: the separate documents the score is printed as, one for
+       each player's stand. Its entries are built from the score, because
+       which parts there are is a fact about the score and not about the
+       markup. A score with none offers to make them. -->
+  <div class="menu" data-menu="parts">
+    <button class="menu-title">Parts</button>
+    <div class="menu-items" id="parts-items"></div>
+  </div>
+
   <!-- The scripts in Gscore/plugins, which are the person's own rather than
        any one score's. Its entries are built when the page loads, out of
        what is actually in the folder: putting a file there is installing it.
@@ -1272,6 +1281,40 @@
      The scripts a score carries are shown here when it is opened. They are
      never run. A document that executes code on being opened is a document
      that can attack whoever opens it. -->
+<!-- What one part wants of its own page.
+     Only the few things that are a part's and not the score's: what it is
+     called, which staves are on it, how large it is drawn, and whether its
+     bars of rest are counted. Everything else a part can want differently —
+     its spacing, its bar numbers, where its lines end — is set in the window
+     that already sets those, which writes to whichever document is on the
+     screen. -->
+<dialog id="part-setup">
+  <div class="dlg-head">
+    <div>
+      <h2>Part</h2>
+      <p class="small">What this part wants of its own page.</p>
+    </div>
+    <form method="dialog">
+      <button value="close" type="submit" class="dlg-close" aria-label="Close">✕</button>
+    </form>
+  </div>
+  <label class="tempo-bar" for="part-name"><span>Called</span>
+    <input type="text" id="part-name" autocomplete="off"></label>
+  <label class="tempo-bar" for="part-staves"><span>Staves</span>
+    <input type="text" id="part-staves" autocomplete="off" placeholder="1, 2"></label>
+  <p class="small" id="part-staves-hint"></p>
+  <label class="tempo-bar" for="part-size"><span>Staff size</span>
+    <input type="number" id="part-size" min="4" max="24" step="0.5"></label>
+  <p class="small">A part is read at arm's length from a stand; the score is
+    read at a desk. Ten is about right for a part and eight for a score.</p>
+  <label><input type="checkbox" id="part-multirest">
+    Count the bars of rest instead of printing them</label>
+  <div id="part-setup-bar">
+    <button type="button" id="part-apply" class="primary">Apply</button>
+    <button type="button" id="part-remove">Remove this part</button>
+  </div>
+</dialog>
+
 <!-- What a script said, and what it drew.
      Not inside the console window and not modal: a script reports about the
      music, and a report you cannot read without closing the music is a

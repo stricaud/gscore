@@ -44,7 +44,13 @@ type numberingState struct {
 	Boxed bool `json:"boxed"`
 	// Restarts are the bars where the count begins again, by bar index,
 	// and the number each begins at.
+	//
+	// The score's own, always: a restart is a decision about what the bars
+	// are called, and a part that called bar forty something else would be
+	// unrehearsable with the score it came from.
 	Restarts map[string]int `json:"restarts"`
+	// Of names the part these belong to, where a part is being looked at.
+	Of string `json:"of,omitempty"`
 }
 
 // handleNumbering reads or changes how this score's bars are numbered.
@@ -64,6 +70,15 @@ func (a *App) numberingSet(w http.ResponseWriter, r *http.Request) {
 	a.lock()
 	defer a.mu.Unlock()
 
+	// Whichever document is being looked at. A part wants numbers more
+	// often than a score does — a player who has just counted thirty-two
+	// bars of rest needs telling where they are — so the two keep their
+	// own answers and this window sets the one on the screen.
+	into := &a.score.Numbering
+	if sh := a.showingSheet(); sh != nil {
+		into = &sh.Numbering
+	}
+
 	if v, ok := q["every"]; ok && len(v) > 0 {
 		n, err := strconv.Atoi(v[0])
 		if err != nil || n < 0 {
@@ -77,10 +92,10 @@ func (a *App) numberingSet(w http.ResponseWriter, r *http.Request) {
 				http.StatusBadRequest)
 			return
 		}
-		a.score.Numbering.Every = n
+		into.Every = n
 	}
 	if v, ok := q["boxed"]; ok && len(v) > 0 {
-		a.score.Numbering.Boxed = v[0] == "1" || v[0] == "true"
+		into.Boxed = v[0] == "1" || v[0] == "true"
 	}
 
 	// A restart, which belongs to a bar rather than to the score.
@@ -122,9 +137,16 @@ func (a *App) numberingSet(w http.ResponseWriter, r *http.Request) {
 
 // writeNumbering sends the state. The caller holds the lock.
 func (a *App) writeNumbering(w http.ResponseWriter) {
+	// What is being looked at, so the window shows what it would change.
+	num := a.score.Numbering
+	of := ""
+	if sh := a.showingSheet(); sh != nil {
+		num, of = sh.Numbering, sh.Name
+	}
 	out := numberingState{
-		Every:    a.score.Numbering.Every,
-		Boxed:    a.score.Numbering.Boxed,
+		Every:    num.Every,
+		Boxed:    num.Boxed,
+		Of:       of,
 		Restarts: map[string]int{},
 	}
 	for i := 0; i < a.score.MeasureCount(); i++ {

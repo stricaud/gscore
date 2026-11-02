@@ -40,8 +40,42 @@ const playerCSS = `
   #transport .clock { font-variant-numeric: tabular-nums; color: #444; }
   #transport .fill { flex: 1; }
   #transport .note { color: #888; }
-  rect.gscore-cursor { fill: #2d7ff9; opacity: .22; pointer-events: none; }
-  .gscore-score .sounding { fill: #2d7ff9; }
+  /*
+   * Showing what is sounding.
+   *
+   * A hairline through the bar says where the music has got to and nothing
+   * about what is being played, which on a page with fifty-four staves on it
+   * is the more interesting half. So there are three things now: a wash
+   * trailing behind the playhead, so the eye is led rather than pointed; the
+   * heads that are sounding, coloured; and a ring leaving each one as it
+   * speaks, which is what makes a chord across the staves read as a chord
+   * rather than as a column of coloured dots.
+   *
+   * The ring is drawn and thrown away. It is a moment, not a state.
+   */
+  rect.gscore-wash { fill: url(#gscore-wash); pointer-events: none; }
+  rect.gscore-cursor { fill: #e8513a; opacity: .5; pointer-events: none; }
+  .gscore-score .sounding {
+    fill: #e8513a;
+    transition: fill 60ms linear;
+  }
+  circle.gscore-ping {
+    fill: none; stroke: #e8513a; stroke-width: 1.1; pointer-events: none;
+    /* Scaled rather than grown by its radius: a geometry property in a
+       stylesheet is newer than some of the browsers this page will be
+       opened in, and a transform is not. */
+    transform-box: fill-box; transform-origin: 50% 50%;
+    animation: gscore-ping 620ms cubic-bezier(.22,.7,.3,1) forwards;
+  }
+  @keyframes gscore-ping {
+    from { transform: scale(.3);  opacity: .75; }
+    to   { transform: scale(2.6); opacity: 0; }
+  }
+  /* Somebody who would rather the page held still gets the colour and the
+     wash, and no ring. */
+  @media (prefers-reduced-motion: reduce) {
+    circle.gscore-ping { display: none; }
+  }
   @media print { #transport { display: none; } }
 `
 
@@ -92,7 +126,7 @@ const playerJS = `
   var media = document.getElementById("gscore-audio");
 
   var audio = null, master = null, voices = [];
-  var playing = false, startedAt = 0, from = 0, raf = 0, lit = null;
+  var playing = false, startedAt = 0, from = 0, raf = 0, lit = [];
   // next is how far the scheduler has got through the notes, lightAt how
   // far the highlight has; pumping is the timer that tops the first up.
   var next = 0, lightAt = 0, pumping = 0, lightNow = -1;
@@ -216,18 +250,59 @@ const playerJS = `
     return null;
   }
 
-  var cursor = null;
+  function svgEl(name) {
+    return document.createElementNS("http://www.w3.org/2000/svg", name);
+  }
+
+  // The gradient the wash is painted with, made once.
+  var defined = false;
+  function define() {
+    if (defined) return;
+    defined = true;
+    var d = svgEl("defs");
+    var g = svgEl("linearGradient");
+    g.setAttribute("id", "gscore-wash");
+    g.setAttribute("x1", "0"); g.setAttribute("y1", "0");
+    g.setAttribute("x2", "1"); g.setAttribute("y2", "0");
+    var ends = [["0", "0"], ["1", ".20"]];
+    for (var i = 0; i < ends.length; i++) {
+      var s = svgEl("stop");
+      s.setAttribute("offset", ends[i][0]);
+      s.setAttribute("stop-color", "#e8513a");
+      s.setAttribute("stop-opacity", ends[i][1]);
+      g.appendChild(s);
+    }
+    d.appendChild(g);
+    svg.insertBefore(d, svg.firstChild);
+  }
+
+  // How far the wash reaches back behind the playhead.
+  var TRAIL = 46;
+
+  var cursor = null, wash = null;
   function showCursor(at) {
     if (!at) return;
     if (!cursor || !cursor.isConnected) {
-      cursor = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+      define();
+      // Behind the music, so the noteheads stay black and legible; the
+      // playhead itself goes on top, where it is the one thing in front.
+      wash = svgEl("rect");
+      wash.setAttribute("class", "gscore-wash");
+      svg.insertBefore(wash, svg.firstChild);
+      cursor = svgEl("rect");
       cursor.setAttribute("class", "gscore-cursor");
       svg.appendChild(cursor);
     }
-    cursor.setAttribute("x", at.x - 1.5);
-    cursor.setAttribute("y", at.top - 6);
-    cursor.setAttribute("width", 3);
-    cursor.setAttribute("height", at.bottom - at.top + 12);
+    var top = at.top - 6, height = at.bottom - at.top + 12;
+    var back = Math.min(TRAIL, at.x);
+    wash.setAttribute("x", at.x - back);
+    wash.setAttribute("y", top);
+    wash.setAttribute("width", back);
+    wash.setAttribute("height", height);
+    cursor.setAttribute("x", at.x - 1);
+    cursor.setAttribute("y", top);
+    cursor.setAttribute("width", 2);
+    cursor.setAttribute("height", height);
     // Keep it on screen, without fighting a scroll of your own: only when
     // it has gone out of sight.
     var r = cursor.getBoundingClientRect();
@@ -250,22 +325,106 @@ const playerJS = `
            notes[lightAt].t + notes[lightAt].d <= now) {
       lightAt++;
     }
-    var on = null;
+    // Every note sounding, and not the first one found.
+    //
+    // A score has as many lines as it has players, and they sound together:
+    // that is what a score is. Taking the first and stopping showed the
+    // ninth symphony as one blue notehead with fifty-three silent staves
+    // under it — the music was all playing, and the page said a soloist was.
+    //
+    // Everything before lightAt has finished, and the notes are in time
+    // order, so this reaches as far as the first note that has not started.
+    // What it looks at is the notes overlapping this instant, which is the
+    // number of players and not the length of the piece.
+    var on = [];
     for (var i = lightAt; i < notes.length && notes[i].t <= now; i++) {
-      if (notes[i].r && now < notes[i].t + notes[i].d) { on = notes[i].r; break; }
+      var n = notes[i];
+      if (n.r && now < n.t + n.d) on.push(n.r);
     }
-    if (on === lit) return;
-    if (lit !== null) {
-      svg.querySelectorAll('[data-ref="' + lit + '"]').forEach(function (e) {
-        e.classList.remove("sounding");
-      });
+
+    if (on.length === lit.length) {
+      var same = true;
+      for (var k = 0; k < on.length; k++) {
+        if (on[k] !== lit[k]) { same = false; break; }
+      }
+      if (same) return;
     }
-    if (on !== null) {
-      svg.querySelectorAll('[data-ref="' + on + '"]').forEach(function (e) {
-        e.classList.add("sounding");
-      });
+    // Only what has just come in gets a ring. A note held across three
+    // frames was struck once, and should say so once.
+    var fresh = [];
+    for (var a = 0; a < on.length; a++) {
+      if (lit.indexOf(on[a]) < 0) fresh.push(on[a]);
+    }
+    paint(lit, false);
+    paint(on, true);
+    // A tutti chord is fifty-four rings at one instant, which is a lot of
+    // drawing for something nobody can pick out anyway. Past a certain
+    // number the colour says it on its own.
+    if (fresh.length <= 24) {
+      for (var b = 0; b < fresh.length; b++) ring(fresh[b]);
     }
     lit = on;
+  }
+
+  // A ring leaving a notehead, thrown away when it has finished.
+  function ring(ref) {
+    var found = headsFor(ref);
+    for (var i = 0; i < found.length; i++) {
+      var box;
+      // getBBox throws on anything not being rendered, and a page can be
+      // playing with the drawing scrolled out of sight.
+      try { box = found[i].getBBox(); } catch (e) { continue; }
+      if (!box || !box.height) continue;
+      var c = svgEl("circle");
+      c.setAttribute("class", "gscore-ping");
+      c.setAttribute("cx", box.x + box.width / 2);
+      c.setAttribute("cy", box.y + box.height / 2);
+      c.setAttribute("r", Math.max(2.2, box.height * 0.45));
+      svg.appendChild(c);
+      drop(c);
+    }
+  }
+
+  // Take it off the page when the animation is over — and, for a browser
+  // that never says so because it never ran it, shortly afterwards anyway.
+  function drop(c) {
+    var gone = function () {
+      if (c.parentNode) c.parentNode.removeChild(c);
+    };
+    c.addEventListener("animationend", gone);
+    setTimeout(gone, 1200);
+  }
+
+  // The heads, filed by the number the engraver gave them.
+  //
+  // Found in one pass and kept, because an attribute selector is a walk down
+  // the whole drawing, and a symphony's drawing is one and a third million
+  // shapes. Fifty-four of those walks a frame is not a thing that can be
+  // done; one walk, the first time anybody presses play, is. The drawing in
+  // a shared page never changes under us, so once is enough.
+  var heads = null;
+  function headsFor(ref) {
+    if (!heads) {
+      heads = {};
+      var all = svg.querySelectorAll("[data-ref]");
+      for (var i = 0; i < all.length; i++) {
+        var r = all[i].getAttribute("data-ref");
+        if (!heads[r]) heads[r] = [];
+        heads[r].push(all[i]);
+      }
+    }
+    return heads[ref] || [];
+  }
+
+  // Turn the heads for these notes on or off.
+  function paint(refs, want) {
+    for (var i = 0; i < refs.length; i++) {
+      var found = headsFor(refs[i]);
+      for (var k = 0; k < found.length; k++) {
+        if (want) found[k].classList.add("sounding");
+        else found[k].classList.remove("sounding");
+      }
+    }
   }
 
   function say(t) {
@@ -364,6 +523,7 @@ const playerJS = `
     say(0);
     light(-1);
     if (cursor) { cursor.remove(); cursor = null; }
+    if (wash) { wash.remove(); wash = null; }
   }
 
   button.addEventListener("click", function () {

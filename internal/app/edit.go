@@ -2941,7 +2941,12 @@ func (a *App) handleAddStaff(w http.ResponseWriter, r *http.Request) {
 		Transpose: model.TranspositionFor(inst),
 	}
 	if part.Name == "" {
-		part.Name = inst.String()
+		// Capitalised, because this is printed down the left of the score
+		// and on the title page of the part: every published score writes
+		// "Flute" beside the staff, and the instrument table's own "flute"
+		// is a name in a table. The drum kit below was already written this
+		// way, which is what the other names should have been.
+		part.Name = capitalised(inst.String())
 		// A drum staff has no program, so the unused one must not name it.
 		if clef == model.Percussion {
 			part.Name = "Drum Kit"

@@ -13,7 +13,10 @@ package app
 import (
 	"encoding/json"
 	"net/http"
+	"sort"
 	"strconv"
+
+	"github.com/stricaud/gscore/internal/model"
 )
 
 /*
@@ -31,12 +34,23 @@ import (
  * longer move those bars about, because where they end has been said. So
  * "fit four bars to a line" is breaks every four bars, and "stop moving
  * them" is the same breaks left where they are.
+ *
+ * Whose lines, though. A part turns pages in different places from the
+ * score — that is most of what makes a part playable, since a turn has to
+ * fall where there are bars of rest to turn in — so these are written on
+ * whichever document is being looked at. The window edits what is on the
+ * screen, which is the only rule anybody could guess: somebody who has
+ * turned to the oboe part and moves a line break has moved the oboe's.
  */
 
 // systemsState is what the editor is told.
 type systemsState struct {
 	// Breaks are the bars that begin a line, by bar index.
 	Breaks []int `json:"breaks"`
+	// Of names the part these belong to, where a part is what is being
+	// looked at. Empty for the score itself. The window says whose lines it
+	// is about, so that moving one is not a surprise.
+	Of string `json:"of,omitempty"`
 }
 
 // handleSystems reads or changes where the lines of music end.
@@ -107,12 +121,7 @@ func (a *App) systemsSet(w http.ResponseWriter, r *http.Request) {
 				http.StatusBadRequest)
 			return
 		}
-		on := q.Get("on") != "0"
-		for _, p := range a.score.Parts {
-			if at < len(p.Measures) {
-				p.Measures[at].SystemBreak = on
-			}
-		}
+		a.setBreakAt(at, q.Get("on") != "0")
 	}
 
 	a.writeSystems(w)
@@ -121,16 +130,49 @@ func (a *App) systemsSet(w http.ResponseWriter, r *http.Request) {
 // setBreaks lays out a stretch of bars: a break every `every` bars from
 // the first, or none at all where every is zero.
 //
-// Written on every staff, because a line of music is a line on every staff
-// at once. Never on the first bar of the piece, which begins a line
-// already.
+// Never on the first bar of the piece, which begins a line already.
 func (a *App) setBreaks(from, to, every int) {
 	for mi := from; mi <= to; mi++ {
-		on := every > 0 && mi > from && (mi-from)%every == 0
-		for _, p := range a.score.Parts {
-			if mi < len(p.Measures) && mi > 0 {
-				p.Measures[mi].SystemBreak = on
+		a.setBreakAt(mi, every > 0 && mi > from && (mi-from)%every == 0)
+	}
+}
+
+// showingSheet is the part being looked at, or nil where it is the score.
+// The caller holds the lock.
+func (a *App) showingSheet() *model.Sheet {
+	if a.sheet < 0 || a.sheet >= len(a.score.Sheets) {
+		return nil
+	}
+	return &a.score.Sheets[a.sheet]
+}
+
+// setBreakAt says whether a line begins at a bar, on whichever document is
+// being looked at.
+//
+// On the score it is written on every staff, because a line of music is a
+// line on every staff at once. On a part it is written on the part, which
+// has one list of its own for exactly this reason.
+func (a *App) setBreakAt(at int, on bool) {
+	if at <= 0 {
+		return
+	}
+	if sh := a.showingSheet(); sh != nil {
+		was := sh.Breaks
+		sh.Breaks = sh.Breaks[:0]
+		for _, b := range was {
+			if b != at {
+				sh.Breaks = append(sh.Breaks, b)
 			}
+		}
+		if on {
+			sh.Breaks = append(sh.Breaks, at)
+		}
+		sort.Ints(sh.Breaks)
+		return
+	}
+	for _, p := range a.score.Parts {
+		if at < len(p.Measures) {
+			p.Measures[at].SystemBreak = on
 		}
 	}
 }
@@ -170,11 +212,16 @@ func (e *barError) Error() string { return "there is no bar " + e.what }
 // writeSystems sends where the lines begin. The caller holds the lock.
 func (a *App) writeSystems(w http.ResponseWriter) {
 	out := systemsState{Breaks: []int{}}
-	for i := 0; i < a.score.MeasureCount(); i++ {
-		for _, p := range a.score.Parts {
-			if i < len(p.Measures) && p.Measures[i].SystemBreak {
-				out.Breaks = append(out.Breaks, i)
-				break
+	if sh := a.showingSheet(); sh != nil {
+		out.Breaks = append(out.Breaks, sh.Breaks...)
+		out.Of = sh.Name
+	} else {
+		for i := 0; i < a.score.MeasureCount(); i++ {
+			for _, p := range a.score.Parts {
+				if i < len(p.Measures) && p.Measures[i].SystemBreak {
+					out.Breaks = append(out.Breaks, i)
+					break
+				}
 			}
 		}
 	}

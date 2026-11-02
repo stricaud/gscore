@@ -61,6 +61,34 @@ type scoreDoc struct {
 	// are boxed. Omitted where the score has not said, which is the
 	// ordinary case.
 	Numbering *numberingDoc `json:"numbering,omitempty"`
+
+	// Sheets are the parts: the separate documents this score is printed
+	// as. No music in them — a part says which staves it prints and how it
+	// wants them laid out, and the notes it shows are the score's own, which
+	// is why a score and a part here can never come to disagree about one.
+	//
+	// In the file because somebody named them, sized them and put the page
+	// turns where a player has time to turn, and that is work they would
+	// not want to do again. Omitted where there are none, which is most
+	// scores: a piano piece, a song and a lead sheet are their own part.
+	Sheets []sheetDoc `json:"sheets,omitempty"`
+}
+
+// One printed part.
+type sheetDoc struct {
+	Name   string `json:"name,omitempty"`
+	Staves []int  `json:"staves,omitempty"`
+	// Engraving is what this part wants differently from the score, by the
+	// engraver's own names, and StaffSpace how large it is drawn — which is
+	// not an engraving measurement but the one thing every printed part
+	// changes, being read at arm's length rather than at a desk.
+	Engraving  map[string]float64 `json:"engraving,omitempty"`
+	StaffSpace float64            `json:"staffSpace,omitempty"`
+	Numbering  *numberingDoc      `json:"numbering,omitempty"`
+	MultiRests bool               `json:"multiRests,omitempty"`
+	// Breaks are the bars this part begins a system at. Its own, because
+	// the score's fall wherever its fuller systems ran out of room.
+	Breaks []int `json:"breaks,omitempty"`
 }
 
 // How a score's bars are numbered.
@@ -394,6 +422,30 @@ func encodeScore(s *model.Score) *scoreDoc {
 			Every: s.Numbering.Every, Boxed: s.Numbering.Boxed,
 		}
 	}
+	for _, sh := range s.Sheets {
+		d := sheetDoc{
+			Name: sh.Name, StaffSpace: sh.StaffSpace,
+			MultiRests: sh.MultiRests,
+		}
+		if sh.Staves != nil {
+			d.Staves = append([]int(nil), sh.Staves...)
+		}
+		if sh.Breaks != nil {
+			d.Breaks = append([]int(nil), sh.Breaks...)
+		}
+		if len(sh.Engraving) > 0 {
+			d.Engraving = make(map[string]float64, len(sh.Engraving))
+			for k, v := range sh.Engraving {
+				d.Engraving[k] = v
+			}
+		}
+		if sh.Numbering != (model.MeasureNumbering{}) {
+			d.Numbering = &numberingDoc{
+				Every: sh.Numbering.Every, Boxed: sh.Numbering.Boxed,
+			}
+		}
+		doc.Sheets = append(doc.Sheets, d)
+	}
 	if len(s.Engraving) > 0 {
 		doc.Engraving = make(map[string]float64, len(s.Engraving))
 		for k, v := range s.Engraving {
@@ -633,6 +685,30 @@ func decodeScore(doc *scoreDoc) (*model.Score, error) {
 	s.Description = doc.Description
 	if len(doc.Tags) > 0 {
 		s.Tags = append([]string(nil), doc.Tags...)
+	}
+	for _, d := range doc.Sheets {
+		sh := model.Sheet{
+			Name: d.Name, StaffSpace: d.StaffSpace,
+			MultiRests: d.MultiRests,
+		}
+		if d.Staves != nil {
+			sh.Staves = append([]int(nil), d.Staves...)
+		}
+		if d.Breaks != nil {
+			sh.Breaks = append([]int(nil), d.Breaks...)
+		}
+		if len(d.Engraving) > 0 {
+			sh.Engraving = make(map[string]float64, len(d.Engraving))
+			for k, v := range d.Engraving {
+				sh.Engraving[k] = v
+			}
+		}
+		if d.Numbering != nil {
+			sh.Numbering = model.MeasureNumbering{
+				Every: d.Numbering.Every, Boxed: d.Numbering.Boxed,
+			}
+		}
+		s.Sheets = append(s.Sheets, sh)
 	}
 	if doc.Numbering != nil {
 		s.Numbering = model.MeasureNumbering{

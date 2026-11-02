@@ -1706,6 +1706,62 @@ paths:
                           degree: { type: integer }
                           semitones: { type: integer }
 
+  /api/sheets:
+    get:
+      tags: [score]
+      summary: The parts, and which one is being shown
+      description: >
+        A part is a view of the score, not a copy of it: it says which
+        staves it prints and how it wants them laid out, and the notes it
+        shows are the score's own. Which part is on the screen belongs to
+        the window rather than to the file, so showing one does not change
+        the score; which parts exist does belong to the file.
+      responses:
+        "200":
+          description: The parts, in the order they are printed.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  showing: { type: integer, description: "the part being shown, or -1 for the score" }
+                  sheets:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        name: { type: string }
+                        staves: { type: array, items: { type: integer } }
+                        showing: { type: boolean }
+                        multiRests: { type: boolean }
+                        breaks: { type: integer }
+    post:
+      tags: [score]
+      summary: Make the parts, show one, or change one
+      description: >
+        make=1 writes one part per player, which is one per staff except
+        where a braced group with its barlines run through says that one
+        player reads several. It refuses a score that already has parts,
+        since running it twice would throw away whatever was named or
+        re-laid-out in them. show takes a part's number or "score". at
+        names a part to rename (name), to count the rests of (multirest),
+        or to take away (remove=1).
+      parameters:
+        - { name: make, in: query, schema: { type: string, enum: ["1"] } }
+        - { name: show, in: query, schema: { type: string } }
+        - { name: at, in: query, schema: { type: integer } }
+        - { name: name, in: query, schema: { type: string } }
+        - { name: multirest, in: query, schema: { type: string, enum: ["0", "1"] } }
+        - { name: remove, in: query, schema: { type: string, enum: ["1"] } }
+      responses:
+        "200":
+          description: The parts as they now stand.
+          content:
+            application/json:
+              schema: { type: object }
+        "400":
+          description: There is no such part, or the score already has parts.
+
   /api/plugins:
     get:
       tags: [scripts]

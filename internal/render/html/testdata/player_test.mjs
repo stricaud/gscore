@@ -72,16 +72,38 @@ function mount({ notes, duration, recording = false }) {
     fire(ev) { if (media.on[ev]) media.on[ev](); },
   };
 
+  // The drawing, as one head per note carrying the engraver's number for
+  // it. querySelectorAll is counted: on a real symphony it is a walk down a
+  // million shapes, so the player must not be doing it every frame.
   const lit = new Set();
+  const queries = [];
+  const allHeads = notes.filter((n) => n.r).map((n, i) => ({
+    ref: String(n.r),
+    getAttribute: (a) => (a === "data-ref" ? String(n.r) : null),
+    getBBox: () => ({ x: i * 10, y: 20, width: 4.7, height: 4 }),
+    classList: { add() { lit.add(String(n.r)); },
+                 remove() { lit.delete(String(n.r)); } },
+  }));
+  // Whatever the player puts on the drawing, so the rings can be counted.
+  const added = [];
   const svg = {
-    appendChild() {},
+    firstChild: null,
+    appendChild(el) { added.push(el); el.parentNode = svg; return el; },
+    insertBefore(el) { added.push(el); el.parentNode = svg; return el; },
+    removeChild(el) {
+      const i = added.indexOf(el);
+      if (i >= 0) added.splice(i, 1);
+      el.parentNode = null;
+    },
     querySelectorAll: (sel) => {
+      queries.push(sel);
+      if (sel === "[data-ref]") return allHeads;
       const m = /data-ref="(\d+)"/.exec(sel);
       if (!m) return [];
-      return [{ classList: { add: () => lit.add(m[1]),
-                             remove: () => lit.delete(m[1]) } }];
+      return allHeads.filter((h) => h.ref === m[1]);
     },
   };
+  const rings = () => added.filter((e) => e.cls === "gscore-ping");
   const button = { innerHTML: "", disabled: false, on: {},
                    addEventListener(ev, fn) { button.on[ev] = fn; } };
   const clockEl = { textContent: "" };
@@ -97,9 +119,15 @@ function mount({ notes, duration, recording = false }) {
     },
     querySelector: () => svg,
     addEventListener() {},
-    createElementNS: () => ({ setAttribute() {}, remove() {}, isConnected: true,
-                              getBoundingClientRect: () => ({ top: 10, bottom: 20 }),
-                              scrollIntoView() {} }),
+    createElementNS: (ns, name) => ({
+      tag: name, cls: null, attrs: {}, parentNode: null, isConnected: true,
+      setAttribute(k, v) { this.attrs[k] = v; if (k === "class") this.cls = v; },
+      appendChild(el) { el.parentNode = this; return el; },
+      addEventListener() {},
+      remove() { if (this.parentNode) this.parentNode.removeChild(this); },
+      getBoundingClientRect: () => ({ top: 10, bottom: 20 }),
+      scrollIntoView() {},
+    }),
   };
 
   let frame = null;
@@ -112,7 +140,8 @@ function mount({ notes, duration, recording = false }) {
   new Function(src)();
 
   return {
-    sound, media, button, clockEl, lit, made, starts, chains,
+    sound, media, button, clockEl, lit, made, starts, chains, queries,
+    added, rings,
     press: () => button.on.click(),
     tick: () => { if (frame) frame(); },
     wind: (to) => { clock = to; if (pump) pump(); },
@@ -214,6 +243,90 @@ test("the cursor and the highlight follow the recording's own clock", () => {
   p.tick();
   assert.ok(p.lit.has("1") && !p.lit.has("2"),
     `lit ${[...p.lit]} after going back to 0.5s`);
+});
+
+test("every staff sounding at once is lit, not just the first", () => {
+  // Four parts playing a chord together, as four staves of a score do.
+  const notes = [
+    { t: 0, d: 2, m: 72, v: 80, f: "bowed", r: 1 },
+    { t: 0, d: 2, m: 67, v: 80, f: "bowed", r: 2 },
+    { t: 0, d: 2, m: 64, v: 80, f: "bowed", r: 3 },
+    { t: 0, d: 2, m: 48, v: 80, f: "bowed", r: 4 },
+    // And one that comes in later, so the set has to change.
+    { t: 1, d: 1, m: 55, v: 80, f: "bowed", r: 5 },
+  ];
+  const p = mount({ notes, duration: 4 });
+  p.press();
+
+  p.wind(0.5);
+  p.tick();
+  assert.deepEqual([...p.lit].sort(), ["1", "2", "3", "4"],
+    `lit ${[...p.lit]} — a chord across four staves should light four heads`);
+
+  p.wind(1.5);
+  p.tick();
+  assert.deepEqual([...p.lit].sort(), ["1", "2", "3", "4", "5"],
+    `lit ${[...p.lit]} after the fifth part comes in`);
+
+  // And when they stop, they all stop.
+  p.wind(2.5);
+  p.tick();
+  assert.deepEqual([...p.lit], [], `lit ${[...p.lit]} after the chord ended`);
+});
+
+test("a note struck rings once, and a note held does not ring again", () => {
+  const notes = [
+    { t: 0, d: 2, m: 72, v: 80, f: "bowed", r: 1 },
+    { t: 0, d: 2, m: 67, v: 80, f: "bowed", r: 2 },
+    { t: 0, d: 2, m: 64, v: 80, f: "bowed", r: 3 },
+    { t: 1, d: 1, m: 55, v: 80, f: "bowed", r: 4 },
+  ];
+  const p = mount({ notes, duration: 4 });
+  p.press();
+
+  p.wind(0.2); p.tick();
+  assert.equal(p.rings().length, 3, "three heads struck together should ring three times");
+
+  // Held across many frames: still three.
+  for (let t = 0.3; t < 1; t += 1 / 60) { p.wind(t); p.tick(); }
+  assert.equal(p.rings().length, 3, "a held chord rang again while it was held");
+
+  // The fourth part comes in and rings on its own.
+  p.wind(1.2); p.tick();
+  assert.equal(p.rings().length, 4, "the note that came in did not ring");
+});
+
+test("the playhead has a wash behind it, and both go when it stops", () => {
+  const p = mount({ notes: [{ t: 0, d: 1, m: 60, v: 80, f: "flute", r: 1 }], duration: 4 });
+  p.press();
+  p.wind(0.5); p.tick();
+
+  const wash = p.added.filter((e) => e.cls === "gscore-wash");
+  const head = p.added.filter((e) => e.cls === "gscore-cursor");
+  assert.equal(wash.length, 1, "no wash was drawn behind the playhead");
+  assert.equal(head.length, 1, "no playhead was drawn");
+  // The wash reaches back from the playhead, not forward over music unplayed.
+  const x = Number(wash[0].attrs.x), w = Number(wash[0].attrs.width);
+  assert.ok(x + w <= Number(head[0].attrs.x) + 1.5,
+    `the wash (${x}..${x + w}) runs past the playhead (${head[0].attrs.x})`);
+
+  p.media.ended = true;           // no recording here, so end it by the clock
+  p.wind(5); p.tick();
+  assert.equal(p.added.filter((e) => e.cls === "gscore-wash").length, 0,
+    "the wash was left on the page after stopping");
+});
+
+test("the drawing is walked once, not once a frame", () => {
+  const notes = orchestra(54, 50, 100);
+  const p = mount({ notes, duration: 100 });
+  p.press();
+  for (let t = 0; t <= 100; t += 1 / 60) { p.wind(t); p.tick(); }
+
+  // One pass to find every head, and no per-note attribute selectors after.
+  const broad = p.queries.filter((q) => q === "[data-ref]").length;
+  const narrow = p.queries.filter((q) => q !== "[data-ref]").length;
+  assert.ok(broad <= 1, `the drawing was walked ${broad} times`);
+  assert.equal(narrow, 0, `${narrow} per-note selectors were run over the drawing`);
 });
 
 test("a recording that will not load is said so, not played silently", () => {

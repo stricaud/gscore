@@ -118,8 +118,14 @@ type App struct {
 	engraveOpt engrave.Options
 	// concert says the score is being shown as it sounds rather than as
 	// each player reads it, and concert0 holds that copy. See concert.go.
-	concert   bool
-	concert0  concertCache
+	concert  bool
+	concert0 concertCache
+	// sheet is which part is being shown, by its index in Score.Sheets, or
+	// -1 for the score itself; sheet0 holds that copy. Which part is on the
+	// screen belongs to the window rather than to the file — a score
+	// reopened tomorrow shows the score. See sheets.go.
+	sheet     int
+	sheet0    sheetCache
 	renderOpt svg.Options
 
 	// inBrowser records that this core is the page: compiled to WebAssembly
@@ -206,10 +212,15 @@ func NewBook(scores []*model.Score, filename string) *App {
 		restEmptyMeasures(sc)
 	}
 	return &App{
-		score:      s,
-		book:       scores,
-		filename:   filename,
-		symbols:    reg,
+		score:    s,
+		book:     scores,
+		filename: filename,
+		symbols:  reg,
+		// The score, not one of its parts. A score opens as itself however
+		// many parts it carries: the parts are there to be printed and to
+		// be turned to, and neither is what somebody opening a file wants
+		// to be looking at first.
+		sheet:      -1,
 		engraveOpt: eo,
 		renderOpt:  ro,
 	}
@@ -422,6 +433,7 @@ func (a *App) APIRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/chordfingering", a.handleChordFingering)
 	mux.HandleFunc("/api/chordqualities", a.handleChordQualities)
 	mux.HandleFunc("/api/plugins", a.handlePlugins)
+	mux.HandleFunc("/api/sheets", a.handleSheets)
 	mux.HandleFunc("/api/instruments", a.handleInstruments)
 	mux.HandleFunc("/api/percussion", a.handlePercussion)
 	mux.HandleFunc("/api/getlyrics", a.handleGetLyrics)
@@ -560,7 +572,31 @@ func (a *App) viewOptions(r *http.Request) (*model.Score, engrave.Options, svg.O
 	eopt := a.engraveOpt
 	ropt := a.renderOpt
 	ropt.Symbols = a.symbols
+	// The views: the score as it sounds, and the score as one of its parts.
+	// Both are copies of it rather than flags the engraver reads, and both
+	// are made here rather than at each route, because two routes answer
+	// questions about the same picture — what it looks like and how big it
+	// is — and a size taken from a different picture sends the editor to
+	// the wrong place in the music.
+	score = a.sounding(score)
+	var sheet *model.Sheet
+	if a.sheet >= 0 && a.sheet < len(score.Sheets) {
+		sheet = &score.Sheets[a.sheet]
+	}
+	score = a.asSheet(score)
 	a.mu.RUnlock()
+
+	if sheet != nil {
+		// What a part asks for that is not a measurement: its rests
+		// counted, and no staff names down the left — a part has one staff
+		// and its name is on the title page, where a name beside every
+		// system would only be in the way of the music.
+		eopt.MultiRests = sheet.MultiRests
+		eopt.ShowPartNames = false
+		if sheet.StaffSpace > 0 {
+			ropt.StaffSpace = sheet.StaffSpace
+		}
+	}
 
 	if v := r.URL.Query().Get("space"); v != "" {
 		if f, err := strconv.ParseFloat(v, 64); err == nil && f >= 3 && f <= 40 {
@@ -596,7 +632,9 @@ func (a *App) handleSVG(w http.ResponseWriter, r *http.Request) {
 	// editor already has. See svg.Options.Fragment.
 	ropt.Fragment = r.URL.Query().Get("frag") == "1"
 
-	lay := a.layout(a.sounding(score), eopt)
+	// Already the view that was asked for: viewOptions made it, so that
+	// this and the size route cannot disagree about which picture it is.
+	lay := a.layout(score, eopt)
 	w.Header().Set("Content-Type", "image/svg+xml")
 	w.Header().Set("Cache-Control", "no-store")
 	if err := svg.Render(w, lay, ropt); err != nil {
@@ -1070,6 +1108,20 @@ func (a *App) handlePrint(w http.ResponseWriter, r *http.Request) {
 		}
 	case "parts":
 		sections = append(sections, section{score: score})
+		// The parts the score carries, where somebody has made them: those
+		// are the documents that were named, sized and laid out for the
+		// stands, and printing a staff apiece instead would be printing
+		// something nobody asked for.
+		if len(score.Sheets) > 0 {
+			for i, sh := range score.Sheets {
+				sections = append(sections, section{
+					heading: sh.Name, score: sheetOf(score, i),
+				})
+			}
+			break
+		}
+		// A score with none: a staff apiece, which is the best guess there
+		// is and what this did before parts existed.
 		if len(score.Parts) > 1 {
 			for _, p := range score.Parts {
 				sections = append(sections, section{heading: partLabel(p), score: onePart(score, p)})

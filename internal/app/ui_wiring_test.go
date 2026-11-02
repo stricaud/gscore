@@ -671,6 +671,15 @@ func TestTheChromeIsTranslated(t *testing.T) {
 		add("a shortcut heading", m[1])
 	}
 
+	// The engraving window's words come from the engraver rather than from
+	// the markup — one list of measurements, read by the dialog, the
+	// endpoint and the layout alike — so they have to be collected from
+	// there or a window of thirty-four fields stays in English.
+	for _, k := range engrave.Knobs {
+		add("an engraving measurement", k.Label)
+		add("an engraving heading", k.Group)
+	}
+
 	var missing []string
 	for s, where := range english {
 		if _, ok := fr[s]; ok || leaveInEnglish(s) {
@@ -747,7 +756,8 @@ func TestNoFrenchIsLeftBehind(t *testing.T) {
 	// Run together the way the dictionary holds them: a sentence is written
 	// across several lines of markup and the dictionary keys it as one.
 	all := regexp.MustCompile(`\s+`).ReplaceAllString(
-		readUI(t, "index.html")+readUI(t, "palette.js")+readUI(t, "app.js"), " ")
+		readUI(t, "index.html")+readUI(t, "palette.js")+readUI(t, "app.js")+
+			knobWords(), " ")
 	// What script puts on the screen itself, which is in neither table.
 	spoken := map[string]bool{
 		"Change": true, "Taken by": true, "reset": true,
@@ -773,6 +783,16 @@ func TestNoFrenchIsLeftBehind(t *testing.T) {
 			t.Errorf("   %q", o)
 		}
 	}
+}
+
+// knobWords is every word the engraving window shows that comes from the
+// engraver rather than from the markup.
+func knobWords() string {
+	var b strings.Builder
+	for _, k := range engrave.Knobs {
+		b.WriteString(" " + k.Label + " " + k.Group)
+	}
+	return b.String()
 }
 
 // The Mac menu bar gets the pictures too, from the one table.

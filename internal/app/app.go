@@ -465,6 +465,7 @@ func (a *App) APIRoutes(mux *http.ServeMux) {
 		"/api/nudge":           a.handleNudge,
 		"/api/transpose":       a.handleTranspose,
 		"/api/pickup":          a.handlePickup,
+		"/api/engraving":       a.handleEngraving,
 		"/api/shift":           a.handleShift,
 		"/api/addmeasure":      a.handleAddMeasure,
 		"/api/splitmeasure":    a.handleSplitMeasure,

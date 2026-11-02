@@ -41,6 +41,12 @@ type scoreDoc struct {
 	// person who opens it, which is the mistake Word made and spent a
 	// decade undoing.
 	Scripts []scriptDoc `json:"scripts,omitempty"`
+
+	// Engraving is what this score wants done differently from the house
+	// style, by the engraver's own names for those measurements. Only what
+	// was changed: a file that wrote down every default would freeze the
+	// day's defaults into itself and never see an improvement to them.
+	Engraving map[string]float64 `json:"engraving,omitempty"`
 }
 
 type scriptDoc struct {
@@ -354,6 +360,12 @@ func encodeScore(s *model.Score) *scoreDoc {
 			Barlines: g.Barlines, Name: g.Name,
 		})
 	}
+	if len(s.Engraving) > 0 {
+		doc.Engraving = make(map[string]float64, len(s.Engraving))
+		for k, v := range s.Engraving {
+			doc.Engraving[k] = v
+		}
+	}
 	for _, sc := range s.Scripts {
 		doc.Scripts = append(doc.Scripts, scriptDoc{Name: sc.Name, Body: sc.Body})
 	}
@@ -582,6 +594,12 @@ func decodeScore(doc *scoreDoc) (*model.Score, error) {
 		}
 	}
 
+	if len(doc.Engraving) > 0 {
+		s.Engraving = make(map[string]float64, len(doc.Engraving))
+		for k, v := range doc.Engraving {
+			s.Engraving[k] = v
+		}
+	}
 	for _, sd := range doc.Scripts {
 		s.Scripts = append(s.Scripts, model.Script{Name: sd.Name, Body: sd.Body})
 	}

@@ -2082,3 +2082,86 @@ dialog.wide { max-width: 640px; }
    what makes it stand out from the two cents of a fifth. */
 #harm-intervals td.harm-far { font-weight: 600; }
 #harm-intervals td:last-child { text-align: right; font-variant-numeric: tabular-nums; }
+
+/* What this score is engraved by.
+   The shape gscore 0.0.9 used, because it was the right one: the kinds of
+   measurement down the side and one kind at a time beside them, so the
+   window is a page of six rows rather than a scroll of thirty-four. The
+   page behind it is redrawn as each number is changed, which is why the
+   window stays narrow enough to leave music visible. */
+#engraving-body {
+  display: grid;
+  grid-template-columns: 11em 1fr;
+  gap: 14px;
+  margin: 10px 0 0;
+  min-height: 15em;
+}
+#engraving-cats {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  border-right: 1px solid var(--line);
+  padding-right: 10px;
+}
+#engraving-cats button {
+  text-align: left;
+  font-size: 13px;
+  padding: 5px 8px;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  background: none;
+  cursor: pointer;
+  color: inherit;
+}
+#engraving-cats button:hover { background: var(--accent-soft); }
+#engraving-cats button.on {
+  background: var(--accent);
+  color: #fff;
+}
+/* A heading with something set under it is marked, so a score's own
+   choices can be found without opening every page in turn. */
+#engraving-cats button.has-set::after {
+  content: " \2022";
+  color: var(--accent);
+  font-weight: 700;
+}
+#engraving-cats button.on.has-set::after { color: inherit; }
+
+#engraving-rows {
+  max-height: 24em;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+/* The label takes the room, then the field, then the picture — so the
+   numbers line up in a column and the pictures in another. A list of
+   measurements is read down the numbers. */
+.knob {
+  display: grid;
+  grid-template-columns: 1fr 5.5em 72px;
+  align-items: center;
+  gap: 10px;
+  padding: 5px 0;
+}
+.knob + .knob { border-top: 1px solid var(--line); }
+.knob label { font-size: 13px; }
+.knob input { width: 100%; }
+
+/* A measurement this score has an answer of its own for, as against one
+   it is inheriting. Without the difference showing there is no telling
+   whether 2.8 was chosen or merely inherited, and a field like that is
+   one nobody dares touch. */
+.knob input.is-set {
+  border-color: var(--accent);
+  font-weight: 600;
+}
+
+/* The picture of what the measurement does: the music in the ink of the
+   words, the distance it sets marked in red. Right-aligned so that the
+   pictures form a column of their own rather than drifting with the
+   labels. */
+.knob-picture {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+}
+.knob-picture svg { max-width: 72px; height: auto; }

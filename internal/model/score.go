@@ -689,6 +689,25 @@ type Score struct {
 	// kept is text: the console shows it, and a person reads it and
 	// decides.
 	Scripts []Script
+
+	// Engraving is what this score wants done differently from the house
+	// style: how wide a quarter note's slot is, how heavy a beam is, how
+	// far apart the staves sit.
+	//
+	// Keyed by name and holding only what was changed, rather than a struct
+	// of every setting. Three reasons. A file then says what somebody chose
+	// and not what the program happened to default to the day it was
+	// written, so a later change to a default reaches old scores instead of
+	// being frozen into them. A name this version does not know is ignored
+	// rather than refused, so a file from a newer gscore still opens. And
+	// the model stays out of it: these are the engraver's numbers, named by
+	// the engraver — see engrave.Knobs, which is the one list of them and
+	// is what the dialog, the endpoint and the layout all read.
+	//
+	// Not coordinates. Nothing here says where anything goes; they are the
+	// measurements the engraver works the places out from, which is why
+	// they can live on a score without the model knowing what a page is.
+	Engraving map[string]float64
 }
 
 // Script is one saved program, with the name its author gave it.

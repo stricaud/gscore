@@ -734,6 +734,10 @@ func PitchForStep(c model.Clef, step int) model.Pitch {
 
 // Engrave lays out a score.
 func Engrave(s *model.Score, opt Options) *Layout {
+	// Whatever this score asks to be engraved differently, applied here
+	// rather than by each of the dozen callers that build Options. See
+	// withScoreSettings.
+	opt = withScoreSettings(s, opt)
 	lay := engraveWith(s, opt, nil)
 	// Again, knowing where the ink went. The room over each system was
 	// reserved from a count of what might be written there; this is what

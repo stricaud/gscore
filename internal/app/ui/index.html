@@ -322,7 +322,7 @@
            guide and the count is left to the player. -->
       <button data-action="track-barlines"><span>Keep bars to the meter</span><kbd id="barline-tick">✓</kbd></button>
       <hr>
-      <button data-action="score-options" disabled><span>Score options…</span></button>
+      <button data-action="score-options"><span>Engraving…</span></button>
       <button data-action="parameters" disabled><span>Parameters…</span></button>
     </div>
   </div>
@@ -869,6 +869,28 @@
       <button value="cancel" type="submit">Cancel</button>
     </div>
   </form>
+</dialog>
+
+<!-- What this score is engraved by.
+     The measurements the engraver works from — how wide a quarter note's
+     slot is, how heavy a beam is, how far apart two staves sit. Nothing
+     here is written in the markup: the list comes from the engraver, so a
+     measurement added there shows up in this window without anybody having
+     to remember to add it twice. -->
+<dialog id="engraving" class="wide">
+  <h2>Engraving</h2>
+  <p class="small">What this score is engraved by, in staff spaces. The
+     picture beside each one shows the distance it sets, in red. Every
+     change shows on the page at once and belongs to this score, saved
+     with it; empty a field to go back to the house style for that one.</p>
+  <div id="engraving-body">
+    <nav id="engraving-cats" aria-label="Kinds of measurement"></nav>
+    <div id="engraving-rows"></div>
+  </div>
+  <div class="ask-buttons">
+    <button id="engraving-reset" type="button">Reset all</button>
+    <button id="engraving-done" type="button" class="primary">Done</button>
+  </div>
 </dialog>
 
 <!-- Moving the music to another key.

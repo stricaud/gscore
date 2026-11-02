@@ -858,6 +858,75 @@ paths:
                     description: Whether the bar is a whole one again.
         "400": { $ref: "#/components/responses/Error" }
 
+  /api/engraving:
+    get:
+      tags: [read]
+      summary: The measurements this score is engraved by
+      description: >
+        The engraver works from two tables of measurements — how wide a
+        quarter note's slot is, how heavy a beam is, how far apart two
+        staves sit. A score may set any of them for itself, and what it
+        sets is saved with it.
+
+
+        The list is the engraver's own (engrave.Knobs), so a measurement
+        added there appears here without this being touched, and the
+        editor's dialog builds itself from what comes back. `value` is
+        what this score engraves at, `default` what it would engrave at
+        having said nothing, and `set` whether it has an answer of its
+        own.
+      responses:
+        "200":
+          description: Every measurement that can be set.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  knobs:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        name: { type: string }
+                        label: { type: string }
+                        group: { type: string }
+                        unit: { type: string }
+                        min: { type: number }
+                        max: { type: number }
+                        value: { type: number }
+                        default: { type: number }
+                        set: { type: boolean }
+    post:
+      tags: [write]
+      summary: Change what this score is engraved by
+      description: >
+        Any number of measurements, as query parameters named after them —
+        `noteBase=3.2&beamThickness=0.55`. A parameter given an empty value
+        stops the score having an answer of its own for that one, and
+        `reset` with no value puts the lot back to the house style.
+
+
+        Nothing is applied unless all of it can be: a request with one
+        number out of bounds changes nothing, because half-applied would
+        leave somebody looking at a moved page and a refusal with no way
+        to tell which state they are in.
+      parameters:
+        - name: reset
+          in: query
+          description: Put every measurement back to the house style.
+          schema: { type: string }
+      responses:
+        "200":
+          description: Every measurement, as it now stands.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  knobs: { type: array, items: { type: object } }
+        "400": { $ref: "#/components/responses/Error" }
+
   /api/transpose:
     post:
       tags: [write]

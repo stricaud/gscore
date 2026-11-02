@@ -692,6 +692,9 @@ async function action(name) {
     case "set-pickup":
       await pickupDialog();
       break;
+    case "score-options":
+      await engravingDialog();
+      break;
     case "select-all":
       selectAll();
       break;
@@ -5646,6 +5649,337 @@ async function pickupDialog() {
   status(d && d.full
     ? "The first bar is a whole bar again"
     : "The first bar is an upbeat — bar one is the first full bar");
+}
+
+/* ---------- what each engraving measurement does ---------- */
+
+// A picture for each measurement, showing which gap it is.
+//
+// The number on its own says nothing: nobody knows what 0.4 of a staff
+// space between an accidental and its note looks like, and a dialog of
+// thirty-four numbered fields is thirty-four guesses. gscore 0.0.9 drew a
+// little picture beside each one — the music in the ink of the words, and
+// the distance being set marked in red — and that is the whole of what
+// makes such a window usable. Same idea here, and the same two colours:
+// black is what is written, red is what the field changes.
+//
+// Built from a description rather than drawn by hand, because thirty-four
+// hand-drawn SVGs are thirty-four chances to mark the wrong gap. Each
+// picture names its glyphs and where they stand, and the red mark is one
+// span across or down.
+//
+//   g: [codepoint, x, staffStep]  a music glyph, by its place on the staff
+//   l: [x0, y0, x1, y1, weight]   a plain line: a barline, a beam, a staff
+//   h: [x0, x1, step]             the red mark, measuring across
+//   v: [x, step0, step1]          the red mark, measuring down
+//   staff: step                   five staff lines behind it all
+//
+// x is in staff spaces from the left. A step is half a staff space, zero
+// at the middle line and positive upwards, which is how the engraver
+// counts everywhere else.
+const KNOB_PICTURES = {
+  // Notes and rests. The width of a slot is the distance from one note to
+  // the next, so two notes and the gap between them.
+  noteBase: { g: [["\ue1d5", 1, 0], ["\ue1d5", 6, 0]], h: [1.6, 6.6, -5] },
+  // Two slots of different lengths, because the exponent is what sets how
+  // much wider a long note's slot is than a short one's.
+  noteExponent: { g: [["\ue1d3", 0.8, 0], ["\ue1d5", 5.6, 0], ["\ue1d5", 7.6, 0]],
+    h: [1.4, 6.2, -5], h2: [6.2, 8.2, -5] },
+  minNote: { g: [["\ue1d5", 1, 0], ["\ue1d5", 3.2, 0]], h: [1.6, 3.8, -5] },
+
+  // Accidentals.
+  beforeAccidental: { g: [["\ue1d5", 0.6, 0], ["\ue260", 4.3, 0], ["\ue1d5", 5.4, 0]],
+    h: [1.6, 4.3, -5] },
+  accidentalToNote: { g: [["\ue260", 1.6, 0], ["\ue1d5", 3.2, 0]], h: [2.5, 3.2, -5] },
+  betweenAccidentals: { g: [["\ue260", 1, 0], ["\ue260", 2.4, 0], ["\ue1d5", 4, 0]],
+    h: [1.9, 2.4, -5] },
+
+  // Augmentation dots.
+  dotToNote: { g: [["\ue1d5", 1, 0], ["\ue1e7", 3, 1]], h: [2.1, 3, -5] },
+  betweenDots: { g: [["\ue1d5", 1, 0], ["\ue1e7", 2.6, 1], ["\ue1e7", 3.5, 1]],
+    h: [2.9, 3.5, -5] },
+
+  // Clefs.
+  clefBefore: { g: [["\ue050", 2.2, -2]], h: [0.4, 2.2, -6] },
+  clefAfter: { g: [["\ue050", 0.6, -2], ["\ue1d5", 4.4, 0]], h: [2.9, 4.4, -6] },
+
+  // Key signatures.
+  betweenKeyAccidentals: { g: [["\ue050", 0.6, -2], ["\ue260", 3.1, 4], ["\ue260", 4.2, 1]],
+    h: [3.5, 4.2, -6] },
+  afterKeyCancel: { g: [["\ue261", 0.6, 4], ["\ue261", 1.5, 1], ["\ue262", 3.6, 4],
+    ["\ue262", 4.6, 1]], h: [2.2, 3.6, -6] },
+  afterKeySignature: { g: [["\ue260", 0.6, 4], ["\ue260", 1.7, 1], ["\ue1d5", 4.4, 0]],
+    h: [2.4, 4.4, -6] },
+
+  // Time signatures.
+  afterTimeSignature: { g: [["\ue084", 0.8, 2], ["\ue084", 0.8, -2], ["\ue1d5", 4.2, 0]],
+    h: [2.2, 4.2, -6] },
+
+  /* Barlines. A thickness is shown by drawing the thing itself in the
+   * colour the field changes, beside one drawn normally — which is how
+   * gscore 0.0.9 showed them, and it reads at a glance where a pair of
+   * calipers half a staff space tall does not. */
+  thinBarlineThickness: { l: [[2, 2, 2, -2, 0.16], [3.4, 2, 3.4, -2, 0.16, 1]] },
+  thickBarlineThickness: { l: [[2, 2, 2, -2, 0.16], [3.6, 2, 3.6, -2, 0.5, 1]] },
+  barlineSeparation: { l: [[1.8, 2, 1.8, -2, 0.16], [3, 2, 3, -2, 0.16]],
+    h: [1.8, 3, -5] },
+  afterBarline: { l: [[1, 2, 1, -2, 0.16]], g: [["\ue1d5", 3.2, 0]], h: [1, 3.2, -5] },
+  betweenMeasures: { l: [[1, 2, 1, -2, 0.16], [5, 2, 5, -2, 0.16]],
+    g: [["\ue1d5", 1.5, 0]], h: [2.7, 5, -5] },
+
+  // Beams, drawn rather than set: the font carries beams only as part of
+  // whole notes and what is shown here is the beam alone.
+  beamThickness: { l: [[2, 2, 2, -1, 0.12], [5, 2, 5, -1, 0.12],
+    [1.94, 2, 5.06, 2, 0.5, 1]] },
+  beamSpacing: { l: [[2, 2.6, 2, -1, 0.12], [5, 2.6, 5, -1, 0.12],
+    [1.94, 2.6, 5.06, 2.6, 0.5], [1.94, 1.6, 5.06, 1.6, 0.5]],
+    v: [6, 2.35, 1.85] },
+
+  // Stems and ledger lines.
+  stemThickness: { g: [["\ue1d5", 1.6, -2]], l: [[2.76, -2, 2.76, 5, 0.12, 1]] },
+  legerLineThickness: { g: [["\ue0a4", 2, 6]], l: [[1.6, 6, 3.6, 6, 0.16, 1]] },
+  legerLineExtension: { g: [["\ue0a4", 2, 6]], l: [[1.6, 6, 3.6, 6, 0.16]],
+    h: [3.18, 3.6, 7.4] },
+
+  // Slurs and ties, whose weight is measured at the middle of the curve.
+  slurMidpointThickness: { g: [["\ue1d5", 1, -4], ["\ue1d5", 5, -4]],
+    c: [[1.6, -1, 5.6, -1, 3.6, 4, 1]] },
+  tieMidpointThickness: { g: [["\ue0a3", 1, -2], ["\ue0a3", 4, -2]],
+    c: [[1.6, 1, 4.6, 1, 3.1, 4, 1]] },
+
+  // The lines that are not notes.
+  staffLineThickness: { redLine: 0 },
+  hairpinThickness: { l: [[1, -6, 5.4, -7, 0.16, 1], [1, -6, 5.4, -5, 0.16, 1]] },
+  octaveLineThickness: { g: [["\ue511", 0.6, 6.4]],
+    l: [[2.7, 5.6, 6.2, 5.6, 0.16, 1]] },
+  tupletBracketThickness: { l: [[1.4, 5, 1.4, 4, 0.16, 1],
+    [1.4, 5, 5.4, 5, 0.16, 1], [5.4, 5, 5.4, 4, 0.16, 1]],
+    g: [["\ue083", 2.9, 6.6]] },
+
+  // The page. Two staves, and the room between or around them. Drawn
+  // closer together than they really stand, because the picture has to
+  // fit beside a number: what it says is which gap, not how big.
+  staffGap: { staff2: -12, h: 17, z: 4, v: [3, -4, -8] },
+  systemGap: { staff2: -14, h: 19, z: 4, v: [3, -4, -10], divider: true },
+  margin: { page: true, h: [0.4, 2.2, 0] },
+  marginY: { page: true, v: [4.6, 5.6, 4.2] },
+};
+
+// knobPicture draws one of those descriptions.
+//
+// In staff spaces throughout, scaled once at the end, so the numbers above
+// read as music — "the flat stands a space and a half to the left of the
+// note" — rather than as pixels.
+function knobPicture(spec) {
+  if (!spec) return "";
+  // Pixels to a staff space. The two-staff pictures ask for less: a
+  // picture of two staves and the gap between them is three times the
+  // height of a picture of one, and a row of this list cannot be.
+  const z = spec.z || 7;
+  const w = 9.6;
+  const h = spec.h && !Array.isArray(spec.h) ? spec.h : 8;
+  // The staff sits in the middle, which leaves about four spaces above it
+  // and four below for what is written there — a stem, a ledger line, an
+  // octave line, a hairpin.
+  const sy = (step) => h / 2 - step / 2;
+  const ink = (red) => (red ? 'var(--mark)' : 'currentColor');
+  const out = [];
+
+  const staffAt = (at, redLine) => {
+    for (let i = -4; i <= 4; i += 2) {
+      const on = redLine !== undefined && i === redLine;
+      out.push(`<line x1="0.3" y1="${sy(at + i)}" x2="${w - 0.3}" y2="${sy(at + i)}" ` +
+        `stroke="${ink(on)}" stroke-width="${on ? 0.22 : 0.1}" ` +
+        `opacity="${on ? 1 : 0.55}"/>`);
+    }
+  };
+  if (spec.page) {
+    out.push(`<rect x="0.4" y="0.6" width="${w - 0.8}" height="${h - 1.2}" ` +
+      `fill="none" stroke="currentColor" stroke-width="0.12" opacity=".55"/>`);
+    for (let i = 0; i < 3; i++) {
+      out.push(`<line x1="2.2" y1="${2 + i * 0.9}" x2="${w - 2.2}" y2="${2 + i * 0.9}" ` +
+        `stroke="currentColor" stroke-width="0.1" opacity=".45"/>`);
+    }
+  } else {
+    staffAt(0, spec.redLine);
+    if (spec.staff2 !== undefined) staffAt(spec.staff2);
+    // The line between two systems, so that the gap above it reads as the
+    // gap between systems and not as another pair of staves.
+    if (spec.divider) {
+      // Midway between the first staff's bottom line and the second's
+      // top line, which in steps is simply half of where the second
+      // staff's middle is.
+      const at = sy(spec.staff2 / 2);
+      out.push(`<line x1="0.3" y1="${at}" x2="1.5" y2="${at}" ` +
+        `stroke="currentColor" stroke-width="0.12" opacity=".55"/>`);
+    }
+  }
+
+  for (const [x0, s0, x1, s1, t, red] of spec.l || []) {
+    out.push(`<line x1="${x0}" y1="${sy(s0)}" x2="${x1}" y2="${sy(s1)}" ` +
+      `stroke="${ink(red)}" stroke-width="${t}" stroke-linecap="butt"/>`);
+  }
+  for (const [x0, s0, x1, s1, cx, cs, red] of spec.c || []) {
+    out.push(`<path d="M${x0} ${sy(s0)} Q${cx} ${sy(cs)} ${x1} ${sy(s1)}" ` +
+      `fill="none" stroke="${ink(red)}" stroke-width="0.16"/>`);
+  }
+  for (const [ch, x, step, red] of spec.g || []) {
+    out.push(`<text x="${x}" y="${sy(step)}" font-family="Bravura" font-size="4" ` +
+      `fill="${ink(red)}">${ch}</text>`);
+  }
+
+  // The red mark for a distance. End ticks and not an arrowhead: at this
+  // size an arrow is a blob, and two ticks say "from here to here" just as
+  // plainly.
+  const red = 'stroke="var(--mark)" stroke-width="0.14" stroke-linecap="butt"';
+  const across = (x0, x1, step) => {
+    const y = sy(step);
+    out.push(`<line x1="${x0}" y1="${y}" x2="${x1}" y2="${y}" ${red}/>`);
+    out.push(`<line x1="${x0}" y1="${y - 0.35}" x2="${x0}" y2="${y + 0.35}" ${red}/>`);
+    out.push(`<line x1="${x1}" y1="${y - 0.35}" x2="${x1}" y2="${y + 0.35}" ${red}/>`);
+  };
+  if (Array.isArray(spec.h)) across(...spec.h);
+  if (spec.h2) across(...spec.h2);
+  if (spec.v) {
+    const [x, s0, s1] = spec.v, y0 = sy(s0), y1 = sy(s1);
+    out.push(`<line x1="${x}" y1="${y0}" x2="${x}" y2="${y1}" ${red}/>`);
+    out.push(`<line x1="${x - 0.35}" y1="${y0}" x2="${x + 0.35}" y2="${y0}" ${red}/>`);
+    out.push(`<line x1="${x - 0.35}" y1="${y1}" x2="${x + 0.35}" y2="${y1}" ${red}/>`);
+  }
+
+  return `<svg class="knob-pic" viewBox="0 0 ${w} ${h}" width="${w * z}" ` +
+    `height="${h * z}" aria-hidden="true">${out.join("")}</svg>`;
+}
+
+/* ---------- how this score is engraved ---------- */
+
+// engravingDialog shows the measurements the engraver works from, and lets
+// this score set its own.
+//
+// Nothing about them is written here. The endpoint hands over the
+// engraver's own list — name, label, the heading it belongs under, what it
+// is allowed to be — and the window is built from that, so a measurement
+// added to the engraver appears here without this function being touched.
+// A dialog with fifty fields written out by hand is a dialog that is wrong
+// a week after it is written.
+//
+// Each change is applied as it is made rather than on a button, because
+// what these do cannot be judged from the number. Nobody knows what a beam
+// of 0.55 looks like; they know whether the page in front of them looks
+// right. The score is redrawn behind the open window after every change,
+// which is the whole point of doing it this way.
+async function engravingDialog() {
+  const dlg = $("#engraving");
+  const cats = $("#engraving-cats");
+  const rows = $("#engraving-rows");
+  // Which heading is open. Kept across a redraw so that changing a number
+  // does not throw you back to the first page of the window.
+  let open = null;
+
+  const draw = (knobs) => {
+    const groups = [];
+    for (const k of knobs) {
+      let g = groups.find((x) => x.name === k.group);
+      if (!g) groups.push(g = { name: k.group, rows: [] });
+      g.rows.push(k);
+    }
+    if (!groups.some((g) => g.name === open)) open = groups[0]?.name ?? null;
+
+    cats.innerHTML = "";
+    for (const g of groups) {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.textContent = t(g.name);
+      b.className = g.name === open ? "on" : "";
+      // A heading with something set under it says so, so that a score's
+      // own choices can be found without opening every page in turn.
+      if (g.rows.some((k) => k.set)) b.classList.add("has-set");
+      b.onclick = () => { open = g.name; draw(knobs); };
+      cats.appendChild(b);
+    }
+
+    rows.innerHTML = "";
+    for (const k of (groups.find((g) => g.name === open)?.rows) || []) {
+      const row = document.createElement("div");
+      row.className = "knob";
+
+      const name = document.createElement("label");
+      name.htmlFor = "engraving-" + k.name;
+      name.textContent = t(k.label);
+      row.appendChild(name);
+
+      const field = document.createElement("input");
+      field.type = "number";
+      field.id = "engraving-" + k.name;
+      field.min = String(k.min);
+      field.max = String(k.max);
+      // A hundredth of a staff space: the difference between a beam of
+      // 0.5 and one of 0.55 is one somebody can see.
+      field.step = "0.01";
+      field.value = String(k.value);
+      // What it would be if this score said nothing, so a field that has
+      // been changed says so. Without it there is no telling whether 2.8
+      // was chosen or merely inherited, and a field like that is one
+      // nobody dares touch.
+      field.placeholder = String(k.default);
+      if (k.set) field.classList.add("is-set");
+      field.title = k.set
+        ? `${k.label}: ${k.value}${k.unit ? " " + k.unit : ""}` +
+          ` — the house style is ${k.default}. Empty the field to go back to it.`
+        : `${k.label}: the house style, ${k.default}` +
+          `${k.unit ? " " + k.unit : ""}. Between ${k.min} and ${k.max}.`;
+      field.addEventListener("change", () => void set(k.name, field.value));
+      row.appendChild(field);
+
+      const pic = document.createElement("i");
+      pic.className = "knob-picture";
+      pic.innerHTML = knobPicture(KNOB_PICTURES[k.name]);
+      row.appendChild(pic);
+
+      rows.appendChild(row);
+    }
+  };
+
+  const show = (d) => {
+    draw(d.knobs || []);
+    const n = (d.knobs || []).filter((k) => k.set).length;
+    status(n
+      ? `Engraving — ${n} ${n === 1 ? "measurement" : "measurements"} set for this score`
+      : "Engraving — this score is on the house style");
+  };
+
+  const set = async (name, value) => {
+    const p = new URLSearchParams();
+    p.set(name, value);
+    const res = await fetch("/api/engraving?" + p.toString(), { method: "POST" });
+    if (!res.ok) {
+      status("Could not set it: " + (await res.text()).trim());
+      // Back to what it really is, rather than leaving a refused number
+      // sitting in the field looking as though it took.
+      await load();
+      return;
+    }
+    show(await res.json());
+    await refreshScore();
+  };
+
+  const load = async (how) => {
+    const res = await fetch("/api/engraving" + (how || ""), how ? { method: "POST" } : {});
+    if (!res.ok) {
+      status("Could not read the engraving settings");
+      return;
+    }
+    show(await res.json());
+  };
+
+  $("#engraving-reset").onclick = async () => {
+    await load("?reset");
+    await refreshScore();
+  };
+  $("#engraving-done").onclick = () => dlg.close();
+
+  await load();
+  dlg.showModal();
 }
 
 /* ---------- transposing ---------- */

@@ -261,3 +261,40 @@ func TestBracketedAccidentalSurvivesARoundTrip(t *testing.T) {
 		t.Error("the chord's bracketed notehead lost them")
 	}
 }
+
+// What a score is engraved by travels with it.
+//
+// These are the measurements somebody chose for this piece — how wide a
+// quarter note's slot is, how heavy a beam is — and a file that forgot
+// them would open looking like a different edition every time.
+func TestEngravingSettingsSurviveARoundTrip(t *testing.T) {
+	s := model.NewScore()
+	s.Engraving = map[string]float64{"noteBase": 3.4, "beamThickness": 0.56}
+
+	var b bytes.Buffer
+	if err := Write(&b, s, nil); err != nil {
+		t.Fatalf("writing: %v", err)
+	}
+	back, _, err := Read(bytes.NewReader(b.Bytes()))
+	if err != nil {
+		t.Fatalf("reading: %v", err)
+	}
+	if len(back.Engraving) != 2 {
+		t.Fatalf("%d measurements came back, want 2: %v", len(back.Engraving), back.Engraving)
+	}
+	if back.Engraving["noteBase"] != 3.4 || back.Engraving["beamThickness"] != 0.56 {
+		t.Errorf("they came back as %v", back.Engraving)
+	}
+}
+
+// A score that has chosen nothing carries nothing, rather than a key in
+// every file ever saved holding the defaults of the day it was written.
+func TestAScoreWithNoEngravingSettingsWritesNone(t *testing.T) {
+	var b bytes.Buffer
+	if err := Write(&b, model.NewScore(), nil); err != nil {
+		t.Fatalf("writing: %v", err)
+	}
+	if bytes.Contains(b.Bytes(), []byte("\"engraving\"")) {
+		t.Error("a score that set nothing wrote an engraving block anyway")
+	}
+}

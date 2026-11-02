@@ -128,20 +128,44 @@ func DefaultOptions() Options {
 	return Options{StaffSpace: 8, EmbedFont: true}
 }
 
+// writeOpen writes the <svg> the score is drawn in, and the rules it is drawn
+// under. The size is the whole score's whether a window of it is being drawn
+// or all of it, so a coordinate means the same thing either way.
+func writeOpen(b *strings.Builder, lay *engrave.Layout, opt Options) {
+	s := opt.StaffSpace
+	width, height := lay.Width*s, lay.Height*s
+	class := "gscore-score"
+	if opt.Scope != "" {
+		class += " " + scopeClass(opt.Scope)
+	}
+	fmt.Fprintf(b, `<svg xmlns="http://www.w3.org/2000/svg" width="%.1f" height="%.1f" `+
+		`viewBox="0 0 %.1f %.1f" class="%s">`+"\n", width, height, width, height, class)
+	writeStyle(b, opt, s)
+}
+
+// Shell writes the drawing with no music in it: the <svg> of the score's full
+// size, and the rules the music will be drawn under when it arrives.
+//
+// It is the other half of Fragment. A page too large to carry a long score
+// whole carries this instead, the right size and so with the right scrollbar,
+// and fills it with fragments as they are wanted. Beethoven's ninth is nine
+// hundred thousand shapes and two and a third million units tall; the shell
+// of it is a few hundred bytes.
+func Shell(w io.Writer, lay *engrave.Layout, opt Options) error {
+	var b strings.Builder
+	writeOpen(&b, lay, opt)
+	b.WriteString("</svg>\n")
+	_, err := io.WriteString(w, b.String())
+	return err
+}
+
 // Render writes the layout as a standalone SVG document.
 func Render(w io.Writer, lay *engrave.Layout, opt Options) error {
 	var b strings.Builder
 	s := opt.StaffSpace
 
 	if !opt.Fragment {
-		width, height := lay.Width*s, lay.Height*s
-		class := "gscore-score"
-		if opt.Scope != "" {
-			class += " " + scopeClass(opt.Scope)
-		}
-		fmt.Fprintf(&b, `<svg xmlns="http://www.w3.org/2000/svg" width="%.1f" height="%.1f" `+
-			`viewBox="0 0 %.1f %.1f" class="%s">`+"\n", width, height, width, height, class)
-		writeStyle(&b, opt, s)
+		writeOpen(&b, lay, opt)
 	}
 	win := opt.Window
 

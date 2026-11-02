@@ -80,6 +80,10 @@ func main() {
 		audioURL = flag.String("audio", "",
 			"for -o to .html: play a recording fetched from this address — made "+
 				"with -o to a .flac — instead of synthesising the music in the page")
+		bands = flag.Int("bands", 0,
+			"for -o to .html: write the drawing as files of this many systems "+
+				"each, beside the page, for the page to fetch as it needs them "+
+				"— for a score too large to put in one")
 		soundFont = flag.String("soundfont", "",
 			"the soundfont to record through, for -o to a .flac")
 
@@ -141,7 +145,7 @@ func main() {
 		fmt.Printf("wrote %s\n", *convert)
 	case *out != "":
 		if err := renderFile(score, *out, *strip, *space, *landscape,
-			*fontURL, *scriptURL, *soundFont, *audioURL, !*noPlay); err != nil {
+			*fontURL, *scriptURL, *soundFont, *audioURL, *bands, !*noPlay); err != nil {
 			fmt.Fprintf(os.Stderr, "gscore: %v\n", err)
 			os.Exit(1)
 		}
@@ -286,7 +290,7 @@ func sayIfDivided(s *model.Score, lay *engrave.Layout, popt gpdf.Options) {
 // to print at, and a PDF is pages or it is nothing.
 func renderFile(s *model.Score, path string, strip bool, space float64,
 	landscape bool, fontURL, scriptURL, soundFont, audioURL string,
-	play bool) error {
+	bands int, play bool) error {
 	ext := strings.ToLower(filepath.Ext(path))
 	wantPDF := ext == ".pdf"
 	wantPage := ext == ".html" || ext == ".htm"
@@ -383,9 +387,65 @@ func renderFile(s *model.Score, path string, strip bool, space float64,
 		if play {
 			hopt.Sound = app.PageSound(s, lay, ropt.StaffSpace)
 		}
+		if bands > 0 {
+			// The drawing in pieces beside the page rather than inside it.
+			// Written from this one layout: engraving the ninth symphony is
+			// six seconds and there are a hundred of them, so doing it once
+			// is the whole point.
+			written, err := writeBands(path, lay, ropt, bands)
+			if err != nil {
+				return err
+			}
+			hopt.Bands = written
+		}
 		return ghtml.Render(f, lay, s, nil, hopt)
 	}
 	return svg.Render(f, lay, ropt)
+}
+
+// writeBands writes the drawing as pieces beside the page, and says where
+// they went.
+//
+// One layout, many windows. The engraving is the expensive part and it has
+// already been done by the time we are here, so each piece is a walk down the
+// shapes that are already in hand, keeping the ones that reach into its band.
+//
+// The files are named after the page: play.html gets play.000.svg and so on
+// beside it, and the page asks for them by those names, relative to itself.
+// So the whole set can be moved or renamed as a directory and still work,
+// which is what being a static site means.
+func writeBands(page string, lay *engrave.Layout, ropt svg.Options,
+	perBand int) ([]ghtml.Band, error) {
+
+	dir := filepath.Dir(page)
+	stem := strings.TrimSuffix(filepath.Base(page), filepath.Ext(page))
+	name := func(i int) string { return fmt.Sprintf("%s.%03d.svg", stem, i) }
+
+	list := ghtml.Bands(lay, ropt.StaffSpace, perBand, name)
+	for _, band := range list {
+		bopt := ropt
+		// The shapes alone: the page already has the drawing to put them in.
+		bopt.Fragment = true
+		// A fragment carries no stylesheet and so no font either; the shell
+		// in the page brought both.
+		bopt.EmbedFont = false
+		bopt.Interactive = true
+		x0, y0, x1, y1 := band.Window(lay.Width, ropt.StaffSpace)
+		bopt.Window = &svg.Box{X0: x0, Y0: y0, X1: x1, Y1: y1}
+
+		out, err := os.Create(filepath.Join(dir, name(band.Index)))
+		if err != nil {
+			return nil, err
+		}
+		if err := svg.Render(out, lay, bopt); err != nil {
+			out.Close()
+			return nil, err
+		}
+		if err := out.Close(); err != nil {
+			return nil, err
+		}
+	}
+	return list, nil
 }
 
 func describeScore(s *model.Score) {

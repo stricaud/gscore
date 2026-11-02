@@ -30,6 +30,7 @@ package html
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"html"
 	"io"
@@ -92,6 +93,23 @@ type Options struct {
 	// With a recording the notes are wanted only for lighting up noteheads,
 	// so what is written into the page is trimmed to that.
 	AudioURL string
+
+	// Bands leaves the drawing out of the page and says where its pieces are
+	// to be fetched from instead. Empty writes the music into the page, which
+	// is right for anything that can be carried whole.
+	//
+	// It is for the scores that cannot. The ninth symphony inline is seventy
+	// four megabytes and nine hundred thousand shapes: it takes a browser
+	// seconds to lay out, and once laid out there is no budget left to
+	// animate anything, so the music plays with the page frozen behind it.
+	// In pieces of a few systems it is nine thousand shapes at a time, which
+	// is less than a page of chamber music.
+	//
+	// What is written here is the shell — the <svg> of the score's full size,
+	// so the scrollbar is honest — and a list of the pieces. Writing the
+	// pieces themselves is the caller's business, from the same layout: see
+	// Bands and svg.Options.Window.
+	Bands []Band
 }
 
 // DefaultOptions draws the music at a readable size, standing on its own.
@@ -116,7 +134,13 @@ func Render(w io.Writer, lay *engrave.Layout, score *model.Score,
 	// The noteheads carry their numbers when there is a player to light
 	// them up, and not otherwise: it is a few bytes a note.
 	sv.Interactive = sv.Interactive || opt.Sound != nil
-	if err := svg.Render(&art, lay, sv); err != nil {
+	if len(opt.Bands) > 0 {
+		// The music arrives in pieces, so the page carries the drawing it
+		// goes into and not the drawing itself.
+		if err := svg.Shell(&art, lay, sv); err != nil {
+			return err
+		}
+	} else if err := svg.Render(&art, lay, sv); err != nil {
 		return err
 	}
 
@@ -170,6 +194,18 @@ func Render(w io.Writer, lay *engrave.Layout, score *model.Score,
 	// A line saying where it came from. It is not printed: a score on paper
 	// is the music and nothing else.
 	fmt.Fprintf(&b, "<footer>Engraved with %s</footer>\n", brand.Name)
+
+	if len(opt.Bands) > 0 {
+		// Where the pieces of the drawing are. As data, like the sound: a
+		// type the browser does not know is a type it does not execute.
+		list, err := json.Marshal(opt.Bands)
+		if err != nil {
+			return err
+		}
+		b.WriteString("<script id=\"gscore-bands\" type=\"application/json\">\n")
+		b.Write(list)
+		b.WriteString("\n</script>\n")
+	}
 
 	if opt.Sound != nil {
 		// With a recording beside it, nothing in the page makes a sound, so

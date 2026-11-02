@@ -129,7 +129,7 @@ const playerJS = `
   var playing = false, startedAt = 0, from = 0, raf = 0, lit = [];
   // next is how far the scheduler has got through the notes, lightAt how
   // far the highlight has; pumping is the timer that tops the first up.
-  var next = 0, lightAt = 0, pumping = 0, lightNow = -1;
+  var next = 0, lightAt = 0, pumping = 0, lightNow = -1, shownBar = -1;
 
   // The notes in the order they sound.
   //
@@ -237,17 +237,25 @@ const playerJS = `
   var boxOf = {};
   (sound.boxes || []).forEach(function (b) { boxOf[b.i] = b; });
 
+  // Carried on from the bar the last frame was in, not begun at the first.
+  //
+  // The bars are in playing order, so their starts only increase; a moment
+  // earlier than the last — a seek, or somebody moving the recording — starts
+  // the walk again. Reading all of them every frame costs what the piece has
+  // already played, and the ninth symphony has three thousand two hundred.
+  var barFrom = 0;
   function placeAt(now) {
     var bars = sound.bars || [];
-    for (var i = 0; i < bars.length; i++) {
-      var bar = bars[i];
-      if (now < bar.t || now >= bar.t + bar.d) continue;
-      var box = boxOf[bar.i];
-      if (!box) return null;
-      var part = bar.d > 0 ? (now - bar.t) / bar.d : 0;
-      return { x: box.a + (box.b - box.a) * part, top: box.c, bottom: box.d };
-    }
-    return null;
+    if (!bars.length) return null;
+    if (barFrom >= bars.length || bars[barFrom].t > now) barFrom = 0;
+    while (barFrom + 1 < bars.length && bars[barFrom + 1].t <= now) barFrom++;
+    var bar = bars[barFrom];
+    if (now < bar.t || now >= bar.t + bar.d) return null;
+    var box = boxOf[bar.i];
+    if (!box) return null;
+    var part = bar.d > 0 ? (now - bar.t) / bar.d : 0;
+    return { x: box.a + (box.b - box.a) * part, top: box.c, bottom: box.d,
+             bar: bar.i };
   }
 
   function svgEl(name) {
@@ -303,12 +311,37 @@ const playerJS = `
     cursor.setAttribute("y", top);
     cursor.setAttribute("width", 2);
     cursor.setAttribute("height", height);
-    // Keep it on screen, without fighting a scroll of your own: only when
-    // it has gone out of sight.
+  }
+
+  // Keep the music in view.
+  //
+  // Asked once a bar, and never from inside a frame. What this replaces
+  // measured the cursor every frame and scrolled it into view whenever it
+  // was not wholly on screen — and the cursor is as tall as the system it
+  // is in, so on the ninth symphony it was four thousand nine hundred
+  // pixels tall and could not be wholly on screen in any window ever made.
+  // The test was therefore always true: a smooth scroll was asked for sixty
+  // times a second, each one restarting the one before, each one measuring
+  // a document of one and a third million shapes. The page stopped
+  // answering and the music never started. Pressing play did nothing at
+  // all, which is exactly what it looked like.
+  //
+  // A system taller than the window cannot be shown whole, so this follows
+  // its top rather than trying to centre it, and leaves it alone while any
+  // of it is in view.
+  var sentTo = null;
+  function keepInView() {
+    if (!cursor) return;
     var r = cursor.getBoundingClientRect();
-    if (r.top < 0 || r.bottom > window.innerHeight) {
-      cursor.scrollIntoView({ block: "center", behavior: "smooth" });
-    }
+    var h = window.innerHeight || 800;
+    // Some of the system is on screen: whatever you are looking at, the
+    // music is in front of you.
+    if (r.top < h * 0.75 && r.bottom > h * 0.1) { sentTo = null; return; }
+    var target = Math.max(0, (window.scrollY || 0) + r.top - h * 0.2);
+    // Once per move, not once per frame.
+    if (sentTo !== null && Math.abs(sentTo - target) < 8) return;
+    sentTo = target;
+    window.scrollTo({ top: target, behavior: "smooth" });
   }
 
   function light(now) {
@@ -440,12 +473,25 @@ const playerJS = `
     // sitting past the end waiting for a moment that never arrives.
     if (media ? media.ended : now >= sound.duration + 0.3) { stop(); return; }
     say(Math.max(0, now));
-    showCursor(placeAt(now));
+    var pt = placeAt(now);
+    showCursor(pt);
+    // The view is looked at when the bar changes and not otherwise: reading
+    // where things are on the page forces the browser to work out the
+    // layout of the whole drawing, which is not a thing to ask of it sixty
+    // times a second when the answer can only change once a bar.
+    if (pt && pt.bar !== shownBar) {
+      shownBar = pt.bar;
+      keepInView();
+    }
     light(now);
     raf = requestAnimationFrame(follow);
   }
 
   function play() {
+    // Where the walk down the bars and the view are starting from.
+    barFrom = 0;
+    shownBar = -1;
+    sentTo = null;
     if (media) {
       // Nothing to schedule: the recording is the sound and the clock both.
       if (Math.abs(media.currentTime - from) > 0.05) {

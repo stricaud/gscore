@@ -29,11 +29,12 @@ const src = readFileSync(process.env.GSCORE_PLAYER, "utf8");
 
 // A page, as the player finds one: a clock we wind by hand, an audio graph
 // that counts what it is asked for, and the few elements it looks up.
-function mount({ notes, duration, recording = false }) {
+function mount({ notes, duration, recording = false, bars, boxes }) {
   const sound = {
     notes,
-    bars: [{ i: 0, t: 0, d: 2 }, { i: 1, t: 2, d: 2 }],
-    boxes: [{ i: 0, a: 0, b: 10, c: 0, e: 8 }, { i: 1, a: 10, b: 20, c: 0, e: 8 }],
+    bars: bars || [{ i: 0, t: 0, d: 2 }, { i: 1, t: 2, d: 2 }],
+    boxes: boxes ||
+      [{ i: 0, a: 0, b: 10, c: 0, e: 8 }, { i: 1, a: 10, b: 20, c: 0, e: 8 }],
     duration,
     tempo: 120,
   };
@@ -108,7 +109,17 @@ function mount({ notes, duration, recording = false }) {
                    addEventListener(ev, fn) { button.on[ev] = fn; } };
   const clockEl = { textContent: "" };
 
-  globalThis.window = { AudioContext: Ctx };
+  // The window, and every scroll the player asks of it. The cursor is as
+  // tall as its system, which on a big score is far taller than any window —
+  // so getBoundingClientRect answers with a box that cannot fit, and how
+  // often the player reacts to that is the thing under test.
+  const scrolls = [];
+  globalThis.window = {
+    AudioContext: Ctx,
+    innerHeight: 900,
+    scrollY: 0,
+    scrollTo(opt) { scrolls.push(opt); window.scrollY = opt.top; },
+  };
   globalThis.document = {
     getElementById(id) {
       if (id === "gscore-sound") return { textContent: JSON.stringify(sound) };
@@ -125,8 +136,15 @@ function mount({ notes, duration, recording = false }) {
       appendChild(el) { el.parentNode = this; return el; },
       addEventListener() {},
       remove() { if (this.parentNode) this.parentNode.removeChild(this); },
-      getBoundingClientRect: () => ({ top: 10, bottom: 20 }),
-      scrollIntoView() {},
+      // A system of fifty-four staves: 4,930 units tall, which no window
+      // will ever hold. This is the shape of the real thing.
+      getBoundingClientRect() {
+        const y = Number(this.attrs.y || 0);
+        const h = Number(this.attrs.height || 0);
+        return { top: y - window.scrollY, bottom: y + h - window.scrollY,
+                 height: h };
+      },
+      scrollIntoView() { scrolls.push({ via: "scrollIntoView" }); },
     }),
   };
 
@@ -141,7 +159,7 @@ function mount({ notes, duration, recording = false }) {
 
   return {
     sound, media, button, clockEl, lit, made, starts, chains, queries,
-    added, rings,
+    added, rings, scrolls,
     press: () => button.on.click(),
     tick: () => { if (frame) frame(); },
     wind: (to) => { clock = to; if (pump) pump(); },
@@ -314,6 +332,42 @@ test("the playhead has a wash behind it, and both go when it stops", () => {
   p.wind(5); p.tick();
   assert.equal(p.added.filter((e) => e.cls === "gscore-wash").length, 0,
     "the wash was left on the page after stopping");
+});
+
+// The fault that made pressing Play on the ninth symphony do nothing.
+//
+// Its systems are fifty-four staves — 4,930 units tall — so the cursor could
+// never be wholly on screen, the "is it in view" test was always false, and a
+// smooth scroll was asked for on every frame, each one measuring a drawing of
+// 1.37 million shapes. The page stopped answering.
+test("a system taller than the window is not scrolled at on every frame", () => {
+  const bars = [], boxes = [], notes = [];
+  for (let i = 0; i < 400; i++) {
+    bars.push({ i, t: i * 1.36, d: 1.36 });
+    // Each system holds 10 bars and is as tall as the real thing.
+    const system = Math.floor(i / 10);
+    boxes.push({ i, a: 140 + (i % 10) * 95, b: 140 + (i % 10) * 95 + 90,
+                 c: 191 + system * 5200, e: 5121 + system * 5200 });
+    notes.push({ t: i * 1.36, d: 1, m: 60, v: 80, f: "bowed", r: i + 1 });
+  }
+  const p = mount({ notes, bars, boxes, duration: 400 * 1.36 });
+  p.press();
+
+  let frames = 0;
+  for (let t = 0; t < 400 * 1.36; t += 1 / 60) {
+    p.media.currentTime = t;       // no recording here; the synth clock moves
+    p.wind(t);
+    p.tick();
+    frames++;
+  }
+
+  // 40 systems, so a few dozen scrolls. Once a frame would be 32,000.
+  assert.ok(p.scrolls.length < 200,
+    `asked for ${p.scrolls.length} scrolls over ${frames} frames`);
+  assert.equal(p.scrolls.filter((s) => s.via === "scrollIntoView").length, 0,
+    "scrollIntoView was used on a box that cannot fit the window");
+  console.log(`      ${p.scrolls.length} scrolls over ${frames} frames ` +
+              `(one a frame would be ${frames})`);
 });
 
 test("the drawing is walked once, not once a frame", () => {

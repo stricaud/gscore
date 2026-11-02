@@ -822,6 +822,11 @@ type engraver struct {
 	// because a fret number is sitting on them. They are collected as the
 	// bars are drawn and used when the lines are ruled, which happens after.
 	tabGaps []tabGap
+	// scale is the size the engraver is drawing notes at, where one is full
+	// size. Anything but one is a cue: see cue.go, which has the reasoning
+	// and every measurement that reads this.
+	scale float64
+
 	// nextRef numbers elements in reading order. It starts at 1 so that zero
 	// can mean "belongs to no element".
 	nextRef int
@@ -1047,6 +1052,7 @@ func (e *engraver) run() {
 	sp := e.opt.Spacings
 	e.y = sp.marginY()
 	e.nextRef = 1
+	e.scale = 1
 
 	if e.opt.ShowTitle {
 		e.titleBlock()

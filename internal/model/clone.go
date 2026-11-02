@@ -81,6 +81,9 @@ func (sh Sheet) Clone() Sheet {
 	if sh.Breaks != nil {
 		out.Breaks = append([]int(nil), sh.Breaks...)
 	}
+	if sh.Cues != nil {
+		out.Cues = append([]Cue(nil), sh.Cues...)
+	}
 	if sh.Engraving != nil {
 		out.Engraving = make(map[string]float64, len(sh.Engraving))
 		for k, v := range sh.Engraving {

@@ -1309,6 +1309,26 @@
     read at a desk. Ten is about right for a part and eight for a score.</p>
   <label><input type="checkbox" id="part-multirest">
     Count the bars of rest instead of printing them</label>
+
+  <!-- The cues: a few bars of somebody else's line, printed small so the
+       player can hear their entry coming. What a player does after forty
+       bars of rest is count, and counting goes wrong. -->
+  <h3 class="small">Cues</h3>
+  <p class="small">A few bars of another player's line, printed small, so
+    there is something to listen for instead of a number to hold on to.</p>
+  <div id="part-cues"></div>
+  <div class="tempo-bar">
+    <span>Cue</span>
+    <select id="cue-from" aria-label="Whose line to print"></select>
+    <span>from bar</span>
+    <input type="number" id="cue-bar" min="1" step="1" style="width:5em"
+           aria-label="The bar the cue begins at">
+    <span>for</span>
+    <input type="number" id="cue-bars" min="1" max="16" step="1" value="2"
+           style="width:4em" aria-label="How many bars of it">
+    <button type="button" id="cue-add">Add</button>
+  </div>
+
   <div id="part-setup-bar">
     <button type="button" id="part-apply" class="primary">Apply</button>
     <button type="button" id="part-remove">Remove this part</button>

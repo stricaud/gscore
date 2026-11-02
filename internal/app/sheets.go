@@ -132,7 +132,115 @@ func sheetOf(s *model.Score, which int) *model.Score {
 			}
 		}
 	}
+
+	for _, cue := range sh.Cues {
+		writeCue(out, sh, cue, s)
+	}
 	return out
+}
+
+// barIsSilent reports whether a bar has nothing in it but rests, which is
+// where a cue may go.
+func barIsSilent(m *model.Measure) bool {
+	if m == nil {
+		return true
+	}
+	for _, v := range m.Voices {
+		for _, el := range v.Elements {
+			if _, ok := el.(*model.Rest); !ok {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// writeCue puts a few bars of another staff's line into this part, small.
+//
+// Into the copy the part is drawn from, never into the score: what is
+// stored is "show me bars 38 to 41 of the oboe", and the notes are fetched
+// from the oboe every time the part is drawn. A cue whose notes had been
+// copied into the part would go stale the first time somebody edited the
+// line it came from, and would be wrong in the one place nobody thinks to
+// look.
+//
+// from is the score the music comes from — the real one, not the copy —
+// since the copy's own staves have been hidden and its measures are about
+// to be written into.
+func writeCue(out *model.Score, sh model.Sheet, cue model.Cue, from *model.Score) {
+	if cue.Bars <= 0 || cue.From < 0 || cue.From >= len(from.Parts) {
+		return
+	}
+	// Onto the part's own first staff, which is the one the player reads. A
+	// cue on the second staff of a piano part would be under the music
+	// rather than in the player's eye.
+	if len(sh.Staves) == 0 || sh.Staves[0] >= len(out.Parts) {
+		return
+	}
+	onto := out.Parts[sh.Staves[0]]
+	src := from.Parts[cue.From]
+
+	label := cue.Label
+	if label == "" {
+		label = staffName(from, cue.From)
+	}
+
+	first := true
+	for i := 0; i < cue.Bars; i++ {
+		at := cue.At + i
+		if at < 0 || at >= len(onto.Measures) || at >= len(src.Measures) {
+			break
+		}
+		// Not over music of your own. A cue is for a bar you are not
+		// playing, and printing one over a bar you are would hide the thing
+		// you are holding the page for. A cue that runs into your entry
+		// simply stops there, which is where it was going to stop anyway.
+		if !barIsSilent(onto.Measures[at]) {
+			continue
+		}
+		// The bar as the other player has it, with every note of it marked
+		// as not yours to play.
+		bar := src.Measures[at].Clone()
+		for _, v := range bar.Voices {
+			for _, el := range v.Elements {
+				if m := marksOn(el); m != nil {
+					m.Small = true
+					// A cue is not the place for the other part's dynamics,
+					// lyrics or chord symbols: they belong to whoever is
+					// playing it, and printed here they read as
+					// instructions to the person holding this page.
+					m.Dynamic = model.DynamicNone
+					m.Lyrics, m.Texts, m.Chord = nil, nil, nil
+					m.Hairpin = nil
+				}
+			}
+		}
+		// Its own bar keeps what the bar is: the key, the meter, the
+		// barline and anything written on it are this part's, not the
+		// staff the notes were borrowed from.
+		mine := onto.Measures[at]
+		mine.Voices = bar.Voices
+
+		if first {
+			first = false
+			// Whose line it is, over the first bar of it. Without the name
+			// a cue is a few notes that appear from nowhere, which is worse
+			// than no cue: the player does not know who to listen for.
+			for _, v := range mine.Voices {
+				if len(v.Elements) == 0 {
+					continue
+				}
+				if m := marksOn(v.Elements[0]); m != nil {
+					m.Texts = append(m.Texts, model.TextMark{
+						Text:      label,
+						Placement: model.PlacementAbove,
+						Italic:    true,
+					})
+				}
+				break
+			}
+		}
+	}
 }
 
 // makeSheets writes one part for every player, where the score has none.
@@ -272,10 +380,20 @@ type sheetInfo struct {
 	Name   string `json:"name"`
 	Staves []int  `json:"staves"`
 	// Showing is whether this is the one on the screen.
-	Showing    bool    `json:"showing"`
-	MultiRests bool    `json:"multiRests"`
-	Breaks     int     `json:"breaks"`
-	StaffSpace float64 `json:"staffSpace,omitempty"`
+	Showing    bool      `json:"showing"`
+	MultiRests bool      `json:"multiRests"`
+	Breaks     int       `json:"breaks"`
+	StaffSpace float64   `json:"staffSpace,omitempty"`
+	Cues       []cueInfo `json:"cues,omitempty"`
+}
+
+// cueInfo is one cue as the editor is told about it: which bars of whose
+// line, and what is written over it.
+type cueInfo struct {
+	At    int    `json:"at"`
+	Bars  int    `json:"bars"`
+	From  int    `json:"from"`
+	Label string `json:"label"`
 }
 
 // handleSheets lists the parts, makes them, or shows one.
@@ -385,6 +503,79 @@ func (a *App) sheetsSet(w http.ResponseWriter, r *http.Request) {
 		}
 		sh.Staves = staves
 	}
+	// A cue: a few bars of somebody else's line, printed small so the
+	// player can hear their entry coming.
+	if v, ok := q["cue"]; ok && len(v) > 0 {
+		from, err := strconv.Atoi(v[0])
+		if err != nil || from < 0 || from >= len(a.score.Parts) {
+			http.Error(w, "there is no staff "+v[0], http.StatusBadRequest)
+			return
+		}
+		// at already names the part, so the cue's own first bar is "bar".
+		at, bars := 0, 2
+		if raw := q.Get("bar"); raw != "" {
+			n, err := strconv.Atoi(raw)
+			if err != nil || n < 0 || n >= a.score.MeasureCount() {
+				http.Error(w, "there is no bar "+raw, http.StatusBadRequest)
+				return
+			}
+			at = n
+		}
+		if raw := q.Get("bars"); raw != "" {
+			n, err := strconv.Atoi(raw)
+			// More than a handful is not a cue, it is the other part
+			// printed in this one: the point is a few bars to listen for.
+			if err != nil || n < 1 || n > 16 {
+				http.Error(w, raw+" is not a number of bars — 1 to 16",
+					http.StatusBadRequest)
+				return
+			}
+			bars = n
+		}
+		// Not from a staff this part already prints: the player can see
+		// their own line, and a cue of it would be the same bars twice.
+		for _, own := range sh.Staves {
+			if own == from {
+				http.Error(w, "that is a staff this part already prints",
+					http.StatusBadRequest)
+				return
+			}
+		}
+		// A cue has to have somewhere to go. Told now rather than drawn as
+		// nothing: somebody who asks for a cue and sees no change on the
+		// page has no way to know which of the two happened.
+		room := false
+		if len(sh.Staves) > 0 && sh.Staves[0] < len(a.score.Parts) {
+			mine := a.score.Parts[sh.Staves[0]].Measures
+			for i := 0; i < bars; i++ {
+				if n := at + i; n < len(mine) && barIsSilent(mine[n]) {
+					room = true
+					break
+				}
+			}
+		}
+		if !room {
+			http.Error(w, "this part is playing in those bars, so there is "+
+				"nowhere to print a cue", http.StatusBadRequest)
+			return
+		}
+		sh.Cues = append(sh.Cues, model.Cue{
+			At: at, Bars: bars, From: from, Label: strings.TrimSpace(q.Get("label")),
+		})
+		a.writeSheets(w)
+		return
+	}
+	if v, ok := q["uncue"]; ok && len(v) > 0 {
+		n, err := strconv.Atoi(v[0])
+		if err != nil || n < 0 || n >= len(sh.Cues) {
+			http.Error(w, "there is no cue "+v[0], http.StatusBadRequest)
+			return
+		}
+		sh.Cues = append(sh.Cues[:n], sh.Cues[n+1:]...)
+		a.writeSheets(w)
+		return
+	}
+
 	if q.Get("remove") == "1" {
 		a.score.Sheets = append(a.score.Sheets[:at], a.score.Sheets[at+1:]...)
 		if a.sheet >= len(a.score.Sheets) {
@@ -392,6 +583,21 @@ func (a *App) sheetsSet(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	a.writeSheets(w)
+}
+
+// cuesOf is a part's cues, each with the name that is actually written over
+// it — the staff's own where the cue did not say, which is what it almost
+// always is.
+func cuesOf(s *model.Score, sh model.Sheet) []cueInfo {
+	var out []cueInfo
+	for _, c := range sh.Cues {
+		label := c.Label
+		if label == "" {
+			label = staffName(s, c.From)
+		}
+		out = append(out, cueInfo{At: c.At, Bars: c.Bars, From: c.From, Label: label})
+	}
+	return out
 }
 
 // writeSheets sends the list. The caller holds the lock.
@@ -402,6 +608,7 @@ func (a *App) writeSheets(w http.ResponseWriter) {
 			Name: sh.Name, Staves: append([]int(nil), sh.Staves...),
 			Showing: i == a.sheet, MultiRests: sh.MultiRests,
 			Breaks: len(sh.Breaks), StaffSpace: sh.StaffSpace,
+			Cues: cuesOf(a.score, sh),
 		})
 	}
 	w.Header().Set("Content-Type", "application/json")

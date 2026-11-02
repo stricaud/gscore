@@ -2294,7 +2294,91 @@ async function partSetupDialog() {
     ? "Of " + names.join(", ")
     : "";
 
+  drawCues(sh);
   if (!dlg.open) dlg.showModal();
+}
+
+// drawCues lists what this part already cues, and offers the staves it
+// could cue from.
+//
+// Not its own staves: the player can see their own line, and a cue of it
+// would be the same bars printed twice.
+function drawCues(sh) {
+  const box = $("#part-cues");
+  if (box) {
+    box.innerHTML = "";
+    if (!(sh.cues || []).length) {
+      const p = document.createElement("p");
+      p.className = "small";
+      p.textContent = "None yet.";
+      box.append(p);
+    }
+    (sh.cues || []).forEach((c, i) => {
+      const row = document.createElement("div");
+      row.className = "tempo-bar";
+      const what = document.createElement("span");
+      const last = c.at + c.bars;
+      what.textContent = c.label + ", bar" + (c.bars === 1 ? " " : "s ") +
+        (c.bars === 1 ? String(c.at + 1) : (c.at + 1) + "–" + last);
+      const go = document.createElement("button");
+      go.type = "button";
+      go.textContent = "Take it away";
+      go.addEventListener("click", () => void removeCue(i));
+      row.append(what, go);
+      box.append(row);
+    });
+  }
+
+  const from = $("#cue-from");
+  if (from) {
+    const own = new Set(sh.staves);
+    from.innerHTML = "";
+    (state.info?.parts || []).forEach((p, i) => {
+      if (own.has(i)) return;
+      const o = document.createElement("option");
+      o.value = String(i);
+      o.textContent = p.name || "Staff " + (i + 1);
+      from.append(o);
+    });
+    from.disabled = from.options.length === 0;
+  }
+  const bar = $("#cue-bar");
+  if (bar && !bar.value) bar.value = "1";
+  const add = $("#cue-add");
+  if (add) add.disabled = !from || from.options.length === 0;
+}
+
+async function addCue() {
+  if (showingSheet < 0) return;
+  const q = new URLSearchParams({
+    at: String(showingSheet),
+    cue: $("#cue-from").value,
+    bar: String(Math.max(0, Number($("#cue-bar").value || 1) - 1)),
+    bars: $("#cue-bars").value || "2",
+  });
+  const res = await fetch("/api/sheets?" + q, { method: "POST" });
+  if (!res.ok) {
+    status((await res.text()).trim());
+    return;
+  }
+  await loadSheets();
+  drawCues(sheets[showingSheet]);
+  await reopen();
+  status("Cue added");
+}
+
+async function removeCue(i) {
+  if (showingSheet < 0) return;
+  const res = await fetch(
+    "/api/sheets?at=" + showingSheet + "&uncue=" + i, { method: "POST" });
+  if (!res.ok) {
+    status((await res.text()).trim());
+    return;
+  }
+  await loadSheets();
+  drawCues(sheets[showingSheet]);
+  await reopen();
+  status("Cue taken away");
 }
 
 async function applyPartSetup() {
@@ -2342,6 +2426,7 @@ async function removeShowingPart() {
 
 function setupPartDialog() {
   $("#part-apply")?.addEventListener("click", () => void applyPartSetup());
+  $("#cue-add")?.addEventListener("click", () => void addCue());
   $("#part-remove")?.addEventListener("click", () => void removeShowingPart());
 }
 

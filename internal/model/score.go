@@ -840,6 +840,35 @@ type Sheet struct {
 	// turn has to fall where there are bars of rest to turn in, and the
 	// score's turns fall wherever its own fuller systems ran out of room.
 	Breaks []int
+
+	// Cues are the bars of somebody else's line printed small in this part
+	// so the player can hear their entry coming.
+	Cues []Cue
+}
+
+// Cue is a few bars of another staff's music, printed small in a part.
+//
+// What a player does after forty bars of rest is count, and counting goes
+// wrong. A cue is the fix every printed part uses: the last few bars before
+// the entry carry the line of whoever is playing then, small, with their
+// name over it, so there is something to listen for instead of a number to
+// hold on to.
+//
+// It belongs to the part and not to the score, because it is not music: the
+// score already has that line on its own staff at full size, and printing
+// it twice there would be nonsense. And it holds no notes of its own — only
+// which bars of which staff to show — for the same reason a part holds no
+// music at all. A cue whose notes were copied would go stale the first time
+// somebody edited the line it was copied from, and would be wrong in the
+// one place nobody thinks to check.
+type Cue struct {
+	// At is the bar it begins at and Bars how many of them it covers.
+	At, Bars int
+	// From is the staff it is taken from, by index in Score.Parts.
+	From int
+	// Label is what is written over it. Empty means the staff's own name,
+	// which is what it almost always should be.
+	Label string
 }
 
 // MeasureNumbering is how a score's bars are numbered.

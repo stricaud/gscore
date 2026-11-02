@@ -89,6 +89,19 @@ type sheetDoc struct {
 	// Breaks are the bars this part begins a system at. Its own, because
 	// the score's fall wherever its fuller systems ran out of room.
 	Breaks []int `json:"breaks,omitempty"`
+	// Cues are the bars of somebody else's line printed small in this part
+	// so the player can hear their entry coming. Which bars of which staff,
+	// and no notes: the notes are fetched from that staff every time the
+	// part is drawn, so a cue cannot go stale.
+	Cues []cueDoc `json:"cues,omitempty"`
+}
+
+// One cue in a part.
+type cueDoc struct {
+	At    int    `json:"at"`
+	Bars  int    `json:"bars"`
+	From  int    `json:"from"`
+	Label string `json:"label,omitempty"`
 }
 
 // How a score's bars are numbered.
@@ -433,6 +446,11 @@ func encodeScore(s *model.Score) *scoreDoc {
 		if sh.Breaks != nil {
 			d.Breaks = append([]int(nil), sh.Breaks...)
 		}
+		for _, c := range sh.Cues {
+			d.Cues = append(d.Cues, cueDoc{
+				At: c.At, Bars: c.Bars, From: c.From, Label: c.Label,
+			})
+		}
 		if len(sh.Engraving) > 0 {
 			d.Engraving = make(map[string]float64, len(sh.Engraving))
 			for k, v := range sh.Engraving {
@@ -696,6 +714,11 @@ func decodeScore(doc *scoreDoc) (*model.Score, error) {
 		}
 		if d.Breaks != nil {
 			sh.Breaks = append([]int(nil), d.Breaks...)
+		}
+		for _, c := range d.Cues {
+			sh.Cues = append(sh.Cues, model.Cue{
+				At: c.At, Bars: c.Bars, From: c.From, Label: c.Label,
+			})
 		}
 		if len(d.Engraving) > 0 {
 			sh.Engraving = make(map[string]float64, len(d.Engraving))

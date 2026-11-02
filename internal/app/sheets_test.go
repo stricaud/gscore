@@ -595,3 +595,294 @@ func TestNonsenseAboutAPartsPageIsRefused(t *testing.T) {
 		t.Errorf("a refused request changed the staves: %v", sh.Staves)
 	}
 }
+
+/*
+ * Cues.
+ *
+ * A few bars of somebody else's line, printed small in a part so the player
+ * can hear their entry coming. What a player does after forty bars of rest
+ * is count, and counting goes wrong.
+ *
+ * The cue holds no notes: it says which bars of which staff, and the notes
+ * are fetched from that staff every time the part is drawn. That is the
+ * thing most worth testing, because a cue whose notes had been copied would
+ * go stale the first time somebody edited the line it came from and would be
+ * wrong in the one place nobody thinks to look.
+ */
+
+// cuedScore is a flute part with an oboe under it: four bars each, the oboe
+// playing throughout and the flute resting through the middle two — which is
+// the only place a cue can go, since a cue is for a bar you are not playing.
+func cuedScore(t *testing.T) *harness {
+	t.Helper()
+	h := newHarness(t)
+	h.post("/api/addstaff?instrument=oboe&clef=treble")
+	for i := 1; i < 4; i++ {
+		h.post("/api/addmeasure")
+	}
+	for b := 0; b < 4; b++ {
+		h.note(1, b, 2+b, "quarter")
+	}
+	// The flute plays the first bar and the last, and counts the two
+	// between them.
+	h.note(0, 0, 2, "quarter")
+	h.note(0, 3, 5, "quarter")
+	h.post("/api/sheets?make=1")
+	return h
+}
+
+func TestACueShowsAnotherStavesBarsSmall(t *testing.T) {
+	h := cuedScore(t)
+	// The flute part, cueing the oboe's bars two and three.
+	h.post("/api/sheets?show=0")
+	h.post("/api/sheets?at=0&cue=1&bar=1&bars=2")
+
+	view := sheetOf(h.app.score, 0)
+	small, notes := 0, 0
+	for mi, m := range view.Parts[0].Measures {
+		for _, v := range m.Voices {
+			for _, el := range v.Elements {
+				n, ok := el.(*model.Note)
+				if !ok {
+					continue
+				}
+				notes++
+				if n.Marks.Small {
+					small++
+				}
+				if n.Marks.Small && (mi < 1 || mi > 2) {
+					t.Errorf("bar %d is small and is not in the cue", mi)
+				}
+			}
+		}
+	}
+	if small != 2 {
+		t.Errorf("%d small notes of %d in the part, want 2 — the oboe's two "+
+			"cued bars", small, notes)
+	}
+
+	// And the score itself is untouched: the oboe's line is on the oboe's
+	// staff at full size, where it belongs.
+	for _, m := range h.app.score.Parts[0].Measures {
+		for _, v := range m.Voices {
+			for _, el := range v.Elements {
+				if n, ok := el.(*model.Note); ok && n.Marks.Small {
+					t.Error("a cue was written into the score")
+				}
+			}
+		}
+	}
+}
+
+// Whose line it is, over the first bar of it. A cue with no name is a few
+// notes appearing from nowhere, which is worse than no cue: the player does
+// not know who to listen for.
+func TestACueSaysWhoseLineItIs(t *testing.T) {
+	h := cuedScore(t)
+	h.post("/api/sheets?at=0&cue=1&bar=1&bars=2")
+
+	view := sheetOf(h.app.score, 0)
+	found := ""
+	for _, v := range view.Parts[0].Measures[1].Voices {
+		for _, el := range v.Elements {
+			if m := marksOn(el); m != nil {
+				for _, tx := range m.Texts {
+					found = tx.Text
+				}
+			}
+		}
+	}
+	if found == "" {
+		t.Fatal("nothing says whose line the cue is")
+	}
+	if !strings.EqualFold(found, "oboe") {
+		t.Errorf("it is labelled %q", found)
+	}
+
+	// A label of one's own wins, for the editions that write "Ob." or
+	// "Oboe 1".
+	h.post("/api/sheets?at=0&uncue=0")
+	h.post("/api/sheets?at=0&cue=1&bar=1&bars=1&label=Ob.")
+	view = sheetOf(h.app.score, 0)
+	got := ""
+	for _, v := range view.Parts[0].Measures[1].Voices {
+		for _, el := range v.Elements {
+			if m := marksOn(el); m != nil && len(m.Texts) > 0 {
+				got = m.Texts[0].Text
+			}
+		}
+	}
+	if got != "Ob." {
+		t.Errorf("it is labelled %q, want the name that was given", got)
+	}
+}
+
+// The notes are fetched every time, so editing the line a cue comes from
+// changes the cue. This is the whole reason a cue holds no notes.
+func TestACueFollowsTheLineItCameFrom(t *testing.T) {
+	h := cuedScore(t)
+	h.post("/api/sheets?at=0&cue=1&bar=1&bars=1")
+
+	before := cuedPitch(t, sheetOf(h.app.score, 0))
+	// Move the oboe's note, as an edit to the score would.
+	for _, v := range h.app.score.Parts[1].Measures[1].Voices {
+		for _, el := range v.Elements {
+			if n, ok := el.(*model.Note); ok {
+				n.Pitch.Step = model.Step((int(n.Pitch.Step) + 3) % 7)
+			}
+		}
+	}
+	after := cuedPitch(t, sheetOf(h.app.score, 0))
+	if before == after {
+		t.Errorf("the cue still shows %q after the oboe's note was changed: "+
+			"it was copied rather than fetched, so it will be wrong in the "+
+			"one place nobody looks", before)
+	}
+}
+
+func cuedPitch(t *testing.T, view *model.Score) string {
+	t.Helper()
+	for _, v := range view.Parts[0].Measures[1].Voices {
+		for _, el := range v.Elements {
+			if n, ok := el.(*model.Note); ok && n.Marks.Small {
+				return n.Pitch.String()
+			}
+		}
+	}
+	return ""
+}
+
+// What belongs to the other player does not come with it. Their dynamics,
+// their words and their chord symbols read as instructions to whoever is
+// holding this page.
+func TestACueLeavesTheOtherPlayersMarkingsBehind(t *testing.T) {
+	h := cuedScore(t)
+	h.post("/api/dynamic?part=1&measure=1&at=1&dynamic=ff")
+	h.post("/api/sheets?at=0&cue=1&bar=1&bars=1")
+
+	for _, v := range sheetOf(h.app.score, 0).Parts[0].Measures[1].Voices {
+		for _, el := range v.Elements {
+			if m := marksOn(el); m != nil && m.Dynamic != model.DynamicNone {
+				t.Error("the other player's dynamic was printed in this part")
+			}
+		}
+	}
+	// And it is still on the oboe's own staff, where it was written.
+	kept := false
+	for _, v := range h.app.score.Parts[1].Measures[1].Voices {
+		for _, el := range v.Elements {
+			if m := marksOn(el); m != nil && m.Dynamic != model.DynamicNone {
+				kept = true
+			}
+		}
+	}
+	if !kept {
+		t.Error("the oboe lost its own dynamic")
+	}
+}
+
+// A cue of a staff this part already prints would be the same bars twice.
+func TestNonsenseAboutACueIsRefused(t *testing.T) {
+	h := cuedScore(t)
+	for _, q := range []string{
+		"at=0&cue=0", // its own staff
+		"at=0&cue=9", // no such staff
+		"at=0&cue=abc",
+		"at=0&cue=1&bar=99",
+		"at=0&cue=1&bars=0",
+		"at=0&cue=1&bars=99",
+		"at=0&uncue=0", // there are none yet
+	} {
+		if why := h.postFails("/api/sheets?" + q); why == "" {
+			t.Errorf("%q was accepted", q)
+		}
+	}
+	if len(h.app.score.Sheets[0].Cues) != 0 {
+		t.Errorf("a refused request added a cue: %v", h.app.score.Sheets[0].Cues)
+	}
+}
+
+// A cue survives the file, because somebody chose which bars of whose line
+// would tell them where they are.
+func TestCuesSurviveTheFile(t *testing.T) {
+	h := cuedScore(t)
+	h.app.local = true
+	h.post("/api/sheets?at=0&cue=1&bar=1&bars=3&label=Ob.")
+
+	path := filepath.Join(t.TempDir(), "cued.gscore")
+	h.post("/api/save?path=" + path)
+	f, err := os.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	back, _, err := gscore.Read(f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(back.Sheets) == 0 || len(back.Sheets[0].Cues) != 1 {
+		t.Fatalf("the cues came back as %+v", back.Sheets)
+	}
+	got := back.Sheets[0].Cues[0]
+	if got.At != 1 || got.Bars != 3 || got.From != 1 || got.Label != "Ob." {
+		t.Errorf("the cue came back as %+v", got)
+	}
+}
+
+// A cue goes where the player is not playing, and stops at their entry.
+//
+// Printed over a bar of their own it would hide the thing they are holding
+// the page for, which is the one thing a part must never do.
+func TestACueStopsAtTheEntryItIsThereFor(t *testing.T) {
+	h := cuedScore(t)
+	// Three bars of cue from bar two: bars two and three rest, and the
+	// fourth is the flute's own entry.
+	h.post("/api/sheets?at=0&cue=1&bar=1&bars=3")
+
+	view := sheetOf(h.app.score, 0)
+	for mi, m := range view.Parts[0].Measures {
+		small := false
+		mine := false
+		for _, v := range m.Voices {
+			for _, el := range v.Elements {
+				n, ok := el.(*model.Note)
+				if !ok {
+					continue
+				}
+				if n.Marks.Small {
+					small = true
+				} else {
+					mine = true
+				}
+			}
+		}
+		switch mi {
+		case 1, 2:
+			if !small {
+				t.Errorf("bar %d rests and carries no cue", mi+1)
+			}
+		case 0, 3:
+			if small {
+				t.Errorf("bar %d is the flute's own and was printed over "+
+					"with a cue", mi+1)
+			}
+			if !mine {
+				t.Errorf("bar %d lost the flute's own music", mi+1)
+			}
+		}
+	}
+}
+
+// And a cue that has nowhere to go is refused at the time it is asked for,
+// rather than drawn as nothing: somebody who asks and sees no change has no
+// way to know which of the two happened.
+func TestACueWithNowhereToGoSaysSo(t *testing.T) {
+	h := cuedScore(t)
+	why := h.postFails("/api/sheets?at=0&cue=1&bar=0&bars=1")
+	if why == "" {
+		t.Fatal("a cue over the flute's own first bar was accepted")
+	}
+	if !strings.Contains(why, "playing in those bars") {
+		t.Errorf("it was refused with %q, which does not say why", why)
+	}
+}

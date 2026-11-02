@@ -1735,6 +1735,16 @@ paths:
                         showing: { type: boolean }
                         multiRests: { type: boolean }
                         breaks: { type: integer }
+                        staffSpace: { type: number }
+                        cues:
+                          type: array
+                          items:
+                            type: object
+                            properties:
+                              at: { type: integer }
+                              bars: { type: integer }
+                              from: { type: integer }
+                              label: { type: string }
     post:
       tags: [score]
       summary: Make the parts, show one, or change one
@@ -1753,6 +1763,13 @@ paths:
         - { name: name, in: query, schema: { type: string } }
         - { name: multirest, in: query, schema: { type: string, enum: ["0", "1"] } }
         - { name: remove, in: query, schema: { type: string, enum: ["1"] } }
+        - { name: size, in: query, schema: { type: number }, description: "how large the staff is drawn, 4 to 24; empty for the score's own size" }
+        - { name: staves, in: query, schema: { type: string }, description: "which staves this part prints, counted from one: \"1, 2\"" }
+        - { name: cue, in: query, schema: { type: integer }, description: "add a cue from this staff; with bar, bars and label" }
+        - { name: bar, in: query, schema: { type: integer }, description: "the bar a cue begins at" }
+        - { name: bars, in: query, schema: { type: integer }, description: "how many bars of it, 1 to 16" }
+        - { name: label, in: query, schema: { type: string }, description: "what is written over a cue; the staff's own name where empty" }
+        - { name: uncue, in: query, schema: { type: integer }, description: "take away the cue with this number" }
       responses:
         "200":
           description: The parts as they now stand.

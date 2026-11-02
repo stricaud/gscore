@@ -701,15 +701,19 @@ func (e *engraver) stemUp(p *placed) bool {
 	return (middleStep - p.lo) >= (p.hi - middleStep)
 }
 
+// drawHeads draws an element's noteheads, at whatever size that element is
+// written at: full size for the music, smaller for a cue. See cue.go.
 func (e *engraver) drawHeads(part *model.Part, p *placed) {
-	switch {
-	case p.rest != nil:
-		e.drawRestAt(p)
-	case p.note != nil:
-		e.drawNoteHead(p)
-	case p.chord != nil:
-		e.drawChordHeads(p)
-	}
+	e.drawingAt(p.scaleOf(), func() {
+		switch {
+		case p.rest != nil:
+			e.drawRestAt(p)
+		case p.note != nil:
+			e.drawNoteHead(p)
+		case p.chord != nil:
+			e.drawChordHeads(p)
+		}
+	})
 }
 
 func (e *engraver) drawRestAt(p *placed) {
@@ -723,10 +727,11 @@ func (e *engraver) drawRestAt(p *placed) {
 	}
 	e.lay.Glyphs = append(e.lay.Glyphs, Glyph{
 		Name: name, X: p.x, Y: e.y + stepY(step), Ref: p.index,
+		Size: e.glyphSize(),
 	})
 	e.lay.Refs[p.index] = RefPos{X: p.x, Y: e.y + stepY(step), Staff: e.y}
 	// A rest has no stem for the dots to clear.
-	e.drawDots(p.x+smufl.Advance(name)+e.opt.Spacings.DotToNote, step, p.dots)
+	e.drawDots(p.x+e.adv(name)+e.opt.Spacings.DotToNote, step, p.dots)
 }
 
 // drawAccidental writes a note's sign in front of it, in brackets where the
@@ -741,18 +746,19 @@ func (e *engraver) drawAccidental(n *model.Note, at, y float64) {
 	if g == "" {
 		return
 	}
-	x := at - e.opt.Spacings.AccidentalToNote - smufl.Advance(g)
+	size := e.glyphSize()
+	x := at - e.opt.Spacings.AccidentalToNote - e.adv(g)
 	if !n.Parens {
-		e.lay.Glyphs = append(e.lay.Glyphs, Glyph{Name: g, X: x, Y: y})
+		e.lay.Glyphs = append(e.lay.Glyphs, Glyph{Name: g, X: x, Y: y, Size: size})
 		return
 	}
 	left, right := "accidentalParensLeft", "accidentalParensRight"
-	lw, rw := smufl.Advance(left), smufl.Advance(right)
+	lw, rw := e.adv(left), e.adv(right)
 	x -= lw + rw
 	e.lay.Glyphs = append(e.lay.Glyphs,
-		Glyph{Name: left, X: x, Y: y},
-		Glyph{Name: g, X: x + lw, Y: y},
-		Glyph{Name: right, X: x + lw + smufl.Advance(g), Y: y})
+		Glyph{Name: left, X: x, Y: y, Size: size},
+		Glyph{Name: g, X: x + lw, Y: y, Size: size},
+		Glyph{Name: right, X: x + lw + e.adv(g), Y: y, Size: size})
 }
 
 func (e *engraver) drawNoteHead(p *placed) {
@@ -760,18 +766,18 @@ func (e *engraver) drawNoteHead(p *placed) {
 	e.drawAccidental(n, p.x, e.y+stepY(float64(p.step)))
 	head := smufl.NoteheadGlyphOf(p.value, n.Head)
 	y := e.y + stepY(float64(p.step))
-	if e.tab != nil && e.fretNumber(n, p.x+noteheadWidth(p.value)/2, y, p.index) {
+	if e.tab != nil && e.fretNumber(n, p.x+e.headW(p.value)/2, y, p.index) {
 		e.lay.Refs[p.index] = RefPos{X: p.x, Y: y, Staff: e.y}
-		e.drawDots(p.x+smufl.Advance(head)+e.dotGap(e.stemUp(p)),
+		e.drawDots(p.x+e.adv(head)+e.dotGap(e.stemUp(p)),
 			float64(p.step), p.dots)
 		return
 	}
 	e.lay.Glyphs = append(e.lay.Glyphs, Glyph{
-		Name: head, X: p.x, Y: y, Ref: p.index,
+		Name: head, X: p.x, Y: y, Ref: p.index, Size: e.glyphSize(),
 	})
 	e.lay.Refs[p.index] = RefPos{X: p.x, Y: y, Staff: e.y}
-	e.ledgerLines(p.x, smufl.Advance(head), p.step)
-	e.drawDots(p.x+smufl.Advance(head)+e.dotGap(e.stemUp(p)), float64(p.step), p.dots)
+	e.ledgerLines(p.x, e.adv(head), p.step)
+	e.drawDots(p.x+e.adv(head)+e.dotGap(e.stemUp(p)), float64(p.step), p.dots)
 }
 
 func (e *engraver) drawChordHeads(p *placed) {
@@ -800,7 +806,7 @@ func (e *engraver) drawChordHeads(p *placed) {
 	// stem-down chord's lower note out on the wrong side, hanging off the
 	// chord with the stem running down between them: reported as "the A
 	// should be on the left, otherwise the chord looks weird".
-	step := smufl.Advance(head)
+	step := e.adv(head)
 	if !up {
 		step = -step
 	}
@@ -823,7 +829,7 @@ func (e *engraver) drawChordHeads(p *placed) {
 		}
 		if e.tab != nil {
 			y := e.y + stepY(float64(at))
-			if e.fretNumber(n, p.x+noteheadWidth(p.value)/2, y, p.index) {
+			if e.fretNumber(n, p.x+e.headW(p.value)/2, y, p.index) {
 				if i == 0 {
 					e.lay.Refs[p.index] = RefPos{X: p.x, Y: y, Staff: e.y}
 				}
@@ -843,6 +849,7 @@ func (e *engraver) drawChordHeads(p *placed) {
 			X:    p.x + offset,
 			Y:    e.y + stepY(float64(at)),
 			Ref:  p.index,
+			Size: e.glyphSize(),
 		})
 		if i == 0 {
 			e.lay.Refs[p.index] = RefPos{X: p.x, Y: e.y + stepY(float64(at)), Staff: e.y}
@@ -850,7 +857,7 @@ func (e *engraver) drawChordHeads(p *placed) {
 		// Under the notehead it carries, which for a stepped-out head is
 		// not the column: a ledger line drawn at the column left that head
 		// floating beside it with a line under thin air.
-		e.ledgerLines(p.x+offset, smufl.Advance(head), at)
+		e.ledgerLines(p.x+offset, e.adv(head), at)
 	}
 	e.drawChordDots(p, steps, shifted, head, up)
 }
@@ -875,11 +882,11 @@ func (e *engraver) drawChordDots(p *placed, steps []int, shifted []bool, head st
 	// placed off the unshifted heads is drawn on top of a shifted one. Only
 	// a stem-up chord's heads step right; a stem-down chord's step left,
 	// out of the dots' way.
-	right := p.x + smufl.Advance(head)
+	right := p.x + e.adv(head)
 	if up {
 		for _, s := range shifted {
 			if s {
-				right += smufl.Advance(head)
+				right += e.adv(head)
 				break
 			}
 		}
@@ -1207,10 +1214,13 @@ func (e *engraver) drawStemsAndBeams(items []*placed, t model.TimeSignature) {
 		if p.rest != nil || inGroup[p] {
 			continue
 		}
-		e.drawSingleStem(p)
+		e.drawingAt(p.scaleOf(), func() { e.drawSingleStem(p) })
 	}
 	for _, g := range groups {
-		e.drawBeamGroup(g)
+		// A group is beamed together, so it is drawn at one size: the
+		// first note's. A cue is whole bars of somebody else's line, so a
+		// group with one small note in it is a group of small notes.
+		e.drawingAt(g[0].scaleOf(), func() { e.drawBeamGroup(g) })
 	}
 }
 
@@ -1230,9 +1240,9 @@ func (e *engraver) drawStemsAndBeams(items []*placed, t model.TimeSignature) {
 func (e *engraver) stemEnd(base float64, up bool) float64 {
 	mid := e.y + stepY(middleStep)
 	if up {
-		return math.Min(base-stemLength, mid)
+		return math.Min(base-e.stemLen(), mid)
 	}
-	return math.Max(base+stemLength, mid)
+	return math.Max(base+e.stemLen(), mid)
 }
 
 func (e *engraver) drawSingleStem(p *placed) {
@@ -1242,17 +1252,17 @@ func (e *engraver) drawSingleStem(p *placed) {
 		e.drawTremolo(p, 0, 0, 0)
 		return
 	}
-	d := e.opt.Defaults
 	up := e.stemUp(p)
-	head := noteheadWidth(p.value)
+	head := e.headW(p.value)
+	th := e.stemTh()
 
 	loY := e.y + stepY(float64(p.lo))
 	hiY := e.y + stepY(float64(p.hi))
 
-	sx := p.x + head - d.StemThickness/2
+	sx := p.x + head - th/2
 	y1, y2 := loY, e.stemEnd(hiY, up)
 	if !up {
-		sx = p.x + d.StemThickness/2
+		sx = p.x + th/2
 		y1, y2 = hiY, e.stemEnd(loY, up)
 	}
 	// Which notehead the slashes have to clear: the far one.
@@ -1270,10 +1280,12 @@ func (e *engraver) drawSingleStem(p *placed) {
 	// Before the stem is drawn and before the flag is hung on the end of
 	// it, because both go where the end goes.
 	y2 = e.roomForTremolo(p, clear, y2, up)
-	e.lay.Lines = append(e.lay.Lines, Line{X1: sx, Y1: y1, X2: sx, Y2: y2, Thickness: d.StemThickness})
+	e.lay.Lines = append(e.lay.Lines, Line{X1: sx, Y1: y1, X2: sx, Y2: y2, Thickness: th})
 
 	if g := smufl.FlagGlyph(p.value, up); g != "" {
-		e.lay.Glyphs = append(e.lay.Glyphs, Glyph{Name: g, X: sx, Y: y2})
+		e.lay.Glyphs = append(e.lay.Glyphs, Glyph{
+			Name: g, X: sx, Y: y2, Size: e.glyphSize(),
+		})
 	}
 	e.drawTremolo(p, sx, clear, y2)
 }
@@ -1464,8 +1476,6 @@ func tremoloGlyph(t *model.Tremolo) string {
 
 // drawBeamGroup draws the stems of a beamed run and the beams across them.
 func (e *engraver) drawBeamGroup(g []*placed) {
-	d := e.opt.Defaults
-
 	// One direction serves the whole group, and it was decided in the one
 	// place that decides it — setStemDirections — so that what is drawn
 	// here and what the slurs and dots were placed against cannot come
@@ -1483,11 +1493,11 @@ func (e *engraver) drawBeamGroup(g []*placed) {
 	}
 	ends := make([]end, 0, len(g))
 	for _, p := range g {
-		head := noteheadWidth(p.value)
-		sx := p.x + head - d.StemThickness/2
+		head := e.headW(p.value)
+		sx := p.x + head - e.stemTh()/2
 		base := e.y + stepY(float64(p.hi))
 		if !up {
-			sx = p.x + d.StemThickness/2
+			sx = p.x + e.stemTh()/2
 			base = e.y + stepY(float64(p.lo))
 		}
 		ends = append(ends, end{x: sx, y: e.stemEnd(base, up), p: p})
@@ -1536,8 +1546,8 @@ func (e *engraver) drawBeamGroup(g []*placed) {
 	// them. Without this a pair of half notes a third apart has three
 	// beams drawn through its own noteheads.
 	if tr := pairTremolo(g); tr != nil {
-		stack := float64(tr.Beams()) * (d.BeamThickness + d.BeamSpacing)
-		if room := stack - d.BeamThickness + tremoloPairGap; room > 0 {
+		stack := float64(tr.Beams()) * (e.beamTh() + e.beamGap())
+		if room := stack - e.beamTh() + tremoloPairGap; room > 0 {
 			shift += room
 		}
 	}
@@ -1566,7 +1576,7 @@ func (e *engraver) drawBeamGroup(g []*placed) {
 			base = e.y + stepY(float64(en.p.hi))
 		}
 		e.lay.Lines = append(e.lay.Lines, Line{
-			X1: en.x, Y1: base, X2: en.x, Y2: beamY(en.x), Thickness: d.StemThickness,
+			X1: en.x, Y1: base, X2: en.x, Y2: beamY(en.x), Thickness: e.stemTh(),
 		})
 		// A beamed note can carry a tremolo too, and then the slashes go
 		// between the notehead and the beam rather than on a bare stem.
@@ -1587,7 +1597,7 @@ func (e *engraver) drawBeamGroup(g []*placed) {
 		dir = -1
 	}
 	for level := 1; level <= maxFlags; level++ {
-		offset := float64(level-1) * (d.BeamThickness + d.BeamSpacing) * -dir
+		offset := float64(level-1) * (e.beamTh() + e.beamGap()) * -dir
 		i := 0
 		for i < len(g) {
 			if g[i].flags() < level {
@@ -1609,7 +1619,7 @@ func (e *engraver) drawBeamGroup(g []*placed) {
 					bx1 = ends[i].x + stub
 				}
 			}
-			e.beamQuad(bx0, beamY(bx0)+offset, bx1, beamY(bx1)+offset, d.BeamThickness, dir)
+			e.beamQuad(bx0, beamY(bx0)+offset, bx1, beamY(bx1)+offset, e.beamTh(), dir)
 			i = j + 1
 		}
 	}
@@ -1624,11 +1634,11 @@ func (e *engraver) drawBeamGroup(g []*placed) {
 		}
 		top, bottom := math.Inf(1), math.Inf(-1)
 		for level := maxFlags + 1; level <= maxFlags+tr.Beams(); level++ {
-			offset := float64(level-1) * (d.BeamThickness + d.BeamSpacing) * -dir
+			offset := float64(level-1) * (e.beamTh() + e.beamGap()) * -dir
 			y0, y1 := beamY(x0)+offset, beamY(x1)+offset
-			e.beamQuad(x0, y0, x1, y1, d.BeamThickness, dir)
-			top = math.Min(top, math.Min(y0, y1)+math.Min(0, dir*d.BeamThickness))
-			bottom = math.Max(bottom, math.Max(y0, y1)+math.Max(0, dir*d.BeamThickness))
+			e.beamQuad(x0, y0, x1, y1, e.beamTh(), dir)
+			top = math.Min(top, math.Min(y0, y1)+math.Min(0, dir*e.beamTh()))
+			bottom = math.Max(bottom, math.Max(y0, y1)+math.Max(0, dir*e.beamTh()))
 		}
 		e.markTremolo(g, tr, x0, top, x1-x0, bottom-top)
 	}
@@ -1725,14 +1735,17 @@ const ledgerGap = 0.3
 
 func (e *engraver) ledgerLines(x, headWidth float64, step int) {
 	d := e.opt.Defaults
-	ext := d.LegerLineExtension
+	// A cue's ledger lines are as much smaller as its noteheads are: a
+	// full-size rule under a small head reads as a staff line.
+	ext := d.LegerLineExtension * e.sc()
 	draw := func(s int) {
 		y := e.y + stepY(float64(s))
 		e.ledgers = append(e.ledgers, ledgerRun{
 			line: len(e.lay.Lines), y: y, headL: x, headR: x + headWidth,
 		})
 		e.lay.Lines = append(e.lay.Lines, Line{
-			X1: x - ext, Y1: y, X2: x + headWidth + ext, Y2: y, Thickness: d.LegerLineThickness,
+			X1: x - ext, Y1: y, X2: x + headWidth + ext, Y2: y,
+			Thickness: d.LegerLineThickness * e.sc(),
 		})
 	}
 	for s := 10; s <= step; s += 2 {
@@ -1814,19 +1827,28 @@ func (e *engraver) dotsAt(x, ds float64, dots int) {
 	for i := 0; i < dots; i++ {
 		e.lay.Glyphs = append(e.lay.Glyphs, Glyph{
 			Name: "augmentationDot", X: x, Y: e.y + stepY(ds),
+			Size: e.glyphSize(),
 		})
 		// Past the dot just drawn, then the gap. Advancing by the gap alone
 		// left each dot after the first sitting on top of the one before it,
 		// by the width of a dot less the gap — which a double-dotted note
 		// showed as a single fat blot.
-		x += dotStep(e.opt.Spacings)
+		x += e.drawnDotStep()
 	}
 }
 
 // dotStep is the distance from one dot to the next: the dot itself, then the
 // air after it.
+//
+// The bare one is what the room for a bar is booked from, before anything is
+// drawn and before the size it will be drawn at is known; drawnDotStep is
+// what the drawing walks by, which is smaller in a cue.
 func dotStep(sp Spacings) float64 {
 	return smufl.Advance("augmentationDot") + sp.BetweenDots
+}
+
+func (e *engraver) drawnDotStep() float64 {
+	return e.adv("augmentationDot") + e.opt.Spacings.BetweenDots
 }
 
 // dotGap is how far after a notehead its dots begin.
@@ -1837,7 +1859,7 @@ func dotStep(sp Spacings) float64 {
 func (e *engraver) dotGap(stemUp bool) float64 {
 	gap := e.opt.Spacings.DotToNote
 	if stemUp {
-		gap += e.opt.Defaults.StemThickness + 0.12
+		gap += e.stemTh() + 0.12
 	}
 	return gap
 }

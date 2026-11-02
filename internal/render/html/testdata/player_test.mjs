@@ -29,7 +29,8 @@ const src = readFileSync(process.env.GSCORE_PLAYER, "utf8");
 
 // A page, as the player finds one: a clock we wind by hand, an audio graph
 // that counts what it is asked for, and the few elements it looks up.
-function mount({ notes, duration, recording = false, bars, boxes, bands }) {
+function mount({ notes, duration, recording = false, bars, boxes, bands,
+                 latency = 0 }) {
   const sound = {
     notes,
     bars: bars || [{ i: 0, t: 0, d: 2 }, { i: 1, t: 2, d: 2 }],
@@ -50,6 +51,9 @@ function mount({ notes, duration, recording = false, bars, boxes, bands }) {
                          connect() {}, start() {}, stop() {} });
   class Ctx {
     get currentTime() { return clock; }
+    // How long what has just been written takes to reach the speaker, as a
+    // real device reports it.
+    get outputLatency() { return latency; }
     get state() { return "running"; }
     resume() {}
     createBiquadFilter() { return plain(); }
@@ -307,6 +311,41 @@ test("the cursor and the highlight follow the recording's own clock", () => {
   p.tick();
   assert.ok(p.lit.has("1") && !p.lit.has("2"),
     `lit ${[...p.lit]} after going back to 0.5s`);
+});
+
+test("the highlight shows the note being heard, not the one being written", () => {
+  // Four notes, a second each, and a device a quarter of a second behind the
+  // audio clock — a pair of Bluetooth headphones.
+  const notes = [{ t: 0, d: 1, r: 1 }, { t: 1, d: 1, r: 2 },
+                 { t: 2, d: 1, r: 3 }, { t: 3, d: 1, r: 4 }];
+  const p = mount({ notes, duration: 4, latency: 0.25 });
+  p.press();
+
+  // The audio clock has written 1.08 seconds, which is the second note. A
+  // quarter of a second of that is still in the device, so what the listener
+  // is hearing is the first — and the first is what must be lit.
+  p.wind(1.08);
+  p.tick();
+  assert.ok(p.lit.has("1") && !p.lit.has("2"),
+    `lit ${[...p.lit]} while the second note is still on its way out`);
+
+  // And once it has arrived, the second.
+  p.wind(1.40);
+  p.tick();
+  assert.ok(p.lit.has("2") && !p.lit.has("1"),
+    `lit ${[...p.lit]} once the second note has reached the speaker`);
+
+  // The sound itself has not moved: the latency is the display's business,
+  // and a note made to sound later than it was written would be late.
+  assert.equal(p.starts[0], 0.08, "the first note was still sounded at once");
+
+  // The piece is not cut off before its tail has been heard. A quarter of a
+  // second past the end, the audio clock is at the end and the listener is
+  // still a quarter of a second short of it.
+  p.wind(4.3);
+  p.tick();
+  assert.equal(p.button.innerHTML.includes("Pause"), true,
+    "stopped while the last note was still in the device");
 });
 
 test("every staff sounding at once is lit, not just the first", () => {

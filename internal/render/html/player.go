@@ -168,16 +168,40 @@ const playerJS = `
   // as a playing lasts: startedAt is when score time "from" was heard.
   function at(t) { return startedAt + (t - from); }
 
+  // How far behind the audio clock the sound you can hear is.
+  //
+  // audio.currentTime is where the browser is writing sound, not where the
+  // speaker is playing it. Everything already handed over is still on its way
+  // out through the device's buffers, and over Bluetooth that journey is a
+  // fifth of a second — at this music's tempo, half a note. A cursor driven
+  // by the writing clock is that far ahead of the sound: you watch a notehead
+  // light up and then hear it, and at the end of the piece the highlight
+  // finishes while the last chord is still on its way to the speaker, which
+  // is exactly what it sounds like — notes after the last one.
+  //
+  // outputLatency is the whole journey and the right number. Safari publishes
+  // only baseLatency, which is the first leg of it — better than nothing.
+  function lag() {
+    if (!audio) return 0;
+    var l = audio.outputLatency;
+    if (!(l > 0)) l = audio.baseLatency;
+    if (!(l > 0)) return 0;
+    // A device claiming more than this is either wrong or unlistenable, and
+    // believing it would put the cursor behind the music instead of ahead.
+    return Math.min(l, 0.5);
+  }
+
   // Where the music has got to, in the score's own seconds.
   //
   // The recording's own clock when there is one, and otherwise how far the
-  // audio clock has moved since we started. Either way it is the clock of the
-  // thing making the sound and not the wall's: a cursor driven by a clock
-  // that drifts from what you can hear ends up pointing at the wrong bar,
-  // which is the one thing it must never do.
+  // audio clock has moved since we started, less what is still in the pipe.
+  // Either way it is the clock of the sound that is reaching the listener and
+  // not the wall's, nor the scheduler's: a cursor driven by a clock that
+  // drifts from what you can hear ends up pointing at the wrong bar, which is
+  // the one thing it must never do.
   function clockNow() {
     if (media) return media.currentTime;
-    return from + (audio.currentTime - startedAt);
+    return from + (audio.currentTime - lag() - startedAt);
   }
 
   function wake() {

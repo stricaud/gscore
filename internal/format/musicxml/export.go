@@ -356,7 +356,7 @@ func buildBarline(style model.BarlineStyle) *barline {
 // closes — the bar before the one it opens, and appended after that bar's
 // notes, where a left-hand barline cannot be. And repeat-both was not written
 // at all: a bar where one repeat ends and the next begins exported as the
-// ending alone, so the Badinerie's turn at bar 17 came out as nothing.
+// ending alone, so the Badinerie's turn at bar 16 came out as nothing.
 func openingBarline(style model.BarlineStyle) *barline {
 	switch style {
 	case model.BarRepeatStart, model.BarRepeatBoth:

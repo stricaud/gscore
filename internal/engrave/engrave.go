@@ -3285,7 +3285,7 @@ func (e *engraver) drawBarline(style model.BarlineStyle, x float64) {
 		//
 		// It fell through to a plain thin line, so a bar the music turns at
 		// was drawn like every other bar and there was nothing on the page
-		// to say it turned. The Badinerie goes back at bar 17 and showed a
+		// to say it turned. The Badinerie goes back at bar 16 and showed a
 		// single line there.
 		//
 		// Where the dots go was settled before there was anything to put

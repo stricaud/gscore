@@ -89,7 +89,7 @@ func TestRepeatBarlineLeavesRoom(t *testing.T) {
 // TestRepeatBarlineLeavesRoom above asks whether room was left for the marks.
 // Nothing asked whether anything was put in it, and for one style nothing
 // was: repeat-both reserved its room in barlineRoom and then fell through to
-// a plain thin line in the drawing. The Badinerie turns at bar 17, and the
+// a plain thin line in the drawing. The Badinerie turns at bar 16, and the
 // page drew one line there, like every other bar in the piece.
 func TestEveryRepeatDrawsItsDots(t *testing.T) {
 	for _, c := range []struct {

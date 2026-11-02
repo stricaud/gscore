@@ -124,6 +124,10 @@ test("every menu entry gets an icon box, and the right glyph in it", () => {
   // The entries that are not music carry a drawing of their own instead.
   const drawings = app.match(/^const MENU_DRAWINGS = \{[\s\S]*?^\};$/m);
   assert.ok(drawings, "app.js has no table of drawn icons");
+  // The "take it away" entries all share one picture, which the table
+  // refers to by name, so the name has to come with it.
+  const remove = app.match(/^const REMOVE_MARK = .*?;$/m);
+  assert.ok(remove, "app.js has no REMOVE_MARK");
   const size = app.match(/^const menuIconSize = .*?;$/m);
   assert.ok(size, "app.js has no menuIconSize");
 
@@ -132,6 +136,7 @@ test("every menu entry gets an icon box, and the right glyph in it", () => {
     { dataset: { action: "open" } },
     { dataset: { action: "dyn-ff" } },
     { dataset: { action: "cut" } },
+    { dataset: { action: "no-such-command" } },
   ].map((b) => ({
     ...b,
     kids: [],
@@ -155,12 +160,12 @@ test("every menu entry gets an icon box, and the right glyph in it", () => {
     },
     fitGlyphs() {},
   };
-  const body = [icons[0], drawings[0], grabApp("menuDrawing"),
+  const body = [icons[0], remove[0], drawings[0], grabApp("menuDrawing"),
                 size[0], grabApp("syncMenuIcons")].join("\n") +
     "\nreturn { syncMenuIcons };";
   new Function(...Object.keys(scope), body)(...Object.values(scope)).syncMenuIcons();
 
-  assert.equal(made.length, 4, "not every entry got a box");
+  assert.equal(made.length, 5, "not every entry got a box");
   for (const n of made) assert.equal(n.className, "menu-icon");
 
   // A staccato is a note with the dot under it: the note in the box and
@@ -175,9 +180,16 @@ test("every menu entry gets an icon box, and the right glyph in it", () => {
   assert.equal(buttons[2].kids[0].textContent, "", "ff");
   assert.equal(buttons[2].kids[0].dataset.mark, undefined);
   assert.deepEqual(buttons[2].kids[0].classes, ["is-mark"]);
-  // And an empty box where there is none, so the words still line up.
+  // An entry that writes nothing on the music is drawn rather than set in
+  // the music font: no glyph, and a drawing of our own in the box.
   assert.equal(buttons[1].kids[0].textContent, "",
-               "an entry that writes nothing was given a picture of something");
+               "an entry that writes nothing was given a music glyph");
+  assert.match(buttons[1].kids[0].innerHTML, /<svg/, "open has no drawing");
+
+  // And an empty box where there is neither, so the words still line up.
+  assert.equal(buttons[4].kids[0].textContent, "");
+  assert.equal(buttons[4].kids[0].innerHTML, "",
+               "a command in neither table was given a picture of something");
 });
 
 // Measuring before the music font has arrived.
@@ -314,7 +326,10 @@ test("an entry that is not music gets a drawing of its own", () => {
   const app = readFileSync(new URL("./app.js", import.meta.url), "utf8");
   const drawings = app.match(/^const MENU_DRAWINGS = \{[\s\S]*?^\};$/m);
   assert.ok(drawings, "app.js has no table of drawn icons");
-  const table = new Function("return (" + drawings[0].replace(/^const MENU_DRAWINGS = /, "").replace(/;$/, "") + ")")();
+  const remove = app.match(/^const REMOVE_MARK = .*?;$/m);
+  assert.ok(remove, "app.js has no REMOVE_MARK");
+  const table = new Function(remove[0] + "\nreturn (" +
+    drawings[0].replace(/^const MENU_DRAWINGS = /, "").replace(/;$/, "") + ")")();
 
   for (const name of ["undo", "redo", "cut", "copy", "paste", "delete",
                       "select-all", "select-region"]) {

@@ -9432,6 +9432,40 @@ const MENU_ICONS = {
   "set-time": "\ue08a",            // timeSigCommon
   "group-brace": "\ue000",         // brace
   "group-bracket": "\ue002",       // bracket
+
+  // Writing notes: the same note the entry is about to put down.
+  "note-input": "\ue1d5",          // noteQuarterUp
+
+  // Bars. A plain barline for the one that adds a bar, and the dashed one
+  // for the entry that cuts a bar in two — a dashed line is where a thing
+  // is to be divided, which is what the entry does.
+  "add-measure": "\ue030",         // barlineSingle
+  "split-measure": "\ue036",       // barlineDashed
+  "track-barlines": "\ue030",      // barlineSingle
+
+  // The signs a reader jumps by, and the chord symbols written over them.
+  "insert-marker": "\ue048",       // coda
+  "insert-chord": "\ue873",        // csymMajorSeventh
+  "chord-builder": "\ue856",       // fretboard6String
+
+  // The tempo mark, which is written as a note and a number.
+  "set-tempo": "\ueca5",           // metNoteQuarterUp
+
+  // Staves that are not five lines of pitches, and what is written on them.
+  "tab": "\ue06d",                 // 6stringTabClef
+  // Moving the written pitch of a tab staff is transposing, so it is the
+  // arrow the transpose entry uses and not another tab clef: the entry is
+  // about the move, not about the staff.
+  "tab-transposition": "\ueb61",   // arrowBlackUpRight
+  "fingering": "\ued11",           // fingering1
+  "add-grand-staff": "\ue000",     // brace
+
+  // What a run of empty bars is drawn as, which is what the entry turns on.
+  "view-multirest": "\ue4ee",      // restHBar
+
+  // Looking at the music rather than writing it.
+  "harmonics": "\ue614",           // stringsHarmonic
+  "rhythm": "\ue101",              // noteheadSlashHorizontalEnds
 };
 
 // menuIconSize is the staff height a menu picture is drawn at, in pixels.
@@ -11777,6 +11811,15 @@ const typeBudget = 256;
 //
 // Line drawings, one weight, no fill: at this size a solid shape is a
 // blob, and the music glyphs beside them are strokes too.
+// REMOVE_MARK is the picture every "take it away" entry carries.
+//
+// One picture for all of them rather than twelve. The entries differ in
+// which mark they remove, and the words beside them say which; what they
+// have in common is the only thing a drawing can show. A struck-through
+// staccato and a struck-through tenuto are, at this size, two identical
+// dots behind a stroke.
+const REMOVE_MARK = '<circle cx="12" cy="12" r="8.5"/><path d="M6 18 18 6"/>';
+
 const MENU_DRAWINGS = {
   undo: '<path d="M4.5 11h9.5a5 5 0 0 1 0 10H9"/><path d="M8.5 6.5 4 11l4.5 4.5"/>',
   redo: '<path d="M19.5 11H10a5 5 0 0 0 0 10h4.5"/><path d="M15.5 6.5 20 11l-4.5 4.5"/>',
@@ -11796,6 +11839,227 @@ const MENU_DRAWINGS = {
     '<rect x="2" y="5" width="20" height="14" rx="2" stroke-dasharray="3 2.5"/>',
   "select-region": '<path d="M2 12h20" opacity=".55"/>' +
     '<rect x="7" y="5" width="10" height="14" rx="2" stroke-dasharray="3 2.5"/>',
+
+  /* Files. A page, a folder and a floppy disc: nobody has put a disc in a
+   * machine for twenty years and everybody still reads it as save, which
+   * is the only thing an icon has to do. */
+  "new": '<path d="M13.5 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8.5z"/>' +
+    '<path d="M13.5 3v5.5H19"/>',
+  "open": '<path d="M3 7.5A1.5 1.5 0 0 1 4.5 6h4L11 8.5h8.5A1.5 1.5 0 0 1 21 10v8a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 18z"/>',
+  "save": '<path d="M5 4h11l3.5 3.5V19a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1z"/>' +
+    '<path d="M8 4v5h7V4"/><path d="M7.5 20v-6h9v6"/>',
+  // The same disc with a nib on it: saved, but under a name you choose.
+  "save-as": '<path d="M5 4h9l3 3v4"/><path d="M4 5v14a1 1 0 0 0 1 1h5"/>' +
+    '<path d="M8 4v4h5V4"/><path d="M19.5 12.5 13 19l-3 1 1-3 6.5-6.5a1.8 1.8 0 0 1 2.5 2.5z"/>',
+
+  /* Writing the music out as something else. Four pictures and not nine:
+   * the kinds of thing differ, the formats within a kind do not, and nine
+   * drawings that each claimed to mean a particular file extension would
+   * be nine guesses for a reader to make where the words beside them say
+   * it outright. A page you look at, a page of markup, a keyboard and a
+   * loudspeaker is the whole of the difference that can be drawn. */
+  "save-pdf": '<path d="M13.5 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h4"/>' +
+    '<path d="M13.5 3v5.5H19V12"/><path d="M14 18h7"/><path d="M18 15l3 3-3 3"/>',
+  "save-svg": '<path d="M13.5 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8.5z"/>' +
+    '<path d="M13.5 3v5.5H19"/><path d="M8 17.5c1.6-5 6.4-5 8 0"/>' +
+    '<circle cx="8" cy="17.5" r="1.3"/><circle cx="16" cy="17.5" r="1.3"/>',
+  "save-page": '<rect x="3" y="5" width="18" height="14" rx="2"/>' +
+    '<path d="M3 9h18"/><circle cx="6.3" cy="7" r=".9"/><circle cx="9.1" cy="7" r=".9"/>',
+  "save-musicxml": '<path d="M13.5 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8.5z"/>' +
+    '<path d="M13.5 3v5.5H19"/><path d="M10.5 12.5 8 15l2.5 2.5"/><path d="M14 12.5 16.5 15 14 17.5"/>',
+  "save-mxl": '<rect x="3" y="7" width="18" height="13" rx="2"/><path d="M3 11h18"/>' +
+    '<path d="M10 15 8 17l2 2"/><path d="M14 15l2 2-2 2"/>',
+  "save-abc": '<path d="M13.5 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8.5z"/>' +
+    '<path d="M13.5 3v5.5H19"/><path d="M8.5 13h7M8.5 16h7M8.5 19h4"/>',
+  "save-lilypond": '<path d="M13.5 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8.5z"/>' +
+    '<path d="M13.5 3v5.5H19"/><circle cx="10" cy="17.5" r="2.1"/><path d="M12.1 17.5v-5.5"/>',
+  "save-midi": '<rect x="2.5" y="7" width="19" height="10" rx="1.5"/>' +
+    '<path d="M8.2 7v6M12 7v6M15.8 7v6"/>',
+  "save-audio": '<path d="M4 9.5h3.5L12 5.5v13L7.5 14.5H4z"/>' +
+    '<path d="M16 9.5a4 4 0 0 1 0 5"/><path d="M18.6 7a7.5 7.5 0 0 1 0 10"/>',
+
+  /* Printing, and the page it goes on. */
+  "page-setup": '<rect x="4.5" y="3" width="15" height="18" rx="1.5"/>' +
+    '<rect x="8" y="7" width="8" height="10" stroke-dasharray="2.5 2"/>',
+  "print": '<path d="M7 9V3.5h10V9"/>' +
+    '<path d="M7 17H5a2 2 0 0 1-2-2v-4a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v4a2 2 0 0 1-2 2h-2"/>' +
+    '<rect x="7" y="14" width="10" height="7"/>',
+  "print-preview": '<path d="M6.5 10V3.5h11V10"/>' +
+    '<path d="M6.5 17H5a2 2 0 0 1-2-2v-3.5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2V15a2 2 0 0 1-2 2h-1.5"/>' +
+    '<rect x="6.5" y="14" width="11" height="7"/><circle cx="12" cy="17.5" r="2"/>',
+  "settings": '<path d="M4 7h10M18 7h2M4 17h2M10 17h10"/>' +
+    '<circle cx="16" cy="7" r="2.3"/><circle cx="8" cy="17" r="2.3"/>',
+  // A door with the way out marked, which is what closing a window is.
+  "close": '<path d="M14 4H6a1 1 0 0 0-1 1v14a1 1 0 0 0 1 1h8"/>' +
+    '<path d="M11 12h10"/><path d="M18 9l3 3-3 3"/>',
+
+  /* Taking a mark off again. One picture for all of them, because they are
+   * all the same act: there is no drawing of "no staccato" that is not a
+   * drawing of a staccato with something done to it, and twelve of those
+   * side by side would be twelve near-identical dots. The words say which
+   * mark; this says the entry takes one away. */
+  "artic-none": REMOVE_MARK,
+  "slur-none": REMOVE_MARK,
+  "tie-none": REMOVE_MARK,
+  "dyn-none": REMOVE_MARK,
+  "hairpin-none": REMOVE_MARK,
+  "octave-none": REMOVE_MARK,
+  "tuplet-none": REMOVE_MARK,
+  "tremolo-none": REMOVE_MARK,
+  "repeat-none": REMOVE_MARK,
+  "ending-none": REMOVE_MARK,
+  "group-none": REMOVE_MARK,
+  "fingering-off": REMOVE_MARK,
+
+  /* Stems and beams, which are about how notes are joined rather than
+   * about a mark written on one, so there is no glyph for them: a beam is
+   * drawn between two stems and the font has stems and beams only as part
+   * of whole notes. Two stems and what happens between them. */
+  "stem-auto": '<circle cx="6" cy="16.5" r="2.6"/><path d="M8.6 16.5V5"/>' +
+    '<circle cx="18" cy="7.5" r="2.6"/><path d="M15.4 7.5V19"/>',
+  "beam-join": '<path d="M6 17V6.5M18 17V8.5"/><path d="M5 7.5l14-2v3l-14 2z"/>',
+  "beam-break": '<path d="M6 17V6.5M18 17V8.5"/>' +
+    '<path d="M5 7.5l4-.6v3l-4 .6z"/><path d="M15 6.1l4-.6v3l-4 .6z"/>',
+  "beam-auto": '<path d="M6 17V6.5M18 17V8.5"/>' +
+    '<path d="M5.5 7l13-1.9" stroke-dasharray="3 2.2"/>',
+
+  /* Typing music instead of clicking it, and the line you type into. */
+  "type-music": '<rect x="2.5" y="12.5" width="19" height="8" rx="1.8"/>' +
+    '<path d="M6 15.5h.01M9.5 15.5h.01M13 15.5h.01M16.5 15.5h.01M8 18.5h8"/>' +
+    '<circle cx="8.5" cy="7.5" r="2.2"/><path d="M10.7 7.5V2.5"/>',
+  "console": '<rect x="2.5" y="4.5" width="19" height="15" rx="2"/>' +
+    '<path d="M6.5 9.5 9.5 12l-3 2.5"/><path d="M12 15h5.5"/>',
+  "insert-text": '<path d="M5.5 7V5h13v2"/><path d="M12 5v14"/><path d="M9 19h6"/>',
+
+  /* The bracket over the bars of a repeat, with the time through it covers.
+   * The numbers are drawn rather than set, because at this size a digit
+   * from a font is three pixels of stem and nothing else. */
+  "ending-1": '<path d="M4 11V5.5h16"/><path d="M9.6 14.2 12 12.5V20"/>',
+  "ending-2": '<path d="M4 11V5.5h16"/>' +
+    '<path d="M9.3 14.4a2.5 2.5 0 1 1 4.5 1.7L9.3 20h5"/>',
+  "ending-12": '<path d="M4 11V5.5h16"/><path d="M5 14.2 7 12.5V20"/>' +
+    '<path d="M11.8 14.4a2.5 2.5 0 1 1 4.5 1.7L11.8 20h5"/>',
+  // A tuplet whose number you choose: the bracket, and the number left open.
+  "tuplet-other": '<path d="M4 8.5V13M20 8.5V13"/><path d="M4 8.5h5.5M14.5 8.5H20"/>' +
+    '<circle cx="9" cy="17.5" r="1"/><circle cx="12" cy="17.5" r="1"/>' +
+    '<circle cx="15" cy="17.5" r="1"/>',
+
+  /* Symbols drawn by hand, and the drawer they are kept in. */
+  "symbol-palette": '<rect x="3" y="3.5" width="7.5" height="7.5" rx="1.5"/>' +
+    '<rect x="13.5" y="3.5" width="7.5" height="7.5" rx="1.5"/>' +
+    '<rect x="3" y="13" width="7.5" height="7.5" rx="1.5"/>' +
+    '<rect x="13.5" y="13" width="7.5" height="7.5" rx="1.5"/>',
+  "draw-symbol": '<path d="M19.5 4.5a2.1 2.1 0 0 1 0 3L9 18l-4 1 1-4L16.5 4.5a2.1 2.1 0 0 1 3 0z"/>' +
+    '<path d="M14.5 6.5 17.5 9.5"/>',
+  "import-symbols": '<path d="M4 15v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/>' +
+    '<path d="M12 3.5v11"/><path d="M8 10.5l4 4 4-4"/>',
+  "export-symbols": '<path d="M4 15v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/>' +
+    '<path d="M12 14.5v-11"/><path d="M8 7.5l4-4 4 4"/>',
+
+  /* What belongs to the whole score. */
+  "set-header": '<path d="M4.5 5.5h15M7 9.5h10"/>' +
+    '<path d="M4.5 14.5h15M4.5 18.5h11"/>',
+  // The short bar a piece can begin on, and the first full bar after it.
+  "set-pickup": '<path d="M2.5 5.5v13M9.5 5.5v13M21.5 5.5v13"/>' +
+    '<circle cx="5.3" cy="14.5" r="2"/><path d="M7.3 14.5V8"/>',
+  "score-options": '<path d="M13.5 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8.5z"/>' +
+    '<path d="M13.5 3v5.5H19"/><path d="M7.5 13.5h9M7.5 17.5h9"/>' +
+    '<circle cx="10.5" cy="13.5" r="1.5"/><circle cx="13.5" cy="17.5" r="1.5"/>',
+  "parameters": '<circle cx="12" cy="12" r="3.2"/>' +
+    '<path d="M12 3v2.5M12 18.5V21M3 12h2.5M18.5 12H21M5.6 5.6l1.8 1.8M16.6 16.6l1.8 1.8M18.4 5.6l-1.8 1.8M7.4 16.6l-1.8 1.8"/>',
+
+  /* Staves: the five lines, and what the entry does to them. */
+  "add-staff": '<path d="M3 7h12M3 10h12M3 13h12M3 16h12M3 19h12" opacity=".7"/>' +
+    '<path d="M19 4v7M15.5 7.5h7"/>',
+  "remove-staff": '<path d="M3 7h12M3 10h12M3 13h12M3 16h12M3 19h12" opacity=".7"/>' +
+    '<path d="M15.5 7.5h7"/>',
+  "hide-staff": '<path d="M3 7h12M3 10h12M3 13h12M3 16h12M3 19h12" opacity=".7"/>' +
+    '<path d="M15 4.5 22 20"/>',
+  "show-all-staves": '<path d="M2.5 6h11M2.5 9h11M2.5 12h11M2.5 15h11M2.5 18h11" opacity=".7"/>' +
+    '<path d="M13.5 17c2.2-3.4 6.3-3.4 8.5 0-2.2 3.4-6.3 3.4-8.5 0z"/>' +
+    '<circle cx="17.7" cy="17" r="1.1"/>',
+  "staff-up": '<path d="M3 10h12M3 13h12M3 16h12M3 19h12" opacity=".7"/>' +
+    '<path d="M19 20V5"/><path d="M15.5 8.5 19 5l3.5 3.5"/>',
+  "staff-down": '<path d="M3 5h12M3 8h12M3 11h12M3 14h12" opacity=".7"/>' +
+    '<path d="M19 4v15"/><path d="M15.5 15.5 19 19l3.5-3.5"/>',
+  // The instrument itself: a tube, its keys and the bell on the end.
+  //
+  // Not a clef, which is what this was. A clef is a thing written on a
+  // staff and there are entries about writing one, so a treble clef here
+  // read as "set the clef" or, next to the key signature entry, as the
+  // key — which is the one place beside a key signature a sharp sign
+  // must not be mistaken for.
+  "set-instrument": '<path d="M3.2 10.3h11.3v3.4H3.2a1.7 1.7 0 0 1 0-3.4z"/>' +
+    '<path d="M14.5 8 21.5 4.5v15L14.5 16z"/>' +
+    '<path d="M6.6 10.3V7M9.8 10.3V7M13 10.3V7"/>',
+
+  // Words under the staff, which is where lyrics go.
+  "set-lyrics": '<path d="M3 4.5h18M3 7.5h18M3 10.5h18" opacity=".7"/>' +
+    '<path d="M3.5 16h5M10 16h1.5M13 16h7.5"/><path d="M3.5 20h9"/>',
+
+  /* Looking at the page rather than changing it. */
+  "mode-strip": '<rect x="2" y="8" width="20" height="8" rx="1.5"/>' +
+    '<path d="M7 8v8M12 8v8M17 8v8" opacity=".6"/>',
+  "mode-page": '<rect x="3" y="3.5" width="8" height="17" rx="1.5"/>' +
+    '<rect x="13" y="3.5" width="8" height="17" rx="1.5"/>',
+  "show-all-tunes": '<path d="M4 6.5h16M4 12h16M4 17.5h16"/>' +
+    '<circle cx="2" cy="6.5" r=".9"/><circle cx="2" cy="12" r=".9"/>' +
+    '<circle cx="2" cy="17.5" r=".9"/>',
+  "fullscreen": '<path d="M3.5 9V4.5a1 1 0 0 1 1-1H9"/><path d="M15 3.5h4.5a1 1 0 0 1 1 1V9"/>' +
+    '<path d="M20.5 15v4.5a1 1 0 0 1-1 1H15"/><path d="M9 20.5H4.5a1 1 0 0 1-1-1V15"/>',
+  "zoom-in": '<circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.3 15.3 21 21"/>' +
+    '<path d="M10.5 7.5v6M7.5 10.5h6"/>',
+  "zoom-out": '<circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.3 15.3 21 21"/>' +
+    '<path d="M7.5 10.5h6"/>',
+  "zoom-reset": '<circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.3 15.3 21 21"/>' +
+    '<path d="M8.6 9.3 10.5 8v5.5"/>',
+  // A label, which is what a staff name is.
+  "view-names": '<path d="M3 8.5a2 2 0 0 1 2-2h8l6 5.5-6 5.5H5a2 2 0 0 1-2-2z"/>' +
+    '<circle cx="7" cy="12" r="1.1"/>',
+  "view-numbers": '<rect x="3.5" y="6" width="17" height="12" rx="2"/>' +
+    '<path d="M7.6 10.2 9.2 9v6"/><path d="M12.6 10.6a2 2 0 1 1 3.6 1.4L12.6 15h4"/>',
+  // A tuning fork: concert pitch is the pitch a tuner sounds, not the one
+  // the player reads.
+  "view-concert": '<path d="M8 3.5v7a4 4 0 0 0 8 0v-7"/><path d="M12 14.5V21"/>' +
+    '<path d="M9.5 21h5"/>',
+
+  /* Playing. */
+  "play": '<path d="M7 4.5 19.5 12 7 19.5z"/>',
+  "play-from-start": '<path d="M9.5 4.5 21 12 9.5 19.5z"/><path d="M4.5 4.5v15"/>',
+  "stop": '<rect x="5.5" y="5.5" width="13" height="13" rx="1.5"/>',
+  "playback-sound": '<path d="M3.5 9.5H7L11.5 5.5v13L7 14.5H3.5z"/>' +
+    '<path d="M15.5 9.5a4 4 0 0 1 0 5"/><path d="M18.2 7a7.5 7.5 0 0 1 0 10"/>',
+
+  /* Looking at what the music is made of. */
+  "range": '<path d="M4 5.5h16M4 18.5h16" opacity=".7"/><path d="M12 7.5v9"/>' +
+    '<path d="M9 10.5 12 7.5l3 3"/><path d="M9 13.5 12 16.5l3-3"/>',
+  "keymap": '<rect x="3" y="4.5" width="18" height="15" rx="2"/>' +
+    '<path d="M9 4.5v15M15 4.5v15M3 9.5h18M3 14.5h18" opacity=".7"/>',
+  "scoremap": '<rect x="2.5" y="6" width="19" height="12" rx="1.5"/>' +
+    '<path d="M5 9.5h14M5 12h9M5 14.5h11" opacity=".7"/>' +
+    '<rect x="3.8" y="8.2" width="7" height="7.5" rx="1"/>',
+  // Two lines of music on one staff, which is what a voice is: the stems
+  // tell them apart, so the stems are the picture.
+  "voices": '<circle cx="6.5" cy="8" r="2.4"/><path d="M8.9 8V3"/>' +
+    '<circle cx="16" cy="16" r="2.4"/><path d="M13.6 16v5"/>',
+  "spacing": '<path d="M5 4.5v15M19 4.5v15"/><path d="M8 12h8"/>' +
+    '<path d="M11 9 8 12l3 3"/><path d="M13 9l3 3-3 3"/>',
+  "melody": '<path d="M3.5 17 8 12.5l4 2.5 8.5-8"/>' +
+    '<circle cx="3.5" cy="17" r="1.3"/><circle cx="8" cy="12.5" r="1.3"/>' +
+    '<circle cx="12" cy="15" r="1.3"/><circle cx="20.5" cy="7" r="1.3"/>',
+
+  /* Help. */
+  "shortcuts": '<rect x="2" y="6" width="20" height="12" rx="2"/>' +
+    '<path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M7.5 14h9"/>',
+  "typing-help": '<circle cx="12" cy="12" r="9"/>' +
+    '<path d="M9.4 9.6a2.7 2.7 0 1 1 3.4 3.2V15"/><path d="M12.8 18h.01"/>',
+  "report-bug": '<rect x="8" y="7.5" width="8" height="11" rx="4"/>' +
+    '<path d="M9.5 6 8 4M14.5 6 16 4"/>' +
+    '<path d="M8 10.5H4.5M8 15H4.5M16 10.5h3.5M16 15h3.5"/>',
+  "import-log": '<path d="M4 5.5h10M4 9.5h10M4 13.5h6"/>' +
+    '<path d="M16.3 11.2 21.4 19.6a1 1 0 0 1-.9 1.4h-10a1 1 0 0 1-.9-1.4l5.1-8.4a1 1 0 0 1 1.6 0z"/>' +
+    '<path d="M15.5 15v2.2M15.5 19h.01"/>',
+  "about": '<circle cx="12" cy="12" r="9"/><path d="M12 11v5.5"/><path d="M12 7.8h.01"/>',
 };
 
 // menuDrawing wraps one of those in the square it is drawn in.

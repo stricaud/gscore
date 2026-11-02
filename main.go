@@ -514,6 +514,27 @@ func describeScore(s *model.Score) {
 	dopt.ShowPartNames = len(s.Parts) > 1
 	fmt.Printf("shapes    %d\n", shapeCount(engrave.Engrave(s, dopt)))
 
+	// Which instruments are on it, each named once, in the order they first
+	// appear.
+	//
+	// The instrument and not the part's name, because a list to pick from
+	// wants one entry for a flute: "Flöte", "Flauto 1" and "Flute" are three
+	// names for the thing somebody is looking for, and a shelf that offered
+	// all three would be a shelf nobody could use.
+	var played []string
+	named := map[string]bool{}
+	for _, p := range s.Parts {
+		n := p.Instrument.String()
+		if n == "" || n == "unknown" || named[n] {
+			continue
+		}
+		named[n] = true
+		played = append(played, n)
+	}
+	if len(played) > 0 {
+		fmt.Printf("instruments %s\n", strings.Join(played, ", "))
+	}
+
 	for _, p := range s.Parts {
 		name := p.Name
 		if name == "" && p.ID != "" {

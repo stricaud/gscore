@@ -208,6 +208,9 @@ func convert(doc *scorePartwise, lg *log) (*model.Score, error) {
 
 		// Divisions carry over from measure to measure until restated.
 		divisions := 1
+		// What the last bar was called, for noticing where the file's
+		// own numbering stops simply counting on.
+		counted := 0
 		for _, xm := range xp.Measures {
 			for _, it := range xm.Content {
 				a := it.Attributes
@@ -250,8 +253,15 @@ func convert(doc *scorePartwise, lg *log) (*model.Score, error) {
 			}
 
 			ms := convertMeasure(xm, divisions, staves, lg)
+			// What the file calls this bar, where that is not simply the
+			// one after the last. See numberedFrom.
+			from := numberedFrom(xm, len(parts[0].Measures), &counted)
 			for i, p := range parts {
 				ms[i].RightBarline = convertBarline(barline)
+				if from != nil {
+					n := *from
+					ms[i].NumberFrom = &n
+				}
 				p.Measures = append(p.Measures, ms[i])
 			}
 		}
@@ -270,6 +280,45 @@ func convert(doc *scorePartwise, lg *log) (*model.Score, error) {
 		s.Parts = append(s.Parts, parts...)
 	}
 	return s, nil
+}
+
+// numberedFrom is the number the file gives a bar, where gscore would not
+// arrive at it by counting.
+//
+// The engraver works bar numbers out for itself, and has to: most formats
+// do not carry them, and the rule — bar one is the first full bar, so an
+// upbeat is not counted — is what every edition does. MusicXML is the
+// exception. It says what each bar is called, and says separately, with
+// implicit="yes", when a bar is not to be counted. A file whose first bar
+// is short but not implicit means a short first bar that is still bar
+// one, and the engraver guessing an upbeat there numbered the whole piece
+// one low: the Nocturne's bar 11 came out as 10, all the way to the end.
+//
+// So the file wins wherever it has an opinion. Only where it disagrees
+// with plain counting is anything written down, which keeps the ordinary
+// file — numbered 1, 2, 3 — free of a restart on every bar.
+//
+// A number that is not a number is left alone: "12a" is what a publisher
+// writes for the second half of a split bar, and there is nothing useful
+// to be done with it here.
+func numberedFrom(xm xmlMeasure, at int, counted *int) *int {
+	if xm.Implicit {
+		// The file says this bar is not counted. That is the engraver's
+		// own rule for an upbeat, so there is nothing to override.
+		return nil
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(xm.Number))
+	if err != nil {
+		return nil
+	}
+	was := *counted
+	*counted = n
+	// Counting on from the last bar, which is what the engraver does
+	// anyway once it has been told where to start.
+	if at > 0 && n == was+1 {
+		return nil
+	}
+	return &n
 }
 
 // countBeats reads what stands above the line in a time signature.
@@ -388,9 +437,56 @@ func convertNotes(notes []xmlNote, divisions int, v *model.Voice, lg *log) {
 		}
 	}
 
+	// The tuplets met, in order, so that where a group begins and ends can
+	// be settled once the whole voice has been read.
+	//
+	// A file may say so itself, with <tuplet type="start"> on the first
+	// note and "stop" on the last. It may also say nothing at all and give
+	// only the arithmetic on each note, which is legal and common — so the
+	// ends are inferred from a run of notes sharing the same ratio where
+	// the file has not marked them. Without that a group of eleven comes
+	// out as eleven groups of one, each with its own 11 over it.
+	type tupletRun struct {
+		marks    *model.Marks
+		actual   int
+		normal   int
+		start    bool
+		stop     bool
+		explicit bool
+	}
+	var runs []tupletRun
+	takeTuplet := func(m *model.Marks, xn *xmlNote) {
+		tm := xn.TimeMod
+		if tm == nil || tm.Actual <= 0 || tm.Normal <= 0 || tm.Actual == tm.Normal {
+			return
+		}
+		r := tupletRun{marks: m, actual: tm.Actual, normal: tm.Normal}
+		if xn.Notations != nil {
+			for _, t := range xn.Notations.Tuplets {
+				r.explicit = true
+				switch strings.ToLower(t.Type) {
+				case "start":
+					r.start = true
+					// Written down for the arithmetic and not to be read:
+					// a measured tremolo is six sixteenths in the time of
+					// four, and the strokes through the stem are how that
+					// is written, not a 6.
+					if strings.EqualFold(t.PrintObject, "no") ||
+						strings.EqualFold(t.ShowNumber, "none") {
+						m.Tuplet = &model.Tuplet{Hidden: true}
+					}
+				case "stop":
+					r.stop = true
+				}
+			}
+		}
+		runs = append(runs, r)
+	}
+
 	for i := range notes {
 		xn := &notes[i]
 		dur := model.Duration{Num: xn.Duration, Den: 4 * divisions}.Reduced()
+		dur = tupletDuration(xn, dur)
 
 		if xn.Grace != nil {
 			if xn.Pitch == nil {
@@ -419,6 +515,7 @@ func convertNotes(notes []xmlNote, divisions int, v *model.Voice, lg *log) {
 			flush()
 			r := &model.Rest{Dur: dur}
 			takeGrace(&r.Marks)
+			takeTuplet(&r.Marks, xn)
 			v.Elements = append(v.Elements, r)
 			continue
 		}
@@ -429,6 +526,11 @@ func convertNotes(notes []xmlNote, divisions int, v *model.Voice, lg *log) {
 
 		n := convertNote(xn, dur, lg)
 		takeGrace(&n.Marks)
+		// Only the note that starts a chord: the rest of its notes sound
+		// with it and are not a group of their own.
+		if xn.Chord == nil {
+			takeTuplet(&n.Marks, xn)
+		}
 
 		if xn.Chord != nil {
 			// This note sounds with the one before it.
@@ -462,6 +564,63 @@ func convertNotes(notes []xmlNote, divisions int, v *model.Voice, lg *log) {
 		lg.say("%d grace note(s) at the end of a bar were left out",
 			len(grace.Notes))
 	}
+
+	// And now the tuplets, which could not be settled until the whole
+	// voice was read: a group's end is only known once something that is
+	// not part of it turns up.
+	for i := range runs {
+		r := &runs[i]
+		start, stop := r.start, r.stop
+		if !r.explicit {
+			// The file gave the arithmetic and not the brackets, so the
+			// group is the run of notes sharing the ratio: this one
+			// begins it if what came before was something else, and ends
+			// it if what comes after is.
+			start = i == 0 || runs[i-1].actual != r.actual ||
+				runs[i-1].normal != r.normal || !touching(runs[i-1].marks, r.marks, v)
+			stop = i == len(runs)-1 || runs[i+1].actual != r.actual ||
+				runs[i+1].normal != r.normal || !touching(r.marks, runs[i+1].marks, v)
+		}
+		hidden := r.marks.Tuplet != nil && r.marks.Tuplet.Hidden
+		r.marks.Tuplet = &model.Tuplet{
+			Actual: r.actual, Normal: r.normal,
+			Start: start, Stop: stop, Hidden: hidden,
+		}
+	}
+}
+
+// touching says whether two tupleted elements are next to each other in
+// the voice.
+//
+// Two groups of three in a row, with the same ratio and no bracket in the
+// file to tell them apart, are one group of six to anything that only
+// looks at the numbers. What separates them is a note between them that
+// is not in a tuplet at all — so this asks the voice, which is the only
+// thing that knows the order.
+func touching(a, b *model.Marks, v *model.Voice) bool {
+	at := -1
+	for i, el := range v.Elements {
+		m := marksOfElement(el)
+		if m == a {
+			at = i
+		} else if m == b {
+			return at == i-1
+		}
+	}
+	return false
+}
+
+// marksOfElement is the marks an element carries, where it carries any.
+func marksOfElement(el model.Element) *model.Marks {
+	switch e := el.(type) {
+	case *model.Note:
+		return &e.Marks
+	case *model.Chord:
+		return &e.Marks
+	case *model.Rest:
+		return &e.Marks
+	}
+	return nil
 }
 
 // convertMeasure walks a measure in document order, so that each dynamic
@@ -818,6 +977,39 @@ func firstByte(s string) byte {
 // A grace note carries no <duration>, because it takes no time out of the
 // bar, but it is still written as something — an eighth with one flag, a
 // sixteenth with two — and that is what decides how it looks.
+// tupletDuration is how long a note in a tuplet really sounds.
+//
+// <duration> is in divisions and a tuplet rarely divides them evenly:
+// eleven notes in the time of six eighths of a 6/4 bar come to 130.9
+// divisions each, and the file writes 130 — so the eleven of them are
+// ten divisions short of the time they fill, and scaling that back up by
+// eleven sixths gives 143/1152 of a whole note, which is not a length any
+// notehead spells. The notes then had no flags, so no beam, so the figure
+// over them was given a bracket to hang from.
+//
+// The file says what they are: <type>eighth</type>, and eleven in the
+// time of six. Taken from there the arithmetic is exact and the rounding
+// never happens. Only for tuplets, because everywhere else <duration> is
+// the thing to trust — a file may hold a note longer than its type says
+// on purpose, and that is not this.
+func tupletDuration(xn *xmlNote, dur model.Duration) model.Duration {
+	tm := xn.TimeMod
+	if tm == nil || tm.Actual <= 0 || tm.Normal <= 0 || xn.Type == "" {
+		return dur
+	}
+	if _, ok := typeValues[xn.Type]; !ok {
+		return dur // a type this does not know; the duration is all there is
+	}
+	w := writtenValue(xn.Type)
+	for range xn.Dots {
+		w = model.Duration{Num: w.Num * 3, Den: w.Den * 2}.Reduced()
+	}
+	return model.Duration{
+		Num: w.Num * tm.Normal,
+		Den: w.Den * tm.Actual,
+	}.Reduced()
+}
+
 func writtenValue(kind string) model.Duration {
 	if v, ok := typeValues[kind]; ok {
 		return v.Duration()

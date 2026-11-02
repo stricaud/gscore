@@ -310,6 +310,17 @@ type xmlNote struct {
 	Stem       string        `xml:"stem,omitempty"`
 	Beams      []beamElem    `xml:"beam,omitempty"`
 	Notations  *notationsTag `xml:"notations,omitempty"`
+	// How many of this note are played in the time of how many written
+	// ones: three in the time of two, eleven in the time of six. The
+	// <duration> above is already the sounding length, so this is not
+	// needed to get the timing right — it is needed to know that the
+	// group is a tuplet at all, and so to write the figure over it.
+	TimeMod *timeModElem `xml:"time-modification,omitempty"`
+}
+
+type timeModElem struct {
+	Actual int `xml:"actual-notes"`
+	Normal int `xml:"normal-notes"`
 }
 
 type unpitched struct {
@@ -339,6 +350,24 @@ type notationsTag struct {
 	Slurs         []slurElem     `xml:"slur,omitempty"`
 	Articulations *articulations `xml:"articulations,omitempty"`
 	Fermata       *empty         `xml:"fermata,omitempty"`
+	// Where the figure over a tuplet begins and ends. A file may leave
+	// these out and give only the time-modification, which is why the
+	// ends are inferred where they are missing — see convertNotes.
+	Tuplets []tupletElem `xml:"tuplet,omitempty"`
+}
+
+// tupletElem is the bracket and figure over a tuplet, as against the
+// arithmetic of it, which is time-modification.
+type tupletElem struct {
+	Type string `xml:"type,attr"`
+	// "no" leaves the whole thing off the page: the notes keep their
+	// tuplet time and nothing is written over them. A measured tremolo is
+	// the usual case — six sixteenths in the time of four, written as
+	// strokes through a stem and not as a 6.
+	PrintObject string `xml:"print-object,attr"`
+	// "none" leaves the figure off while keeping the bracket. Anything
+	// else, including nothing at all, means the figure is written.
+	ShowNumber string `xml:"show-number,attr"`
 }
 
 type slurElem struct {

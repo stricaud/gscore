@@ -986,11 +986,21 @@ func beamGroupsOfOne(items []*placed, t model.TimeSignature) [][]*placed {
 	var out [][]*placed
 	var cur []*placed
 
+	// Whether the group being built is inside a tuplet. A tuplet is read
+	// as one thing — the figure over it says so — and the beat does not
+	// break it: twenty-two notes in the time of a 6/4 bar are one beam in
+	// every printed edition, and broken at the beat they came out as two
+	// beams with a bracket slung under both to carry the 22.
+	//
+	// Only within one group: two triplets in a row are two tuplets, each
+	// starting and stopping, so they still break between themselves.
+	inTuplet := false
 	flush := func() {
 		if len(cur) > 1 {
 			out = append(out, cur)
 		}
 		cur = nil
+		inTuplet = false
 	}
 	beatOf := func(d model.Duration) int {
 		if beat.Float() == 0 {
@@ -1027,13 +1037,21 @@ func beamGroupsOfOne(items []*placed, t model.TimeSignature) [][]*placed {
 			flush()
 			continue
 		}
-		if len(cur) > 0 && beatOf(p.start) != beatOf(cur[0].start) {
+		if len(cur) > 0 && beatOf(p.start) != beatOf(cur[0].start) && !inTuplet {
 			// A group opened by hand is not broken by the beat.
 			if m := cur[0].marks(); m == nil || m.Beam != model.BeamStart {
 				flush()
 			}
 		}
 		cur = append(cur, p)
+		if m := p.marks(); m != nil && m.Tuplet != nil {
+			if m.Tuplet.Start {
+				inTuplet = true
+			}
+			if m.Tuplet.Stop {
+				inTuplet = false
+			}
+		}
 	}
 	flush()
 	return out

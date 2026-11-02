@@ -10,7 +10,10 @@
 
 package musicxml
 
-import "encoding/xml"
+import (
+	"encoding/xml"
+	"strings"
+)
 
 // A measure's children have to keep the order they were written in.
 //
@@ -46,8 +49,12 @@ type shift struct {
 
 // xmlMeasure is a measure with its children in document order.
 type xmlMeasure struct {
-	Number  string
-	Content []measureItem
+	Number string
+	// implicit="yes" is how a file says a bar is not counted: a pickup,
+	// or the short bar left by a repeat. Anything else is a bar with a
+	// number of its own, and that number is the file's to decide.
+	Implicit bool
+	Content  []measureItem
 }
 
 // add appends a child.
@@ -108,6 +115,9 @@ func (m *xmlMeasure) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error 
 	for _, a := range start.Attr {
 		if a.Name.Local == "number" {
 			m.Number = a.Value
+		}
+		if a.Name.Local == "implicit" {
+			m.Implicit = strings.EqualFold(a.Value, "yes")
 		}
 	}
 	for {

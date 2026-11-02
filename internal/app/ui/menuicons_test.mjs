@@ -192,3 +192,22 @@ test("every colour class the drawings use has a rule", () => {
       `.${cls} is used in app.js but has no rule in style.css`);
   }
 });
+
+// Every id in the markup is used once.
+//
+// Two elements with the same id is legal enough that nothing complains,
+// and $("#x") then quietly returns whichever came first. A second dialog
+// called "about" was added beside the one that says what Gscore is, and
+// Help ▸ About would have opened the wrong window — no error anywhere,
+// just the wrong thing on the screen.
+test("no id is used twice", () => {
+  const seen = new Map();
+  const twice = [];
+  for (const m of html.matchAll(/\sid="([^"]+)"/g)) {
+    const id = m[1];
+    if (seen.has(id)) twice.push(id);
+    else seen.set(id, true);
+  }
+  assert.deepEqual([...new Set(twice)], [],
+    "ids used more than once in index.html");
+});

@@ -6530,9 +6530,9 @@ function tempoAtBar(bar) {
 }
 
 async function setHeaderDialog() {
-  const dlg = $("#about");
+  const dlg = $("#score-about");
   const i = state.info || {};
-  const field = (id, v) => { $("#about-" + id).value = v || ""; };
+  const field = (id, v) => { $("#score-about-" + id).value = v || ""; };
   field("title", i.title);
   field("subtitle", i.subtitle);
   field("composer", i.composer);
@@ -6551,8 +6551,8 @@ async function setHeaderDialog() {
   // The same rule the server uses, which is the one that counts: this is
   // a preview of what will be stored, so a second opinion here would be
   // a lie half the time.
-  const tags = $("#about-tags");
-  const tagged = $("#about-tagged");
+  const tags = $("#score-about-tags");
+  const tagged = $("#score-about-tagged");
   const preview = () => {
     tagged.innerHTML = "";
     const seen = new Set();
@@ -6575,7 +6575,7 @@ async function setHeaderDialog() {
     };
     dlg.addEventListener("close", done);
     dlg.showModal();
-    $("#about-title").focus();
+    $("#score-about-title").focus();
   });
   if (answer !== "ok") {
     status("Ready");
@@ -6583,11 +6583,11 @@ async function setHeaderDialog() {
   }
 
   const p = new URLSearchParams({
-    title: $("#about-title").value,
-    subtitle: $("#about-subtitle").value,
-    composer: $("#about-composer").value,
-    copyright: $("#about-copyright").value,
-    description: $("#about-description").value,
+    title: $("#score-about-title").value,
+    subtitle: $("#score-about-subtitle").value,
+    composer: $("#score-about-composer").value,
+    copyright: $("#score-about-copyright").value,
+    description: $("#score-about-description").value,
     tags: tags.value,
   });
   const res = await fetch("/api/header?" + p.toString(), { method: "POST" });

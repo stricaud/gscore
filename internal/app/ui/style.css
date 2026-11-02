@@ -2207,9 +2207,39 @@ dialog.wide { max-width: 640px; }
 #find-what, #find-with { flex: 1; }
 
 /* What this score is.
-   The two free-text fields get a line of their own: a description is a
-   sentence and a row of tags is a list, and neither fits in the narrow
-   column the one-line fields share. */
+
+   The one-line fields take the width of the window. They share the
+   .tempo-bar row with the tempo picker, which sets its boxes to six
+   characters because what goes in them is a number — and a title is not
+   a number. Four six-character boxes for a title, a subtitle, a composer
+   and a copyright is a window nobody can read what they typed in.
+
+   The labels are one column and the boxes another, so the four line up
+   rather than each starting wherever its own label happens to end. */
+#score-about-form .tempo-bar > span {
+  flex: 0 0 7em;
+  font-size: 13px;
+}
+#score-about-form .tempo-bar input[type="text"] {
+  flex: 1;
+  width: auto;
+  font: inherit;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: var(--paper);
+  color: #111;
+}
+#score-about-form .tempo-bar input[type="text"]:focus,
+#score-about-form textarea:focus,
+.about-wide input:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+}
+
+/* The two free-text fields get a line of their own: a description is a
+   sentence and a row of tags is a list, and neither fits in the column
+   the one-line fields share. */
 .about-wide {
   display: flex;
   flex-direction: column;
@@ -2218,21 +2248,29 @@ dialog.wide { max-width: 640px; }
 }
 .about-wide > span { font-size: 13px; }
 .about-wide textarea,
-.about-wide input { width: 100%; font: inherit; }
+.about-wide input {
+  width: 100%;
+  font: inherit;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: var(--paper);
+  color: #111;
+}
 .about-wide textarea { resize: vertical; min-height: 3.4em; }
 
 /* The tags as they will be stored, read back from the line as it is
    typed. A comma-separated line is easy to write and easy to get subtly
    wrong — a stray comma, the same word twice — and this says what gscore
    made of it before it is saved. */
-#about-tagged {
+#score-about-tagged {
   display: flex;
   flex-wrap: wrap;
   gap: 4px;
   margin: -6px 0 12px;
   min-height: 1.4em;
 }
-#about-tagged span {
+#score-about-tagged span {
   padding: 2px 8px;
   border-radius: 999px;
   background: var(--accent-soft);

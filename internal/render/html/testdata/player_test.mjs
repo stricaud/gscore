@@ -34,7 +34,7 @@ function mount({ notes, duration, recording = false, bars, boxes, bands }) {
     notes,
     bars: bars || [{ i: 0, t: 0, d: 2 }, { i: 1, t: 2, d: 2 }],
     boxes: boxes ||
-      [{ i: 0, a: 0, b: 10, c: 0, e: 8 }, { i: 1, a: 10, b: 20, c: 0, e: 8 }],
+      [{ i: 0, a: 0, b: 10, c: 0, d: 8 }, { i: 1, a: 10, b: 20, c: 0, d: 8 }],
     duration,
     tempo: 120,
   };
@@ -124,11 +124,14 @@ function mount({ notes, duration, recording = false, bars, boxes, bands }) {
   // so getBoundingClientRect answers with a box that cannot fit, and how
   // often the player reacts to that is the thing under test.
   const scrolls = [];
+  const listeners = {};
   globalThis.window = {
     AudioContext: Ctx,
     innerHeight: 900,
     scrollY: 0,
     scrollTo(opt) { scrolls.push(opt); window.scrollY = opt.top; },
+    addEventListener(ev, fn) { (listeners[ev] = listeners[ev] || []).push(fn); },
+    removeEventListener() {},
   };
   globalThis.document = {
     getElementById(id) {
@@ -390,7 +393,7 @@ test("a system taller than the window is not scrolled at on every frame", () => 
     // Each system holds 10 bars and is as tall as the real thing.
     const system = Math.floor(i / 10);
     boxes.push({ i, a: 140 + (i % 10) * 95, b: 140 + (i % 10) * 95 + 90,
-                 c: 191 + system * 5200, e: 5121 + system * 5200 });
+                 c: 191 + system * 5200, d: 5121 + system * 5200 });
     notes.push({ t: i * 1.36, d: 1, m: 60, v: 80, f: "bowed", r: i + 1 });
   }
   const p = mount({ notes, bars, boxes, duration: 400 * 1.36 });
@@ -411,6 +414,32 @@ test("a system taller than the window is not scrolled at on every frame", () => 
     "scrollIntoView was used on a box that cannot fit the window");
   console.log(`      ${p.scrolls.length} scrolls over ${frames} frames ` +
               `(one a frame would be ${frames})`);
+});
+
+// The playhead has a height, which for a long time it did not.
+//
+// A bar's box is written with its bottom under one key and was read from
+// another, so the bottom came back undefined and the height — bottom less
+// top — came out NaN. An attribute set to NaN draws nothing: there was no
+// visible cursor on any shared page, on any score, and nothing said so.
+test("the playhead is as tall as the system it is in", () => {
+  const p = mount({
+    notes: [{ t: 0, d: 2, m: 60, v: 80, f: "flute", r: 1 }],
+    bars: [{ i: 0, t: 0, d: 2 }],
+    boxes: [{ i: 0, a: 140, b: 900, c: 191, d: 5121 }],
+    duration: 4,
+  });
+  p.press();
+  p.wind(0.5); p.tick();
+
+  const head = p.added.filter((e) => e.cls === "gscore-cursor")[0];
+  assert.ok(head, "no playhead was drawn at all");
+  const h = Number(head.attrs.height);
+  assert.ok(Number.isFinite(h), `the playhead's height is ${head.attrs.height}`);
+  // The system is 191..5121, and the cursor is drawn a little past either end.
+  assert.ok(h > 4900 && h < 5000, `the playhead is ${h} tall, the system 4930`);
+  const y = Number(head.attrs.y);
+  assert.ok(Number.isFinite(y) && y < 191, `the playhead starts at ${head.attrs.y}`);
 });
 
 test("the drawing is walked once, not once a frame", () => {
@@ -453,7 +482,7 @@ function symphonyScore(bands) {
     for (let k = 0; k <= b.last - b.first; k++, bar++) {
       bars.push({ i: bar, t: bar * 1.36, d: 1.36 });
       boxes.push({ i: bar, a: 140, b: 900,
-                   c: b.y0 + 180, e: b.y0 + 4950 });
+                   c: b.y0 + 180, d: b.y0 + 4950 });
       notes.push({ t: bar * 1.36, d: 1, r: bar + 1 });
     }
   }
@@ -493,7 +522,8 @@ test("playing on brings the next pieces and lets go of the ones behind", async (
 
   const here = p.onPage();
   assert.ok(here.includes(intoBand),
-    `playing in piece ${intoBand}, but the page holds ${here}`);
+    `playing in piece ${intoBand}, but the page holds [${here}]; ` +
+    `fetched [${p.fetched}]`);
   assert.ok(!here.includes(0),
     `the first piece is still on the page while playing piece ${intoBand}`);
   assert.ok(here.length <= 5,

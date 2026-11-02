@@ -33,6 +33,13 @@
      it would be printed in, and what the entry actually writes is red. The
      eye finds the entry by the red rather than by reading seven words. */
   --mark: #c0392b;
+  /* A note that is sounding. The same red a shared page lights its heads in,
+     so that a score read here and the same score read in a browser look like
+     the same thing happening. It was the accent blue, which is also the
+     colour of a selection, of the writing cursor and of half the interface:
+     the one mark on the page that means "this is making a sound now" should
+     not be the colour of the furniture. */
+  --sounding: #e8513a;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -48,6 +55,9 @@
     --paper: #f7f6f3;
     /* Lighter on a dark panel, where the printing red goes muddy. */
     --mark: #e8705f;
+    /* The paper stays near white in the dark theme, so a note sounding on it
+       keeps the colour it has on paper. */
+    --sounding: #e8513a;
   }
 }
 
@@ -405,8 +415,39 @@ kbd {
 }
 #canvas svg { display: block; }
 
-/* A note currently sounding is highlighted as the score plays. */
-#canvas text.playing { fill: var(--accent); }
+/* A note currently sounding is highlighted as the score plays, and a ring
+   leaves its head as it speaks.
+
+   The ring is what makes a chord across the staves read as a chord rather
+   than as a column of coloured dots: the colour says which notes are
+   sounding, and the ring says they started together. The same mark the
+   shared page makes, so the editor and a browser show the music the same
+   way. */
+#canvas text.playing { fill: var(--sounding); }
+
+#canvas circle.ping {
+  fill: none;
+  stroke: var(--sounding);
+  stroke-width: 1.1;
+  pointer-events: none;
+  /* Scaled rather than grown by its radius: a geometry property in a
+     stylesheet is newer than some of the browsers this runs in, and a
+     transform is not. */
+  transform-box: fill-box;
+  transform-origin: 50% 50%;
+  animation: gscore-ping 620ms cubic-bezier(.22, .7, .3, 1) forwards;
+}
+
+@keyframes gscore-ping {
+  from { transform: scale(.3);  opacity: .75; }
+  to   { transform: scale(2.6); opacity: 0; }
+}
+
+/* Somebody who would rather the page held still gets the colour and no
+   ring. */
+@media (prefers-reduced-motion: reduce) {
+  #canvas circle.ping { display: none; }
+}
 
 #empty-hint {
   color: var(--muted);

@@ -9479,9 +9479,19 @@ function follow(pb) {
         if (sounding.has(ref)) continue;
         for (const n of byRef(ref)) n.classList.remove("playing");
       }
+      // What has just come in is what gets a ring: a note held across thirty
+      // frames was struck once, and should say so once.
+      let struck = 0;
       for (const ref of sounding) {
         if (current.has(ref)) continue;
-        for (const n of byRef(ref)) n.classList.add("playing");
+        for (const n of byRef(ref)) {
+          n.classList.add("playing");
+          // A tutti chord is fifty-four rings in one instant, which is a lot
+          // of drawing for something nobody can pick out anyway. Past a
+          // certain number the colour says it on its own.
+          if (struck < 24) ringAt(n);
+        }
+        struck++;
       }
       current = sounding;
       if (lead) updateFingering(lead);
@@ -9610,6 +9620,42 @@ function visibleTune() {
   return best;
 }
 
+// ringAt leaves a ring at a notehead as it speaks.
+//
+// The colour says which notes are sounding; the ring says they started
+// together, which on a score of many staves is the thing the eye cannot get
+// from colour alone — fifty-four red heads look the same whether they were
+// struck as a chord or arrived one at a time.
+//
+// Drawn and thrown away: it is a moment, not a state. Nothing reads it back,
+// so it is put straight into the drawing and taken out when the animation
+// says it is over — or shortly after, for a browser that never ran it and so
+// never says so.
+function ringAt(el) {
+  const svg = currentSVG();
+  if (!svg) return;
+  let box;
+  // getBBox throws on anything not being rendered, and the drawing is
+  // replaced underneath playback as it moves along.
+  try {
+    box = el.getBBox();
+  } catch {
+    return;
+  }
+  if (!box || !box.height) return;
+
+  const c = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+  c.setAttribute("class", "ping");
+  c.setAttribute("cx", box.x + box.width / 2);
+  c.setAttribute("cy", box.y + box.height / 2);
+  c.setAttribute("r", Math.max(2.2, box.height * 0.45));
+  svg.appendChild(c);
+
+  const gone = () => c.remove();
+  c.addEventListener("animationend", gone);
+  setTimeout(gone, 1200);
+}
+
 // followCursor keeps the music ahead of the cursor on screen.
 //
 // The view is locked to the cursor and moves with it, every frame, the way a
@@ -9722,8 +9768,10 @@ function silence() {
   }
   voices = [];
   const svg = currentSVG();
-  // Clear every notehead that was lit, on every staff.
+  // Clear every notehead that was lit, on every staff, and any ring still
+  // on its way out — stopping should leave the page still, not fading.
   svg?.querySelectorAll(".playing").forEach((n) => n.classList.remove("playing"));
+  svg?.querySelectorAll("circle.ping").forEach((n) => n.remove());
   current = new Set();
   state.playing = false;
   // The harmonics panel goes back to following what is picked up: with

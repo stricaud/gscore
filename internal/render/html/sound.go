@@ -67,7 +67,14 @@ type Box struct {
 	A float64 `json:"a"` // left
 	B float64 `json:"b"` // right
 	C float64 `json:"c"` // top
-	D float64 `json:"e"` // bottom
+	// Named for its field, like the other three. It said "e" — a slip of one
+	// key along the row — and the player reads a bar's bottom as "d", so
+	// every bar in every shared page ever written said its bottom was
+	// nothing at all. The cursor's height is the bottom less the top, so the
+	// cursor was NaN tall: there has never been a visible playback cursor on
+	// a shared page, on any score. The page and the player are written and
+	// served together, so the two agreeing is the whole of the fix.
+	D float64 `json:"d"` // bottom
 }
 
 // Sound is everything the page plays and follows.

@@ -11,9 +11,7 @@
 package engrave
 
 import (
-	"fmt"
 	"math"
-	"os"
 	"sort"
 	"strings"
 
@@ -282,10 +280,6 @@ func (e *engraver) resumeSpansOf(open *openSpans, left float64) {
 	if open.slur != nil && open.slur.x < 0 {
 		open.slur.x = left
 		open.slur.y = e.y + open.slur.rel
-		if os.Getenv("GSCORE_DBG") != "" {
-			fmt.Fprintf(os.Stderr, "RESUME slur ref=%d part=%d left=%.1f e.y=%.1f rel=%.1f -> y=%.1f\n",
-				open.slur.ref, open.slur.part, left, e.y, open.slur.rel, open.slur.y)
-		}
 	}
 	for _, t := range open.ties {
 		if t.x < 0 {
@@ -651,9 +645,24 @@ func (e *engraver) slurAt(part *model.Part, m *model.Marks, p *placed, measure i
 
 	if m.SlurStop && open.slur != nil {
 		sl := open.slur
-		// Away from the stems of the notes it covers — and above wherever
-		// they point both ways, there being no side away from them then.
-		sl.above = sl.down > 0 || sl.up == 0
+		// A slur that came over a line break has no note at its left end.
+		//
+		// That end is the margin this system started at, put there by
+		// resumeSpans at the height the curve left the system above, and the
+		// note the phrase began on is on another system — on another page as
+		// often as not. Everything below works the left end out from that
+		// note's own pitch, stem and staff, which on this system is a place
+		// hundreds of spaces away: the curve came out as a straight line
+		// drawn diagonally across the page, from where the phrase began to
+		// where it ends. The piece already drawn above also settled which
+		// side the curve arcs on, so that is left alone too — the two halves
+		// of one slur cannot arch opposite ways.
+		carried := len(sl.stubs) > 0
+		if !carried {
+			// Away from the stems of the notes it covers — and above wherever
+			// they point both ways, there being no side away from them then.
+			sl.above = sl.down > 0 || sl.up == 0
+		}
 		// Each end on its own note. What lies between them is lifted over
 		// by the arch, not by dragging the ends out to meet it.
 		edge, toEdge := sl.fromHi, p.hi
@@ -688,7 +697,9 @@ func (e *engraver) slurAt(part *model.Part, m *model.Marks, p *placed, measure i
 		// column, and outside the marks on the note itself.
 		fromY = e.slurEndColumn(sl.x, fromY, sl.fromStemY, sl.above, fromOnStem)
 		toBase = e.slurEndColumn(x, toBase, toStemY, sl.above, toOnStem)
-		sl.y = e.slurEndClear(sl.x, fromY, sl.above)
+		if !carried {
+			sl.y = e.slurEndClear(sl.x, fromY, sl.above)
+		}
 		sl.toRef = p.index
 		toY := e.slurEndClear(x, toBase, sl.above)
 		e.drawTieOrSlur(sl, x, toY, slurLift, true, true)
@@ -865,10 +876,6 @@ func (e *engraver) drawTieOrSlur(from *openSpan, toX, toY, lift float64, slur, c
 		y1, y2, cy = e.fitSlur(from.x, toX, y1, y2, dir)
 	}
 
-	if os.Getenv("GSCORE_DBG") != "" {
-		fmt.Fprintf(os.Stderr, "CURVE slur=%v complete=%v part=%d from(%.1f,%.1f) to(%.1f,%.1f) staffTop=%.1f rel=%.1f ref=%d measure=%d\n",
-			slur, complete, from.part, from.x, y1, toX, y2, e.y, from.rel, from.ref, from.measure)
-	}
 	e.lay.Curves = append(e.lay.Curves, Curve{
 		X1: from.x, Y1: y1,
 		CX: (from.x + toX) / 2, CY: cy,
@@ -1022,13 +1029,8 @@ func (e *engraver) fitSlur(x0, x1, y1, y2, dir float64) (float64, float64, float
 	}
 	// The shoulders first, because the arch is fitted to the ends and has
 	// to be fitted to where they finally are.
-	in1 := y1
 	y1 = e.slurShoulder(x0+slurOwnColumn, x0+(x1-x0)*slurShoulderIn, y1, dir)
 	y2 = e.slurShoulder(x1-(x1-x0)*slurShoulderIn, x1-slurOwnColumn, y2, dir)
-	if os.Getenv("GSCORE_DBG") != "" && x1-x0 > 30 {
-		fmt.Fprintf(os.Stderr, "FIT x0=%.1f x1=%.1f y1 %.1f -> %.1f  inkReach=%.1f\n",
-			x0, x1, in1, y1, e.staffInkline().reach(x0+slurOwnColumn, x0+(x1-x0)*slurShoulderIn, dir > 0))
-	}
 	cy := (y1+y2)/2 + dir*e.slurArchFor(x1-x0)*2
 	// Twice: lifting the ends changes what the arch has to be, and the
 	// new arch is what says whether the ends are high enough yet.

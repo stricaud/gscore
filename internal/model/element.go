@@ -434,6 +434,21 @@ type Marks struct {
 	// bar of four quarters. Putting them in the voice would make every bar
 	// that has one overflow.
 	Grace *GraceGroup
+
+	// Small draws the element at cue size: a note that is printed but is
+	// not yours to play.
+	//
+	// What it is for is the cue in a part — a few bars of somebody else's
+	// line, printed small during a long rest so you can hear your entry
+	// coming. It says nothing about the music: a cue sounds nothing, lasts
+	// nothing a player counts, and is there to be read and not played,
+	// which is the whole of what the smaller size means on a page.
+	//
+	// A mark rather than a kind of note, because that is what it is — the
+	// same note, written smaller. It is set on the copy of the score a part
+	// is drawn from and never on the score itself, where somebody else's
+	// line already stands on its own staff at full size.
+	Small bool
 }
 
 // GraceGroup is the small notes played before the note they belong to.

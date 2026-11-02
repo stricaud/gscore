@@ -448,6 +448,19 @@ func writeBands(page string, lay *engrave.Layout, ropt svg.Options,
 	return list, nil
 }
 
+// shapeCount is how many separate things the engraver drew.
+//
+// Every one of them becomes an element in a page's drawing and a thing the
+// browser has to lay out and repaint, so this is the number that says whether
+// a page can hold the score or has to be given it a piece at a time.
+func shapeCount(lay *engrave.Layout) int {
+	if lay == nil {
+		return 0
+	}
+	return len(lay.Glyphs) + len(lay.Lines) + len(lay.Texts) +
+		len(lay.Curves) + len(lay.Circles) + len(lay.Quads)
+}
+
 func describeScore(s *model.Score) {
 	if s.Identity.Title != "" {
 		fmt.Printf("title     %s\n", s.Identity.Title)
@@ -472,6 +485,23 @@ func describeScore(s *model.Score) {
 		fmt.Printf("tags      %s\n", strings.Join(s.Tags, ", "))
 	}
 	fmt.Printf("tempo     %d x %v per minute\n", s.Tempo.BPM, s.Tempo.Unit)
+
+	// How much drawing the score comes to.
+	//
+	// It is the thing that decides whether a page can carry the music or has
+	// to fetch it in pieces, and it is not something to guess at. Staves
+	// times bars is the obvious guess and on the ninth symphony it is wrong
+	// by a factor of seven: fifty-three staves, and most of them resting
+	// most of the time. A bar's rest is one shape; a beamed chord with
+	// accidentals and a slur over it is a dozen.
+	//
+	// This is the one line here that is not read straight out of the file.
+	// Counting what the engraver drew means engraving it, which on a
+	// symphony is a few seconds where everything else about it is instant.
+	// It is worth it to whoever is deciding what to do with the file, and
+	// nothing else in the line is any use for deciding that.
+	fmt.Printf("shapes    %d\n", shapeCount(engrave.Engrave(s, engrave.DefaultOptions())))
+
 	for _, p := range s.Parts {
 		name := p.Name
 		if name == "" && p.ID != "" {

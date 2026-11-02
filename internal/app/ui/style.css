@@ -588,7 +588,6 @@ dialog button {
 .timesig-art svg { display: block; height: 52px; width: auto; max-width: 100%; }
 .timesig-option span { color: var(--muted); }
 
-#canvas text.playing { fill: var(--accent); }
 #canvas rect.cursor {
   fill: var(--accent);
   opacity: .45;

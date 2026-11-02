@@ -1062,6 +1062,7 @@ function forgetTiles() {
   tileEls = new Map();
   tileText = new Map();
   tileHome = null;
+  drawnAgain();
 }
 
 // fetchTile asks for one piece, once. The answer is kept, so asking for it
@@ -1091,6 +1092,27 @@ async function showTile(plan, size, i) {
   g.innerHTML = text;
   tileHome.appendChild(g);
   tileEls.set(i, g);
+  drawnAgain();
+}
+
+/*
+ * When the drawing last changed under whatever is reading it.
+ *
+ * A long score is not one picture: it is drawn a piece at a time into one
+ * SVG, and the pieces come and go as the view moves. Anything that files
+ * the shapes away — the index that finds a notehead by its number, so that
+ * the note being played can be lit — has to know that the shapes it filed
+ * are not the shapes on the page any more.
+ *
+ * It was watching the SVG element instead, which never changes: the pieces
+ * are added inside it. So on a score long enough to be tiled, the index was
+ * built once and never again, and every note drawn after that moment lit
+ * nothing. On Beethoven's ninth that is everything past the first screenful.
+ */
+let drawGen = 0;
+
+function drawnAgain() {
+  drawGen++;
 }
 
 // ensureTiles draws what the view needs, drops what it has left well behind,
@@ -1118,6 +1140,7 @@ async function ensureTiles() {
     if (g) g.remove();
     tileEls.delete(i);
     tileText.delete(i);
+    drawnAgain();
   }
 
   // And the next one along each way, fetched but not drawn, so that
@@ -9389,26 +9412,85 @@ function soundingAt(when, at) {
 // Built the first time it is asked for, because a score that is never played
 // should not pay for it.
 function refIndex() {
-  let map = null;
-  let made = null;
+  // The shapes of each piece of the drawing, so that a piece arriving or
+  // leaving costs only itself.
+  //
+  // Not a rebuild of the whole index: on a score long enough to be drawn in
+  // pieces, the whole index is every shape on several screenfuls of
+  // fifty-three staves, and rebuilding it each time a piece arrived — which
+  // while the music plays is every few seconds — would cost more than the
+  // search it was there to avoid.
+  const map = new Map();      // ref -> the shapes carrying it
+  const perTile = new Map();  // a piece of the drawing -> the refs in it
+  let gen = -1;
+  let host = null;
   const none = [];
-  return (ref) => {
-    const svg = currentSVG();
-    if (!svg) return none;
-    // Made again when the drawing is: a long score is drawn a screenful at
-    // a time and the whole of it is replaced as the music moves along.
-    if (!map || made !== svg) {
-      map = new Map();
-      made = svg;
-      for (const n of svg.querySelectorAll("[data-ref]")) {
-        const k = n.getAttribute("data-ref");
-        const got = map.get(k);
-        if (got) got.push(n);
-        else map.set(k, [n]);
-      }
+
+  const take = (el) => {
+    const refs = [];
+    for (const n of el.querySelectorAll("[data-ref]")) {
+      const k = n.getAttribute("data-ref");
+      const got = map.get(k);
+      if (got) got.push(n);
+      else map.set(k, [n]);
+      refs.push(k);
     }
+    perTile.set(el, refs);
+  };
+
+  const drop = (el) => {
+    for (const k of perTile.get(el) || []) {
+      const got = map.get(k);
+      if (!got) continue;
+      // Whatever is still on the page. A shape in a piece that has been
+      // taken away is no longer connected to it, which is the cheapest
+      // true test there is and needs no bookkeeping of its own.
+      const left = got.filter((n) => n.isConnected);
+      if (left.length) map.set(k, left);
+      else map.delete(k);
+    }
+    perTile.delete(el);
+  };
+
+  const sync = () => {
+    const svg = currentSVG();
+    if (!svg) return false;
+    if (host !== svg) {
+      // A different drawing altogether — another tune, or the score drawn
+      // again from scratch. Nothing filed about the old one is any use.
+      map.clear();
+      perTile.clear();
+      host = svg;
+    }
+    if (gen === drawGen && perTile.size > 0) return true;
+    gen = drawGen;
+
+    // The pieces on the page now. A score short enough to be drawn whole
+    // has none, and is one piece: itself.
+    const now = new Set();
+    for (const g of tileEls.values()) {
+      if (g) now.add(g);
+    }
+    if (now.size === 0) now.add(svg);
+
+    for (const el of [...perTile.keys()]) {
+      if (!now.has(el) || !el.isConnected) drop(el);
+    }
+    for (const el of now) {
+      if (!perTile.has(el)) take(el);
+    }
+    return true;
+  };
+
+  const index = (ref) => {
+    if (!sync()) return none;
     return map.get(String(ref)) || none;
   };
+  // Whether the drawing has changed since this index last looked, so that
+  // whoever is using it can put back anything it had marked on the shapes
+  // that have gone.
+  index.stale = () => gen !== drawGen;
+  return index;
 }
 
 // follow moves the cursor and lights up whichever notehead is sounding. The
@@ -9474,7 +9556,15 @@ function follow(pb) {
         if (lead === null || ev.part === fingering.staff) lead = ev;
       }
     }
-    if (!sameSet(sounding, current)) {
+    // A piece of the score drawn since the last frame is new paper and
+    // carries no marks. What is sounding may not have changed, so nothing
+    // below would touch it, and the note being played would go dark and
+    // stay dark for as long as it rang — which on a score long enough to be
+    // drawn in pieces is from the first scroll onwards.
+    const redrawn = byRef.stale();
+    if (redrawn) current = new Set();
+
+    if (redrawn || !sameSet(sounding, current)) {
       for (const ref of current) {
         if (sounding.has(ref)) continue;
         for (const n of byRef(ref)) n.classList.remove("playing");
@@ -9489,7 +9579,11 @@ function follow(pb) {
           // A tutti chord is fifty-four rings in one instant, which is a lot
           // of drawing for something nobody can pick out anyway. Past a
           // certain number the colour says it on its own.
-          if (struck < 24) ringAt(n);
+          //
+          // And nothing rings for paper that has only just been drawn: the
+          // notes on it were struck a while ago and are merely still
+          // sounding, so a ring there would be a second strike.
+          if (!redrawn && struck < 24) ringAt(n);
         }
         struck++;
       }
@@ -9634,21 +9728,28 @@ function visibleTune() {
 function ringAt(el) {
   const svg = currentSVG();
   if (!svg) return;
-  let box;
-  // getBBox throws on anything not being rendered, and the drawing is
-  // replaced underneath playback as it moves along.
-  try {
-    box = el.getBBox();
-  } catch {
-    return;
-  }
-  if (!box || !box.height) return;
+
+  // Where the notehead is, read off the shape rather than measured.
+  //
+  // getBBox is a measurement, and a measurement forces the browser to work
+  // out the layout of the whole drawing before it can answer. On a
+  // screenful of Beethoven's ninth that is twenty thousand shapes, and a
+  // tutti chord asks for it two dozen times in one frame — which is the
+  // playback going from smooth to stepping. A notehead is a glyph set at a
+  // place, and the place is written on it.
+  const x = Number(el.getAttribute("x"));
+  const y = Number(el.getAttribute("y"));
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return;
+
+  // A notehead is about one staff space tall and a little wider, and the
+  // staff space is what the drawing is scaled by.
+  const space = state.zoom || 8;
 
   const c = document.createElementNS("http://www.w3.org/2000/svg", "circle");
   c.setAttribute("class", "ping");
-  c.setAttribute("cx", box.x + box.width / 2);
-  c.setAttribute("cy", box.y + box.height / 2);
-  c.setAttribute("r", Math.max(2.2, box.height * 0.45));
+  c.setAttribute("cx", x + space * 0.58);
+  c.setAttribute("cy", y - space * 0.1);
+  c.setAttribute("r", Math.max(2.2, space * 0.5));
   svg.appendChild(c);
 
   const gone = () => c.remove();

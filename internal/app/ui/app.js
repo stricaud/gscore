@@ -1054,6 +1054,18 @@ async function loadSize() {
 // only the drawing of it.
 let tileEls = new Map();
 let tileText = new Map();
+// Pieces already turned into shapes and waiting to be put on the page.
+//
+// Turning a piece of a long score into shapes is the expensive half of
+// drawing it: a screenful of Beethoven's ninth is some hundred and eighty
+// thousand characters of markup and a few thousand shapes, and the browser
+// does that work on the one thread that also moves the music. Done at the moment the piece is
+// wanted, it lands in the middle of playing and the scrolling stops dead
+// for as long as it takes.
+//
+// So it is done early, while nothing else is happening, and what is left
+// for the moment the piece is wanted is putting it on the page.
+let tileReady = new Map();
 let tileHome = null;
 
 // forgetTiles throws the drawing away, which is what a new score, a new
@@ -1061,6 +1073,7 @@ let tileHome = null;
 function forgetTiles() {
   tileEls = new Map();
   tileText = new Map();
+  tileReady = new Map();
   tileHome = null;
   drawnAgain();
 }
@@ -1078,18 +1091,50 @@ function fetchTile(plan, size, i) {
   return p;
 }
 
+// buildTile turns one piece of markup into shapes, off the page.
+//
+// Off the page on purpose: a subtree built on its own costs nothing to make
+// beyond the making, where the same markup parsed into the drawing makes
+// the browser lay the whole thing out again as it goes.
+function buildTile(text, i) {
+  const g = document.createElementNS("http://www.w3.org/2000/svg", "g");
+  g.setAttribute("data-tile", String(i));
+  g.innerHTML = text;
+  return g;
+}
+
+// prepareTile turns a piece into shapes before anybody needs it.
+async function prepareTile(plan, size, i) {
+  if (tileReady.has(i) || tileEls.has(i)) return;
+  const text = await fetchTile(plan, size, i);
+  if (!text) return;
+  // Asked for in earnest while we waited, or thrown away.
+  if (tileReady.has(i) || tileEls.has(i) || !tileHome) return;
+  tileReady.set(i, buildTile(text, i));
+}
+
 // showTile puts one piece on the page.
 async function showTile(plan, size, i) {
   if (tileEls.has(i)) return;
+
+  // Already turned into shapes while nothing was happening, which is the
+  // whole point: what is left to do now is one append.
+  const ready = tileReady.get(i);
+  if (ready) {
+    tileReady.delete(i);
+    tileEls.set(i, ready);
+    tileHome.appendChild(ready);
+    drawnAgain();
+    return;
+  }
+
   // Claimed before it is awaited, so two passes over the same piece do not
   // both draw it.
   tileEls.set(i, null);
   const text = await fetchTile(plan, size, i);
   if (!tileHome || !tileHome.isConnected) return; // the drawing has gone
   if (tileEls.get(i) !== null) return;            // forgotten while we waited
-  const g = document.createElementNS("http://www.w3.org/2000/svg", "g");
-  g.setAttribute("data-tile", String(i));
-  g.innerHTML = text;
+  const g = buildTile(text, i);
   tileHome.appendChild(g);
   tileEls.set(i, g);
   drawnAgain();
@@ -1143,14 +1188,38 @@ async function ensureTiles() {
     drawnAgain();
   }
 
-  // And the next one along each way, fetched but not drawn, so that
-  // reaching it is only the drawing of it.
+  // Pieces turned into shapes and then left far behind are shapes nobody
+  // is going to look at.
+  for (const i of [...tileReady.keys()]) {
+    if (keep && i >= keep.lo && i <= keep.hi) continue;
+    tileReady.delete(i);
+  }
+
+  // And the next one along each way, turned into shapes but not put on the
+  // page, so that reaching it is one append and not a megabyte of parsing
+  // in the middle of the music.
+  //
+  // When there is a moment, not now: this is called from the scrolling, and
+  // doing it here would be the very stall it is there to prevent.
   for (const i of [want.lo - 1, want.hi + 1]) {
-    if (i < 0 || tileText.has(i)) continue;
+    if (i < 0 || tileReady.has(i) || tileEls.has(i)) continue;
     const end = plan.downTheLength ? size.height : size.width;
     if (i * plan.span >= end) continue;
-    void fetchTile(plan, size, i);
+    whenIdle(() => void prepareTile(plan, size, i));
   }
+}
+
+// whenIdle runs something in a gap between frames.
+//
+// A fallback for where there are no idle callbacks: a timeout is not the
+// same promise — it will run whether there is a gap or not — but it does at
+// least leave the frame it was asked in, which is most of the benefit.
+function whenIdle(fn) {
+  if (typeof requestIdleCallback === "function") {
+    requestIdleCallback(fn, { timeout: 2000 });
+    return;
+  }
+  setTimeout(fn, 0);
 }
 
 /* ---------- the end of a staff ---------- */
@@ -1199,9 +1268,15 @@ function drawSprints() {
   // music. Scrolling back to the beginning brings them back.
   const atStart = wrap && wrap.scrollLeft <= 16;
   if (!wrap || !svg || !far || !atStart || state.mode !== "strip" || state.readOnly) {
-    box.hidden = true;
-    box.textContent = "";
-    sprintKey = "";
+    // Only where it is not already away. This runs on every frame of every
+    // scroll, and writing to the page to say what it already says is still
+    // writing to the page — which while the music plays is sixty needless
+    // touches a second.
+    if (!box.hidden) {
+      box.hidden = true;
+      box.textContent = "";
+      sprintKey = "";
+    }
     return;
   }
   box.hidden = false;
@@ -1294,16 +1369,39 @@ function setupVirtualDraw() {
   const wrap = $("#canvas-wrap");
   if (!wrap) return;
   let frame = 0;
+  let ran = 0;
   const check = () => {
     frame = 0;
+    ran = performance.now();
     // The buttons are pinned to the panel and their staves are not, so they
     // move whenever the view does.
     drawSprints();
     if (!state.tiles) return; // the whole score is in the page
     void ensureTiles();
   };
+  // A few times a second, not sixty.
+  //
+  // While the music plays the view is moved every frame, so this is asked
+  // every frame — and what it does is work out which pieces of a long score
+  // are wanted, which changes a handful of times a minute. The pieces are
+  // turned into shapes two screenfuls ahead, so there is a great deal of
+  // margin to spend on not asking.
+  //
+  // Looking rather than scrolling is the same question asked at the same
+  // rate, and an eighth of a second is still quicker than a page turn.
+  const askEvery = 125;
   const ask = () => {
-    if (!frame) frame = requestAnimationFrame(check);
+    if (frame) return;
+    const since = performance.now() - ran;
+    if (since >= askEvery) {
+      frame = requestAnimationFrame(check);
+      return;
+    }
+    frame = -1;
+    setTimeout(() => {
+      frame = 0;
+      ask();
+    }, askEvery - since);
   };
   wrap.addEventListener("scroll", ask, { passive: true });
   window.addEventListener("resize", ask);

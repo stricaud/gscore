@@ -279,3 +279,54 @@ test("the note being played is red, and only one rule says so", () => {
       `--sounding is #${m[1]}, which is not a red`);
   }
 });
+
+/*
+ * What the scrolling costs while the music plays.
+ *
+ * Following the music moves the view every frame, and moving the view is a
+ * scroll, so everything hung off scrolling runs sixty times a second for as
+ * long as the piece lasts. On a score small enough to be drawn whole that
+ * is nothing. On one drawn in pieces it is the work of deciding which
+ * pieces are wanted — a question whose answer changes a handful of times a
+ * minute — asked three and a half thousand times a minute.
+ */
+
+test("a piece of the score is turned into shapes before it is wanted", () => {
+  const prep = grab("prepareTile");
+  assert.match(prep, /buildTile\(/,
+    "nothing turns a piece into shapes ahead of time");
+  assert.match(prep, /await fetchTile/);
+
+  const show = grab("showTile");
+  assert.match(show, /tileReady\.get\(i\)/,
+    "putting a piece on the page does not use the one already made");
+  // And when it does, that is all it does: the expensive half is behind it.
+  const quick = show.slice(show.indexOf("tileReady.get(i)"));
+  assert.ok(!/innerHTML/.test(quick.slice(0, quick.indexOf("Claimed"))),
+    "a piece that was made ahead is parsed again on the way in");
+
+  // The making is asked for in a gap between frames, not in the scroll
+  // that noticed it was needed.
+  assert.match(grab("ensureTiles"), /whenIdle\(\(\) => void prepareTile/,
+    "a piece is made in the middle of the scrolling that asked for it, " +
+    "which is the stall it was meant to prevent");
+});
+
+test("the scroll does not ask what it needs on every frame", () => {
+  const fn = grab("setupVirtualDraw");
+  assert.match(fn, /askEvery/,
+    "every frame of every scroll works out which pieces are wanted, and " +
+    "while the music plays that is sixty times a second");
+  const every = Number(/const askEvery = (\d+)/.exec(fn)?.[1]);
+  assert.ok(every >= 60 && every <= 500,
+    `it asks every ${every}ms, which is either still too often or slow ` +
+    "enough to be noticed");
+});
+
+test("the sprint buttons do not touch the page to say what it says", () => {
+  const fn = grab("drawSprints");
+  // The path taken on every frame of every scroll once the view has left
+  // the start of the staff.
+  assert.match(fn, /if \(!box\.hidden\) \{/,
+    "the hidden path writes to the page whether or not anything changed");
+});

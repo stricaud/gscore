@@ -335,6 +335,15 @@ func renderFile(s *model.Score, path string, strip bool, space float64,
 		eopt.Mode = engrave.Strip
 	}
 
+	// Say which staff is which, wherever there is more than one.
+	//
+	// A PDF has always done this and a page never did, so the ninth symphony
+	// came out as fifty-three unlabelled staves: the music is all there and
+	// there is no telling which line is the oboes. It is the same question on
+	// screen as on paper, and it was only ever answered on paper because the
+	// name is set in the PDF branch below rather than here.
+	eopt.ShowPartNames = len(s.Parts) > 1
+
 	popt := gpdf.DefaultOptions()
 	if wantPDF {
 		popt.Title = s.Identity.Title
@@ -348,7 +357,6 @@ func renderFile(s *model.Score, path string, strip bool, space float64,
 		}
 
 		eopt.Mode = engrave.Paginated
-		eopt.ShowPartNames = len(s.Parts) > 1
 		eopt.ShowMeasureNumbers = true
 		// How big the music is set and how long a line of music the paper
 		// holds: one decision, made from the music and the paper together.
@@ -500,7 +508,11 @@ func describeScore(s *model.Score) {
 	// symphony is a few seconds where everything else about it is instant.
 	// It is worth it to whoever is deciding what to do with the file, and
 	// nothing else in the line is any use for deciding that.
-	fmt.Printf("shapes    %d\n", shapeCount(engrave.Engrave(s, engrave.DefaultOptions())))
+	// Engraved the way a page engraves it, names and all, or the number
+	// would be of a drawing nothing is going to make.
+	dopt := engrave.DefaultOptions()
+	dopt.ShowPartNames = len(s.Parts) > 1
+	fmt.Printf("shapes    %d\n", shapeCount(engrave.Engrave(s, dopt)))
 
 	for _, p := range s.Parts {
 		name := p.Name

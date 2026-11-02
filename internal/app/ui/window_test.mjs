@@ -234,8 +234,13 @@ test("the drawing is one <svg> with the pieces inside it", () => {
     "the pieces are not kept together, so one arriving late is drawn over the cursor");
   assert.ok(draw.includes("ensureTiles("), "nothing puts the first pieces on the page");
 
+  // The markup becomes shapes in buildTile, which showTile either calls or
+  // skips because the shapes were made ahead of time; either way the piece
+  // goes into the drawing that is already there.
+  assert.ok(grab("buildTile").includes("innerHTML"),
+    "nothing turns a piece of markup into shapes");
   const show = grab("showTile");
-  assert.ok(show.includes("innerHTML"),
+  assert.ok(show.includes("tileHome.appendChild"),
     "a piece is not put into the drawing that is already there");
   assert.ok(!show.includes("$(\"#canvas\")"),
     "a piece replaces the whole canvas, which is what this is here to stop");
@@ -244,8 +249,11 @@ test("the drawing is one <svg> with the pieces inside it", () => {
 test("the piece ahead is asked for before it is wanted", () => {
   const fn = grab("ensureTiles");
   assert.ok(/want\.lo - 1, want\.hi \+ 1/.test(fn),
-    "nothing is fetched beyond what is drawn, so arriving at it waits for it");
-  assert.ok(fn.includes("fetchTile("), "the piece ahead is not fetched");
+    "nothing is asked for beyond what is drawn, so arriving at it waits for it");
+  // Asked for by being made ahead of time, which fetches it on the way.
+  assert.ok(fn.includes("prepareTile("), "the piece ahead is not asked for");
+  assert.ok(grab("prepareTile").includes("fetchTile("),
+    "the piece ahead is not fetched");
 
   // And one piece is asked for once, however many times it is wanted.
   const fetchOne = grab("fetchTile");

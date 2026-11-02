@@ -167,7 +167,21 @@ func convert(doc *scorePartwise, lg *log) (*model.Score, error) {
 	programs := map[string]model.Instrument{}
 	for _, sp := range doc.PartList.ScoreParts {
 		names[sp.ID] = sp.Name
-		if sp.MidiInst != nil && sp.MidiInst.Program > 0 {
+		// The name first, where it names something.
+		//
+		// A file can say one thing in the name and another in the program,
+		// and when it does the name is the truer of the two: it is what is
+		// printed over the staff and what a musician reads. The Lieder corpus
+		// writes program 69 on a part called "Voice" — a stand-in for playing
+		// a song back, 69 being the oboe — so every song in it was sung by an
+		// oboe. The name said "Voice" the whole time.
+		//
+		// Only where the name names something gscore recognises. A part
+		// called "Right hand", or anything the guesser is not sure of, leaves
+		// the program to answer as it always did.
+		if inst, ok := model.InstrumentNamed(sp.Name); ok {
+			programs[sp.ID] = inst
+		} else if sp.MidiInst != nil && sp.MidiInst.Program > 0 {
 			// Counted from one in the file, from zero in General MIDI.
 			programs[sp.ID] = model.Instrument(sp.MidiInst.Program - 1)
 		}

@@ -1176,66 +1176,19 @@ func barDuration(bar measSpec) model.Duration {
 //
 // Finale identifies its instruments by a code of its own — a UUID per entry
 // in its library — and the library is not in the file. The name is what is
-// left, and it is what a reader has to go on anyway. French names are tried
-// as well as English ones: the files this was written against are French,
-// and a saxophone that plays back as a piano is a worse answer than a guess.
+// left, and it is what a reader has to go on anyway.
+//
+// The list itself is shared with every other reader that has to guess, in
+// model.InstrumentNamed. What is added here is the one answer only this
+// reader is entitled to: "alto" on its own. These scores are instrumental and
+// French, where that word is the viola; in a song it is a singer, which is
+// why the shared guesser will not call it either way.
 func instrumentNamed(name string) (model.Instrument, bool) {
-	if name == "" {
-		return 0, false
-	}
-	plain := strings.ToLower(strings.TrimSpace(name))
-	for from, to := range map[string]string{
-		"é": "e", "è": "e", "ê": "e", "û": "u", "ù": "u", "ô": "o", "î": "i", "à": "a", "ç": "c",
-	} {
-		plain = strings.ReplaceAll(plain, from, to)
-	}
-	if inst, ok := model.InstrumentFromName(plain); ok {
+	if inst, ok := model.InstrumentNamed(name); ok {
 		return inst, true
 	}
-	// The common band and orchestra names, in French and in the shapes
-	// people actually write them in.
-	for _, alias := range []struct {
-		match string
-		inst  model.Instrument
-	}{
-		{"flute", model.Flute},
-		{"piccolo", model.Piccolo},
-		{"hautbois", model.Oboe},
-		{"oboe", model.Oboe},
-		{"clarinette basse", model.Clarinet},
-		{"clarinette", model.Clarinet},
-		{"clarinet", model.Clarinet},
-		{"basson", model.Bassoon},
-		{"bassoon", model.Bassoon},
-		{"soprano sax", model.SopranoSax},
-		{"alto sax", model.AltoSax},
-		{"tenor sax", model.TenorSax},
-		{"baritone sax", model.BaritoneSax},
-		{"saxophone soprano", model.SopranoSax},
-		{"saxophone alto", model.AltoSax},
-		{"saxophone tenor", model.TenorSax},
-		{"saxophone baryton", model.BaritoneSax},
-		{"trompette", model.Trumpet},
-		{"trumpet", model.Trumpet},
-		{"cor", model.FrenchHorn},
-		{"horn", model.FrenchHorn},
-		{"trombone", model.Trombone},
-		{"tuba", model.Tuba},
-		{"violon", model.Violin},
-		{"violin", model.Violin},
-		{"alto", model.Viola},
-		{"viola", model.Viola},
-		{"violoncelle", model.Cello},
-		{"cello", model.Cello},
-		{"contrebasse", model.Contrabass},
-		{"timbales", model.Timpani},
-		{"timpani", model.Timpani},
-		{"orgue", model.ChurchOrgan},
-		{"piano", model.AcousticGrandPiano},
-	} {
-		if strings.Contains(plain, alias.match) {
-			return alias.inst, true
-		}
+	if strings.Contains(strings.ToLower(name), "alto") {
+		return model.Viola, true
 	}
 	return 0, false
 }

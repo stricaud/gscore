@@ -122,6 +122,130 @@ func InstrumentFromName(s string) (Instrument, bool) {
 	return 0, false
 }
 
+// InstrumentNamed guesses the instrument from the word written over the
+// staff.
+//
+// Two kinds of file need this. Some say which instrument a staff is only in
+// its name — Finale names a code from a library that is not in the file — and
+// some say one thing in the name and another in the MIDI program, which is
+// how a part called "Voice" comes out sounding like an oboe: its program is
+// 69, and 69 is the oboe. The name is what a musician reads, so where the two
+// disagree the name is the one to believe.
+//
+// French, Italian and German names are tried as well as English ones. A
+// saxophone that plays back as a piano is a worse answer than a guess.
+//
+// The order matters, because these are substrings and the first match wins.
+// The saxophones come before the voices, so that a soprano saxophone is not a
+// soprano; the voices come before the instruments, so that a chorus — "coro"
+// — is not a horn, "cor" being inside it.
+//
+// What is deliberately not here is "alto" on its own. In an Italian or French
+// score it is the viola and in a vocal one it is a singer, and nothing in the
+// word says which. A reader that knows what sort of score it is reading can
+// decide for itself; this cannot, and a confident wrong answer is worse than
+// none.
+func InstrumentNamed(name string) (Instrument, bool) {
+	if name == "" {
+		return 0, false
+	}
+	plain := strings.ToLower(strings.TrimSpace(name))
+	for from, to := range map[string]string{
+		"é": "e", "è": "e", "ê": "e", "û": "u", "ù": "u", "ô": "o",
+		"î": "i", "à": "a", "ç": "c", "œ": "oe", "ü": "u", "ä": "a", "ö": "o",
+	} {
+		plain = strings.ReplaceAll(plain, from, to)
+	}
+	if inst, ok := InstrumentFromName(plain); ok {
+		return inst, true
+	}
+	for _, alias := range []struct {
+		match string
+		inst  Instrument
+	}{
+		// The saxophones first: a soprano saxophone is not a soprano.
+		{"soprano sax", SopranoSax},
+		{"alto sax", AltoSax},
+		{"tenor sax", TenorSax},
+		{"baritone sax", BaritoneSax},
+		{"saxophone soprano", SopranoSax},
+		{"saxophone alto", AltoSax},
+		{"saxophone tenor", TenorSax},
+		{"saxophone baryton", BaritoneSax},
+
+		// Then the voices, ahead of anything they sit inside.
+		{"soprano solo", VoiceOohs},
+		{"alto solo", VoiceOohs},
+		{"tenore solo", VoiceOohs},
+		{"tenor solo", VoiceOohs},
+		{"basso solo", VoiceOohs},
+		{"bass solo", VoiceOohs},
+		{"voice", VoiceOohs},
+		{"voix", VoiceOohs},
+		{"vocal", VoiceOohs},
+		{"singstimme", VoiceOohs},
+		{"gesang", VoiceOohs},
+		{"canto", VoiceOohs},
+		{"chant", VoiceOohs},
+		{"choir", ChoirAahs},
+		{"chorus", ChoirAahs},
+		{"choeur", ChoirAahs},
+		{"coro", ChoirAahs},
+		{"soprano", VoiceOohs},
+
+		// Then the instruments.
+		{"flute", Flute},
+		{"piccolo", Piccolo},
+		{"hautbois", Oboe},
+		{"oboe", Oboe},
+		{"clarinette basse", Clarinet},
+		{"clarinette", Clarinet},
+		{"clarinet", Clarinet},
+		// The big bassoons before the small ones, and both before anything
+		// that is merely a bass: "contrabassoon" has "contrabass" inside it.
+		{"contrabassoon", Bassoon},
+		{"contrebasson", Bassoon},
+		{"controfagotto", Bassoon},
+		{"contrafagotto", Bassoon},
+		{"basson", Bassoon},
+		{"bassoon", Bassoon},
+		{"fagotto", Bassoon},
+		{"trompette", Trumpet},
+		{"trumpet", Trumpet},
+		{"cor", FrenchHorn},
+		{"horn", FrenchHorn},
+		{"trombone", Trombone},
+		{"tuba", Tuba},
+
+		// The cellos and the double basses before the violins. Every one of
+		// their names has "violon" inside it — violoncello, violoncelle,
+		// violoncelli — so matched the other way round a cello came out a
+		// violin, which is what this list did for as long as it has existed.
+		// Beethoven's ninth has a staff called Violoncelli on it.
+		{"violoncell", Cello},
+		{"violonchelo", Cello},
+		{"cello", Cello},
+		{"contrabbass", Contrabass},
+		{"contrabass", Contrabass},
+		{"kontrabass", Contrabass},
+		{"double bass", Contrabass},
+		{"violon", Violin},
+		{"violin", Violin},
+		{"viola", Viola},
+		{"viole", Viola},
+		{"contrebasse", Contrabass},
+		{"timbales", Timpani},
+		{"timpani", Timpani},
+		{"orgue", ChurchOrgan},
+		{"piano", AcousticGrandPiano},
+	} {
+		if strings.Contains(plain, alias.match) {
+			return alias.inst, true
+		}
+	}
+	return 0, false
+}
+
 // Family groups instruments by how they are sounded, which is what a
 // synthesiser needs to know: the difference between a flute and a violin is
 // how the note starts and whether it keeps going, not which note it is.

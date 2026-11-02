@@ -11,7 +11,9 @@
 package engrave
 
 import (
+	"fmt"
 	"math"
+	"os"
 	"sort"
 	"strings"
 
@@ -280,6 +282,10 @@ func (e *engraver) resumeSpansOf(open *openSpans, left float64) {
 	if open.slur != nil && open.slur.x < 0 {
 		open.slur.x = left
 		open.slur.y = e.y + open.slur.rel
+		if os.Getenv("GSCORE_DBG") != "" {
+			fmt.Fprintf(os.Stderr, "RESUME slur ref=%d part=%d left=%.1f e.y=%.1f rel=%.1f -> y=%.1f\n",
+				open.slur.ref, open.slur.part, left, e.y, open.slur.rel, open.slur.y)
+		}
 	}
 	for _, t := range open.ties {
 		if t.x < 0 {
@@ -859,6 +865,10 @@ func (e *engraver) drawTieOrSlur(from *openSpan, toX, toY, lift float64, slur, c
 		y1, y2, cy = e.fitSlur(from.x, toX, y1, y2, dir)
 	}
 
+	if os.Getenv("GSCORE_DBG") != "" {
+		fmt.Fprintf(os.Stderr, "CURVE slur=%v complete=%v part=%d from(%.1f,%.1f) to(%.1f,%.1f) staffTop=%.1f rel=%.1f ref=%d measure=%d\n",
+			slur, complete, from.part, from.x, y1, toX, y2, e.y, from.rel, from.ref, from.measure)
+	}
 	e.lay.Curves = append(e.lay.Curves, Curve{
 		X1: from.x, Y1: y1,
 		CX: (from.x + toX) / 2, CY: cy,
@@ -1012,8 +1022,13 @@ func (e *engraver) fitSlur(x0, x1, y1, y2, dir float64) (float64, float64, float
 	}
 	// The shoulders first, because the arch is fitted to the ends and has
 	// to be fitted to where they finally are.
+	in1 := y1
 	y1 = e.slurShoulder(x0+slurOwnColumn, x0+(x1-x0)*slurShoulderIn, y1, dir)
 	y2 = e.slurShoulder(x1-(x1-x0)*slurShoulderIn, x1-slurOwnColumn, y2, dir)
+	if os.Getenv("GSCORE_DBG") != "" && x1-x0 > 30 {
+		fmt.Fprintf(os.Stderr, "FIT x0=%.1f x1=%.1f y1 %.1f -> %.1f  inkReach=%.1f\n",
+			x0, x1, in1, y1, e.staffInkline().reach(x0+slurOwnColumn, x0+(x1-x0)*slurShoulderIn, dir > 0))
+	}
 	cy := (y1+y2)/2 + dir*e.slurArchFor(x1-x0)*2
 	// Twice: lifting the ends changes what the arch has to be, and the
 	// new arch is what says whether the ends are high enough yet.

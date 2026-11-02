@@ -95,6 +95,15 @@ type Spacings struct {
 	MarginY float64
 }
 
+// minSqueeze is how far a line the writer asked for may be compressed to
+// hold the bars they asked it to hold.
+//
+// Three quarters, which is about where a run of eighths stops having air
+// between the noteheads. A line asked to hold twice what it can is a
+// line that cannot be drawn, and the honest answer there is a line over
+// the margin the writer can see and take back — not an unreadable one.
+const minSqueeze = 0.75
+
 // marginY is the vertical border actually in force.
 func (s Spacings) marginY() float64 {
 	if s.MarginY > 0 {

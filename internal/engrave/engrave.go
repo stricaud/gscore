@@ -1554,7 +1554,7 @@ func (e *engraver) layout() {
 	if maxMeasures == 0 {
 		// A part with no measures still has a clef and a key signature, and
 		// drawing just those is what the key signature picker asks for.
-		e.drawSystem(parts, boxes, widths, 0, 0, prefix, 0, true)
+		e.drawSystem(parts, boxes, widths, 0, 0, prefix, 0, true, false)
 		// There is no next system, so the gap that separates them is just
 		// empty space under the staff.
 		e.y -= e.opt.Spacings.SystemGap
@@ -1586,9 +1586,18 @@ func (e *engraver) layout() {
 		if to := e.sectionEnd(parts, start, maxMeasures); to-start < n {
 			n = to - start
 		}
+		// A line break the writer asked for. It may take bars off this
+		// system or put more on it than would fit by themselves, which is
+		// the whole point of asking: "four bars to this line" is said
+		// about a line that would otherwise hold five.
+		forced := false
+		if to := e.breakBefore(parts, start, maxMeasures); to > start {
+			forced = true
+			n = to - start
+		}
 		end := start + n
 		last := end >= maxMeasures
-		e.drawSystem(parts, boxes, widths, start, end, prefix+carried, carried, last)
+		e.drawSystem(parts, boxes, widths, start, end, prefix+carried, carried, last, forced)
 		if last {
 			// The gap belongs between systems, not after the final one.
 			// Leaving it there pads every score with empty space, which is
@@ -1680,6 +1689,28 @@ func (e *engraver) sectionEnd(parts []*model.Part, start, n int) int {
 		}
 	}
 	return n
+}
+
+// breakBefore is where the writer asked this system to end, or start
+// where they asked for nothing.
+//
+// The break is written on the bar that begins the new line, so what is
+// looked for is the next one after this system's first — a break on the
+// first bar of a system has already been obeyed by the system beginning
+// there, and reading it again would make a line of no bars at all and
+// then do it forever.
+//
+// Read from whichever staff carries it, the way a rehearsal mark is: a
+// line of music is a line on every staff at once.
+func (e *engraver) breakBefore(parts []*model.Part, start, n int) int {
+	for mi := start + 1; mi < n; mi++ {
+		for _, p := range parts {
+			if mi < len(p.Measures) && p.Measures[mi].SystemBreak {
+				return mi
+			}
+		}
+	}
+	return start
 }
 
 // opensSection says a bar is the first of a movement — the bar after one
@@ -2556,7 +2587,7 @@ func (e *engraver) elementWidth(el model.Element) float64 {
 // carried is how much of prefix is blank held back for the ties and slurs
 // coming in from the system above: it sits after the meter, before the music.
 func (e *engraver) drawSystem(parts []*model.Part, boxes [][]measureBox,
-	widths []float64, start, end int, prefix, carried float64, last bool) {
+	widths []float64, start, end int, prefix, carried float64, last, forced bool) {
 
 	sp := e.opt.Spacings
 
@@ -2568,9 +2599,23 @@ func (e *engraver) drawSystem(parts []*model.Part, boxes [][]measureBox,
 	// Stretch to the margin, except on the last system, which would look wrong
 	// pulled out to full width.
 	stretch := 1.0
-	if e.opt.Mode == Paginated && !last && ideal > 0 {
-		if avail := e.opt.LineWidth - prefix; avail > ideal {
+	if e.opt.Mode == Paginated && ideal > 0 {
+		avail := e.opt.LineWidth - prefix
+		switch {
+		case !last && avail > ideal:
 			stretch = avail / ideal
+		// A line the writer asked for may hold more than fits by itself.
+		// That is what asking is for — "four bars to this line" is said
+		// about a line that would otherwise hold three — so the music is
+		// squeezed rather than the instruction quietly dropped.
+		//
+		// Down to a floor and no further. Past that the noteheads are
+		// closer together than they are wide and the line stops being
+		// readable, so what the reader gets is a line a little over the
+		// margin, which they can see and undo, rather than a line they
+		// cannot read and no clue why.
+		case forced && avail < ideal:
+			stretch = math.Max(avail/ideal, minSqueeze)
 		}
 	}
 	// Kept on the engraver so that a measure can place its barline against

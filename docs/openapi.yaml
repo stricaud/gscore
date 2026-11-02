@@ -990,6 +990,157 @@ paths:
               schema: { type: object }
         "400": { $ref: "#/components/responses/Error" }
 
+  /api/systems:
+    get:
+      tags: [read]
+      summary: Where the lines of music begin
+      responses:
+        "200":
+          description: The bars that begin a line, by bar index.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  breaks: { type: array, items: { type: integer } }
+    post:
+      tags: [write]
+      summary: Say where the lines of music end
+      description: >
+        The engraver fits as many bars to a line as will go. A break says
+        "a new line starts here", which also locks the line before it:
+        where those bars end has been said, so they can no longer be moved
+        about. One mechanism does both halves — "four bars to a line" is
+        `fit=4`, and "stop moving them" is those breaks left where they
+        are.
+
+
+        `clear` is applied before `fit`, so sending both means "forget
+        what was there and lay it out this way". `from` and `to` bound
+        either to a stretch of bars; left out, they mean the whole piece.
+        A break is written on every staff, because a line of music is a
+        line on every staff at once.
+
+
+        A line asked to hold more bars than fit is squeezed rather than
+        quietly broken early, down to three quarters of the natural
+        spacing. Past that it runs over the margin, which the writer can
+        see and take back.
+      parameters:
+        - name: at
+          in: query
+          description: One bar to break before, or stop breaking before.
+          schema: { type: integer }
+        - name: "on"
+          in: query
+          description: 0 to take the break at `at` away; anything else sets it.
+          schema: { type: string }
+        - name: fit
+          in: query
+          description: Put a break every this many bars.
+          schema: { type: integer }
+        - name: clear
+          in: query
+          description: Take every break away first.
+          schema: { type: string }
+        - name: from
+          in: query
+          description: The first bar of the stretch, by index.
+          schema: { type: integer }
+        - name: to
+          in: query
+          description: The last bar of the stretch, by index.
+          schema: { type: integer }
+      responses:
+        "200":
+          description: Where the lines begin, as it now stands.
+          content:
+            application/json:
+              schema: { type: object }
+        "400": { $ref: "#/components/responses/Error" }
+
+  /api/find:
+    get:
+      tags: [read]
+      summary: Find words anywhere in the score
+      description: >
+        Words are scattered through a score in a dozen unrelated places —
+        the title block, the staff names, the lyrics under every note, the
+        chord symbols over them, the rehearsal marks, the movement titles,
+        the word beside a metronome mark, and every "rit." or "solo"
+        somebody has written. This searches all of them, in the order they
+        are read: the title block, then the staff names, then the music
+        from the beginning.
+
+
+        Matching ignores case unless `case=1`. Writing that is empty never
+        matches, so a search does not turn up every unwritten title.
+      parameters:
+        - name: q
+          in: query
+          required: true
+          description: What to look for.
+          schema: { type: string }
+        - name: case
+          in: query
+          description: 1 to match the capitals as typed.
+          schema: { type: string }
+      responses:
+        "200":
+          description: Every place the words appear.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  hits:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        where:
+                          type: string
+                          description: >
+                            What kind of writing it is — "Lyric", "Chord
+                            quality", "Rehearsal mark", "Title".
+                        part: { type: integer, description: -1 for the whole score }
+                        measure: { type: integer, description: -1 for the whole score }
+                        verse: { type: integer }
+                        text: { type: string }
+        "400": { $ref: "#/components/responses/Error" }
+    post:
+      tags: [write]
+      summary: Change words anywhere in the score
+      description: >
+        The same search as the GET, so that what is replaced is exactly
+        what was listed. The replacement goes in as it was typed and
+        everything around it is left as it was, so a case-insensitive
+        search for "flute" can put "Flûte" in place of "Flute" without
+        touching the rest of the line.
+      parameters:
+        - name: q
+          in: query
+          required: true
+          schema: { type: string }
+        - name: with
+          in: query
+          required: true
+          description: What to put in its place. May be empty, which deletes it.
+          schema: { type: string }
+        - name: case
+          in: query
+          schema: { type: string }
+      responses:
+        "200":
+          description: How many pieces of writing were changed.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  changed: { type: integer }
+        "400": { $ref: "#/components/responses/Error" }
+
   /api/transpose:
     post:
       tags: [write]

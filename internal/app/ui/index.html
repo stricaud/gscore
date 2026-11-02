@@ -96,6 +96,7 @@
       <!-- Picking up music without dragging over it. On a long piece
            dragging is the wrong way: to take bars 40 to 96 you have to find
            both ends and hold the mouse down over everything between. -->
+      <button data-action="find-text"><span>Find and replace…</span></button>
       <button data-action="select-all"><span>Pick up the whole staff</span><kbd>⌘A</kbd></button>
       <button data-action="select-region"><span>Pick up bars…</span></button>
       <hr>
@@ -316,6 +317,7 @@
       <button data-action="set-pickup"><span>Pickup measure…</span></button>
       <button data-action="set-time"><span>Time signature from here…</span></button>
       <button data-action="set-numbering"><span>Bar numbers…</span></button>
+      <button data-action="set-systems"><span>Lines of music…</span></button>
       <hr>
       <!-- Whether a bar that is too long has its last notes moved into the
            next one. On is what makes typing music in feel like typing; off
@@ -868,6 +870,64 @@
     <div class="ask-buttons">
       <button value="ok" type="submit" class="primary">Pick up</button>
       <button value="cancel" type="submit">Cancel</button>
+    </div>
+  </form>
+</dialog>
+
+<!-- Finding words in a score, and changing them.
+     Words are scattered through a score in a dozen unrelated places —
+     the title block, the staff names, the lyrics, the chord symbols, the
+     rehearsal marks — and renaming an instrument meant finding each one
+     by eye. -->
+<dialog id="find" class="wide">
+  <h2>Find and replace</h2>
+  <form method="dialog" id="find-form">
+    <label class="tempo-bar" for="find-what">
+      <span>Find</span>
+      <input type="text" id="find-what" autocomplete="off">
+    </label>
+    <label class="tempo-bar" for="find-with">
+      <span>Replace with</span>
+      <input type="text" id="find-with" autocomplete="off">
+    </label>
+    <label class="tempo-bar" for="find-case">
+      <span>Match capitals</span>
+      <input type="checkbox" id="find-case">
+    </label>
+    <div id="find-hits"></div>
+    <div class="ask-buttons">
+      <button value="ok" type="submit" class="primary">Replace all</button>
+      <button value="cancel" type="submit">Close</button>
+    </div>
+  </form>
+</dialog>
+
+<!-- Where the lines of music end.
+     The engraver fits as many bars to a line as will go. A break says a
+     new line starts here, which also locks the line before it: where
+     those bars end has been said, so nothing moves them. -->
+<dialog id="systems">
+  <h2>Lines of music</h2>
+  <p class="small">The engraver fits as many bars to a line as will go.
+     Saying where a line ends also stops those bars being moved about.</p>
+  <form method="dialog" id="systems-form">
+    <label class="tempo-bar" for="systems-fit">
+      <span>Bars to a line</span>
+      <input type="number" id="systems-fit" min="1" max="32" step="1" value="4">
+    </label>
+    <label class="tempo-bar" for="systems-from">
+      <span>From bar</span>
+      <input type="number" id="systems-from" min="1" step="1" value="1">
+    </label>
+    <label class="tempo-bar" for="systems-to">
+      <span>To bar</span>
+      <input type="number" id="systems-to" min="1" step="1">
+    </label>
+    <div id="systems-says" class="small"></div>
+    <div class="ask-buttons">
+      <button value="ok" type="submit" class="primary">Lay it out</button>
+      <button value="clear" type="submit">Let it reflow</button>
+      <button value="cancel" type="submit">Close</button>
     </div>
   </form>
 </dialog>

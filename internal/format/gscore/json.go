@@ -140,7 +140,9 @@ type measureDoc struct {
 	// NumberFrom restarts the bar numbering at this bar, at the number it
 	// holds. A pointer, because restarting at 1 is a thing you can mean.
 	NumberFrom *int `json:"numberFrom,omitempty"`
-	Repeat     int  `json:"repeat,omitempty"`
+	// SystemBreak starts a new line of music at this bar.
+	SystemBreak bool `json:"systemBreak,omitempty"`
+	Repeat      int  `json:"repeat,omitempty"`
 
 	// Sign is the segno, coda, Fine or To Coda written at this bar, and Jump
 	// the direction written at the end of it. Both are stored by name rather
@@ -431,6 +433,7 @@ func encodeScore(s *model.Score) *scoreDoc {
 			}
 			md.Marker, md.Repeat = m.Marker, m.Repeat
 			md.NumberFrom = m.NumberFrom
+			md.SystemBreak = m.SystemBreak
 			if m.Sign != model.NoSign {
 				md.Sign = m.Sign.String()
 			}
@@ -676,6 +679,7 @@ func decodeScore(doc *scoreDoc) (*model.Score, error) {
 			}
 			m.Marker, m.Repeat = md.Marker, md.Repeat
 			m.NumberFrom = md.NumberFrom
+			m.SystemBreak = md.SystemBreak
 			if sign, ok := model.SignFromName(md.Sign); ok {
 				m.Sign = sign
 			}

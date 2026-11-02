@@ -2185,3 +2185,23 @@ dialog.wide { max-width: 640px; }
  * on a dark ground. */
 .knob-pic .mark { stroke: var(--mark); }
 .knob-pic text.mark { fill: var(--mark); stroke: none; }
+
+/* The matches a search turned up.
+   What kind of writing it is in a column of its own, because the useful
+   question is not only "what does it say" but "where does it say it" —
+   the same word in a lyric and in a staff name want different answers. */
+#find-hits {
+  max-height: 16em;
+  overflow-y: auto;
+  margin: 6px 0 10px;
+}
+.find-hit {
+  display: grid;
+  grid-template-columns: 13em 1fr;
+  gap: 8px;
+  padding: 3px 0;
+  font-size: 13px;
+}
+.find-hit + .find-hit { border-top: 1px solid var(--line); }
+.find-where { color: var(--muted); }
+#find-what, #find-with { flex: 1; }

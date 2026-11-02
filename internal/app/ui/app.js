@@ -698,6 +698,12 @@ async function action(name) {
     case "set-numbering":
       await numberingDialog();
       break;
+    case "set-systems":
+      await systemsDialog();
+      break;
+    case "find-text":
+      await findDialog();
+      break;
     case "select-all":
       selectAll();
       break;
@@ -5652,6 +5658,186 @@ async function pickupDialog() {
   status(d && d.full
     ? "The first bar is a whole bar again"
     : "The first bar is an upbeat — bar one is the first full bar");
+}
+
+/* ---------- finding words, and changing them ---------- */
+
+// findDialog finds words anywhere in the score and can change them all.
+//
+// The matches are listed as they are typed rather than on a button,
+// because "replace all" without having seen what all of it is is how
+// somebody renames an instrument and silently rewrites a lyric that
+// happened to contain the same letters. The list says what will be
+// changed before anything is.
+async function findDialog() {
+  const dlg = $("#find");
+  const what = $("#find-what");
+  const with_ = $("#find-with");
+  const fold = $("#find-case");
+  const list = $("#find-hits");
+
+  const show = (hits) => {
+    list.innerHTML = "";
+    if (!hits.length) {
+      list.innerHTML = `<p class="small">${t("Nothing found.")}</p>`;
+      return;
+    }
+    const head = document.createElement("p");
+    head.className = "small";
+    head.textContent = `${hits.length} ${hits.length === 1
+      ? t("place") : t("places")}`;
+    list.appendChild(head);
+    // The first twenty. A score with four hundred lyrics matching "the"
+    // would otherwise build four hundred rows nobody reads, and the
+    // count above already says how many there are.
+    for (const h of hits.slice(0, 20)) {
+      const row = document.createElement("div");
+      row.className = "find-hit";
+      const where = document.createElement("span");
+      where.className = "find-where";
+      where.textContent = h.measure >= 0
+        ? `${t(h.where)} · ${t("bar")} ${barNumberOf(h.measure)}`
+        : t(h.where);
+      row.appendChild(where);
+      const text = document.createElement("span");
+      text.textContent = h.text;
+      row.appendChild(text);
+      list.appendChild(row);
+    }
+    if (hits.length > 20) {
+      const more = document.createElement("p");
+      more.className = "small";
+      more.textContent = `… ${t("and")} ${hits.length - 20} ${t("more")}`;
+      list.appendChild(more);
+    }
+  };
+
+  const look = async () => {
+    const q = what.value;
+    if (!q) {
+      list.innerHTML = "";
+      return;
+    }
+    const p = new URLSearchParams({ q });
+    if (fold.checked) p.set("case", "1");
+    const res = await fetch("/api/find?" + p.toString());
+    if (!res.ok) {
+      list.innerHTML = "";
+      return;
+    }
+    show((await res.json()).hits || []);
+  };
+
+  what.oninput = () => void look();
+  fold.onchange = () => void look();
+  what.value = "";
+  with_.value = "";
+  list.innerHTML = "";
+
+  const answer = await new Promise((resolve) => {
+    const done = () => {
+      dlg.removeEventListener("close", done);
+      resolve(dlg.returnValue);
+    };
+    dlg.addEventListener("close", done);
+    dlg.showModal();
+    what.focus();
+  });
+  if (answer !== "ok" || !what.value) {
+    status("Ready");
+    return;
+  }
+
+  const p = new URLSearchParams({ q: what.value, with: with_.value });
+  if (fold.checked) p.set("case", "1");
+  const res = await fetch("/api/find?" + p.toString(), { method: "POST" });
+  if (!res.ok) {
+    status("Could not replace: " + (await res.text()).trim());
+    return;
+  }
+  const d = await res.json();
+  await refreshScore();
+  markSelection();
+  status(d.changed
+    ? `Changed ${d.changed} ${d.changed === 1 ? "place" : "places"}`
+    : "Nothing to change");
+}
+
+/* ---------- where the lines of music end ---------- */
+
+// systemsDialog lays the bars out so many to a line, or lets them reflow.
+//
+// The two buttons are the two things anybody wants here and they are
+// opposites, which is why both are on the window rather than one being
+// hidden behind the other: having said "four to a line" there has to be a
+// way back, and hunting for it among the breaks you just made is not one.
+async function systemsDialog() {
+  const dlg = $("#systems");
+  const fit = $("#systems-fit");
+  const from = $("#systems-from");
+  const to = $("#systems-to");
+  const says = $("#systems-says");
+
+  const bars = state.hits.reduce((n, h) => Math.max(n, h.measure + 1), 0);
+  if (!bars) {
+    status("There is nothing written yet");
+    return;
+  }
+  const where = movementHere();
+  from.max = to.max = String(bars);
+  from.value = String(barNumberOf(state.selection?.measure ?? 0));
+  to.value = String(barNumberOf(bars - 1));
+
+  const show = (d) => {
+    const n = (d.breaks || []).length;
+    says.textContent = n
+      ? `${n} ${n === 1 ? t("line is set where it is") : t("lines are set where they are")}`
+      : t("The bars are laid out as they fall.");
+  };
+
+  const read = await fetch("/api/systems");
+  if (!read.ok) {
+    status("Could not read the layout");
+    return;
+  }
+  show(await read.json());
+
+  const answer = await new Promise((resolve) => {
+    const done = () => {
+      dlg.removeEventListener("close", done);
+      resolve(dlg.returnValue);
+    };
+    dlg.addEventListener("close", done);
+    dlg.showModal();
+  });
+  if (answer !== "ok" && answer !== "clear") {
+    status("Ready");
+    return;
+  }
+
+  // The fields ask for bars by the names the score calls them; the
+  // endpoint wants the indices they are stored under.
+  const p = new URLSearchParams({
+    from: String(barIndexOf(Number(from.value), where)),
+    to: String(barIndexOf(Number(to.value), where)),
+  });
+  // Clearing first either way: laying out afresh means forgetting what
+  // was there, not adding to it.
+  p.set("clear", "1");
+  if (answer === "ok") p.set("fit", fit.value);
+
+  const res = await fetch("/api/systems?" + p.toString(), { method: "POST" });
+  if (!res.ok) {
+    status("Could not lay it out: " + (await res.text()).trim());
+    return;
+  }
+  const d = await res.json();
+  await refreshScore();
+  markSelection();
+  status(answer === "ok"
+    ? `${fit.value} bars to a line, from bar ${from.value} to ${to.value}`
+    : "The bars will fall where they will again");
+  show(d);
 }
 
 /* ---------- how the bars are numbered ---------- */
@@ -12483,6 +12669,17 @@ const MENU_DRAWINGS = {
     '<path d="M4 13V21M12 13v8M20 13v8" opacity=".6"/>' +
     '<path d="M5.4 4.4 7 3.2V10"/>' +
     '<path d="M12.6 4.6a2.3 2.3 0 1 1 4.1 1.6L12.6 10h4.6"/>',
+
+  // Lines of music, and where one is cut off from the next: two staves
+  // with the break between them marked.
+  "set-systems": '<path d="M3 4.5h18M3 8h18" opacity=".6"/>' +
+    '<path d="M3 16h18M3 19.5h18" opacity=".6"/>' +
+    '<path d="M3 12h5M16 12h5"/><path d="M11.5 9.5 13 12l-1.5 2.5"/>',
+
+  // A magnifier over words, which is what is being searched: a score's
+  // writing and not its notes.
+  "find-text": '<path d="M3 5.5h9M3 9.5h7"/>' +
+    '<circle cx="14" cy="14" r="5"/><path d="M17.8 17.8 21.5 21.5"/>',
 
   // A label, which is what a staff name is.
   "view-names": '<path d="M3 8.5a2 2 0 0 1 2-2h8l6 5.5-6 5.5H5a2 2 0 0 1-2-2z"/>' +

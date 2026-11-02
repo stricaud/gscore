@@ -679,6 +679,9 @@ func TestTheChromeIsTranslated(t *testing.T) {
 		add("an engraving measurement", k.Label)
 		add("an engraving heading", k.Group)
 	}
+	// And the kinds of writing a search turns up, which the find window
+	// writes beside every match and which are named in Go.
+	add("a kind of writing", AllTextKinds...)
 
 	var missing []string
 	for s, where := range english {
@@ -791,6 +794,9 @@ func knobWords() string {
 	var b strings.Builder
 	for _, k := range engrave.Knobs {
 		b.WriteString(" " + k.Label + " " + k.Group)
+	}
+	for _, k := range AllTextKinds {
+		b.WriteString(" " + k)
 	}
 	return b.String()
 }

@@ -340,3 +340,36 @@ func TestAScoreWithNoNumberingWritesNone(t *testing.T) {
 		}
 	}
 }
+
+// Where the lines of music end travels with the score.
+//
+// A writer who has evened out the systems of a part has made a decision
+// that cannot be worked out again from the notes, so a file that forgot it
+// would reflow to something else the next time it was opened.
+func TestSystemBreaksSurviveARoundTrip(t *testing.T) {
+	s := model.NewScore()
+	for len(s.Parts[0].Measures) < 6 {
+		s.Parts[0].Measures = append(s.Parts[0].Measures,
+			&model.Measure{Voices: []*model.Voice{{}}})
+	}
+	s.Parts[0].Measures[2].SystemBreak = true
+	s.Parts[0].Measures[4].SystemBreak = true
+
+	var b bytes.Buffer
+	if err := Write(&b, s, nil); err != nil {
+		t.Fatalf("writing: %v", err)
+	}
+	back, _, err := Read(bytes.NewReader(b.Bytes()))
+	if err != nil {
+		t.Fatalf("reading: %v", err)
+	}
+	var at []int
+	for i, m := range back.Parts[0].Measures {
+		if m.SystemBreak {
+			at = append(at, i)
+		}
+	}
+	if len(at) != 2 || at[0] != 2 || at[1] != 4 {
+		t.Errorf("the breaks came back at %v, want 2 and 4", at)
+	}
+}

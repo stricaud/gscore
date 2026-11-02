@@ -289,6 +289,20 @@ type Measure struct {
 	// places the directions below refer to.
 	Sign Sign
 
+	// SystemBreak starts a new line of music at this bar.
+	//
+	// The engraver fits as many bars to a line as will go, which is right
+	// until somebody wants otherwise: four bars to a line through a study
+	// so each one is read the same way, a page turn moved off a passage
+	// nobody can spare a hand for, a system evened out because the last
+	// line of a piece holding one bar looks like a mistake. None of that
+	// can be worked out from the notes; it is a decision, and this is
+	// where it is written down.
+	//
+	// It belongs to the bar across the whole score, like a rehearsal
+	// mark: a line of music is a line on every staff at once.
+	SystemBreak bool
+
 	// NumberFrom restarts the bar numbering here, at the number it holds.
 	//
 	// A movement already restarts the count on its own, and that covers

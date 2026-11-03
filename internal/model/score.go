@@ -844,6 +844,109 @@ type Sheet struct {
 	// Cues are the bars of somebody else's line printed small in this part
 	// so the player can hear their entry coming.
 	Cues []Cue
+
+	// Voicing is which of a shared staff's notes this part prints.
+	//
+	// Two players on one staff is how wind and brass are written: "Flute
+	// 1, 2" is one line of the score, and the notes on it are a chord
+	// where they differ and one note where they do not. The score is
+	// right as it stands; it is the parts that have to be told apart,
+	// because the second flute reads the lower note and nothing else.
+	//
+	// Empty for nearly every part, and that is the common case: a part
+	// with one player on one staff prints the staff.
+	Voicing []Voicing `json:",omitempty"`
+}
+
+// VoicingPick is which notes of a chord a part takes.
+type VoicingPick int
+
+const (
+	// VoicingAll prints the staff as it is written.
+	VoicingAll VoicingPick = iota
+	// VoicingTop and VoicingBottom take one note of each chord: the first
+	// player reads the upper line and the second the lower.
+	VoicingTop
+	VoicingBottom
+	// VoicingNth takes named notes counted through the chord, for a staff
+	// carrying three or four players.
+	VoicingNth
+)
+
+func (v VoicingPick) String() string {
+	switch v {
+	case VoicingTop:
+		return "top"
+	case VoicingBottom:
+		return "bottom"
+	case VoicingNth:
+		return "nth"
+	}
+	return "all"
+}
+
+// Voicing says which notes of one staff a part prints.
+//
+// It holds no music, like everything else about a part: it is a rule read
+// when the part is drawn, against the score's own notes. A part that had
+// been given a copy of the second flute's line would go stale the first
+// time somebody edited the staff it came from.
+//
+// Written against chords and against layers both, because both are how the
+// thing is written. Two players sharing a staff in unison and in thirds are
+// a single line of chords; two players who are rhythmically apart are two
+// layers, with their stems opposed. One score often has both, bar by bar,
+// which is why there is a rule for each and not a choice between them.
+type Voicing struct {
+	// Staff is which staff this rule is about, by index in Score.Parts.
+	// A part printing two staves can voice them differently.
+	Staff int
+
+	// Pick is which notes of a chord to take, in bars written as one
+	// layer.
+	Pick VoicingPick `json:",omitempty"`
+
+	// Nth are the notes to take when Pick is VoicingNth, counted from one
+	// through the chord: {1, 3} is the first and third.
+	Nth []int `json:",omitempty"`
+
+	// FromBottom counts Nth up from the lowest note instead of down from
+	// the highest. Scores are written both ways and the player's number
+	// is what decides: horns count down, and a string divisi counts up.
+	FromBottom bool `json:",omitempty"`
+
+	// Single prints a note that is alone in its bar even where Pick would
+	// not have chosen it.
+	//
+	// This is the a2 rule, and it is the difference between a part that
+	// can be played and one that cannot. Where both players play the same
+	// note the score writes it once, so a rule asking for the third note
+	// of a chord finds no third note and the bar comes out empty — the
+	// player sits through the loudest passage in the piece looking at a
+	// rest. With this, a lone note belongs to everybody reading the
+	// staff.
+	Single bool `json:",omitempty"`
+
+	// Layer is which voice to print in bars written with more than one,
+	// counted from one. Zero prints them all, which is what a part that
+	// is the whole staff wants.
+	Layer int `json:",omitempty"`
+}
+
+// IsPlain reports a rule that changes nothing, which is the same as having
+// no rule at all.
+func (v Voicing) IsPlain() bool {
+	return v.Pick == VoicingAll && v.Layer == 0
+}
+
+// VoicingFor is the rule a sheet has for a staff, and whether it has one.
+func (s *Sheet) VoicingFor(staff int) (Voicing, bool) {
+	for _, v := range s.Voicing {
+		if v.Staff == staff {
+			return v, !v.IsPlain()
+		}
+	}
+	return Voicing{Staff: staff}, false
 }
 
 // Cue is a few bars of another staff's music, printed small in a part.

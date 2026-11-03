@@ -515,6 +515,9 @@ func (a *App) APIRoutes(mux *http.ServeMux) {
 		"/api/header":          a.handleHeader,
 		"/api/staff":           a.handleStaff,
 		"/api/addstaff":        a.handleAddStaff,
+		"/api/tunings":         a.handleTunings,
+		"/api/fret":            a.handleFret,
+		"/api/restring":        a.handleRestring,
 		"/api/removestaff":     a.handleRemoveStaff,
 		"/api/movestaff":       a.handleMoveStaff,
 		"/api/group":           a.handleGroup,
@@ -841,6 +844,10 @@ type partInfo struct {
 	TransposeSemitones int `json:"transposeSemitones"`
 	// Hidden says the staff is out of the drawing but still in the score.
 	Hidden bool `json:"hidden,omitempty"`
+	// Tab is the tuning this staff is written in, where it is written as
+	// tablature rather than on a staff of pitches. Absent otherwise, which
+	// is what the editor reads to know whether a typed digit is a fret.
+	Tab *tabInfo `json:"tab,omitempty"`
 }
 
 func (a *App) handleInfo(w http.ResponseWriter, r *http.Request) {
@@ -931,6 +938,7 @@ func (a *App) handleInfo(w http.ResponseWriter, r *http.Request) {
 			Time: p.Time.String(), Measures: len(p.Measures), Notes: notes,
 			TransposeSemitones: p.Transpose.Semitones(),
 			Hidden:             p.Hidden,
+			Tab:                tabOf(p),
 		})
 	}
 	writeJSON(w, out)

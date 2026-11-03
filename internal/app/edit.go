@@ -319,9 +319,42 @@ func (a *App) handleInsert(w http.ResponseWriter, r *http.Request) {
 // is anything to click on — so writing into it is what turns it into a bar.
 // Only the one directly after the last: anywhere further is a stale click
 // from before something else changed the score.
+// errVoicedElsewhere is a staff that cannot be written to from here.
+//
+// A part showing a voicing is showing a choice of the staff's notes — the
+// lower note of each chord, or the second layer — and the notes drawn are
+// not the notes written. There is no honest way to aim an edit at them: the
+// third thing on the page is not the third thing in the bar, and a note
+// typed over it would land somewhere else. So the part is read here and
+// written in the score, which is the same answer every program that has
+// voicings has arrived at.
+func errVoicedElsewhere(name string) error {
+	if name == "" {
+		name = "this part"
+	}
+	return editError("the notes " + name + " shows are chosen from a staff " +
+		"that two players share — turn to the full score to change them")
+}
+
+// voicedHere reports that the staff is being shown through a voicing rule,
+// so what is drawn is not what is written.
+func (a *App) voicedHere(staff int) (string, bool) {
+	if a.sheet < 0 || a.sheet >= len(a.score.Sheets) {
+		return "", false
+	}
+	sh := a.score.Sheets[a.sheet]
+	if _, ok := sh.VoicingFor(staff); !ok {
+		return "", false
+	}
+	return sh.Name, true
+}
+
 func (a *App) locateForWriting(partIdx, measIdx int) (*model.Part, *model.Measure, error) {
 	if partIdx < 0 || partIdx >= len(a.score.Parts) {
 		return nil, nil, editError("no such staff")
+	}
+	if name, ok := a.voicedHere(partIdx); ok {
+		return nil, nil, errVoicedElsewhere(name)
 	}
 	p := a.score.Parts[partIdx]
 	if measIdx == len(p.Measures) && measIdx > 0 {
@@ -1135,6 +1168,9 @@ func (a *App) marksOf(q url.Values) ([]*model.Marks, error) {
 
 		var out []*model.Marks
 		for _, t := range targets {
+			if name, ok := a.voicedHere(t.part); ok {
+				return nil, errVoicedElsewhere(name)
+			}
 			_, m, err := a.locate(t.part, t.measure)
 			if err != nil {
 				continue // a stale selection is not worth failing over
@@ -1374,6 +1410,31 @@ func (a *App) handleStaff(w http.ResponseWriter, r *http.Request) {
 					changed = append(changed, "transposition")
 				}
 			}
+		}
+	}
+	// Written as tablature, or back on a staff of pitches.
+	//
+	// Not a change to the music. The notes keep their pitches — that is
+	// what sounds and what transposes — and this is how they are shown,
+	// so a staff turned to tab and back is the staff it was.
+	if v, ok := q["tab"]; ok && len(v) > 0 {
+		switch name := strings.TrimSpace(v[0]); {
+		case name == "" || name == "off":
+			p.Tab = nil
+			changed = append(changed, "staff of pitches")
+		default:
+			tab, found := model.TuningNamed(name)
+			if !found {
+				http.Error(w, "no tuning called "+name+" — /api/tunings lists them",
+					http.StatusBadRequest)
+				return
+			}
+			p.Tab = tab
+			// Where the notes are played, for the ones that did not say.
+			// A file that recorded a string keeps it: which string to
+			// play a note on is a decision somebody made.
+			restringPart(p)
+			changed = append(changed, "tablature")
 		}
 	}
 	if v := q.Get("hidden"); v != "" {

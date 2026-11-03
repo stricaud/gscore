@@ -12,7 +12,9 @@ package app
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
+	"net/url"
 	"sort"
 	"strconv"
 	"strings"
@@ -130,6 +132,20 @@ func sheetOf(s *model.Score, which int) *model.Score {
 			if at >= 0 && at < len(p.Measures) {
 				p.Measures[at].SystemBreak = true
 			}
+		}
+	}
+
+	// Which of a shared staff's notes this part prints. Done on the copy
+	// and never on the score, like everything else about a part: the rule
+	// is what is kept, and the notes are taken through it afresh every
+	// time the part is drawn.
+	for _, v := range sh.Voicing {
+		if v.IsPlain() || v.Staff < 0 || v.Staff >= len(out.Parts) {
+			continue
+		}
+		p := out.Parts[v.Staff]
+		for i, m := range p.Measures {
+			p.Measures[i] = v.Voiced(m)
 		}
 	}
 
@@ -380,11 +396,22 @@ type sheetInfo struct {
 	Name   string `json:"name"`
 	Staves []int  `json:"staves"`
 	// Showing is whether this is the one on the screen.
-	Showing    bool      `json:"showing"`
-	MultiRests bool      `json:"multiRests"`
-	Breaks     int       `json:"breaks"`
-	StaffSpace float64   `json:"staffSpace,omitempty"`
-	Cues       []cueInfo `json:"cues,omitempty"`
+	Showing    bool          `json:"showing"`
+	MultiRests bool          `json:"multiRests"`
+	Breaks     int           `json:"breaks"`
+	StaffSpace float64       `json:"staffSpace,omitempty"`
+	Cues       []cueInfo     `json:"cues,omitempty"`
+	Voicing    []voicingInfo `json:"voicing,omitempty"`
+}
+
+// voicingInfo is one staff's voicing as the editor is told about it.
+type voicingInfo struct {
+	Staff      int    `json:"staff"`
+	Pick       string `json:"pick"`
+	Nth        []int  `json:"nth,omitempty"`
+	FromBottom bool   `json:"fromBottom,omitempty"`
+	Single     bool   `json:"single,omitempty"`
+	Layer      int    `json:"layer,omitempty"`
 }
 
 // cueInfo is one cue as the editor is told about it: which bars of whose
@@ -503,6 +530,13 @@ func (a *App) sheetsSet(w http.ResponseWriter, r *http.Request) {
 		}
 		sh.Staves = staves
 	}
+	// Which of a shared staff's notes this part prints.
+	if _, ok := q["voice"]; ok {
+		if err := setVoicing(sh, q); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+	}
 	// A cue: a few bars of somebody else's line, printed small so the
 	// player can hear their entry coming.
 	if v, ok := q["cue"]; ok && len(v) > 0 {
@@ -601,6 +635,94 @@ func cuesOf(s *model.Score, sh model.Sheet) []cueInfo {
 }
 
 // writeSheets sends the list. The caller holds the lock.
+// voicingsOf is a part's voicing rules as the editor is told about them.
+func voicingsOf(sh model.Sheet) []voicingInfo {
+	var out []voicingInfo
+	for _, v := range sh.Voicing {
+		if v.IsPlain() {
+			continue
+		}
+		out = append(out, voicingInfo{
+			Staff: v.Staff, Pick: v.Pick.String(),
+			Nth: append([]int(nil), v.Nth...), FromBottom: v.FromBottom,
+			Single: v.Single, Layer: v.Layer,
+		})
+	}
+	return out
+}
+
+// voicingPick reads back what VoicingPick.String wrote.
+func voicingPick(s string) (model.VoicingPick, bool) {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "", "all":
+		return model.VoicingAll, true
+	case "top":
+		return model.VoicingTop, true
+	case "bottom":
+		return model.VoicingBottom, true
+	case "nth", "selected":
+		return model.VoicingNth, true
+	}
+	return 0, false
+}
+
+// setVoicing reads a rule off the query and puts it on the part.
+//
+// One staff per call, named by its number in the score, because that is
+// what a rule is about: a part printing a flute staff and a piccolo staff
+// takes the bottom note of one and all of the other.
+func setVoicing(sh *model.Sheet, q url.Values) error {
+	staff, err := strconv.Atoi(q.Get("voice"))
+	if err != nil || staff < 0 {
+		return errors.New("which staff is the voicing for?")
+	}
+	pick, ok := voicingPick(q.Get("pick"))
+	if !ok {
+		return errors.New(q.Get("pick") + " is not all, top, bottom or nth")
+	}
+	v := model.Voicing{Staff: staff, Pick: pick}
+	if raw := q.Get("nth"); raw != "" {
+		for _, part := range strings.Split(raw, ",") {
+			n, err := strconv.Atoi(strings.TrimSpace(part))
+			if err != nil || n < 1 || n > 16 {
+				return errors.New(part + " is not a note of a chord")
+			}
+			v.Nth = append(v.Nth, n)
+		}
+	}
+	if pick == model.VoicingNth && len(v.Nth) == 0 {
+		return errors.New("say which notes of the chord — nth=2, or nth=1,3")
+	}
+	v.FromBottom = q.Get("frombottom") == "1"
+	v.Single = q.Get("single") == "1"
+	if raw := q.Get("layer"); raw != "" {
+		n, err := strconv.Atoi(raw)
+		if err != nil || n < 0 || n > 8 {
+			return errors.New(raw + " is not a layer")
+		}
+		v.Layer = n
+	}
+
+	// Over whatever this staff had before, and taken away where the rule
+	// now changes nothing: a part that prints the staff whole should hold
+	// no rule at all, so that nothing downstream has to tell the
+	// difference between "all notes" and "no rule".
+	kept := sh.Voicing[:0]
+	for _, old := range sh.Voicing {
+		if old.Staff != staff {
+			kept = append(kept, old)
+		}
+	}
+	sh.Voicing = kept
+	if !v.IsPlain() {
+		sh.Voicing = append(sh.Voicing, v)
+	}
+	sort.Slice(sh.Voicing, func(i, j int) bool {
+		return sh.Voicing[i].Staff < sh.Voicing[j].Staff
+	})
+	return nil
+}
+
 func (a *App) writeSheets(w http.ResponseWriter) {
 	out := []sheetInfo{}
 	for i, sh := range a.score.Sheets {
@@ -608,7 +730,7 @@ func (a *App) writeSheets(w http.ResponseWriter) {
 			Name: sh.Name, Staves: append([]int(nil), sh.Staves...),
 			Showing: i == a.sheet, MultiRests: sh.MultiRests,
 			Breaks: len(sh.Breaks), StaffSpace: sh.StaffSpace,
-			Cues: cuesOf(a.score, sh),
+			Cues: cuesOf(a.score, sh), Voicing: voicingsOf(sh),
 		})
 	}
 	w.Header().Set("Content-Type", "application/json")

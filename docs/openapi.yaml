@@ -1745,6 +1745,22 @@ paths:
                               bars: { type: integer }
                               from: { type: integer }
                               label: { type: string }
+                        voicing:
+                          type: array
+                          description: >
+                            Which of a shared staff's notes this part
+                            prints, one rule per staff. Absent where the
+                            part prints its staves whole, which is nearly
+                            always.
+                          items:
+                            type: object
+                            properties:
+                              staff: { type: integer }
+                              pick: { type: string, enum: [all, top, bottom, nth] }
+                              nth: { type: array, items: { type: integer } }
+                              fromBottom: { type: boolean }
+                              single: { type: boolean }
+                              layer: { type: integer }
     post:
       tags: [score]
       summary: Make the parts, show one, or change one
@@ -1770,6 +1786,31 @@ paths:
         - { name: bars, in: query, schema: { type: integer }, description: "how many bars of it, 1 to 16" }
         - { name: label, in: query, schema: { type: string }, description: "what is written over a cue; the staff's own name where empty" }
         - { name: uncue, in: query, schema: { type: integer }, description: "take away the cue with this number" }
+        - name: voice
+          in: query
+          description: >
+            Set the voicing for this staff, by its number in the score
+            counted from zero. Two players on one staff is how wind and
+            brass are written: the staff carries a chord where they differ
+            and one note where they agree, and each part needs its own
+            line off it. The rule is read against the score's notes every
+            time the part is drawn, so nothing is copied and nothing can
+            go stale. Sent with pick, and with nth, frombottom, single and
+            layer as the rule needs. A staff set back to pick=all keeps no
+            rule at all.
+          schema: { type: integer }
+        - name: pick
+          in: query
+          description: >
+            Which notes of a chord this part takes, in bars written as one
+            layer: all of them, the top note, the bottom note, or notes
+            counted through the chord (nth). A note written alone is
+            played by both players, so top and bottom both keep it.
+          schema: { type: string, enum: [all, top, bottom, nth] }
+        - { name: nth, in: query, schema: { type: string }, description: "which notes of the chord, counted from one: \"2\" or \"1,3\". Required with pick=nth." }
+        - { name: frombottom, in: query, schema: { type: string, enum: ["0", "1"] }, description: "count nth up from the lowest note instead of down from the highest" }
+        - { name: single, in: query, schema: { type: string, enum: ["0", "1"] }, description: "with pick=nth, print a note that is alone in its bar whoever it was written for — the a2 rule" }
+        - { name: layer, in: query, schema: { type: integer }, description: "in bars written with more than one layer, print this one, counted from one; 0 prints them all" }
       responses:
         "200":
           description: The parts as they now stand.
@@ -1778,6 +1819,105 @@ paths:
               schema: { type: object }
         "400":
           description: There is no such part, or the score already has parts.
+
+  /api/tunings:
+    get:
+      tags: [structure]
+      summary: The tunings a tab staff can be written for
+      description: >
+        A tablature is a tuning and a number of frets, and without the
+        tuning it says nothing: the same 3 on the same line is a G on a
+        guitar and a C on a ukulele. The strings are listed from the top
+        line of the tab down, which is how they are numbered — string 1 is
+        the line at the top. That is a position on the page and not an
+        order of pitch: a ukulele's fourth string is higher than its third.
+      responses:
+        "200":
+          description: The tunings, in the order they are offered.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    name: { type: string, description: "\"guitar\", \"guitar — drop D\"" }
+                    strings: { type: array, items: { type: string }, description: "the open strings, top line down" }
+                    frets: { type: integer }
+
+  /api/fret:
+    post:
+      tags: [edit]
+      summary: Write a note on a tab staff by the fret it stops
+      description: >
+        What is typed is a fret and what is stored is a pitch. A fret
+        number is where a finger goes and means nothing without the
+        tuning; the pitch is what sounds, what transposes and what every
+        other part of the program reads. The string and fret are kept
+        beside it, because which of the several places a note can be
+        played was a decision somebody made. Refused on a staff that is
+        not written as tablature, and on a place the instrument has not
+        got.
+      parameters:
+        - { name: part, in: query, required: true, schema: { type: integer } }
+        - { name: measure, in: query, required: true, schema: { type: integer } }
+        - { name: string, in: query, required: true, schema: { type: integer }, description: "counted from the top line of the tab down, so 1 is the highest string" }
+        - { name: fret, in: query, required: true, schema: { type: integer }, description: "0 is the open string" }
+        - { name: at, in: query, schema: { type: integer }, description: "where in the bar; appended where absent" }
+        - name: replace
+          in: query
+          description: >
+            Change the note already at `at` instead of writing another.
+            Frets run past nine and are typed a digit at a time, so a
+            second digit arriving while the player is still typing means
+            the twelfth fret and not a first followed by a second.
+          schema: { type: string, enum: ["1"] }
+        - { name: dur, in: query, schema: { type: string } }
+        - { name: dots, in: query, schema: { type: string } }
+      responses:
+        "200":
+          description: Where it went, and what it sounds.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string }
+                  at: { type: integer }
+                  pitch: { type: string }
+                  string: { type: integer }
+                  fret: { type: integer }
+        "400": { $ref: "#/components/responses/Error" }
+
+  /api/restring:
+    post:
+      tags: [edit]
+      summary: Move a note to another string without changing what it sounds
+      description: >
+        The same pitch is in several places on a neck and they do not
+        sound or finger alike: the open B string and the fourth fret of
+        the G are the same note and a different thing to play. The pitch
+        is kept and the fret is worked out again. A string that cannot
+        reach the note says so and nothing moves.
+      parameters:
+        - { name: part, in: query, required: true, schema: { type: integer } }
+        - { name: measure, in: query, required: true, schema: { type: integer } }
+        - { name: at, in: query, required: true, schema: { type: integer }, description: "which element of the bar" }
+        - { name: string, in: query, schema: { type: integer }, description: "the string to move to" }
+        - { name: move, in: query, schema: { type: string, enum: [up, down] }, description: "a string along the neck instead; up is towards string one" }
+      responses:
+        "200":
+          description: Where it is played now.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string }
+                  string: { type: integer }
+                  fret: { type: integer }
+                  pitch: { type: string }
+        "400": { $ref: "#/components/responses/Error" }
 
   /api/plugins:
     get:
@@ -2181,6 +2321,24 @@ paths:
         - $ref: "#/components/parameters/part"
         - { name: name, in: query, schema: { type: string } }
         - { name: instrument, in: query, schema: { type: string } }
+        - name: sound
+          in: query
+          description: >
+            Which instrument this staff is, by its MusicXML standard sound
+            id. Listed by `/api/instruments`; settles the transposition and
+            the range as well as what plays it. Takes precedence over
+            `instrument`.
+          schema: { type: string }
+        - name: tab
+          in: query
+          description: >
+            Write this staff as tablature, in the named tuning —
+            `/api/tunings` lists them — or `off` for a staff of pitches.
+            Not a change to the music: the notes keep their pitches, which
+            is what sounds and what transposes, and a staff turned to tab
+            and back is the staff it was. Notes already on it are given a
+            place on the neck.
+          schema: { type: string }
         - { name: clef, in: query, schema: { type: string, enum: [treble, bass, alto, tenor, percussion] } }
         - { name: time, in: query, description: "A meter, as `4/4` or `6/8`.", schema: { type: string } }
         - { name: at, in: query, description: "The bar a meter change begins at.", schema: { type: integer } }

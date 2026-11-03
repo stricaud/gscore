@@ -26,10 +26,16 @@ import (
 //
 // What is left out is as much of it as what is put in. There are no clefs
 // and no key signatures, because a fret number says where to put a finger
-// and needs neither. There are no stems, beams or flags: common guitar tab
-// leaves the rhythm to the staff above or to the player's ear, and the
-// numbers are what the eye is reading. Rests are not drawn for the same
-// reason — the file says so too, with showRests off.
+// and needs neither, and the word TAB stands at the head instead.
+//
+// The stems stay, and that is a decision rather than an oversight. Common
+// guitar tab leaves the rhythm to the staff of pitches printed above it and
+// gives the numbers nothing but their order — which works only while that
+// staff is there. A tab on its own, which is what gscore writes when
+// somebody turns a staff into one, would then say which frets and never say
+// when. So a tab here is an ordinary staff with figures where the noteheads
+// would be: it is beamed and stemmed like any other, and the rhythm can be
+// read off it. See TestATabKeepsItsStems, which is where this was settled.
 
 const (
 	// tabFretSize is the type the numbers are set in, in staff spaces.

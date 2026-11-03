@@ -755,6 +755,9 @@ async function action(name) {
     case "show-all-staves": await showAllStaves(); break;
     case "staff-up": await moveStaff(-1); break;
     case "staff-down": await moveStaff(1); break;
+    case "tab": await tabDialog(); break;
+    case "string-up": await moveToString("up"); break;
+    case "string-down": await moveToString("down"); break;
 
     case "repeat-bar": await setMeasureRepeat(1); break;
     case "repeat-2bars": await setMeasureRepeat(2); break;
@@ -2420,7 +2423,87 @@ async function partSetupDialog() {
     : "";
 
   drawCues(sh);
+  drawVoicing(sh);
   if (!dlg.open) dlg.showModal();
+}
+
+// drawVoicing fills the voicing controls from the part.
+//
+// One staff at a time, because a rule is about a staff: a part printing a
+// flute staff and a piccolo staff takes the bottom note of one and all of
+// the other. The staff picker holds the part's own staves and nobody
+// else's — a rule about a staff this part does not print would do nothing.
+function drawVoicing(sh) {
+  const pick = $("#voice-staff");
+  if (!pick) return;
+  const names = state.info?.parts || [];
+  pick.innerHTML = (sh.staves || []).map((n) =>
+    `<option value="${n}">${escapeHTML((n + 1) + " " + (names[n]?.name || "Staff " + (n + 1)))}</option>`
+  ).join("");
+  showVoicingFor(sh);
+}
+
+// voicingOf is the rule a part has for a staff, or the empty rule.
+function voicingOf(sh, staff) {
+  return (sh.voicing || []).find((v) => v.staff === staff) ||
+    { staff, pick: "all", nth: [], fromBottom: false, single: false, layer: 0 };
+}
+
+// showVoicingFor puts one staff's rule into the controls.
+function showVoicingFor(sh) {
+  const staff = Number($("#voice-staff")?.value ?? -1);
+  if (!Number.isInteger(staff) || staff < 0) return;
+  const v = voicingOf(sh, staff);
+  $("#voice-pick").value = v.pick || "all";
+  $("#voice-nth").value = (v.nth || []).join(", ");
+  $("#voice-from").value = v.fromBottom ? "bottom" : "top";
+  $("#voice-single").checked = !!v.single;
+  $("#voice-layer").value = String(v.layer || 0);
+  syncVoicingRows();
+}
+
+// syncVoicingRows hides the controls that only mean something for a rule
+// counting notes through a chord.
+function syncVoicingRows() {
+  const nth = $("#voice-pick")?.value === "nth";
+  const row = $("#voice-nth-row");
+  const single = $("#voice-single-row");
+  if (row) row.hidden = !nth;
+  if (single) single.hidden = !nth;
+  // The warning is about a part whose notes are chosen, whichever way.
+  const chosen = ($("#voice-pick")?.value || "all") !== "all" ||
+    Number($("#voice-layer")?.value || 0) > 0;
+  const note = $("#voice-note");
+  if (note) note.hidden = !chosen;
+}
+
+// applyVoicing sends the rule for the staff on show.
+async function applyVoicing() {
+  if (showingSheet < 0) return true;
+  const staff = Number($("#voice-staff")?.value ?? -1);
+  if (!Number.isInteger(staff) || staff < 0) return true;
+
+  const q = new URLSearchParams({
+    at: String(showingSheet), voice: String(staff),
+    pick: $("#voice-pick").value,
+    layer: $("#voice-layer").value,
+  });
+  if ($("#voice-pick").value === "nth") {
+    const nth = $("#voice-nth").value.trim();
+    if (nth === "") {
+      status("Say which notes of the chord — 2, or 1,3");
+      return false;
+    }
+    q.set("nth", nth);
+    if ($("#voice-from").value === "bottom") q.set("frombottom", "1");
+    if ($("#voice-single").checked) q.set("single", "1");
+  }
+  const res = await fetch("/api/sheets?" + q, { method: "POST" });
+  if (!res.ok) {
+    status((await res.text()).trim());
+    return false;
+  }
+  return true;
 }
 
 // drawCues lists what this part already cues, and offers the staves it
@@ -2508,6 +2591,9 @@ async function removeCue(i) {
 
 async function applyPartSetup() {
   if (showingSheet < 0) return;
+  // The voicing first: it is a separate call, and sending it after the
+  // rest would leave the dialog closed if it were the thing that failed.
+  if (!await applyVoicing()) return;
   const q = new URLSearchParams({
     at: String(showingSheet),
     name: $("#part-name").value,
@@ -2553,6 +2639,16 @@ function setupPartDialog() {
   $("#part-apply")?.addEventListener("click", () => void applyPartSetup());
   $("#cue-add")?.addEventListener("click", () => void addCue());
   $("#part-remove")?.addEventListener("click", () => void removeShowingPart());
+
+  // Turning to another staff shows that staff's rule rather than leaving
+  // the one before it in the boxes, which would be read as this staff's
+  // and applied to it on the way out.
+  $("#voice-staff")?.addEventListener("change", () => {
+    const sh = sheets[showingSheet];
+    if (sh) showVoicingFor(sh);
+  });
+  $("#voice-pick")?.addEventListener("change", syncVoicingRows);
+  $("#voice-layer")?.addEventListener("change", syncVoicingRows);
 }
 
 // tickItem marks the entry that is the one being shown. A list of things
@@ -8363,6 +8459,161 @@ function instrumentNamed(sound) {
   return found ? found.name : sound;
 }
 
+/* ---------- tablature ---------- */
+
+// isTabStaff reports whether a staff is written as tab rather than as a
+// staff of pitches.
+function isTabStaff(part) {
+  return !!state.info?.parts?.[part]?.tab;
+}
+
+// tabDialog chooses the tuning a staff is written in, or takes the tab
+// away.
+//
+// A tablature is a tuning and nothing else: the same 3 on the same line is
+// a G on a guitar and a C on a ukulele, so there is no such thing as a tab
+// staff without one and the question cannot be skipped.
+async function tabDialog() {
+  const part = state.selection?.part ?? 0;
+  const staff = state.info?.parts?.[part];
+  const tunings = await (await fetch("/api/tunings")).json();
+
+  const options = [{ value: "off", label: "a staff of pitches" }].concat(
+    tunings.map((t) => ({
+      value: t.name,
+      // The strings, because that is what tells two tunings apart, and
+      // somebody choosing between drop D and DADGAD is choosing by them.
+      label: `${t.name} — ${t.strings.join(" ")}`,
+    })));
+
+  const now = staff?.tab?.tuning;
+  const v = await ask({
+    title: staff ? `${staff.name} as tablature` : "Tablature",
+    label: "Written as",
+    value: now && now !== "custom" ? now : "guitar",
+    note: "The notes keep their pitches either way — a tab is how the " +
+          "music is written, not what it is. Type a fret number to write " +
+          "a note on the line the cursor is on.",
+    search: true,
+    options,
+  });
+  if (v === null) return;
+
+  const res = await fetch(`/api/staff?part=${part}&tab=${encodeURIComponent(v)}`,
+                          { method: "POST" });
+  if (!res.ok) {
+    status((await res.text()).trim());
+    return;
+  }
+  await refreshScore();
+  status(v === "off" ? "Written on a staff of pitches" : "Written as " + v);
+}
+
+// moveToString moves the selected note a string along the neck, keeping
+// what it sounds.
+//
+// The same pitch is in several places and they do not finger alike: the
+// open B string and the fourth fret of the G are the same note and a
+// different thing to play. Which one the music wants is a decision, and
+// this is where it is made.
+async function moveToString(dir) {
+  const sel = state.selection;
+  if (!sel || sel.index == null) {
+    status("Pick a note first");
+    return;
+  }
+  if (!isTabStaff(sel.part)) {
+    status("That staff is not written as tablature");
+    return;
+  }
+  const p = new URLSearchParams({
+    part: String(sel.part), measure: String(sel.measure),
+    at: String(sel.index), move: dir,
+  });
+  const res = await fetch("/api/restring?" + p, { method: "POST" });
+  if (!res.ok) {
+    status((await res.text()).trim());
+    return;
+  }
+  const d = await res.json();
+  await refreshScore();
+  status(`String ${d.string}, fret ${d.fret}`);
+}
+
+// typing holds the fret being typed, while it is being typed.
+//
+// Frets run past nine and are typed a digit at a time, so "1" then "2" is
+// the twelfth fret and not the first followed by the second. The only
+// thing that can tell them apart is whether the player is still typing,
+// which is what this remembers: a digit arriving soon after another, on
+// the same note, extends it instead of starting a new one.
+let fretTyping = null;
+const fretTypingWindow = 900;
+
+// typeFret writes the digit the player typed onto the line the cursor is
+// on.
+async function typeFret(digit) {
+  const sel = state.selection;
+  if (!sel) return false;
+  const str = stringAtCursor(sel);
+  if (!str) return false;
+
+  const now = Date.now();
+  const extending = fretTyping &&
+    now - fretTyping.at < fretTypingWindow &&
+    fretTyping.part === sel.part && fretTyping.measure === sel.measure &&
+    fretTyping.string === str;
+
+  const fret = extending ? fretTyping.fret * 10 + digit : digit;
+  const p = new URLSearchParams({
+    part: String(sel.part), measure: String(sel.measure),
+    string: String(str), fret: String(fret), dur: state.tool.duration,
+  });
+  if (state.tool.dots) p.set("dots", String(state.tool.dots));
+  if (extending) {
+    p.set("at", String(fretTyping.index));
+    p.set("replace", "1");
+  }
+  const res = await fetch("/api/fret?" + p, { method: "POST" });
+  if (!res.ok) {
+    // A two-digit fret that does not exist is almost always a first digit
+    // the player has finished with — "1" then "5" on a twelve-fret neck —
+    // so the second digit starts again rather than being refused.
+    if (extending) {
+      fretTyping = null;
+      return typeFret(digit);
+    }
+    status((await res.text()).trim());
+    return true;
+  }
+  const d = await res.json();
+  fretTyping = {
+    at: now, part: sel.part, measure: sel.measure,
+    string: str, fret, index: d.at,
+  };
+  await refreshScore();
+  return true;
+}
+
+// stringAtCursor is which string the cursor is sitting on, counted from
+// the top line of the tab down.
+//
+// The cursor's step is in half spaces from the bottom line, which is how
+// the whole editor measures height; a tab's strings are its lines, so the
+// string is which line that lands on, counted the other way about.
+function stringAtCursor(sel) {
+  const tab = state.info?.parts?.[sel.part]?.tab;
+  if (!tab) return 0;
+  const lines = tab.strings.length;
+  const step = sel.step ?? 0;
+  // Two half spaces to a line, counted up from the bottom; string one is
+  // the top line.
+  const fromBottom = Math.round(step / 2);
+  const str = lines - fromBottom;
+  if (str < 1 || str > lines) return 0;
+  return str;
+}
+
 // addGrandStaff adds the two staves a pianist reads, joined by a brace with
 // the barlines running through — which is what makes them one instrument on
 // the page rather than two next to each other.
@@ -11098,6 +11349,11 @@ const MENU_ICONS = {
   // arrow the transpose entry uses and not another tab clef: the entry is
   // about the move, not about the staff.
   "tab-transposition": "\ueb61",   // arrowBlackUpRight
+  // Moving a note along the neck is a move up or down the page, and that
+  // is what the arrows say. Not a string number: the entry is about
+  // taking the note somewhere, not about where it ends up.
+  "string-up": "\ueb60",           // arrowBlackUp
+  "string-down": "\ueb64",         // arrowBlackDown
   "fingering": "\ued11",           // fingering1
   "add-grand-staff": "\ue000",     // brace
 
@@ -11371,6 +11627,17 @@ function setupKeys() {
         isDrumStaff(state.selection.part) && drumPadForKey(e.key)) {
       e.preventDefault();
       void typeDrum(e.key);
+      return;
+    }
+
+    // And on a tab staff the digits type frets, by the same rule and for
+    // the same reason: a tab is written by saying which fret, and the
+    // number is what the player is reading. Scoped to the staff, so the
+    // digits go on meaning what they mean everywhere else.
+    if (!e.shiftKey && !e.altKey && !e.ctrlKey && !e.metaKey && state.selection &&
+        isTabStaff(state.selection.part) && /^[0-9]$/.test(e.key)) {
+      e.preventDefault();
+      void typeFret(Number(e.key));
       return;
     }
 

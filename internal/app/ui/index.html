@@ -356,7 +356,9 @@
         </div>
       </div>
       <hr>
-      <button data-action="tab" disabled><span>Tab</span></button>
+      <button data-action="tab"><span>Write as tablature…</span></button>
+      <button data-action="string-up"><span>Move note to the string above</span></button>
+      <button data-action="string-down"><span>Move note to the string below</span></button>
       <button data-action="chord-builder" disabled><span>Chord builder…</span></button>
       <button data-action="tab-transposition" disabled><span>Tab transposition…</span></button>
     </div>
@@ -1330,6 +1332,49 @@
            style="width:4em" aria-label="How many bars of it">
     <button type="button" id="cue-add">Add</button>
   </div>
+
+  <!-- The voicing: which of a shared staff's notes this part prints. Wind
+       and brass are written two to a staff, and the second player reads
+       the lower note and nothing else. -->
+  <h3 class="small">Voicing</h3>
+  <p class="small">Where two players share a staff, which of its notes this
+    part prints. A note written once is played by both, so it is in both
+    parts.</p>
+  <div class="tempo-bar">
+    <span>Of staff</span>
+    <select id="voice-staff" aria-label="Which staff the rule is about"></select>
+    <span>print</span>
+    <select id="voice-pick" aria-label="Which notes to print">
+      <option value="all">every note</option>
+      <option value="top">the top note</option>
+      <option value="bottom">the bottom note</option>
+      <option value="nth">chosen notes…</option>
+    </select>
+  </div>
+  <div class="tempo-bar" id="voice-nth-row" hidden>
+    <span>Notes</span>
+    <input type="text" id="voice-nth" autocomplete="off" placeholder="2, or 1,3"
+           style="width:6em" aria-label="Which notes of the chord">
+    <select id="voice-from" aria-label="Which end to count from">
+      <option value="top">counting from the top</option>
+      <option value="bottom">counting from the bottom</option>
+    </select>
+  </div>
+  <label id="voice-single-row" hidden><input type="checkbox" id="voice-single">
+    Print a note that is alone in its bar, whoever it was written for</label>
+  <div class="tempo-bar">
+    <span>In bars written in layers, print</span>
+    <select id="voice-layer" aria-label="Which layer to print">
+      <option value="0">every layer</option>
+      <option value="1">layer 1</option>
+      <option value="2">layer 2</option>
+      <option value="3">layer 3</option>
+      <option value="4">layer 4</option>
+    </select>
+  </div>
+  <p class="small" id="voice-note" hidden>The notes this part shows are
+    chosen from a staff two players share, so they are changed in the full
+    score rather than here.</p>
 
   <div id="part-setup-bar">
     <button type="button" id="part-apply" class="primary">Apply</button>

@@ -764,6 +764,9 @@ func (a *App) handleDelete(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// A tuplet losing a note stops being a tuplet. See freeTuplet.
+	freeTupletAt(v, at)
+
 	v.Elements = append(v.Elements[:at], v.Elements[at+1:]...)
 	writeJSON(w, map[string]string{"status": "ok"})
 }
@@ -852,6 +855,11 @@ func (a *App) handleDeleteSelection(w http.ResponseWriter, r *http.Request) {
 			if i < 0 || i >= len(v.Elements) {
 				continue
 			}
+			// A tuplet losing a note stops being a tuplet, and the whole
+			// group goes at the first of its notes to be taken: freeing it
+			// moves nothing, so the indices still to be deleted are still
+			// where they were. See freeTuplet.
+			freeTupletAt(v, i)
 			v.Elements = append(v.Elements[:i], v.Elements[i+1:]...)
 			removed++
 		}
@@ -4449,6 +4457,56 @@ func spanOf(els []model.Element) model.Duration {
 	return span
 }
 
+// freeTuplet takes a whole group out of its tuplet, leaving the notes
+// exactly as they are drawn, and says how many it freed.
+//
+// For when a tuplet is about to lose a note. Three in the time of two with
+// one of them deleted is not a triplet any more — it is two notes with a
+// 3 printed over them and no arithmetic that holds — and the state it left
+// behind was worse than untidy. A member's stored length is its written
+// length scaled by the figure, so a thirty-second in twelve-in-the-time-of
+// -eight is a forty-eighth: a length no notehead spells. Those orphans
+// could not be dotted ("that note's length is not one a dot can change"),
+// could not be made into a tuplet again ("part of that selection is
+// already in a tuplet"), and said both about notes with no group over them
+// to see. Reported as exactly that, twice, on the same bar of the Altes.
+//
+// What is restored is the written length, so nothing on the page moves:
+// a member drawn as a thirty-second goes on being a thirty-second. Only
+// the arithmetic changes, and it changes from false to true.
+func freeTuplet(v *model.Voice, idx int) int {
+	first, last, ok := tupletBounds(v, idx)
+	if !ok {
+		return 0
+	}
+	freed := 0
+	for i := first; i <= last; i++ {
+		mk := marksOfElement(v.Elements[i])
+		if mk == nil || mk.Tuplet == nil {
+			continue
+		}
+		if actual, normal, ok := mk.Tuplet.Ratio(); ok {
+			setDuration(v.Elements[i],
+				v.Elements[i].Duration().Scale(actual, normal).Reduced())
+		}
+		mk.Tuplet = nil
+		freed++
+	}
+	return freed
+}
+
+// freeTupletAt frees the group around an element that is about to be
+// removed, where there is one. Called before the removal, since the group
+// is found by walking the notes either side of it.
+func freeTupletAt(v *model.Voice, idx int) {
+	if idx < 0 || idx >= len(v.Elements) {
+		return
+	}
+	if mk := marksOfElement(v.Elements[idx]); mk != nil && mk.Tuplet != nil {
+		freeTuplet(v, idx)
+	}
+}
+
 func ungroupTuplet(v *model.Voice, idx int) int {
 	first, last, ok := tupletBounds(v, idx)
 	if !ok {
@@ -4683,9 +4741,31 @@ func (a *App) handleDot(w http.ResponseWriter, r *http.Request) {
 	}
 	el := v.Elements[at-1]
 
-	// What the note is written as now. A length that no notehead spells —
-	// one member of a tuplet, say — has no dot to add or take away.
-	value, dots, ok := el.Duration().Written()
+	// A note inside a tuplet is written as one thing and lasts another: a
+	// thirty-second in twelve-in-the-time-of-eight is stored as a
+	// forty-eighth, because that is what it plays for. The dot belongs to
+	// the written note — it is drawn beside that notehead and read as
+	// half of it again — so the group's figure is divided out, the dot
+	// added to what is written, and the figure put back.
+	//
+	// Without that, a forty-eighth was a length no notehead spells and the
+	// dot was refused: "that note's length is not one a dot can change",
+	// on a note a reader would call an ordinary thirty-second. Worse where
+	// the arithmetic happened to land on a value that does spell — a
+	// dotted quarter in a triplet is stored as a quarter — and the dot
+	// would have been added to the wrong note and come out as something
+	// else entirely.
+	num, den := 1, 1
+	if mk := marksOfElement(el); mk != nil && mk.Tuplet != nil {
+		if actual, normal, ok := mk.Tuplet.Ratio(); ok {
+			num, den = actual, normal
+		}
+	}
+	written := el.Duration().Scale(num, den).Reduced()
+
+	// What the note is written as now. A length that no notehead spells at
+	// all has no dot to add or take away.
+	value, dots, ok := written.Written()
 	if !ok {
 		http.Error(w, "that note's length is not one a dot can change",
 			http.StatusBadRequest)
@@ -4704,12 +4784,15 @@ func (a *App) handleDot(w http.ResponseWriter, r *http.Request) {
 	if want > 0 {
 		next = dotted(plain, strconv.Itoa(want))
 	}
-	setDuration(el, next)
+	setDuration(el, next.Scale(den, num).Reduced())
 
 	// What no longer fits the bar moves into the next one, as when writing.
 	spill(p, measIdx)
 	measure, idx := findElement(p, measIdx, el)
 	writeJSON(w, map[string]any{
+		// The written length, not the played one: it is the note on the
+		// page that has just gained a dot, and inside a tuplet the two are
+		// different numbers.
 		"dots": want,
 		"dur":  next.String(), "measure": measure, "at": idx,
 	})

@@ -136,10 +136,17 @@ func TestTheDotLengthensTheNoteItIsAimedAt(t *testing.T) {
 
 // A length no notehead spells cannot be dotted, and says so rather than
 // writing something that cannot be drawn.
+//
+// This used to be tried on a member of a triplet, which was the wrong
+// example and hid a real fault: a third of a quarter is an eighth written,
+// spelled perfectly well once the group's figure is divided out, and
+// refusing it meant no note anywhere inside a tuplet could be dotted. A
+// fifth of a whole note is the real case — nothing in gscore writes one,
+// and only a file from somewhere else can hold one.
 func TestALengthWithNoNoteheadIsNotDotted(t *testing.T) {
 	h := newHarness(t)
 	h.note(0, 0, 6, "quarter")
-	h.post("/api/tuplet?part=0&measure=0&at=1&n=3") // thirds of a quarter
+	setDuration(h.elements(0, 0)[0], model.Duration{Num: 1, Den: 5})
 
 	if said := h.postFails("/api/dot?part=0&measure=0&at=1"); said == "" {
 		t.Error("it was refused without saying why")

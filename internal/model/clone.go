@@ -199,6 +199,9 @@ func CloneMarks(m Marks) Marks {
 	if m.Articulations != nil {
 		out.Articulations = append([]Articulation(nil), m.Articulations...)
 	}
+	if m.Techniques != nil {
+		out.Techniques = append([]Technique(nil), m.Techniques...)
+	}
 	if m.Symbols != nil {
 		out.Symbols = append([]SymbolMark(nil), m.Symbols...)
 	}

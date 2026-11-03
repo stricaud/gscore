@@ -247,6 +247,7 @@ type symbolRef struct {
 
 type marksDoc struct {
 	Articulations []string    `json:"articulations,omitempty"`
+	Techniques    []string    `json:"techniques,omitempty"`
 	Symbols       []symbolRef `json:"symbols,omitempty"`
 	TieStart      bool        `json:"tieStart,omitempty"`
 	TieStop       bool        `json:"tieStop,omitempty"`
@@ -605,7 +606,8 @@ func encodeElement(el model.Element) elemDoc {
 }
 
 func encodeMarks(m *model.Marks) *marksDoc {
-	if len(m.Articulations) == 0 && len(m.Symbols) == 0 && m.Tuplet == nil &&
+	if len(m.Articulations) == 0 && len(m.Techniques) == 0 &&
+		len(m.Symbols) == 0 && m.Tuplet == nil &&
 		!m.TieStart && !m.TieStop && !m.SlurStart && !m.SlurStop &&
 		m.Stem == model.StemAuto && m.Dynamic == model.DynamicNone &&
 		m.Hairpin == nil && m.Octave == nil && len(m.Lyrics) == 0 &&
@@ -624,6 +626,9 @@ func encodeMarks(m *model.Marks) *marksDoc {
 	}
 	for _, a := range m.Articulations {
 		out.Articulations = append(out.Articulations, articNames[a])
+	}
+	for _, t := range m.Techniques {
+		out.Techniques = append(out.Techniques, t.String())
 	}
 	for _, s := range m.Symbols {
 		out.Symbols = append(out.Symbols, symbolRef{
@@ -964,6 +969,15 @@ func decodeMarks(md *marksDoc, m *model.Marks) {
 	for _, a := range md.Articulations {
 		if v, ok := articValues[a]; ok {
 			m.AddArticulation(v)
+		}
+	}
+	// A technique the file names and this build does not know is dropped
+	// rather than refused: a score written by a later gscore should still
+	// open, minus the one mark. The same rule the articulations above are
+	// read by, and for the same reason.
+	for _, t := range md.Techniques {
+		if v, ok := model.TechniqueFromName(t); ok {
+			m.AddTechnique(v)
 		}
 	}
 	for _, s := range md.Symbols {

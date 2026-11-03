@@ -375,7 +375,21 @@ func (a *App) routes(mux *http.ServeMux) {
 	if err != nil {
 		panic(err)
 	}
-	mux.Handle("/", http.FileServer(http.FS(ui)))
+	// The editor's own files, told to ask before reusing what is cached.
+	//
+	// The editor and the core are one program in two halves, and they
+	// have to be from the same build: a page that serves itself the
+	// app.js it kept and fetches a core it has not got asks for things
+	// the other half does not do, and one thing quietly does not work.
+	// Nothing about that reads as a failure, which is what makes it
+	// expensive — the site build stamps its scripts with the version for
+	// exactly this reason, and this server, which hands out a UI built
+	// into the binary beside it, had nothing.
+	//
+	// no-cache and not no-store: the file is still kept and still
+	// answered from the cache, the browser simply asks first, which over
+	// a socket to the same machine costs nothing worth counting.
+	mux.Handle("/", noCache(http.FileServer(http.FS(ui))))
 	// The mascot is served from the one place he is kept, rather than from a
 	// second copy sitting in the interface's own files: the PDF writer
 	// stamps the same drawing on paper and the two must not drift apart.
@@ -390,6 +404,15 @@ func (a *App) routes(mux *http.ServeMux) {
 		w.Write(brand.GilbertSVG)
 	})
 	a.APIRoutes(mux)
+}
+
+// noCache makes a handler's answers revalidate rather than be reused
+// unasked.
+func noCache(h http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-cache")
+		h.ServeHTTP(w, r)
+	})
 }
 
 // APIRoutes registers everything but the interface's own files.
@@ -513,6 +536,8 @@ func (a *App) APIRoutes(mux *http.ServeMux) {
 		"/api/tremolo":         a.handleTremolo,
 		"/api/accidental":      a.handleAccidental,
 		"/api/articulation":    a.handleArticulation,
+		"/api/technique":       a.handleTechnique,
+		"/api/notehead":        a.handleNotehead,
 		"/api/dynamic":         a.handleDynamic,
 		"/api/hairpin":         a.handleHairpin,
 		"/api/octave":          a.handleOctave,

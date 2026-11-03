@@ -62,11 +62,15 @@ func tabStep(str int) int {
 
 // tabPosition is where a note is played: what the file recorded, or the
 // first place on the neck that reaches the pitch.
-func tabPosition(t *model.Tablature, n *model.Note) (str, fret int, ok bool) {
+// shift is the staff's transposition, because a tuning says what the
+// open strings sound and the note carries what is printed: on a guitar,
+// which reads an octave above what it sounds, the two are an octave
+// apart and a fret worked out from the printed pitch comes out wrong.
+func tabPosition(t *model.Tablature, n *model.Note, shift model.Transposition) (str, fret int, ok bool) {
 	if n.String > 0 && n.String <= t.Lines() {
 		return n.String, n.Fret, true
 	}
-	return t.At(n.Pitch)
+	return t.At(shift.Apply(n.Pitch))
 }
 
 // noteStep is where a note sits on the staff being drawn.
@@ -80,7 +84,7 @@ func (e *engraver) noteStep(c model.Clef, n *model.Note) int {
 	if e.tab == nil {
 		return StaffStep(c, n.Pitch)
 	}
-	str, _, ok := tabPosition(e.tab, n)
+	str, _, ok := tabPosition(e.tab, n, e.tabShift)
 	if !ok {
 		return StaffStep(c, n.Pitch)
 	}
@@ -92,12 +96,19 @@ func (e *engraver) noteStep(c model.Clef, n *model.Note) int {
 // It returns false for a note the instrument cannot reach, which is drawn as
 // the notehead it is rather than as a fret that does not exist.
 func (e *engraver) fretNumber(n *model.Note, x, y float64, index int) bool {
-	str, fret, ok := tabPosition(e.tab, n)
+	str, fret, ok := tabPosition(e.tab, n, e.tabShift)
 	if !ok {
 		return false
 	}
 	_ = str
+	// A dead note: the string damped and struck, which has no pitch and so
+	// no fret to print. The same note on a staff of pitches is drawn with
+	// a cross notehead, which is what Head already says, so the tab reads
+	// it from there rather than from a mark of its own.
 	s := strconv.Itoa(fret)
+	if n.Head == model.HeadX {
+		s = "x"
+	}
 	w := textWidth(s, tabFretSize)
 	e.lay.Texts = append(e.lay.Texts, Text{
 		S: s, X: x, Y: y + tabFretSize*0.36,

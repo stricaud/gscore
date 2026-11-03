@@ -70,9 +70,14 @@ func TestATabStaffHasALineForEachString(t *testing.T) {
 
 	// The staff lines are the level ones, and a six-string tab has six of
 	// them at distinct heights.
+	//
+	// Counted by height and not by length. A line is ruled around the
+	// numbers written on it, so the line a fret sits on is drawn as two
+	// short pieces either side of the figure — and on a short staff both
+	// pieces are shorter than any threshold worth setting.
 	levels := map[float64]bool{}
 	for _, l := range lay.Lines {
-		if math.Abs(l.Y1-l.Y2) < 0.01 && l.X2-l.X1 > 4 {
+		if math.Abs(l.Y1-l.Y2) < 0.01 && l.X2 > l.X1 {
 			levels[math.Round(l.Y1*100)/100] = true
 		}
 	}
@@ -212,3 +217,47 @@ func TestTheLinesAreBrokenBehindTheNumbers(t *testing.T) {
 // fretLine is the staff line a fret number sits on: the figure is set from
 // its baseline, a little under the line.
 func fretLine(t *Text) float64 { return t.Y - tabFretSize*0.36 }
+
+// Where the strings sit, which is the one thing the editor has to agree
+// with to put a fret where the cursor is.
+//
+// String one is the top line of the staff and each string below it is a
+// line lower — and that is true whatever the instrument, which is why the
+// sum does not mention how many strings there are. The editor counted up
+// from the bottom instead, which is the same answer only for a tab with as
+// many lines as stepAt's zero is spaces above the bottom. For a guitar it
+// is not: every string came out a line too high and the bottom one could
+// not be reached at all. See stringAtCursor in app.js, which is the other
+// half of this and is tested against the steps written out here.
+func TestStringOneIsTheTopLineWhateverTheInstrument(t *testing.T) {
+	// The top line is where stepY puts a step of staffHeight*2: at the
+	// staff's own origin, which is the first line drawn.
+	if got := tabStep(1); got != staffHeight*2 {
+		t.Errorf("string one is at step %d, want %d — the top line",
+			got, staffHeight*2)
+	}
+	if got := stepY(float64(tabStep(1))); got != 0 {
+		t.Errorf("string one is drawn %.2f from the top of the staff", got)
+	}
+	for str := 1; str < 8; str++ {
+		if got, want := tabStep(str+1), tabStep(str)-2; got != want {
+			t.Errorf("string %d is at step %d, want %d — a line below string %d",
+				str+1, got, want, str)
+		}
+	}
+}
+
+// And the bottom string of a tab is drawn on its bottom line, for every
+// neck anybody writes: a string drawn off the end of the staff is a fret
+// number floating under it.
+func TestTheLastStringIsTheBottomLine(t *testing.T) {
+	for _, lines := range []int{4, 5, 6, 7} {
+		p := &model.Part{Tab: &model.Tablature{
+			Strings: make([]model.Pitch, lines), Frets: 24,
+		}}
+		if got, want := stepY(float64(tabStep(lines))), partH(p); got != want {
+			t.Errorf("a %d-string tab puts its last string %.2f down, "+
+				"and the staff is %.2f tall", lines, got, want)
+		}
+	}
+}

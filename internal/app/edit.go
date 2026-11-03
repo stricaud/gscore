@@ -353,6 +353,7 @@ func (a *App) locateForWriting(partIdx, measIdx int) (*model.Part, *model.Measur
 	if partIdx < 0 || partIdx >= len(a.score.Parts) {
 		return nil, nil, editError("no such staff")
 	}
+	partIdx = a.score.MusicIndex(partIdx)
 	if name, ok := a.voicedHere(partIdx); ok {
 		return nil, nil, errVoicedElsewhere(name)
 	}
@@ -794,6 +795,10 @@ func (a *App) handleAddMeasure(w http.ResponseWriter, r *http.Request) {
 	a.lock()
 	defer a.mu.Unlock()
 	for _, p := range a.score.Parts {
+		// A staff that mirrors another holds no bars of its own.
+		if p.Mirrors() {
+			continue
+		}
 		p.AppendMeasure()
 	}
 	// A bar added is a bar of rest until something is written in it.
@@ -872,7 +877,12 @@ func (a *App) locate(partIdx, measIdx int) (*model.Part, *model.Measure, error) 
 	if partIdx < 0 || partIdx >= len(a.score.Parts) {
 		return nil, nil, errBadPart
 	}
-	p := a.score.Parts[partIdx]
+	// A staff that mirrors another is the music above it written a
+	// second way, so reading or writing at it means the staff that holds
+	// the music. Typing a fret on a guitar's tablature puts the note on
+	// the notation staff, where it belongs and where it is already being
+	// read from.
+	p := a.score.MusicOf(partIdx)
 	if measIdx < 0 || measIdx >= len(p.Measures) {
 		return nil, nil, errBadMeasure
 	}
@@ -1764,6 +1774,13 @@ func (a *App) handleInstruments(w http.ResponseWriter, r *http.Request) {
 		// is not the order this list is in: the list is ordered for
 		// finding an instrument and a score for reading one.
 		ScoreRank int `json:"scoreRank"`
+		// Written is how the staff is laid out — a staff of pitches, a
+		// tablature, or both — and Tuning which tuning a tablature is
+		// in. Only a fretted instrument is offered more than one way,
+		// and the editor has to be told which way an entry is or every
+		// one of them asks for a plain staff.
+		Written string `json:"written,omitempty"`
+		Tuning  string `json:"tuning,omitempty"`
 	}
 	out := make([]item, 0, 320)
 	for _, c := range model.Catalogue() {
@@ -1771,6 +1788,7 @@ func (a *App) handleInstruments(w http.ResponseWriter, r *http.Request) {
 			Group: c.Group, Name: c.Name, Sound: c.Sound,
 			Program: int(c.Program), Percussion: c.Percussion,
 			Low: c.Low, High: c.High, ScoreRank: c.ScoreRank,
+			Written: c.Written, Tuning: c.Tuning,
 		})
 	}
 	writeJSON(w, struct {
@@ -3102,6 +3120,10 @@ func (a *App) handleAddStaff(w http.ResponseWriter, r *http.Request) {
 		clef = c
 	}
 	inst := model.AcousticGrandPiano
+	// How the staff is written down, for a fretted instrument, and in
+	// what tuning.
+	writtenAs := model.WrittenPitches
+	tuningName := ""
 	// sound and trans are what the staff is and how it transposes. A sound
 	// answers both; an instrument chosen as a General MIDI program can only
 	// answer the second, and only as well as the program allows.
@@ -3113,6 +3135,34 @@ func (a *App) handleAddStaff(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "unknown instrument "+v, http.StatusBadRequest)
 			return
 		}
+		// How it is written down, which for a fretted instrument is a
+		// question of its own: a staff of pitches, a tab, or the pair of
+		// them a guitar part is usually printed as.
+		written, ok := model.WrittenFromName(strings.TrimSpace(q.Get("written")))
+		if !ok {
+			http.Error(w, q.Get("written")+" is not pitches, tab or both",
+				http.StatusBadRequest)
+			return
+		}
+		if written != model.WrittenPitches && model.DefaultTuning(v) == "" {
+			http.Error(w, "that instrument has no frets to write a tab for",
+				http.StatusBadRequest)
+			return
+		}
+		// Which tuning, and so how many lines the tab is ruled with: a
+		// bass is four strings and often five, and the number of lines
+		// is not a setting of its own — it is however many strings the
+		// instrument has.
+		tuningName = model.DefaultTuning(v)
+		if t := strings.TrimSpace(q.Get("tuning")); t != "" {
+			if _, ok := model.TuningNamed(t); !ok {
+				http.Error(w, "no tuning called "+t+" — /api/tunings lists them",
+					http.StatusBadRequest)
+				return
+			}
+			tuningName = t
+		}
+		writtenAs = written
 		sound, inst = v, probe.Instrument
 		named, _ = model.SoundName(v)
 		trans, _ = model.SoundTransposition(v)
@@ -3228,6 +3278,38 @@ func (a *App) handleAddStaff(w http.ResponseWriter, r *http.Request) {
 	copy(a.score.Parts[at+1:], a.score.Parts[at:])
 	a.score.Parts[at] = part
 	shiftGroups(a.score, at, 1)
+	shiftMirrors(a.score, at, 1)
+
+	// Written as tablature, or as the pair a guitar part is usually
+	// printed as: the notation above and the tab below, joined down the
+	// left with the barlines run through, because it is one player
+	// reading one line written down twice.
+	if writtenAs != model.WrittenPitches {
+		tab, _ := model.TuningNamed(tuningName)
+		if writtenAs == model.WrittenTab {
+			part.Tab = tab
+			restringPart(part)
+		} else {
+			below := part.Clone()
+			below.Name = "" // named once, over the pair
+			below.Tab = tab
+			// It holds no music of its own: the notation above it is
+			// the music, and this is that music written a second way.
+			// Two copies would be two things to keep in step, and they
+			// would not stay in step.
+			below.Measures = nil
+			below.MirrorOf = &at
+			a.score.Parts = append(a.score.Parts, nil)
+			copy(a.score.Parts[at+2:], a.score.Parts[at+1:])
+			a.score.Parts[at+1] = below
+			shiftGroups(a.score, at+1, 1)
+			shiftMirrors(a.score, at+1, 1)
+			a.score.Groups = append(a.score.Groups, model.StaffGroup{
+				First: at, Last: at + 1, Symbol: model.GroupLine,
+				Barlines: true, Name: part.Name,
+			})
+		}
+	}
 
 	writeJSON(w, map[string]any{
 		"status": "ok", "at": at, "staves": len(a.score.Parts),
@@ -3255,6 +3337,7 @@ func (a *App) handleRemoveStaff(w http.ResponseWriter, r *http.Request) {
 	}
 	a.score.Parts = append(a.score.Parts[:at], a.score.Parts[at+1:]...)
 	shiftGroups(a.score, at, -1)
+	shiftMirrors(a.score, at, -1)
 	writeJSON(w, map[string]any{"status": "ok", "staves": len(a.score.Parts)})
 }
 
@@ -3306,6 +3389,35 @@ func (a *App) handleMoveStaff(w http.ResponseWriter, r *http.Request) {
 
 // shiftGroups moves the staff numbers a group refers to when a staff is added
 // or removed before it, and drops a group that no longer spans anything.
+// shiftMirrors keeps a staff that mirrors another pointing at it when the
+// staves above them move.
+//
+// A tablature says which staff it shows by that staff's number, and a
+// staff added or taken away above it changes every number after it. Left
+// alone, a guitar's tab ends up naming whatever staff has fallen into
+// that place — or itself, after which it shows nothing at all, which is
+// how a pair came out empty the first time a staff was removed above it.
+//
+// A mirror whose staff has gone stops being one. It keeps its tuning and
+// its ruling and simply holds nothing, which is a staff somebody can see
+// and delete, rather than a dangling reference nothing explains.
+func shiftMirrors(s *model.Score, at, delta int) {
+	for i, p := range s.Parts {
+		if p.MirrorOf == nil {
+			continue
+		}
+		n := *p.MirrorOf
+		if n >= at {
+			n += delta
+		}
+		if n < 0 || n >= len(s.Parts) || n == i {
+			p.MirrorOf = nil
+			continue
+		}
+		p.MirrorOf = &n
+	}
+}
+
 func shiftGroups(s *model.Score, at, delta int) {
 	var kept []model.StaffGroup
 	for _, g := range s.Groups {

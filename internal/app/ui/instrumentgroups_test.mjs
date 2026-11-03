@@ -130,16 +130,29 @@ test("both instrument pickers read the catalogue", () => {
 
 test("the picker sends the sound id, not the name", () => {
   // Several instruments share a name — two are called timpani — so the
-  // name cannot be what identifies the choice.
+  // name cannot be what identifies the choice. For a fretted instrument
+  // the way it is written down travels with it, since "guitar —
+  // notation and tablature" is one thing somebody picks.
   const add = src.match(/async function addStaffDialog\(\)[\s\S]*?\n\}/)[0];
-  assert.match(add, /URLSearchParams\(\{ sound: inst \}\)/);
+  assert.match(add, /const chosen = soundChosen\(inst\)/);
+  assert.match(add, /new URLSearchParams\(chosen\)/);
 
   const set = src.match(/async function setInstrumentDialog\(\)[\s\S]*?\n\}/)[0];
-  assert.match(set, /setStaffProperty\("sound", v\)/);
+  assert.match(set, /setStaffProperty\("sound", soundChosen\(v\)\.sound\)/);
+});
+
+test("the way it is written is split back off the choice", () => {
+  const chosen = new Function(
+    src.match(/^function soundChosen\([\s\S]*?^}/m)[0] + "\nreturn soundChosen;")();
+  assert.deepEqual(chosen("pluck.guitar"), { sound: "pluck.guitar" });
+  assert.deepEqual(chosen("pluck.guitar/both"),
+    { sound: "pluck.guitar", written: "both" });
+  assert.deepEqual(chosen("pluck.bass/tab"),
+    { sound: "pluck.bass", written: "tab" });
 });
 
 test("the person is told the instrument's name, never its id", () => {
-  assert.match(src, /function instrumentNamed\(sound\)/);
+  assert.match(src, /function instrumentNamed\(value\)/);
   const add = src.match(/async function addStaffDialog\(\)[\s\S]*?\n\}/)[0];
   assert.match(add, /status\("Added a staff for " \+ instrumentNamed\(inst\)\)/);
 });

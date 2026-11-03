@@ -715,6 +715,28 @@ async function action(name) {
     case "artic-marcato-up": await setArticulation("marcato"); break;
     case "artic-marcato-down": await setArticulation("marcato down"); break;
 
+    // How a fretted instrument plays the note. Written out one by one
+    // rather than matched by their prefix, so that the entry on the menu
+    // and the case that answers it can be read against each other.
+    case "tab-hammer-on": await setTechnique("hammer-on"); break;
+    case "tab-pull-off": await setTechnique("pull-off"); break;
+    case "tab-slide-up": await setTechnique("slide-up"); break;
+    case "tab-slide-down": await setTechnique("slide-down"); break;
+    case "tab-bend": await setTechnique("bend"); break;
+    case "tab-bend-half": await setTechnique("bend-half"); break;
+    case "tab-bend-release": await setTechnique("bend-release"); break;
+    case "tab-pre-bend": await setTechnique("pre-bend"); break;
+    case "tab-vibrato": await setTechnique("vibrato"); break;
+    case "tab-wide-vibrato": await setTechnique("wide-vibrato"); break;
+    case "tab-palm-mute": await setTechnique("palm-mute"); break;
+    case "tab-let-ring": await setTechnique("let-ring"); break;
+    case "tab-natural-harmonic": await setTechnique("natural-harmonic"); break;
+    case "tab-artificial-harmonic": await setTechnique("artificial-harmonic"); break;
+    case "tab-pinch-harmonic": await setTechnique("pinch-harmonic"); break;
+    case "tab-tap": await setTechnique("tap"); break;
+    case "tab-dead-note": await setDeadNote(); break;
+    case "tab-none": await setTechnique(""); break;
+
     case "set-pickup":
       await pickupDialog();
       break;
@@ -5691,6 +5713,39 @@ const setArticulation = (a) =>
   mark("articulation", { articulation: a },
        a === "" ? "Articulations cleared" : a);
 
+// How a fretted instrument plays the note. Named for what a guitarist
+// calls it rather than for the endpoint's word, since that is what the
+// status line says back.
+const TAB_MARKS = {
+  "hammer-on": "Hammer-on",
+  "pull-off": "Pull-off",
+  "slide-up": "Slide up",
+  "slide-down": "Slide down",
+  "bend": "Bend a whole tone",
+  "bend-half": "Bend a semitone",
+  "bend-release": "Bend and release",
+  "pre-bend": "Pre-bend",
+  "vibrato": "Vibrato",
+  "wide-vibrato": "Wide vibrato",
+  "palm-mute": "Palm mute",
+  "let-ring": "Let ring",
+  "natural-harmonic": "Natural harmonic",
+  "artificial-harmonic": "Artificial harmonic",
+  "pinch-harmonic": "Pinch harmonic",
+  "tap": "Tap",
+};
+
+const setTechnique = (t) =>
+  mark("technique", { technique: t },
+       t === "" ? "Tab marks cleared" : (TAB_MARKS[t] || t));
+
+// A dead note is a notehead and not a technique: the drum staves already
+// write one, and on a tab it comes out as the x the books print. Going
+// through the notehead endpoint rather than adding a second way to say it
+// is what keeps a file from having two marks that mean the same thing.
+const setDeadNote = () =>
+  mark("notehead", { shape: "x" }, "Dead note");
+
 /* ---------- drawing a symbol ---------- */
 
 // gscore drew all 287 of its symbols as XPM files — grids of characters anyone
@@ -7666,7 +7721,11 @@ async function instrumentOptions() {
     instrumentCatalogue = d.instruments || [];
   }
   return instrumentCatalogue.map((x) => ({
-    value: x.sound, label: x.name, group: x.group,
+    // The way it is written down travels with the instrument, because
+    // that is how it is chosen: "guitar — notation and tablature" is one
+    // thing somebody picks, not an instrument and then a setting.
+    value: x.written ? x.sound + "/" + x.written : x.sound,
+    label: x.name, group: x.group,
   }));
 }
 
@@ -7684,7 +7743,9 @@ async function setInstrumentDialog() {
     options,
   });
   if (v === null) return;
-  await setStaffProperty("sound", v);
+  // Changing what a staff is, which is not the same question as how it
+  // is written: that is Staff ▸ Write as tablature, on the staff itself.
+  await setStaffProperty("sound", soundChosen(v).sound);
 }
 
 // openBarlinePicker asks what the clicked barline should be.
@@ -8720,7 +8781,16 @@ async function addStaffDialog() {
   });
   if (inst === null) return;
 
-  const p = new URLSearchParams({ sound: inst });
+  const chosen = soundChosen(inst);
+  // How many lines the tab is ruled with is not a setting of its own: it
+  // is however many strings the instrument has, so the question to ask
+  // is the tuning. A bass is four strings and often five or six.
+  if (chosen.written) {
+    const tuning = await askTuningFor(chosen.sound);
+    if (tuning === null) return;
+    if (tuning) chosen.tuning = tuning;
+  }
+  const p = new URLSearchParams(chosen);
   // Below the staff the cursor is on, which is where somebody adding a
   // staff while looking at one almost always means.
   if (state.selection) p.set("at", String((state.selection.part ?? 0) + 1));
@@ -8734,11 +8804,54 @@ async function addStaffDialog() {
   status("Added a staff for " + instrumentNamed(inst));
 }
 
+// askTuningFor asks which tuning a tab staff is written in, where the
+// instrument has more than one worth offering.
+//
+// Silent where it has only one: a mandolin is tuned one way and being
+// asked about it is a question with a single answer. The strings are
+// named beside each, because that is what tells a five-string bass from
+// a four and drop D from DADGAD.
+async function askTuningFor(sound) {
+  const want = (instrumentCatalogue || []).find((x) => x.sound === sound);
+  const theirs = want && want.tuning;
+  if (!theirs) return "";
+
+  const all = await (await fetch("/api/tunings")).json();
+  // The ones for this instrument: a tuning is named after what it is
+  // for, so the family is the first word of the default's name.
+  const family = String(theirs).split(" ")[0];
+  const mine = all.filter((t) => t.name.split(" ")[0] === family);
+  if (mine.length < 2) return "";
+
+  return ask({
+    title: "Tuning",
+    label: "Written for",
+    value: theirs,
+    note: "The tab is ruled with a line for each string, so this is also " +
+          "how many lines it has.",
+    search: mine.length > 8,
+    options: mine.map((t) => ({
+      value: t.name,
+      label: `${t.name} — ${t.strings.length} strings — ${t.strings.join(" ")}`,
+    })),
+  });
+}
+
+// soundChosen splits what the picker sends back into the instrument and
+// the way it is written down.
+function soundChosen(value) {
+  const at = String(value).indexOf("/");
+  if (at < 0) return { sound: value };
+  return { sound: value.slice(0, at), written: value.slice(at + 1) };
+}
+
 // instrumentNamed is what to call a sound id in a sentence to the person,
 // who chose "bass clarinet" and should not be told about
 // "wind.reed.clarinet.bass".
-function instrumentNamed(sound) {
-  const found = (instrumentCatalogue || []).find((x) => x.sound === sound);
+function instrumentNamed(value) {
+  const { sound, written } = soundChosen(value);
+  const found = (instrumentCatalogue || []).find(
+    (x) => x.sound === sound && (x.written || "") === (written || ""));
   return found ? found.name : sound;
 }
 
@@ -8910,7 +9023,11 @@ function setupOrdered() {
 // second copy of the convention is a second thing to be wrong, and the
 // order is already written down where the staves are made.
 function inScoreOrder(chosen) {
-  const rank = (sound) => {
+  const rank = (value) => {
+    // The value may carry how it is written — "pluck.guitar/both" — and
+    // where a thing goes down the page is about the instrument, not
+    // about the way it is written down.
+    const { sound } = soundChosen(value);
     const i = (instrumentCatalogue || []).findIndex((x) => x.sound === sound);
     return i < 0 ? 1e9 : (instrumentCatalogue[i].scoreRank ?? 1e9);
   };
@@ -9197,6 +9314,12 @@ async function typeFret(digit) {
   if (extending) {
     p.set("at", String(fretTyping.index));
     p.set("replace", "1");
+  } else {
+    // At the caret, the way a note typed on a staff of pitches goes in
+    // at the caret. Appending to the end of the bar instead meant the
+    // caret said nothing about where the next fret would land, so there
+    // was no way to put one in between two others.
+    p.set("at", String(sel.at));
   }
   const res = await fetch("/api/fret?" + p, { method: "POST" });
   if (!res.ok) {
@@ -9211,11 +9334,44 @@ async function typeFret(digit) {
     return true;
   }
   const d = await res.json();
+  // Where it actually landed, which is not always the bar it was aimed
+  // at: a bar with no room left in it passes the note to the next one.
+  const landed = d.measure == null ? sel.measure : d.measure;
   fretTyping = {
-    at: now, part: sel.part, measure: sel.measure,
+    at: now, part: sel.part, measure: landed,
     string: str, fret, index: d.at,
   };
+
+  // The caret goes past what was just written, the way it does when a
+  // note is typed on a staff of pitches.
+  //
+  // It used to stay where it was, so the next digit landed on top of the
+  // last one and the only way to write a second fret was to move the
+  // caret by hand first. A second digit arriving while the player is
+  // still typing is the one case that means the note already written —
+  // that is the twelfth fret rather than a first and a second — and it
+  // has its own index to aim at, so moving on does not disturb it.
+  if (!extending) {
+    sel.measure = landed;
+    sel.at = d.at + 1;
+    sel.ref = null;
+    // Selected, not picked up: the arrows should move the caret from
+    // string to string, not drag the note that was just written.
+    sel.wrote = true;
+    state.multi = [];
+    state.anchor = null;
+    state.focus = null;
+  }
   await refreshScore();
+  if (!extending) {
+    // A bar with no room left in it is no place to leave the caret: the
+    // next fret goes into the bar after, and that is where the caret
+    // belongs. It is read after the refresh, because it asks the bar how
+    // full it is and the answer it had before was one note out of date.
+    carryCaretOn(sel);
+  }
+  markSelection();
+  scrollSelectionIntoView();
   return true;
 }
 
@@ -9230,10 +9386,21 @@ function stringAtCursor(sel) {
   if (!tab) return 0;
   const lines = tab.strings.length;
   const step = sel.step ?? 0;
-  // Two half spaces to a line, counted up from the bottom; string one is
-  // the top line.
-  const fromBottom = Math.round(step / 2);
-  const str = lines - fromBottom;
+  // Counted down from the top line, because that is where the engraver
+  // anchors it: string one is the top line of a tab whatever the
+  // instrument, and each string below it is a line — two half spaces —
+  // lower. So the sum does not mention how many strings there are, and
+  // that is the tell. Counting up from the bottom instead looks like the
+  // same sum and is not: it puts string one on the top line only when the
+  // tab happens to have as many lines as stepAt's zero is spaces above
+  // the bottom, which for a six-string guitar it does not.
+  //
+  // What that cost: every string came out one too high, so a fret typed
+  // on the line the cursor was sitting on was written on the line below
+  // it, and the bottom string could not be reached at all — the step it
+  // sits at came out as one string past the end of the neck.
+  const fromTop = Math.round(STAFF_HEIGHT - step / 2);
+  const str = 1 + fromTop;
   if (str < 1 || str > lines) return 0;
   return str;
 }
@@ -12020,6 +12187,23 @@ const MENU_ICONS = {
   "tremolo-pair-3": "\ue222",      // tremolo3
   "tremolo-buzz": "\ue22a",        // buzzRoll
 
+  // How a fretted instrument plays the note. The font carries the ones
+  // that are signs — the vibrato strokes, the tapping hand, the harmonic
+  // circle, the laissez vibrer tick — and the arrows the bends are drawn
+  // with. The rest are drawn, down in MENU_DRAWINGS: a hammer-on is a
+  // slur with a letter over it, and no font has that.
+  "tab-bend": "\ueb61",            // arrowBlackUpRight
+  "tab-bend-half": "\ueb71",       // arrowOpenUpRight
+  "tab-bend-release": "\ueb63",    // arrowBlackDownRight
+  "tab-pre-bend": "\ueb60",        // arrowBlackUp
+  "tab-vibrato": "\ueab2",         // guitarVibratoStroke
+  "tab-wide-vibrato": "\ueab3",    // guitarWideVibratoStroke
+  "tab-palm-mute": "\ue638",       // pluckedDamp
+  "tab-let-ring": "\ue4ba",        // articLaissezVibrerAbove
+  "tab-natural-harmonic": "\ue614", // stringsHarmonic
+  "tab-tap": "\ue841",             // guitarRightHandTapping
+  "tab-dead-note": "\ue0a9",       // noteheadXBlack
+
   // What is written on a note or a staff.
   "insert-note": "\ue1d5",         // noteQuarterUp
   "insert-rest": "\ue4e5",         // restQuarter
@@ -14554,6 +14738,31 @@ const MENU_DRAWINGS = {
   "ending-none": REMOVE_MARK,
   "group-none": REMOVE_MARK,
   "fingering-off": REMOVE_MARK,
+  "tab-none": REMOVE_MARK,
+
+  /* The tab marks no font has a sign for.
+   *
+   * Each is the two notes it is about and the mark between them, because
+   * that is what the mark means: a hammer-on is not something done to a
+   * note, it is how you get from one note to the next. The pair of
+   * hammer-on and pull-off, and of the two slides, are mirror images of
+   * each other, which is the difference a guitarist reads them by. */
+  "tab-hammer-on": '<circle cx="5.5" cy="18" r="2.2"/>' +
+    '<circle cx="18.5" cy="12" r="2.2"/><path d="M5.5 14.8Q12 4.5 18.5 8.8"/>',
+  "tab-pull-off": '<circle cx="5.5" cy="12" r="2.2"/>' +
+    '<circle cx="18.5" cy="18" r="2.2"/><path d="M5.5 8.8Q12 4.5 18.5 14.8"/>',
+  "tab-slide-up": '<circle cx="5" cy="18" r="2.2"/>' +
+    '<circle cx="19" cy="9" r="2.2"/><path d="M8 16.1 16 10.9"/>',
+  "tab-slide-down": '<circle cx="5" cy="9" r="2.2"/>' +
+    '<circle cx="19" cy="18" r="2.2"/><path d="M8 10.9 16 16.1"/>',
+
+  /* The two harmonics the font has no circle for. An artificial harmonic
+   * is the diamond it is written with; a pinched one is the same note
+   * with the pick biting into it, drawn as the rays coming off it. */
+  "tab-artificial-harmonic": '<path d="M12 5 18 12 12 19 6 12Z"/>',
+  "tab-pinch-harmonic": '<circle cx="12" cy="12" r="3.2"/>' +
+    '<path d="M12 3.5V7"/><path d="M12 17V20.5"/>' +
+    '<path d="M3.5 12H7"/><path d="M17 12H20.5"/>',
 
   /* Stems and beams, which are about how notes are joined rather than
    * about a mark written on one, so there is no glyph for them: a beam is

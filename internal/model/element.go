@@ -350,6 +350,10 @@ func (d Dynamic) Velocity() int {
 type Marks struct {
 	Articulations []Articulation
 
+	// Techniques are how a fretted instrument is played at this note: a
+	// hammer-on, a slide, a bend, a palm mute. See Technique.
+	Techniques []Technique
+
 	// Symbols are user-supplied marks, named in the symbol registry. The
 	// built-in Articulations above cover what the C program knew; this is the
 	// escape hatch for everything else.

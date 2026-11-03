@@ -361,6 +361,73 @@ var catalogue = []struct {
 	{GroupElectronic, "strings.group.synth"},
 }
 
+// Written is how a staff for an instrument is laid out.
+//
+// An instrument and the way it is written down are two questions, and for
+// a fretted instrument they are both real: the same guitar part is written
+// on a staff of pitches, as tablature, or as both one above the other.
+// None of them is a different instrument — it is one player reading one
+// line — so this sits beside the sound rather than inventing sounds of its
+// own, and the sound written into a file is the same whichever is chosen.
+type Written int
+
+const (
+	// WrittenPitches is an ordinary staff.
+	WrittenPitches Written = iota
+	// WrittenTab is a tab staff: a line per string, with the fret on it.
+	WrittenTab
+	// WrittenBoth is the pair a guitar part is usually printed as —
+	// pitches above, tablature below, braced together with the barlines
+	// run through, because it is one player reading one line twice over.
+	WrittenBoth
+)
+
+func (w Written) String() string {
+	switch w {
+	case WrittenTab:
+		return "tab"
+	case WrittenBoth:
+		return "both"
+	}
+	return "pitches"
+}
+
+// WrittenFromName reads back what String wrote.
+func WrittenFromName(s string) (Written, bool) {
+	switch s {
+	case "", "pitches", "staff":
+		return WrittenPitches, true
+	case "tab", "tablature":
+		return WrittenTab, true
+	case "both", "pair":
+		return WrittenBoth, true
+	}
+	return 0, false
+}
+
+// fretted are the instruments offered as tablature as well as on a staff,
+// with the tuning each is written in unless somebody says otherwise.
+//
+// Not every plucked thing: a harp has no frets and a sitar has no tab
+// anybody writes. These are the ones people actually ask for tab for.
+var fretted = map[string]string{
+	"pluck.guitar":              "guitar",
+	"pluck.guitar.acoustic":     "guitar",
+	"pluck.guitar.nylon-string": "guitar",
+	"pluck.guitar.steel-string": "guitar",
+	"pluck.guitar.electric":     "guitar",
+	"pluck.bass":                "bass",
+	"pluck.bass.acoustic":       "bass",
+	"pluck.bass.electric":       "bass",
+	"pluck.ukulele":             "ukulele",
+	"pluck.mandolin":            "mandolin",
+	"pluck.banjo":               "banjo — five string",
+}
+
+// DefaultTuning is the tuning a fretted instrument is written in unless
+// somebody chooses another, and "" for one that is not fretted.
+func DefaultTuning(sound string) string { return fretted[sound] }
+
 // CatalogueItem is one instrument as it is offered.
 type CatalogueItem struct {
 	// Group is the cluster it is offered in: "Woodwind", "Brass".
@@ -385,6 +452,12 @@ type CatalogueItem struct {
 	// from Group, which is how the list is ordered for finding
 	// something — see scoreorder.go.
 	ScoreRank int `json:"scoreRank"`
+	// Written is how the staff is laid out: a staff of pitches, a tab,
+	// or both braced together. Only a fretted instrument is offered more
+	// than one.
+	Written string `json:"written,omitempty"`
+	// Tuning is the tab's tuning, where it has one.
+	Tuning string `json:"tuning,omitempty"`
 }
 
 // Catalogue is every instrument that can be chosen, in the order offered.
@@ -413,6 +486,33 @@ func Catalogue() []CatalogueItem {
 			it.Low, it.High = s.reach.Low, s.reach.High
 		}
 		out = append(out, it)
+
+		// A fretted instrument is offered the other two ways of writing
+		// it down, beside the plain staff. Not separate instruments —
+		// the same sound is written into the file for all three — which
+		// is why they are made here rather than listed above.
+		tuning, isFretted := fretted[c.Sound]
+		if !isFretted {
+			continue
+		}
+		for _, w := range []Written{WrittenTab, WrittenBoth} {
+			v := it
+			v.Written, v.Tuning = w.String(), tuning
+			v.Name = s.name + writtenSuffix(w)
+			out = append(out, v)
+		}
 	}
 	return out
+}
+
+// writtenSuffix is how the other ways of writing an instrument down are
+// told apart in a list of them.
+func writtenSuffix(w Written) string {
+	switch w {
+	case WrittenTab:
+		return " — tablature"
+	case WrittenBoth:
+		return " — notation and tablature"
+	}
+	return ""
 }

@@ -40,7 +40,10 @@ function load() {
     instrumentCatalogue: CATALOGUE,
     instrumentNamed: (s) => (CATALOGUE.find((x) => x.sound === s) || {}).name || s,
   };
-  const body = grab("inScoreOrder") + "\nreturn { inScoreOrder };";
+  // inScoreOrder reads the way an instrument is written off the value,
+  // since where a thing goes down the page is about the instrument.
+  const body = grab("soundChosen") + "\n" + grab("inScoreOrder") +
+    "\nreturn { inScoreOrder };";
   return new Function(...Object.keys(scope), body)(...Object.values(scope));
 }
 

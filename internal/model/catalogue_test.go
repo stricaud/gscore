@@ -33,11 +33,79 @@ func TestEveryCatalogueInstrumentIsKnown(t *testing.T) {
 	}
 }
 
-// Catalogue() drops anything it cannot resolve, so its length is the check
-// that nothing was dropped.
+// Catalogue() drops anything it cannot resolve, so every row has to come
+// out at least once. It comes out more than once for a fretted
+// instrument, which is offered on a staff, as tablature, and as both.
 func TestCatalogueDropsNothing(t *testing.T) {
-	if got, want := len(Catalogue()), len(catalogue); got != want {
-		t.Errorf("Catalogue() gave %d of %d instruments", got, want)
+	got := Catalogue()
+	seen := map[string]bool{}
+	for _, it := range got {
+		seen[it.Sound] = true
+	}
+	for _, c := range catalogue {
+		if !seen[c.Sound] {
+			t.Errorf("%s is in the list and not in the catalogue", c.Sound)
+		}
+	}
+	if want := len(catalogue) + 2*len(fretted); len(got) != want {
+		t.Errorf("Catalogue() gave %d entries, want %d", len(got), want)
+	}
+}
+
+// A fretted instrument is offered three ways, and they are all the same
+// instrument: the sound written into a file is the same for all of them.
+func TestAFrettedInstrumentIsOfferedThreeWays(t *testing.T) {
+	var ways []string
+	for _, it := range Catalogue() {
+		if it.Sound == "pluck.guitar" {
+			ways = append(ways, it.Written)
+			if it.Name == "" {
+				t.Error("a way of writing it has no name")
+			}
+		}
+	}
+	// The plain one carries no way of its own: empty is a staff of
+	// pitches, which is what everything else in the list is too.
+	want := []string{"", "tab", "both"}
+	if len(ways) != 3 {
+		t.Fatalf("the guitar is offered %d ways: %v", len(ways), ways)
+	}
+	for i, w := range want {
+		if ways[i] != w {
+			t.Errorf("the ways are %v, want %v", ways, want)
+			break
+		}
+	}
+}
+
+// The ones that are not fretted are offered once, and nothing claims a
+// tuning it has not got.
+func TestOnlyFrettedInstrumentsAreOfferedAsTab(t *testing.T) {
+	for _, it := range Catalogue() {
+		if it.Written == "" || it.Written == "pitches" {
+			if it.Tuning != "" {
+				t.Errorf("%s claims the tuning %q", it.Name, it.Tuning)
+			}
+			continue
+		}
+		if DefaultTuning(it.Sound) == "" {
+			t.Errorf("%s is offered as tab and has no frets", it.Name)
+		}
+		if _, ok := TuningNamed(it.Tuning); !ok {
+			t.Errorf("%s is tuned to %q, which is not a tuning", it.Name, it.Tuning)
+		}
+	}
+}
+
+func TestWrittenNamesRoundTrip(t *testing.T) {
+	for _, w := range []Written{WrittenPitches, WrittenTab, WrittenBoth} {
+		got, ok := WrittenFromName(w.String())
+		if !ok || got != w {
+			t.Errorf("%v came back as %v (%v)", w, got, ok)
+		}
+	}
+	if _, ok := WrittenFromName("sideways"); ok {
+		t.Error("a way nobody has heard of was accepted")
 	}
 }
 

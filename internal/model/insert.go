@@ -50,6 +50,10 @@ func (s *Score) InsertMeasures(after, count, onlyPart int) int {
 		if onlyPart >= 0 && pi != onlyPart {
 			continue
 		}
+		// A staff that mirrors another has no bars to put any into.
+		if p.Mirrors() {
+			continue
+		}
 		p.insertMeasures(at, count)
 	}
 
@@ -61,7 +65,7 @@ func (s *Score) InsertMeasures(after, count, onlyPart int) int {
 	if onlyPart >= 0 {
 		want := s.MeasureCount()
 		for pi, p := range s.Parts {
-			if pi == onlyPart {
+			if pi == onlyPart || p.Mirrors() {
 				continue
 			}
 			for len(p.Measures) < want {

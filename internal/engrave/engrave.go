@@ -913,6 +913,11 @@ type engraver struct {
 	// rather than across it. Worked out once. See groupColumns.
 	columns []float64
 
+	// tabShift is the transposition of the tab staff being drawn, so a
+	// fret can be worked out from a printed pitch: a tuning says what
+	// the strings sound and the note says what is printed.
+	tabShift model.Transposition
+
 	// marks is what is printed over each marked bar, worked out once.
 	//
 	// A rehearsal mark is stored as a place in a sequence rather than as
@@ -960,6 +965,11 @@ type openSpans struct {
 	gliss   *openSpan
 	pedal   *openSpan
 	notches []float64
+	// tech is a hammer-on, a pull-off or a slide waiting for the note it
+	// reaches. Unlike the others it is never written closed: it opens on
+	// one note and closes on whichever note comes next, which is what
+	// "5h7" means and is why there is nothing to mark on the 7.
+	tech *techLink
 	// ties are kept per notehead, keyed by the staff step they left. A
 	// chord is tied notehead by notehead — every voice in it carries on
 	// sounding — so one curve for the chord would be one curve short for
@@ -1480,9 +1490,28 @@ func (e *engraver) writesAhead(parts []*model.Part, count int) bool {
 }
 
 func (e *engraver) layout() {
-	all := e.score.Parts
-	if len(all) == 0 {
+	if len(e.score.Parts) == 0 {
 		return
+	}
+	// A staff that mirrors another holds no music of its own: a guitar's
+	// tablature is the staff above it written a second way, not a second
+	// copy of it. It is drawn from the music it names, with everything
+	// else — its own ruling, its own clef, its own tuning — its own.
+	//
+	// Substituted here, once, so that nothing downstream has to know:
+	// every pass after this sees an ordinary staff with measures on it.
+	all := make([]*model.Part, len(e.score.Parts))
+	mirrors := make([]*model.Part, len(e.score.Parts))
+	for i, p := range e.score.Parts {
+		all[i] = p
+		src := e.score.MusicOf(i)
+		if src == p {
+			continue
+		}
+		shown := *p
+		shown.Measures = src.Measures
+		all[i] = &shown
+		mirrors[i] = src
 	}
 
 	// A hidden staff is left out of the drawing but not out of the score, so
@@ -1513,9 +1542,27 @@ func (e *engraver) layout() {
 	// Refs are claimed over every part in score order, hidden ones included,
 	// so the numbering matches what playback walks.
 	byPart := make(map[*model.Part][]measureBox, len(all))
-	for _, p := range all {
+	// Where each staff's elements were numbered from, so that a staff
+	// mirroring it can claim the same numbers again rather than new ones.
+	//
+	// The numbering has to match the walk playback makes, and playback
+	// walks the score — where a mirror holds nothing. Letting the mirror
+	// take fresh numbers would push every staff below it out of step, so
+	// the highlight would land on the wrong note. Claiming the same ones
+	// is also what somebody would want anyway: the fret and the notehead
+	// above it are one note, and clicking either picks up that note.
+	refFrom := make(map[*model.Part]int, len(all))
+	for i, p := range all {
 		var rows []measureBox
 		clef := p.Clef
+		was := e.nextRef
+		if src := mirrors[i]; src != nil {
+			if at, ok := refFrom[src]; ok {
+				e.nextRef = at
+			}
+		} else {
+			refFrom[p] = was
+		}
 		for mi, m := range p.Measures {
 			if m.Clef != nil {
 				clef = *m.Clef
@@ -1530,6 +1577,11 @@ func (e *engraver) layout() {
 			rows = append(rows, b)
 		}
 		byPart[p] = rows
+		if mirrors[i] != nil {
+			// Back to where the score's own numbering had reached: the
+			// mirror consumed none of it.
+			e.nextRef = was
+		}
 	}
 
 	boxes := make([][]measureBox, len(parts))
@@ -2101,7 +2153,22 @@ func (e *engraver) prefixWidth(p *model.Part, at int) float64 {
 // nowhere else. Repeating it says "the meter changes here" to anybody
 // reading, and it costs three staff spaces of every line it is printed on —
 // which in a part is a bar every few systems.
+// meterAt says whether the meter is printed at the head of a system.
+//
+// Never on a tablature. A tab says which fret to stop a string at, and a
+// meter is not among the things it is answering: where a tab is printed
+// under a staff of pitches — which is how a guitar part is nearly always
+// printed — the meter is on the staff above and saying it twice over one
+// line of music is saying it twice. A tab standing on its own leaves the
+// count to the stems, which it keeps for exactly that reason.
+//
+// The one gate for both the room reserved and the drawing, so the two
+// cannot disagree and leave a gap at the head of the staff where a meter
+// was measured and never written.
 func meterAt(p *model.Part, at int) bool {
+	if p != nil && p.Tab != nil {
+		return false
+	}
 	if at <= 0 {
 		return true
 	}
@@ -2406,7 +2473,9 @@ func (e *engraver) signatureAt(p *model.Part, index int) (signatureChange, float
 			w += sp.AfterKeySignature
 		}
 	}
-	if m.Time != nil && !e.opt.HideTimeSignature {
+	// A change of meter partway through, and not on a tab for the reason
+	// meterAt gives.
+	if m.Time != nil && !e.opt.HideTimeSignature && p.Tab == nil {
 		ch.time, ch.hasTime = m.Time, true
 		num, den, sym := smufl.TimeSignatureGlyphs(*m.Time)
 		if sym != "" {
@@ -2884,7 +2953,7 @@ func (e *engraver) drawSystem(parts []*model.Part, boxes [][]measureBox,
 		// How this staff is ruled: five lines of pitches, or one line per
 		// string with the frets written on them.
 		e.lines, e.lineGap = partLines(p), partGap(p)
-		e.tab = p.Tab
+		e.tab, e.tabShift = p.Tab, p.Transpose
 		e.tabGaps = e.tabGaps[:0]
 		// A hairpin or an octave line cut off at the end of the last system
 		// starts again here, at this system's left edge.

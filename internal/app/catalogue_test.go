@@ -36,6 +36,8 @@ type catalogueReply struct {
 		Percussion bool   `json:"percussion"`
 		Low        int    `json:"low"`
 		High       int    `json:"high"`
+		Written    string `json:"written"`
+		Tuning     string `json:"tuning"`
 	} `json:"instruments"`
 }
 
@@ -203,5 +205,47 @@ func TestChangingAStaffToAnotherInstrument(t *testing.T) {
 	}
 	if p.Transpose.Chromatic != -9 {
 		t.Errorf("the alto sax transposes %+v", p.Transpose)
+	}
+}
+
+// The way an instrument is written down has to reach the editor, or every
+// entry in the list asks for a plain staff however it is named.
+//
+// This is the bug that made "guitar — tablature" add an ordinary treble
+// staff: the catalogue knew, the endpoint's own answer did not carry it,
+// and the editor built its choice out of what the endpoint sent.
+func TestTheListSaysHowEachOneIsWritten(t *testing.T) {
+	h := newHarness(t)
+	list := catalogueOf(t, h)
+
+	want := map[string]string{
+		"guitar":                          "",
+		"guitar — tablature":              "tab",
+		"guitar — notation and tablature": "both",
+		"electric bass — tablature":       "tab",
+	}
+	seen := map[string]bool{}
+	for _, in := range list.Instruments {
+		w, ok := want[in.Name]
+		if !ok {
+			continue
+		}
+		seen[in.Name] = true
+		if in.Written != w {
+			t.Errorf("%q says written=%q, want %q", in.Name, in.Written, w)
+		}
+		// And one written as tab says what it is tuned to, since that
+		// is how many lines it has.
+		if w != "" && in.Tuning == "" {
+			t.Errorf("%q is a tab and names no tuning", in.Name)
+		}
+		if w == "" && in.Tuning != "" {
+			t.Errorf("%q is a plain staff and claims the tuning %q", in.Name, in.Tuning)
+		}
+	}
+	for name := range want {
+		if !seen[name] {
+			t.Errorf("the list has no %q", name)
+		}
 	}
 }

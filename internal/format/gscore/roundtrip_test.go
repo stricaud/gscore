@@ -417,3 +417,57 @@ func TestAScoreWithNoTagsWritesNone(t *testing.T) {
 		t.Error("a score with no tags wrote a tags block anyway")
 	}
 }
+
+// How a fretted instrument plays the note survives being saved.
+//
+// A mark that does not come back is a mark lost the first time the work is
+// put away, and nothing would say so: the score would simply open with one
+// fewer hammer-on than it was written with. Every one of them is checked
+// rather than a sample, because the way this breaks is one name left out of
+// a table and the rest working.
+func TestEveryTabMarkSurvivesARoundTrip(t *testing.T) {
+	s := model.NewScore()
+	p := s.Parts[0]
+
+	// One note per mark, so that a name dropped on the way out can be
+	// traced to the mark it belongs to.
+	all := model.Techniques()
+	for _, tech := range all {
+		n := &model.Note{
+			Pitch: model.Pitch{Step: model.StepE, Octave: 4},
+			Dur:   model.Duration{Num: 1, Den: 4},
+		}
+		n.AddTechnique(tech)
+		// And the shape, since a dead note is written as one of these
+		// rather than as a mark and travels by another road entirely.
+		n.Head = model.HeadX
+		p.Measures[0].Voices[0].Elements = append(
+			p.Measures[0].Voices[0].Elements, n)
+	}
+
+	var buf bytes.Buffer
+	if err := Write(&buf, s, nil); err != nil {
+		t.Fatal(err)
+	}
+	back, _, err := Read(bytes.NewReader(buf.Bytes()))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	els := back.Parts[0].Measures[0].Voices[0].Elements
+	if len(els) != len(all) {
+		t.Fatalf("%d notes came back, want %d", len(els), len(all))
+	}
+	for i, tech := range all {
+		n, ok := els[i].(*model.Note)
+		if !ok {
+			t.Fatalf("element %d came back as %T", i, els[i])
+		}
+		if !n.HasTechnique(tech) {
+			t.Errorf("%v was lost: the note came back with %v", tech, n.Techniques)
+		}
+		if n.Head != model.HeadX {
+			t.Errorf("note %d came back drawn as %v", i, n.Head)
+		}
+	}
+}

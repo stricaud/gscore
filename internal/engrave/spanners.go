@@ -141,6 +141,20 @@ func (e *engraver) spanAt(m *model.Marks, p *placed, measure int) {
 		}
 	}
 
+	// A hammer-on, a pull-off or a slide on a fretted instrument, which
+	// reaches from this note to the one after it.
+	//
+	// Closed before it is opened, and in that order: a run of hammer-ons
+	// is every note marked, and each one both finishes the link from the
+	// note before and starts the link to the note after.
+	if open.tech != nil {
+		e.drawTechLink(*open.tech, x, e.y+stepY(float64(p.step)))
+		open.tech = nil
+	}
+	if t, ok := linkFrom(m); ok {
+		open.tech = &techLink{kind: t, x: x, y: e.y + stepY(float64(p.step))}
+	}
+
 	// A slide from this note to the next. Drawn at the moment it closes,
 	// because a line between two noteheads needs both of them placed.
 	if g := m.Glissando; g != nil {

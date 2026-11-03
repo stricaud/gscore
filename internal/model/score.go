@@ -413,7 +413,67 @@ type Part struct {
 	// the same Measures.
 	Tab *Tablature
 
+	// MirrorOf says this staff shows another staff's music, written its
+	// own way, and holds none of its own.
+	//
+	// A guitar part printed as notation above and tablature below is one
+	// player reading one line written down twice. Two staves each holding
+	// their own copy of it would be two copies to keep in step, and they
+	// would not stay in step: a note fixed in one and not the other is
+	// the mistake nobody finds until somebody plays from the wrong half.
+	//
+	// So the lower staff holds nothing. Its Measures are empty and the
+	// music is read from the staff it names, exactly as a part is a view
+	// of the score rather than a copy of it. Writing aimed at it is sent
+	// to the staff that holds the music — see Score.MusicOf.
+	//
+	// By index into Score.Parts, and a pointer because zero is a staff.
+	MirrorOf *int `json:",omitempty"`
+
 	Measures []*Measure
+}
+
+// MusicOf is the part whose measures a staff shows: itself, or the staff
+// it mirrors.
+//
+// Everything that reads or writes the music of a staff goes through this,
+// so that a tab drawn from the staff above it is drawn from the same notes
+// and an edit aimed at it lands on them.
+func (s *Score) MusicOf(i int) *Part {
+	if s == nil || i < 0 || i >= len(s.Parts) {
+		return nil
+	}
+	p := s.Parts[i]
+	if p.MirrorOf == nil {
+		return p
+	}
+	at := *p.MirrorOf
+	// A mirror of a mirror, or of nothing, is a mirror of itself: a
+	// staff that cannot find its music draws what it has, which is
+	// nothing, rather than sending the reader round a loop.
+	if at < 0 || at >= len(s.Parts) || at == i || s.Parts[at].MirrorOf != nil {
+		return p
+	}
+	return s.Parts[at]
+}
+
+// Mirrors says a staff shows another's music and holds none of its own,
+// so that everything which pads or appends bars across the score leaves
+// it alone: bars added to it would be bars nobody reads.
+func (p *Part) Mirrors() bool { return p != nil && p.MirrorOf != nil }
+
+// MusicIndex is the staff that holds the music for staff i.
+func (s *Score) MusicIndex(i int) int {
+	if s == nil || i < 0 || i >= len(s.Parts) {
+		return i
+	}
+	if m := s.Parts[i].MirrorOf; m != nil {
+		if at := *m; at >= 0 && at < len(s.Parts) && at != i &&
+			s.Parts[at].MirrorOf == nil {
+			return at
+		}
+	}
+	return i
 }
 
 // Tablature is how a fretted instrument's part is written: one line per
@@ -1133,6 +1193,20 @@ func (t Transposition) Apply(p Pitch) Pitch {
 		return p
 	}
 	return p.Transpose(t.Steps(), t.Semitones())
+}
+
+// Unapply turns a sounding pitch into the one that is written.
+//
+// The inverse of Apply, and needed wherever a pitch arrives as what is
+// heard rather than as what is printed. A tablature's tuning is one such
+// place: an open low E on a guitar sounds E2 and is written E3, because a
+// guitar sounds an octave below what it reads, and the model keeps what
+// is printed.
+func (t Transposition) Unapply(p Pitch) Pitch {
+	if t.IsZero() {
+		return p
+	}
+	return p.Transpose(-t.Steps(), -t.Semitones())
 }
 
 // Fifths is how far around the circle the written key moves.

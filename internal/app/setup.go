@@ -42,11 +42,15 @@ func (a *App) handleSetup(w http.ResponseWriter, r *http.Request) {
 	}
 	q := r.URL.Query()
 
-	var want []string
-	for _, raw := range strings.Split(q.Get("instruments"), ",") {
-		if id := strings.TrimSpace(raw); id != "" {
-			want = append(want, id)
-		}
+	// Each one is an instrument, and for a fretted one it may carry the
+	// way it is written down: "pluck.guitar/both". The picker sends them
+	// that way because that is how they are chosen — "guitar — notation
+	// and tablature" is one thing somebody picks off a list, not an
+	// instrument and then a setting.
+	want, err := chosenInstruments(q.Get("instruments"))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
 	}
 	if len(want) == 0 {
 		http.Error(w, "choose an instrument or two", http.StatusBadRequest)
@@ -57,9 +61,14 @@ func (a *App) handleSetup(w http.ResponseWriter, r *http.Request) {
 			http.StatusBadRequest)
 		return
 	}
-	for _, id := range want {
-		if !model.SoundKnown(id) {
-			http.Error(w, "unknown instrument "+id, http.StatusBadRequest)
+	for _, c := range want {
+		if !model.SoundKnown(c.Sound) {
+			http.Error(w, "unknown instrument "+c.Sound, http.StatusBadRequest)
+			return
+		}
+		if c.Written != model.WrittenPitches && model.DefaultTuning(c.Sound) == "" {
+			http.Error(w, c.Sound+" has no frets to write a tab for",
+				http.StatusBadRequest)
 			return
 		}
 	}
@@ -82,7 +91,7 @@ func (a *App) handleSetup(w http.ResponseWriter, r *http.Request) {
 	// question and must not be second-guessed — and groups are given by
 	// place, so arranging them is saying the order too.
 	if q.Get("order") != "keep" && len(brackets) == 0 {
-		want = model.InScoreOrder(want)
+		want = inScoreOrderChosen(want)
 	}
 
 	a.lock()
@@ -148,6 +157,59 @@ func bracketRuns(raw string, have int) ([][2]int, error) {
 	return out, nil
 }
 
+// chosen is one instrument as the picker sends it: what it is, and for a
+// fretted one how it is written down.
+type chosen struct {
+	Sound   string
+	Written model.Written
+}
+
+// chosenInstruments reads the comma-separated list the picker sends.
+func chosenInstruments(raw string) ([]chosen, error) {
+	var out []chosen
+	for _, part := range strings.Split(raw, ",") {
+		id := strings.TrimSpace(part)
+		if id == "" {
+			continue
+		}
+		c := chosen{Sound: id}
+		if at := strings.IndexByte(id, '/'); at >= 0 {
+			w, ok := model.WrittenFromName(id[at+1:])
+			if !ok {
+				return nil, errors.New(id[at+1:] + " is not pitches, tab or both")
+			}
+			c.Sound, c.Written = id[:at], w
+		}
+		out = append(out, c)
+	}
+	return out, nil
+}
+
+// inScoreOrderChosen sorts them the way a score is laid out, keeping the
+// way each is written down with it.
+func inScoreOrderChosen(in []chosen) []chosen {
+	sounds := make([]string, len(in))
+	for i, c := range in {
+		sounds[i] = c.Sound
+	}
+	order := model.InScoreOrder(sounds)
+
+	// Back to the chosen entries, taking each one once and in order, so
+	// that two of the same instrument keep the ways they were asked for.
+	used := make([]bool, len(in))
+	out := make([]chosen, 0, len(in))
+	for _, s := range order {
+		for i, c := range in {
+			if !used[i] && c.Sound == s {
+				used[i] = true
+				out = append(out, c)
+				break
+			}
+		}
+	}
+	return out
+}
+
 // scoreIsEmpty reports a score nobody has written anything into yet.
 //
 // Notes are what counts. A score that has had its title typed and its
@@ -176,7 +238,7 @@ func scoreIsEmpty(s *model.Score) bool {
 // by their place in want. It replaces the families rather than adding to
 // them: asked for a bracket round particular staves and then drawing the
 // automatic ones as well would be two answers to one question.
-func buildStaves(want []string, s *model.Score, bars int, brackets [][2]int) ([]*model.Part, []model.StaffGroup) {
+func buildStaves(want []chosen, s *model.Score, bars int, brackets [][2]int) ([]*model.Part, []model.StaffGroup) {
 	var parts []*model.Part
 	var groups []model.StaffGroup
 
@@ -203,7 +265,8 @@ func buildStaves(want []string, s *model.Score, bars int, brackets [][2]int) ([]
 		time = first.Time
 	}
 
-	for _, id := range want {
+	for _, pick := range want {
+		id := pick.Sound
 		name, _ := model.SoundName(id)
 		trans, _ := model.SoundTransposition(id)
 		prog, _ := model.SoundProgram(id)
@@ -212,8 +275,12 @@ func buildStaves(want []string, s *model.Score, bars int, brackets [][2]int) ([]
 		// A piano is one instrument played with two hands: two staves,
 		// braced, with the barlines run through the gap between them.
 		// That gap is what says one player reads both.
+		//
+		// A guitar written as notation and tablature is the same shape
+		// for a different reason: not two hands, but one line written
+		// down twice.
 		staves := 1
-		if model.GrandStaff(id) {
+		if model.GrandStaff(id) || pick.Written == model.WrittenBoth {
 			staves = 2
 		}
 		at := len(parts)
@@ -237,6 +304,22 @@ func buildStaves(want []string, s *model.Score, bars int, brackets [][2]int) ([]
 				p.Key = model.KeySignature{}
 				p.Transpose = model.Transposition{}
 			}
+			// Written as tablature: this staff alone where that is all
+			// that was asked for, and the lower of the pair where both
+			// were.
+			if pick.Written == model.WrittenTab ||
+				(pick.Written == model.WrittenBoth && i == 1) {
+				p.Tab, _ = model.TuningNamed(model.DefaultTuning(id))
+				p.Clef = clefForSound(id)
+			}
+			// The lower half of a pair holds no music of its own: it
+			// is the staff above written a second way, and two copies
+			// would be two things to keep in step.
+			if pick.Written == model.WrittenBoth && i == 1 {
+				above := at
+				p.MirrorOf = &above
+				p.Measures = nil
+			}
 			// Named once for a grand staff: "Piano" beside both staves
 			// says there are two pianos.
 			if i == 0 {
@@ -248,8 +331,16 @@ func buildStaves(want []string, s *model.Score, bars int, brackets [][2]int) ([]
 			parts = append(parts, p)
 		}
 		if staves == 2 {
+			// A pianist's two staves are braced; a notation and tab
+			// pair is joined with a plain rule, which is how guitar
+			// music is printed and says the two are one line rather
+			// than two hands.
+			symbol := model.GroupBrace
+			if pick.Written == model.WrittenBoth {
+				symbol = model.GroupLine
+			}
 			groups = append(groups, model.StaffGroup{
-				First: at, Last: at + 1, Symbol: model.GroupBrace,
+				First: at, Last: at + 1, Symbol: symbol,
 				Barlines: true, Name: capitalised(name),
 			})
 		}

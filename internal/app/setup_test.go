@@ -313,3 +313,59 @@ func TestANonsenseGroupIsRefused(t *testing.T) {
 		}
 	}
 }
+
+// A fretted instrument carries how it is written down, because that is
+// how it is chosen: "guitar — notation and tablature" is one thing off a
+// list, not an instrument and then a setting.
+func TestScoreSetupUnderstandsTheWayItIsWritten(t *testing.T) {
+	h := newHarness(t)
+	h.post("/api/setup?instruments=" +
+		"pluck.bass.electric%2Fboth,wind.flutes.flute")
+
+	if n := len(h.app.score.Parts); n != 3 {
+		t.Fatalf("%d staves, want the flute and the bass pair", n)
+	}
+	// Score order puts the flute above the bass.
+	if got := staffNames(h)[0]; got != "Flute" {
+		t.Errorf("the first staff is %q", got)
+	}
+	pair := h.app.score.Parts[1:]
+	if pair[0].Tab != nil || pair[1].Tab == nil {
+		t.Error("the notation and the tab are the wrong way round")
+	}
+	if pair[1].Tab != nil && pair[1].Tab.Lines() != 4 {
+		t.Errorf("the bass tab has %d lines", pair[1].Tab.Lines())
+	}
+	// Joined with a plain rule, not a brace: one line written twice is
+	// not two hands.
+	var joined *model.StaffGroup
+	for i := range h.app.score.Groups {
+		if g := &h.app.score.Groups[i]; g.First == 1 && g.Last == 2 {
+			joined = g
+		}
+	}
+	if joined == nil {
+		t.Fatal("the pair is not joined")
+	}
+	if joined.Symbol != model.GroupLine || !joined.Barlines {
+		t.Errorf("the pair is joined by %+v", *joined)
+	}
+}
+
+func TestScoreSetupCanAskForTabAlone(t *testing.T) {
+	h := newHarness(t)
+	h.post("/api/setup?instruments=pluck.guitar%2Ftab")
+	if n := len(h.app.score.Parts); n != 1 {
+		t.Fatalf("%d staves, want one", n)
+	}
+	if h.app.score.Parts[0].Tab == nil {
+		t.Error("it is not a tab")
+	}
+}
+
+func TestScoreSetupRefusesTabForSomethingWithNoFrets(t *testing.T) {
+	h := newHarness(t)
+	if got := h.postFails("/api/setup?instruments=wind.flutes.flute%2Ftab"); got == "" {
+		t.Error("a flute was written as tablature")
+	}
+}

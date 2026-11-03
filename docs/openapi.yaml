@@ -1520,6 +1520,53 @@ paths:
         "200": { $ref: "#/components/responses/Changed" }
         "400": { $ref: "#/components/responses/Error" }
 
+  /api/technique:
+    post:
+      tags: [marks]
+      summary: How a fretted instrument plays the note — a hammer-on, a bend, a palm mute
+      description: >-
+        An empty technique clears every mark on the selection. off=1 takes
+        the one named away and leaves the others, since a note can be both
+        palm-muted and hammered onto.
+      parameters:
+        - $ref: "#/components/parameters/part"
+        - $ref: "#/components/parameters/measure"
+        - $ref: "#/components/parameters/at"
+        - $ref: "#/components/parameters/sel"
+        - name: technique
+          in: query
+          schema:
+            type: string
+            enum: [hammer-on, pull-off, slide-up, slide-down, bend, bend-half, bend-release, pre-bend, vibrato, wide-vibrato, palm-mute, let-ring, natural-harmonic, artificial-harmonic, pinch-harmonic, tap]
+        - name: "off"
+          in: query
+          schema: { type: string, enum: ["1"] }
+      responses:
+        "200": { $ref: "#/components/responses/Changed" }
+        "400": { $ref: "#/components/responses/Error" }
+
+  /api/notehead:
+    post:
+      tags: [marks]
+      summary: The shape a note is drawn with — the x of a dead note, a diamond, a slash
+      parameters:
+        - $ref: "#/components/parameters/part"
+        - $ref: "#/components/parameters/measure"
+        - $ref: "#/components/parameters/at"
+        - $ref: "#/components/parameters/sel"
+        - name: shape
+          in: query
+          required: true
+          description: >-
+            Called shape rather than head because head already means the
+            staff step of one notehead of a chord.
+          schema:
+            type: string
+            enum: [normal, x, circle-x, triangle, diamond, slash]
+      responses:
+        "200": { $ref: "#/components/responses/Changed" }
+        "400": { $ref: "#/components/responses/Error" }
+
   /api/dynamic:
     post:
       tags: [marks]
@@ -2397,6 +2444,27 @@ paths:
         clef and the transposition follow from the instrument — a new staff
         in C major under a piece in five flats would be wrong on sight.
       parameters:
+        - name: written
+          in: query
+          description: >
+            How a fretted instrument's staff is laid out: `pitches` (the
+            default), `tab`, or `both` — the pair a guitar part is
+            usually printed as, the notation above and the tablature
+            below, joined with the barlines run through, because it is
+            one player reading one line written down twice. The sound
+            written into the file is the same for all three: this is how
+            it is shown, not what it is. Refused for an instrument with
+            no frets.
+          schema: { type: string, enum: [pitches, tab, both] }
+        - name: tuning
+          in: query
+          description: >
+            Which tuning a tab is written in, and so how many lines it is
+            ruled with — a line for each string. The instrument's usual
+            one where this is left out; `/api/tunings` lists them. A bass
+            is four strings and often five or six, and that is a tuning
+            rather than a setting of its own.
+          schema: { type: string }
         - name: instrument
           in: query
           description: A name — `flute`, `cello` — or a MIDI program number. `/api/instruments?flat=1` lists them. Prefer `sound`.

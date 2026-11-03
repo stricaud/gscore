@@ -330,6 +330,10 @@ func (e *engraver) drawMeasure(part *model.Part, b measureBox, x, end float64, s
 			e.slurAt(part, m, p, b.index)
 			e.drawLyrics(m, p)
 			e.drawTexts(m, p)
+			// How the note is played: a bend, a mute, a harmonic. The
+			// hammer-ons and the slides are not here — they need the
+			// note after this one, so spanAt carries them.
+			e.drawTechniques(m, p)
 			e.drawFingering(p, m.Fingering)
 			// After the beams and the articulations, so a breath taken over
 			// a high run is set clear of them rather than through them.

@@ -29,43 +29,84 @@ const grab = (name) => {
   return m[0];
 };
 
-// stringAtCursor reads state, so it is given one.
+// The steps the engraver puts the strings at.
+//
+// internal/engrave/tab.go: tabStep(str) = staffHeight*2 - (str-1)*2, with
+// staffHeight the 4 that stepY and stepAt both measure from. So string one
+// is at step 8 — the top line — and each string below it is two steps
+// lower, whatever the instrument. Written out here rather than taken from
+// the formula, because the formula is the thing under test.
+const STRING_STEPS = [8, 6, 4, 2, 0, -2];
+
+// STAFF_HEIGHT read from app.js rather than written down again, so this
+// cannot pass against a 4 the program has stopped using.
+const STAFF_HEIGHT = Number(/const STAFF_HEIGHT = (\d+)/.exec(src)[1]);
+
+// stringAtCursor reads state and the staff height, so it is given both.
 function stringReader(lines) {
   const state = { info: { parts: [{ tab: { strings: new Array(lines).fill("E4") } }] } };
-  const fn = new Function("state", grab("stringAtCursor") + "\nreturn stringAtCursor;")(state);
+  const fn = new Function("state", "STAFF_HEIGHT",
+    grab("stringAtCursor") + "\nreturn stringAtCursor;")(state, STAFF_HEIGHT);
   return (step) => fn({ part: 0, step });
 }
 
-test("the bottom line of a six-string tab is the sixth string", () => {
-  const at = stringReader(6);
-  assert.equal(at(0), 6);
+test("app.js still measures from the staff height the engraver does", () => {
+  assert.equal(STAFF_HEIGHT, 4);
 });
 
+// The cursor has to name the string whose line it is actually sitting on.
+//
+// It did not: the strings were counted up from the bottom, which put every
+// one of them a line too high — a fret typed on the line the cursor was on
+// was written on the line below it — and left the bottom string with no
+// step that reached it at all.
 test("the top line is string one", () => {
   const at = stringReader(6);
-  // Five lines above the bottom, two half spaces to a line.
-  assert.equal(at(10), 1);
+  assert.equal(at(STRING_STEPS[0]), 1);
+});
+
+test("the bottom line of a six-string tab is the sixth string", () => {
+  const at = stringReader(6);
+  assert.equal(at(STRING_STEPS[5]), 6);
 });
 
 test("every line of the tab is a string, and in order", () => {
   const at = stringReader(6);
-  assert.deepEqual([0, 2, 4, 6, 8, 10].map(at), [6, 5, 4, 3, 2, 1]);
+  assert.deepEqual(STRING_STEPS.map(at), [1, 2, 3, 4, 5, 6]);
 });
 
-test("a four-string tab counts to four", () => {
+// A bass tab is the same lines from the top down, four of them. The sum
+// does not mention how many strings there are, which is the whole of what
+// was wrong with it before.
+test("a four-string tab counts to four from the same top line", () => {
   const at = stringReader(4);
-  assert.deepEqual([0, 2, 4, 6].map(at), [4, 3, 2, 1]);
+  assert.deepEqual(STRING_STEPS.slice(0, 4).map(at), [1, 2, 3, 4]);
+});
+
+test("a five-string bass reaches its fifth string", () => {
+  const at = stringReader(5);
+  assert.equal(at(STRING_STEPS[4]), 5);
 });
 
 test("off the staff is not a string", () => {
   const at = stringReader(6);
+  // Above the top line, and below the bottom string of a six-string neck.
+  assert.equal(at(10), 0);
+  assert.equal(at(-4), 0);
+});
+
+// And a tab with fewer lines stops where its neck does rather than
+// carrying on into the space under the staff.
+test("a four-string tab has nothing on the lines a guitar would use", () => {
+  const at = stringReader(4);
+  assert.equal(at(0), 0);
   assert.equal(at(-2), 0);
-  assert.equal(at(12), 0);
 });
 
 test("a staff of pitches has no strings at all", () => {
   const state = { info: { parts: [{}] } };
-  const fn = new Function("state", grab("stringAtCursor") + "\nreturn stringAtCursor;")(state);
+  const fn = new Function("state", "STAFF_HEIGHT",
+    grab("stringAtCursor") + "\nreturn stringAtCursor;")(state, STAFF_HEIGHT);
   assert.equal(fn({ part: 0, step: 0 }), 0);
 });
 
@@ -140,4 +181,71 @@ test("moving a note along the neck keeps what it sounds", () => {
   assert.match(body, /move: dir/);
   // It is about a note, so there has to be one.
   assert.match(body, /sel\.index == null/);
+});
+
+/*
+ * The caret after a fret.
+ *
+ * It used to stay where it was, so the next digit landed on top of the
+ * last one and the only way to write a second fret was to move the caret
+ * by hand first.
+ */
+
+test("the fret goes in at the caret", () => {
+  const body = grab("typeFret");
+  assert.match(body, /p\.set\("at", String\(sel\.at\)\)/);
+});
+
+test("the caret moves past what was just written", () => {
+  const body = grab("typeFret");
+  assert.match(body, /sel\.at = d\.at \+ 1/);
+  assert.match(body, /carryCaretOn\(sel\)/);
+  assert.match(body, /scrollSelectionIntoView\(\)/);
+});
+
+test("a second digit still aims at the note it is correcting", () => {
+  // "1" then "2" is the twelfth fret, and the caret has already moved
+  // past that note — so the correction has its own index to aim at and
+  // the caret is left alone.
+  const body = grab("typeFret");
+  assert.match(body, /if \(extending\) \{\s*p\.set\("at", String\(fretTyping\.index\)\)/);
+  assert.match(body, /if \(!extending\) \{[\s\S]*?sel\.at = d\.at \+ 1/);
+});
+
+test("a fret leaves the note selected but not picked up", () => {
+  // So the arrows move the caret from string to string rather than
+  // dragging the note that was just written.
+  const body = grab("typeFret");
+  assert.match(body, /sel\.wrote = true/);
+  assert.match(body, /state\.multi = \[\]/);
+});
+
+/*
+ * Running out of room.
+ */
+
+test("the caret follows the fret into whichever bar it landed in", () => {
+  const body = grab("typeFret");
+  // A full bar passes the note to the next one, so the bar it went in at
+  // is not always the bar it ended up in.
+  assert.match(body, /d\.measure == null \? sel\.measure : d\.measure/);
+  assert.match(body, /sel\.measure = landed/);
+});
+
+test("how full the bar is is read after the score comes back", () => {
+  // carryCaretOn asks the bar whether it has room left. Called before the
+  // refresh it read the bar as it was one note ago, so the caret stayed
+  // in a bar that was already full.
+  const body = grab("typeFret");
+  const refresh = body.indexOf("await refreshScore()");
+  const carry = body.indexOf("carryCaretOn(sel)");
+  assert.ok(refresh > 0 && carry > 0, "typeFret no longer does both");
+  assert.ok(carry > refresh,
+    "carryCaretOn runs before the refresh, so it reads stale hits");
+});
+
+test("a second digit leaves the caret alone", () => {
+  // It is correcting the note the caret has already moved past.
+  const body = grab("typeFret");
+  assert.match(body, /if \(!extending\) \{\s*sel\.measure = landed/);
 });

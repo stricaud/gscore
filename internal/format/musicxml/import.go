@@ -188,6 +188,12 @@ func convert(doc *scorePartwise, lg *log) (*model.Score, error) {
 	}
 
 	tempoSet := false
+	// The rehearsal marks, by the bar they name. Collected as the parts
+	// are read and written onto every staff once they are all in, because
+	// the mark belongs to the bar and not to whichever part the file
+	// happened to write it on — "from letter B" has to mean one bar to
+	// everybody in the room.
+	marks := map[int]string{}
 	for _, xp := range doc.Parts {
 		// A part may be written on more than one staff — a piano is one
 		// instrument played with two hands, and the file says so with
@@ -279,6 +285,27 @@ func convert(doc *scorePartwise, lg *log) (*model.Score, error) {
 						tempoSet = true
 					}
 				}
+				// A rehearsal mark names the bar for everybody in the
+				// room, so it is kept against the bar and not against
+				// the part it happened to be written on. Files write it
+				// once, nearly always on the top staff; gscore puts it
+				// on every staff of that bar once all the parts are in.
+				if it.Direction != nil && it.Direction.Type.Rehearsal != "" {
+					text := strings.TrimSpace(it.Direction.Type.Rehearsal)
+					switch at := len(parts[0].Measures); {
+					case marks[at] == "":
+						marks[at] = text
+					case marks[at] != text:
+						// A bar carrying two of them — "12" and "bis"
+						// over the same bar is in the specification's
+						// own test suite. gscore names a bar once,
+						// because a conductor calling it calls it one
+						// thing, so the second is left out and said so.
+						lg.say("bar %d carries more than one rehearsal "+
+							"mark; %q was kept and %q left out",
+							at+1, marks[at], text)
+					}
+				}
 			}
 
 			// What opens this bar closes the one before it: in a score the
@@ -324,6 +351,15 @@ func convert(doc *scorePartwise, lg *log) (*model.Score, error) {
 			})
 		}
 		s.Parts = append(s.Parts, parts...)
+	}
+
+	// And now the marks, onto every staff of the bars they name.
+	for at, text := range marks {
+		for _, p := range s.Parts {
+			if at < len(p.Measures) {
+				p.Measures[at].Marker = text
+			}
+		}
 	}
 	return s, nil
 }

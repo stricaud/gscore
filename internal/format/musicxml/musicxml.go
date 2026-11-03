@@ -175,6 +175,15 @@ type directionType struct {
 	Metronome *metronome `xml:"metronome,omitempty"`
 	Words     string     `xml:"words,omitempty"`
 	Dynamics  *dynamics  `xml:"dynamics,omitempty"`
+	// Rehearsal is the letter a conductor calls a bar by.
+	//
+	// Its own element and not words, which is the distinction the format
+	// is making: a rehearsal mark names a place and a word over the music
+	// says something about it, and a reader that treated them alike would
+	// put "poco rit." in the list of places to start from. The spec gives
+	// it a square enclosure unless it says otherwise, which is what
+	// gscore draws, so nothing needs to be written for the box.
+	Rehearsal string `xml:"rehearsal,omitempty"`
 }
 
 // dynamics is a choice of empty elements, one per marking, which is how

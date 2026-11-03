@@ -112,6 +112,22 @@ func buildPart(s *model.Score, p *model.Part, id string, index, divisions int) x
 			}
 		}
 
+		// The rehearsal mark, written once on the top part.
+		//
+		// gscore keeps it on every staff of the bar, because that is what
+		// it means; the file writes it once, because that is what every
+		// program reading one expects and because writing it on all
+		// twenty staves of an orchestral score would have every reader
+		// print twenty letters. It is first in the bar, before the notes,
+		// since it names the bar rather than anything in it.
+		if index == 0 && m.Marker != "" {
+			d := direction{
+				Placement: "above",
+				Type:      directionType{Rehearsal: m.Marker},
+			}
+			xm.add(measureItem{Direction: &d})
+		}
+
 		if len(m.Voices) > 0 {
 			for _, el := range m.Voices[0].Elements {
 				// A dynamic is a direction, written immediately before the

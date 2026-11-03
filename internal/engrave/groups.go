@@ -396,6 +396,81 @@ func (e *engraver) drawMarkers(parts []*model.Part, columns []float64, start, en
 	}
 }
 
+// markRepeatStaves are the drawn staves that carry the rehearsal letter
+// again, besides the top one.
+//
+// The top staff of each bracketed family. A bracket is the score saying
+// "these belong together" — the strings, the woodwind, a rhythm section —
+// and the top of each is where its players look. That is the rule printed
+// scores follow, and taking it from the brackets means it is already
+// answered by a score somebody has laid out, with nothing further to set.
+//
+// A brace is not a bracket here. It joins the staves one player reads, and
+// a pianist does not need the letter twice.
+func (e *engraver) markRepeatStaves() map[int]bool {
+	out := map[int]bool{}
+	if !e.opt.RepeatMarkers || e.score == nil {
+		return out
+	}
+	for _, g := range e.score.Groups {
+		if g.Symbol != model.GroupBracket {
+			continue
+		}
+		// Only where the family actually begins below the top of the
+		// page: a bracket round the whole score repeats nothing, because
+		// the mark is already there.
+		if fi, ok := e.drawnAt(g.First); ok && fi > 0 {
+			out[fi] = true
+		}
+	}
+	return out
+}
+
+// repeatMarkers queues the rehearsal letters again over one staff further
+// down the system.
+//
+// Only the letter. The segno, the speed and the jump directions stay where
+// they are: a conductor's score writes "D.S. al Coda" once, and printing
+// it over every family would be four copies of one instruction. A letter
+// is a place rather than an instruction, which is why it is the one thing
+// that is repeated.
+//
+// Queued rather than drawn, so that it clears whatever this staff has
+// reaching up out of it, the same way the row over the top staff does.
+func (e *engraver) repeatMarkers(parts []*model.Part, columns []float64, start, end int) {
+	markAt := func(mi int) string {
+		for _, p := range parts {
+			if mi < len(p.Measures) && p.Measures[mi].Marker != "" {
+				return p.Measures[mi].Marker
+			}
+		}
+		return ""
+	}
+	for mi := start; mi < end && mi-start < len(columns); mi++ {
+		text := markAt(mi)
+		if text == "" {
+			continue
+		}
+		// The same place along the bar as the letter at the top of the
+		// page, so the repeats stand in one column down the system.
+		//
+		// There is no bar number to clear down here — the numbers are
+		// written over the top staff only — but starting at the barline
+		// instead put each repeat a little to the left of the one above
+		// it, and a column of letters that does not line up reads as a
+		// mistake even when nobody can say what is wrong with it.
+		x := columns[mi-start] + e.numberWidth(mi, start)
+		right := columns[len(columns)-1]
+		if mi-start+1 < len(columns) {
+			right = columns[mi-start+1]
+		}
+		e.wait(waitingMark{
+			x0: x, x1: right, height: markRowHeight, gap: 0.6, rank: rankMarks,
+			draw: func(row float64) { e.drawRehearsalMark(text, x, row) },
+		})
+	}
+}
+
 // drawMarkRow writes everything that belongs over one bar, once the row it
 // sits in has been found: the letter, the sign, the new speed and the
 // direction at the end of the bar, all on one line.

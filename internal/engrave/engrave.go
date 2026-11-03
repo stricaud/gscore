@@ -564,6 +564,20 @@ type Options struct {
 	// above the first staff.
 	ShowTempoMark bool
 
+	// RepeatMarkers writes the rehearsal letter again further down a large
+	// score, over the top staff of each bracketed family.
+	//
+	// Because a cellist at the foot of a twenty-stave page cannot read a
+	// letter eighteen staves up. Printed scores repeat the mark above each
+	// choir for exactly that reason, and a conductor calling "from letter
+	// M" is talking to the whole room.
+	//
+	// Nothing happens on a score with no groups, or where the only group
+	// starts at the top staff — so a song, a lead sheet and a piano piece
+	// are drawn as they always were, and the letter appears again only
+	// where there is a page deep enough to need it.
+	RepeatMarkers bool
+
 	// MultiRests draws a run of bars in which every staff rests as one bar
 	// with the count over it, instead of as that many empty bars.
 	//
@@ -610,6 +624,7 @@ func DefaultOptions() Options {
 		LineWidth:          120,
 		ShowTitle:          true,
 		ShowTempoMark:      true,
+		RepeatMarkers:      true,
 		ShowMeasureNumbers: true,
 		WriteAhead:         true,
 	}
@@ -2831,7 +2846,17 @@ func (e *engraver) drawSystem(parts []*model.Part, boxes [][]measureBox,
 		lead += groupGap + bracketThickness
 	}
 
+	// Which staves say the rehearsal letter again, besides the top one.
+	repeatOn := e.markRepeatStaves()
+
 	for pi, p := range parts {
+		// The letter again, over the top staff of this family. Queued
+		// here rather than with the row over the top staff, because what
+		// it has to clear is this staff's music and the waiting marks
+		// are placed against the staff being drawn.
+		if repeatOn[pi] {
+			e.repeatMarkers(parts, columns, start, end)
+		}
 		// Where this staff's own ink begins. See clearOfNoteheads.
 		e.staffGlyphs = len(e.lay.Glyphs)
 		e.clef = e.clefAt(p, start)

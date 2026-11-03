@@ -78,10 +78,10 @@ suite/24e-GraceNote-StaffChange.musicxml df11729fd72360a0 116
 suite/24f-GraceNote-Slur.musicxml c47abca9278dbae0 19
 suite/24g-GraceNote-Dynamics.musicxml 9be537efb832a86e 23
 suite/24h-GraceNote-Simultaneous.musicxml d8aa0b355c4652c0 234
-suite/31a-Directions.musicxml a1de9e8ae4037552 216
+suite/31a-Directions.musicxml f1e956cb544703c5 221
 suite/31b-Directions-Order.musicxml 22dfd0c01bc1a011 17
 suite/31c-MetronomeMarks.musicxml 54f9f5485d5d2141 38
-suite/31d-Directions-Compounds.musicxml 82ab73e7a068254a 59
+suite/31d-Directions-Compounds.musicxml 97c3c438c2c0825e 64
 suite/31f-Direction-Multiline-Compounds.musicxml d533ba139773e967 14
 suite/32a-Notations.musicxml 96c1e9c442606849 276
 suite/32b-Articulations-Texts.musicxml 6fd7e792939cef84 16
@@ -101,8 +101,8 @@ suite/33i-Ties-NotEnded.musicxml 4e3515703cd81d7d 22
 suite/33j-Beams-Tremolos.musicxml 6cd67fc325e1b2cb 66
 suite/33k-Tie-Types.musicxml ec9a0dfbe2f8132d 63
 suite/34a-Print-Object-Spanners.musicxml 8d1f94845efed9f9 133
-suite/34b-Colors.musicxml 0134846f26dddba7 269
-suite/34c-Font-Size.musicxml 464d6d4b4207ce4c 194
+suite/34b-Colors.musicxml 9dac2b1cbee9fd2a 274
+suite/34c-Font-Size.musicxml 17c2d1ce9997fc3e 199
 suite/34d-Note-Attributes.musicxml 7940fae8b5386f48 66
 suite/41a-MultiParts-Partorder.musicxml 45938c76c7659a20 59
 suite/41b-MultiParts-MoreThan10.musicxml 130d037d262df8a5 202

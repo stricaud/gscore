@@ -286,7 +286,38 @@ func (d *dynamics) get() model.Dynamic {
 type metronome struct {
 	BeatUnit string `xml:"beat-unit"`
 	Dot      *empty `xml:"beat-unit-dot,omitempty"`
-	PerMin   int    `xml:"per-minute"`
+
+	// Text, not a number, because the standard says so: per-minute is a text
+	// element exactly so that a score can be marked "ca. 76", "c. 120" or
+	// "92-96" the way an engraver would write it. Read as an int it is a
+	// parse error and the whole score is refused over a tempo marking that
+	// could perfectly well have been rounded — which is how a Satie with
+	// "ca. 76" over the first bar became a file gscore would not open.
+	PerMin string `xml:"per-minute"`
+}
+
+// bpm is the number in a per-minute marking, or 0 if there is not one.
+//
+// The first run of digits and nothing cleverer. "ca. 76" is 76; a range like
+// "92-96" is 92, the slow end, which is the one to practise at. A marking
+// with no figure in it at all — "Allegro", or an empty element — is 0, and
+// the caller reads that as no metronome mark, which is what it is.
+func (m *metronome) bpm() int {
+	n := 0
+	for i := 0; i < len(m.PerMin); i++ {
+		c := m.PerMin[i]
+		if c < '0' || c > '9' {
+			if n > 0 {
+				break
+			}
+			continue
+		}
+		n = n*10 + int(c-'0')
+		if n > 9999 {
+			break
+		}
+	}
+	return n
 }
 
 type sound struct {

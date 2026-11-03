@@ -257,10 +257,30 @@ type Measure struct {
 	// most of what the sign is for.
 	Repeat int
 
-	// Marker is a rehearsal mark — the boxed A, B, C that a conductor calls
-	// out. It belongs to the bar across the whole score, because "from B"
-	// has to mean the same bar to everybody in the room.
+	// Marker is a rehearsal mark written out as itself — the boxed A, B, C
+	// that a conductor calls out. It belongs to the bar across the whole
+	// score, because "from B" has to mean the same bar to everybody in the
+	// room.
+	//
+	// Used for the marks that are not part of the sequence: "1a" at an
+	// insert, a word at the top of a chorus, and everything read out of a
+	// file, which arrives already written out. For a mark that should
+	// count along with the others, see MarkerAuto.
 	Marker string
+
+	// MarkerAuto says this bar is in the rehearsal sequence, and leaves
+	// what it is called to be worked out from where it falls.
+	//
+	// The difference matters the moment anybody edits. A letter stored as
+	// the letter is right until a mark is put in before it, and then the
+	// page reads A, B, D, C with nothing to say which is wrong; delete one
+	// and the sequence has a hole. Stored as a place in the sequence, all
+	// of that comes out right without anybody being asked, which is the
+	// whole reason to keep it this way round.
+	//
+	// What it is called comes from Score.Markers — letters, numbers, or
+	// the bar's own number. See Score.RehearsalMarks.
+	MarkerAuto bool `json:",omitempty"`
 
 	// SectionTitle names the movement that begins at this bar, and is
 	// written over the staff where it begins.
@@ -755,6 +775,16 @@ type Score struct {
 	Tags []string
 
 	Engraving map[string]float64
+
+	// Markers is what the rehearsal marks in the sequence are called:
+	// letters, numbers, or the number of the bar they stand on.
+	//
+	// A decision about the whole score and not about any one mark. A
+	// conductor calls the places one way through a piece, and half of
+	// them lettered and half numbered would be two systems of names for
+	// one set of places. The marks written out as themselves are the
+	// exception and are left alone — see RehearsalMarks.
+	Markers MarkerStyle `json:",omitempty"`
 
 	// Numbering is how often the bar numbers are printed and whether they
 	// are boxed.

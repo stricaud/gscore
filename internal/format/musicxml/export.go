@@ -89,6 +89,19 @@ func buildPart(s *model.Score, p *model.Part, id string, index, divisions int) x
 	// back at, because it has to be the first thing in the measure.
 	var opening *barline
 
+	// The rehearsal marks, with the sequence worked out: a mark is kept as
+	// a place in the sequence and the letter is derived, so the letter is
+	// what has to be written into the file.
+	//
+	// Counted by position, with no bar numbers handed in. That is what the
+	// rest of this file does too — every <measure number> below is its
+	// place — so a score whose marks are named after their bars comes out
+	// agreeing with its own numbering. The engraver knows better, about
+	// upbeats and about a numbering a file stated for itself, and it is
+	// the engraver's business: it is about the page and this is about the
+	// file.
+	marks := s.RehearsalMarks(nil)
+
 	for mi, m := range p.Measures {
 		xm := xmlMeasure{Number: strconv.Itoa(mi + 1)}
 
@@ -120,10 +133,10 @@ func buildPart(s *model.Score, p *model.Part, id string, index, divisions int) x
 		// twenty staves of an orchestral score would have every reader
 		// print twenty letters. It is first in the bar, before the notes,
 		// since it names the bar rather than anything in it.
-		if index == 0 && m.Marker != "" {
+		if text := marks[mi]; index == 0 && text != "" {
 			d := direction{
 				Placement: "above",
-				Type:      directionType{Rehearsal: m.Marker},
+				Type:      directionType{Rehearsal: text},
 			}
 			xm.add(measureItem{Direction: &d})
 		}
@@ -194,7 +207,7 @@ func buildTempo(t model.Tempo) direction {
 			name = n
 		}
 	}
-	m := &metronome{BeatUnit: name, PerMin: t.BPM}
+	m := &metronome{BeatUnit: name, PerMin: strconv.Itoa(t.BPM)}
 	if dots > 0 {
 		m.Dot = &empty{}
 	}

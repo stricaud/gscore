@@ -784,6 +784,8 @@ async function action(name) {
     case "insert-chord": await chordSymbolDialog(); break;
     case "insert-text": await textDialog(); break;
     case "insert-marker": await markerDialog(); break;
+    case "marker-style": await markerStyleDialog(); break;
+    case "score-setup": await scoreSetupDialog(); break;
 
     case "group-brace": await joinStaves("brace"); break;
     case "group-bracket": await joinStaves("bracket"); break;
@@ -7943,41 +7945,135 @@ async function textDialog() {
 }
 
 // markerDialog puts a rehearsal mark on the current bar, across every staff.
+//
+// Two kinds, and the difference is what happens next. A mark in the
+// sequence is kept as a place and named from where it falls, so putting
+// one in before the others moves every letter after it along by itself. A
+// mark written out as itself — "1a" at an insert, a word over a chorus —
+// is left alone by the sequence and does not advance it.
+//
+// The sequence is offered first because it is what nearly every mark is.
 async function markerDialog() {
   const sel = state.selection;
   if (!sel) {
     status("Click a measure first");
     return;
   }
-  // The next letter, so marks run A, B, C without being typed each time.
+  const next = nextMarkerName(sel.measure);
+  const here = (state.info?.marks || {})[sel.measure];
+
   const v = await ask({
     title: `Rehearsal mark at measure ${barNumberOf(sel.measure)}`,
     label: "Mark",
-    value: nextMarkerLetter(),
+    value: "auto",
     note: "Written over every staff, because “from B” has to mean the same " +
-          "bar to everyone. Leave it empty to take it away.",
+          "bar to everyone. A mark in the sequence renames itself when " +
+          "another is put in before it.",
+    options: [
+      { value: "auto", label: next + " — next in the sequence" },
+      { value: "custom", label: "Something else…" },
+    ].concat(here ? [{ value: "remove", label: "Take the mark away" }] : []),
   });
   if (v === null) return;
-  const p = new URLSearchParams({ measure: String(sel.measure), text: v });
+
+  const p = new URLSearchParams({ measure: String(sel.measure) });
+  let said = "";
+  switch (v) {
+    case "auto":
+      p.set("auto", "1");
+      said = "Mark " + next;
+      break;
+    case "remove":
+      p.set("text", "");
+      said = "Mark removed";
+      break;
+    default: {
+      const text = await ask({
+        title: `Rehearsal mark at measure ${barNumberOf(sel.measure)}`,
+        label: "Call it",
+        value: here && here !== next ? here : "",
+        note: "Left out of the sequence, so the letters either side of it " +
+              "are unaffected.",
+      });
+      if (text === null) return;
+      if (text.trim() === "") return;
+      p.set("text", text);
+      said = "Mark " + text;
+    }
+  }
+
   const res = await fetch("/api/marker?" + p.toString(), { method: "POST" });
   if (!res.ok) {
     status("Could not set it: " + (await res.text()).trim());
     return;
   }
+  // Setting one mark renames the others, so the editor reads the whole
+  // score again rather than patching the bar it touched.
   await refreshScore();
-  status(v === "" ? "Mark removed" : "Mark " + v);
+  status(said);
 }
 
-// nextMarkerLetter is what comes after the marks already written.
+// markerStyleDialog chooses what the marks in the sequence are called.
 //
-// Counted in the score rather than on the page. It used to count the single
-// capital letters in the drawing, which worked while the whole score was
-// drawn and stopped working when a long one began to be drawn a screenful
-// at a time: the marks already written are mostly not on the page, so it
-// offered A again and again.
-function nextMarkerLetter() {
-  const n = state.info?.markers ?? 0;
-  return String.fromCharCode(65 + Math.min(25, n));
+// A decision about the whole score. A conductor calls the places one way
+// through a piece, and half of them lettered and half numbered would be
+// two systems of names for one set of places.
+async function markerStyleDialog() {
+  const now = state.info?.markerStyle || "letters";
+  const v = await ask({
+    title: "Rehearsal marks",
+    label: "Call them",
+    value: now,
+    note: "Marks written out as themselves keep what they say, whichever " +
+          "this is.",
+    options: [
+      { value: "letters", label: "Letters — A, B, C" },
+      { value: "numbers", label: "Numbers — 1, 2, 3" },
+      { value: "bars", label: "The number of the bar they stand on" },
+    ],
+  });
+  if (v === null || v === now) return;
+
+  const res = await fetch("/api/marker?style=" + encodeURIComponent(v),
+                          { method: "POST" });
+  if (!res.ok) {
+    status("Could not set it: " + (await res.text()).trim());
+    return;
+  }
+  await refreshScore();
+  status("Rehearsal marks are " + v);
+}
+
+// nextMarkerName is what a mark put at this bar would be called.
+//
+// Asked of the score rather than counted here, because what a mark is
+// called depends on every mark before it in its own movement — and
+// because counting the marks already written, which is what this used to
+// do, offered the letter after the last one wherever the cursor was. A
+// mark put in between B and C was then offered D, and the page read A, B,
+// D, C.
+function nextMarkerName(at) {
+  const style = state.info?.markerStyle || "letters";
+  if (style === "bars") return String(barNumberOf(at));
+
+  // How many sequence marks come before this bar. The ones written out as
+  // themselves are not places the sequence counts through, so they are
+  // not among these.
+  const n = (state.info?.sequenced || []).filter((bar) => bar < at).length;
+  return style === "numbers" ? String(n + 1) : rehearsalLetter(n);
+}
+
+// rehearsalLetter is the nth name in the sequence, counting from zero.
+//
+// A to Z and then AA, BB, CC — doubling, because a conductor shouting
+// "A B" across a hall is not heard as one thing. I is skipped: it reads as
+// a one at a glance, which is the one thing a rehearsal mark must never be
+// mistaken for in a room where people are also calling out bar numbers.
+function rehearsalLetter(n) {
+  const letters = "ABCDEFGHJKLMNOPQRSTUVWXYZ"; // no I
+  if (n < 0) return "";
+  const c = letters[n % letters.length];
+  return c.repeat(Math.floor(n / letters.length) + 1);
 }
 
 // staffRange reads "2-4" as the staves it names, counted from one the way
@@ -8457,6 +8553,286 @@ async function addStaffDialog() {
 function instrumentNamed(sound) {
   const found = (instrumentCatalogue || []).find((x) => x.sound === sound);
   return found ? found.name : sound;
+}
+
+/* ---------- score setup ---------- */
+
+// Who is playing, chosen all at once.
+//
+// gscore opens with a staff ready and that is right: a tune goes in before
+// anybody has decided what it is for, and being asked to fill in a form
+// first is how a good idea gets lost. This is the other case — somebody
+// who already knows the piece is a wind quintet, and who should not have
+// to add five staves one at a time, order them by hand and then bracket
+// them.
+//
+// The chosen list is kept here rather than read back off the dialog,
+// because it is a list with an order and a select is a set.
+//
+// Each entry carries an id of its own, and the groups are kept as sets of
+// those ids rather than of positions: a group named by position stops
+// meaning what it meant the moment anything is moved or taken away, and
+// moving things about is most of what this dialog is for.
+let setupChosen = [];
+let setupGroups = [];
+let setupNextId = 1;
+
+async function scoreSetupDialog() {
+  const dlg = $("#score-setup");
+  if (!dlg) return;
+  const options = await instrumentOptions();
+
+  // What the score already holds, so the dialog opens on it rather than
+  // on nothing: somebody reopening it means to change the ensemble, not
+  // to start again from an empty list.
+  const sounds = (state.info?.parts || [])
+    .map((p) => p.sound).filter((s) => !!s)
+    // A grand staff is two staves and one instrument; listing it twice
+    // would add a second piano every time the dialog was reopened.
+    .filter((s, i, all) => s !== all[i - 1]);
+  setupChosen = sounds.map((sound) => ({ id: setupNextId++, sound }));
+  setupGroups = [];
+
+  drawSetupPick(options, "");
+  drawSetupChosen();
+
+  const warn = $("#setup-warning");
+  if (warn) warn.hidden = !scoreHasMusic();
+
+  const filter = $("#setup-filter");
+  if (filter) {
+    filter.value = "";
+    filter.oninput = () => drawSetupPick(options, filter.value);
+  }
+  if (!dlg.open) dlg.showModal();
+}
+
+// scoreHasMusic says there is something here worth not throwing away.
+function scoreHasMusic() {
+  return (state.info?.parts || []).some((p) => (p.notes || 0) > 0);
+}
+
+// drawSetupPick fills the list of instruments to choose from, under the
+// headings the catalogue is grouped by.
+function drawSetupPick(options, query) {
+  const pick = $("#setup-pick");
+  if (!pick) return;
+  const q = query.trim().toLowerCase();
+  const hit = (o) => q === "" || o.label.toLowerCase().includes(q) ||
+    o.group.toLowerCase().includes(q);
+
+  let html = "", open = "";
+  for (const o of options) {
+    if (!hit(o)) continue;
+    if (o.group !== open) {
+      if (open) html += "</optgroup>";
+      html += `<optgroup label="${escapeHTML(o.group)}">`;
+      open = o.group;
+    }
+    html += `<option value="${escapeHTML(o.value)}">${escapeHTML(o.label)}</option>`;
+  }
+  if (open) html += "</optgroup>";
+  pick.innerHTML = html;
+}
+
+// drawSetupChosen fills the list of what is in the score, in the order it
+// will be laid out.
+function drawSetupChosen() {
+  const box = $("#setup-chosen");
+  if (!box) return;
+  const list = setupOrdered();
+  box.innerHTML = list.map((it, i) => {
+    // A mark against the ones that are bracketed together, so a group is
+    // something you can see rather than something you have to remember.
+    const g = setupGroups.findIndex((ids) => ids.includes(it.id));
+    const tag = g < 0 ? "" : "  ⌈" + (g + 1) + "⌉";
+    return `<option value="${i}">${escapeHTML(instrumentNamed(it.sound) + tag)}</option>`;
+  }).join("");
+}
+
+// setupOrdered is the chosen instruments in the order they will be laid
+// out, which is what the box shows and what the positions mean.
+function setupOrdered() {
+  return $("#setup-order")?.checked ? inScoreOrder(setupChosen) : setupChosen;
+}
+
+// inScoreOrder sorts the chosen instruments the way a score is laid out.
+//
+// Asked of the server's own ranking rather than worked out again here: a
+// second copy of the convention is a second thing to be wrong, and the
+// order is already written down where the staves are made.
+function inScoreOrder(chosen) {
+  const rank = (sound) => {
+    const i = (instrumentCatalogue || []).findIndex((x) => x.sound === sound);
+    return i < 0 ? 1e9 : (instrumentCatalogue[i].scoreRank ?? 1e9);
+  };
+  return chosen.map((it, i) => [it, i]).sort((a, b) => {
+    const d = rank(a[0].sound) - rank(b[0].sound);
+    return d !== 0 ? d : a[1] - b[1]; // two of the same keep their order
+  }).map(([it]) => it);
+}
+
+// setupAdd puts the instrument the cursor is on into the score.
+function setupAdd() {
+  const pick = $("#setup-pick");
+  if (!pick || !pick.value) return;
+  setupChosen.push({ id: setupNextId++, sound: pick.value });
+  drawSetupChosen();
+}
+
+function setupRemove() {
+  const picked = setupPicked();
+  if (!picked.length) return;
+  const gone = new Set(picked.map((it) => it.id));
+  setupChosen = setupOrdered().filter((it) => !gone.has(it.id));
+  // And out of whatever groups they were in, so a group does not go on
+  // holding a staff that is no longer in the score.
+  setupGroups = setupGroups
+    .map((ids) => ids.filter((id) => !gone.has(id)))
+    .filter((ids) => ids.length > 1);
+  drawSetupChosen();
+}
+
+// setupPicked is what is selected in the chosen list, as entries.
+function setupPicked() {
+  const box = $("#setup-chosen");
+  if (!box) return [];
+  const list = setupOrdered();
+  return [...box.selectedOptions]
+    .map((o) => list[Number(o.value)]).filter(Boolean);
+}
+
+// setupMove moves what is picked up or down the list.
+//
+// Moving by hand is arranging the score, so it turns the automatic order
+// off: the two cannot both be in charge, and the one somebody just used
+// their hands on is the one that wins.
+function setupMove(dir) {
+  const box = $("#setup-chosen");
+  if (!box || box.selectedIndex < 0) return;
+  setupArrangedByHand();
+  const i = box.selectedIndex;
+  const j = i + dir;
+  if (j < 0 || j >= setupChosen.length) return;
+  [setupChosen[i], setupChosen[j]] = [setupChosen[j], setupChosen[i]];
+  drawSetupChosen();
+  box.selectedIndex = j;
+}
+
+// setupArrangedByHand freezes the order somebody is about to rearrange.
+//
+// Moving by hand turns the automatic order off: the two cannot both be in
+// charge, and the one somebody just used their hands on is the one that
+// wins.
+function setupArrangedByHand() {
+  const order = $("#setup-order");
+  if (order?.checked) {
+    setupChosen = inScoreOrder(setupChosen);
+    order.checked = false;
+  }
+}
+
+// setupBracket draws a bracket round the staves that are selected.
+//
+// A bracket is a vertical line down the left of a run of staves, so it
+// covers everything between its ends — there is no bracketing the first
+// and the third and not the second. Staves picked apart from each other
+// are therefore brought together first, under the topmost of them, which
+// is what somebody picking them apart is asking for. It is said out loud
+// rather than done quietly, because it moves the score about.
+function setupBracket() {
+  const picked = setupPicked();
+  if (picked.length < 2) {
+    status("Pick two staves or more to bracket them");
+    return;
+  }
+  setupArrangedByHand();
+
+  const ids = picked.map((it) => it.id);
+  const want = new Set(ids);
+  const at = setupChosen.findIndex((it) => want.has(it.id));
+  const moved = setupChosen.filter((it) => want.has(it.id));
+  const rest = setupChosen.filter((it) => !want.has(it.id));
+  const apart = moved.some((it, i) =>
+    setupChosen.indexOf(it) !== setupChosen.indexOf(moved[0]) + i);
+
+  setupChosen = rest.slice(0, at).concat(moved, rest.slice(at));
+  // Out of any group they were in before: a staff is in one bracket.
+  setupGroups = setupGroups
+    .map((g) => g.filter((id) => !want.has(id)))
+    .filter((g) => g.length > 1);
+  setupGroups.push(ids);
+
+  drawSetupChosen();
+  status(apart
+    ? "Bracketed, and brought together — a bracket covers the staves between its ends"
+    : "Bracketed");
+}
+
+// setupUngroup takes the selected staves out of their brackets.
+function setupUngroup() {
+  const picked = setupPicked();
+  if (!picked.length) return;
+  const want = new Set(picked.map((it) => it.id));
+  setupGroups = setupGroups
+    .map((g) => g.filter((id) => !want.has(id)))
+    .filter((g) => g.length > 1);
+  drawSetupChosen();
+  status("Taken out of the bracket");
+}
+
+async function applyScoreSetup() {
+  if (!setupChosen.length) {
+    status("Choose an instrument or two");
+    return;
+  }
+  if (scoreHasMusic()) {
+    const sure = await confirmThat({
+      title: "Make the staves again?",
+      note: "This score has music in it, and laying it out again throws " +
+            "it away.",
+      ok: "Make them",
+    });
+    if (!sure) return;
+  }
+  const list = setupOrdered();
+  const p = new URLSearchParams({
+    instruments: list.map((it) => it.sound).join(","),
+  });
+  // The server orders them unless the dialog already has.
+  if (!$("#setup-order")?.checked) p.set("order", "keep");
+  // The groups, as runs over the list being sent. They are contiguous by
+  // construction — bracketing brings the staves together — so a run is
+  // all that has to go across.
+  const runs = setupGroups.map((ids) => {
+    const at = list.findIndex((it) => ids.includes(it.id));
+    return at < 0 ? null : at + "-" + (at + ids.length - 1);
+  }).filter(Boolean);
+  if (runs.length) p.set("brackets", runs.join(","));
+  if (scoreHasMusic()) p.set("replace", "1");
+
+  const res = await fetch("/api/setup?" + p, { method: "POST" });
+  if (!res.ok) {
+    status((await res.text()).trim());
+    return;
+  }
+  const d = await res.json();
+  $("#score-setup")?.close();
+  await reload();
+  status(d.staves === 1 ? "Made 1 staff" : "Made " + d.staves + " staves");
+}
+
+function setupScoreSetupDialog() {
+  $("#setup-add")?.addEventListener("click", setupAdd);
+  $("#setup-remove")?.addEventListener("click", setupRemove);
+  $("#setup-up")?.addEventListener("click", () => setupMove(-1));
+  $("#setup-bracket")?.addEventListener("click", setupBracket);
+  $("#setup-ungroup")?.addEventListener("click", setupUngroup);
+  $("#setup-down")?.addEventListener("click", () => setupMove(1));
+  $("#setup-order")?.addEventListener("change", drawSetupChosen);
+  $("#setup-apply")?.addEventListener("click", () => void applyScoreSetup());
+  // Double-clicking an instrument is how everybody expects to add one.
+  $("#setup-pick")?.addEventListener("dblclick", setupAdd);
 }
 
 /* ---------- tablature ---------- */
@@ -12302,6 +12678,7 @@ async function main() {
   setupConsole();
   setupScriptResult();
   setupPartDialog();
+  setupScoreSetupDialog();
   setupPanning();
   setupMarquee();
   setupSymbolDragging();
@@ -13897,6 +14274,11 @@ const MENU_DRAWINGS = {
   /* What belongs to the whole score. */
   "set-header": '<path d="M4.5 5.5h15M7 9.5h10"/>' +
     '<path d="M4.5 14.5h15M4.5 18.5h11"/>',
+  // A stack of staves with a bracket down the left of it, which is what
+  // this entry makes and what nothing else in the menu does.
+  "score-setup": '<path d="M7 5.5h14M7 9.5h14M7 14.5h14M7 18.5h14"/>' +
+    '<path d="M4 4.5v15"/><path d="M4 4.5c0-1 .8-1.6 1.8-1.6"/>' +
+    '<path d="M4 19.5c0 1 .8 1.6 1.8 1.6"/>',
   // The short bar a piece can begin on, and the first full bar after it.
   "set-pickup": '<path d="M2.5 5.5v13M9.5 5.5v13M21.5 5.5v13"/>' +
     '<circle cx="5.3" cy="14.5" r="2"/><path d="M7.3 14.5V8"/>',
@@ -13930,6 +14312,11 @@ const MENU_DRAWINGS = {
    * what the entry does. Drawn, they can be what they are. */
   "insert-marker": '<rect x="3.5" y="4.5" width="17" height="15" rx="1.5"/>' +
     '<path d="M8 16.3 12 7.7l4 8.6"/><path d="M9.4 13.4h5.2"/>',
+  // The same boxed letter, with the next one of the sequence behind it:
+  // this entry is about what they are all called, not about one of them.
+  "marker-style": '<rect x="2.5" y="7.5" width="12" height="11" rx="1.5"/>' +
+    '<path d="M5.6 15.8 8.5 9.5l2.9 6.3"/><path d="M6.6 13.7h3.8"/>' +
+    '<rect x="15.5" y="5.5" width="6" height="6" rx="1" opacity=".5"/>',
   // A letter and the figure beside it, which is the shape of every chord
   // symbol ever written and belongs to nothing else.
   "insert-chord": '<path d="M13.8 8.6a6 6 0 1 0 0 7.4"/>' +

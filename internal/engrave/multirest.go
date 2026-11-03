@@ -149,7 +149,7 @@ func followsMultiRest(parts []*model.Part, at int) bool {
 		// A sign written at the bar is a sign nobody would see: the bar it
 		// belongs to is not drawn.
 		if m.Key != nil || m.Time != nil || m.Clef != nil ||
-			m.Marker != "" || m.SectionTitle != "" || m.Tempo != nil ||
+			m.HasMarker() || m.SectionTitle != "" || m.Tempo != nil ||
 			m.Sign != model.NoSign {
 			return false
 		}

@@ -1694,13 +1694,17 @@ func (a *App) handleInstruments(w http.ResponseWriter, r *http.Request) {
 		// has no one range and claims none.
 		Low  int `json:"low,omitempty"`
 		High int `json:"high,omitempty"`
+		// ScoreRank is where it goes down the page of a score, which
+		// is not the order this list is in: the list is ordered for
+		// finding an instrument and a score for reading one.
+		ScoreRank int `json:"scoreRank"`
 	}
 	out := make([]item, 0, 320)
 	for _, c := range model.Catalogue() {
 		out = append(out, item{
 			Group: c.Group, Name: c.Name, Sound: c.Sound,
 			Program: int(c.Program), Percussion: c.Percussion,
-			Low: c.Low, High: c.High,
+			Low: c.Low, High: c.High, ScoreRank: c.ScoreRank,
 		})
 	}
 	writeJSON(w, struct {
@@ -2663,27 +2667,57 @@ func (a *App) handleMarker(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	q := r.URL.Query()
-	measIdx, _ := strconv.Atoi(q.Get("measure"))
-	text := strings.TrimSpace(q.Get("text"))
 
 	a.lock()
 	defer a.mu.Unlock()
 
-	found := false
-	for _, p := range a.score.Parts {
-		if measIdx < 0 || measIdx >= len(p.Measures) {
-			continue
+	// What the marks in the sequence are called, which is a decision
+	// about the whole score rather than about any one bar.
+	if v, ok := q["style"]; ok && len(v) > 0 {
+		style, good := model.MarkerStyleFromName(strings.TrimSpace(v[0]))
+		if !good {
+			http.Error(w, v[0]+" is not letters, numbers or bars",
+				http.StatusBadRequest)
+			return
 		}
-		// Every staff, because "from letter B" has to mean the same bar to
-		// everybody. A mark on one staff is a mark nobody else can find.
-		p.Measures[measIdx].Marker = text
-		found = true
+		a.score.Markers = style
+		if _, naming := q["measure"]; !naming {
+			a.writeMarks(w, -1)
+			return
+		}
 	}
-	if !found {
+
+	measIdx, _ := strconv.Atoi(q.Get("measure"))
+	text := strings.TrimSpace(q.Get("text"))
+	// auto=1 puts the bar in the sequence and lets its name be worked out
+	// from where it falls, which is what keeps the letters in order when
+	// one is put in before the others or taken away. A text instead is a
+	// mark written out as itself — "1a" at an insert, a word over a
+	// chorus — and is left alone by the sequence.
+	auto := q.Get("auto") == "1"
+	if auto {
+		text = ""
+	}
+
+	if !a.score.SetMarker(measIdx, text, auto) {
 		http.Error(w, "there is no such measure", http.StatusBadRequest)
 		return
 	}
-	writeJSON(w, map[string]any{"status": "ok", "measure": measIdx, "text": text})
+	a.writeMarks(w, measIdx)
+}
+
+// writeMarks answers with the sequence as it now stands.
+//
+// The whole sequence and not just the bar that changed, because changing
+// one changes the others: a mark put in before the rest moves every letter
+// after it along, and an editor told only about the bar it touched would
+// draw the old letters everywhere else.
+func (a *App) writeMarks(w http.ResponseWriter, at int) {
+	marks := a.score.RehearsalMarks(engrave.BarNumbers(a.score))
+	writeJSON(w, map[string]any{
+		"status": "ok", "measure": at, "text": marks[at],
+		"style": a.score.Markers.String(), "marks": marks,
+	})
 }
 
 // handleView changes how the score is drawn rather than what it says.
@@ -5205,6 +5239,8 @@ func (a *App) handleContents(w http.ResponseWriter, r *http.Request) {
 	// A script saying "a parallel fifth in bar 41" has to name the bar a
 	// player would read.
 	numbers := engrave.BarNumbers(a.score)
+	// And what each marked bar is called, with the sequence worked out.
+	marks := a.score.RehearsalMarks(numbers)
 
 	out := make([]staffContents, 0, len(a.score.Parts))
 	for pi, p := range a.score.Parts {
@@ -5236,7 +5272,10 @@ func (a *App) handleContents(w http.ResponseWriter, r *http.Request) {
 			if m.RightBarline != model.BarSingle {
 				bd.Barline = m.RightBarline.String()
 			}
-			bd.Marker, bd.Section, bd.Repeat = m.Marker, m.SectionTitle, m.Repeat
+			// What is printed, with the sequence worked out: a script
+			// reporting "letter C" has to say what a conductor would
+			// call, not the empty string a sequenced mark holds.
+			bd.Marker, bd.Section, bd.Repeat = marks[mi], m.SectionTitle, m.Repeat
 			if m.Tempo != nil {
 				bd.Tempo = tempoText(*m.Tempo)
 			}

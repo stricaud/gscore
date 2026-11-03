@@ -127,7 +127,8 @@ func (e *engraver) labelWidth(parts []*model.Part, first bool) float64 {
 			widest = w
 		}
 	}
-	for _, g := range e.score.Groups {
+	columns := e.groupColumns()
+	for i, g := range e.score.Groups {
 		if g.Name == "" {
 			continue
 		}
@@ -143,6 +144,9 @@ func (e *engraver) labelWidth(parts []*model.Part, first bool) float64 {
 			// braces widen the margin.
 			w += braceWidth(1e9)
 		}
+		// And a group inside another stands further out again, with its
+		// name outside that.
+		w += -columns[i]
 		if w > widest {
 			widest = w
 		}
@@ -187,6 +191,108 @@ func (e *engraver) bracedStaves() map[int]bool {
 	return out
 }
 
+// Nested groups, and the column each one stands in.
+//
+// A bracket round a family that has a piano in it is two symbols on one
+// system: the bracket round the family and the brace round the pianist's
+// two staves. Drawn in the same column they sit on top of each other, and
+// the brace comes off worst — its arms swell out to the left, so it
+// crosses the bracket rather than standing inside it.
+//
+// The rule in print is that the outermost goes furthest from the music and
+// each one inside it steps towards the staves. So the depth of a group —
+// how many others contain it — is which column it stands in, and the
+// columns are spaced by the room the symbols in them actually take.
+
+// groupDepth is how many groups contain this one.
+//
+// Strictly contain: two groups over the same staves are not nested, they
+// are the same span said twice, and stepping one of them aside would make
+// the page say there is a structure that is not there.
+func (e *engraver) groupDepth(at int) int {
+	g := e.score.Groups[at]
+	n := 0
+	for i, other := range e.score.Groups {
+		if i == at {
+			continue
+		}
+		if other.First <= g.First && other.Last >= g.Last &&
+			(other.First < g.First || other.Last > g.Last) {
+			n++
+		}
+	}
+	return n
+}
+
+// groupReach is how far left of its own column a symbol swells.
+//
+// A brace is drawn from its column leftwards and is the only one that
+// takes real room; a bracket and a line are verticals half their own
+// thickness either side.
+func groupReach(g model.StaffGroup) float64 {
+	if g.Symbol == model.GroupBrace {
+		// The widest a brace gets, rather than this brace's own width:
+		// the column has to be in the same place on every system, and a
+		// brace drawn over four staves is wider than one over two.
+		return 0.4 + braceWidth(1e9)
+	}
+	return bracketThickness
+}
+
+// groupColumns is how far left of the usual column each group stands, by
+// its place in Score.Groups. Zero for a group that nothing contains.
+//
+// Worked out once: the groups do not change while a drawing is being made,
+// and every system asks the same question.
+func (e *engraver) groupColumns() []float64 {
+	if e.columns != nil {
+		return e.columns
+	}
+	out := make([]float64, len(e.score.Groups))
+	if len(out) == 0 {
+		e.columns = out
+		return out
+	}
+	// The widest symbol at each depth, which is what the step between
+	// that column and the one outside it has to clear.
+	deepest := 0
+	widest := map[int]float64{}
+	depths := make([]int, len(out))
+	for i := range e.score.Groups {
+		d := e.groupDepth(i)
+		depths[i] = d
+		if d > deepest {
+			deepest = d
+		}
+		if r := groupReach(e.score.Groups[i]); r > widest[d] {
+			widest[d] = r
+		}
+	}
+	// Innermost keeps the column everything used before, so a score with
+	// no nesting is drawn exactly where it was.
+	at := map[int]float64{deepest: 0}
+	for d := deepest; d > 0; d-- {
+		at[d-1] = at[d] - widest[d] - groupGap*0.5
+	}
+	for i := range out {
+		out[i] = at[depths[i]]
+	}
+	e.columns = out
+	return out
+}
+
+// groupRoom is the extra width the nesting needs, over the one column a
+// score without nesting takes.
+func (e *engraver) groupRoom() float64 {
+	room := 0.0
+	for _, x := range e.groupColumns() {
+		if -x > room {
+			room = -x
+		}
+	}
+	return room
+}
+
 // drawGroups draws the braces and brackets at the left of a system, and the
 // names beside them.
 func (e *engraver) drawGroups(parts []*model.Part, left float64, tops []float64, first bool) {
@@ -194,7 +300,8 @@ func (e *engraver) drawGroups(parts []*model.Part, left float64, tops []float64,
 		return
 	}
 
-	for _, g := range e.score.Groups {
+	columns := e.groupColumns()
+	for gi, g := range e.score.Groups {
 		// A group names staves by their number in the score, and the ones
 		// drawn are only those not hidden. Hiding the lower half of a piano
 		// should not leave its brace reaching into the staff below.
@@ -205,7 +312,9 @@ func (e *engraver) drawGroups(parts []*model.Part, left float64, tops []float64,
 		}
 		top := tops[fi]
 		bottom := tops[li] + partH(parts[li])
-		x := left - groupGap
+		// Its own column: the outermost furthest from the music, each one
+		// inside it a step nearer the staves.
+		x := left - groupGap + columns[gi]
 
 		switch g.Symbol {
 		case model.GroupBrace:
@@ -234,6 +343,8 @@ func (e *engraver) drawGroups(parts []*model.Part, left float64, tops []float64,
 			if g.Symbol == model.GroupBrace {
 				at = x - 0.4 - braceWidth(bottom-top) - groupGap*0.5
 			}
+			// x has already stepped left for a group that is inside
+			// another, so the name follows it without anything more.
 			e.lay.Texts = append(e.lay.Texts, Text{
 				S: label, X: at, Y: (top+bottom)/2 + nameSize*0.35,
 				Size: nameSize, Anchor: "end",
@@ -352,12 +463,29 @@ const (
 // course. Each is placed after the last thing written over that bar rather
 // than at the bar line, which is what keeps the sign from being printed
 // through the letter.
+// markerText is what is printed over a bar, with the sequence worked out.
+//
+// A mark is stored as a place in the sequence rather than as the letter,
+// so the letter has to be derived — and derived against the whole score,
+// because what a mark is called depends on every mark before it. Worked
+// out once and kept: this is asked for every bar of every system, and the
+// answer cannot change while a drawing is being made.
+func (e *engraver) markerText(mi int) string {
+	if e.marks == nil {
+		e.marks = e.score.RehearsalMarks(BarNumbers(e.score))
+		if e.marks == nil {
+			e.marks = map[int]string{}
+		}
+	}
+	return e.marks[mi]
+}
+
 func (e *engraver) drawMarkers(parts []*model.Part, columns []float64, start, end int) {
 	at := func(mi int) *model.Measure {
 		for _, p := range parts {
 			if mi < len(p.Measures) {
 				m := p.Measures[mi]
-				if m.Marker != "" || m.Sign != model.NoSign || m.Jump != nil {
+				if m.HasMarker() || m.Sign != model.NoSign || m.Jump != nil {
 					return m
 				}
 			}
@@ -438,16 +566,8 @@ func (e *engraver) markRepeatStaves() map[int]bool {
 // Queued rather than drawn, so that it clears whatever this staff has
 // reaching up out of it, the same way the row over the top staff does.
 func (e *engraver) repeatMarkers(parts []*model.Part, columns []float64, start, end int) {
-	markAt := func(mi int) string {
-		for _, p := range parts {
-			if mi < len(p.Measures) && p.Measures[mi].Marker != "" {
-				return p.Measures[mi].Marker
-			}
-		}
-		return ""
-	}
 	for mi := start; mi < end && mi-start < len(columns); mi++ {
-		text := markAt(mi)
+		text := e.markerText(mi)
 		if text == "" {
 			continue
 		}
@@ -477,8 +597,8 @@ func (e *engraver) repeatMarkers(parts []*model.Part, columns []float64, start, 
 func (e *engraver) drawMarkRow(m *model.Measure, tempo *model.Tempo,
 	columns []float64, mi, start int, x, row float64) {
 	if m != nil {
-		if m.Marker != "" {
-			x = e.drawRehearsalMark(m.Marker, x, row) + afterMark
+		if text := e.markerText(mi); text != "" {
+			x = e.drawRehearsalMark(text, x, row) + afterMark
 		}
 		if g := m.Sign.Glyph(); g != "" {
 			e.lay.Glyphs = append(e.lay.Glyphs, Glyph{

@@ -380,6 +380,11 @@ type CatalogueItem struct {
 	// "strings" has no one range and nothing is claimed for it.
 	Low  int `json:"low,omitempty"`
 	High int `json:"high,omitempty"`
+	// ScoreRank is where this instrument goes down the page of a score:
+	// the lower the number, the nearer the top. A different question
+	// from Group, which is how the list is ordered for finding
+	// something — see scoreorder.go.
+	ScoreRank int `json:"scoreRank"`
 }
 
 // Catalogue is every instrument that can be chosen, in the order offered.
@@ -402,6 +407,7 @@ func Catalogue() []CatalogueItem {
 		it := CatalogueItem{
 			Group: c.Group, Name: s.name, Sound: c.Sound,
 			Program: s.program, Percussion: s.percussion,
+			ScoreRank: ScoreRank(c.Sound),
 		}
 		if s.hasReach {
 			it.Low, it.High = s.reach.Low, s.reach.High

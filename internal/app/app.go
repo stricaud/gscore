@@ -515,6 +515,7 @@ func (a *App) APIRoutes(mux *http.ServeMux) {
 		"/api/header":          a.handleHeader,
 		"/api/staff":           a.handleStaff,
 		"/api/addstaff":        a.handleAddStaff,
+		"/api/setup":           a.handleSetup,
 		"/api/tunings":         a.handleTunings,
 		"/api/fret":            a.handleFret,
 		"/api/restring":        a.handleRestring,
@@ -654,7 +655,7 @@ func markerCount(s *model.Score) int {
 	n := 0
 	for i := 0; i < s.MeasureCount(); i++ {
 		for _, p := range s.Parts {
-			if i < len(p.Measures) && strings.TrimSpace(p.Measures[i].Marker) != "" {
+			if i < len(p.Measures) && p.Measures[i].HasMarker() {
 				n++
 				break
 			}
@@ -748,10 +749,18 @@ type info struct {
 	// was done: a long score is drawn a screenful at a time, so the letters
 	// already written are mostly not on the page, and counting what was
 	// drawn offered A over and over.
-	Markers int  `json:"markers"`
-	Current int  `json:"current"`
-	Native  bool `json:"native"`
-	Local   bool `json:"local"`
+	Markers int `json:"markers"`
+	// Marks is what is printed over each marked bar, by its index, with
+	// the sequence worked out. MarkerStyle is what the ones in the
+	// sequence are called, and Sequenced lists the bars that are in it —
+	// which the editor needs to tell them from the marks written out as
+	// themselves, since those do not advance the count.
+	Marks       map[int]string `json:"marks,omitempty"`
+	MarkerStyle string         `json:"markerStyle,omitempty"`
+	Sequenced   []int          `json:"sequenced,omitempty"`
+	Current     int            `json:"current"`
+	Native      bool           `json:"native"`
+	Local       bool           `json:"local"`
 	// InBrowser says the core is running inside the page as WebAssembly,
 	// with no server and no disk. It is not "local" — there is no machine
 	// to save to — but it can still make a sound, because the synthesizer
@@ -880,6 +889,16 @@ func (a *App) handleInfo(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	out.Markers = markerCount(a.score)
+	out.Marks = a.score.RehearsalMarks(engrave.BarNumbers(a.score))
+	out.MarkerStyle = a.score.Markers.String()
+	for i := 0; i < a.score.MeasureCount(); i++ {
+		for _, p := range a.score.Parts {
+			if i < len(p.Measures) && p.Measures[i].MarkerAuto {
+				out.Sequenced = append(out.Sequenced, i)
+				break
+			}
+		}
+	}
 	out.Cursor = a.cursorInfo()
 	out.TempoUnit, out.TempoDotted = beatName(a.score.Tempo.Unit)
 	out.TempoText = a.score.Tempo.Text

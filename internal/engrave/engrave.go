@@ -908,6 +908,19 @@ type engraver struct {
 	// BarNumbers, which is the one place the rule lives.
 	numbers []int
 
+	// columns is how far left of the usual place each staff group's
+	// symbol stands, so that a brace inside a bracket sits inside it
+	// rather than across it. Worked out once. See groupColumns.
+	columns []float64
+
+	// marks is what is printed over each marked bar, worked out once.
+	//
+	// A rehearsal mark is stored as a place in a sequence rather than as
+	// the letter, so what it is called depends on every mark before it —
+	// which makes it a question about the whole score and not about the
+	// bar. See Score.RehearsalMarks.
+	marks map[int]string
+
 	// waiting are the marks that go outside the staff and cannot be placed
 	// where they are met.
 	//
@@ -1579,15 +1592,7 @@ func (e *engraver) layout() {
 	// however wide each part's own clef and key signature happen to be. It is
 	// measured where the system begins, because a key change earlier in the
 	// piece is restated at the head of every system after it.
-	// leadAt is the room in front of the clefs: the staff names, and the
-	// brace or bracket that joins them.
-	leadAt := func(at int) float64 {
-		w := e.labelWidth(parts, at == 0)
-		if len(e.score.Groups) > 0 {
-			w += groupGap + bracketThickness
-		}
-		return w
-	}
+	leadAt := func(at int) float64 { return e.leadWidth(parts, at == 0) }
 	// prefixAt is all of it: the names, the bracket, and the widest staff's
 	// clef, key and meter — so the music starts in the same column on every
 	// staff of the system.
@@ -2039,6 +2044,25 @@ func metronomeGlyph(d model.Duration) (string, int) {
 		return "metNote16thUp", dots
 	}
 	return "metNoteQuarterUp", dots
+}
+
+// leadWidth is the room in front of the clefs: the staff names, and the
+// braces and brackets that join the staves.
+//
+// One function and not two. There were two — one working out where the
+// music starts and one working out where the symbols go — and they agreed
+// until the day they did not: nesting widened the second, the staves moved
+// right and the clefs stayed where they were, printed through the brace.
+// Anything that takes room in front of the staves belongs here, once.
+func (e *engraver) leadWidth(parts []*model.Part, first bool) float64 {
+	w := e.labelWidth(parts, first)
+	if len(e.score.Groups) > 0 {
+		// The one column a score without nesting takes, and then the
+		// extra the nesting needs: a brace inside a bracket stands in
+		// its own column, and both have to fit in front of the staves.
+		w += groupGap + bracketThickness + e.groupRoom()
+	}
+	return w
 }
 
 func (e *engraver) prefixWidth(p *model.Part, at int) float64 {
@@ -2841,10 +2865,7 @@ func (e *engraver) drawSystem(parts []*model.Part, boxes [][]measureBox,
 
 	// How much of the prefix belongs to the names and the bracket rather
 	// than to the clefs.
-	lead := e.labelWidth(parts, start == 0)
-	if len(e.score.Groups) > 0 {
-		lead += groupGap + bracketThickness
-	}
+	lead := e.leadWidth(parts, start == 0)
 
 	// Which staves say the rehearsal letter again, besides the top one.
 	repeatOn := e.markRepeatStaves()

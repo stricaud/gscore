@@ -460,7 +460,11 @@ func convertClef(c *clef) model.Clef {
 
 func convertTempo(d direction) (model.Tempo, bool) {
 	m := d.Type.Metronome
-	if m == nil || m.PerMin <= 0 {
+	if m == nil {
+		return model.Tempo{}, false
+	}
+	bpm := m.bpm()
+	if bpm <= 0 {
 		return model.Tempo{}, false
 	}
 	v, ok := typeValues[m.BeatUnit]
@@ -471,7 +475,7 @@ func convertTempo(d direction) (model.Tempo, bool) {
 	if m.Dot != nil {
 		unit = unit.Scale(3, 2)
 	}
-	return model.Tempo{BPM: m.PerMin, Unit: unit, Text: d.Type.Words}, true
+	return model.Tempo{BPM: bpm, Unit: unit, Text: d.Type.Words}, true
 }
 
 // joinBarlines is the one mark written between two bars, from what closes the

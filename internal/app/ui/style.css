@@ -1531,6 +1531,32 @@ body.player.bare { grid-template-rows: 1fr; }
   margin: 0 0 14px;
 }
 .tempo-bar input { width: 6em; }
+/* The search box in Score setup is the width of the column it stands over,
+   not the six characters a tempo box wants. */
+#setup-filter { width: auto; }
+
+/* Score setup: the instruments to choose from on the left, the ones in the
+   score on the right, so that adding is a move across rather than a thing
+   that happens somewhere out of sight. */
+.setup-columns {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+  margin-bottom: 12px;
+}
+.setup-columns select { width: 100%; }
+.setup-columns h3 { margin: 0 0 6px; }
+#score-setup-bar {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  margin-top: 12px;
+}
+/* Narrow enough and the two columns stack rather than squeezing the
+   instrument names until nothing can be told from anything. */
+@media (max-width: 560px) {
+  .setup-columns { grid-template-columns: 1fr; }
+}
 
 /* Brackets round the metronome mark. Its own row under the picker, not
    squeezed beside the dotted box, because the two say different things. */

@@ -307,6 +307,8 @@
   <div class="menu" data-menu="score">
     <button class="menu-title">Score</button>
     <div class="menu-items">
+      <button data-action="score-setup"><span>Score setup…</span></button>
+      <hr>
       <button data-action="set-tempo"><span>Set tempo…</span></button>
       <button data-action="set-header"><span>About this score…</span></button>
       <hr>
@@ -317,6 +319,7 @@
       <button data-action="set-pickup"><span>Pickup measure…</span></button>
       <button data-action="set-time"><span>Time signature from here…</span></button>
       <button data-action="set-numbering"><span>Bar numbers…</span></button>
+      <button data-action="marker-style"><span>Rehearsal marks…</span></button>
       <button data-action="set-systems"><span>Lines of music…</span></button>
       <hr>
       <!-- Whether a bar that is too long has its last notes moved into the
@@ -1292,6 +1295,65 @@
      its spacing, its bar numbers, where its lines end — is set in the window
      that already sets those, which writes to whichever document is on the
      screen. -->
+<!-- Choosing who is playing, all at once. gscore opens with a staff ready,
+     which is right for writing a tune down; this is for somebody who
+     already knows the piece is a wind quintet and should not have to add
+     five staves one at a time and then order and bracket them. -->
+<dialog id="score-setup">
+  <div class="dlg-head">
+    <div>
+      <h2>Score setup</h2>
+      <p class="small">Who is playing. The staves are laid out in score
+        order, each family bracketed, with a piano given its two staves.</p>
+    </div>
+    <form method="dialog">
+      <button value="close" type="submit" class="dlg-close" aria-label="Close">✕</button>
+    </form>
+  </div>
+
+  <div class="tempo-bar">
+    <input type="search" id="setup-filter" autocomplete="off"
+           placeholder="Search the instruments" aria-label="Search the instruments"
+           style="flex:1">
+  </div>
+  <div class="setup-columns">
+    <div>
+      <h3 class="small">Instruments</h3>
+      <select id="setup-pick" size="14" aria-label="The instruments to choose from"></select>
+      <div class="tempo-bar">
+        <button type="button" id="setup-add">Add →</button>
+      </div>
+    </div>
+    <div>
+      <h3 class="small">In this score</h3>
+      <select id="setup-chosen" size="14" multiple
+              aria-label="The instruments in this score"></select>
+      <div class="tempo-bar">
+        <button type="button" id="setup-up" aria-label="Move up">↑</button>
+        <button type="button" id="setup-down" aria-label="Move down">↓</button>
+        <button type="button" id="setup-remove">Remove</button>
+      </div>
+      <div class="tempo-bar">
+        <button type="button" id="setup-bracket">Bracket these</button>
+        <button type="button" id="setup-ungroup">Ungroup</button>
+      </div>
+      <p class="small">Pick two staves or more. A bracket is a line down
+        the side of a run of staves, so it covers everything between its
+        ends — staves picked apart from each other are brought together
+        first.</p>
+    </div>
+  </div>
+  <label><input type="checkbox" id="setup-order" checked>
+    Put them in score order — woodwind, brass, percussion, harp, keyboard,
+    voices, strings</label>
+  <p class="small" id="setup-warning" hidden>This score has music in it.
+    Making the staves again will throw it away.</p>
+
+  <div id="score-setup-bar">
+    <button type="button" id="setup-apply" class="primary">Make the staves</button>
+  </div>
+</dialog>
+
 <dialog id="part-setup">
   <div class="dlg-head">
     <div>

@@ -160,3 +160,144 @@ func TestAScoreCanCarryABraceAndABracketAtOnce(t *testing.T) {
 		t.Error("the brace was not drawn")
 	}
 }
+
+/*
+ * A brace inside a bracket.
+ *
+ * A bracket round a family that has a piano in it is two symbols on one
+ * system. Drawn in the same column they sit on top of each other, and the
+ * brace comes off worst: its arms swell out to the left, so it crosses the
+ * bracket rather than standing inside it.
+ */
+
+// nested is a flute and a piano, bracketed together, which is the score
+// that showed this.
+func nested() *model.Score {
+	s := bracketScore(3, 0, 2, model.GroupBracket)
+	s.Parts[2].Clef = model.Bass
+	s.Groups = append(s.Groups, model.StaffGroup{
+		First: 1, Last: 2, Symbol: model.GroupBrace, Barlines: true,
+	})
+	return s
+}
+
+// leftmost is where the drawing's ink begins, among the things named.
+func braceLeft(lay *Layout) (lo, hi float64, ok bool) {
+	lo, hi = 1e9, -1e9
+	for _, q := range lay.Quads {
+		for _, x := range q.X {
+			if x < lo {
+				lo = x
+			}
+			if x > hi {
+				hi = x
+			}
+		}
+	}
+	return lo, hi, lo < hi
+}
+
+// bracketAt is the x of the bracket's heavy vertical.
+func bracketAt(lay *Layout) (float64, bool) {
+	for _, l := range lay.Lines {
+		if l.X1 == l.X2 && l.Y2-l.Y1 > 4 && l.Thickness >= bracketThickness {
+			return l.X1, true
+		}
+	}
+	return 0, false
+}
+
+func TestABraceInsideABracketStandsInsideIt(t *testing.T) {
+	lay := Engrave(nested(), DefaultOptions())
+
+	bx, ok := bracketAt(lay)
+	if !ok {
+		t.Fatal("no bracket was drawn")
+	}
+	lo, _, ok := braceLeft(lay)
+	if !ok {
+		t.Fatal("no brace was drawn")
+	}
+	// The brace begins to the right of the bracket, which is what
+	// "inside" means on a page: the outermost symbol is furthest from
+	// the music.
+	if lo <= bx+bracketThickness/2 {
+		t.Errorf("the brace starts at %.2f and the bracket is at %.2f — "+
+			"the brace is drawn across it", lo, bx)
+	}
+}
+
+// And neither of them is drawn over the clef.
+func TestTheSymbolsClearTheClefs(t *testing.T) {
+	lay := Engrave(nested(), DefaultOptions())
+
+	_, braceRight, ok := braceLeft(lay)
+	if !ok {
+		t.Fatal("no brace was drawn")
+	}
+	clef := 1e9
+	for _, g := range lay.Glyphs {
+		// has is a prefix check, and the clefs are gClef and fClef.
+		if (has(g.Name, "gClef") || has(g.Name, "fClef")) && g.X < clef {
+			clef = g.X
+		}
+	}
+	if clef == 1e9 {
+		t.Fatal("no clef was drawn")
+	}
+	if braceRight >= clef {
+		t.Errorf("the brace reaches %.2f and the first clef is at %.2f",
+			braceRight, clef)
+	}
+}
+
+// Nesting makes room by moving the music right, not by moving the
+// outermost symbol off the edge of the page: the left margin is where the
+// page begins and the bracket stands on it either way.
+func TestNestingMakesRoomByMovingTheMusic(t *testing.T) {
+	staffStart := func(lay *Layout) float64 {
+		out := 1e9
+		for _, l := range lay.Lines {
+			if l.Y1 == l.Y2 && l.X2-l.X1 > 4 && l.X1 < out {
+				out = l.X1
+			}
+		}
+		return out
+	}
+	plain := staffStart(Engrave(bracketScore(3, 0, 2, model.GroupBracket), DefaultOptions()))
+	with := staffStart(Engrave(nested(), DefaultOptions()))
+	if with <= plain {
+		t.Errorf("the staves start at %.2f nested and %.2f plain; "+
+			"the brace has nowhere to go", with, plain)
+	}
+
+	// And the bracket itself has not moved: it is on the margin in both.
+	a, _ := bracketAt(Engrave(bracketScore(3, 0, 2, model.GroupBracket), DefaultOptions()))
+	b, _ := bracketAt(Engrave(nested(), DefaultOptions()))
+	if a != b {
+		t.Errorf("the bracket moved from %.2f to %.2f", a, b)
+	}
+}
+
+// Two brackets side by side are not nested and must not be stepped apart:
+// that would say there is a structure on the page that is not there.
+func TestSiblingBracketsShareAColumn(t *testing.T) {
+	s := bracketScore(6, 0, 2, model.GroupBracket)
+	s.Groups = append(s.Groups, model.StaffGroup{
+		First: 3, Last: 5, Symbol: model.GroupBracket,
+	})
+	lay := Engrave(s, DefaultOptions())
+
+	var xs []float64
+	for _, l := range lay.Lines {
+		if l.X1 == l.X2 && l.Y2-l.Y1 > 4 && l.Thickness >= bracketThickness {
+			xs = append(xs, l.X1)
+		}
+	}
+	if len(xs) != 2 {
+		t.Fatalf("%d brackets were drawn", len(xs))
+	}
+	if xs[0] != xs[1] {
+		t.Errorf("the two brackets are at %.2f and %.2f", xs[0], xs[1])
+	}
+}

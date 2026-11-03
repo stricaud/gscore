@@ -1820,6 +1820,68 @@ paths:
         "400":
           description: There is no such part, or the score already has parts.
 
+  /api/setup:
+    post:
+      tags: [structure]
+      summary: Lay a score out for the instruments chosen
+      description: >
+        Makes the staves for a whole ensemble at once, in score order,
+        with each family bracketed and a piano given its two staves and
+        its brace. gscore opens with a staff ready and that is right for
+        writing a tune down; this is for somebody who already knows the
+        piece is a wind quintet. The order is the one a score is laid out
+        in — woodwind, brass, percussion, harp, keyboard, voices, strings
+        — which is a convention about the page and not the order the
+        catalogue is in, that being ordered for finding an instrument.
+        Refused over a score that already has notes in it unless
+        replace=1.
+      parameters:
+        - name: instruments
+          in: query
+          required: true
+          description: >
+            The MusicXML standard sound ids, comma separated, as
+            `/api/instruments` lists them. Two of the same instrument give
+            two staves.
+          schema: { type: string }
+        - name: order
+          in: query
+          description: >
+            `keep` lays the staves out in the order given instead of in
+            score order, for a chooser that already let somebody arrange
+            them.
+          schema: { type: string, enum: [score, keep] }
+        - name: brackets
+          in: query
+          description: >
+            The groups to bracket, as runs over the instruments given,
+            counted from zero and inclusive: `0-1,3-5`. Given these, the
+            families are not bracketed automatically — asked for a
+            bracket round particular staves and then drawing the
+            automatic ones as well would be two answers to one question.
+            A bracket is a line down the side of a run of staves, so it
+            covers everything between its ends; a chooser that lets
+            somebody pick staves that are apart has to bring them
+            together and send the run. A run of one draws nothing. A run
+            over an instrument that reads two staves reaches round both.
+          schema: { type: string }
+        - name: replace
+          in: query
+          description: Throw away the staves of a score that has notes in it.
+          schema: { type: string, enum: ["1"] }
+      responses:
+        "200":
+          description: What was made.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string }
+                  staves: { type: integer }
+                  groups: { type: integer }
+        "400": { $ref: "#/components/responses/Error" }
+
   /api/tunings:
     get:
       tags: [structure]

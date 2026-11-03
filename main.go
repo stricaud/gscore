@@ -90,7 +90,12 @@ func main() {
 		noPDF = flag.Bool("nopdf", false,
 			"for -convert to .gscore: write the music alone, without a PDF of "+
 				"it in front")
+
+		addTags tagList
 	)
+	flag.Var(&addTags, "tag",
+		"add this tag to the score if it is not on it already, and save; "+
+			"give it more than once, or several tags separated by commas")
 	flag.Usage = usage
 	flag.Parse()
 
@@ -133,6 +138,43 @@ func main() {
 		} else {
 			fmt.Fprintf(os.Stderr, "gscore: %v\n", err)
 			os.Exit(1)
+		}
+	}
+
+	// Tags asked for on the command line go on before anything else is done
+	// with the score, so that -o and -convert carry them as well: tagging
+	// and converting in one run is one thing somebody wants to do, not two
+	// that cannot be combined.
+	var asked, added []string
+	if len(addTags) > 0 {
+		if score == nil {
+			fmt.Fprintln(os.Stderr, "gscore: -tag needs a file to put the tags on")
+			os.Exit(1)
+		}
+		if len(scores) > 1 {
+			// A file holding several scores would need all of them written
+			// back, and only the first is loaded here. Better to refuse
+			// than to save one and drop the rest.
+			fmt.Fprintf(os.Stderr, "gscore: %s holds %d scores; -tag can only "+
+				"tag a file that holds one\n", path, len(scores))
+			os.Exit(1)
+		}
+		asked = model.ParseTags(strings.Join(addTags, ","))
+		added = score.AddTags(asked)
+	}
+
+	// Saving them is its own errand, and it is done before anything is
+	// printed: -tag with -describe means "tag it, then tell me what it
+	// says", not "tell me what it would say if it had been saved". Where
+	// the score is on its way somewhere else — -convert, or -o — the tags
+	// travel with it and the file it came from is left alone.
+	if len(addTags) > 0 && *convert == "" && *out == "" {
+		if err := saveTags(score, path, added, asked, !*noPDF); err != nil {
+			fmt.Fprintf(os.Stderr, "gscore: %v\n", err)
+			os.Exit(1)
+		}
+		if !*describe {
+			return
 		}
 	}
 
@@ -181,6 +223,122 @@ func main() {
 	}
 }
 
+// tagList collects -tag, which may be given more than once.
+//
+// Both ways of saying it, because both are natural at a prompt and in a
+// script: -tag advent -tag "to learn", and -tag "advent, to learn". They
+// end up in one line for the model to divide, so the comma means the same
+// thing on the command line as it does in the editor's tag window.
+type tagList []string
+
+func (t *tagList) String() string { return strings.Join(*t, ", ") }
+
+func (t *tagList) Set(v string) error {
+	*t = append(*t, v)
+	return nil
+}
+
+// saveTags writes a score that has just been tagged back where it came
+// from.
+//
+// In place, because that is what tagging a shelf of scores means: the file
+// keeps its name, and the next run of the same command over the same shelf
+// does nothing at all. Through a temporary file beside it and a rename, so
+// that a run interrupted halfway leaves the score as it was rather than
+// half of one.
+//
+// Only a .gscore. Tags are gscore's own field and no other format has
+// anywhere to put them, so writing a tagged score back over a MusicXML
+// file would quietly throw the tags away — and rewrite the music through
+// an exporter while it was at it, which is not what was asked for.
+func saveTags(s *model.Score, path string, added, asked []string, withPDF bool) error {
+	if path == "" {
+		return fmt.Errorf("-tag needs a file to put the tags on")
+	}
+	if !strings.EqualFold(filepath.Ext(path), ".gscore") {
+		return fmt.Errorf("%s is not a .gscore, and no other format carries "+
+			"tags: convert it first with -convert OUT.gscore", path)
+	}
+	if len(added) == 0 {
+		// Nothing to write. Saying so matters more than it looks: the whole
+		// point of asking for tags that are not there already is that
+		// running the same command twice is safe, and silence would leave
+		// somebody wondering whether it worked the first time.
+		fmt.Printf("%s: already tagged %s\n", path, strings.Join(asked, ", "))
+		return nil
+	}
+
+	// What the file was before we touched it. Adding a tag is the smallest
+	// edit there is and it should leave everything else as it found it: a
+	// score saved without a PDF of itself in front stays that way — put one
+	// in and a two-kilobyte file comes back as four hundred — and the file
+	// keeps the permissions it had, which a fresh temporary file does not.
+	info, err := os.Stat(path)
+	if err != nil {
+		return err
+	}
+	withPDF = withPDF && hasPDFWrapper(path)
+
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".gscore-tag-*")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(tmp.Name())
+
+	if err := writeGscore(tmp, s, withPDF); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := os.Chmod(tmp.Name(), info.Mode().Perm()); err != nil {
+		return err
+	}
+	if err := os.Rename(tmp.Name(), path); err != nil {
+		return err
+	}
+	fmt.Printf("%s: added %s\n", path, strings.Join(added, ", "))
+	return nil
+}
+
+// hasPDFWrapper says whether this .gscore carries a PDF of itself in front
+// of the music, which is what makes it open in anything that reads one.
+//
+// A file too short to tell, or one that cannot be read at all, is treated
+// as not having one: the caller is about to rewrite it either way, and the
+// smaller of the two guesses is the one that cannot surprise anybody.
+func hasPDFWrapper(path string) bool {
+	f, err := os.Open(path)
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+	var head [5]byte
+	if _, err := io.ReadFull(f, head[:]); err != nil {
+		return false
+	}
+	return string(head[:]) == "%PDF-"
+}
+
+// writeGscore writes the score as a .gscore, with a PDF of itself in front
+// unless that was turned off. See convertTo, which does the same for a file
+// being written under a new name.
+func writeGscore(w io.Writer, s *model.Score, withPDF bool) error {
+	if !withPDF {
+		exp, err := format.ExporterFor(".gscore")
+		if err != nil {
+			return err
+		}
+		return exp.Export(w, s)
+	}
+	var pdf bytes.Buffer
+	if err := renderPDFTo(&pdf, s); err != nil {
+		return err
+	}
+	return gscorefmt.WriteWithPDF(w, s, nil, pdf.Bytes())
+}
+
 func usage() {
 	fmt.Fprintf(os.Stderr, `gscore %s - a musical score editor
 
@@ -201,6 +359,9 @@ usage:
   gscore -serve :8080    run as a web server
   gscore -describe FILE  print what FILE contains
   gscore -convert OUT.musicxml FILE   convert between formats
+  gscore -tag advent -tag "to learn" FILE.gscore
+                         add tags FILE.gscore does not have already and save
+                         it; -tag "advent, to learn" says the same thing
 
 options:
 `, version.Version)

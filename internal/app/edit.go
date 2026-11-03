@@ -1550,31 +1550,10 @@ func (a *App) handleHeader(w http.ResponseWriter, r *http.Request) {
 
 // parseTags reads a line of tags the way somebody writes one.
 //
-// Separated by commas, because a tag is a phrase — "flute duet", "to
-// learn by Easter" — and splitting on spaces would make three tags of
-// each. Emptied of blanks and of repeats, so that a line typed with a
-// trailing comma or the same word twice does not put either in the file.
-//
-// Compared without regard to capitals when deciding what is a repeat, and
-// kept as typed otherwise: "Advent" and "advent" are one tag, and the one
-// that survives is the one that was written first.
-func parseTags(line string) []string {
-	var out []string
-	seen := map[string]bool{}
-	for _, raw := range strings.Split(line, ",") {
-		t := strings.TrimSpace(raw)
-		if t == "" {
-			continue
-		}
-		key := strings.ToLower(t)
-		if seen[key] {
-			continue
-		}
-		seen[key] = true
-		out = append(out, t)
-	}
-	return out
-}
+// The rules live with the model, because the command line puts tags on the
+// same files this window does and the two have to agree about where one tag
+// ends and the next begins.
+func parseTags(line string) []string { return model.ParseTags(line) }
 
 // handleInstruments lists what a staff can be set to sound as.
 func (a *App) handleInstruments(w http.ResponseWriter, r *http.Request) {

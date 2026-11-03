@@ -96,6 +96,35 @@ type Symbol struct {
 	// Advance is how much horizontal room the symbol occupies, in staff
 	// spaces. Zero means to measure it from the artwork.
 	Advance float64
+
+	// Source says where this symbol came from: the score it is in, or the
+	// folder of symbols that belongs to the person rather than to any
+	// score.
+	//
+	// It decides nothing on its own — a symbol is drawn the same either
+	// way — and it is what lets the palette say which is which, and what
+	// lets a score that carries a symbol of its own keep it when the
+	// folder has one by the same name.
+	Source Source
+}
+
+// Source is where a symbol came from.
+type Source int
+
+const (
+	// FromScore is a symbol that travels in the file, which is every
+	// symbol unless something says otherwise.
+	FromScore Source = iota
+	// FromFolder is one read out of the symbols folder, which belongs to
+	// the person and is there in every score they open.
+	FromFolder
+)
+
+func (s Source) String() string {
+	if s == FromFolder {
+		return "folder"
+	}
+	return "score"
 }
 
 // Bitmap is a symbol drawn on a pixel grid.

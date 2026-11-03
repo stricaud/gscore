@@ -796,7 +796,8 @@
 <dialog id="draw">
   <h2>Draw a symbol</h2>
   <div class="draw-row">
-    <label>Name <input type="text" id="sym-name" placeholder="myMark" size="14"></label>
+    <label>Name <input type="text" id="sym-name" placeholder="myMark" size="14"
+      autocomplete="off" aria-describedby="sym-name-why"></label>
     <label>Grid
       <select id="sym-size">
         <option value="12">12 x 12</option>
@@ -814,6 +815,7 @@
       </select>
     </label>
   </div>
+  <p class="small field-why" id="sym-name-why" role="alert" hidden></p>
   <canvas id="sym-canvas" width="384" height="384"></canvas>
   <p class="small">Click or drag to draw; hold Alt to erase. The dotted line is
      the staff line the symbol sits on.</p>
@@ -829,9 +831,17 @@
 
 <dialog id="palette">
   <h2>Insert a symbol</h2>
+  <div class="tempo-bar" id="palette-search" hidden>
+    <input type="search" id="palette-filter" autocomplete="off"
+           placeholder="Search the symbols" aria-label="Search the symbols"
+           style="flex:1">
+  </div>
   <div id="palette-grid"></div>
   <p class="small" id="palette-empty" hidden>Nothing drawn yet. Use
-     Insert → Draw a symbol… first.</p>
+     Insert → Draw a symbol… first, or put a drawing in your symbols
+     folder.</p>
+  <p class="small" id="palette-none" hidden>Nothing by that name.</p>
+  <p class="small" id="palette-folder"></p>
   <form method="dialog"><button>Close</button></form>
 </dialog>
 

@@ -118,7 +118,7 @@ async function paletteAction(item) {
       case "rest":
         state.tool.rest = true;
         if (item.dur) state.tool.duration = item.dur;
-        if (item.dur && hasSelection()) {
+        if (item.dur && heldForChanging()) {
           await setSelectionDuration(item.dur, item.label);
         }
         break;
@@ -149,7 +149,12 @@ async function paletteAction(item) {
         // notes that are meant — somebody who has selected four sixteenths
         // and clicked the thirty-second is not choosing a pen, they are
         // telling you the four notes are wrong.
-        if (hasSelection()) {
+        //
+        // The note just written is the exception, and it is the common
+        // case while typing: the value clicked then is for the note about
+        // to be written, not for the one behind the cursor. See
+        // heldForChanging.
+        if (heldForChanging()) {
           await setSelectionDuration(item.tool, item.label);
         }
     }
@@ -4552,6 +4557,18 @@ async function insertAtSelection(rest, keepSelection) {
   // replacement.
   sel.replace = false;
   sel.ref = null;
+  // And nothing is picked up any more. Writing is not a selecting
+  // gesture: whatever was held before it — a range dragged out, a note
+  // pointed at — is behind you now.
+  //
+  // It was left standing, and heldForMoving asks about a range before it
+  // asks whether the note was merely written, so the up and down arrows
+  // went on moving whatever had been picked up earlier instead of aiming
+  // the next note. The arrow after writing a note is somebody saying
+  // where the next one goes.
+  state.multi = [];
+  state.anchor = null;
+  state.focus = null;
   await refreshScore();
   // Select what was just written, so a dynamic or a stem change lands on it.
   const hit = state.hits.find(
@@ -4626,6 +4643,28 @@ async function addPitch(hit, el, step) {
 }
 
 async function deleteSelected() {
+  // A symbol was picked up by clicking it. It is picked the way a
+  // hairpin is and is not part of the note selection, so it has to be
+  // asked about here — and it comes first, because a symbol sitting over
+  // a note is what the click landed on and is what somebody pressing
+  // delete means.
+  if (pickedSymbol) {
+    const p = new URLSearchParams({
+      part: String(pickedSymbol.part), measure: String(pickedSymbol.measure),
+      at: String(pickedSymbol.index + 1), name: pickedSymbol.name,
+    });
+    const res = await fetch("/api/removesymbol?" + p, { method: "POST" });
+    if (!res.ok) {
+      status("Could not remove it: " + (await res.text()).trim());
+      return;
+    }
+    const gone = pickedSymbol.name;
+    pickedSymbol = null;
+    await refreshScore();
+    status("Removed " + gone);
+    return;
+  }
+
   // A swell was picked up by clicking it. Both of its ends go: a hairpin
   // with its start cleared and its end left behind opens and never closes,
   // and is drawn to the end of the system.
@@ -5281,6 +5320,25 @@ function heldForMoving() {
   return pickedNotes();
 }
 
+// heldForChanging says the selection is music somebody picked up and meant
+// to change, rather than the note they have just this moment written.
+//
+// The difference is the whole of what makes typing bearable. A note value
+// clicked with four sixteenths picked up means "those four are wrong" and
+// has to retime them. The same click a moment after writing a note means
+// "the next one is shorter" — somebody looking at a bar with a beat left
+// in it, choosing what to fill it with — and retiming what they just
+// wrote is the opposite of what they asked for, undone by hand every time.
+//
+// Written notes stay selected on purpose, so a dynamic or a stem change
+// still lands on them. This is the same line heldForMoving draws, for the
+// same reason, and in the same words: selected is not picked up.
+function heldForChanging() {
+  if (state.multi.length) return true;
+  if (state.selection && state.selection.wrote) return false;
+  return hasSelection();
+}
+
 // pickedHead names the notehead of a chord that was clicked, for the
 // commands that act on one note rather than on the whole element.
 //
@@ -5760,13 +5818,54 @@ function setupDrawing() {
     e.target.value = "";
   });
 
-  $("#sym-save").addEventListener("click", async () => {
-    const name = $("#sym-name").value.trim();
-    if (!name) {
-      status("The symbol needs a name");
-      return;
-    }
-    const res = await fetch("/api/symbols", {
+  $("#sym-name").addEventListener("input", () => symbolNameIsFine());
+  $("#sym-save").addEventListener("click", () => void saveDrawnSymbol());
+}
+
+// symbolNameIsFine clears the complaint about the name as soon as it is
+// being answered, so the box stops being red while somebody is typing.
+function symbolNameIsFine() {
+  $("#sym-name")?.classList.remove("wrong");
+  const why = $("#sym-name-why");
+  if (why) {
+    why.hidden = true;
+    why.textContent = "";
+  }
+}
+
+// symbolNameIsWrong says why the window is not closing, beside the box it
+// is about.
+//
+// Beside the box and not only in the status bar, and the window stays
+// open: somebody who has just pressed Save is looking at the button they
+// pressed, and a drawing that vanished along with the reason it would not
+// save is a drawing they have to make again.
+function symbolNameIsWrong(why) {
+  const box = $("#sym-name");
+  const said = $("#sym-name-why");
+  if (said) {
+    said.textContent = why;
+    said.hidden = false;
+  }
+  if (box) {
+    box.classList.add("wrong");
+    box.focus();
+    box.select();
+  }
+  status(why);
+}
+
+// saveDrawnSymbol keeps the drawing until it has somewhere to go.
+async function saveDrawnSymbol() {
+  const name = $("#sym-name").value.trim();
+  if (!name) {
+    symbolNameIsWrong("The symbol needs a name before it can be saved");
+    return;
+  }
+
+  const send = (replace) => fetch(
+    "/api/symbols" + (replace ? "?replace=1" : ""),
+    {
       method: "POST",
       body: JSON.stringify({
         name,
@@ -5778,15 +5877,38 @@ function setupDrawing() {
         originY: draw.size / 2,
       }),
     });
-    if (!res.ok) {
-      status("Could not save: " + (await res.text()).trim());
+
+  let res = await send(false);
+  if (res.status === 409) {
+    // A name already taken. The one that would go is a symbol they drew
+    // earlier and may already have used, so it is their decision.
+    const sure = await confirmThat({
+      title: `There is already a symbol called ${name}`,
+      note: "Replacing it changes that symbol everywhere it has been " +
+            "used, in this score and in any other.",
+      ok: "Replace it",
+    });
+    if (!sure) {
+      symbolNameIsWrong(`There is already a symbol called ${name} — ` +
+        "give this one another name");
       return;
     }
-    status("Saved the symbol " + name);
-    $("#draw").close();
-    await openPalette();
-  });
+    res = await send(true);
+  }
+  if (!res.ok) {
+    symbolNameIsWrong("Could not save: " + (await res.text()).trim());
+    return;
+  }
+
+  symbolNameIsFine();
+  status("Saved the symbol " + name);
+  $("#draw").close();
+  await openPalette();
 }
+
+// The symbols the palette is showing, with their pictures, so that
+// searching does not fetch them all again on every keystroke.
+let paletteSymbols = [];
 
 async function openPalette() {
   const list = await (await fetch("/api/symbols")).json();
@@ -5802,19 +5924,53 @@ async function openPalette() {
       return r.ok ? URL.createObjectURL(await r.blob()) : "";
     })
   );
+  paletteSymbols = list.map((s, i) => ({ ...s, pic: pics[i] }));
 
-  $("#palette-grid").innerHTML = list
+  // A search box once there are more than a screenful. A folder of forty
+  // marks is a folder somebody looks something up in; four is a row of
+  // pictures and a box over it would only be in the way.
+  const search = $("#palette-search");
+  if (search) search.hidden = paletteSymbols.length < 8;
+  const filter = $("#palette-filter");
+  if (filter) {
+    filter.value = "";
+    filter.oninput = () => drawPalette(filter.value);
+  }
+
+  const folder = paletteSymbols.filter((s) => s.source === "folder").length;
+  const note = $("#palette-folder");
+  if (note) {
+    note.textContent = folder
+      ? `${folder} of these are in your symbols folder, so they are in every score you open.`
+      : "";
+  }
+
+  drawPalette("");
+  $("#palette").showModal();
+}
+
+// drawPalette fills the grid with whatever matches.
+function drawPalette(query) {
+  const q = String(query || "").trim().toLowerCase();
+  const shown = q === ""
+    ? paletteSymbols
+    : paletteSymbols.filter((s) => s.name.toLowerCase().includes(q));
+
+  const none = $("#palette-none");
+  if (none) none.hidden = shown.length > 0 || paletteSymbols.length === 0;
+
+  $("#palette-grid").innerHTML = shown
     .map(
-      (s, i) => `<button class="palette-item" data-symbol="${escapeHTML(s.name)}">
-        <img src="${pics[i]}" alt="">
+      (s) => `<button class="palette-item" data-symbol="${escapeHTML(s.name)}">
+        <img src="${s.pic}" alt="">
         <span>${escapeHTML(s.name)}</span>
+        ${s.source === "folder" ? '<span class="from">folder</span>' : ""}
       </button>`
     )
     .join("");
   $$("#palette-grid .palette-item").forEach((b) =>
     b.addEventListener("click", () => insertSymbol(b.dataset.symbol))
   );
-  $("#palette").showModal();
 }
 
 async function insertSymbol(name) {
@@ -11146,7 +11302,11 @@ function setupSymbolDragging() {
   let dragging = null;
 
   wrap.addEventListener("pointerdown", (e) => {
-    const img = e.target.closest ? e.target.closest("image[data-symbol]") : null;
+    // Any drawn symbol, whichever way it was drawn. A grid comes out as
+    // an <image> and an outline as a <path>, and asking only for the
+    // first made every symbol from the folder unpickable — visible on
+    // the page and deaf to the mouse.
+    const img = e.target.closest ? e.target.closest("[data-symbol]") : null;
     if (!img || e.button !== 0) return;
     const ref = Number(img.dataset.ref || 0);
     const where = elementByRef(ref);
@@ -11157,8 +11317,17 @@ function setupSymbolDragging() {
     dragging = {
       img, where, name: img.dataset.symbol,
       startX: e.clientX, startY: e.clientY,
-      x: parseFloat(img.getAttribute("x")), y: parseFloat(img.getAttribute("y")),
+      x: parseFloat(img.getAttribute("x") || "0"),
+      y: parseFloat(img.getAttribute("y") || "0"),
+      // An outline is placed by its transform rather than by x and y, so
+      // it is moved by adding one in front of the one it has.
+      transform: img.getAttribute("transform") || "",
+      isPath: img.tagName.toLowerCase() === "path",
     };
+    // And it stays picked after the mouse lets go, so the arrow keys can
+    // take over. A mark is put roughly where it goes with the mouse and
+    // then settled with the keys, which is how anybody does this.
+    pickSymbol({ ...where, name: img.dataset.symbol });
     img.setPointerCapture(e.pointerId);
     img.classList.add("dragging");
     status("Moving " + dragging.name);
@@ -11168,8 +11337,15 @@ function setupSymbolDragging() {
     if (!dragging) return;
     // Moved live, so it is clear what is happening; the score is redrawn
     // from the model once the mark is let go.
-    dragging.img.setAttribute("x", String(dragging.x + (e.clientX - dragging.startX)));
-    dragging.img.setAttribute("y", String(dragging.y + (e.clientY - dragging.startY)));
+    const mx = e.clientX - dragging.startX;
+    const my = e.clientY - dragging.startY;
+    if (dragging.isPath) {
+      dragging.img.setAttribute("transform",
+        `translate(${mx},${my}) ` + dragging.transform);
+      return;
+    }
+    dragging.img.setAttribute("x", String(dragging.x + mx));
+    dragging.img.setAttribute("y", String(dragging.y + my));
   });
 
   const drop = async (e) => {
@@ -11204,6 +11380,63 @@ function setupSymbolDragging() {
   };
   wrap.addEventListener("pointerup", drop);
   wrap.addEventListener("pointercancel", drop);
+}
+
+// The symbol the arrow keys will move, or nothing.
+//
+// Kept here rather than read off the drawing, because the drawing is
+// thrown away and made again after every edit: a selection held as an
+// element of the page would be lost the moment the thing it points at
+// moved, which is exactly when it is wanted.
+let pickedSymbol = null;
+
+function pickSymbol(what) {
+  pickedSymbol = what;
+  markPickedSymbol();
+}
+
+function dropSymbol() {
+  if (!pickedSymbol) return;
+  pickedSymbol = null;
+  markPickedSymbol();
+  status("Ready");
+}
+
+// markPickedSymbol outlines the one that is picked, so that it is clear
+// what the arrow keys are about to move.
+function markPickedSymbol() {
+  $$("#canvas-wrap [data-symbol]").forEach((img) => {
+    const where = elementByRef(Number(img.dataset.ref || 0));
+    const mine = pickedSymbol && where &&
+      where.part === pickedSymbol.part &&
+      where.measure === pickedSymbol.measure &&
+      where.index === pickedSymbol.index &&
+      img.dataset.symbol === pickedSymbol.name;
+    img.classList.toggle("picked", !!mine);
+  });
+}
+
+// nudgeSymbol moves the picked symbol by a step, in staff spaces.
+//
+// A quarter of a space a press, and a whole one with shift: the first is
+// small enough to settle a mark by eye and the second is large enough to
+// cross the staff without holding the key down.
+async function nudgeSymbol(dx, dy) {
+  if (!pickedSymbol) return false;
+  const p = new URLSearchParams({
+    part: String(pickedSymbol.part), measure: String(pickedSymbol.measure),
+    at: String(pickedSymbol.index + 1), name: pickedSymbol.name,
+    dx: dx.toFixed(3), dy: dy.toFixed(3),
+  });
+  const res = await fetch("/api/movesymbol?" + p, { method: "POST" });
+  if (!res.ok) {
+    status("Could not move it: " + (await res.text()).trim());
+    return true;
+  }
+  await refreshScore();
+  markPickedSymbol();
+  status(`Moved ${pickedSymbol.name}`);
+  return true;
 }
 
 // elementByRef finds which measure and position an element's ref belongs to.
@@ -12069,6 +12302,27 @@ function setupKeys() {
       e.preventDefault();
       void typeDrum(e.key);
       return;
+    }
+
+    // A symbol that has been picked up takes the arrow keys, so that a
+    // mark put roughly in place with the mouse can be settled with the
+    // keys. Escape lets it go and gives the keys back.
+    if (pickedSymbol && !e.ctrlKey && !e.metaKey) {
+      const step = e.shiftKey ? 1 : 0.25;
+      const by = {
+        ArrowLeft: [-step, 0], ArrowRight: [step, 0],
+        ArrowUp: [0, -step], ArrowDown: [0, step],
+      }[e.key];
+      if (by) {
+        e.preventDefault();
+        void nudgeSymbol(by[0], by[1]);
+        return;
+      }
+      if (e.key === "Escape") {
+        e.preventDefault();
+        dropSymbol();
+        return;
+      }
     }
 
     // And on a tab staff the digits type frets, by the same rule and for

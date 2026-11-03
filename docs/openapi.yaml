@@ -2047,6 +2047,33 @@ paths:
         "200": { $ref: "#/components/responses/Status" }
         "400": { $ref: "#/components/responses/Error" }
 
+  /api/removesymbol:
+    post:
+      tags: [edit]
+      summary: Take a symbol off the page
+      description: >
+        Both kinds: one standing in a bar on its own, and one a note is
+        wearing. Addressed the way `/api/movesymbol` addresses one, so
+        that whatever the editor has picked up can be removed without it
+        having to know which kind it turned out to be. With no `name`,
+        every symbol at that place goes.
+      parameters:
+        - { name: part, in: query, required: true, schema: { type: integer } }
+        - { name: measure, in: query, required: true, schema: { type: integer } }
+        - { name: at, in: query, required: true, schema: { type: integer }, description: "one past the element, as the editor addresses everything else" }
+        - { name: name, in: query, schema: { type: string } }
+      responses:
+        "200":
+          description: How many went.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string }
+                  removed: { type: integer }
+        "400": { $ref: "#/components/responses/Error" }
+
   /api/movesymbol:
     post:
       tags: [marks]

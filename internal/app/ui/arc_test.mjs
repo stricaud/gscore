@@ -74,6 +74,10 @@ function load(names, extra = {}) {
   };
   const scope = {
     state,
+    // No symbol has been clicked in these: deleteSelected asks about one
+    // before it asks about a curve, since a symbol over a note is what a
+    // click lands on.
+    pickedSymbol: null,
     document: extra.document,
     status: (s) => said.push(s),
     markSelection() {},

@@ -2410,3 +2410,36 @@ dialog.wide { max-width: 640px; }
   background: var(--accent-soft);
   font-size: 12px;
 }
+
+/* A box whose contents are the reason a window will not close.
+ *
+ * Said beside the box and not only in the status bar: the status bar is at
+ * the other end of the window and somebody who has just pressed Save is
+ * looking at the button they pressed. */
+input.wrong {
+  outline: 2px solid var(--danger, #c0392b);
+  outline-offset: 1px;
+}
+.field-why {
+  color: var(--danger, #c0392b);
+  margin: 0 0 10px;
+}
+
+/* The symbol the arrow keys will move.
+ *
+ * Outlined rather than tinted: a drawn symbol is black on nothing, and a
+ * tint behind it would be read as part of the mark. */
+#canvas-wrap image[data-symbol].picked {
+  outline: 1.5px dashed var(--accent, #3b7dd8);
+  outline-offset: 2px;
+}
+
+/* Which symbols came out of the folder rather than this score. Said in a
+ * word under the name, because the difference matters when one is about to
+ * be replaced and not at any other time. */
+.palette-item .from {
+  display: block;
+  font-size: 0.85em;
+  opacity: 0.6;
+}
+#palette-filter { width: auto; }

@@ -63,6 +63,19 @@ func (h *harness) postBody(path, body string) map[string]any {
 	return out
 }
 
+// postBodyFails expects a refusal of a request that carries a body, with
+// a reason.
+func (h *harness) postBodyFails(path, body string) string {
+	h.t.Helper()
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
+	h.mux.ServeHTTP(rec, req)
+	if rec.Code == http.StatusOK {
+		return "POST " + path + " was meant to be refused, but succeeded"
+	}
+	return strings.TrimSpace(rec.Body.String())
+}
+
 // postFails expects a refusal, with a reason.
 func (h *harness) postFails(path string) string {
 	h.t.Helper()

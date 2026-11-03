@@ -20,6 +20,7 @@ import (
 	_ "image/png"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -61,6 +62,10 @@ type symbolInfo struct {
 	H         int     `json:"h"`
 	PixelSize float64 `json:"pixelSize"`
 	Kind      string  `json:"kind"`
+	// Source is "score" for a symbol that travels in the file and
+	// "folder" for one out of the symbols folder, so the palette can say
+	// which is which.
+	Source string `json:"source"`
 }
 
 // handleSymbols lists what has been drawn, or accepts a new drawing.
@@ -78,7 +83,8 @@ func (a *App) handleSymbols(w http.ResponseWriter, r *http.Request) {
 		if !ok {
 			continue
 		}
-		info := symbolInfo{Name: name, Kind: s.Kind.String()}
+		info := symbolInfo{Name: name, Kind: s.Kind.String(),
+			Source: s.Source.String()}
 		if s.Pixels != nil {
 			info.W, info.H = s.Pixels.W, s.Pixels.H
 			info.PixelSize = s.Pixels.PixelSize
@@ -124,6 +130,22 @@ func (a *App) createSymbol(w http.ResponseWriter, r *http.Request) {
 		if v != 0 {
 			bm.Set(i%doc.W, i/doc.W, ink)
 		}
+	}
+
+	// A name already taken is refused rather than written over.
+	//
+	// Add replaces what is there, which is right for reading a file and
+	// wrong for somebody drawing: the symbol that goes is one they drew
+	// earlier, it is already in their scores, and nothing said it had
+	// gone. Saying so and letting them decide costs one more click and
+	// cannot lose anything.
+	a.mu.RLock()
+	_, taken := a.symbols.Lookup(doc.Name)
+	a.mu.RUnlock()
+	if taken && r.URL.Query().Get("replace") != "1" {
+		http.Error(w, "there is already a symbol called "+doc.Name,
+			http.StatusConflict)
+		return
 	}
 
 	a.lock()
@@ -306,6 +328,26 @@ func (a *App) handleMoveSymbol(w http.ResponseWriter, r *http.Request) {
 	dy, _ := strconv.ParseFloat(q.Get("dy"), 64)
 	name := q.Get("name")
 
+	// A symbol standing in the bar on its own is moved first, since it
+	// carries no Marks for markAt to find: it is the symbol, rather than
+	// something a note is wearing.
+	if lone, ok := a.loneSymbolAt(q); ok {
+		a.lock()
+		defer a.mu.Unlock()
+		if name != "" && lone.Symbol.Name != name {
+			http.Error(w, "no such symbol there", http.StatusBadRequest)
+			return
+		}
+		if q.Get("absolute") == "1" {
+			lone.Symbol.OffsetX, lone.Symbol.OffsetY = dx, dy
+		} else {
+			lone.Symbol.OffsetX += dx
+			lone.Symbol.OffsetY += dy
+		}
+		writeJSON(w, map[string]int{"moved": 1})
+		return
+	}
+
 	m, err := a.markAt(q)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -332,6 +374,98 @@ func (a *App) handleMoveSymbol(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, map[string]int{"moved": moved})
+}
+
+// handleRemoveSymbol takes a symbol off the page.
+//
+// Both kinds: one standing in a bar on its own, and one a note is
+// wearing. Addressed the way moving one is, so that whatever the editor
+// has picked up can be deleted without it having to know which kind it
+// turned out to be.
+func (a *App) handleRemoveSymbol(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST required", http.StatusMethodNotAllowed)
+		return
+	}
+	q := r.URL.Query()
+	name := q.Get("name")
+
+	// A symbol of its own is an element of the bar, so taking it away is
+	// taking an element out rather than clearing a field.
+	if lone, ok := a.loneSymbolAt(q); ok && (name == "" || lone.Symbol.Name == name) {
+		partIdx, _ := strconv.Atoi(q.Get("part"))
+		measIdx, _ := strconv.Atoi(q.Get("measure"))
+		at, _ := strconv.Atoi(q.Get("at"))
+
+		a.lock()
+		defer a.mu.Unlock()
+		v := a.score.Parts[partIdx].Measures[measIdx].Voices[0]
+		v.Elements = append(v.Elements[:at-1], v.Elements[at:]...)
+		writeJSON(w, map[string]any{"status": "ok", "removed": 1})
+		return
+	}
+
+	m, err := a.markAt(q)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	a.lock()
+	defer a.mu.Unlock()
+
+	kept := m.Symbols[:0]
+	removed := 0
+	for _, sm := range m.Symbols {
+		if name == "" || sm.Name == name {
+			removed++
+			continue
+		}
+		kept = append(kept, sm)
+	}
+	if removed == 0 {
+		http.Error(w, "no such symbol there", http.StatusBadRequest)
+		return
+	}
+	m.Symbols = kept
+	writeJSON(w, map[string]any{"status": "ok", "removed": removed})
+}
+
+// loneSymbolAt is the symbol standing on its own that a request names, if
+// that is what it names.
+//
+// Looked at before the marks, because the two are addressed the same way —
+// a part, a bar and a place in it — and only one of them can be right.
+// Addressed the way markAt addresses a mark — at is one past the element,
+// which is the convention the whole editor sends — so that one request can
+// be tried as either without the caller having to know which it is.
+func (a *App) loneSymbolAt(q url.Values) (*model.SymbolElement, bool) {
+	partIdx, _ := strconv.Atoi(q.Get("part"))
+	measIdx, _ := strconv.Atoi(q.Get("measure"))
+	at, err := strconv.Atoi(q.Get("at"))
+	if err != nil {
+		return nil, false
+	}
+
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+
+	if partIdx < 0 || partIdx >= len(a.score.Parts) {
+		return nil, false
+	}
+	p := a.score.Parts[partIdx]
+	if measIdx < 0 || measIdx >= len(p.Measures) {
+		return nil, false
+	}
+	m := p.Measures[measIdx]
+	if len(m.Voices) == 0 {
+		return nil, false
+	}
+	v := m.Voices[0]
+	if at <= 0 || at > len(v.Elements) {
+		return nil, false
+	}
+	el, ok := v.Elements[at-1].(*model.SymbolElement)
+	return el, ok
 }
 
 // handleImportSymbols takes the symbols out of a .gscore and adds them here.

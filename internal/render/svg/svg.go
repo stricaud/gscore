@@ -332,12 +332,46 @@ func spread(xs, ys []float64) (x0, y0, x1, y1 float64) {
 // so that it keeps its musical proportions however far the score is zoomed,
 // and rendered without smoothing so the pixels stay the pixels that were
 // drawn.
+// drawVectorSymbol draws a symbol that is an outline rather than a grid.
+//
+// Its path is already in staff spaces, measured from the symbol's own
+// origin, so all that is left is the staff size and where on the page it
+// goes. Written as a path and not as a picture: it is the one kind of
+// symbol that does not have to be resampled to be made larger, and
+// turning it into pixels to draw it would throw that away.
+func drawVectorSymbol(b *strings.Builder, opt Options, g engrave.Glyph,
+	sym *symbol.Symbol, interactive bool) error {
+	if sym.Path == "" {
+		return nil
+	}
+	s := opt.StaffSpace
+	attr := ""
+	if interactive {
+		attr = fmt.Sprintf(` data-symbol="%s"`, html.EscapeString(g.Name))
+		if g.Ref != 0 {
+			attr += fmt.Sprintf(` data-ref="%d"`, g.Ref)
+		}
+	}
+	// One transform rather than a rewritten path: the outline is the
+	// same shape wherever it is put, and scaling it here keeps the file
+	// small when a symbol is used many times.
+	fmt.Fprintf(b, `<path d="%s" fill="currentColor" transform="translate(%.2f,%.2f) scale(%.4f)"%s/>`+"\n",
+		html.EscapeString(sym.Path), g.X*s, g.Y*s, s, attr)
+	return nil
+}
+
 func drawSymbol(b *strings.Builder, opt Options, g engrave.Glyph, interactive bool) error {
 	if opt.Symbols == nil {
 		return nil
 	}
 	sym, ok := opt.Symbols.Lookup(g.Name)
-	if !ok || sym.Kind != symbol.FromPixels || sym.Pixels == nil {
+	if !ok {
+		return nil
+	}
+	if sym.Kind == symbol.FromVector {
+		return drawVectorSymbol(b, opt, g, sym, interactive)
+	}
+	if sym.Kind != symbol.FromPixels || sym.Pixels == nil {
 		return nil
 	}
 	px := sym.Pixels

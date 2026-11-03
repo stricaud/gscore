@@ -39,6 +39,10 @@ type placed struct {
 	note  *model.Note
 	chord *model.Chord
 	rest  *model.Rest
+	// symbol is a mark standing in the bar on its own rather than
+	// attached to a note: a sign somebody drew and put where they wanted
+	// it. It has no duration and takes no slot of its own.
+	symbol *model.SymbolElement
 
 	step   int // staff step of a note, or the outer note of a chord
 	lo, hi int // a chord's range; equal to step for a single note
@@ -89,6 +93,13 @@ func (e *engraver) placedOf(clef model.Clef, el model.Element, at model.Duration
 		p.lo, p.hi = e.chordRange(clef, el)
 		p.step = p.hi
 		p.value, p.dots = written(el.WrittenDuration(el.Dur))
+	case *model.SymbolElement:
+		// It sits where a note would, so that it is placed against the
+		// staff and not against the bottom line, and so that a bar of
+		// nothing but a symbol still gives it somewhere to stand.
+		p.symbol = el
+		p.value = model.Quarter
+		p.step, p.lo, p.hi = middleStep, middleStep, middleStep
 	case *model.Rest:
 		p.rest = el
 		p.value, p.dots = written(el.WrittenDuration(el.Dur))
@@ -308,6 +319,7 @@ func (e *engraver) drawMeasure(part *model.Part, b measureBox, x, end float64, s
 		}
 		e.drawHeads(part, p)
 		e.drawGrace(part, p)
+		e.drawLoneSymbol(p)
 	}
 	e.drawStemsAndBeams(items, part.Time)
 	for _, p := range items {
@@ -2343,6 +2355,39 @@ func (e *engraver) drawArticulations(m *model.Marks, x float64, lo, hi int, stem
 		}
 	}
 }
+
+// drawLoneSymbol draws a symbol that stands in the bar on its own.
+//
+// One that is attached to a note is drawn with that note's marks, and this
+// is the other case: a sign put into the music where somebody wanted it
+// rather than onto a particular note. It was in the model, saved to the
+// file and carried through every copy, and never drawn — so inserting one
+// anywhere but onto a note put a mark into the score that could not be
+// seen and therefore could not be moved or taken away either.
+//
+// Over the staff by default, because that is where a mark goes unless it
+// says otherwise, and carrying its own ref so the editor can point at it.
+func (e *engraver) drawLoneSymbol(p *placed) {
+	if p.symbol == nil {
+		return
+	}
+	sm := p.symbol.Symbol
+	y := e.y - symbolRise
+	if sm.Placement == model.PlacementBelow {
+		y = e.y + e.staffH() + symbolRise
+	}
+	e.lay.Glyphs = append(e.lay.Glyphs, Glyph{
+		Name: sm.Name,
+		X:    p.x + sm.OffsetX,
+		Y:    y + sm.OffsetY,
+		Ref:  p.index,
+	})
+}
+
+// symbolRise is how far above the staff a symbol standing on its own is
+// put before anybody moves it: clear of the lines, and near enough that it
+// reads as belonging to the bar it is in.
+const symbolRise = 2.0
 
 // clearOfNoteheads moves a mark out past any notehead already drawn at this
 // point of this staff, in whichever direction it is travelling.

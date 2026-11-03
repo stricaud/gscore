@@ -115,6 +115,12 @@ type App struct {
 	// order to draw anything the music font does not carry.
 	symbols *symbol.Registry
 
+	// folderSymbols is what was found in the symbols folder when the
+	// editor started, including the files it could not read — which the
+	// person wants told about, since a drawing they put in the folder
+	// and cannot find is otherwise a mystery.
+	folderSymbols []folderSymbol
+
 	engraveOpt engrave.Options
 	// concert says the score is being shown as it sounds rather than as
 	// each player reads it, and concert0 holds that copy. See concert.go.
@@ -211,7 +217,7 @@ func NewBook(scores []*model.Score, filename string) *App {
 	for _, sc := range scores {
 		restEmptyMeasures(sc)
 	}
-	return &App{
+	app := &App{
 		score:    s,
 		book:     scores,
 		filename: filename,
@@ -224,6 +230,12 @@ func NewBook(scores []*model.Score, filename string) *App {
 		engraveOpt: eo,
 		renderOpt:  ro,
 	}
+
+	// The person's own symbols, before anything a score carries: a score
+	// that has one by the same name writes over the folder's copy, which
+	// is what keeps somebody else's piece looking the way they drew it.
+	app.folderSymbols = app.loadFolderSymbols()
+	return app
 }
 
 // UIMode selects how the interface is shown.
@@ -524,6 +536,7 @@ func (a *App) APIRoutes(mux *http.ServeMux) {
 		"/api/movestaff":       a.handleMoveStaff,
 		"/api/group":           a.handleGroup,
 		"/api/insertsymbol":    a.handleInsertSymbol,
+		"/api/removesymbol":    a.handleRemoveSymbol,
 		"/api/movesymbol":      a.handleMoveSymbol,
 	} {
 		mux.HandleFunc(path, a.undoable(h))

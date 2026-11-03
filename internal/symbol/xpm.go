@@ -351,3 +351,17 @@ func safeIdent(s string) string {
 	}
 	return b.String() + "_xpm"
 }
+
+// ReadXPMNamed reads an XPM into a symbol of its own.
+//
+// The grid alone says nothing about where on a staff it goes, so it is
+// registered the way a drawn one is: the left edge at the note and the
+// middle of the grid on the staff position.
+func ReadXPMNamed(r io.Reader, name string) (*Symbol, error) {
+	bm, err := DecodeXPM(r)
+	if err != nil {
+		return nil, err
+	}
+	bm.OriginY = float64(bm.H) / 2
+	return &Symbol{Name: name, Kind: FromPixels, Pixels: bm}, nil
+}

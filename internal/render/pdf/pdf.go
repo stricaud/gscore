@@ -750,7 +750,14 @@ func (r *renderer) drawSymbol(g engrave.Glyph) {
 		return
 	}
 	sym, ok := r.opt.Symbols.Lookup(g.Name)
-	if !ok || sym.Kind != symbol.FromPixels || sym.Pixels == nil {
+	if !ok {
+		return
+	}
+	if sym.Kind == symbol.FromVector {
+		r.drawVectorSymbol(g, sym)
+		return
+	}
+	if sym.Kind != symbol.FromPixels || sym.Pixels == nil {
 		return
 	}
 	px := sym.Pixels
@@ -767,6 +774,59 @@ func (r *renderer) drawSymbol(g engrave.Glyph) {
 	x := r.x(g.X) - pdf.Point(px.OriginX*px.PixelSize)*r.s
 	y := r.y(g.Y) + pdf.Point(px.OriginY*px.PixelSize)*r.s - h
 	r.page.Image(img, x, y, w, h)
+}
+
+// drawVectorSymbol draws a symbol that is an outline.
+//
+// Printed as an outline rather than as a picture of one, which is the
+// whole point of having it as one: it comes out at the printer's own
+// resolution instead of at whatever grid it was drawn on.
+//
+// The path is in staff spaces measured from the symbol's own origin, and
+// y increases downward in it as it does everywhere else in the layout —
+// so each point goes through the same two functions every other
+// coordinate does, and the page's upside-down y is dealt with once, there.
+func (r *renderer) drawVectorSymbol(g engrave.Glyph, sym *symbol.Symbol) {
+	path, err := symbol.ParsePath(sym.Path)
+	if err != nil || len(path) == 0 {
+		return
+	}
+	at := func(p symbol.Point) (pdf.Point, pdf.Point) {
+		return r.x(g.X + p.X), r.y(g.Y + p.Y)
+	}
+	open := false
+	for _, seg := range path {
+		switch seg.Kind {
+		case symbol.SegMove:
+			if open {
+				r.page.Paint(true, false)
+			}
+			x, y := at(seg.P[0])
+			r.page.Begin(x, y)
+			open = true
+		case symbol.SegLine:
+			if !open {
+				continue
+			}
+			x, y := at(seg.P[0])
+			r.page.LineTo(x, y)
+		case symbol.SegCubic:
+			if !open {
+				continue
+			}
+			c1x, c1y := at(seg.P[0])
+			c2x, c2y := at(seg.P[1])
+			x, y := at(seg.P[2])
+			r.page.CurveTo(c1x, c1y, c2x, c2y, x, y)
+		case symbol.SegClose:
+			if open {
+				r.page.ClosePath()
+			}
+		}
+	}
+	if open {
+		r.page.Paint(true, false)
+	}
 }
 
 func (r *renderer) drawTexts(top, bottom float64) {

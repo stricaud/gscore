@@ -222,15 +222,10 @@ func (a *App) handleFret(w http.ResponseWriter, r *http.Request) {
 	at = openEmptyBar(p, m, measIdx, at)
 
 	// Typing at the end of a bar that is already full means the next bar,
-	// as it does on a staff of pitches. Without it the frets pile up
-	// behind the barline and there is no way to reach the bar after the
-	// one being filled — which is the one the player is looking at.
-	if at == len(v.Elements) && v.Duration().Cmp(p.Time.BarDuration()) >= 0 {
-		measIdx++
-		m = measureAt(p, measIdx)
-		v = m.Voices[0]
-		at = 0
-	}
+	// as it does on a staff of pitches — and stays put when the barlines
+	// are being left alone, also as it does there. See carryOn.
+	m, measIdx, at = carryOn(p, m, measIdx, at)
+	v = m.Voices[0]
 
 	v.Elements = append(v.Elements, nil)
 	copy(v.Elements[at+1:], v.Elements[at:])

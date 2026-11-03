@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -20,6 +21,37 @@ import (
 // Each of these was reported broken at least once, and several were "fixed"
 // in a place nothing reached. Going through the real HTTP handlers is the
 // only check that means anything: it is the same path a click takes.
+
+// TestMain gives the tests somewhere of their own to remember things in.
+//
+// What gscore keeps between sessions is a real file in a real
+// configuration directory, and the tests were using the one belonging to
+// whoever ran them. Both ways round. They read it, so the settings on the
+// machine decided whether they passed: somebody who had turned "keep bars
+// to the meter" off for their own work saw every test about what happens
+// at a full barline fail, because the program was doing what their
+// settings asked. And they wrote it — every test that saves a score adds
+// it to the recent-files list — so a run left six paths under /var/folders
+// where the person's own scores had been, and dropped the soundfont they
+// had chosen.
+//
+// A temporary home for the run fixes both: os.UserConfigDir is where the
+// file is looked for, and it answers from the environment.
+func TestMain(m *testing.M) {
+	dir, err := os.MkdirTemp("", "gscore-settings")
+	if err != nil {
+		panic(err)
+	}
+	os.Setenv("HOME", dir)
+	os.Setenv("XDG_CONFIG_HOME", filepath.Join(dir, ".config"))
+	stored.Lock()
+	stored.settings, stored.read = settings{}, true
+	stored.Unlock()
+
+	code := m.Run()
+	os.RemoveAll(dir)
+	os.Exit(code)
+}
 
 type harness struct {
 	t   *testing.T

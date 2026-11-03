@@ -317,15 +317,10 @@ func (a *App) handleInsert(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Writing at the end of a bar that is already full means the next bar.
-	// Without this the music piles up behind the barline and there is no way
-	// to reach the measure after it, which is the one you are looking at.
-	if at == len(v.Elements) && v.Duration().Cmp(p.Time.BarDuration()) >= 0 {
-		measIdx++
-		m = measureAt(p, measIdx)
-		v = m.Voices[0]
-		at = 0
-	}
+	// Writing at the end of a bar that is already full means the next bar,
+	// unless the barlines are being left alone. See carryOn.
+	m, measIdx, at = carryOn(p, m, measIdx, at)
+	v = m.Voices[0]
 
 	v.Elements = append(v.Elements, nil)
 	copy(v.Elements[at+1:], v.Elements[at:])
@@ -454,6 +449,35 @@ func spill(p *model.Part, from int) {
 			return
 		}
 	}
+}
+
+// carryOn says where to write when the bar being written to is already as
+// long as the meter allows, and hands back the bar it chose.
+//
+// At the end of a full bar, the next one. Without that the music piles up
+// behind the barline and there is no way to reach the measure after it,
+// which is the one on the screen.
+//
+// Unless the barlines are not being kept. Somebody who turned that off said
+// their bars are their own business, and this was overruling them: the
+// switch stopped spill carrying anything over afterwards, but the writing
+// point moved over the barline before spill was ever reached, so a figure
+// longer than the bar still broke in two at the line and could not be typed
+// into one bar however it was asked for. The twelve thirty-seconds in the
+// time of eight that the Altes writes in one bar is the ordinary case, and
+// it is what the switch is for.
+//
+// The caller's voice is stale afterwards, since the bar may have changed.
+func carryOn(p *model.Part, m *model.Measure, index, at int) (*model.Measure, int, int) {
+	v := m.Voices[0]
+	if at != len(v.Elements) || !TrackBarlines() {
+		return m, index, at
+	}
+	if v.Duration().Cmp(p.Time.BarDuration()) < 0 {
+		return m, index, at
+	}
+	index++
+	return measureAt(p, index), index, 0
 }
 
 // openEmptyBar takes a bar's rest out when something is being written into

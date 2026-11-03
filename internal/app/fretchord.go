@@ -221,12 +221,8 @@ func (a *App) handleFretChord(w http.ResponseWriter, r *http.Request) {
 	// Into the bar rather than after its rest, and on into the next bar
 	// when this one is full — the same two rules a single fret follows.
 	at = openEmptyBar(p, m, measIdx, at)
-	if at == len(v.Elements) && v.Duration().Cmp(p.Time.BarDuration()) >= 0 {
-		measIdx++
-		m = measureAt(p, measIdx)
-		v = m.Voices[0]
-		at = 0
-	}
+	m, measIdx, at = carryOn(p, m, measIdx, at)
+	v = m.Voices[0]
 	v.Elements = append(v.Elements, nil)
 	copy(v.Elements[at+1:], v.Elements[at:])
 	v.Elements[at] = chord

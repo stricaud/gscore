@@ -2106,7 +2106,17 @@ paths:
       parameters:
         - name: instrument
           in: query
-          description: A name — `flute`, `cello` — or a MIDI program number. `/api/instruments` lists them.
+          description: A name — `flute`, `cello` — or a MIDI program number. `/api/instruments?flat=1` lists them. Prefer `sound`.
+          schema: { type: string }
+        - name: sound
+          in: query
+          description: >
+            Which instrument this staff is, by its MusicXML standard sound
+            id — `wind.reed.clarinet.bass`, `brass.euphonium`. Listed by
+            `/api/instruments`. Says more than a program can: it settles the
+            clef, the transposition and the range the staff is checked
+            against, and it is what gets written into the file. Takes
+            precedence over `instrument`.
           schema: { type: string }
         - name: clef
           in: query
@@ -2964,13 +2974,46 @@ paths:
   /api/instruments:
     get:
       tags: [structure]
-      summary: Every instrument a staff can be
+      summary: Every instrument a staff can be, clustered by what it is
+      description: >
+        The catalogue, grouped — keyboard, voice, woodwind, brass, bowed and
+        plucked strings, pitched and unpitched percussion, electronic — and
+        in the order a score is laid out. Each entry carries the MusicXML
+        standard sound id, which is what identifies the instrument and what
+        `/api/addstaff` and `/api/staff` take as `sound`; the General MIDI
+        program beside it is only what plays it, and cannot tell a bass
+        clarinet from a clarinet.
+      parameters:
+        - name: flat
+          in: query
+          description: >
+            `1` gives the older answer instead: the named General MIDI
+            programs as a flat array, with the drum kit at program -1.
+          schema: { type: string, enum: ["0", "1"] }
       responses:
         "200":
-          description: The list, with the clef and transposition each implies.
+          description: The catalogue, or the flat program list.
           content:
             application/json:
-              schema: { type: array, items: { type: object } }
+              schema:
+                type: object
+                properties:
+                  groups:
+                    type: array
+                    items: { type: string }
+                    description: The headings, in the order they are offered.
+                  instruments:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        group: { type: string }
+                        name: { type: string, description: "What it is called: `bass clarinet`." }
+                        sound: { type: string, description: "MusicXML standard sound id: `wind.reed.clarinet.bass`." }
+                        program: { type: integer, description: "General MIDI's nearest, which is what plays it." }
+                        percussion: { type: boolean, description: "Read by position on a kit rather than by pitch." }
+                        low: { type: integer, description: "Bottom of its written compass, as a MIDI note. Absent where unknown." }
+                        high: { type: integer, description: "Top of its written compass." }
 
   /api/percussion:
     get:

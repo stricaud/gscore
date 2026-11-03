@@ -67,6 +67,67 @@ const (
 	Ocarina            Instrument = 79
 )
 
+// The rest of General MIDI, for the instruments the catalogue offers that
+// are not among the names above.
+//
+// These are not in instrumentNames and so are not offered as programs to
+// choose from by number: they are what a *sound* is played with. A player
+// picks "bass trombone" or "oud", which is an instrument; the program is
+// how it is made audible, and General MIDI's nearest is often all there
+// is — it has one guitar family, no cornet, and nothing whatever for a
+// sackbutt.
+const (
+	HonkyTonkPiano   Instrument = 3
+	ElectricPianoFM  Instrument = 5
+	Clavinet         Instrument = 7
+	Xylophone        Instrument = 13
+	TubularBells     Instrument = 14
+	Dulcimer         Instrument = 15
+	DrawbarOrgan     Instrument = 16
+	PercussiveOrgan  Instrument = 17
+	RockOrgan        Instrument = 18
+	ReedOrgan        Instrument = 20
+	TangoAccordion   Instrument = 23
+	SteelGuitar      Instrument = 25
+	JazzGuitar       Instrument = 26
+	CleanGuitar      Instrument = 28
+	OverdrivenGuitar Instrument = 29
+	ElectricBass     Instrument = 33
+	PickedBass       Instrument = 34
+	FretlessBass     Instrument = 35
+	SlapBass         Instrument = 36
+	SynthBass        Instrument = 38
+	TremoloStrings   Instrument = 44
+	PizzicatoStrings Instrument = 45
+	StringEnsemble2  Instrument = 49
+	SynthStrings     Instrument = 50
+	SynthVoice       Instrument = 54
+	MutedTrumpet     Instrument = 59
+	BrassSection     Instrument = 61
+	SynthBrass       Instrument = 62
+	BlownBottle      Instrument = 76
+	Shakuhachi       Instrument = 77
+	Whistle          Instrument = 78
+	SquareLead       Instrument = 80
+	SawtoothLead     Instrument = 81
+	WarmPad          Instrument = 89
+	Sitar            Instrument = 104
+	Banjo            Instrument = 105
+	Shamisen         Instrument = 106
+	Koto             Instrument = 107
+	Kalimba          Instrument = 108
+	Bagpipe          Instrument = 109
+	Fiddle           Instrument = 110
+	Shanai           Instrument = 111
+	Agogo            Instrument = 113
+	SteelDrums       Instrument = 114
+	WoodBlock        Instrument = 115
+	TaikoDrum        Instrument = 116
+	MelodicTom       Instrument = 117
+	SynthDrum        Instrument = 118
+	ReverseCymbal    Instrument = 119
+)
+
 // instrumentNames gives the names gscore shows and accepts.
 var instrumentNames = map[Instrument]string{
 	AcousticGrandPiano: "piano", BrightPiano: "bright piano",

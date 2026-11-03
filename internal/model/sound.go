@@ -77,8 +77,13 @@ var sounds = map[string]soundInfo{
 	"wind.flutes.panpipes":      pitched("pan flute", PanFlute, 60, 96, 62, 93),
 	"wind.flutes.ocarina":       pitched("ocarina", Ocarina, 69, 89, 69, 86),
 
-	"wind.reed.oboe":              pitched("oboe", Oboe, 58, 93, 60, 86),
-	"wind.reed.oboe.english-horn": pitched("english horn", EnglishHorn, 52, 81, 55, 76),
+	"wind.reed.oboe": pitched("oboe", Oboe, 58, 93, 60, 86),
+	// The standard spells it at the top of the reeds and not under the
+	// oboe. Written the other way it fell back to "wind.reed.oboe", so
+	// every english horn ever imported was reported as an oboe and
+	// measured against an oboe's range, which is five notes higher at the
+	// bottom. The old spelling is kept below, where the aliases are.
+	"wind.reed.english-horn": pitched("english horn", EnglishHorn, 52, 81, 55, 76),
 	// A clarinet in B flat, which is what "clarinet" means unqualified.
 	"wind.reed.clarinet":           pitched("clarinet", Clarinet, 50, 94, 52, 84),
 	"wind.reed.clarinet.bflat":     pitched("clarinet in B♭", Clarinet, 50, 94, 52, 84),
@@ -109,8 +114,12 @@ var sounds = map[string]soundInfo{
 	"strings.viola":      pitched("viola", Viola, 48, 88, 48, 81),
 	"strings.cello":      pitched("cello", Cello, 36, 84, 36, 76),
 	"strings.contrabass": pitched("contrabass", Contrabass, 28, 67, 28, 55),
-	"strings.harp":       pitched("harp", Harp, 23, 104, 28, 100),
-	"strings.guitar":     pitched("guitar", AcousticGuitar, 40, 88, 40, 83),
+	// A harp and a guitar are plucked, and the standard files them under
+	// pluck rather than strings — where this table used to look for them
+	// and not find them, so a MuseScore harp arrived with no range and no
+	// name of its own. Both old spellings are kept below.
+	"pluck.harp":   pitched("harp", Harp, 23, 104, 28, 100),
+	"pluck.guitar": pitched("guitar", AcousticGuitar, 40, 88, 40, 83),
 	// A section rather than an instrument: it may be the first violins or
 	// the double basses, and a range covering both would say nothing.
 	"strings.group": {name: "strings", program: StringEnsemble},
@@ -148,6 +157,429 @@ var sounds = map[string]soundInfo{
 	"metal":  unpitched("percussion"),
 	"wood":   unpitched("percussion"),
 	"effect": unpitched("percussion"),
+	"rattle": unpitched("percussion"),
+
+	/*
+	 * The rest of what people write for.
+	 *
+	 * Everything above was what the importers had met. What follows is
+	 * the catalogue somebody picks from when they start a score, and it
+	 * is a different question: not "what turned up in a file" but "what
+	 * is this piece for". An orchestrator wants a bass trombone and a
+	 * contrabass clarinet; a folk player wants a bouzouki; neither is
+	 * served by a list of thirty-eight General MIDI programs.
+	 *
+	 * The ids are MusicXML 4.0's standard sounds, which is a published
+	 * list and the one MuseScore, Dorico and Finale all write — so a part
+	 * named here survives the trip out and back. Nothing is invented: an
+	 * id gscore makes up would be written into a file that no other
+	 * program could read, which is worse than saying nothing.
+	 *
+	 * The program beside each is General MIDI's nearest, and often it is
+	 * not near. There is no cornet in General MIDI and no sackbutt at
+	 * all; a trumpet plays them. That is a statement about what can be
+	 * made audible, not about what the instrument is, and the name is
+	 * what the instrument is.
+	 *
+	 * The ranges are the written compass of an ordinary instrument and
+	 * its ordinary player: the wide pair is what the instrument can do,
+	 * the narrow pair what can be asked for night after night. Where
+	 * gscore does not know, nothing is claimed — see strings.group.
+	 */
+
+	// Keyboards.
+	"keyboard.piano.grand":      pitched("grand piano", AcousticGrandPiano, 21, 108, 28, 96),
+	"keyboard.piano.upright":    pitched("upright piano", AcousticGrandPiano, 21, 108, 28, 96),
+	"keyboard.piano.electric":   pitched("electric piano", ElectricPiano, 28, 103, 28, 96),
+	"keyboard.piano.honky-tonk": pitched("honky-tonk piano", HonkyTonkPiano, 21, 108, 28, 96),
+	"keyboard.piano.toy":        pitched("toy piano", Celesta, 60, 96, 60, 96),
+	"keyboard.fortepiano":       pitched("fortepiano", AcousticGrandPiano, 29, 101, 29, 101),
+	"keyboard.clavichord":       pitched("clavichord", Clavinet, 36, 84, 36, 84),
+	"keyboard.virginal":         pitched("virginal", Harpsichord, 41, 86, 41, 86),
+	"keyboard.organ.pipe":       pitched("pipe organ", ChurchOrgan, 36, 96, 36, 96),
+	"keyboard.organ.reed":       pitched("reed organ", ReedOrgan, 36, 96, 36, 96),
+	"keyboard.organ.drawbar":    pitched("drawbar organ", DrawbarOrgan, 36, 96, 36, 96),
+	"keyboard.organ.percussive": pitched("percussive organ", PercussiveOrgan, 36, 96, 36, 96),
+	"keyboard.organ.rotary":     pitched("rotary organ", RockOrgan, 36, 96, 36, 96),
+	"keyboard.harmonium":        pitched("harmonium", ReedOrgan, 36, 96, 36, 96),
+	"keyboard.bandoneon":        pitched("bandoneon", TangoAccordion, 41, 89, 41, 89),
+	"keyboard.concertina":       pitched("concertina", Accordion, 48, 93, 48, 93),
+
+	// Voices. A section's compass, as above.
+	"voice.countertenor": pitched("countertenor", ChoirAahs, 48, 74, 53, 70),
+	"voice.child":        pitched("child voice", ChoirAahs, 55, 79, 57, 76),
+	"voice.female":       pitched("women", ChoirAahs, 53, 84, 57, 79),
+	"voice.male":         pitched("men", ChoirAahs, 38, 72, 43, 67),
+	"voice.vocals":       pitched("voice", ChoirAahs, 38, 84, 43, 79),
+
+	// Flutes.
+	"wind.flutes.flute.bass":         pitched("bass flute", Flute, 48, 84, 50, 79),
+	"wind.flutes.flute.irish":        pitched("irish flute", Flute, 62, 86, 62, 84),
+	"wind.flutes.recorder.sopranino": pitched("sopranino recorder", Recorder, 79, 105, 79, 103),
+	"wind.flutes.recorder.soprano":   pitched("descant recorder", Recorder, 72, 98, 72, 96),
+	"wind.flutes.recorder.alto":      pitched("treble recorder", Recorder, 65, 91, 65, 89),
+	"wind.flutes.recorder.tenor":     pitched("tenor recorder", Recorder, 60, 86, 60, 84),
+	"wind.flutes.recorder.bass":      pitched("bass recorder", Recorder, 53, 79, 53, 77),
+	"wind.flutes.whistle.tin":        pitched("tin whistle", Whistle, 74, 98, 74, 95),
+	"wind.flutes.shakuhachi":         pitched("shakuhachi", Shakuhachi, 60, 89, 62, 86),
+	"wind.flutes.fife":               pitched("fife", Piccolo, 74, 100, 74, 98),
+
+	// Reeds.
+	"wind.reed.oboe.bass":            pitched("bass oboe", Oboe, 46, 81, 48, 77),
+	"wind.reed.oboe-damore":          pitched("oboe d'amore", Oboe, 56, 88, 58, 84),
+	"wind.reed.oboe-da-caccia":       pitched("oboe da caccia", Oboe, 53, 84, 55, 81),
+	"wind.reed.clarinet.alto":        pitched("alto clarinet", Clarinet, 45, 89, 47, 81),
+	"wind.reed.clarinet.contra-alto": pitched("contra-alto clarinet", Clarinet, 33, 77, 35, 70),
+	"wind.reed.clarinet.contrabass":  pitched("contrabass clarinet", Clarinet, 26, 70, 28, 63),
+	"wind.reed.basset-horn":          pitched("basset horn", Clarinet, 46, 89, 48, 81),
+	"wind.reed.saxophone.sopranino":  pitched("sopranino sax", SopranoSax, 61, 93, 63, 89),
+	"wind.reed.saxophone.bass":       pitched("bass sax", BaritoneSax, 32, 70, 34, 65),
+	"wind.reed.melodica":             pitched("melodica", Harmonica, 53, 89, 53, 89),
+	"wind.reed.duduk":                pitched("duduk", Shanai, 58, 82, 58, 79),
+	"wind.reed.shawm":                pitched("shawm", Shanai, 55, 84, 55, 81),
+	"wind.reed.crumhorn":             pitched("crumhorn", Shanai, 53, 77, 53, 75),
+
+	// Brass.
+	"brass.trumpet.piccolo":     pitched("piccolo trumpet", Trumpet, 60, 93, 62, 89),
+	"brass.trumpet.bass":        pitched("bass trumpet", Trumpet, 40, 72, 43, 70),
+	"brass.cornet":              pitched("cornet", Trumpet, 52, 86, 55, 82),
+	"brass.flugelhorn":          pitched("flugelhorn", Trumpet, 52, 82, 55, 79),
+	"brass.posthorn":            pitched("post horn", Trumpet, 55, 84, 55, 81),
+	"brass.bugle":               pitched("bugle", Trumpet, 55, 79, 55, 76),
+	"brass.alphorn":             pitched("alphorn", Trumpet, 43, 79, 46, 74),
+	"brass.mellophone":          pitched("mellophone", FrenchHorn, 48, 79, 50, 76),
+	"brass.alto-horn":           pitched("alto horn", FrenchHorn, 45, 77, 48, 74),
+	"brass.trombone.contrabass": pitched("contrabass trombone", Trombone, 28, 65, 31, 60),
+	"brass.sackbutt":            pitched("sackbutt", Trombone, 40, 74, 43, 70),
+	"brass.sackbutt.alto":       pitched("alto sackbutt", Trombone, 45, 79, 48, 74),
+	"brass.sackbutt.tenor":      pitched("tenor sackbutt", Trombone, 40, 74, 43, 70),
+	"brass.sackbutt.bass":       pitched("bass sackbutt", Trombone, 34, 70, 38, 65),
+	"brass.euphonium":           pitched("euphonium", Tuba, 34, 77, 38, 72),
+	"brass.baritone-horn":       pitched("baritone horn", Tuba, 34, 74, 38, 70),
+	"brass.tuba.bass":           pitched("bass tuba", Tuba, 28, 67, 31, 60),
+	"brass.tuba.subcontrabass":  pitched("subcontrabass tuba", Tuba, 20, 55, 22, 50),
+	"brass.sousaphone":          pitched("sousaphone", Tuba, 26, 65, 29, 58),
+	"brass.cimbasso":            pitched("cimbasso", Tuba, 29, 65, 31, 60),
+	"brass.ophicleide":          pitched("ophicleide", Tuba, 31, 70, 34, 65),
+	"brass.serpent":             pitched("serpent", Tuba, 31, 70, 34, 65),
+	"brass.cornett":             pitched("cornett", Trumpet, 55, 86, 57, 81),
+	"brass.wagner-tuba":         pitched("wagner tuba", FrenchHorn, 34, 74, 38, 69),
+	// A section rather than an instrument, like strings.group above.
+	"brass.group": {name: "brass section", program: BrassSection},
+
+	// Bowed strings.
+	"strings.viol":          pitched("viol", Cello, 36, 79, 38, 74),
+	"strings.viol.treble":   pitched("treble viol", Viola, 55, 93, 55, 86),
+	"strings.viol.alto":     pitched("alto viol", Viola, 48, 86, 48, 79),
+	"strings.viol.tenor":    pitched("tenor viol", Cello, 43, 81, 43, 74),
+	"strings.viol.bass":     pitched("bass viol", Cello, 36, 76, 36, 69),
+	"strings.viol.violone":  pitched("violone", Contrabass, 28, 67, 28, 60),
+	"strings.viola-damore":  pitched("viola d'amore", Viola, 48, 88, 48, 81),
+	"strings.cello.piccolo": pitched("piccolo cello", Cello, 43, 91, 43, 83),
+	"strings.octobass":      pitched("octobass", Contrabass, 16, 48, 16, 43),
+	"strings.hurdy-gurdy":   pitched("hurdy-gurdy", Fiddle, 48, 84, 48, 79),
+	"strings.nyckelharpa":   pitched("nyckelharpa", Fiddle, 48, 84, 48, 79),
+	"strings.fiddle":        pitched("fiddle", Fiddle, 55, 98, 55, 88),
+	"strings.erhu":          pitched("erhu", Fiddle, 55, 91, 55, 86),
+	"strings.group.synth":   {name: "synth strings", program: SynthStrings},
+
+	// Plucked strings.
+	"pluck.guitar.acoustic":     pitched("acoustic guitar", SteelGuitar, 40, 88, 40, 83),
+	"pluck.guitar.nylon-string": pitched("classical guitar", AcousticGuitar, 40, 88, 40, 83),
+	"pluck.guitar.steel-string": pitched("steel-string guitar", SteelGuitar, 40, 88, 40, 83),
+	"pluck.guitar.electric":     pitched("electric guitar", ElectricGuitar, 40, 91, 40, 86),
+	"pluck.guitar.resonator":    pitched("resonator guitar", SteelGuitar, 40, 86, 40, 83),
+	"pluck.guitar.pedal-steel":  pitched("pedal steel guitar", CleanGuitar, 40, 88, 40, 83),
+	"pluck.guitar.requinto":     pitched("requinto guitar", AcousticGuitar, 45, 93, 45, 88),
+	"pluck.bass":                pitched("bass guitar", ElectricBass, 28, 67, 28, 62),
+	"pluck.bass.acoustic":       pitched("acoustic bass guitar", AcousticBass, 28, 67, 28, 62),
+	"pluck.bass.electric":       pitched("electric bass", ElectricBass, 28, 67, 28, 62),
+	"pluck.bass.fretless":       pitched("fretless bass", FretlessBass, 28, 67, 28, 62),
+	"pluck.bass.synth":          pitched("synth bass", SynthBass, 28, 67, 28, 62),
+	"pluck.lute":                pitched("lute", AcousticGuitar, 40, 83, 40, 79),
+	"pluck.archlute":            pitched("archlute", AcousticGuitar, 33, 83, 36, 79),
+	"pluck.theorbo":             pitched("theorbo", AcousticGuitar, 28, 79, 31, 74),
+	"pluck.vihuela":             pitched("vihuela", AcousticGuitar, 40, 83, 40, 79),
+	"pluck.mandolin":            pitched("mandolin", AcousticGuitar, 55, 96, 55, 88),
+	"pluck.mandola":             pitched("mandola", AcousticGuitar, 48, 88, 48, 81),
+	"pluck.mandocello":          pitched("mandocello", AcousticGuitar, 36, 76, 36, 72),
+	"pluck.banjo":               pitched("banjo", Banjo, 48, 88, 48, 83),
+	"pluck.banjo.tenor":         pitched("tenor banjo", Banjo, 48, 88, 48, 83),
+	"pluck.ukulele":             pitched("ukulele", AcousticGuitar, 60, 93, 60, 88),
+	"pluck.ukulele.tenor":       pitched("tenor ukulele", AcousticGuitar, 55, 91, 55, 86),
+	"pluck.celtic-harp":         pitched("celtic harp", Harp, 36, 93, 36, 88),
+	"pluck.dulcimer":            pitched("appalachian dulcimer", Dulcimer, 55, 86, 55, 83),
+	"pluck.autoharp":            pitched("autoharp", Dulcimer, 48, 86, 48, 83),
+	"pluck.zither":              pitched("zither", Dulcimer, 48, 93, 48, 88),
+	"pluck.psaltery":            pitched("psaltery", Dulcimer, 55, 91, 55, 86),
+	"pluck.lyre":                pitched("lyre", Harp, 55, 86, 55, 83),
+	"pluck.kantele":             pitched("kantele", Harp, 55, 91, 55, 86),
+	"pluck.sitar":               pitched("sitar", Sitar, 48, 91, 48, 86),
+	"pluck.oud":                 pitched("oud", Sitar, 36, 79, 38, 74),
+	"pluck.bouzouki":            pitched("bouzouki", AcousticGuitar, 48, 88, 48, 83),
+	"pluck.bouzouki.irish":      pitched("irish bouzouki", AcousticGuitar, 43, 83, 43, 79),
+	"pluck.balalaika":           pitched("balalaika", Banjo, 57, 91, 57, 86),
+	"pluck.charango":            pitched("charango", AcousticGuitar, 57, 93, 57, 88),
+	"pluck.cuatro":              pitched("cuatro", AcousticGuitar, 50, 88, 50, 83),
+	"pluck.cavaquinho":          pitched("cavaquinho", AcousticGuitar, 62, 96, 62, 91),
+	"pluck.tres":                pitched("tres", AcousticGuitar, 48, 88, 48, 83),
+	"pluck.saz":                 pitched("saz", Sitar, 43, 83, 43, 79),
+	"pluck.tambura":             pitched("tambura", Sitar, 36, 72, 36, 69),
+	"pluck.veena":               pitched("veena", Sitar, 36, 84, 38, 79),
+	"pluck.pipa":                pitched("pipa", Koto, 50, 89, 50, 84),
+	"pluck.guzheng":             pitched("guzheng", Koto, 38, 86, 38, 81),
+	"pluck.koto":                pitched("koto", Koto, 41, 84, 41, 79),
+	"pluck.shamisen":            pitched("shamisen", Shamisen, 48, 84, 48, 79),
+	"pluck.sanshin":             pitched("sanshin", Shamisen, 48, 84, 48, 79),
+	"pluck.kora":                pitched("kora", Harp, 48, 86, 48, 81),
+
+	// Tuned percussion.
+	"pitched-percussion.tubular-bells":   pitched("tubular bells", TubularBells, 53, 77, 53, 77),
+	"pitched-percussion.bells":           pitched("bells", TubularBells, 53, 77, 53, 77),
+	"pitched-percussion.handbells":       pitched("handbells", TubularBells, 48, 96, 48, 93),
+	"pitched-percussion.handchimes":      pitched("handchimes", TubularBells, 48, 96, 48, 93),
+	"pitched-percussion.xylorimba":       pitched("xylorimba", Marimba, 48, 108, 53, 103),
+	"pitched-percussion.marimba.bass":    pitched("bass marimba", Marimba, 29, 72, 31, 69),
+	"pitched-percussion.music-box":       pitched("music box", MusicBox, 72, 96, 72, 96),
+	"pitched-percussion.kalimba":         pitched("kalimba", Kalimba, 60, 84, 60, 84),
+	"pitched-percussion.mbira":           pitched("mbira", Kalimba, 60, 84, 60, 84),
+	"pitched-percussion.hammer-dulcimer": pitched("hammered dulcimer", Dulcimer, 48, 91, 48, 86),
+	"pitched-percussion.cimbalom":        pitched("cimbalom", Dulcimer, 41, 89, 41, 84),
+	"pitched-percussion.glass-harmonica": pitched("glass harmonica", Celesta, 60, 96, 60, 96),
+	"pitched-percussion.balafon":         pitched("balafon", Marimba, 55, 96, 55, 91),
+	"pitched-percussion.crystal-glasses": pitched("crystal glasses", Celesta, 60, 96, 60, 96),
+	"metal.crotales":                     pitched("crotales", Glockenspiel, 84, 108, 84, 108),
+	"metal.steel-drums":                  pitched("steel drums", SteelDrums, 48, 84, 48, 81),
+	"metal.bells.carillon":               pitched("carillon", TubularBells, 48, 96, 48, 93),
+	"metal.hang":                         pitched("hang", SteelDrums, 53, 77, 53, 77),
+	"metal.singing-bowl":                 pitched("singing bowl", TubularBells, 53, 77, 53, 77),
+	"metal.musical-saw":                  pitched("musical saw", Whistle, 55, 84, 55, 79),
+	"metal.jaw-harp":                     pitched("jaw harp", Kalimba, 48, 72, 48, 72),
+
+	// The kit, and everything struck or shaken that is read by position
+	// rather than by pitch.
+	"drum.group.set":           unpitched("drum kit"),
+	"drum.snare-drum":          unpitched("snare drum"),
+	"drum.bass-drum":           unpitched("bass drum"),
+	"drum.tom-tom":             unpitched("tom-toms"),
+	"drum.tenor-drum":          unpitched("tenor drum"),
+	"drum.rototom":             unpitched("roto-toms"),
+	"drum.timbale":             unpitched("timbales"),
+	"drum.bongo":               unpitched("bongos"),
+	"drum.conga":               unpitched("congas"),
+	"drum.djembe":              unpitched("djembe"),
+	"drum.cajon":               unpitched("cajón"),
+	"drum.tabla":               unpitched("tabla"),
+	"drum.taiko":               unpitched("taiko"),
+	"drum.frame-drum":          unpitched("frame drum"),
+	"drum.bodhran":             unpitched("bodhrán"),
+	"drum.darabuka":            unpitched("darabuka"),
+	"drum.surdo":               unpitched("surdo"),
+	"drum.tambourine":          unpitched("tambourine"),
+	"drum.hand-drum":           unpitched("hand drum"),
+	"metal.triangle":           unpitched("triangle"),
+	"metal.anvil":              unpitched("anvil"),
+	"metal.flexatone":          unpitched("flexatone"),
+	"metal.tamtam":             unpitched("tam-tam"),
+	"metal.gong":               unpitched("gong"),
+	"metal.hi-hat":             unpitched("hi-hat"),
+	"metal.thundersheet":       unpitched("thunder sheet"),
+	"metal.washboard":          unpitched("washboard"),
+	"metal.spoons":             unpitched("spoons"),
+	"metal.cymbal.crash":       unpitched("crash cymbal"),
+	"metal.cymbal.ride":        unpitched("ride cymbal"),
+	"metal.cymbal.suspended":   unpitched("suspended cymbal"),
+	"metal.cymbal.splash":      unpitched("splash cymbal"),
+	"metal.cymbal.chinese":     unpitched("china cymbal"),
+	"metal.cymbal.sizzle":      unpitched("sizzle cymbal"),
+	"metal.cymbal.clash":       unpitched("clash cymbals"),
+	"metal.cymbal.finger":      unpitched("finger cymbals"),
+	"metal.bells.cowbell":      unpitched("cowbell"),
+	"metal.bells.agogo":        unpitched("agogo bells"),
+	"metal.bells.sleigh-bells": unpitched("sleigh bells"),
+	"metal.bells.wind-chimes":  unpitched("wind chimes"),
+	"metal.bells.mark-tree":    unpitched("mark tree"),
+	"metal.bells.bell-plate":   unpitched("bell plate"),
+	"metal.bells.almglocken":   unpitched("almglocken"),
+	"metal.bells.church":       unpitched("church bells"),
+	"metal.berimbau":           unpitched("berimbau"),
+	"wood.wood-block":          unpitched("wood block"),
+	"wood.temple-block":        unpitched("temple blocks"),
+	"wood.claves":              unpitched("claves"),
+	"wood.castanets":           unpitched("castanets"),
+	"wood.guiro":               unpitched("güiro"),
+	"wood.slapstick":           unpitched("whip"),
+	"wood.bones":               unpitched("bones"),
+	"wood.jam-block":           unpitched("jam block"),
+	"wood.sand-block":          unpitched("sand blocks"),
+	"wood.agogo-block":         unpitched("agogo blocks"),
+	"wood.drum-sticks":         unpitched("drum sticks"),
+	"rattle.maraca":            unpitched("maracas"),
+	"rattle.cabasa":            unpitched("cabasa"),
+	"rattle.shaker":            unpitched("shaker"),
+	"rattle.vibraslap":         unpitched("vibraslap"),
+	"rattle.ratchet":           unpitched("ratchet"),
+	"rattle.rain-stick":        unpitched("rain stick"),
+	"rattle.shekere":           unpitched("shekere"),
+	"rattle.caxixi":            unpitched("caxixi"),
+	"effect.wind":              unpitched("wind machine"),
+	"effect.thunder":           unpitched("thunder sheet"),
+	"effect.applause":          unpitched("applause"),
+	"effect.hand-clap":         unpitched("hand claps"),
+	"effect.whistle.police":    unpitched("police whistle"),
+	"effect.whistle.slide":     unpitched("slide whistle"),
+	"effect.bird":              unpitched("bird whistle"),
+	"effect.siren":             unpitched("siren"),
+	"effect.gunshot":           unpitched("gunshot"),
+	"effect.metronome-click":   unpitched("metronome"),
+	"voice.percussion.beatbox": unpitched("beatbox"),
+
+	// Electronic.
+	"keyboard.ondes-martenot": pitched("ondes martenot", SquareLead, 36, 96, 36, 93),
+	"synth.theremin":          pitched("theremin", SawtoothLead, 36, 96, 41, 91),
+	"synth.tone.square":       pitched("square lead", SquareLead, 24, 108, 36, 96),
+	"synth.tone.sawtooth":     pitched("sawtooth lead", SawtoothLead, 24, 108, 36, 96),
+	"synth.tone.sine":         pitched("sine tone", SquareLead, 24, 108, 36, 96),
+	"synth.pad.warm":          pitched("warm pad", WarmPad, 24, 108, 36, 96),
+	"synth.pad":               pitched("synth pad", WarmPad, 24, 108, 36, 96),
+	"synth.group":             {name: "synthesizer", program: SquareLead},
+	"synth.effects":           {name: "effect synth", program: 96},
+
+	/*
+	 * Aliases.
+	 *
+	 * Spellings that are not in the standard list but have been written
+	 * into files — three of them by gscore itself, before this table was
+	 * checked against the standard and found to be guessing. They are
+	 * kept so those files still open knowing what they are, and they are
+	 * not offered in the catalogue: nothing new should be written with
+	 * them.
+	 */
+	// The two that were already above — "pitched-percussion.timpani" and
+	// "pitched-percussion.celesta" — are aliases too; they are left where
+	// they are, with the tuned percussion, so the diff against the
+	// standard reads in one place.
+	"wind.reed.oboe.english-horn":    pitched("english horn", EnglishHorn, 52, 81, 55, 76),
+	"strings.harp":                   pitched("harp", Harp, 23, 104, 28, 100),
+	"strings.guitar":                 pitched("guitar", AcousticGuitar, 40, 88, 40, 83),
+	"pitched-percussion.steel-drums": pitched("steel drums", SteelDrums, 48, 84, 48, 81),
+	"pitched-percussion.crotales":    pitched("crotales", Glockenspiel, 84, 108, 84, 108),
+}
+
+// transposeFor is the interval between what a staff reads and what is
+// heard, for the instruments where that is not nothing.
+//
+// Kept by sound and not by General MIDI program, because the program cannot
+// tell them apart: a clarinet in A and a clarinet in B-flat are both program
+// 71, and reading the transposition off the program put every clarinet in A
+// a semitone out. Which is the whole reason the catalogue offers sounds
+// rather than programs.
+//
+// Only the transposing instruments are here. Most are not, and an id that is
+// missing is read as a staff that reads what it sounds — which is the right
+// answer for a piano, a violin, a trombone and nearly everything else.
+var transposeFor = map[string]Transposition{
+	// In B flat: a major second below.
+	"wind.reed.clarinet":          {Diatonic: -1, Chromatic: -2},
+	"wind.reed.clarinet.bflat":    {Diatonic: -1, Chromatic: -2},
+	"wind.reed.saxophone.soprano": {Diatonic: -1, Chromatic: -2},
+	"brass.trumpet":               {Diatonic: -1, Chromatic: -2},
+	"brass.trumpet.bflat":         {Diatonic: -1, Chromatic: -2},
+	"brass.cornet":                {Diatonic: -1, Chromatic: -2},
+	"brass.flugelhorn":            {Diatonic: -1, Chromatic: -2},
+
+	// In A: a minor third below.
+	"wind.reed.clarinet.a":  {Diatonic: -2, Chromatic: -3},
+	"wind.reed.oboe-damore": {Diatonic: -2, Chromatic: -3},
+
+	// In E flat, sounding above what is written: a minor third up.
+	"wind.reed.clarinet.eflat":      {Diatonic: 2, Chromatic: 3},
+	"wind.reed.saxophone.sopranino": {Diatonic: 2, Chromatic: 3},
+
+	// In F: a perfect fifth below.
+	"brass.french-horn":        {Diatonic: -4, Chromatic: -7},
+	"brass.natural-horn":       {Diatonic: -4, Chromatic: -7},
+	"brass.wagner-tuba":        {Diatonic: -4, Chromatic: -7},
+	"brass.mellophone":         {Diatonic: -4, Chromatic: -7},
+	"wind.reed.english-horn":   {Diatonic: -4, Chromatic: -7},
+	"wind.reed.basset-horn":    {Diatonic: -4, Chromatic: -7},
+	"wind.reed.oboe-da-caccia": {Diatonic: -4, Chromatic: -7},
+
+	// In E flat: a major sixth below.
+	"wind.reed.saxophone.alto": {Diatonic: -5, Chromatic: -9},
+	"wind.reed.clarinet.alto":  {Diatonic: -5, Chromatic: -9},
+	"brass.alto-horn":          {Diatonic: -5, Chromatic: -9},
+
+	// In B flat, an octave lower again: a major ninth below.
+	"wind.reed.saxophone.tenor": {Diatonic: -1, Chromatic: -2, OctaveChange: -1},
+	"wind.reed.clarinet.bass":   {Diatonic: -1, Chromatic: -2, OctaveChange: -1},
+	"brass.trumpet.bass":        {Diatonic: -1, Chromatic: -2, OctaveChange: -1},
+	"brass.baritone-horn":       {Diatonic: -1, Chromatic: -2, OctaveChange: -1},
+
+	// In E flat, an octave and a major sixth below.
+	"wind.reed.saxophone.baritone":   {Diatonic: -5, Chromatic: -9, OctaveChange: -1},
+	"wind.reed.clarinet.contra-alto": {Diatonic: -5, Chromatic: -9, OctaveChange: -1},
+
+	// Two octaves down from the B flat instruments.
+	"wind.reed.saxophone.bass":      {Diatonic: -1, Chromatic: -2, OctaveChange: -2},
+	"wind.reed.clarinet.contrabass": {Diatonic: -1, Chromatic: -2, OctaveChange: -2},
+
+	// The rest of the transposing winds.
+	"brass.trumpet.d":        {Diatonic: 1, Chromatic: 2},
+	"brass.trumpet.piccolo":  {Diatonic: -1, Chromatic: -2, OctaveChange: 1},
+	"wind.flutes.flute.alto": {Diatonic: -3, Chromatic: -5},
+	"wind.flutes.flute.bass": {OctaveChange: -1},
+
+	// Written an octave away from where they sound, and nothing else.
+	"wind.flutes.flute.piccolo":          {OctaveChange: 1},
+	"wind.flutes.recorder.sopranino":     {OctaveChange: 1},
+	"wind.flutes.recorder.soprano":       {OctaveChange: 1},
+	"wind.reed.contrabassoon":            {OctaveChange: -1},
+	"strings.contrabass":                 {OctaveChange: -1},
+	"strings.octobass":                   {OctaveChange: -1},
+	"pluck.guitar":                       {OctaveChange: -1},
+	"pluck.guitar.acoustic":              {OctaveChange: -1},
+	"pluck.guitar.nylon-string":          {OctaveChange: -1},
+	"pluck.guitar.steel-string":          {OctaveChange: -1},
+	"pluck.guitar.electric":              {OctaveChange: -1},
+	"pluck.guitar.resonator":             {OctaveChange: -1},
+	"pluck.guitar.requinto":              {OctaveChange: -1},
+	"pluck.bass":                         {OctaveChange: -1},
+	"pluck.bass.acoustic":                {OctaveChange: -1},
+	"pluck.bass.electric":                {OctaveChange: -1},
+	"pluck.bass.fretless":                {OctaveChange: -1},
+	"pluck.bass.synth":                   {OctaveChange: -1},
+	"pitched-percussion.xylophone":       {OctaveChange: 1},
+	"pitched-percussion.xylorimba":       {OctaveChange: 1},
+	"keyboard.celesta":                   {OctaveChange: 1},
+	"pitched-percussion.handbells":       {OctaveChange: 1},
+	"pitched-percussion.glockenspiel":    {OctaveChange: 2},
+	"metal.crotales":                     {OctaveChange: 2},
+	"pitched-percussion.marimba.bass":    {OctaveChange: -1},
+	"pitched-percussion.hammer-dulcimer": {},
+}
+
+// SoundTransposition is the interval between what a staff written for an id
+// reads and what is heard, and whether gscore knows of one.
+//
+// Exact rather than by family: "wind.reed.clarinet.a" must not fall back to
+// the B-flat clarinet's interval, which is the mistake this table exists to
+// prevent. An id with no entry does not transpose.
+func SoundTransposition(id string) (Transposition, bool) {
+	t, ok := transposeFor[strings.ToLower(strings.TrimSpace(id))]
+	return t, ok
+}
+
+// SoundKnown reports whether an id is one the table has an entry for
+// exactly, rather than one it can only place by family.
+//
+// What the editor validates a chosen instrument with. The family fallback is
+// right when reading a file — an unknown reed is still a reed — and wrong
+// when somebody is picking from a list, where an id that is not offered is a
+// mistake and should say so.
+func SoundKnown(id string) bool {
+	_, ok := sounds[strings.ToLower(strings.TrimSpace(id))]
+	return ok
 }
 
 // soundOf finds what gscore knows about an id, trying it whole and then

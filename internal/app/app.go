@@ -825,11 +825,16 @@ type movementInfo struct {
 type partInfo struct {
 	Name       string `json:"name"`
 	Instrument string `json:"instrument"`
-	Clef       string `json:"clef"`
-	Key        string `json:"key"`
-	Time       string `json:"time"`
-	Measures   int    `json:"measures"`
-	Notes      int    `json:"notes"`
+	// Sound is which instrument this staff is, by its MusicXML standard
+	// sound id, where the file or the catalogue said. The instrument above
+	// is only the General MIDI program that plays it, and cannot tell a
+	// bass clarinet from a clarinet. Empty where nothing said.
+	Sound    string `json:"sound,omitempty"`
+	Clef     string `json:"clef"`
+	Key      string `json:"key"`
+	Time     string `json:"time"`
+	Measures int    `json:"measures"`
+	Notes    int    `json:"notes"`
 	// TransposeSemitones is how far below what is written this staff sounds,
 	// so the editor can get back from a sounding note to the printed one.
 	// A fingering chart needs the printed one: fingers follow the page.
@@ -921,7 +926,7 @@ func (a *App) handleInfo(w http.ResponseWriter, r *http.Request) {
 			instrument = drumKitName
 		}
 		out.Parts = append(out.Parts, partInfo{
-			Name: name, Instrument: instrument,
+			Name: name, Instrument: instrument, Sound: p.Sound,
 			Clef: p.Clef.String(), Key: keyText(p.Key),
 			Time: p.Time.String(), Measures: len(p.Measures), Notes: notes,
 			TransposeSemitones: p.Transpose.Semitones(),

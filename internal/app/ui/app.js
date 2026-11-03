@@ -339,7 +339,11 @@ async function setStaffProperty(what, value) {
     return;
   }
   await refreshScore();
-  status(`${what}: ${value}`);
+  // "sound" is the name of a field, not a word to say to somebody: what
+  // they chose was an instrument.
+  status(what === "sound"
+    ? `Instrument: ${instrumentNamed(value)}`
+    : `${what}: ${value}`);
 }
 
 /* ---------- menus ---------- */
@@ -6058,15 +6062,33 @@ function ask({ title, label, value = "", note = "", options = null,
   const asOption = (o) => ({
     value: typeof o === "string" ? o : o.value,
     label: typeof o === "string" ? o : o.label,
+    // A heading to gather this one under. Options carrying one are drawn
+    // in groups; a list where nothing carries one is drawn flat, as it
+    // always was.
+    group: typeof o === "string" ? "" : (o.group || ""),
   });
   const all = useList ? options.map(asOption) : [];
   let onFilter = null;
 
   if (useList) {
+    // Drawn under headings where the options carry them, which is what
+    // turns three hundred instruments from a wall into a list somebody can
+    // find a cor anglais in. The options arrive in order and a group is in
+    // one piece, so this is a single pass: a heading opens when the group
+    // changes and closes when the next one does.
     const render = (list, keep) => {
-      select.innerHTML = list
-        .map((o) => `<option value="${escapeHTML(o.value)}">${escapeHTML(o.label)}</option>`)
-        .join("");
+      let html = "", open = "";
+      for (const o of list) {
+        const g = o.group || "";
+        if (g !== open) {
+          if (open) html += "</optgroup>";
+          if (g) html += `<optgroup label="${escapeHTML(g)}">`;
+          open = g;
+        }
+        html += `<option value="${escapeHTML(o.value)}">${escapeHTML(o.label)}</option>`;
+      }
+      if (open) html += "</optgroup>";
+      select.innerHTML = html;
       if (keep && list.some((o) => o.value === keep)) select.value = keep;
       else if (list.length) select.selectedIndex = 0;
     };
@@ -6086,7 +6108,12 @@ function ask({ title, label, value = "", note = "", options = null,
       onFilter = () => {
         const q = filter.value.trim().toLowerCase();
         const keep = select.value;
-        render(q ? all.filter((o) => o.label.toLowerCase().includes(q)) : all, keep);
+        // The heading counts as part of what is being searched: typing
+        // "brass" should find the brass, and nothing in that group has
+        // the word in its name.
+        const hit = (o) => o.label.toLowerCase().includes(q) ||
+          (o.group || "").toLowerCase().includes(q);
+        render(q ? all.filter(hit) : all, keep);
       };
       filter.addEventListener("input", onFilter);
     }
@@ -7340,20 +7367,39 @@ async function setTimeDialog(at) {
     : `${meter}, on every staff`);
 }
 
+// instrumentOptions is the catalogue as the picker wants it: one option per
+// instrument, carrying the heading it belongs under.
+//
+// The value is the sound id and not the name, because the id is what says
+// which instrument this is. Two of them are called "timpani" and several
+// are called some kind of guitar; the names are for reading and the id is
+// what gets sent back and written into the file.
+let instrumentCatalogue = null;
+async function instrumentOptions() {
+  if (!instrumentCatalogue) {
+    const d = await (await fetch("/api/instruments")).json();
+    instrumentCatalogue = d.instruments || [];
+  }
+  return instrumentCatalogue.map((x) => ({
+    value: x.sound, label: x.name, group: x.group,
+  }));
+}
+
 async function setInstrumentDialog() {
-  const list = await (await fetch("/api/instruments")).json();
+  const options = await instrumentOptions();
   const part = state.selection?.part ?? 0;
   const staff = state.info?.parts?.[part];
   const v = await ask({
     title: "Instrument",
-    label: staff ? `What ${staff.name} sounds as` : "Instrument",
-    value: staff?.instrument || "piano",
-    note: "Used for playback. Type to search.",
+    label: staff ? `What ${staff.name} plays` : "Instrument",
+    value: staff?.sound || "keyboard.piano",
+    note: "Sets the clef, the transposition and the range it is checked " +
+          "against, as well as what it is played with. Type to search.",
     search: true,
-    options: list.map((x) => ({ value: x.name, label: `${x.name} — ${x.family}` })),
+    options,
   });
   if (v === null) return;
-  await setStaffProperty("instrument", v);
+  await setStaffProperty("sound", v);
 }
 
 // openBarlinePicker asks what the clicked barline should be.
@@ -7838,18 +7884,66 @@ function nextMarkerLetter() {
   return String.fromCharCode(65 + Math.min(25, n));
 }
 
-// joinStaves draws a brace or a bracket down the staves that are selected.
+// staffRange reads "2-4" as the staves it names, counted from one the way
+// they are numbered down the side of the score.
+//
+// A dash, an en dash or a comma, because all three are what somebody types
+// for a range and none of them is wrong. A single number is a range of one
+// staff, which is not a group, and is refused by the caller rather than
+// quietly turned into something else.
+function staffRange(raw, have) {
+  const text = String(raw).trim();
+  // Digits and separators, beginning with a digit. Checked before it is
+  // split rather than after: splitting "-1-2" throws the sign away and
+  // reads it as staves 1 to 2, which is an answer to a question nobody
+  // asked.
+  if (!/^\d[\d\s,–—-]*$/.test(text)) return null;
+  const n = text.split(/[-–—,\s]+/).map((s) => s.trim())
+    .filter((s) => s !== "").map(Number);
+  if (!n.length || n.some((v) => !Number.isInteger(v) || v < 1 || v > have)) {
+    return null;
+  }
+  const first = Math.min(...n) - 1, last = Math.max(...n) - 1;
+  return last > first ? { first, last } : null;
+}
+
+// joinStaves draws a brace or a bracket down a run of staves.
+//
+// Not only a pianist's two. A bracket gathers a family — the strings, the
+// woodwind, a rhythm section — and that is most of what it is for, so which
+// staves it covers is a question and not an assumption. Selecting across
+// the staves answers it; where nothing is selected the question is asked,
+// because the old behaviour of silently taking every staff in the score was
+// right about as often as it was wrong.
 async function joinStaves(symbol) {
   const parts = state.info?.parts || [];
   if (parts.length < 2) {
     status("There is only one staff to join");
     return;
   }
-  // Which staves: the ones touched by the selection, or all of them.
+  // Which staves: the ones touched by the selection, or whatever is asked
+  // for. Taking a group away is about a group that is already there, so it
+  // asks nothing.
   let first = 0, last = parts.length - 1;
   if (state.multi.length) {
     first = Math.min(...state.multi.map((m) => m.part));
     last = Math.max(...state.multi.map((m) => m.part));
+  }
+  if (last <= first && symbol !== "none") {
+    const named = parts.map((p, i) => (i + 1) + " " + (p.name || "Staff " + (i + 1)));
+    const answer = await ask({
+      title: symbol === "brace" ? "Brace which staves?" : "Bracket which staves?",
+      label: "Staves",
+      value: "1–" + parts.length,
+      note: "A range, as 2–4. Of " + named.join(", ") + ".",
+    });
+    if (answer === null) return;
+    const got = staffRange(answer, parts.length);
+    if (!got) {
+      status(`${answer} is not a range of two staves or more`);
+      return;
+    }
+    ({ first, last } = got);
   }
   if (last <= first) { first = 0; last = parts.length - 1; }
 
@@ -8234,19 +8328,20 @@ async function changeDrumKit(id) {
 // Without this the only way to a trio chart was to write it somewhere else
 // and import it, which is not a notation program.
 async function addStaffDialog() {
-  const list = await (await fetch("/api/instruments")).json();
+  const options = await instrumentOptions();
   const inst = await ask({
     title: "Add a staff",
     label: "What plays it",
-    value: "flute",
+    value: "wind.flutes.flute",
     note: "The clef and the transposition follow from the instrument. " +
-          "Choose the drum kit for a staff whose lines name drums. Type to search.",
+          "Choose a drum or a kit for a staff whose lines name instruments " +
+          "rather than pitches. Type to search.",
     search: true,
-    options: list.map((x) => ({ value: x.name, label: `${x.name} — ${x.family}` })),
+    options,
   });
   if (inst === null) return;
 
-  const p = new URLSearchParams({ instrument: inst, clef: clefFor(inst) });
+  const p = new URLSearchParams({ sound: inst });
   // Below the staff the cursor is on, which is where somebody adding a
   // staff while looking at one almost always means.
   if (state.selection) p.set("at", String((state.selection.part ?? 0) + 1));
@@ -8257,17 +8352,15 @@ async function addStaffDialog() {
     return;
   }
   await reload();
-  status("Added a staff for " + inst);
+  status("Added a staff for " + instrumentNamed(inst));
 }
 
-// clefFor is the clef an instrument is written in, so nobody has to tell a
-// program that a double bass reads bass clef.
-function clefFor(name) {
-  const n = (name || "").toLowerCase();
-  if (/drum|percussion/.test(n)) return "percussion";
-  if (/bass|cello|bassoon|trombone|tuba|contrabass|baritone/.test(n)) return "bass";
-  if (/viola/.test(n)) return "alto";
-  return "treble";
+// instrumentNamed is what to call a sound id in a sentence to the person,
+// who chose "bass clarinet" and should not be told about
+// "wind.reed.clarinet.bass".
+function instrumentNamed(sound) {
+  const found = (instrumentCatalogue || []).find((x) => x.sound === sound);
+  return found ? found.name : sound;
 }
 
 // addGrandStaff adds the two staves a pianist reads, joined by a brace with

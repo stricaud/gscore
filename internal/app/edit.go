@@ -1323,7 +1323,25 @@ func (a *App) handleStaff(w http.ResponseWriter, r *http.Request) {
 			changed = append(changed, "time")
 		}
 	}
-	if v := q.Get("instrument"); isDrumKit(v) {
+	// A sound names the instrument itself — "bass clarinet", not "a
+	// clarinet program" — and is what the catalogue offers.
+	if v := q.Get("sound"); v != "" {
+		if !applySound(p, v) {
+			http.Error(w, "unknown instrument "+v, http.StatusBadRequest)
+			return
+		}
+		changed = append(changed, "instrument")
+		if q.Get("transpose") != "0" {
+			want, _ := model.SoundTransposition(v)
+			if want != p.Transpose {
+				retranspose(p, p.Transpose, want)
+				p.Transpose = want
+				if !want.IsZero() {
+					changed = append(changed, "transposition")
+				}
+			}
+		}
+	} else if v := q.Get("instrument"); isDrumKit(v) {
 		p.Clef = model.Percussion
 		// A staff of drums is in no key: its lines carry no pitches.
 		p.Key = model.KeySignature{}
@@ -1556,33 +1574,78 @@ func (a *App) handleHeader(w http.ResponseWriter, r *http.Request) {
 func parseTags(line string) []string { return model.ParseTags(line) }
 
 // handleInstruments lists what a staff can be set to sound as.
+// handleInstruments is the list somebody picks an instrument from.
+//
+// The catalogue, clustered by what the thing is, and not the hundred and
+// twenty-eight General MIDI programs in numerical order. The difference
+// matters because the question being asked is "what is this piece for",
+// and a flat list of programs cannot answer it: General MIDI has no bass
+// clarinet, no cornet and one entry covering every guitar ever made.
+//
+// Each entry carries the sound id as well as the name, and that is what the
+// editor sends back. A name is for reading; the id is what says which
+// instrument this is, in the spelling MusicXML, MuseScore, Dorico and
+// Finale all use, so a part chosen here survives being exported.
+//
+// ?flat=1 gives the old answer — the named General MIDI programs, as a flat
+// list — for anything that was reading this endpoint before the catalogue
+// existed.
 func (a *App) handleInstruments(w http.ResponseWriter, r *http.Request) {
 	type entry struct {
 		Program int    `json:"program"`
 		Name    string `json:"name"`
 		Family  string `json:"family"`
-		// Percussion marks the one entry that is not a General MIDI program
-		// at all. Choosing it gives a staff whose lines name drums.
+		// Percussion marks an entry that is not a General MIDI program at
+		// all. Choosing it gives a staff whose lines name drums.
 		Percussion bool `json:"percussion,omitempty"`
 	}
-	// A drum kit belongs in the list people choose an instrument from,
-	// because that is where somebody looks for it. It is not a program
-	// number: General MIDI puts drums on their own channel rather than
-	// giving them one, so nothing of the sort is written into the model —
-	// what makes a staff a drum staff is its clef, and choosing this sets
-	// that.
-	out := []entry{{Program: -1, Name: drumKitName, Family: "percussion", Percussion: true}}
-	for p := 0; p < 128; p++ {
-		i := model.Instrument(p)
-		n := i.String()
-		// Only the ones with a name of their own; the rest are "program 57"
-		// and nobody is choosing those from a list.
-		if strings.HasPrefix(n, "program ") {
-			continue
+
+	if r.URL.Query().Get("flat") == "1" {
+		// A drum kit belongs in the list people choose an instrument from,
+		// because that is where somebody looks for it. It is not a program
+		// number: General MIDI puts drums on their own channel rather than
+		// giving them one, so nothing of the sort is written into the model
+		// — what makes a staff a drum staff is its clef, and choosing this
+		// sets that.
+		out := []entry{{Program: -1, Name: drumKitName, Family: "percussion", Percussion: true}}
+		for p := 0; p < 128; p++ {
+			i := model.Instrument(p)
+			n := i.String()
+			// Only the ones with a name of their own; the rest are
+			// "program 57" and nobody is choosing those from a list.
+			if strings.HasPrefix(n, "program ") {
+				continue
+			}
+			out = append(out, entry{Program: p, Name: n, Family: i.Family().String()})
 		}
-		out = append(out, entry{Program: p, Name: n, Family: i.Family().String()})
+		writeJSON(w, out)
+		return
 	}
-	writeJSON(w, out)
+
+	type item struct {
+		Group      string `json:"group"`
+		Name       string `json:"name"`
+		Sound      string `json:"sound"`
+		Program    int    `json:"program"`
+		Percussion bool   `json:"percussion,omitempty"`
+		// Low and High are the written compass, as MIDI note numbers,
+		// where gscore knows it. A section — "strings", "brass section" —
+		// has no one range and claims none.
+		Low  int `json:"low,omitempty"`
+		High int `json:"high,omitempty"`
+	}
+	out := make([]item, 0, 320)
+	for _, c := range model.Catalogue() {
+		out = append(out, item{
+			Group: c.Group, Name: c.Name, Sound: c.Sound,
+			Program: int(c.Program), Percussion: c.Percussion,
+			Low: c.Low, High: c.High,
+		})
+	}
+	writeJSON(w, struct {
+		Groups      []string `json:"groups"`
+		Instruments []item   `json:"instruments"`
+	}{model.Groups, out})
 }
 
 // retranspose rewrites a part from one transposition to another, keeping what
@@ -2644,11 +2707,23 @@ func (a *App) handleGroup(w http.ResponseWriter, r *http.Request) {
 	case "line":
 		symbol = model.GroupLine
 	}
-	a.score.Groups = append(a.score.Groups, model.StaffGroup{
+	group := model.StaffGroup{
 		First: first, Last: last, Symbol: symbol,
 		Barlines: q.Get("barlines") == "1" || symbol == model.GroupBrace,
 		Name:     q.Get("name"),
-	})
+	}
+	// Over the one already covering these staves, where there is one.
+	// Appending instead drew the second symbol on top of the first, so
+	// changing a bracket to a brace left both of them there and the only
+	// way out was to take the group away and start again.
+	for i, g := range a.score.Groups {
+		if g.First == first && g.Last == last {
+			a.score.Groups[i] = group
+			writeJSON(w, map[string]any{"status": "ok", "groups": len(a.score.Groups)})
+			return
+		}
+	}
+	a.score.Groups = append(a.score.Groups, group)
 	writeJSON(w, map[string]any{"status": "ok", "groups": len(a.score.Groups)})
 }
 
@@ -2866,7 +2941,29 @@ func (a *App) handleAddStaff(w http.ResponseWriter, r *http.Request) {
 		clef = c
 	}
 	inst := model.AcousticGrandPiano
-	if v := q.Get("instrument"); isDrumKit(v) {
+	// sound and trans are what the staff is and how it transposes. A sound
+	// answers both; an instrument chosen as a General MIDI program can only
+	// answer the second, and only as well as the program allows.
+	sound, named := "", ""
+	trans := model.Transposition{}
+	if v := q.Get("sound"); v != "" {
+		probe := &model.Part{}
+		if !applySound(probe, v) {
+			http.Error(w, "unknown instrument "+v, http.StatusBadRequest)
+			return
+		}
+		sound, inst = v, probe.Instrument
+		named, _ = model.SoundName(v)
+		trans, _ = model.SoundTransposition(v)
+		if probe.Clef == model.Percussion {
+			clef = model.Percussion
+		} else if _, given := clefByStringName[q.Get("clef")]; !given {
+			// A bassoon in the treble clef is a mistake nobody wants to
+			// correct by hand, so the clef follows the instrument unless
+			// the caller said otherwise.
+			clef = clefForSound(v)
+		}
+	} else if v := q.Get("instrument"); isDrumKit(v) {
 		// A drum kit is a staff whose lines name drums, which is the clef.
 		clef = model.Percussion
 	} else if v != "" {
@@ -2884,6 +2981,9 @@ func (a *App) handleAddStaff(w http.ResponseWriter, r *http.Request) {
 			}
 			inst = model.Instrument(n)
 		}
+		trans = model.TranspositionFor(inst)
+	} else {
+		trans = model.TranspositionFor(inst)
 	}
 
 	// The key and the meter come from the score, not from nothing: a new
@@ -2902,7 +3002,7 @@ func (a *App) handleAddStaff(w http.ResponseWriter, r *http.Request) {
 	if len(a.score.Parts) > 0 {
 		first := a.score.Parts[0]
 		concert = first.Transpose.Sounding(first.Key)
-		key, time = model.TranspositionFor(inst).Written(concert), first.Time
+		key, time = trans.Written(concert), first.Time
 		for _, p := range a.score.Parts {
 			if len(p.Measures) > bars {
 				bars = len(p.Measures)
@@ -2916,8 +3016,11 @@ func (a *App) handleAddStaff(w http.ResponseWriter, r *http.Request) {
 
 	part := &model.Part{
 		Name: strings.TrimSpace(q.Get("name")), Instrument: inst,
-		Clef: clef, Key: key, Time: time,
-		Transpose: model.TranspositionFor(inst),
+		Sound: sound, Clef: clef, Key: key, Time: time,
+		Transpose: trans,
+	}
+	if part.Name == "" && named != "" {
+		part.Name = capitalised(named)
 	}
 	if part.Name == "" {
 		// Capitalised, because this is printed down the left of the score
@@ -2946,7 +3049,7 @@ func (a *App) handleAddStaff(w http.ResponseWriter, r *http.Request) {
 			// too is read off the staff it is written on and written again
 			// for this one.
 			if k := src.Measures[i].Key; k != nil && clef != model.Percussion {
-				c := model.TranspositionFor(inst).Written(src.Transpose.Sounding(*k))
+				c := trans.Written(src.Transpose.Sounding(*k))
 				part.Measures[i].Key = &c
 			}
 			if t := src.Measures[i].Time; t != nil {
@@ -3421,6 +3524,74 @@ func (a *App) handlePercussion(w http.ResponseWriter, r *http.Request) {
 
 // drumKitName is what the kit is called in the list of instruments.
 const drumKitName = "drum kit"
+
+// applySound sets a staff to one of the catalogue's instruments.
+//
+// The sound is what the staff *is* and the program is only what plays it,
+// so both are written: a contrabassoon staff keeps "wind.reed.contrabassoon"
+// and sounds through a bassoon, because General MIDI has nothing nearer.
+// Asked for the range, the staff answers as a contrabassoon — which is the
+// whole reason the sound is kept.
+//
+// The transposition comes from the sound too. Reading it off the program
+// cannot tell a clarinet in A from one in B flat, and the editor used to
+// get that wrong by a semitone on every clarinet in A ever chosen.
+func applySound(p *model.Part, id string) bool {
+	if !model.SoundKnown(id) {
+		return false
+	}
+	p.Sound = id
+
+	if model.SoundIsPercussion(id) {
+		// A staff of drums is in no key and reads no pitches: its lines
+		// name instruments, which is what the percussion clef says.
+		p.Clef = model.Percussion
+		p.Key = model.KeySignature{}
+		p.Transpose = model.Transposition{}
+		return true
+	}
+	if prog, ok := model.SoundProgram(id); ok {
+		p.Instrument = prog
+	}
+	return true
+}
+
+// clefForSound is the clef an instrument is written in.
+//
+// So that nobody has to tell the program that a cello reads the bass clef.
+// It is a default and not a rule: the staff dialog can change it, and a
+// part that wants a different one says so.
+//
+// A list and not a rule derived from the range, which was tried and is
+// wrong. A clef is a convention about what a player reads, not a
+// consequence of where the instrument sounds: a cello's top C is as high as
+// a violin's open E and it still reads the bass clef, and a horn covers
+// three and a half octaves centred below middle C and still reads the
+// treble. Neither follows from a number, so neither is guessed from one.
+func clefForSound(id string) model.Clef {
+	switch id {
+	case "strings.viola", "strings.viola-damore", "strings.viol.alto",
+		"brass.trombone.alto", "brass.sackbutt.alto":
+		return model.Alto
+	}
+	switch id {
+	case "strings.cello", "strings.cello.piccolo", "strings.contrabass",
+		"strings.octobass", "strings.viol", "strings.viol.tenor",
+		"strings.viol.bass", "strings.viol.violone",
+		"wind.reed.bassoon", "wind.reed.contrabassoon",
+		"brass.trombone", "brass.trombone.tenor", "brass.trombone.bass",
+		"brass.trombone.contrabass", "brass.sackbutt", "brass.sackbutt.tenor",
+		"brass.sackbutt.bass", "brass.tuba", "brass.tuba.bass",
+		"brass.tuba.subcontrabass", "brass.euphonium", "brass.baritone-horn",
+		"brass.sousaphone", "brass.cimbasso", "brass.ophicleide",
+		"brass.serpent", "brass.trumpet.bass",
+		"pluck.bass", "pluck.bass.acoustic", "pluck.bass.electric",
+		"pluck.bass.fretless", "pluck.bass.synth",
+		"drum.timpani", "pitched-percussion.marimba.bass":
+		return model.Bass
+	}
+	return model.Treble
+}
 
 // isDrumKit reports whether a chosen instrument is the kit rather than a
 // General MIDI program.

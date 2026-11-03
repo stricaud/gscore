@@ -1828,7 +1828,11 @@ func TestDrumKitIsAnInstrumentChoice(t *testing.T) {
 		Family     string `json:"family"`
 		Percussion bool   `json:"percussion"`
 	}
-	if err := json.Unmarshal([]byte(h.get("/api/instruments")), &list); err != nil {
+	// ?flat=1 is the General MIDI programs as a flat list, which is what
+	// this endpoint answered before the catalogue; the kit has to stay in
+	// it, because that is the list anything written against the old
+	// endpoint is still reading.
+	if err := json.Unmarshal([]byte(h.get("/api/instruments?flat=1")), &list); err != nil {
 		t.Fatal(err)
 	}
 	var kit *struct {

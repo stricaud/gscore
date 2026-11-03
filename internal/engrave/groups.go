@@ -215,14 +215,7 @@ func (e *engraver) drawGroups(parts []*model.Part, left float64, tops []float64,
 				X1: x, Y1: top, X2: x, Y2: bottom, Thickness: bracketThickness / 2,
 			})
 		default:
-			// A bracket: a heavy vertical with a serif turning right at each
-			// end, which is what distinguishes it from a barline.
-			e.lay.Lines = append(e.lay.Lines,
-				Line{X1: x, Y1: top - 0.2, X2: x, Y2: bottom + 0.2, Thickness: bracketThickness},
-				Line{X1: x, Y1: top - 0.2, X2: x + 0.7, Y2: top - 0.5,
-					Thickness: bracketThickness * 0.7},
-				Line{X1: x, Y1: bottom + 0.2, X2: x + 0.7, Y2: bottom + 0.5,
-					Thickness: bracketThickness * 0.7})
+			e.drawBracket(x, top, bottom)
 		}
 
 		if g.Name != "" && e.opt.ShowPartNames {
@@ -828,6 +821,51 @@ func (e *engraver) drawnAt(staff int) (int, bool) {
 		}
 	}
 	return 0, false
+}
+
+const (
+	// bracketExtend is how far the vertical runs past the outermost staff
+	// line before the claw starts. A bracket that stopped exactly on the
+	// line would read as a barline with decoration.
+	bracketExtend = 0.18
+)
+
+// drawBracket draws the bracket that gathers the staves of a family: the
+// strings, the woodwind, a rhythm section.
+//
+// A heavy vertical, and at each end the claw that turns back towards the
+// music. What was drawn here before was three straight lines — the vertical
+// and a diagonal serif at either end — and it read as an arrow: a serif of
+// even width cannot come to a point, and the corner where it met the
+// vertical showed as a notch at every size.
+//
+// The claws are the font's, not this file's. A bracket end is a drawn shape
+// with a crest and a point, and Bravura has both of them — bracketTop and
+// bracketBottom, designed against the same staff space everything else here
+// is measured in. Working them out again as Bézier curves was tried and got
+// a shape that was recognisably almost right, which is the worst thing a
+// piece of engraving can be: the font was drawn by somebody who does this,
+// and SMuFL is the font interface this program already has.
+//
+// The vertical stays a line, because a line of even width is exactly what
+// it is.
+func (e *engraver) drawBracket(x, top, bottom float64) {
+	if bottom <= top {
+		return
+	}
+	// The vertical stops where the claws take over. They overlap it by
+	// bracketExtend, so there is no seam at the join to show as a pale
+	// line between two black things.
+	e.lay.Lines = append(e.lay.Lines, Line{
+		X1: x, Y1: top - bracketExtend,
+		X2: x, Y2: bottom + bracketExtend,
+		Thickness: bracketThickness,
+	})
+	// Placed on the centre line of the vertical: the glyphs are drawn
+	// from there outwards, up at the top and down at the bottom.
+	e.lay.Glyphs = append(e.lay.Glyphs,
+		Glyph{Name: "bracketTop", X: x - bracketThickness/2, Y: top - bracketExtend},
+		Glyph{Name: "bracketBottom", X: x - bracketThickness/2, Y: bottom + bracketExtend})
 }
 
 // drawBrace draws the curly brace that joins the staves of one instrument.

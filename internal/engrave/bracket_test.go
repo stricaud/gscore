@@ -23,6 +23,7 @@
 package engrave
 
 import (
+	"math"
 	"testing"
 
 	"github.com/stricaud/gscore/internal/model"
@@ -155,8 +156,8 @@ func TestAScoreCanCarryABraceAndABracketAtOnce(t *testing.T) {
 	if n := len(glyphsNamed(lay, "bracketTop")); n != 1 {
 		t.Errorf("drew %d bracket tops, want the one over the strings", n)
 	}
-	// And the brace is still there, as filled shapes rather than glyphs.
-	if len(lay.Quads) == 0 {
+	// And the brace is still there, as the font's own glyph.
+	if _, ok := glyphNamed(lay, "brace"); !ok {
 		t.Error("the brace was not drawn")
 	}
 }
@@ -181,20 +182,20 @@ func nested() *model.Score {
 	return s
 }
 
-// leftmost is where the drawing's ink begins, among the things named.
+// braceLeft is the span the brace occupies across the page.
+//
+// The glyph is set from its left edge and is as wide as scaling it to its
+// own height makes it, which is what braceWidth says.
 func braceLeft(lay *Layout) (lo, hi float64, ok bool) {
-	lo, hi = 1e9, -1e9
-	for _, q := range lay.Quads {
-		for _, x := range q.X {
-			if x < lo {
-				lo = x
-			}
-			if x > hi {
-				hi = x
-			}
+	for _, g := range lay.Glyphs {
+		if g.Name != "brace" {
+			continue
 		}
+		// Size is the em the glyph is set at, four spaces to the em.
+		h := g.Size * braceNaturalH / 4
+		return g.X, g.X + braceWidth(h), true
 	}
-	return lo, hi, lo < hi
+	return 0, 0, false
 }
 
 // bracketAt is the x of the bracket's heavy vertical.
@@ -271,11 +272,13 @@ func TestNestingMakesRoomByMovingTheMusic(t *testing.T) {
 			"the brace has nowhere to go", with, plain)
 	}
 
-	// And the bracket itself has not moved: it is on the margin in both.
+	// And the bracket itself has not moved: it is on the margin in both,
+	// because room is made by moving the music and not by pushing the
+	// outermost symbol off the edge of the page.
 	a, _ := bracketAt(Engrave(bracketScore(3, 0, 2, model.GroupBracket), DefaultOptions()))
 	b, _ := bracketAt(Engrave(nested(), DefaultOptions()))
-	if a != b {
-		t.Errorf("the bracket moved from %.2f to %.2f", a, b)
+	if math.Abs(a-b) > 0.001 {
+		t.Errorf("the bracket moved from %.4f to %.4f", a, b)
 	}
 }
 

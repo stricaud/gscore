@@ -13,7 +13,6 @@ package engrave
 import (
 	"github.com/stricaud/gscore/internal/model"
 	"github.com/stricaud/gscore/internal/smufl"
-	"math"
 )
 
 // What is drawn down the left of a system: the staff names, and the braces and
@@ -121,7 +120,7 @@ func (e *engraver) labelWidth(parts []*model.Part, first bool) float64 {
 			// labels each of its staves, and without the allowance the
 			// words "Right Hand" and "Left Hand" were written across the
 			// brace that joins them.
-			w += braceWidth(1e9) + groupGap*0.5
+			w += braceRoom + groupGap*0.5
 		}
 		if w > widest {
 			widest = w
@@ -142,7 +141,7 @@ func (e *engraver) labelWidth(parts []*model.Part, first bool) float64 {
 			// and the name goes outside that, not across it. A bracket is
 			// a line and needs no such allowance, which is why only the
 			// braces widen the margin.
-			w += braceWidth(1e9)
+			w += braceRoom
 		}
 		// And a group inside another stands further out again, with its
 		// name outside that.
@@ -234,7 +233,7 @@ func groupReach(g model.StaffGroup) float64 {
 		// The widest a brace gets, rather than this brace's own width:
 		// the column has to be in the same place on every system, and a
 		// brace drawn over four staves is wider than one over two.
-		return 0.4 + braceWidth(1e9)
+		return braceRoom
 	}
 	return bracketThickness
 }
@@ -301,6 +300,28 @@ func (e *engraver) drawGroups(parts []*model.Part, left float64, tops []float64,
 	}
 
 	columns := e.groupColumns()
+
+	// How far left the ink reaches in front of each staff, so that a name
+	// beside it can be put outside all of it.
+	//
+	// Measured from what is actually drawn and not guessed at. It used to
+	// be guessed — the name of a braced staff stepped left by the width
+	// of a brace over twice the staff height — and a guess is wrong the
+	// moment the brace is a different height or there is a bracket
+	// outside it as well. Both happened, and the words were printed
+	// across the symbols.
+	edge := make([]float64, len(tops))
+	for i := range edge {
+		edge[i] = left - groupGap - 0.4
+	}
+	reach := func(fi, li int, at float64) {
+		for i := fi; i <= li && i < len(edge); i++ {
+			if at < edge[i] {
+				edge[i] = at
+			}
+		}
+	}
+
 	for gi, g := range e.score.Groups {
 		// A group names staves by their number in the score, and the ones
 		// drawn are only those not hidden. Hiding the lower half of a piano
@@ -319,34 +340,39 @@ func (e *engraver) drawGroups(parts []*model.Part, left float64, tops []float64,
 		switch g.Symbol {
 		case model.GroupBrace:
 			e.drawBrace(x-0.4, top, bottom)
+			reach(fi, li, x-0.4-braceWidth(bottom-top))
 		case model.GroupLine:
 			e.lay.Lines = append(e.lay.Lines, Line{
 				X1: x, Y1: top, X2: x, Y2: bottom, Thickness: bracketThickness / 2,
 			})
+			reach(fi, li, x-bracketThickness/4)
 		default:
 			e.drawBracket(x, top, bottom)
+			reach(fi, li, x-bracketThickness/2)
 		}
+	}
 
-		if g.Name != "" && e.opt.ShowPartNames {
+	// The group names, outside everything standing in front of their
+	// staves — their own symbol and any that encloses it.
+	if e.opt.ShowPartNames {
+		for _, g := range e.score.Groups {
+			if g.Name == "" {
+				continue
+			}
+			fi, ok1 := e.drawnAt(g.First)
+			li, ok2 := e.drawnAt(g.Last)
+			if !ok1 || !ok2 || li <= fi || li >= len(tops) {
+				continue
+			}
 			label := g.Name
 			if !first {
 				label = abbreviate(label)
 			}
-			// Clear of the symbol, not clear of the staves. A bracket is a
-			// line and takes no room worth the name; a brace stands a space
-			// or two out to its left, and the word "Piano" written to the
-			// staves was written across the brace.
-			// Clear of the symbol, not clear of the staves: the word
-			// "Piano" beside a grand staff used to be written across the
-			// brace it labels.
-			at := x - groupGap
-			if g.Symbol == model.GroupBrace {
-				at = x - 0.4 - braceWidth(bottom-top) - groupGap*0.5
-			}
-			// x has already stepped left for a group that is inside
-			// another, so the name follows it without anything more.
+			top := tops[fi]
+			bottom := tops[li] + partH(parts[li])
 			e.lay.Texts = append(e.lay.Texts, Text{
-				S: label, X: at, Y: (top+bottom)/2 + nameSize*0.35,
+				S: label, X: edge[fi] - groupGap*0.5,
+				Y:    (top+bottom)/2 + nameSize*0.35,
 				Size: nameSize, Anchor: "end",
 			})
 		}
@@ -370,7 +396,6 @@ func (e *engraver) drawGroups(parts []*model.Part, left float64, tops []float64,
 			named[i] = true
 		}
 	}
-	braced := e.bracedStaves()
 	for i, p := range parts {
 		if i >= len(tops) || named[i] {
 			continue
@@ -379,14 +404,11 @@ func (e *engraver) drawGroups(parts []*model.Part, left float64, tops []float64,
 		if label == "" {
 			continue
 		}
-		// Clear of the brace where there is one, as a group's own name is.
-		// Moonlight Sonata's grand staff carries no group name, so each of
-		// its two staves is labelled on its own, and both words were drawn
-		// over the brace.
-		at := left - groupGap - 0.4
-		if braced[i] {
-			at -= braceWidth(partH(parts[i])*2) + groupGap*0.5
-		}
+		// Outside whatever stands in front of this staff, which is what
+		// edge holds. Moonlight Sonata's grand staff carries no group
+		// name, so each of its two staves is labelled on its own, and
+		// both words were drawn over the brace.
+		at := edge[i] - groupGap*0.5
 		e.lay.Texts = append(e.lay.Texts, Text{
 			// Centred on the staff's middle line, which is where a name sits
 			// in every printed score.
@@ -1063,95 +1085,76 @@ func (e *engraver) drawBracket(x, top, bottom float64) {
 		Glyph{Name: "bracketBottom", X: x - bracketThickness/2, Y: bottom + bracketExtend})
 }
 
-// drawBrace draws the curly brace that joins the staves of one instrument.
+// The curly brace that joins the staves of one instrument.
 //
-// Drawn rather than set as a glyph. A brace has to stretch to however many
-// staves it joins, and a glyph can only be scaled in both directions at once:
-// stretched to a grand staff it comes out four times too wide, and sized to
-// look right it does not reach. Fonts solve this by shipping several braces of
-// different sizes, which still only fits the sizes they ship.
+// Set as a glyph, which this did not used to be. It was drawn by hand on
+// the grounds that a brace has to stretch to however many staves it joins
+// and a glyph can only be scaled both ways at once — true in general, and
+// not true of this one. Bravura's brace is cut 0.277 staff spaces wide and
+// 4.005 tall, which is to say drawn tall and thin on purpose so that
+// scaling it up gives a brace of the right weight: at the height of a
+// grand staff it comes out about 1.4 spaces across, which is where a brace
+// belongs, and a taller one comes out wider, which is what a taller brace
+// does in print.
 //
-// A brace is two mirrored S-curves: a tip at each end curling towards the
-// staves, and a cusp in the middle pointing away from them. Four quadratics
-// draw it at any height.
-// braceWidth is how far a brace's cusp stands out to the left of the staves
-// it joins.
+// What the drawn one could not get was the shape. A brace is not two
+// curves of varying width; it is a cut letter, with a flat on the inside
+// of each arm, a swell that is not symmetrical about the cusp, and tips
+// that come to a hair. That is a thing a type designer did, and the font
+// has it.
+
+const (
+	// braceNaturalW and braceNaturalH are the glyph's own box, in staff
+	// spaces, at the size the font is quoted at — four spaces to the em.
+	// Measured from Bravura: 0 to 69 across and -1 to 1001 up, per 1000
+	// units to the em.
+	braceNaturalW = 0.277
+	braceNaturalH = 4.005
+
+	// braceRoom is how much width to keep in front of the staves for a
+	// brace, where the height it will be drawn to is not yet known.
+	//
+	// A reservation and not a measurement: labelWidth runs before the
+	// staves have been spaced, so it cannot ask how tall any brace is
+	// going to be. Three spaces is the width of a brace over four
+	// staves, which is past anything one player reads — an organist's
+	// three is the most of it — so the room is there and a little of it
+	// goes unused.
+	braceRoom = 3.0
+)
+
+// braceWidth is how far a brace's cusp stands out to the left of the
+// staves it joins, at the height it is drawn to.
 //
-// A brace joining more staves is drawn a little wider, within reason, the way
-// a larger brace in a font is not a scaled-up small one.
+// Read off the glyph rather than chosen: the width is whatever scaling it
+// to this height makes it, and anything reserving room in front of the
+// staves has to agree with what is actually drawn.
 func braceWidth(h float64) float64 {
-	w := 1.05 + h*0.022
-	if w > 1.9 {
-		return 1.9
+	if h <= 0 {
+		return 0
 	}
-	return w
+	return h * braceNaturalW / braceNaturalH
 }
 
+// drawBrace sets the brace, scaled so that it spans exactly the staves it
+// joins.
+//
+// x is the column it stands in and the brace is drawn to the left of it,
+// so the glyph's origin — its left edge — goes a brace's width further
+// out. Its baseline is the foot of the shape, so it is set at the bottom
+// and grows upwards.
 func (e *engraver) drawBrace(x, top, bottom float64) {
 	h := bottom - top
 	if h <= 0 {
 		return
 	}
-	mid := (top + bottom) / 2
-
-	w := braceWidth(h)
-	fat := 0.42 + h*0.009
-	if fat > 0.72 {
-		fat = 0.72
-	}
-
-	// Each arm runs from a tip to the cusp and is a shape, not a stroke.
-	// This is the whole of why it used to look wrong: a brace is not a line
-	// of even width bent into a curve. It is pointed at the tip, swells to
-	// its fattest about halfway along, and comes to a point again where the
-	// two arms meet — and a stroked curve, which is what was drawn here
-	// before, cannot be pointed at either end. It read as a wobbly bracket.
-	arm := func(tipY float64) {
-		// A cubic from the tip to the cusp: it leaves the tip almost
-		// vertically and arrives at the cusp almost horizontally, which is
-		// the line a brace actually takes.
-		p0x, p0y := x, tipY
-		p1x, p1y := x, tipY+(mid-tipY)*0.52
-		p2x, p2y := x-w*0.52, mid
-		p3x, p3y := x-w, mid
-
-		type pt struct{ x, y float64 }
-		// edges is the two sides of the stroke at one point along it.
-		edges := func(t float64) (pt, pt) {
-			if t > 1 {
-				t = 1
-			}
-			u := 1 - t
-			bx := u*u*u*p0x + 3*u*u*t*p1x + 3*u*t*t*p2x + t*t*t*p3x
-			by := u*u*u*p0y + 3*u*u*t*p1y + 3*u*t*t*p2y + t*t*t*p3y
-			dx := 3*u*u*(p1x-p0x) + 6*u*t*(p2x-p1x) + 3*t*t*(p3x-p2x)
-			dy := 3*u*u*(p1y-p0y) + 6*u*t*(p2y-p1y) + 3*t*t*(p3y-p2y)
-			n := math.Hypot(dx, dy)
-			if n == 0 {
-				n = 1
-			}
-			// Across the stroke, not along it.
-			nx, ny := -dy/n, dx/n
-			// Pointed at both ends, fattest in between: that is the shape.
-			th := fat * math.Sin(math.Pi*t)
-			return pt{bx - nx*th/2, by - ny*th/2}, pt{bx + nx*th/2, by + ny*th/2}
-		}
-
-		// Each piece reaches a little past the next. Two filled shapes that
-		// meet along exactly one edge each cover it about half, and the
-		// halves do not add up: the join shows as a pale hairline all the
-		// way down the brace.
-		const steps = 40
-		const over = 1.6 / steps
-		for i := 0; i < steps; i++ {
-			l0, r0 := edges(float64(i) / steps)
-			l1, r1 := edges(float64(i+1)/steps + over)
-			e.lay.Quads = append(e.lay.Quads, Quad{
-				X: [4]float64{l0.x, r0.x, r1.x, l1.x},
-				Y: [4]float64{l0.y, r0.y, r1.y, l1.y},
-			})
-		}
-	}
-	arm(top)
-	arm(bottom)
+	e.lay.Glyphs = append(e.lay.Glyphs, Glyph{
+		Name: "brace",
+		X:    x - braceWidth(h),
+		Y:    bottom,
+		// The em size that makes the glyph exactly h tall. Four spaces
+		// to the em is what everything else here is drawn at, and the
+		// glyph is a touch over four spaces tall in that em.
+		Size: 4 * h / braceNaturalH,
+	})
 }

@@ -242,3 +242,52 @@ func abs(n int) int {
 	}
 	return n
 }
+
+// PitchInKey spells a sounding MIDI note the way a key signature would
+// write it.
+//
+// This is what a MIDI keyboard needs. A key pressed gives a number and
+// nothing else — the same number for D sharp and E flat — so something has
+// to choose, and the key is the thing in the question with an opinion. In
+// three flats, the black key between D and E is an E flat; in three sharps
+// it is a D sharp. Choosing by a fixed table instead writes a part in A
+// flat major full of G sharps.
+//
+// A note the key already contains is spelled as that note and needs no
+// accidental written: in two sharps, 66 is F sharp, which is the key's own
+// F. A note the key does not contain is chromatic, and takes the sign the
+// key leans towards — sharps in a sharp key, flats in a flat one, and
+// sharps in C, which is what a keyboard player means by "the black note
+// above C".
+func PitchInKey(midi int, key KeySignature) Pitch {
+	class := ((midi % 12) + 12) % 12
+
+	// The key's own seven notes first. Written plain, because the
+	// signature has already said them.
+	for step := StepC; step <= StepB; step++ {
+		alter := key.AlterFor(step)
+		if ((naturalClass[step]+alter)%12+12)%12 == class {
+			return withOctave(step, alter, midi)
+		}
+	}
+	// Chromatic: the sign the key leans towards.
+	return spelled(midi, key.Fifths < 0)
+}
+
+// naturalClass is how many semitones each unaltered letter is above C.
+var naturalClass = [7]int{0, 2, 4, 5, 7, 9, 11}
+
+// withOctave puts a letter and its alteration in the octave that makes it
+// the MIDI number asked for.
+//
+// Worked out from the number rather than taken as midi/12, because the two
+// disagree at the ends: B sharp and C flat sit either side of the line
+// between one octave and the next, so a B sharp written in the octave its
+// number falls in comes out an octave low.
+func withOctave(step Step, alter, midi int) Pitch {
+	oct := (midi-alter-naturalClass[step])/12 - 1
+	if n := midi - alter - naturalClass[step]; n < 0 && n%12 != 0 {
+		oct--
+	}
+	return Pitch{Step: step, Octave: oct, Alter: alter}
+}

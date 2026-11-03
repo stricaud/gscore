@@ -71,7 +71,7 @@
         </div>
       </div>
       <hr>
-      <button data-action="page-setup" disabled><span>Page Setup</span></button>
+      <button data-action="page-setup"><span>Page setup…</span></button>
       <button data-action="print-preview" disabled><span>Print Preview…</span></button>
       <button data-action="print"><span>Print…</span><kbd>P</kbd></button>
       <hr>
@@ -155,6 +155,19 @@
           <button data-action="beam-auto"><span>Automatic</span></button>
         </div>
       </div>
+      <!-- Piano writing: a figure that belongs to one hand's rhythm and
+           runs past what that hand can reach is written on the other
+           staff, with the beam crossing between. -->
+      <div class="submenu">
+        <button class="submenu-title"><span>Cross staff</span><kbd>▸</kbd></button>
+        <div class="menu-items">
+          <button data-action="cross-below"><span>Write on the staff below</span></button>
+          <button data-action="cross-above"><span>Write on the staff above</span></button>
+          <hr>
+          <button data-action="cross-own"><span>Back to its own staff</span></button>
+        </div>
+      </div>
+
       <div class="submenu">
         <button class="submenu-title"><span>Slur and tie</span><kbd>▸</kbd></button>
         <div class="menu-items">
@@ -425,6 +438,9 @@
            click in. It is here so that what will be printed can be looked
            at without printing it. -->
       <button data-action="view-multirest"><span>Multi-measure rests</span><kbd id="multirest-tick"></kbd></button>
+      <!-- The metronome mark over the first bar. Off is for a part being
+           read for its notes, or a piece whose speed the title says. -->
+      <button data-action="view-tempomark"><span>Metronome marking</span><kbd id="tempomark-tick"></kbd></button>
       <!-- The score as it sounds, rather than as each player reads it. A
            clarinet in B flat reads a C and a B flat comes out; three staves
            in three keys playing the same line look like three lines until
@@ -443,6 +459,11 @@
   <div class="menu" data-menu="play">
     <button class="menu-title">Play</button>
     <div class="menu-items">
+      <!-- Playing the music in rather than out. A key pressed writes a
+           note where the cursor is, which is how most people put music
+           into a notation program. -->
+      <button data-action="midi-input"><span>MIDI keyboard…</span><kbd id="midi-tick"></kbd></button>
+      <hr>
       <button data-action="play"><span>Play / Pause</span><kbd>⇧Space</kbd></button>
       <button data-action="play-from-start"><span>Play from the beginning</span><kbd>⌃⇧Space</kbd></button>
       <button data-action="stop"><span>Stop</span><kbd>Esc</kbd></button>
@@ -645,8 +666,8 @@
   <div id="keysig-scale"><span>7♭</span><span>♮</span><span>7♯</span></div>
   <form method="dialog" class="ask-buttons">
     <button value="ok" type="submit" class="primary">OK</button>
-    <button value="remove" type="submit" id="keysig-remove" hidden>Remove this change</button>
-    <button value="cancel" type="submit">Cancel</button>
+    <button value="remove" type="submit" formnovalidate id="keysig-remove" hidden>Remove this change</button>
+    <button value="cancel" type="submit" formnovalidate>Cancel</button>
   </form>
 </dialog>
 
@@ -672,7 +693,7 @@
       <p class="small" id="harm-staff">Pick a note, or play, and this follows it.</p>
     </div>
     <form method="dialog">
-      <button value="close" type="submit" class="dlg-close" aria-label="Close">✕</button>
+      <button value="close" type="submit" formnovalidate class="dlg-close" aria-label="Close">✕</button>
     </form>
   </div>
 
@@ -717,7 +738,7 @@
       <p class="small" id="range-where">How far each staff reaches, and whether its instrument can go there.</p>
     </div>
     <form method="dialog">
-      <button value="close" type="submit" class="dlg-close" aria-label="Close">✕</button>
+      <button value="close" type="submit" formnovalidate class="dlg-close" aria-label="Close">✕</button>
     </form>
   </div>
   <div id="range-body"></div>
@@ -735,7 +756,7 @@
       <p class="small" id="keymap-where">Read from the notes, not from the key signature.</p>
     </div>
     <form method="dialog">
-      <button value="close" type="submit" class="dlg-close" aria-label="Close">✕</button>
+      <button value="close" type="submit" formnovalidate class="dlg-close" aria-label="Close">✕</button>
     </form>
   </div>
   <div id="keymap-strip"></div>
@@ -754,7 +775,7 @@
       <p class="small" id="map-where">Who is playing when, and what repeats what.</p>
     </div>
     <form method="dialog">
-      <button value="close" type="submit" class="dlg-close" aria-label="Close">✕</button>
+      <button value="close" type="submit" formnovalidate class="dlg-close" aria-label="Close">✕</button>
     </form>
   </div>
   <div id="map-body"></div>
@@ -772,7 +793,7 @@
       <p class="small" id="voices-where">How the lines move against each other.</p>
     </div>
     <form method="dialog">
-      <button value="close" type="submit" class="dlg-close" aria-label="Close">✕</button>
+      <button value="close" type="submit" formnovalidate class="dlg-close" aria-label="Close">✕</button>
     </form>
   </div>
   <div id="voices-body"></div>
@@ -790,7 +811,7 @@
       <p class="small" id="spacing-where">How low the bottom of the harmony is written.</p>
     </div>
     <form method="dialog">
-      <button value="close" type="submit" class="dlg-close" aria-label="Close">✕</button>
+      <button value="close" type="submit" formnovalidate class="dlg-close" aria-label="Close">✕</button>
     </form>
   </div>
   <div id="spacing-body"></div>
@@ -806,7 +827,7 @@
       <p class="small" id="rhythm-where">Where the notes fall against the beat.</p>
     </div>
     <form method="dialog">
-      <button value="close" type="submit" class="dlg-close" aria-label="Close">✕</button>
+      <button value="close" type="submit" formnovalidate class="dlg-close" aria-label="Close">✕</button>
     </form>
   </div>
   <div id="rhythm-body"></div>
@@ -821,7 +842,7 @@
       <p class="small" id="melody-where">What each line is made of.</p>
     </div>
     <form method="dialog">
-      <button value="close" type="submit" class="dlg-close" aria-label="Close">✕</button>
+      <button value="close" type="submit" formnovalidate class="dlg-close" aria-label="Close">✕</button>
     </form>
   </div>
   <div id="melody-body"></div>
@@ -898,7 +919,7 @@
     <select id="ask-select" hidden></select>
     <div class="ask-buttons">
       <button value="ok" type="submit" class="primary" id="ask-ok">OK</button>
-      <button value="cancel" type="submit">Cancel</button>
+      <button value="cancel" type="submit" formnovalidate>Cancel</button>
     </div>
   </form>
 </dialog>
@@ -921,7 +942,7 @@
       </select></label>
     <div class="ask-buttons">
       <button value="ok" type="submit" class="primary">Set</button>
-      <button value="cancel" type="submit">Cancel</button>
+      <button value="cancel" type="submit" formnovalidate>Cancel</button>
     </div>
   </form>
 </dialog>
@@ -940,7 +961,7 @@
       <input type="number" id="region-to" min="1" step="1" value="1"></label>
     <div class="ask-buttons">
       <button value="ok" type="submit" class="primary">Pick up</button>
-      <button value="cancel" type="submit">Cancel</button>
+      <button value="cancel" type="submit" formnovalidate>Cancel</button>
     </div>
   </form>
 </dialog>
@@ -968,7 +989,7 @@
     <div id="find-hits"></div>
     <div class="ask-buttons">
       <button value="ok" type="submit" class="primary">Replace all</button>
-      <button value="cancel" type="submit">Close</button>
+      <button value="cancel" type="submit" formnovalidate>Close</button>
     </div>
   </form>
 </dialog>
@@ -997,8 +1018,8 @@
     <div id="systems-says" class="small"></div>
     <div class="ask-buttons">
       <button value="ok" type="submit" class="primary">Lay it out</button>
-      <button value="clear" type="submit">Let it reflow</button>
-      <button value="cancel" type="submit">Close</button>
+      <button value="clear" type="submit" formnovalidate>Let it reflow</button>
+      <button value="cancel" type="submit" formnovalidate>Close</button>
     </div>
   </form>
 </dialog>
@@ -1033,7 +1054,7 @@
     <div id="score-about-tagged" class="small"></div>
     <div class="ask-buttons">
       <button value="ok" type="submit" class="primary">Save</button>
-      <button value="cancel" type="submit">Cancel</button>
+      <button value="cancel" type="submit" formnovalidate>Cancel</button>
     </div>
   </form>
 </dialog>
@@ -1081,7 +1102,7 @@
        this button is for the restart above.</p>
     <div class="ask-buttons">
       <button value="ok" type="submit" class="primary">Start again there</button>
-      <button value="cancel" type="submit">Close</button>
+      <button value="cancel" type="submit" formnovalidate>Close</button>
     </div>
   </form>
 </dialog>
@@ -1099,13 +1120,15 @@
      in red. Every change shows on the page at once and belongs to this
      score, saved with it; empty a field to go back to the house style for
      that one. The numbers beside each are what most scores use, not a
-     limit: set what you like.</p>
+     limit: set what you like. Cancel puts everything back the way it was
+     when this window opened.</p>
   <div id="engraving-body">
     <nav id="engraving-cats" aria-label="Kinds of measurement"></nav>
     <div id="engraving-rows"></div>
   </div>
   <div class="ask-buttons">
     <button id="engraving-reset" type="button">Reset all</button>
+    <button id="engraving-cancel" type="button">Cancel</button>
     <button id="engraving-done" type="button" class="primary">Done</button>
   </div>
 </dialog>
@@ -1158,7 +1181,7 @@
     </div>
     <div class="ask-buttons">
       <button value="ok" type="submit" class="primary">Transpose</button>
-      <button value="cancel" type="submit">Cancel</button>
+      <button value="cancel" type="submit" formnovalidate>Cancel</button>
     </div>
   </form>
 </dialog>
@@ -1168,8 +1191,8 @@
   <p class="small" id="timesig-where">Pick the one you want to see on the staff.</p>
   <div id="timesig-grid"></div>
   <form method="dialog" class="ask-buttons">
-    <button value="cancel" type="submit">Cancel</button>
-    <button value="remove" type="submit" id="timesig-remove" hidden>Remove this change</button>
+    <button value="cancel" type="submit" formnovalidate>Cancel</button>
+    <button value="remove" type="submit" formnovalidate id="timesig-remove" hidden>Remove this change</button>
   </form>
   <p class="small">
     Something else? Type it as <b>7/8</b>, or <b>C</b> for common time and
@@ -1225,8 +1248,8 @@
            placeholder="Moderately, Slow Swing, a tempo…">
     <div class="ask-buttons">
       <button value="ok" type="submit" class="primary">OK</button>
-      <button value="remove" type="submit" id="tempo-remove" hidden>Remove this change</button>
-      <button value="cancel" type="submit">Cancel</button>
+      <button value="remove" type="submit" formnovalidate id="tempo-remove" hidden>Remove this change</button>
+      <button value="cancel" type="submit" formnovalidate>Cancel</button>
     </div>
   </form>
 </dialog>
@@ -1251,7 +1274,7 @@
     <p class="small" id="lyrics-count"></p>
     <div class="ask-buttons">
       <button value="ok" type="submit" class="primary">Apply</button>
-      <button value="cancel" type="submit">Cancel</button>
+      <button value="cancel" type="submit" formnovalidate>Cancel</button>
     </div>
   </form>
 </dialog>
@@ -1292,7 +1315,7 @@
     </div>
     <div class="ask-buttons">
       <button value="ok" type="submit" class="primary">Print</button>
-      <button value="cancel" type="submit">Cancel</button>
+      <button value="cancel" type="submit" formnovalidate>Cancel</button>
     </div>
   </form>
 </dialog>
@@ -1354,7 +1377,7 @@
         order, each family bracketed, with a piano given its two staves.</p>
     </div>
     <form method="dialog">
-      <button value="close" type="submit" class="dlg-close" aria-label="Close">✕</button>
+      <button value="close" type="submit" formnovalidate class="dlg-close" aria-label="Close">✕</button>
     </form>
   </div>
 
@@ -1408,7 +1431,7 @@
       <p class="small">What this part wants of its own page.</p>
     </div>
     <form method="dialog">
-      <button value="close" type="submit" class="dlg-close" aria-label="Close">✕</button>
+      <button value="close" type="submit" formnovalidate class="dlg-close" aria-label="Close">✕</button>
     </form>
   </div>
   <label class="tempo-bar" for="part-name"><span>Called</span>
@@ -1503,7 +1526,7 @@
       <p class="small" id="script-result-about"></p>
     </div>
     <form method="dialog">
-      <button value="close" type="submit" class="dlg-close" aria-label="Close">✕</button>
+      <button value="close" type="submit" formnovalidate class="dlg-close" aria-label="Close">✕</button>
     </form>
   </div>
   <pre id="script-result-said" aria-live="polite"></pre>
@@ -1521,7 +1544,7 @@
       <p class="small" id="console-where">A dozen words, and JavaScript for the rest.</p>
     </div>
     <form method="dialog">
-      <button value="close" type="submit" class="dlg-close" aria-label="Close">✕</button>
+      <button value="close" type="submit" formnovalidate class="dlg-close" aria-label="Close">✕</button>
     </form>
   </div>
 
@@ -1562,7 +1585,7 @@
          this is both of them in the order a musician says them.</p>
     </div>
     <form method="dialog">
-      <button value="close" type="submit" class="dlg-close" aria-label="Close">✕</button>
+      <button value="close" type="submit" formnovalidate class="dlg-close" aria-label="Close">✕</button>
     </form>
   </div>
   <div id="typing-help-body"></div>
@@ -1690,8 +1713,8 @@
        offered one again.</p>
     <div class="ask-buttons">
       <button value="ok" type="submit" class="primary">Write it</button>
-      <button value="remove" type="submit">Remove</button>
-      <button value="cancel" type="submit">Cancel</button>
+      <button value="remove" type="submit" formnovalidate>Remove</button>
+      <button value="cancel" type="submit" formnovalidate>Cancel</button>
     </div>
   </form>
 </dialog>
@@ -1732,7 +1755,7 @@
     <p class="small" id="tabmove-tuning"></p>
     <div class="ask-buttons">
       <button value="ok" type="submit" class="primary">Move it</button>
-      <button value="cancel" type="submit">Cancel</button>
+      <button value="cancel" type="submit" formnovalidate>Cancel</button>
     </div>
   </form>
 </dialog>
@@ -1755,8 +1778,79 @@
      value the toolbar is holding.</p>
   <form method="dialog" class="ask-buttons">
     <button value="ok" type="submit" class="primary">Write it</button>
-    <button value="clear" type="submit">Clear</button>
-    <button value="cancel" type="submit">Cancel</button>
+    <button value="clear" type="submit" formnovalidate>Clear</button>
+    <button value="cancel" type="submit" formnovalidate>Cancel</button>
+  </form>
+</dialog>
+
+<dialog id="textmark">
+  <h2>Text</h2>
+  <p class="small">Words beside the note that is selected. What kind of
+     writing it is decides how it is set and where it goes — so every
+     "rit." in the score comes out alike, and changes together.</p>
+  <form method="dialog" id="textmark-form">
+    <label class="tempo-bar" for="tm-words">Words
+      <input type="text" id="tm-words" autocomplete="off" spellcheck="false"></label>
+    <label class="tempo-bar" for="tm-style">Kind
+      <select id="tm-style"></select></label>
+    <p class="small" id="tm-look"></p>
+    <div class="ask-buttons">
+      <button value="ok" type="submit" class="primary">Write it</button>
+      <button value="remove" type="submit" formnovalidate>Remove</button>
+      <button value="cancel" type="submit" formnovalidate>Cancel</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="pagesetup">
+  <h2>Page setup</h2>
+  <p class="small">The paper this score is printed on. It is kept with the
+     score, because it decides how wide a system may be and so how the
+     music is laid out — not only how it comes out of the printer.</p>
+  <form method="dialog" id="pagesetup-form">
+    <label class="tempo-bar" for="ps-paper">Paper
+      <select id="ps-paper"></select></label>
+    <div class="choices">
+      <label><input type="radio" name="ps-orient" value="portrait" checked>
+        <span><b>Upright</b></span></label>
+      <label><input type="radio" name="ps-orient" value="landscape">
+        <span><b>On its side</b><em>A full score is wider than it is
+          tall.</em></span></label>
+    </div>
+    <div id="ps-custom" hidden>
+      <div class="ps-row">
+        <label for="ps-width">Width<input type="number" id="ps-width"
+               min="50" max="2000" step="any"> mm</label>
+        <label for="ps-height">Height<input type="number" id="ps-height"
+               min="50" max="2000" step="any"> mm</label>
+      </div>
+    </div>
+    <h3 class="small">Margins, in millimetres</h3>
+    <div class="ps-row">
+      <label for="ps-top">Top<input type="number" id="ps-top"
+             min="0" max="150" step="any"></label>
+      <label for="ps-bottom">Bottom<input type="number" id="ps-bottom"
+             min="0" max="150" step="any"></label>
+      <label for="ps-left">Left<input type="number" id="ps-left"
+             min="0" max="150" step="any"></label>
+      <label for="ps-right">Right<input type="number" id="ps-right"
+             min="0" max="150" step="any"></label>
+    </div>
+    <label class="tempo-bar" for="ps-space">Staff size
+      <select id="ps-space">
+        <option value="0">fit the music to the page</option>
+        <option value="7.5">7.5 pt — a large part</option>
+        <option value="7">7 pt — a printed part</option>
+        <option value="6.2">6.2 pt — the usual</option>
+        <option value="5.5">5.5 pt — a full score</option>
+        <option value="4.6">4.6 pt — a pocket score</option>
+      </select></label>
+    <p class="small" id="ps-room"></p>
+    <div class="ask-buttons">
+      <button value="ok" type="submit" class="primary">Use this paper</button>
+      <button value="reset" type="submit" formnovalidate>Back to the default</button>
+      <button value="cancel" type="submit" formnovalidate>Cancel</button>
+    </div>
   </form>
 </dialog>
 

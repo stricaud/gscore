@@ -86,7 +86,11 @@ const state = {
   // Measure numbers are on: the engraver's DefaultOptions says so, and this
   // has to say the same thing or the tick beside "Measure numbers" in the
   // View menu starts out contradicting the page.
-  view: { names: false, numbers: true, multirest: false, concert: false },
+  // What the drawing shows. The metronome marking starts on, which is
+  // what DefaultOptions does on the other side — a tick that starts out
+  // lying is worse than no tick.
+  view: { names: false, numbers: true, multirest: false, tempomark: true,
+          concert: false },
   // Whether a bar that is too long has its last notes moved along. Read from
   // the server at startup, because it is remembered between sessions.
   trackBarlines: true,
@@ -740,6 +744,12 @@ async function action(name) {
     case "artic-marcato-up": await setArticulation("marcato"); break;
     case "artic-marcato-down": await setArticulation("marcato down"); break;
 
+    // Piano writing: the note is drawn on the staff next door and
+    // nothing about the music changes.
+    case "cross-below": await setCrossStaff("below"); break;
+    case "cross-above": await setCrossStaff("above"); break;
+    case "cross-own": await setCrossStaff("own"); break;
+
     // How a fretted instrument plays the note. Written out one by one
     // rather than matched by their prefix, so that the entry on the menu
     // and the case that answers it can be read against each other.
@@ -808,6 +818,8 @@ async function action(name) {
     case "show-all-staves": await showAllStaves(); break;
     case "staff-up": await moveStaff(-1); break;
     case "staff-down": await moveStaff(1); break;
+    case "page-setup": await pageSetupDialog(); break;
+    case "midi-input": await midiDialog(); midiTick(); break;
     case "tab": await tabDialog(); break;
     case "chord-builder": await chordBuilderDialog(); break;
     case "tab-transposition": await tabMoveDialog(); break;
@@ -834,6 +846,7 @@ async function action(name) {
     case "view-names": await setView("names", !state.view.names); break;
     case "view-numbers": await setView("numbers", !state.view.numbers); break;
     case "view-multirest": await setView("multirest", !state.view.multirest); break;
+    case "view-tempomark": await setView("tempomark", !state.view.tempomark); break;
     case "view-concert": await setView("concert", !state.view.concert); break;
 
     case "insert-chord": await chordSymbolDialog(); break;
@@ -4550,6 +4563,362 @@ function clearSelection() {
 }
 
 
+/* ---------- the paper ---------- */
+
+/*
+ * Page setup.
+ *
+ * Not only how the score comes out of the printer. The paper decides how
+ * wide a system may be, and the engraver has to be told that before it
+ * lays anything out — so a score set up for A3 on its side is a different
+ * engraving from the same music on A4 upright, with different bars on
+ * different lines. That is why this is kept with the score and not asked
+ * at every print.
+ */
+
+async function pageSetupDialog() {
+  const dlg = $("#pagesetup");
+  const now = await (await fetch("/api/pagesetup")).json();
+
+  const papers = $("#ps-paper");
+  papers.innerHTML = now.papers
+    .map((p) => `<option value="${escapeHTML(p.name)}">${escapeHTML(p.label)}</option>`)
+    .join("");
+  papers.value = now.paper;
+  $$('#pagesetup-form input[name="ps-orient"]').forEach((r) => {
+    r.checked = (r.value === "landscape") === !!now.landscape;
+  });
+  $("#ps-width").value = String(Math.round(now.width));
+  $("#ps-height").value = String(Math.round(now.height));
+  $("#ps-top").value = String(now.marginTop);
+  $("#ps-bottom").value = String(now.marginBottom);
+  $("#ps-left").value = String(now.marginLeft);
+  $("#ps-right").value = String(now.marginRight);
+  // A size the list does not offer — set by a script, or by a later
+  // version — is added to it rather than silently becoming something else.
+  const space = $("#ps-space");
+  if (![...space.options].some((o) => Number(o.value) === Number(now.space))) {
+    space.add(new Option(now.space + " pt", String(now.space)));
+  }
+  space.value = String(now.space);
+
+  // What is left to print on, worked out as the fields are typed in. The
+  // number that matters is the width: it is what a system has to fit into,
+  // and margins that leave forty millimetres are margins nobody meant.
+  const showRoom = () => {
+    const custom = papers.value === "custom";
+    $("#ps-custom").hidden = !custom;
+    let w, h;
+    if (custom) {
+      w = Number($("#ps-width").value) || 0;
+      h = Number($("#ps-height").value) || 0;
+    } else {
+      const p = now.papers.find((x) => x.name === papers.value);
+      w = p ? p.width : 0;
+      h = p ? p.height : 0;
+    }
+    const sideways = $$('#pagesetup-form input[name="ps-orient"]')
+      .find((r) => r.checked)?.value === "landscape";
+    if (sideways && w < h) [w, h] = [h, w];
+    const across = w - (Number($("#ps-left").value) || 0) -
+      (Number($("#ps-right").value) || 0);
+    const down = h - (Number($("#ps-top").value) || 0) -
+      (Number($("#ps-bottom").value) || 0);
+    $("#ps-room").textContent = across > 0 && down > 0
+      ? `${Math.round(across)} × ${Math.round(down)} mm to print on.`
+      : "Those margins leave no room for any music.";
+  };
+  papers.oninput = showRoom;
+  $$("#pagesetup-form input").forEach((i) => { i.oninput = showRoom; });
+  showRoom();
+
+  const answer = await new Promise((resolve) => {
+    const done = () => {
+      dlg.removeEventListener("close", done);
+      resolve(dlg.returnValue);
+    };
+    dlg.addEventListener("close", done);
+    dlg.showModal();
+  });
+  if (answer === "cancel" || answer === "") {
+    status("Ready");
+    return;
+  }
+  if (answer === "reset") {
+    const res = await fetch("/api/pagesetup?reset=1", { method: "POST" });
+    if (!res.ok) {
+      status("Could not change the paper: " + (await res.text()).trim());
+      return;
+    }
+    await refreshScore();
+    status("Back to the default paper");
+    return;
+  }
+
+  const p = new URLSearchParams({
+    paper: papers.value,
+    landscape: $$('#pagesetup-form input[name="ps-orient"]')
+      .find((r) => r.checked)?.value === "landscape" ? "1" : "0",
+    marginTop: $("#ps-top").value,
+    marginBottom: $("#ps-bottom").value,
+    marginLeft: $("#ps-left").value,
+    marginRight: $("#ps-right").value,
+    space: $("#ps-space").value,
+  });
+  if (papers.value === "custom") {
+    p.set("width", $("#ps-width").value);
+    p.set("height", $("#ps-height").value);
+  }
+  const res = await fetch("/api/pagesetup?" + p, { method: "POST" });
+  if (!res.ok) {
+    status("Could not change the paper: " + (await res.text()).trim());
+    return;
+  }
+  const d = await res.json();
+  await refreshScore();
+  status(`${Math.round(d.width)} × ${Math.round(d.height)} mm`);
+}
+
+/* ---------- playing the music in ---------- */
+
+/*
+ * A MIDI keyboard, writing where the cursor is.
+ *
+ * This is how most people put music into a notation program, and gscore
+ * had no way to do it at all: every note had to be clicked or typed.
+ *
+ * Step time rather than real time. A key pressed writes one note of
+ * whatever length the toolbar is holding, and the cursor moves on; the
+ * rhythm comes from the toolbar and not from how long the key was held.
+ * Real time — playing in tempo and having the rhythm worked out — is a
+ * different and much harder thing, and it is not what somebody entering a
+ * part wants: they want the notes right.
+ *
+ * Keys pressed together are a chord. Together means within a short window,
+ * because no two fingers land at the same millisecond: the first key
+ * writes a note and the ones that follow it closely are added to that
+ * note as noteheads. A hand playing a triad gets a triad, and a hand
+ * playing a scale gets a scale, with no mode to switch between them.
+ *
+ * What arrives is a sounding pitch and nothing else — the same number for
+ * D sharp and E flat — so the spelling is left to the server, where the
+ * key signature is. See PitchInKey.
+ */
+
+const midiIn = {
+  // access is the MIDIAccess object once it has been granted, and inputs
+  // the ports it offered.
+  access: null,
+  inputs: [],
+  // port is the one being listened to, or null for none. Kept by id, not
+  // by object, so a device unplugged and plugged back in is recognised.
+  portId: null,
+  // chord is the note being built: where it was written, and when, so a
+  // key pressed soon after is added to it rather than written after it.
+  chord: null,
+  // Milliseconds within which two keys count as played together. Long
+  // enough for a hand, short enough that two deliberate notes are two.
+  window: 60,
+  // busy guards against a second note arriving while the first is still
+  // being written: the server decides where the cursor goes next, and two
+  // writes racing would both aim at where it used to be.
+  busy: false,
+  queue: [],
+};
+
+// midiSupported says whether this build can listen at all.
+//
+// Web MIDI is in Chrome, Edge and Opera, and not in Safari — which is what
+// the macOS application is built on. So the menu entry says why rather
+// than failing silently when it is clicked.
+function midiSupported() {
+  return typeof navigator !== "undefined" &&
+    typeof navigator.requestMIDIAccess === "function";
+}
+
+// openMidi asks for the keyboards and remembers what it was given.
+async function openMidi() {
+  if (midiIn.access) return midiIn.access;
+  if (!midiSupported()) return null;
+  // sysex is not asked for: nothing here needs it, and asking raises the
+  // permission prompt from "use your MIDI devices" to one most people say
+  // no to.
+  const access = await navigator.requestMIDIAccess({ sysex: false });
+  midiIn.access = access;
+  readMidiPorts();
+  // A keyboard switched on after the program was started is still a
+  // keyboard: the list is rebuilt rather than being read once.
+  access.onstatechange = () => {
+    readMidiPorts();
+    if (midiIn.portId && !midiIn.inputs.some((i) => i.id === midiIn.portId)) {
+      status("The MIDI keyboard was unplugged");
+      listenToMidi(null);
+    }
+  };
+  return access;
+}
+
+function readMidiPorts() {
+  midiIn.inputs = midiIn.access ? [...midiIn.access.inputs.values()] : [];
+}
+
+// listenToMidi starts listening to one port and stops listening to the
+// rest. Exactly one at a time, which is what a person has hands for.
+function listenToMidi(id) {
+  for (const port of midiIn.inputs) port.onmidimessage = null;
+  midiIn.portId = id;
+  midiIn.chord = null;
+  if (!id) return;
+  const port = midiIn.inputs.find((p) => p.id === id);
+  if (port) port.onmidimessage = onMidiMessage;
+}
+
+// onMidiMessage picks the note-ons out of what the keyboard sends.
+function onMidiMessage(e) {
+  const [a, note, velocity] = e.data;
+  // The bottom nibble is the channel, which is ignored: a keyboard on
+  // channel 3 is still the person playing.
+  const kind = a & 0xf0;
+  // A note-on with no velocity is how a great many keyboards send
+  // note-off, and taking it for a key press writes every note twice.
+  if (kind !== 0x90 || !velocity) return;
+  playedNote(note);
+}
+
+// playedNote writes one key press, or adds it to the note being built.
+//
+// Queued rather than written at once. Each write asks the server where the
+// cursor ends up, and two of them in flight would both be working from
+// where it was before either had landed — which on a chord played with
+// five fingers is five notes written one after another in the wrong bar.
+function playedNote(note) {
+  midiIn.queue.push({ note, at: Date.now() });
+  drainMidi();
+}
+
+async function drainMidi() {
+  if (midiIn.busy) return;
+  midiIn.busy = true;
+  try {
+    while (midiIn.queue.length) {
+      const { note, at } = midiIn.queue.shift();
+      await writePlayedNote(note, at);
+    }
+  } finally {
+    midiIn.busy = false;
+  }
+}
+
+async function writePlayedNote(note, at) {
+  const sel = state.selection;
+  if (!sel) {
+    status("Click where the music should go first");
+    return;
+  }
+  // Part of the note already being written, if it arrived soon enough and
+  // the cursor has not been moved in between.
+  const together = midiIn.chord &&
+    at - midiIn.chord.at < midiIn.window &&
+    midiIn.chord.part === sel.part && midiIn.chord.measure === sel.measure;
+
+  if (together) {
+    const p = new URLSearchParams({
+      part: String(midiIn.chord.part), measure: String(midiIn.chord.measure),
+      index: String(midiIn.chord.index), midi: String(note),
+    });
+    const res = await fetch("/api/addpitch?" + p, { method: "POST" });
+    if (!res.ok) {
+      status((await res.text()).trim());
+      return;
+    }
+    await refreshScore();
+    markSelection();
+    return;
+  }
+
+  const p = new URLSearchParams({
+    part: String(sel.part), measure: String(sel.measure),
+    at: String(sel.at), midi: String(note), dur: state.tool.duration,
+    kind: "note",
+  });
+  if (state.tool.dots > 0) p.set("dots", String(state.tool.dots));
+  const res = await fetch("/api/insert?" + p, { method: "POST" });
+  if (!res.ok) {
+    status("Could not write it: " + (await res.text()).trim());
+    return;
+  }
+  const where = await res.json().catch(() => null);
+  if (where && where.measure !== undefined) {
+    sel.measure = where.measure;
+    sel.at = where.at;
+  } else {
+    sel.at += 1;
+  }
+  sel.replace = false;
+  sel.ref = null;
+  sel.wrote = true;
+  state.multi = [];
+  state.anchor = null;
+  state.focus = null;
+  // Where the note landed, so the keys pressed with it are added to it
+  // rather than written after it. at is already past the note, so the
+  // note itself is the one before.
+  midiIn.chord = {
+    at, part: sel.part, measure: sel.measure, index: sel.at - 1,
+  };
+  await refreshScore();
+  carryCaretOn(sel);
+  markSelection();
+  scrollSelectionIntoView();
+}
+
+// midiDialog offers the keyboards that are plugged in.
+async function midiDialog() {
+  if (!midiSupported()) {
+    status("This build cannot reach a MIDI keyboard — " +
+           "open gscore in Chrome, Edge or Opera to play one in");
+    return;
+  }
+  let access = null;
+  try {
+    access = await openMidi();
+  } catch (e) {
+    status("Could not reach the MIDI keyboards: " + (e.message || e));
+    return;
+  }
+  if (!access) return;
+  readMidiPorts();
+
+  if (!midiIn.inputs.length) {
+    status("No MIDI keyboard is plugged in");
+    return;
+  }
+  const options = [{ value: "", label: "none — do not listen" }].concat(
+    midiIn.inputs.map((i) => ({
+      value: i.id,
+      label: i.name + (i.manufacturer ? " — " + i.manufacturer : ""),
+    })));
+  const chosen = await ask({
+    title: "MIDI keyboard",
+    note: "A key pressed writes a note where the cursor is, with the " +
+          "length the toolbar is holding. Keys pressed together are a chord.",
+    label: "Listen to",
+    options,
+    value: midiIn.portId || "",
+  });
+  if (chosen === null) return;
+  listenToMidi(chosen || null);
+  const port = midiIn.inputs.find((p) => p.id === chosen);
+  status(port ? "Listening to " + port.name : "Not listening to any keyboard");
+}
+
+// midiTick is the mark beside the menu entry, so the menu says whether
+// anything is being listened to.
+function midiTick() {
+  const el = $("#midi-tick");
+  if (el) el.textContent = midiIn.portId ? "\u2713" : "";
+}
+
 async function insertAtSelection(rest, keepSelection) {
   const sel = state.selection;
   if (!sel) {
@@ -5761,6 +6130,11 @@ const TAB_MARKS = {
   "pinch-harmonic": "Pinch harmonic",
   "tap": "Tap",
 };
+
+const setCrossStaff = (to) =>
+  mark("crossstaff", { to },
+       to === "own" ? "Back on its own staff"
+                    : "Written on the staff " + to);
 
 const setTechnique = (t) =>
   mark("technique", { technique: t },
@@ -7149,6 +7523,44 @@ async function engravingDialog() {
   // 0.91.
   const fields = new Map();
 
+  // What this score was engraved by when the window opened, and what it is
+  // engraved by now.
+  //
+  // Every change in here is applied as it is made, which it has to be:
+  // nobody can judge a beam of 0.55 from the number, only from the page.
+  // But a window that changes the score as you go still needs a way of
+  // saying none of it was meant, and that is what these two are for —
+  // Cancel is the difference between them, sent back the other way.
+  //
+  // opened maps each measurement's name to the value this score had set,
+  // or null for "nothing of its own". null and a number are told apart on
+  // purpose: a measurement that was inherited has to go back to being
+  // inherited, not be frozen at the number it happened to inherit.
+  let opened = null;
+  let latest = [];
+  // The change still being sent, and whether we have given up on this
+  // visit.
+  //
+  // Both are for one gesture: typing a number and clicking Cancel without
+  // stopping in between. The field commits what was typed as it loses the
+  // focus, so a change is in the air at the moment Cancel is clicked — and
+  // if Cancel does not wait for it, it works out what to put back from
+  // before the number landed, and the number nobody wanted is what
+  // survives. Afterwards the other way round: a change that arrives once
+  // the window has been given up on is dropped, rather than writing itself
+  // over what was just put back.
+  let sending = Promise.resolve();
+  let giveUp = false;
+  // Whose measurements are on the screen, for the questions that have to
+  // name them. The window writes to whatever is being looked at.
+  let whose = "this score";
+
+  const snapshot = (knobs) => {
+    const m = new Map();
+    for (const k of knobs) m.set(k.name, k.set ? k.value : null);
+    return m;
+  };
+
   const draw = (knobs) => {
     fields.clear();
     const groups = [];
@@ -7207,7 +7619,9 @@ async function engravingDialog() {
       field.placeholder = String(k.default);
       if (k.set) field.classList.add("is-set");
       field.title = knobTitle(k);
-      field.addEventListener("change", () => void set(k.name, field.value));
+      field.addEventListener("change", () => {
+        sending = set(k.name, field.value);
+      });
       row.appendChild(field);
       fields.set(k.name, field);
 
@@ -7223,7 +7637,7 @@ async function engravingDialog() {
   const said = (d) => {
     const knobs = d.knobs || [];
     const n = knobs.filter((k) => k.set).length;
-    const whose = d.of ? `the ${d.of} part` : "this score";
+    whose = d.of ? `the ${d.of} part` : "this score";
     // Whose measurements these are. The window writes to whatever is on
     // the screen, so a part being looked at is a part being engraved, and
     // saying "this score" over a part's numbers would be a lie.
@@ -7237,7 +7651,11 @@ async function engravingDialog() {
   };
 
   const show = (d) => {
-    draw(d.knobs || []);
+    latest = d.knobs || [];
+    // Only the first time the window is filled in, so that resetting
+    // everything inside it is itself something Cancel can take back.
+    if (!opened) opened = snapshot(latest);
+    draw(latest);
     said(d);
   };
 
@@ -7245,6 +7663,7 @@ async function engravingDialog() {
   // headings have something set under them, which fields say so, and what
   // each one now holds.
   const patch = (d) => {
+    latest = d.knobs || [];
     for (const k of d.knobs || []) {
       const field = fields.get(k.name);
       if (!field) continue;
@@ -7268,6 +7687,7 @@ async function engravingDialog() {
   };
 
   const set = async (name, value) => {
+    if (giveUp) return;
     const p = new URLSearchParams();
     p.set(name, value);
     const res = await fetch("/api/engraving?" + p.toString(), { method: "POST" });
@@ -7291,11 +7711,73 @@ async function engravingDialog() {
     show(await res.json());
   };
 
+  // restore puts back what was there when the window opened.
+  //
+  // Everything that differs in one request, because the endpoint reads the
+  // lot before writing any of it: a measurement at a time would redraw the
+  // page once per measurement and could stop half way, leaving a score
+  // that is neither what it was nor what was asked for. An empty value
+  // means "have no answer of your own for this one", which is how a
+  // measurement set inside this window is unset again.
+  const restore = async () => {
+    if (!opened) return;
+    // Whatever was typed on the way out, first, so that what is put back is
+    // worked out from everything that happened and not from most of it.
+    await sending.catch(() => {});
+    giveUp = true;
+    const p = new URLSearchParams();
+    for (const k of latest) {
+      const was = opened.has(k.name) ? opened.get(k.name) : null;
+      const is = k.set ? k.value : null;
+      if (was === is) continue;
+      p.set(k.name, was === null ? "" : String(was));
+    }
+    const changed = [...p.keys()].length;
+    if (!changed) return;
+    const res = await fetch("/api/engraving?" + p.toString(),
+      { method: "POST" });
+    if (!res.ok) {
+      status("Could not put the engraving back: " + (await res.text()).trim());
+      return;
+    }
+    latest = (await res.json()).knobs || [];
+    await refreshScore();
+    status(`Engraving — left as it was, ${changed} ` +
+      (changed === 1 ? "measurement" : "measurements") + " put back");
+  };
+
   $("#engraving-reset").onclick = async () => {
+    const n = latest.filter((k) => k.set).length;
+    // Nothing set is nothing to lose, and a question whose answer changes
+    // nothing is a question not worth asking.
+    if (n) {
+      const sure = await confirmThat({
+        title: "This will remove all the specific settings you used — " +
+               "are you sure?",
+        note: (n === 1
+          ? `The one measurement set for ${whose} goes back to the house style.`
+          : `The ${n} measurements set for ${whose} go back to the house style.`) +
+          " Cancel still puts everything back the way it was when this " +
+          "window opened.",
+        ok: "Reset all",
+      });
+      if (!sure) return;
+    }
     await load("?reset");
     await refreshScore();
   };
-  $("#engraving-done").onclick = () => dlg.close();
+
+  // Esc is Cancel rather than Done. A window with a Cancel button in it
+  // that keeps the changes when it is dismissed is a window that lies, and
+  // dismissing one is how most people say they did not mean it.
+  let keeping = false;
+  const closed = async () => {
+    dlg.removeEventListener("close", closed);
+    if (!keeping) await restore();
+  };
+  dlg.addEventListener("close", closed);
+  $("#engraving-cancel").onclick = () => dlg.close();
+  $("#engraving-done").onclick = () => { keeping = true; dlg.close(); };
 
   await load();
   dlg.showModal();
@@ -7992,6 +8474,7 @@ async function setView(what, on) {
   state.view.names = !!d.names;
   state.view.numbers = !!d.numbers;
   state.view.multirest = !!d.multirest;
+  state.view.tempomark = !!d.tempomark;
   state.view.concert = !!d.concert;
   markViewTicks();
   await refreshScore();
@@ -8003,6 +8486,10 @@ async function setView(what, on) {
     multirest: on
       ? "Bars of rest counted — they are still there, and still played"
       : "Every bar drawn",
+    // Said in full too: taking the mark off does not change the speed.
+    tempomark: on
+      ? "Metronome marking shown"
+      : "Metronome marking hidden — the piece still plays at that speed",
     // Said in full as well: what is stored has not changed, and writing
     // on a transposing staff still goes in as what its player reads.
     concert: on
@@ -8014,10 +8501,11 @@ async function setView(what, on) {
 
 function markViewTicks() {
   const n = $("#names-tick"), m = $("#numbers-tick"), r = $("#multirest-tick");
-  const c = $("#concert-tick");
+  const c = $("#concert-tick"), t = $("#tempomark-tick");
   if (n) n.textContent = state.view.names ? "✓" : "";
   if (m) m.textContent = state.view.numbers ? "✓" : "";
   if (r) r.textContent = state.view.multirest ? "✓" : "";
+  if (t) t.textContent = state.view.tempomark ? "✓" : "";
   if (c) c.textContent = state.view.concert ? "✓" : "";
   const w = $("#mouse-tick");
   if (w) w.textContent = state.mouseWrites ? "✓" : "";
@@ -8206,16 +8694,56 @@ async function textDialog() {
     status("Click a note first — the words go beside it");
     return;
   }
-  const v = await ask({
-    title: "Text", label: "Words",
-    note: "Written above the staff beside the note that is selected. " +
-          "Drag it afterwards to move it.",
+  const dlg = $("#textmark");
+  const styles = await (await fetch("/api/textstyles")).json();
+
+  const pick = $("#tm-style");
+  pick.innerHTML = styles
+    .map((s) => `<option value="${escapeHTML(s.name)}">${escapeHTML(s.label)}</option>`)
+    .join("");
+  // The one most words are. Remembered between windows, because somebody
+  // writing in the expression markings writes several in a row.
+  pick.value = lastTextStyle;
+  $("#tm-words").value = "";
+
+  // What the choice means, in the words a reader would use rather than as
+  // a list of font settings: where it goes and who it is for.
+  const describe = () => {
+    const s = styles.find((x) => x.name === pick.value);
+    if (!s) {
+      $("#tm-look").textContent = "";
+      return;
+    }
+    const where = s.system
+      ? "Over the whole system, for everybody"
+      : s.place === "below" ? "Under the staff" : "Over the staff";
+    const how = [s.italic ? "italic" : "", s.bold ? "bold" : ""]
+      .filter(Boolean).join(" and ");
+    $("#tm-look").textContent = how ? `${where}, ${how}.` : `${where}.`;
+  };
+  pick.oninput = describe;
+  describe();
+
+  const answer = await new Promise((resolve) => {
+    const done = () => {
+      dlg.removeEventListener("close", done);
+      resolve(dlg.returnValue);
+    };
+    dlg.addEventListener("close", done);
+    dlg.showModal();
+    $("#tm-words").focus();
   });
-  if (v === null) return;
+  if (answer === "cancel" || answer === "") {
+    status("Ready");
+    return;
+  }
+
   const sel = state.selection;
+  const words = answer === "remove" ? "" : $("#tm-words").value;
+  if (answer !== "remove") lastTextStyle = pick.value;
   const p = new URLSearchParams({
     part: String(sel.part), measure: String(sel.measure), at: String(sel.at),
-    text: v,
+    text: words, style: pick.value,
   });
   const res = await fetch("/api/text?" + p.toString(), { method: "POST" });
   if (!res.ok) {
@@ -8223,8 +8751,13 @@ async function textDialog() {
     return;
   }
   await refreshScore();
-  status(v === "" ? "Text removed" : "Text written");
+  status(words === "" ? "Text removed" : "Text written");
 }
+
+// The kind chosen last time. Somebody putting the expression markings into
+// a piece writes several in a row, and choosing the same thing each time
+// is the sort of asking a program should only do once.
+let lastTextStyle = "expression";
 
 // markerDialog puts a rehearsal mark on the current bar, across every staff.
 //
@@ -12555,6 +13088,10 @@ const MENU_ICONS = {
   "tab-tap": "\ue841",             // guitarRightHandTapping
   "tab-dead-note": "\ue0a9",       // noteheadXBlack
 
+  // The metronome mark: the note the beats are counted in, which is the
+  // left half of what the mark says.
+  "view-tempomark": "\ueca5",      // metNoteQuarterUp
+
   // What is written on a note or a staff.
   "insert-note": "\ue1d5",         // noteQuarterUp
   "insert-rest": "\ue4e5",         // restQuarter
@@ -15090,6 +15627,28 @@ const MENU_DRAWINGS = {
   "group-none": REMOVE_MARK,
   "fingering-off": REMOVE_MARK,
   "tab-none": REMOVE_MARK,
+
+  /* Cross-staff writing. Two staves and a note that has gone from one to
+   * the other, which is the whole of what the entry does; which way the
+   * note went is which staff it is on. */
+  "cross-below": '<path d="M3 5.5H21"/><path d="M3 8.5H21"/>' +
+    '<path d="M3 18.5H21"/><path d="M3 21.5H21"/>' +
+    '<circle cx="9" cy="15" r="2.6"/><path d="M11.6 15V7"/>',
+  "cross-above": '<path d="M3 2.5H21"/><path d="M3 5.5H21"/>' +
+    '<path d="M3 15.5H21"/><path d="M3 18.5H21"/>' +
+    '<circle cx="9" cy="9" r="2.6"/><path d="M11.6 9V17"/>',
+  "cross-own": REMOVE_MARK,
+
+  /* Playing the music in: the keyboard it is played on.
+   *
+   * Drawn rather than set from the font, because the font has no piano
+   * keyboard in it — SMuFL's "keyboard" glyphs are the pedalling and
+   * fingering marks written over one, not the thing itself. */
+  "midi-input": '<rect x="2.5" y="7" width="19" height="10" rx="1.5"/>' +
+    '<path d="M8.8 7V13"/><path d="M15.2 7V13"/>' +
+    '<rect x="6.6" y="7" width="2.2" height="6"/>' +
+    '<rect x="11" y="7" width="2.2" height="6"/>' +
+    '<rect x="15.2" y="7" width="2.2" height="6"/>',
 
   /* The tab marks no font has a sign for.
    *

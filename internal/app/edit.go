@@ -204,6 +204,12 @@ func (a *App) handleInsert(w http.ResponseWriter, r *http.Request) {
 		// part's own interval on the way in.
 		pitch := a.asWritten(p, pitchForStep(p.Clef, step))
 		named := false
+		// spelled says the alteration on the pitch is already the one to
+		// write, so the key must not overwrite it. A staff position says
+		// nothing about sharps and flats and the key has the last word;
+		// a note that was played, or typed with a sign on it, has already
+		// been decided.
+		spelled := false
 
 		// Or the pitch is named outright. Somebody typing a tune in writes
 		// "c4 d e f g" and means a scale: they are not thinking in staff
@@ -221,6 +227,30 @@ func (a *App) handleInsert(w http.ResponseWriter, r *http.Request) {
 				got = got.NearestTo(lastPitch(p, m, at, pitch))
 			}
 			pitch, named = a.asWritten(p, got), true
+		}
+
+		// Or the note was played rather than typed. A key pressed on a
+		// MIDI keyboard gives a number and nothing else — the same number
+		// for D sharp and E flat — so the key signature spells it, which
+		// is the only thing in the question with an opinion.
+		//
+		// The number is what sounds, because that is what a keyboard
+		// sends and what an instrument makes. What is stored is what the
+		// player reads, so it comes back through the part's own interval
+		// first: middle C played on a B flat trumpet's part is written a
+		// tone above where it sounds, and a part that stored the number
+		// as it arrived would sound a tone flat for ever after.
+		if v := q.Get("midi"); v != "" {
+			n, err := strconv.Atoi(v)
+			if err != nil || n < 0 || n > 127 {
+				http.Error(w, "a MIDI note is a number from 0 to 127",
+					http.StatusBadRequest)
+				return
+			}
+			sounding := model.PitchInKey(n, model.KeySignature{})
+			written := p.Transpose.Unapply(sounding)
+			pitch = model.PitchInKey(written.MIDI(), p.KeyAt(measIdx))
+			named, spelled = true, true
 		}
 
 		// Or by how far it is from the note before, which is how a melody
@@ -245,8 +275,9 @@ func (a *App) handleInsert(w http.ResponseWriter, r *http.Request) {
 			// signature already said it: asking for a sharp is asking to
 			// see one.
 			pitch.Alter = acc.Semitones()
-		case named && hasAccidental(q.Get("pitch")):
-			// Spelled as it was typed, and given whatever sign a reader
+		case spelled || (named && hasAccidental(q.Get("pitch"))):
+			// Spelled already — as it was typed, or as the key spells the
+			// note that was played — and given whatever sign a reader
 			// needs to read it that way.
 			acc = signFor(pitch, alterInForce(m, at, pitch, key))
 		default:
@@ -524,14 +555,29 @@ func (a *App) handleAddPitch(w http.ResponseWriter, r *http.Request) {
 		}
 		pitch, named = got, true
 	}
+	// Or played: the other keys held down while the first was struck. The
+	// same rule as a single note — the number is what sounds, the part's
+	// interval takes it back to what is read, and the key spells it.
+	spelled := false
+	if v := q.Get("midi"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 0 || n > 127 {
+			http.Error(w, "a MIDI note is a number from 0 to 127",
+				http.StatusBadRequest)
+			return
+		}
+		written := p.Transpose.Unapply(model.PitchInKey(n, model.KeySignature{}))
+		pitch = model.PitchInKey(written.MIDI(), p.KeyAt(measIdx))
+		named, spelled = true, true
+	}
 	key := p.KeyAt(measIdx)
 	switch {
 	case acc != model.NoAccidental:
 		pitch.Alter = acc.Semitones()
-	case named && hasAccidental(q.Get("pitch")):
-		// Spelled as it was typed, and with the sign that spells it. The
-		// notes of the chord being built count as already read, so the
-		// third of a chord whose root is sharpened gets its own sign.
+	case spelled || (named && hasAccidental(q.Get("pitch"))):
+		// Spelled already, and with the sign that spells it. The notes of
+		// the chord being built count as already read, so the third of a
+		// chord whose root is sharpened gets its own sign.
 		acc = signFor(pitch, alterInForce(m, index+1, pitch, key))
 	default:
 		pitch.Alter = key.AlterFor(pitch.Step)
@@ -2725,9 +2771,23 @@ func (a *App) handleText(w http.ResponseWriter, r *http.Request) {
 	}
 	text := strings.TrimSpace(q.Get("text"))
 
-	place := model.PlacementAbove
-	if q.Get("placement") == "below" {
+	// What kind of writing this is, which decides how it is set and where
+	// it goes. See model.TextStyle: words of one kind coming out alike
+	// everywhere is most of what makes a page readable, and is not
+	// something to settle one text at a time.
+	style, ok := model.TextStyleFromName(q.Get("style"))
+	if v := q.Get("style"); v != "" && !ok {
+		http.Error(w, "no text style called "+v, http.StatusBadRequest)
+		return
+	}
+
+	// Left alone, the style decides which side of the staff it goes on.
+	place := model.PlacementAuto
+	switch q.Get("placement") {
+	case "below":
 		place = model.PlacementBelow
+	case "above":
+		place = model.PlacementAbove
 	}
 	for _, m := range marks {
 		if text == "" {
@@ -2735,13 +2795,15 @@ func (a *App) handleText(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		m.Texts = append(m.Texts, model.TextMark{
-			Text: text, Placement: place,
+			Text: text, Style: style, Placement: place,
 			Italic: q.Get("italic") == "1", Bold: q.Get("bold") == "1",
 		})
 		// Words go on one note, not on every note of a passage.
 		break
 	}
-	writeJSON(w, map[string]any{"status": "ok", "text": text})
+	writeJSON(w, map[string]any{
+		"status": "ok", "text": text, "style": style.String(),
+	})
 }
 
 // handleMarker puts a rehearsal mark on a bar, across the whole score.
@@ -2831,6 +2893,18 @@ func (a *App) handleView(w http.ResponseWriter, r *http.Request) {
 		a.engraveOpt.MultiRests = v == "1"
 		changed = append(changed, "multirest")
 	}
+	// The metronome mark and the word beside it, over the first bar.
+	//
+	// Worth taking off as well as putting on: a part being written is
+	// read for its notes, and a piece whose speed is obvious from the
+	// title does not need "= 120" printed over it. It is a decision
+	// about the drawing and not about the music — the tempo is still
+	// there, and still what the playback runs at.
+	if v := q.Get("tempomark"); v != "" {
+		a.engraveOpt.ShowTempoMark = v == "1"
+		changed = append(changed, "tempomark")
+	}
+
 	// Showing the score as it sounds rather than as each player reads it.
 	// Not an engraving option: it is a different score on the screen, made
 	// by moving every transposing part. See concert.go.
@@ -2844,6 +2918,7 @@ func (a *App) handleView(w http.ResponseWriter, r *http.Request) {
 		"names":     a.engraveOpt.ShowPartNames,
 		"numbers":   a.engraveOpt.ShowMeasureNumbers,
 		"multirest": a.engraveOpt.MultiRests,
+		"tempomark": a.engraveOpt.ShowTempoMark,
 		"concert":   a.concert,
 	})
 }
@@ -5789,4 +5864,33 @@ func accidentalWord(a model.Accidental) string {
 		return ""
 	}
 	return a.String()
+}
+
+// handleTextStyles lists the kinds of writing there are, and how each is
+// set.
+//
+// The list comes from the program rather than being written out again in
+// the editor. There is one set of these and one place that decides what
+// each looks like; a second list beside it is a second answer waiting to
+// disagree with the first.
+func (a *App) handleTextStyles(w http.ResponseWriter, r *http.Request) {
+	type entry struct {
+		Name   string  `json:"name"`
+		Label  string  `json:"label"`
+		Size   float64 `json:"size"`
+		Italic bool    `json:"italic"`
+		Bold   bool    `json:"bold"`
+		Place  string  `json:"place"`
+		System bool    `json:"system"`
+	}
+	out := []entry{}
+	for _, s := range model.TextStyles() {
+		look := s.Look()
+		out = append(out, entry{
+			Name: s.String(), Label: s.Label(), Size: look.Size,
+			Italic: look.Italic, Bold: look.Bold,
+			Place: look.Place.String(), System: look.System,
+		})
+	}
+	writeJSON(w, out)
 }

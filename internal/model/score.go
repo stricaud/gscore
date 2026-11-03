@@ -836,6 +836,16 @@ type Score struct {
 
 	Engraving map[string]float64
 
+	// Page is the paper this score is printed on: its size, which way up,
+	// and its margins. See Page, which has the reasoning.
+	//
+	// A decision about the document rather than about the music, and it
+	// belongs to the score for the same reason the engraving measurements
+	// do: asked again at every print it would be answered differently
+	// every time, and the file would not remember what the piece looks
+	// like.
+	Page Page `json:",omitempty"`
+
 	// Markers is what the rehearsal marks in the sequence are called:
 	// letters, numbers, or the number of the bar they stand on.
 	//

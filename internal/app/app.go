@@ -464,6 +464,7 @@ func (a *App) APIRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/script/begin", a.handleScriptBegin)
 	mux.HandleFunc("/api/script/end", a.handleScriptEnd)
 	mux.HandleFunc("/api/keysignatures", a.handleKeySignatures)
+	mux.HandleFunc("/api/textstyles", a.handleTextStyles)
 	mux.HandleFunc("/api/chordpreview", a.handleChordPreview)
 	mux.HandleFunc("/api/chordfingering", a.handleChordFingering)
 	mux.HandleFunc("/api/chordqualities", a.handleChordQualities)
@@ -539,6 +540,8 @@ func (a *App) APIRoutes(mux *http.ServeMux) {
 		"/api/technique":       a.handleTechnique,
 		"/api/notehead":        a.handleNotehead,
 		"/api/retune":          a.handleRetune,
+		"/api/pagesetup":       a.handlePageSetup,
+		"/api/crossstaff":      a.handleCrossStaff,
 		"/api/fretchord":       a.handleFretChord,
 		"/api/dynamic":         a.handleDynamic,
 		"/api/hairpin":         a.handleHairpin,
@@ -1175,6 +1178,7 @@ func (a *App) handlePrint(w http.ResponseWriter, r *http.Request) {
 	score := a.score
 	book := a.book
 	symbols := a.symbols
+	page := a.score.Page
 	a.mu.RUnlock()
 
 	what := r.URL.Query().Get("what")
@@ -1232,7 +1236,11 @@ func (a *App) handlePrint(w http.ResponseWriter, r *http.Request) {
 	// continuous strip has no page breaks to print at.
 	eopt := engrave.DefaultOptions()
 	eopt.Mode = engrave.Paginated
-	eopt.LineWidth = 150
+	// As wide as the paper the score says it is printed on allows, rather
+	// than a fixed number that was right for one size of paper. A score
+	// set up for A3 landscape and printed at a hundred and fifty spaces
+	// came out a third of the way across the sheet.
+	eopt.LineWidth = paperFor(page).LineWidth(eopt.Spacings)
 	// Asked for in the print dialog rather than taken from the editor: the
 	// page a player reads from and the page being written are not the same
 	// page, and the whole point of counting bars of rest is the first one.
@@ -1275,7 +1283,10 @@ func (a *App) handlePrint(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, `<!doctype html>
 <html><head><meta charset="utf-8"><title>%s</title>
 <style>
-  @page { size: auto; margin: 12mm; }
+  /* The paper the score was set up for, so the browser's own print
+     dialog starts on the right size and the margins are the ones that
+     were engraved to. */
+  @page { size: %s; margin: %s; }
   html, body { margin: 0; padding: 0; background: #fff; }
   svg { display: block; width: 100%%; height: auto; }
   /* Each tune, and each extracted part, starts its own page. */
@@ -1291,7 +1302,8 @@ func (a *App) handlePrint(w http.ResponseWriter, r *http.Request) {
   } else {
     setTimeout(function () { window.print(); }, 600);
   }
-</script></body></html>`, html.EscapeString(title), body.String())
+</script></body></html>`, html.EscapeString(title),
+		pageCSSSize(page), pageCSSMargin(page), body.String())
 }
 
 // partLabel names a staff on its own page, so a player can tell which sheet
@@ -1369,3 +1381,31 @@ func (a *App) cursorInfo() cursorInfo {
 // middleStaffStep is the middle line, which is where a cursor with no reason
 // to be anywhere else sits.
 const middleStaffStep = 4
+
+// pageCSSSize and pageCSSMargin are the score's paper as a browser's print
+// machinery wants to hear it.
+//
+// Printing goes through the browser: the pages are drawn as SVG and the
+// browser's own print dialog puts them on paper. So the paper has to be
+// said again in CSS, or the dialog starts on whatever the last thing
+// printed used and the margins the music was engraved to are not the
+// margins it is printed with.
+//
+// Millimetres, which is what the model keeps and what @page takes.
+func pageCSSSize(p model.Page) string {
+	if p.IsZero() {
+		return "auto"
+	}
+	w, h := p.Size()
+	return fmt.Sprintf("%.1fmm %.1fmm", w, h)
+}
+
+func pageCSSMargin(p model.Page) string {
+	if p.IsZero() {
+		return "12mm"
+	}
+	// CSS orders them clockwise from the top, which is not the order they
+	// are asked for.
+	left, right, top, bottom := p.Margins()
+	return fmt.Sprintf("%.1fmm %.1fmm %.1fmm %.1fmm", top, right, bottom, left)
+}

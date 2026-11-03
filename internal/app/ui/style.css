@@ -2540,3 +2540,21 @@ input.wrong {
 #fretboard-at { width: 5em; }
 #fretboard-shape { width: 10em; }
 #fretboard-name { min-height: 1.2em; font-weight: 600; }
+
+/* Page setup: rows of small numbered fields, which is what every page
+   dialog in the world looks like and is what people expect to find. */
+.ps-row {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin: 6px 0 10px;
+}
+.ps-row label {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.ps-row input { width: 6em; }
+#ps-room { min-height: 1.2em; }

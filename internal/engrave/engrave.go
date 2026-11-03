@@ -857,6 +857,20 @@ type engraver struct {
 	// because a fret number is sitting on them. They are collected as the
 	// bars are drawn and used when the lines are ruled, which happens after.
 	tabGaps []tabGap
+
+	// cross is where this staff's neighbours are, for the notes written
+	// on them. See crossstaff.go.
+	cross crossContext
+
+	// systemTop is where the top staff of the system being drawn begins,
+	// and systemTopReach how far above it that staff's own ink and marks
+	// went. Words written for the whole system go above that: a tempo
+	// marking is read by everybody and is written once, at the top,
+	// whatever staff it was typed on.
+	systemTop, systemTopReach float64
+	// systemTexts are the words for the whole system, kept back until
+	// every staff of it has been drawn. See placeSystemTexts.
+	systemTexts []pendingSystemText
 	// scale is the size the engraver is drawing notes at, where one is full
 	// size. Anything but one is a cue: see cue.go, which has the reasoning
 	// and every measurement that reads this.
@@ -1552,6 +1566,15 @@ func (e *engraver) layout() {
 	// is also what somebody would want anyway: the fret and the notehead
 	// above it are one note, and clicking either picks up that note.
 	refFrom := make(map[*model.Part]int, len(all))
+	// Which staff each part is on the page, for the notes written on the
+	// staff next door: "next door" means the staff drawn beside it, and a
+	// hidden staff is not drawn. Measured against the same neighbours the
+	// drawing will use, or the room reserved for a note is the room it
+	// needed on a different staff.
+	visible := make(map[*model.Part]int, len(parts))
+	for vi, vp := range parts {
+		visible[vp] = vi
+	}
 	for i, p := range all {
 		var rows []measureBox
 		clef := p.Clef
@@ -1568,6 +1591,16 @@ func (e *engraver) layout() {
 				clef = *m.Clef
 			}
 			e.clef = clef
+			// Which staff a note is written on changes which line it
+			// sits on, and that changes how much room its ledger lines
+			// and its accidental need — so the measuring pass has to
+			// know about it too. Only the clefs: nothing is drawn here,
+			// so how far apart the staves are does not come into it.
+			if vi, ok := visible[p]; ok {
+				e.setCross(parts, vi, mi, 0, 0)
+			} else {
+				e.cross = crossContext{}
+			}
 			ch, w := e.signatureAt(p, mi)
 			b := e.measureBox(p, m, mi)
 			b.index = mi
@@ -2959,6 +2992,26 @@ func (e *engraver) drawSystem(parts []*model.Part, boxes [][]measureBox,
 		// starts again here, at this system's left edge.
 		e.resumeSpans(e.staffNumber(pi), sp.Margin+prefix-carried)
 
+		// Where this staff's neighbours are, for the notes written on
+		// them. Known before anything is drawn because the gaps are
+		// settled before the staves are walked, which is what lets a
+		// note be drawn on a staff that has not been reached yet.
+		up, down := 0.0, 0.0
+		if pi > 0 {
+			up = -(partH(parts[pi-1]) + gapAfter(pi-1))
+		}
+		if pi+1 < len(parts) {
+			down = partH(p) + gapAfter(pi)
+		}
+		e.setCross(parts, pi, start, up, down)
+
+		if pi == 0 {
+			// The top of the system, for the words that belong to all of
+			// it. Its reach starts at the staff itself and is measured
+			// properly once that staff has been drawn.
+			e.systemTop, e.systemTopReach = e.y, e.y
+		}
+
 		staffTop := e.y
 		staffMark := e.marked()
 		e.staffMark, e.staffTop = staffMark, staffTop
@@ -3094,6 +3147,14 @@ func (e *engraver) drawSystem(parts []*model.Part, boxes [][]measureBox,
 		if low := sky.reach(sp.Margin, right, true); low > lowest {
 			lowest = low
 		}
+		if pi == 0 {
+			// How far above the top staff its own music and marks went,
+			// which is what the words for the whole system have to clear.
+			// Taken after this staff is finished and before the next is
+			// begun, which is the only moment it is both measured and
+			// still the top staff's.
+			e.systemTopReach = sky.reach(sp.Margin, right, false)
+		}
 		outlines = append(outlines, sky)
 		bottoms = append(bottoms, e.y+partH(p))
 
@@ -3117,6 +3178,10 @@ func (e *engraver) drawSystem(parts []*model.Part, boxes [][]measureBox,
 		}
 		e.lay.gaps[start] = want
 	}
+
+	// The words for the whole system, now that the top staff's own reach
+	// is known and nothing else will be added to any staff's outline.
+	e.placeSystemTexts()
 
 	// The names and the brace reach across every staff of the system, so they
 	// are drawn once the staves' positions are all known.

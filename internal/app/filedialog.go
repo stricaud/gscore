@@ -492,9 +492,17 @@ func (a *App) renderPDF(w io.Writer, r *http.Request) error {
 
 	q := r.URL.Query()
 
-	popt := gpdf.DefaultOptions()
+	// The paper the score says it is printed on, which is a decision
+	// somebody made about the document and is kept with it. The query
+	// still overrides, for the one-off: exporting a copy on Letter to send
+	// to somebody is not a change to the piece.
+	popt := paperFor(score.Page)
 	if q.Get("paper") == "letter" {
-		popt = gpdf.Letter()
+		letter := gpdf.Letter()
+		popt.PageWidth, popt.PageHeight = letter.PageWidth, letter.PageHeight
+		if score.Page.Landscape {
+			popt = popt.Landscape()
+		}
 	}
 	popt.Symbols = symbols
 	popt.Title = score.Identity.Title
@@ -938,4 +946,37 @@ func statusFor(err error) int {
 		return http.StatusBadRequest
 	}
 	return http.StatusInternalServerError
+}
+
+// paperFor turns a score's page setup into the renderer's options.
+//
+// The model keeps millimetres, because that is what paper is specified in
+// and what the dialog shows; the renderer works in points. The conversion
+// happens here, once, at the edge between them — which is the only place
+// it can happen without one of the two having to know about the other's
+// units.
+//
+// A score that has chosen nothing comes back with the renderer's own
+// defaults untouched, so nothing moves on a file written before any of
+// this existed.
+func paperFor(page model.Page) gpdf.Options {
+	o := gpdf.DefaultOptions()
+	if page.IsZero() {
+		return o
+	}
+	w, h := page.Size()
+	o.PageWidth, o.PageHeight = model.MMToPoints(w), model.MMToPoints(h)
+
+	left, right, top, bottom := page.Margins()
+	o.MarginLeft = model.MMToPoints(left)
+	o.MarginRight = model.MMToPoints(right)
+	o.MarginTop = model.MMToPoints(top)
+	o.MarginBottom = model.MMToPoints(bottom)
+
+	// Zero means "choose one and shrink it to fit", which is what the
+	// renderer already does when it is not told.
+	if page.StaffSpace > 0 {
+		o.StaffSpace = page.StaffSpace
+	}
+	return o
 }

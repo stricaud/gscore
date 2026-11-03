@@ -57,6 +57,12 @@ type scoreDoc struct {
 
 	Engraving map[string]float64 `json:"engraving,omitempty"`
 
+	// Page is the paper the score is printed on. Omitted where nothing
+	// was chosen, which is every score written before there was a page
+	// setup and every new one since: those print on whatever the program
+	// would do, and that is not a decision to freeze into a file.
+	Page *pageDoc `json:"page,omitempty"`
+
 	// Numbering is how often the bar numbers are printed and whether they
 	// are boxed. Omitted where the score has not said, which is the
 	// ordinary case.
@@ -248,6 +254,7 @@ type symbolRef struct {
 type marksDoc struct {
 	Articulations []string    `json:"articulations,omitempty"`
 	Techniques    []string    `json:"techniques,omitempty"`
+	Cross         string      `json:"cross,omitempty"`
 	Symbols       []symbolRef `json:"symbols,omitempty"`
 	TieStart      bool        `json:"tieStart,omitempty"`
 	TieStop       bool        `json:"tieStop,omitempty"`
@@ -313,6 +320,7 @@ type frameDoc struct {
 
 type textDoc struct {
 	Text      string  `json:"text"`
+	Style     string  `json:"style,omitempty"`
 	Placement string  `json:"placement,omitempty"`
 	OffsetX   float64 `json:"offsetX,omitempty"`
 	OffsetY   float64 `json:"offsetY,omitempty"`
@@ -499,6 +507,15 @@ func encodeScore(s *model.Score) *scoreDoc {
 			doc.Engraving[k] = v
 		}
 	}
+	if !s.Page.IsZero() {
+		doc.Page = &pageDoc{
+			Paper: s.Page.Paper, Landscape: s.Page.Landscape,
+			CustomWidth: s.Page.CustomWidth, CustomHeight: s.Page.CustomHeight,
+			MarginLeft: s.Page.MarginLeft, MarginRight: s.Page.MarginRight,
+			MarginTop: s.Page.MarginTop, MarginBottom: s.Page.MarginBottom,
+			StaffSpace: s.Page.StaffSpace,
+		}
+	}
 	for _, sc := range s.Scripts {
 		doc.Scripts = append(doc.Scripts, scriptDoc{Name: sc.Name, Body: sc.Body})
 	}
@@ -605,8 +622,22 @@ func encodeElement(el model.Element) elemDoc {
 	return elemDoc{Kind: "rest", Dur: "0/1"}
 }
 
+// pageDoc is the paper, in millimetres, as the file writes it.
+type pageDoc struct {
+	Paper        string  `json:"paper,omitempty"`
+	CustomWidth  float64 `json:"customWidth,omitempty"`
+	CustomHeight float64 `json:"customHeight,omitempty"`
+	Landscape    bool    `json:"landscape,omitempty"`
+	MarginLeft   float64 `json:"marginLeft,omitempty"`
+	MarginRight  float64 `json:"marginRight,omitempty"`
+	MarginTop    float64 `json:"marginTop,omitempty"`
+	MarginBottom float64 `json:"marginBottom,omitempty"`
+	StaffSpace   float64 `json:"staffSpace,omitempty"`
+}
+
 func encodeMarks(m *model.Marks) *marksDoc {
 	if len(m.Articulations) == 0 && len(m.Techniques) == 0 &&
+		m.Cross == model.OnOwnStaff &&
 		len(m.Symbols) == 0 && m.Tuplet == nil &&
 		!m.TieStart && !m.TieStop && !m.SlurStart && !m.SlurStop &&
 		m.Stem == model.StemAuto && m.Dynamic == model.DynamicNone &&
@@ -629,6 +660,9 @@ func encodeMarks(m *model.Marks) *marksDoc {
 	}
 	for _, t := range m.Techniques {
 		out.Techniques = append(out.Techniques, t.String())
+	}
+	if m.Cross != model.OnOwnStaff {
+		out.Cross = m.Cross.String()
 	}
 	for _, s := range m.Symbols {
 		out.Symbols = append(out.Symbols, symbolRef{
@@ -703,8 +737,9 @@ func encodeMarks(m *model.Marks) *marksDoc {
 	}
 	for _, t := range m.Texts {
 		out.Texts = append(out.Texts, textDoc{
-			Text: t.Text, Placement: placementNames[t.Placement],
-			OffsetX: t.OffsetX, OffsetY: t.OffsetY,
+			Text: t.Text, Style: t.Style.String(),
+			Placement: placementNames[t.Placement],
+			OffsetX:   t.OffsetX, OffsetY: t.OffsetY,
 			Italic: t.Italic, Bold: t.Bold,
 		})
 	}
@@ -793,6 +828,15 @@ func decodeScore(doc *scoreDoc) (*model.Score, error) {
 	if doc.Numbering != nil {
 		s.Numbering = model.MeasureNumbering{
 			Every: doc.Numbering.Every, Boxed: doc.Numbering.Boxed,
+		}
+	}
+	if p := doc.Page; p != nil {
+		s.Page = model.Page{
+			Paper: p.Paper, Landscape: p.Landscape,
+			CustomWidth: p.CustomWidth, CustomHeight: p.CustomHeight,
+			MarginLeft: p.MarginLeft, MarginRight: p.MarginRight,
+			MarginTop: p.MarginTop, MarginBottom: p.MarginBottom,
+			StaffSpace: p.StaffSpace,
 		}
 	}
 	if len(doc.Engraving) > 0 {
@@ -980,6 +1024,9 @@ func decodeMarks(md *marksDoc, m *model.Marks) {
 			m.AddTechnique(v)
 		}
 	}
+	if c, ok := model.CrossStaffFromName(md.Cross); ok {
+		m.Cross = c
+	}
 	for _, s := range md.Symbols {
 		m.Symbols = append(m.Symbols, model.SymbolMark{
 			Name: s.Name, Placement: placementValues[s.Placement],
@@ -1045,9 +1092,14 @@ func decodeMarks(md *marksDoc, m *model.Marks) {
 		m.Chord = c
 	}
 	for _, t := range md.Texts {
+		// A style this build does not know is read as plain rather than
+		// refused: a score from a later gscore should open with its
+		// words on the page, set simply, rather than not open.
+		style, _ := model.TextStyleFromName(t.Style)
 		m.Texts = append(m.Texts, model.TextMark{
-			Text: t.Text, Placement: placementValues[t.Placement],
-			OffsetX: t.OffsetX, OffsetY: t.OffsetY,
+			Text: t.Text, Style: style,
+			Placement: placementValues[t.Placement],
+			OffsetX:   t.OffsetX, OffsetY: t.OffsetY,
 			Italic: t.Italic, Bold: t.Bold,
 		})
 	}

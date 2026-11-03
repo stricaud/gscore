@@ -471,3 +471,157 @@ func TestEveryTabMarkSurvivesARoundTrip(t *testing.T) {
 		}
 	}
 }
+
+// The paper survives being saved, and a score that chose nothing writes
+// nothing — which is the difference between following the program's
+// defaults and freezing the day's into the file.
+func TestThePaperSurvivesARoundTrip(t *testing.T) {
+	s := model.NewScore()
+	s.Page = model.Page{
+		Paper: "a3", Landscape: true,
+		MarginLeft: 30, MarginRight: 12, MarginTop: 18, MarginBottom: 20,
+		StaffSpace: 5.5,
+	}
+
+	var buf bytes.Buffer
+	if err := Write(&buf, s, nil); err != nil {
+		t.Fatal(err)
+	}
+	back, _, err := Read(bytes.NewReader(buf.Bytes()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if back.Page != s.Page {
+		t.Errorf("the page came back as %+v, want %+v", back.Page, s.Page)
+	}
+}
+
+// A custom page keeps both of its measurements.
+//
+// They are two numbers and were written under one name, so the height was
+// lost and the page came back square. go vet is what found it; nothing on
+// the page would have said so except the shape of the paper.
+func TestACustomPageKeepsItsWidthAndItsHeight(t *testing.T) {
+	s := model.NewScore()
+	s.Page = model.Page{Paper: "custom", CustomWidth: 300, CustomHeight: 190}
+
+	var buf bytes.Buffer
+	if err := Write(&buf, s, nil); err != nil {
+		t.Fatal(err)
+	}
+	back, _, err := Read(bytes.NewReader(buf.Bytes()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if w, h := back.Page.Size(); w != 300 || h != 190 {
+		t.Errorf("it came back %v by %v, want 300 by 190", w, h)
+	}
+}
+
+func TestAScoreThatChoseNoPaperWritesNone(t *testing.T) {
+	var buf bytes.Buffer
+	if err := Write(&buf, model.NewScore(), nil); err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(buf.Bytes(), []byte(`"page"`)) {
+		t.Error("a score that chose nothing wrote a page setup anyway")
+	}
+}
+
+// A note written on the staff next door keeps being written there.
+//
+// Lost on the way through a file, the note comes back on its own staff:
+// the music is unchanged and the page is wrong, which is the kind of
+// mistake nobody finds until they print it.
+func TestCrossStaffSurvivesARoundTrip(t *testing.T) {
+	s := model.NewScore()
+	p := s.Parts[0]
+	for _, dir := range []model.CrossStaff{
+		model.OnStaffBelow, model.OnStaffAbove, model.OnOwnStaff,
+	} {
+		n := &model.Note{
+			Pitch: model.Pitch{Step: model.StepC, Octave: 4},
+			Dur:   model.Duration{Num: 1, Den: 8},
+		}
+		n.Cross = dir
+		p.Measures[0].Voices[0].Elements = append(
+			p.Measures[0].Voices[0].Elements, n)
+	}
+
+	var buf bytes.Buffer
+	if err := Write(&buf, s, nil); err != nil {
+		t.Fatal(err)
+	}
+	back, _, err := Read(bytes.NewReader(buf.Bytes()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	els := back.Parts[0].Measures[0].Voices[0].Elements
+	for i, want := range []model.CrossStaff{
+		model.OnStaffBelow, model.OnStaffAbove, model.OnOwnStaff,
+	} {
+		n := els[i].(*model.Note)
+		if n.Cross != want {
+			t.Errorf("note %d came back written on %v, want %v", i, n.Cross, want)
+		}
+	}
+}
+
+// What kind of writing a text is survives being saved. Lost, every word
+// on the page comes back set as an expression marking: the tempo stops
+// being bold and moves from over the system to under one staff.
+func TestTextStylesSurviveARoundTrip(t *testing.T) {
+	s := model.NewScore()
+	p := s.Parts[0]
+	n := &model.Note{
+		Pitch: model.Pitch{Step: model.StepC, Octave: 4},
+		Dur:   model.Duration{Num: 1, Den: 4},
+	}
+	for _, st := range model.TextStyles() {
+		n.Texts = append(n.Texts, model.TextMark{Text: st.String(), Style: st})
+	}
+	p.Measures[0].Voices[0].Elements = []model.Element{n}
+
+	var buf bytes.Buffer
+	if err := Write(&buf, s, nil); err != nil {
+		t.Fatal(err)
+	}
+	back, _, err := Read(bytes.NewReader(buf.Bytes()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := back.Parts[0].Measures[0].Voices[0].Elements[0].(*model.Note)
+	if len(got.Texts) != len(model.TextStyles()) {
+		t.Fatalf("%d texts came back, want %d", len(got.Texts), len(model.TextStyles()))
+	}
+	for i, st := range model.TextStyles() {
+		if got.Texts[i].Style != st {
+			t.Errorf("%v came back as %v", st, got.Texts[i].Style)
+		}
+	}
+}
+
+// And a mark that left its placement to its style keeps leaving it to the
+// style, rather than coming back pinned to wherever it happened to be.
+func TestATextThatLeftItsPlaceToItsStyleStillDoes(t *testing.T) {
+	s := model.NewScore()
+	n := &model.Note{
+		Pitch: model.Pitch{Step: model.StepC, Octave: 4},
+		Dur:   model.Duration{Num: 1, Den: 4},
+	}
+	n.Texts = []model.TextMark{{Text: "dolce", Style: model.TextExpression}}
+	s.Parts[0].Measures[0].Voices[0].Elements = []model.Element{n}
+
+	var buf bytes.Buffer
+	if err := Write(&buf, s, nil); err != nil {
+		t.Fatal(err)
+	}
+	back, _, err := Read(bytes.NewReader(buf.Bytes()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := back.Parts[0].Measures[0].Voices[0].Elements[0].(*model.Note)
+	if got.Texts[0].Placement != model.PlacementAuto {
+		t.Errorf("it came back pinned to %v", got.Texts[0].Placement)
+	}
+}

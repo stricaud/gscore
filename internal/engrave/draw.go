@@ -74,6 +74,14 @@ type placed struct {
 	// have had alone. That was how a slur over a rising run came to be drawn
 	// underneath it, through the beam.
 	stemDir int
+
+	// cross says this element is written on the staff above or below the
+	// one it belongs to, and crossDY how far that is. See crossstaff.go.
+	// Its step has already been read against that staff's clef, so
+	// everything that works in steps goes on working; only the y it is
+	// drawn at has to move.
+	cross   model.CrossStaff
+	crossDY float64
 }
 
 // placedOf describes one element: what it is, how it is written, and where it
@@ -81,7 +89,19 @@ type placed struct {
 // about an element the spacing decides rather than reads, and the spacing has
 // to be able to ask these same questions before it can decide it.
 func (e *engraver) placedOf(clef model.Clef, el model.Element, at model.Duration) *placed {
-	p := &placed{start: at, clef: clef}
+	// Written on the staff next door, where it says so and there is one.
+	// The clef is swapped before anything is read off it, because which
+	// line a pitch sits on is the clef's answer and this note is being
+	// read on another staff: a C that is a ledger line under the treble
+	// staff is the third space of the bass staff.
+	cross := e.crossOf(el)
+	if cross != model.OnOwnStaff {
+		if c, ok := e.cross.clefFor(cross); ok {
+			clef = c
+		}
+	}
+	p := &placed{start: at, clef: clef, cross: cross,
+		crossDY: e.cross.shiftFor(cross)}
 	switch el := el.(type) {
 	case *model.Note:
 		p.note = el
@@ -737,16 +757,39 @@ func (e *engraver) stemUp(p *placed) bool {
 // drawHeads draws an element's noteheads, at whatever size that element is
 // written at: full size for the music, smaller for a cue. See cue.go.
 func (e *engraver) drawHeads(part *model.Part, p *placed) {
-	e.drawingAt(p.scaleOf(), func() {
-		switch {
-		case p.rest != nil:
-			e.drawRestAt(p)
-		case p.note != nil:
-			e.drawNoteHead(p)
-		case p.chord != nil:
-			e.drawChordHeads(p)
-		}
+	// The notehead, its accidental, its dots and its ledger lines all go
+	// on the other staff together. Moving the whole drawing rather than
+	// each of them is what keeps them from coming apart: a ledger line
+	// left behind on the home staff is a line through the middle of the
+	// music with no note on it.
+	e.onCrossStaff(p, func() {
+		e.drawingAt(p.scaleOf(), func() {
+			switch {
+			case p.rest != nil:
+				e.drawRestAt(p)
+			case p.note != nil:
+				e.drawNoteHead(p)
+			case p.chord != nil:
+				e.drawChordHeads(p)
+			}
+		})
 	})
+}
+
+// onCrossStaff draws something at the neighbouring staff's height.
+//
+// By moving the staff rather than the thing: everything here measures
+// from e.y, and sixty places that each add an offset of their own is
+// sixty places for one of them to be forgotten.
+func (e *engraver) onCrossStaff(p *placed, fn func()) {
+	if p == nil || p.crossDY == 0 {
+		fn()
+		return
+	}
+	was := e.y
+	e.y += p.crossDY
+	defer func() { e.y = was }()
+	fn()
 }
 
 func (e *engraver) drawRestAt(p *placed) {
@@ -1357,7 +1400,12 @@ func (e *engraver) drawStemsAndBeams(items []*placed, t model.TimeSignature) {
 		if p.rest != nil || inGroup[p] {
 			continue
 		}
-		e.drawingAt(p.scaleOf(), func() { e.drawSingleStem(p) })
+		// On the staff it is drawn on, which for a note written across
+		// is the one next door: a stem left behind on the home staff is
+		// a stem joined to nothing.
+		e.onCrossStaff(p, func() {
+			e.drawingAt(p.scaleOf(), func() { e.drawSingleStem(p) })
+		})
 	}
 	for _, g := range groups {
 		// A group is beamed together, so it is drawn at one size: the
@@ -1653,9 +1701,27 @@ func (e *engraver) drawBeamGroup(g []*placed) {
 		extra = float64(deepest-2) * (e.beamTh() + e.beamGap())
 	}
 
+	// A group written across two staves: the beam goes between them and
+	// every stem reaches it, each from its own side.
+	//
+	// Which way a stem points is then not a decision at all — it is
+	// wherever the beam is from the notehead — so the one direction that
+	// serves an ordinary group does not serve this one.
+	betweenY, crossed := e.crossBeamY(g)
+
 	ends := make([]end, 0, len(g))
 	for _, p := range g {
 		head := e.headW(p.value)
+		if crossed {
+			// Down from a note above the beam and up from one below it.
+			stemUp := e.y+p.crossDY+stepY(float64(p.lo)) > betweenY
+			sx := p.x + e.stemTh()/2
+			if stemUp {
+				sx = p.x + head - e.stemTh()/2
+			}
+			ends = append(ends, end{x: sx, y: betweenY, p: p})
+			continue
+		}
 		sx := p.x + head - e.stemTh()/2
 		base := e.y + stepY(float64(p.hi))
 		if !up {
@@ -1712,8 +1778,16 @@ func (e *engraver) drawBeamGroup(g []*placed) {
 
 	// Every stem has to reach the beam, so the line is pushed out to clear the
 	// furthest notehead rather than cutting through it.
+	//
+	// Not for a beam between two staves: it is already clear of both of
+	// them by being in the gap, and "out" has no meaning when there are
+	// noteheads on each side of it. Pushed, it would run into one staff
+	// to get away from the other.
 	shift := 0.0
 	for _, en := range ends {
+		if crossed {
+			break
+		}
 		want := beamY(en.x)
 		if up && want > en.y-0 {
 			if delta := want - en.y; delta > shift {
@@ -1756,9 +1830,14 @@ func (e *engraver) drawBeamGroup(g []*placed) {
 	// that looks unstemmed, which is what the opening of the Altes does with
 	// its C-E flat-C triplets.
 	for _, en := range ends {
-		base := e.y + stepY(float64(en.p.lo))
-		if !up {
-			base = e.y + stepY(float64(en.p.hi))
+		// On its own staff, which for a note written across is the one
+		// next door — and the stem runs from the far side of the chord,
+		// which is the side away from the beam and so depends on which
+		// side of the beam the note is.
+		staffY := e.y + en.p.crossDY
+		base := staffY + stepY(float64(en.p.lo))
+		if (crossed && staffY+stepY(float64(en.p.lo)) < betweenY) || (!crossed && !up) {
+			base = staffY + stepY(float64(en.p.hi))
 		}
 		e.lay.Lines = append(e.lay.Lines, Line{
 			X1: en.x, Y1: base, X2: en.x, Y2: beamY(en.x), Thickness: e.stemTh(),
@@ -2159,12 +2238,19 @@ func (e *engraver) drawDynamic(m *model.Marks, p *placed, measure int) {
 // Above the staff unless told otherwise, because that is where a direction to
 // the player goes and below is where the dynamics and the words already are.
 func (e *engraver) drawTexts(m *model.Marks, p *placed) {
-	const textSize = 1.9
-	const textLine = 2.2 // how far apart the lines of one text sit
 	for _, t := range m.Texts {
 		if t.Text == "" {
 			continue
 		}
+		// How this kind of writing is set, and where it goes. Everything
+		// below reads the style rather than a constant, so that words of
+		// one kind come out alike wherever they are on the page: see
+		// model.TextStyle.
+		look := t.Look()
+		textSize := look.Size
+		// Far enough apart that the lines of one block do not touch at
+		// whatever size the style is set in.
+		textLine := textSize * 1.16
 		// A direction can be several lines — a dedication, a note to the
 		// player — and the newlines in it are real. Drawn as one string
 		// they vanish, because nothing in SVG or PDF breaks a line for
@@ -2177,7 +2263,7 @@ func (e *engraver) drawTexts(m *model.Marks, p *placed) {
 		}
 
 		x := p.x + t.OffsetX
-		if t.Placement == model.PlacementBelow {
+		if look.Place == model.PlacementBelow {
 			for i, line := range lines {
 				if line == "" {
 					continue
@@ -2185,11 +2271,33 @@ func (e *engraver) drawTexts(m *model.Marks, p *placed) {
 				e.lay.Texts = append(e.lay.Texts, Text{
 					S: line, X: x,
 					Y:    e.y + e.staffH() + 3.4 + t.OffsetY + float64(i)*textLine,
-					Size: textSize, Anchor: "start", Italic: t.Italic, Bold: t.Bold,
+					Size: textSize, Anchor: "start",
+					Italic: look.Italic, Bold: look.Bold,
 				})
 			}
 			continue
 		}
+		// Words for everybody go over the top staff of the system rather
+		// than over the staff they are attached to. A tempo marking is
+		// read by the whole orchestra and is written once, at the top,
+		// whichever staff somebody happened to type it on — and a "rit."
+		// printed over the third horn is a "rit." most of the players
+		// will not see.
+		if look.System && e.systemTop < e.y {
+			// Kept back rather than drawn here. It goes above the top
+			// staff, which is not the staff being drawn — and anything
+			// put on the page during a staff's pass counts as that
+			// staff's own ink. A tempo marking drawn from the second
+			// violin's pass made the second violins look thirty spaces
+			// tall, and everything the staff had queued was then placed
+			// clear of that: the "pizz." written two bars later came out
+			// above the flutes.
+			e.systemTexts = append(e.systemTexts, pendingSystemText{
+				t: t, lines: lines, look: look, x: x, line: textLine,
+			})
+			continue
+		}
+
 		// Above the staff it joins the queue, so that it clears the music,
 		// the chord symbols over it and anything else already there rather
 		// than being written at a distance decided in advance. "rit." over
@@ -2218,7 +2326,7 @@ func (e *engraver) drawTexts(m *model.Marks, p *placed) {
 					e.lay.Texts = append(e.lay.Texts, Text{
 						S: line, X: x, Y: top + t.OffsetY + float64(i)*textLine,
 						Size: textSize, Anchor: "start",
-						Italic: t.Italic, Bold: t.Bold,
+						Italic: look.Italic, Bold: look.Bold,
 					})
 				}
 			},
@@ -2591,3 +2699,93 @@ func (e *engraver) separateColumn(col []*placed) {
 		}
 	}
 }
+
+// pendingSystemText is a text for the whole system, waiting for the system
+// to be finished so it can be put above the top staff of it.
+type pendingSystemText struct {
+	t     model.TextMark
+	lines []string
+	look  model.TextLook
+	x     float64
+	line  float64
+}
+
+// placeSystemTexts writes the words that belong to the whole system over
+// the top staff of it.
+//
+// After every staff has been drawn, for two reasons. A staff's outline is
+// whatever went onto the page during its pass, so words put above the top
+// staff from a lower staff's pass would make that lower staff appear to
+// reach the top of the system — and everything it had queued would then be
+// placed clear of a staff thirty spaces tall. And the top staff's own
+// reach is not known until it has been drawn.
+//
+// Stacked where they would otherwise collide: two of them over the same
+// bar — "Allegro" and "To Coda" at a double bar — were written at the same
+// height and came out on top of each other.
+func (e *engraver) placeSystemTexts() {
+	if len(e.systemTexts) == 0 {
+		return
+	}
+	// Nearest the staff first, so the stacking runs outwards from it.
+	rows := []float64{} // the top of each row, and how far right it reaches
+	right := []float64{}
+	for _, p := range e.systemTexts {
+		widest := 0.0
+		for _, line := range p.lines {
+			if w := textWidth(line, p.look.Size); w > widest {
+				widest = w
+			}
+		}
+		height := p.look.Size + float64(len(p.lines)-1)*p.line
+
+		// The first row that is free where this text goes.
+		row := 0
+		for row < len(rows) && p.x < right[row]+textGap {
+			row++
+		}
+		if row == len(rows) {
+			top := e.systemTopReach - systemTextGap
+			for i := 0; i < row; i++ {
+				top -= rows[i]
+			}
+			rows = append(rows, height+systemTextGap)
+			right = append(right, p.x+widest)
+			e.writeSystemText(p, top, height)
+			continue
+		}
+		top := e.systemTopReach - systemTextGap
+		for i := 0; i < row; i++ {
+			top -= rows[i]
+		}
+		if p.x+widest > right[row] {
+			right[row] = p.x + widest
+		}
+		e.writeSystemText(p, top, height)
+	}
+	e.systemTexts = e.systemTexts[:0]
+}
+
+// writeSystemText puts one of them down, its bottom line at y.
+func (e *engraver) writeSystemText(p pendingSystemText, y, height float64) {
+	top := y - height + p.look.Size
+	for i, line := range p.lines {
+		if line == "" {
+			continue
+		}
+		e.lay.Texts = append(e.lay.Texts, Text{
+			S: line, X: p.x, Y: top + p.t.OffsetY + float64(i)*p.line,
+			Size: p.look.Size, Anchor: "start",
+			Italic: p.look.Italic, Bold: p.look.Bold,
+		})
+	}
+}
+
+const (
+	// systemTextGap is the air between the music and the words over the
+	// system, and between one row of them and the next.
+	systemTextGap = 0.6
+	// textGap is how far apart two of them have to be along the line
+	// before they count as not colliding.
+	textGap = 1.0
+)

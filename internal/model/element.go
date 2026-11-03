@@ -354,6 +354,12 @@ type Marks struct {
 	// hammer-on, a slide, a bend, a palm mute. See Technique.
 	Techniques []Technique
 
+	// Cross draws this element on the staff above or below the one it
+	// belongs to, without changing what it is or what it sounds. See
+	// CrossStaff — it is what piano writing needs for a figure that runs
+	// past what one hand can reach.
+	Cross CrossStaff `json:",omitempty"`
+
 	// Symbols are user-supplied marks, named in the symbol registry. The
 	// built-in Articulations above cover what the C program knew; this is the
 	// escape hatch for everything else.
@@ -672,11 +678,40 @@ func (f *ChordFrame) Spell() string {
 
 // TextMark is a piece of writing attached to a note.
 type TextMark struct {
-	Text      string
+	Text string
+
+	// Style is what kind of writing this is, which decides how it is set
+	// and where it goes: see TextStyle. The zero value is an expression
+	// marking, which is what the commonest words on a page are.
+	Style TextStyle `json:",omitempty"`
+
+	// Placement overrides where the style would put it. PlacementAuto —
+	// the zero value — leaves it to the style, which is what nearly every
+	// mark wants: words of one kind all sitting on the same side of the
+	// staff is most of what makes a page readable.
 	Placement Placement
+
 	// Offsets are in staff spaces from where the engraver would put it.
 	OffsetX, OffsetY float64
-	Italic, Bold     bool
+
+	// Italic and Bold are set ON TOP of the style rather than instead of
+	// it. They can add a slant or a weight and cannot take one away:
+	// taking one away would need a third state for "not set", and a mark
+	// that says plainly what it wants is worth more than one that can
+	// countermand its own style in both directions.
+	Italic, Bold bool
+}
+
+// Look is how this mark is set: its style, with whatever the mark itself
+// insists on.
+func (t TextMark) Look() TextLook {
+	look := t.Style.Look()
+	look.Italic = look.Italic || t.Italic
+	look.Bold = look.Bold || t.Bold
+	if t.Placement != PlacementAuto {
+		look.Place = t.Placement
+	}
+	return look
 }
 
 // Syllabic says where a syllable falls in its word, which is what decides
@@ -1025,4 +1060,51 @@ func marksOf(el Element) *Marks {
 		return &e.Marks
 	}
 	return nil
+}
+
+// CrossStaff says this note is drawn on a neighbouring staff.
+//
+// Piano writing needs it constantly. A figure belongs to one hand's
+// rhythm — one beam, one voice — and runs below or above what that hand
+// can reach, so the notes that stray are written on the other staff with
+// the beam crossing between them. The alternative is to write them in the
+// other hand's voice, which puts them in a different rhythm from the
+// figure they are part of and is simply a different piece of music.
+//
+// 1 is the staff below and -1 the staff above; 0, the zero value, is an
+// ordinary note. One step only: this is about a pianist's two staves, and
+// a note sent two staves away is on nobody's hand.
+//
+// The pitch does not change and nothing about what sounds changes. The
+// note is written somewhere else and played the same, which is the whole
+// of what the mark means.
+type CrossStaff int
+
+const (
+	OnOwnStaff   CrossStaff = 0
+	OnStaffBelow CrossStaff = 1
+	OnStaffAbove CrossStaff = -1
+)
+
+func (c CrossStaff) String() string {
+	switch c {
+	case OnStaffBelow:
+		return "below"
+	case OnStaffAbove:
+		return "above"
+	}
+	return "own"
+}
+
+// CrossStaffFromName is the inverse, for files and query strings.
+func CrossStaffFromName(s string) (CrossStaff, bool) {
+	switch s {
+	case "below":
+		return OnStaffBelow, true
+	case "above":
+		return OnStaffAbove, true
+	case "own", "none", "":
+		return OnOwnStaff, true
+	}
+	return OnOwnStaff, false
 }

@@ -640,6 +640,15 @@ paths:
         - name: accidental
           in: query
           schema: { $ref: "#/components/schemas/Accidental" }
+        - name: midi
+          in: query
+          description: >-
+            The note as it SOUNDS, which is what a MIDI keyboard sends.
+            It comes back through the staff's own interval to what the
+            player reads, and the key signature in force spells it — the
+            same number is a D sharp in three sharps and an E flat in
+            three flats. Overrides step and pitch.
+          schema: { type: integer, minimum: 0, maximum: 127 }
         - name: drum
           in: query
           description: On a drum staff, which drum — its MIDI key — rather than where the click landed.
@@ -683,6 +692,15 @@ paths:
             The notehead named outright — "e", "eb", "e5" — instead of by
             staff position, which is how a typed or scripted chord says it.
           schema: { type: string }
+        - name: midi
+          in: query
+          description: >-
+            The note as it SOUNDS, which is what a MIDI keyboard sends.
+            It comes back through the staff's own interval to what the
+            player reads, and the key signature in force spells it — the
+            same number is a D sharp in three sharps and an E flat in
+            three flats. Overrides step and pitch.
+          schema: { type: integer, minimum: 0, maximum: 127 }
         - name: above
           in: query
           description: >
@@ -1567,6 +1585,126 @@ paths:
         "200": { $ref: "#/components/responses/Changed" }
         "400": { $ref: "#/components/responses/Error" }
 
+  /api/textstyles:
+    get:
+      tags: [marks]
+      summary: The kinds of writing there are, and how each one is set
+      description: >-
+        Words on a score fall into a handful of kinds, and the kind decides
+        the type, the slant, the weight and which side of the staff it goes
+        on. The list is served rather than written down again by whatever
+        is choosing from it, so there is one answer about what an
+        expression marking looks like and not two.
+      responses:
+        "200":
+          description: The styles, in the order they are offered.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    name: { type: string }
+                    label: { type: string }
+                    size:
+                      type: number
+                      description: The type size in staff spaces.
+                    italic: { type: boolean }
+                    bold: { type: boolean }
+                    place: { type: string, enum: [above, below, auto] }
+                    system:
+                      type: boolean
+                      description: >-
+                        Written once over the top staff of the system, for
+                        everybody, rather than over the staff it is
+                        attached to.
+
+  /api/crossstaff:
+    post:
+      tags: [marks]
+      summary: Write a note on the staff above or below the one it belongs to
+      description: >-
+        What piano writing needs for a figure that runs past what one hand
+        can reach. Nothing about the music changes — the same pitch, bar,
+        voice and sound — only where it is drawn, and the beam crosses
+        between the staves. A note with no such staff beside it is written
+        where it is.
+      parameters:
+        - $ref: "#/components/parameters/part"
+        - $ref: "#/components/parameters/measure"
+        - $ref: "#/components/parameters/at"
+        - $ref: "#/components/parameters/sel"
+        - name: to
+          in: query
+          required: true
+          schema: { type: string, enum: [above, below, own] }
+      responses:
+        "200": { $ref: "#/components/responses/Changed" }
+        "400": { $ref: "#/components/responses/Error" }
+
+  /api/pagesetup:
+    get:
+      tags: [structure]
+      summary: The paper the score is printed on, and the sizes on offer
+      responses:
+        "200":
+          description: The setup as it stands.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PageSetup" }
+    post:
+      tags: [structure]
+      summary: Change the paper
+      description: >-
+        Everything is in millimetres except the staff size, which is in
+        points — that is an engraving measurement and is quoted that way
+        everywhere else. Anything left out is left as it was. reset=1 puts
+        the score back to following the program's own defaults, which is
+        not the same as writing today's defaults into the file.
+      parameters:
+        - name: paper
+          in: query
+          schema: { type: string, enum: [a4, a3, a5, b4, letter, legal, tabloid, custom] }
+        - name: landscape
+          in: query
+          schema: { type: string, enum: ["0", "1"] }
+        - name: width
+          in: query
+          description: Millimetres, for a custom page.
+          schema: { type: number, minimum: 50, maximum: 2000 }
+        - name: height
+          in: query
+          description: Millimetres, for a custom page.
+          schema: { type: number, minimum: 50, maximum: 2000 }
+        - name: marginLeft
+          in: query
+          schema: { type: number, minimum: 0, maximum: 150 }
+        - name: marginRight
+          in: query
+          schema: { type: number, minimum: 0, maximum: 150 }
+        - name: marginTop
+          in: query
+          schema: { type: number, minimum: 0, maximum: 150 }
+        - name: marginBottom
+          in: query
+          schema: { type: number, minimum: 0, maximum: 150 }
+        - name: space
+          in: query
+          description: >-
+            The staff size in points, or 0 to fit the music to the page.
+          schema: { type: number }
+        - name: reset
+          in: query
+          schema: { type: string, enum: ["1"] }
+      responses:
+        "200":
+          description: The setup as it now stands.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PageSetup" }
+        "400": { $ref: "#/components/responses/Error" }
+
   /api/retune:
     post:
       tags: [edit]
@@ -1706,7 +1844,20 @@ paths:
         - $ref: "#/components/parameters/at"
         - $ref: "#/components/parameters/sel"
         - { name: text, in: query, required: true, schema: { type: string } }
-        - { name: placement, in: query, schema: { type: string, enum: [above, below] } }
+        - name: style
+          in: query
+          description: >-
+            What kind of writing it is, which decides how it is set and
+            where it goes. See /api/textstyles.
+          schema:
+            type: string
+            enum: [expression, technique, tempo, direction, plain]
+        - name: placement
+          in: query
+          description: >-
+            Which side of the staff, overriding the style. Left out, the
+            style decides — which is what nearly every mark wants.
+          schema: { type: string, enum: [above, below] }
         - { name: italic, in: query, schema: { type: string, enum: ["0", "1"] } }
         - { name: bold, in: query, schema: { type: string, enum: ["0", "1"] } }
       responses:
@@ -3715,10 +3866,32 @@ paths:
   /api/view:
     post:
       tags: [app]
-      summary: What the drawing shows — staff names, bar numbers
+      summary: What the drawing shows — staff names, bar numbers, the metronome mark
+      description: >-
+        Decisions about the drawing and not about the music. Anything left
+        out is left as it is, and the answer says what everything is now.
       parameters:
         - { name: names, in: query, schema: { type: string, enum: ["0", "1"] } }
         - { name: numbers, in: query, schema: { type: string, enum: ["0", "1"] } }
+        - name: multirest
+          in: query
+          description: >-
+            Bars of rest counted rather than drawn one at a time. The bars
+            are still there and still played.
+          schema: { type: string, enum: ["0", "1"] }
+        - name: tempomark
+          in: query
+          description: >-
+            The metronome mark and the word beside it, over the first bar.
+            Hidden, the piece still plays at that speed.
+          schema: { type: string, enum: ["0", "1"] }
+        - name: concert
+          in: query
+          description: >-
+            The score as it sounds rather than as each player reads it.
+            What is stored does not change: writing on a transposing staff
+            still goes in as what its player reads.
+          schema: { type: string, enum: ["0", "1"] }
       responses:
         "200":
           description: What it shows now.
@@ -3730,7 +3903,13 @@ paths:
                   status: { type: string }
                   names: { type: boolean }
                   numbers: { type: boolean }
-                  changed: { type: boolean }
+                  multirest: { type: boolean }
+                  tempomark: { type: boolean }
+                  concert: { type: boolean }
+                  changed:
+                    type: array
+                    description: Which of them this request actually changed.
+                    items: { type: string }
 
   /api/settings:
     post:
@@ -3977,6 +4156,39 @@ components:
                   none of its own — the tablature half of a
                   notation-and-tablature pair. Absent where the staff has
                   its own music.
+
+    PageSetup:
+      type: object
+      properties:
+        papers:
+          type: array
+          description: The sizes on offer, in millimetres, plus "custom".
+          items:
+            type: object
+            properties:
+              name: { type: string }
+              label: { type: string }
+              width: { type: number }
+              height: { type: number }
+        paper: { type: string }
+        landscape: { type: boolean }
+        width:
+          type: number
+          description: What the paper comes to in millimetres, the way round it is printed.
+        height: { type: number }
+        marginLeft: { type: number }
+        marginRight: { type: number }
+        marginTop: { type: number }
+        marginBottom: { type: number }
+        space:
+          type: number
+          description: The staff size in points, or 0 to fit the music to the page.
+        chosen:
+          type: boolean
+          description: >-
+            Whether anything was chosen at all. False means the score
+            follows the program's own defaults and will keep following
+            them as they change.
 
     PartReach:
       type: object

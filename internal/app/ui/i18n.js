@@ -245,6 +245,7 @@ const MESSAGES = {
   "Marcato down": "Marcato vers le bas",
   "Marcato up": "Marcato vers le haut",
   "Marks": "Signes",
+  "Measures after this one…": "Mesures après celle-ci…",
   "Measure": "Mesure",
   "Measure numbers": "Numéros de mesure",
   "Multi-measure rests": "Silences multimesures",

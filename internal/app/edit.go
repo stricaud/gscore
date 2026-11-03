@@ -801,6 +801,72 @@ func (a *App) handleAddMeasure(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]int{"measures": len(a.score.Parts[0].Measures)})
 }
 
+// handleInsertMeasure puts empty bars into the middle of the piece.
+//
+// Music is typed in, a bar or two is missed, and the mistake is found four
+// pages later. Adding bars at the end and moving everything along by hand
+// is not a repair anybody should have to make.
+func (a *App) handleInsertMeasure(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST required", http.StatusMethodNotAllowed)
+		return
+	}
+	q := r.URL.Query()
+
+	a.lock()
+	defer a.mu.Unlock()
+
+	bars := a.score.MeasureCount()
+	// Which bar the new ones follow. The bar somebody picked, since what
+	// they asked for is bars to the right of it.
+	after := bars - 1
+	if v := q.Get("measure"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 0 || n >= bars {
+			http.Error(w, "there is no bar "+v, http.StatusBadRequest)
+			return
+		}
+		after = n
+	}
+	count := 1
+	if v := q.Get("count"); v != "" {
+		n, err := strconv.Atoi(v)
+		// A hundred at a time is past what anybody means to type and
+		// well within what a slip of the finger can ask for.
+		if err != nil || n < 1 || n > 100 {
+			http.Error(w, v+" is not a number of bars — 1 to 100",
+				http.StatusBadRequest)
+			return
+		}
+		count = n
+	}
+
+	// Every staff, or the one the cursor is on. Every staff is nearly
+	// always right: a bar is a bar across the score and the barlines
+	// have to stay in a column.
+	onlyPart := -1
+	if q.Get("where") == "staff" {
+		n, err := strconv.Atoi(q.Get("part"))
+		if err != nil || n < 0 || n >= len(a.score.Parts) {
+			http.Error(w, "which staff?", http.StatusBadRequest)
+			return
+		}
+		onlyPart = n
+	}
+
+	if a.score.InsertMeasures(after, count, onlyPart) == 0 {
+		http.Error(w, "nothing could be put in there", http.StatusBadRequest)
+		return
+	}
+	// A bar put in is a bar of rest until something is written in it.
+	restEmptyMeasures(a.score)
+
+	writeJSON(w, map[string]any{
+		"status": "ok", "measures": a.score.MeasureCount(),
+		"at": after + 1, "count": count,
+	})
+}
+
 // locate finds a measure, making sure it has a voice to put things in.
 func (a *App) locate(partIdx, measIdx int) (*model.Part, *model.Measure, error) {
 	if partIdx < 0 || partIdx >= len(a.score.Parts) {

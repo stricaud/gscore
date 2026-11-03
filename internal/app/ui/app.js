@@ -586,6 +586,7 @@ async function action(name) {
       await reload();
       status("Measure added");
       break;
+    case "insert-measures": await insertMeasuresDialog(); break;
     case "delete":
       await deleteSelected();
       break;
@@ -8555,6 +8556,67 @@ function instrumentNamed(sound) {
   return found ? found.name : sound;
 }
 
+// insertMeasuresDialog puts empty bars in after the bar the cursor is on.
+//
+// Two questions, and the second one only where there is more than one
+// staff to ask it about. Every staff is nearly always right — a bar is a
+// bar across the score and the barlines have to stay in a column — so it
+// is what the dialog opens on, and the other answer is there for the case
+// it exists for: a line typed a bar short against the rest.
+async function insertMeasuresDialog() {
+  const sel = state.selection;
+  if (!sel) {
+    status("Click a measure first");
+    return;
+  }
+  const at = sel.measure;
+  const howMany = await ask({
+    title: `Insert after measure ${barNumberOf(at)}`,
+    label: "How many",
+    value: "1",
+    note: "Empty bars, to the right of this one. The rest of the piece " +
+          "moves over, and what is written about a bar — a page turn, a " +
+          "cue, a repeat — moves with it.",
+  });
+  if (howMany === null) return;
+  const count = Number(String(howMany).trim());
+  if (!Number.isInteger(count) || count < 1 || count > 100) {
+    status(`${howMany} is not a number of bars — 1 to 100`);
+    return;
+  }
+
+  const p = new URLSearchParams({ measure: String(at), count: String(count) });
+  const staves = (state.info?.parts || []).length;
+  if (staves > 1) {
+    const name = state.info?.parts?.[sel.part]?.name || "this staff";
+    const where = await ask({
+      title: `Insert ${count === 1 ? "a bar" : count + " bars"}`,
+      label: "Into",
+      value: "all",
+      note: "Into one staff only moves that staff's music along against " +
+            "everybody else's, and the other staves are made up at the " +
+            "end so the score stays the same length.",
+      options: [
+        { value: "all", label: "Every staff" },
+        { value: "staff", label: `${name} only` },
+      ],
+    });
+    if (where === null) return;
+    if (where === "staff") {
+      p.set("where", "staff");
+      p.set("part", String(sel.part));
+    }
+  }
+
+  const res = await fetch("/api/insertmeasure?" + p, { method: "POST" });
+  if (!res.ok) {
+    status((await res.text()).trim());
+    return;
+  }
+  await reload();
+  status(count === 1 ? "A bar put in" : count + " bars put in");
+}
+
 /* ---------- score setup ---------- */
 
 // Who is playing, chosen all at once.
@@ -11710,6 +11772,9 @@ const MENU_ICONS = {
   // for the entry that cuts a bar in two — a dashed line is where a thing
   // is to be divided, which is what the entry does.
   "add-measure": "\ue030",         // barlineSingle
+  // Bars pushed in rather than added on: the repeat-dots barline, which
+  // is the one that reads as "and more of it here".
+  "insert-measures": "\ue034",     // barlineHeavy
   "split-measure": "\ue036",       // barlineDashed
   "track-barlines": "\ue030",      // barlineSingle
 

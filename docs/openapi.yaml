@@ -2104,6 +2104,60 @@ paths:
                   measure: { type: integer }
         "400": { $ref: "#/components/responses/Error" }
 
+  /api/insertmeasure:
+    post:
+      tags: [structure]
+      summary: Put empty bars into the middle of the piece
+      description: >
+        Bars go in to the right of the one named, so the bar picked stays
+        where it is and the rest of the piece moves over. Everything that
+        names a bar by its number moves with it: a part's system breaks,
+        the bars a cue is taken from, and where the writing cursor was
+        left. A barline that is not a plain one follows the end of the run
+        rather than staying in the middle of it — a repeat closing the bar
+        chosen, with two bars pushed in after it, is a repeat of two bars
+        more, and a final barline is the end of the piece wherever the end
+        now is.
+      parameters:
+        - name: measure
+          in: query
+          description: >
+            The bar the new ones follow, counted from zero. The last bar
+            where it is left out.
+          schema: { type: integer }
+        - name: count
+          in: query
+          description: How many, 1 to 100. One where it is left out.
+          schema: { type: integer }
+        - name: where
+          in: query
+          description: >
+            `all`, the default, puts them into every staff, which is
+            nearly always right: a bar is a bar across the score and the
+            barlines stay in a column. `staff` puts them into one staff
+            only — a line that was typed a bar short against the rest —
+            and makes the others up at the end so every staff is still
+            the same length. That moves the chosen staff's music along
+            relative to everybody else's, which is what it is for.
+          schema: { type: string, enum: [all, staff] }
+        - name: part
+          in: query
+          description: Which staff, with `where=staff`.
+          schema: { type: integer }
+      responses:
+        "200":
+          description: What went in, and how long the score is now.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string }
+                  measures: { type: integer }
+                  at: { type: integer }
+                  count: { type: integer }
+        "400": { $ref: "#/components/responses/Error" }
+
   /api/joinmeasure:
     post:
       tags: [structure]

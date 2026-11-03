@@ -1567,6 +1567,84 @@ paths:
         "200": { $ref: "#/components/responses/Changed" }
         "400": { $ref: "#/components/responses/Error" }
 
+  /api/retune:
+    post:
+      tags: [edit]
+      summary: Retune a tablature, keeping the fingering
+      description: >-
+        Every string moves by the same interval and the fret numbers stay
+        exactly as they are, so what sounds moves with the tuning. This is
+        drop D, a guitar taken down to E flat, a capo. The other way about
+        — the notes stay and the frets move — is what writing a staff as a
+        tablature does, and transposing the music is /api/transpose, which
+        works out the fingering again afterwards.
+      parameters:
+        - $ref: "#/components/parameters/part"
+        - name: semitones
+          in: query
+          required: true
+          description: How far, and which way. Up to two octaves either way.
+          schema: { type: integer, minimum: -24, maximum: 24 }
+      responses:
+        "200":
+          description: What it is tuned to now
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string }
+                  changed: { type: integer }
+                  tuning: { type: string }
+                  strings:
+                    type: array
+                    items: { type: string }
+        "400": { $ref: "#/components/responses/Error" }
+
+  /api/fretchord:
+    post:
+      tags: [edit]
+      summary: Write a chord onto a tablature from the shape of the hand
+      description: >-
+        frets is one character or field a string, lowest-sounding string
+        first, the way a chord diagram is written — "x02210" is an A major
+        and "x,0,2,2,10,0" says the same thing with room for frets past
+        nine. x is a string that is not played. preview=1 says what the
+        shape is called and writes nothing.
+      parameters:
+        - $ref: "#/components/parameters/part"
+        - $ref: "#/components/parameters/measure"
+        - $ref: "#/components/parameters/at"
+        - name: frets
+          in: query
+          required: true
+          schema: { type: string }
+        - name: dur
+          in: query
+          schema: { type: string }
+        - name: dots
+          in: query
+          schema: { type: integer }
+        - name: preview
+          in: query
+          schema: { type: string, enum: ["1"] }
+      responses:
+        "200":
+          description: What was written, and what it is called
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string }
+                  name: { type: string }
+                  notes:
+                    type: array
+                    items: { type: string }
+                  measure: { type: integer }
+                  at: { type: integer }
+        "400": { $ref: "#/components/responses/Error" }
+
   /api/dynamic:
     post:
       tags: [marks]
@@ -3868,10 +3946,37 @@ components:
               time: { type: string }
               measures: { type: integer }
               notes: { type: integer }
+              sound:
+                type: string
+                description: >-
+                  Which instrument this staff is, by its MusicXML standard
+                  sound id. The instrument above is only the General MIDI
+                  program that plays it, which cannot tell a bass clarinet
+                  from a clarinet.
               transposeSemitones:
                 type: integer
                 description: How far below what is written this staff sounds.
               hidden: { type: boolean }
+              tab:
+                type: object
+                description: >-
+                  The tuning this staff is written in, where it is written
+                  as tablature. Absent otherwise, which is what the editor
+                  reads to know whether a typed digit is a fret.
+                properties:
+                  tuning: { type: string }
+                  strings:
+                    type: array
+                    description: The open strings from the top line of the tab down.
+                    items: { type: string }
+                  frets: { type: integer }
+              mirrorOf:
+                type: integer
+                description: >-
+                  The staff this one draws the music of, where it holds
+                  none of its own — the tablature half of a
+                  notation-and-tablature pair. Absent where the staff has
+                  its own music.
 
     PartReach:
       type: object

@@ -538,6 +538,8 @@ func (a *App) APIRoutes(mux *http.ServeMux) {
 		"/api/articulation":    a.handleArticulation,
 		"/api/technique":       a.handleTechnique,
 		"/api/notehead":        a.handleNotehead,
+		"/api/retune":          a.handleRetune,
+		"/api/fretchord":       a.handleFretChord,
 		"/api/dynamic":         a.handleDynamic,
 		"/api/hairpin":         a.handleHairpin,
 		"/api/octave":          a.handleOctave,
@@ -896,6 +898,16 @@ type partInfo struct {
 	// tablature rather than on a staff of pitches. Absent otherwise, which
 	// is what the editor reads to know whether a typed digit is a fret.
 	Tab *tabInfo `json:"tab,omitempty"`
+	// MirrorOf is the staff this one draws the music of, where it holds
+	// none of its own: the tablature half of a notation-and-tablature
+	// pair. Absent where the staff has its own music.
+	//
+	// The editor needs it to get from one half of a pair to the other. A
+	// guitar written both ways is one instrument on two staves, and the
+	// cursor is usually on the half with the notes — so anything asked of
+	// the instrument, such as retuning it, has to find the half that
+	// carries the tuning.
+	MirrorOf *int `json:"mirrorOf,omitempty"`
 }
 
 func (a *App) handleInfo(w http.ResponseWriter, r *http.Request) {
@@ -997,6 +1009,7 @@ func (a *App) handleInfo(w http.ResponseWriter, r *http.Request) {
 			TransposeSemitones: p.Transpose.Semitones(),
 			Hidden:             p.Hidden,
 			Tab:                tabOf(p),
+			MirrorOf:           p.MirrorOf,
 		})
 	}
 	writeJSON(w, out)

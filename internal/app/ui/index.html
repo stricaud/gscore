@@ -399,8 +399,8 @@
       <button data-action="tab"><span>Write as tablature…</span></button>
       <button data-action="string-up"><span>Move note to the string above</span></button>
       <button data-action="string-down"><span>Move note to the string below</span></button>
-      <button data-action="chord-builder" disabled><span>Chord builder…</span></button>
-      <button data-action="tab-transposition" disabled><span>Tab transposition…</span></button>
+      <button data-action="chord-builder"><span>Chord builder…</span></button>
+      <button data-action="tab-transposition"><span>Tab transposition…</span></button>
     </div>
   </div>
 
@@ -1693,6 +1693,70 @@
       <button value="remove" type="submit">Remove</button>
       <button value="cancel" type="submit">Cancel</button>
     </div>
+  </form>
+</dialog>
+
+<dialog id="tabmove">
+  <h2>Tab transposition</h2>
+  <p class="small" id="tabmove-where">The guitar.</p>
+  <form method="dialog" id="tabmove-form">
+    <div class="choices">
+      <label><input type="radio" name="tabmove-dir" value="up" checked>
+        <span><b>Up</b></span></label>
+      <label><input type="radio" name="tabmove-dir" value="down">
+        <span><b>Down</b></span></label>
+    </div>
+    <label class="tempo-bar" for="tabmove-interval">Interval
+      <select id="tabmove-interval">
+        <option value="1">a semitone</option>
+        <option value="2" selected>a tone</option>
+        <option value="3">a minor third</option>
+        <option value="4">a major third</option>
+        <option value="5">a fourth</option>
+        <option value="7">a fifth</option>
+        <option value="12">an octave</option>
+      </select></label>
+    <!-- The two things a guitarist means by moving a part, which are not
+         the same edit and cannot be told apart from the request. -->
+    <div class="choices">
+      <label><input type="radio" name="tabmove-how" value="music" checked>
+        <span><b>Move the music</b><em>The notes change and the hand goes
+          somewhere else to play them. The fret numbers are worked out again
+          on the instrument as it is tuned.</em></span></label>
+      <label><input type="radio" name="tabmove-how" value="tuning">
+        <span><b>Retune the instrument</b><em>The hand stays exactly where it
+          is and every string is tuned somewhere else, so the shapes are
+          played as written and what comes out moves. Drop D is this going
+          down; a capo is this going up.</em></span></label>
+    </div>
+    <p class="small" id="tabmove-tuning"></p>
+    <div class="ask-buttons">
+      <button value="ok" type="submit" class="primary">Move it</button>
+      <button value="cancel" type="submit">Cancel</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="fretboard">
+  <h2>Chord builder</h2>
+  <p class="small" id="fretboard-where">Click where the fingers go.</p>
+  <div id="fretboard-grid"></div>
+  <div id="fretboard-bar">
+    <label for="fretboard-at">Position
+      <input type="number" id="fretboard-at" min="0" max="20" value="0"></label>
+    <label for="fretboard-shape">Shape
+      <input type="text" id="fretboard-shape" autocomplete="off"
+             placeholder="x02210" spellcheck="false"></label>
+  </div>
+  <p class="small" id="fretboard-name">&nbsp;</p>
+  <p class="small">One fret a string, lowest first, the way a chord diagram
+     is written; x is a string that is not played. Type it or click it — the
+     two follow each other. It is written at the cursor with whatever note
+     value the toolbar is holding.</p>
+  <form method="dialog" class="ask-buttons">
+    <button value="ok" type="submit" class="primary">Write it</button>
+    <button value="clear" type="submit">Clear</button>
+    <button value="cancel" type="submit">Cancel</button>
   </form>
 </dialog>
 

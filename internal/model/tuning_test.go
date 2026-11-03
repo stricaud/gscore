@@ -193,3 +193,76 @@ func TestFretsAndPitchesAgree(t *testing.T) {
 		}
 	}
 }
+
+// Retuning moves every string by the same interval and leaves the frets
+// alone, which is the whole of what it is for: the shapes are played as
+// written and what comes out is somewhere else.
+func TestRetunedMovesEveryStringTogether(t *testing.T) {
+	guitar, ok := TuningNamed("guitar")
+	if !ok {
+		t.Fatal("there is no guitar")
+	}
+	down, ok := Retuned(guitar, -2)
+	if !ok {
+		t.Fatal("a guitar cannot be taken down a tone")
+	}
+	if len(down.Strings) != len(guitar.Strings) {
+		t.Fatalf("it came back with %d strings", len(down.Strings))
+	}
+	for i := range guitar.Strings {
+		if got, want := down.Strings[i].MIDI(), guitar.Strings[i].MIDI()-2; got != want {
+			t.Errorf("string %d is %d, want %d", i+1, got, want)
+		}
+	}
+	if down.Frets != guitar.Frets {
+		t.Errorf("the neck grew to %d frets", down.Frets)
+	}
+	// And the original is untouched, so a move that is only being
+	// considered cannot change the instrument.
+	if guitar.Strings[0].MIDI() != 64 {
+		t.Errorf("the guitar itself moved: top string is %v", guitar.Strings[0])
+	}
+}
+
+// A fret keeps its number and what it sounds follows the tuning. This is
+// the thing being checked, and it is what a capo does.
+func TestARetunedFretSoundsSomewhereElse(t *testing.T) {
+	guitar, _ := TuningNamed("guitar")
+	was, ok := guitar.PitchAt(6, 3)
+	if !ok {
+		t.Fatal("the third fret of the bottom string is not there")
+	}
+	up, _ := Retuned(guitar, 3) // a capo at the third fret
+	now, ok := up.PitchAt(6, 3)
+	if !ok {
+		t.Fatal("the third fret went away")
+	}
+	if got, want := now.MIDI(), was.MIDI()+3; got != want {
+		t.Errorf("the same fret sounds %d, want %d", got, want)
+	}
+}
+
+// Down gives flats and up gives sharps: a guitar is taken down to E flat,
+// never up to D sharp.
+func TestARetunedStringIsSpelledByTheWayItWent(t *testing.T) {
+	guitar, _ := TuningNamed("guitar")
+	down, _ := Retuned(guitar, -1)
+	if s := down.Strings[0]; s.Step != StepE || s.Alter != -1 {
+		t.Errorf("down a semitone the top string is %v, want E flat", s)
+	}
+	up, _ := Retuned(guitar, 2)
+	if s := up.Strings[0]; s.Step != StepF || s.Alter != 1 {
+		t.Errorf("up a tone the top string is %v, want F sharp", s)
+	}
+}
+
+// A move nobody can make changes nothing rather than half of something.
+func TestARetuningOffTheEndOfWhatCanBeWrittenIsRefused(t *testing.T) {
+	guitar, _ := TuningNamed("guitar")
+	if _, ok := Retuned(guitar, -120); ok {
+		t.Error("a guitar was tuned below the bottom of MIDI")
+	}
+	if _, ok := Retuned(nil, 2); ok {
+		t.Error("nothing was retuned")
+	}
+}

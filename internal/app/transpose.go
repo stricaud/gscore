@@ -93,6 +93,36 @@ func (t transposer) element(el model.Element, m *model.Measure, at int,
 	return 0
 }
 
+// lettersFor is how many letters an interval of so many semitones moves by,
+// read the ordinary way.
+//
+// Seven of the twelve have only one reading — a fifth is a fifth — and five
+// of them have two. Those are spelled as the smaller of the pair, which is
+// how they are named and how they are nearly always meant: three semitones
+// is a minor third rather than an augmented second, and ten is a minor
+// seventh rather than an augmented sixth.
+//
+// The tritone is the one with no smaller reading, and it is taken as an
+// augmented fourth. Either is defensible — up six semitones from C is F
+// sharp or G flat and both are six accidentals — so it is settled here
+// rather than left to come out of the arithmetic.
+//
+// Octaves are carried whole: fourteen semitones is an octave and a tone,
+// which is seven letters and one.
+func lettersFor(semitones int) int {
+	within := [12]int{0, 1, 1, 2, 2, 3, 3, 4, 5, 5, 6, 6}
+	octaves := semitones / 12
+	rest := semitones % 12
+	// Go rounds towards zero, so a negative remainder is brought back to
+	// the positive side and the octave count made up for it. Without this,
+	// down a tone asked for the -1st entry of the table.
+	if rest < 0 {
+		rest += 12
+		octaves--
+	}
+	return octaves*7 + within[rest]
+}
+
 // shiftKey moves a signature by places around the circle of fifths.
 func shiftKey(k model.KeySignature, by int) model.KeySignature {
 	out := k
@@ -110,11 +140,61 @@ func shiftKey(k model.KeySignature, by int) model.KeySignature {
 //
 // A drum staff's lines name instruments: moving a snare up a tone is moving
 // it to a tom, which is not what anybody asked for, and moving a drum part
-// is its own job with its own rules. A tablature staff writes its notes as
-// fret numbers, and moving the pitch without moving the finger would make
-// the two disagree about what is being played.
+// is its own job with its own rules.
+//
+// A tablature used to be refused here for a reason that has since been
+// dealt with rather than for a reason of its own: moving the pitch without
+// moving the finger makes the number on the page disagree with the note it
+// stands for. So the fingers are moved too — see refretTabs, which runs
+// after every move — and a guitar part transposes like any other.
+//
+// Refusing it was worse than it looked. A guitar written as a staff of
+// pitches with a tablature under it has its music on the staff, which was
+// transposed, while the tablature was skipped: the notes moved and the
+// fret numbers under them did not, so the two halves of one part said
+// different things and nothing reported it.
 func transposable(p *model.Part) bool {
-	return p.Clef != model.Percussion && p.Tab == nil
+	return p.Clef != model.Percussion
+}
+
+// refretTabs works out again where every tablature's notes are played.
+//
+// Called after the music has moved. A fret number is where a finger goes
+// and is only true of one pitch on one tuning, so anything that changes the
+// pitch leaves it stale.
+//
+// The music a tablature draws may not be its own: a staff of pitches with a
+// tab under it keeps the notes once, on the staff, and the tab is that same
+// music written a second way. So the notes are fetched from wherever they
+// live and the tuning from the tab that draws them.
+func (a *App) refretTabs() {
+	for i, p := range a.score.Parts {
+		if p.Tab == nil {
+			continue
+		}
+		music := a.score.MusicOf(i)
+		if music == nil {
+			continue
+		}
+		// The tuning says what the open strings sound; the model keeps
+		// what is printed. They are an octave apart on a guitar, and the
+		// transposition of the staff that holds the music is what bridges
+		// them.
+		for _, m := range music.Measures {
+			for _, v := range m.Voices {
+				for _, el := range v.Elements {
+					switch e := el.(type) {
+					case *model.Note:
+						restringNote(p.Tab, e, music.Transpose)
+					case *model.Chord:
+						for _, n := range e.Notes {
+							restringNote(p.Tab, n, music.Transpose)
+						}
+					}
+				}
+			}
+		}
+	}
 }
 
 // handleTranspose moves the selection, or the whole piece, to another key.
@@ -124,11 +204,33 @@ func (a *App) handleTranspose(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	q := r.URL.Query()
-	steps, _ := strconv.Atoi(q.Get("steps"))
+	// Told apart from a steps of zero, which is a real interval and not an
+	// omission: zero letters and one semitone is an augmented unison, C to
+	// C sharp, which is a different move from the minor second C to D
+	// flat. Only where nothing was said at all is the interval guessed.
+	steps, haveSteps := 0, false
+	if v := q.Get("steps"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			http.Error(w, "steps is a number of letters", http.StatusBadRequest)
+			return
+		}
+		steps, haveSteps = n, true
+	}
 	semis, _ := strconv.Atoi(q.Get("semitones"))
 	diatonic := q.Get("mode") == "diatonic"
 	if diatonic {
 		semis = 0
+	}
+	// An interval is two numbers and not one, and a caller that gave only
+	// the semitones has not described one. Taken as zero, the letters never
+	// moved and the whole distance went into the accidental: a tone above
+	// A came out as A double sharp, and again on the next move, so a part
+	// transposed twice was unreadable. What is filled in is the ordinary
+	// reading of that distance — four semitones is a major third and not a
+	// diminished fourth — which is what somebody who gave one number meant.
+	if !diatonic && !haveSteps {
+		steps = lettersFor(semis)
 	}
 	if steps == 0 && semis == 0 {
 		http.Error(w, "that is no distance at all", http.StatusBadRequest)
@@ -179,6 +281,7 @@ func (a *App) handleTranspose(w http.ResponseWriter, r *http.Request) {
 				http.StatusBadRequest)
 			return
 		}
+		a.refretTabs()
 		writeJSON(w, map[string]any{"changed": changed, "left": skipped})
 		return
 	}
@@ -226,6 +329,9 @@ func (a *App) handleTranspose(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "there is nothing here to move", http.StatusBadRequest)
 		return
 	}
+	// The fingers follow the notes. Without this the numbers on a
+	// tablature are where the hand went for the music as it was.
+	a.refretTabs()
 	out := map[string]any{"changed": changed, "left": skipped}
 	if moveKey && len(a.score.Parts) > 0 {
 		out["fifths"] = a.score.Parts[0].Key.Fifths

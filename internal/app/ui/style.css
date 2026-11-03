@@ -150,12 +150,6 @@ body {
   top: 33px;
   left: 0;
   min-width: 210px;
-  /* No overflow here, ever.
-     A submenu is drawn outside the panel that owns it, so a panel that
-     scrolls clips its own flyouts: setting this to make a long menu fit
-     made every submenu unreachable, which is far worse than a menu that
-     runs long. The panels that may scroll are the submenus themselves,
-     below, and those have nothing inside them to clip. */
   background: var(--panel);
   border: 1px solid var(--line);
   border-radius: 6px;
@@ -169,6 +163,28 @@ body {
    all five of its submenus open at once, stacked on top of each other, and no
    amount of scripting could close them. */
 .menu.open > .menu-items { display: block; }
+
+/* A menu taller than the window scrolls rather than running off the bottom.
+ *
+ * The Insert menu is the one that needs it: on a laptop screen its last
+ * entry, Symbol, was drawn below the foot of the window, half-legible and
+ * impossible to click, and nothing said it was there.
+ *
+ * This could not be done while the submenus were drawn inside the panel.
+ * A scrolling box clips what sticks out of it, and overflow-y with
+ * overflow-x left alone does not stay left alone — the x axis becomes
+ * auto too — so every flyout was cut off at the panel's right edge. The
+ * flyouts are positioned against the window now rather than against this
+ * panel, which is what lets this scroll at all. See .submenu > .menu-items
+ * below and placeSubmenu in app.js, which are the other half of it. */
+.menu > .menu-items {
+  /* The bar above it, and a margin at the foot so the last entry does not
+     sit flush against the edge of the screen. */
+  max-height: calc(100vh - 41px);
+  overflow-y: auto;
+  /* A menu scrolled to its end should not then scroll the score behind it. */
+  overscroll-behavior: contain;
+}
 
 .menu-items button {
   display: flex;
@@ -244,9 +260,12 @@ body {
 .submenu { position: relative; }
 .submenu > .menu-items {
   display: none;
-  top: -5px;
-  left: 100%;
-  margin-left: 2px;
+  /* Against the window, not against the menu that owns it.
+     The menu scrolls, and a panel positioned inside a scrolling box is
+     clipped by it; fixed takes the flyout out of that box altogether. The
+     price is that nothing places it any more, so placeSubmenu does — it
+     sets left and top on every open, which is why there are none here. */
+  position: fixed;
   min-width: 190px;
   /* A submenu opens level with the entry that owns it, which may be near
      the bottom of the window — so it is held to the window's height, and
@@ -279,8 +298,10 @@ body {
 .submenu.open > .submenu-title { background: var(--accent); color: #fff; }
 .submenu.open > .submenu-title kbd { color: #fff; background: rgba(255,255,255,.2); }
 .submenu > .submenu-title:hover { background: var(--accent); color: #fff; }
-/* A submenu that would run off the right edge opens to the left instead. */
-.submenu.flip > .menu-items { left: auto; right: 100%; margin: 0 2px 0 0; }
+/* A submenu that would run off the right edge opens to the left instead.
+   Which side it is on is kept as a class for the sake of anything reading
+   the menu, but where it actually sits is set in script: a fixed panel has
+   no parent to measure "the left of" against. */
 
 kbd {
   font: 11px ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -2443,3 +2464,79 @@ input.wrong {
   opacity: 0.6;
 }
 #palette-filter { width: auto; }
+
+/* The chord builder's neck.
+ *
+ * A row for each string with string one at the top, the way the tab staff
+ * itself is drawn: a guitarist reading the dialog is already reading the
+ * staff under it, and a diagram the other way up would have to be
+ * translated every time. The nut is the heavy line after the open and
+ * muted buttons, so the frets to its right are the frets of the neck. */
+#fretboard-grid {
+  margin: 12px 0 6px;
+  font-variant-numeric: tabular-nums;
+}
+.fb-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.fb-row + .fb-row { margin-top: 3px; }
+.fb-name {
+  width: 2.4em;
+  text-align: right;
+  font-size: 11px;
+  color: var(--muted);
+}
+.fb-open, .fb-mute, .fb-cell {
+  font: inherit;
+  font-size: 11px;
+  line-height: 1;
+  color: var(--ink);
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  padding: 0;
+  height: 26px;
+  cursor: pointer;
+}
+.fb-open, .fb-mute { width: 24px; flex: none; }
+/* The nut: everything to the right of it is fretted. */
+.fb-mute { margin-right: 6px; border-right-width: 3px; }
+.fb-cell { flex: 1 1 0; min-width: 28px; }
+.fb-open:hover, .fb-mute:hover, .fb-cell:hover {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-soft);
+}
+/* Where the finger is. A filled cell rather than a dot, because the cells
+ * are small and a dot inside one is smaller still. */
+.fb-open.on, .fb-mute.on, .fb-cell.on {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--paper);
+}
+/* The fret numbers under the neck, which are labels and not buttons. */
+.fb-feet span {
+  border-color: transparent;
+  background: none;
+  cursor: default;
+  text-align: center;
+  font-size: 10px;
+  color: var(--muted);
+  height: auto;
+}
+#fretboard-bar {
+  display: flex;
+  gap: 12px;
+  align-items: flex-end;
+  margin: 8px 0;
+}
+#fretboard-bar label {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 11px;
+}
+#fretboard-at { width: 5em; }
+#fretboard-shape { width: 10em; }
+#fretboard-name { min-height: 1.2em; font-weight: 600; }

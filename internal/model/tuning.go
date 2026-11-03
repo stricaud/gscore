@@ -195,3 +195,54 @@ func spelledAbove(open Pitch, semis int) Pitch {
 	}
 	return Pitch{Step: Step(step), Octave: oct, Alter: alter}
 }
+
+// Retuned is this instrument tuned somewhere else, every string moved by
+// the same interval.
+//
+// What it is for is the move where the hand stays put. Drop D, a guitar
+// taken down to E flat, a capo at the third fret: the shapes are played
+// exactly as written and what comes out is somewhere else. The fret
+// numbers do not change — which is the whole point, and is why this
+// answers with a tuning rather than with notes.
+//
+// The strings are spelled by which way they moved rather than by what they
+// were. Going down gives flats and going up gives sharps, because that is
+// how a retuning is spoken: a guitar is taken *down* to E flat, never up
+// to D sharp. Spelling each string from its own old spelling, which is
+// what spelledAbove does for the frets, would write that same guitar in D
+// sharp and A sharp.
+//
+// It answers false where a string would land past the ends of what can be
+// written, so that a move nobody can make changes nothing.
+func Retuned(t *Tablature, semis int) (*Tablature, bool) {
+	if t == nil || len(t.Strings) == 0 {
+		return nil, false
+	}
+	out := &Tablature{Frets: t.Frets, Strings: make([]Pitch, len(t.Strings))}
+	for i, open := range t.Strings {
+		midi := open.MIDI() + semis
+		if midi < 0 || midi > 127 {
+			return nil, false
+		}
+		out.Strings[i] = spelled(midi, semis < 0)
+	}
+	return out, true
+}
+
+// spelled writes a MIDI number as a note, in sharps or in flats.
+func spelled(midi int, flats bool) Pitch {
+	table := sharpSpelling
+	if flats {
+		table = flatSpelling
+	}
+	class := ((midi % 12) + 12) % 12
+	step, alter := table[class][0], table[class][1]
+	// The octave the letter falls in, which is not always the octave the
+	// MIDI number falls in: B sharp and C flat sit either side of the line
+	// that divides them.
+	oct := (midi-alter)/12 - 1
+	if (midi-alter) < 0 && (midi-alter)%12 != 0 {
+		oct--
+	}
+	return Pitch{Step: Step(step), Octave: oct, Alter: alter}
+}

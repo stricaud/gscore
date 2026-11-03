@@ -403,6 +403,17 @@ function setupMenus() {
     });
   });
 
+  // A menu too tall for the window scrolls, and a submenu opened out of it
+  // is fixed to the window rather than to the panel — so it stays put while
+  // the entry that owns it moves away under it. Moved back level each time
+  // the panel scrolls, which is cheap: there is at most one open.
+  $$(".menu > .menu-items").forEach((panel) => {
+    panel.addEventListener("scroll", () => {
+      const open = panel.querySelector(".submenu.open");
+      if (open) placeSubmenu(open);
+    });
+  });
+
   document.addEventListener("click", closeMenus);
 
   $$("[data-action]").forEach((b) => {
@@ -432,33 +443,47 @@ function openSubmenu(sub) {
 
 // placeSubmenu puts a submenu where it can be read.
 //
-// To the left instead of the right when there is no room on the right, which
-// there is not for a menu near the window edge — and up when it would run
-// off the bottom, which a submenu near the foot of a long menu does. It
-// opens level with the entry that owns it, so the room under it is whatever
-// is left of the window below that entry: on a short window, nothing.
+// The panel is fixed to the window rather than hung off the entry that owns
+// it, because the menu it lives in scrolls and a panel inside a scrolling
+// box is clipped by it. Fixed means nothing places it, so everything about
+// where it goes is decided here.
 //
-// Cut, the entries past the edge were drawn and could not be reached, and
+// Level with its own entry and to the right of it; to the left where there
+// is no room on the right, which there is not near the window edge; and up
+// where it would run off the bottom, which a submenu near the foot of a
+// long menu does. Cut, its entries were drawn and could not be reached, and
 // nothing said they were there. Reported as "menus are sometimes cut".
 function placeSubmenu(sub) {
   sub.classList.remove("flip");
   const items = sub.querySelector(".menu-items");
   if (!items) return;
-  items.style.top = "";
 
-  if (items.getBoundingClientRect().right > window.innerWidth - 8) {
+  // Measured where it will be read: the panel is already shown by the time
+  // this runs, and its size is what decides which side it goes on.
+  const row = sub.getBoundingClientRect();
+  const w = items.offsetWidth;
+  const h = items.offsetHeight;
+
+  // To the right, unless that runs off the edge. Then to the left — and if
+  // there is no room either side, the right is still the better guess,
+  // because the menu itself is at the left of the window.
+  let left = row.right + 2;
+  if (left + w > window.innerWidth - 8 && row.left - w - 2 >= 8) {
+    left = row.left - w - 2;
     sub.classList.add("flip");
   }
+  left = Math.max(8, Math.min(left, window.innerWidth - w - 8));
 
-  const r = items.getBoundingClientRect();
-  const over = r.bottom - (window.innerHeight - 8);
-  if (over <= 0) return;
-  // Up by as much as it hangs over, but never past the top of the window:
-  // a panel taller than the window is scrolled, which its own max-height
-  // already arranges.
-  const now = parseFloat(getComputedStyle(items).top) || 0;
-  const floor = 8 - sub.getBoundingClientRect().top;
-  items.style.top = Math.max(now - over, floor) + "px";
+  // Level with the entry, pulled up by however much hangs over the foot,
+  // and never above the top of the window: a panel taller than the window
+  // scrolls, which its own max-height already arranges.
+  let top = row.top - 5;
+  const over = top + h - (window.innerHeight - 8);
+  if (over > 0) top -= over;
+  top = Math.max(8, top);
+
+  items.style.left = left + "px";
+  items.style.top = top + "px";
 }
 
 async function action(name) {
@@ -784,6 +809,8 @@ async function action(name) {
     case "staff-up": await moveStaff(-1); break;
     case "staff-down": await moveStaff(1); break;
     case "tab": await tabDialog(); break;
+    case "chord-builder": await chordBuilderDialog(); break;
+    case "tab-transposition": await tabMoveDialog(); break;
     case "string-up": await moveToString("up"); break;
     case "string-down": await moveToString("down"); break;
 
@@ -7315,9 +7342,14 @@ function pickedRefs() {
 async function transposeBy(steps, semitones, opt) {
   opt = opt || {};
   const sel = transposeSelection();
-  const p = new URLSearchParams({
-    steps: String(steps), semitones: String(semitones),
-  });
+  const p = new URLSearchParams({ semitones: String(semitones) });
+  // Left out rather than sent as zero where the caller did not say.
+  //
+  // Zero letters is a real interval — an augmented unison, C to C sharp —
+  // so the two cannot be the same request. Saying nothing asks for the
+  // ordinary reading of the distance, which is worked out where the move
+  // is made.
+  if (steps !== null && steps !== undefined) p.set("steps", String(steps));
   if (sel) p.set("sel", sel);
   if (opt.diatonic) p.set("mode", "diatonic");
   // The signature only ever moves when the whole piece does; the server
@@ -7333,7 +7365,9 @@ async function transposeBy(steps, semitones, opt) {
   await refreshScore();
   markSelection();
 
-  const name = intervalNames[`${Math.abs(steps)},${Math.abs(semitones)}`] ||
+  const name = (steps === null || steps === undefined
+    ? null
+    : intervalNames[`${Math.abs(steps)},${Math.abs(semitones)}`]) ||
     `${Math.abs(semitones)} semitones`;
   const way = (semitones || steps) > 0 ? "up" : "down";
   const what = sel ? "The selection" : "The piece";
@@ -9206,6 +9240,323 @@ function setupScoreSetupDialog() {
 // staff of pitches.
 function isTabStaff(part) {
   return !!state.info?.parts?.[part]?.tab;
+}
+
+// tabWithTuning is the staff that carries the tuning for the one named.
+//
+// Itself where it is a tablature, and otherwise the staff that mirrors it
+// and is one. A guitar written as a staff of pitches with a tab under it is
+// one instrument on two staves, and the cursor is usually on the half with
+// the notes on it — so anything asked of the instrument has to find the
+// other half rather than refuse.
+function tabWithTuning(part) {
+  const parts = state.info?.parts || [];
+  if (parts[part]?.tab) return part;
+  for (let i = 0; i < parts.length; i++) {
+    if (parts[i].tab && parts[i].mirrorOf === part) return i;
+  }
+  return -1;
+}
+
+/* ---------- moving a tab ---------- */
+
+// tabMoveDialog asks how far a fretted part moves, and which of the two
+// things that means.
+//
+// The music moving and the instrument moving are both "put it up a tone"
+// and they are different edits: one changes the notes and leaves the
+// instrument alone, the other changes the instrument and leaves the hand
+// alone. Nothing in the request says which, so it is asked.
+async function tabMoveDialog() {
+  const at = state.selection?.part ?? 0;
+  const tabAt = tabWithTuning(at);
+  if (tabAt < 0) {
+    status("That staff is not written as tablature");
+    return;
+  }
+  const staff = state.info?.parts?.[tabAt];
+  const dlg = $("#tabmove");
+  $("#tabmove-where").textContent = staff?.name
+    ? `${staff.name} — ${staff.tab.strings.length} strings.`
+    : "This staff.";
+  const showTuning = () => {
+    $("#tabmove-tuning").textContent =
+      "Tuned to " + (staff.tab.strings || []).join(" ") + ".";
+  };
+  showTuning();
+
+  const answer = await new Promise((resolve) => {
+    const done = () => {
+      dlg.removeEventListener("close", done);
+      resolve(dlg.returnValue);
+    };
+    dlg.addEventListener("close", done);
+    dlg.showModal();
+  });
+  if (answer !== "ok") {
+    status("Ready");
+    return;
+  }
+
+  let semitones = Number($("#tabmove-interval").value);
+  if ($$('#tabmove-form input[name="tabmove-dir"]').find((r) => r.checked)
+      ?.value === "down") {
+    semitones = -semitones;
+  }
+  const how = $$('#tabmove-form input[name="tabmove-how"]')
+    .find((r) => r.checked)?.value;
+
+  if (how === "tuning") {
+    const p = new URLSearchParams({
+      part: String(tabAt), semitones: String(semitones),
+    });
+    const res = await fetch("/api/retune?" + p, { method: "POST" });
+    if (!res.ok) {
+      status("Could not retune: " + (await res.text()).trim());
+      return;
+    }
+    const d = await res.json();
+    await refreshScore();
+    status(`Retuned to ${d.strings.join(" ")} — the fingering is unchanged`);
+    return;
+  }
+
+  // The music moves, which is ordinary transposition: it works out the
+  // fingering again afterwards, so the tab follows.
+  //
+  // The semitones alone, because the interval is spelled where the move is
+  // made. A caller that gives only the distance gets the ordinary reading
+  // of it — four semitones is a major third, not a diminished fourth — and
+  // working that out a second time here would be a second place for it to
+  // be wrong.
+  await transposeBy(null, semitones, { diatonic: false, key: true });
+}
+
+/* ---------- the chord builder ---------- */
+
+// A chord on a fretted instrument is a shape, not six pitches.
+//
+// Typed one string at a time it is six frets on six different lines with the
+// caret moved between every one of them, and the shape — the thing actually
+// being written down — never appears anywhere. So this is the shape: a grid
+// of strings and frets to click at, and the chord it turns out to be
+// underneath, which is how you find out you have built an F sharp minor
+// seventh rather than having to know it first.
+
+// chordShape holds what the builder is showing: one entry a string, lowest
+// string first, each a fret number or null for a string that is not played.
+let chordShape = null;
+
+// fretboardSpan is how many frets are shown at once. Four frets and the nut
+// is what a chord diagram shows, because that is as far as a hand reaches.
+const fretboardSpan = 4;
+
+async function chordBuilderDialog() {
+  const at = state.selection?.part ?? 0;
+  const tabAt = tabWithTuning(at);
+  if (tabAt < 0) {
+    status("Chord builder is for a staff written as tablature");
+    return;
+  }
+  const staff = state.info.parts[tabAt];
+  const strings = staff.tab.strings;
+  const dlg = $("#fretboard");
+
+  $("#fretboard-where").textContent =
+    `${staff.tab.strings.length} strings, tuned ${strings.join(" ")}.`;
+  chordShape = new Array(strings.length).fill(null);
+  $("#fretboard-at").value = "0";
+  $("#fretboard-at").max = String(Math.max(0, (staff.tab.frets || 24) - fretboardSpan));
+  $("#fretboard-shape").value = "";
+  $("#fretboard-name").textContent = "\u00a0";
+
+  // The grid and the written shape are two views of one thing, so each
+  // redraws the other rather than keeping a copy.
+  $("#fretboard-at").oninput = () => drawFretboard(strings, tabAt);
+  $("#fretboard-shape").oninput = () => {
+    readShapeText(strings.length);
+    drawFretboard(strings, tabAt);
+    nameShape(tabAt);
+  };
+  drawFretboard(strings, tabAt);
+
+  const answer = await new Promise((resolve) => {
+    const done = () => {
+      // Clear is a button inside the form, so it closes the dialog; what
+      // it means is empty the grid and carry on. Opening it again is left
+      // to the next turn of the loop, because showModal on a dialog that
+      // is in the middle of closing is not reliably allowed.
+      if (dlg.returnValue === "clear") {
+        chordShape = chordShape.map(() => null);
+        showShapeText();
+        drawFretboard(strings, tabAt);
+        nameShape(tabAt);
+        setTimeout(() => dlg.showModal(), 0);
+        return;
+      }
+      dlg.removeEventListener("close", done);
+      resolve(dlg.returnValue);
+    };
+    dlg.addEventListener("close", done);
+    dlg.showModal();
+  });
+  if (answer !== "ok") {
+    status("Ready");
+    return;
+  }
+  await writeFretChord(at);
+}
+
+// shapeText is the shape as a chord diagram writes it: one field a string,
+// lowest first, x for a string that is not played.
+//
+// Separated by commas rather than run together whenever a fret runs past
+// nine, because "x0221000" cannot say a tenth fret and a chord high on the
+// neck is not unusual.
+function shapeText() {
+  if (!chordShape) return "";
+  const wide = chordShape.some((f) => f !== null && f > 9);
+  const one = (f) => (f === null ? "x" : String(f));
+  return wide ? chordShape.map(one).join(",") : chordShape.map(one).join("");
+}
+
+function showShapeText() {
+  $("#fretboard-shape").value = shapeText();
+}
+
+// readShapeText takes what was typed back into the grid, so the two agree.
+// Anything that is not a shape yet leaves the grid as it was: somebody
+// halfway through typing one has not made a mistake.
+function readShapeText(lines) {
+  const raw = $("#fretboard-shape").value.trim();
+  const fields = /[ ,-]/.test(raw) ? raw.split(/[ ,-]+/).filter(Boolean)
+                                   : raw.split("");
+  if (fields.length !== lines) return;
+  const next = fields.map((f) => {
+    if (/^[xX.]$/.test(f)) return null;
+    const n = Number(f);
+    return Number.isInteger(n) && n >= 0 ? n : undefined;
+  });
+  if (next.some((f) => f === undefined)) return;
+  chordShape = next;
+}
+
+// drawFretboard draws the neck: a row for each string, a column for each
+// fret in view, and the dots where the fingers are.
+//
+// String one at the top, the way the tab staff itself is drawn and the way
+// the player is already reading. The shape is written lowest-string-first,
+// which is the other way about, so the rows are walked in reverse — that
+// turning-round happens here and once.
+function drawFretboard(strings, tabAt) {
+  const grid = $("#fretboard-grid");
+  const from = Math.max(0, Number($("#fretboard-at").value) || 0);
+  const lines = strings.length;
+  const cols = fretboardSpan + 1;
+
+  const rows = [];
+  for (let row = 0; row < lines; row++) {
+    const str = row + 1;                 // string one at the top
+    const idx = lines - str;             // its place in the shape
+    const fret = chordShape[idx];
+    const cells = [];
+    // Open or muted, in front of the nut, which is where a diagram puts it.
+    cells.push(`<button type="button" class="fb-open${fret === 0 ? " on" : ""}"
+       data-str="${idx}" data-fret="0" title="Open">o</button>`);
+    cells.push(`<button type="button" class="fb-mute${fret === null ? " on" : ""}"
+       data-str="${idx}" data-fret="x" title="Not played">x</button>`);
+    for (let c = 1; c <= fretboardSpan; c++) {
+      const f = from + c;
+      cells.push(`<button type="button" class="fb-cell${fret === f ? " on" : ""}"
+         data-str="${idx}" data-fret="${f}"></button>`);
+    }
+    rows.push(`<div class="fb-row"><span class="fb-name">${
+      escapeHTML(strings[row])}</span>${cells.join("")}</div>`);
+  }
+  // The fret numbers along the bottom, so a shape up the neck says where.
+  const foot = ['<div class="fb-row fb-feet"><span class="fb-name"></span>',
+                '<span class="fb-open"></span><span class="fb-mute"></span>'];
+  for (let c = 1; c <= fretboardSpan; c++) {
+    foot.push(`<span class="fb-cell">${from + c}</span>`);
+  }
+  foot.push("</div>");
+  grid.innerHTML = rows.join("") + foot.join("");
+
+  $$("#fretboard-grid button").forEach((b) => {
+    b.onclick = () => {
+      const idx = Number(b.dataset.str);
+      const was = chordShape[idx];
+      const f = b.dataset.fret === "x" ? null : Number(b.dataset.fret);
+      // Clicking what is already there takes it off, so a finger put down
+      // by mistake comes up again with a second click rather than needing
+      // the string muted and un-muted.
+      chordShape[idx] = (was === f) ? null : f;
+      showShapeText();
+      drawFretboard(strings, tabAt);
+      nameShape(tabAt);
+    };
+  });
+}
+
+// nameShape asks what the shape is called and shows it.
+//
+// Asked of the program rather than worked out here, because the program
+// already knows: the same naming the analysis window uses, so the builder
+// and the analysis cannot disagree about what a shape is.
+async function nameShape(tabAt) {
+  const label = $("#fretboard-name");
+  const frets = shapeText();
+  if (!chordShape || chordShape.every((f) => f === null)) {
+    label.textContent = "\u00a0";
+    return;
+  }
+  const p = new URLSearchParams({
+    part: String(tabAt), measure: String(state.selection?.measure ?? 0),
+    frets, preview: "1",
+  });
+  const res = await fetch("/api/fretchord?" + p, { method: "POST" });
+  if (!res.ok) {
+    label.textContent = (await res.text()).trim();
+    return;
+  }
+  const d = await res.json();
+  label.textContent = d.name
+    ? `${d.name} — ${d.notes.join(" ")}`
+    : `No name for it — ${d.notes.join(" ")}`;
+}
+
+// writeFretChord puts the shape into the music at the cursor.
+async function writeFretChord(part) {
+  const sel = state.selection;
+  if (!sel) {
+    status("Click the bar to put it in first");
+    return;
+  }
+  const p = new URLSearchParams({
+    part: String(sel.part), measure: String(sel.measure), at: String(sel.at),
+    frets: shapeText(), dur: state.tool.duration,
+  });
+  if (state.tool.dots) p.set("dots", String(state.tool.dots));
+  const res = await fetch("/api/fretchord?" + p, { method: "POST" });
+  if (!res.ok) {
+    status("Could not write it: " + (await res.text()).trim());
+    return;
+  }
+  const d = await res.json();
+  // The caret goes past what was written, into whichever bar it landed in,
+  // the way a single fret does.
+  sel.measure = d.measure ?? sel.measure;
+  sel.at = (d.at ?? 0) + 1;
+  sel.ref = null;
+  sel.wrote = true;
+  state.multi = [];
+  state.anchor = null;
+  state.focus = null;
+  await refreshScore();
+  carryCaretOn(sel);
+  markSelection();
+  scrollSelectionIntoView();
+  status(d.name ? "Wrote " + d.name : "Wrote the chord");
 }
 
 // tabDialog chooses the tuning a staff is written in, or takes the tab

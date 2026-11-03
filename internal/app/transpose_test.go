@@ -11,6 +11,7 @@
 package app
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/stricaud/gscore/internal/model"
@@ -208,5 +209,129 @@ func TestTransposingCanBeUndone(t *testing.T) {
 	}
 	if got := h.app.score.Parts[0].Key.Fifths; got != 0 {
 		t.Errorf("the key stayed at %d sharps after undo", got)
+	}
+}
+
+/*
+ * Spelling a move that was given as one number.
+ *
+ * An interval is two numbers: the semitones say what is heard and the
+ * letters say how it is written. A caller that gives only the semitones has
+ * not described one, and taking the letters as zero put the whole distance
+ * into the accidental — a tone above A came out as A double sharp, and
+ * again on the next move, so a part transposed twice was unreadable.
+ *
+ * What is not allowed to change is a steps that was actually given. Zero
+ * letters and one semitone is an augmented unison, C to C sharp, and it is
+ * a different move from the minor second C to D flat; a guess that
+ * overwrote it would make the second of those unaskable.
+ */
+
+func TestSemitonesAloneAreSpelledTheOrdinaryWay(t *testing.T) {
+	for _, tc := range []struct {
+		semis int
+		from  string
+		want  string
+	}{
+		{1, "c4", "Db4"}, // a minor second, not C sharp
+		{2, "a4", "B4"},  // a tone above A is B, not A double sharp
+		{3, "c4", "Eb4"}, // a minor third
+		{4, "c4", "E4"},  // a major third
+		{5, "c4", "F4"},  // a fourth
+		{6, "c4", "F#4"}, // the tritone, as an augmented fourth
+		{7, "c4", "G4"},  // a fifth
+		{9, "c4", "A4"},  // a major sixth
+		{11, "c4", "B4"}, // a major seventh
+		{12, "c4", "C5"}, // an octave
+		{14, "c4", "D5"}, // an octave and a tone
+		{-2, "a4", "G4"}, // and downwards
+		{-1, "c4", "B3"},
+		{-12, "c4", "C3"},
+		{-14, "c4", "Bb2"},
+	} {
+		h := newHarness(t)
+		tuneIn(h, 0, tc.from)
+		// No steps at all: only how far it is heard to move.
+		h.post(fmt.Sprintf("/api/transpose?semitones=%d&key=0", tc.semis))
+		if got := pitches(h); got != tc.want {
+			t.Errorf("%s moved %+d came out as %s, want %s",
+				tc.from, tc.semis, got, tc.want)
+		}
+	}
+}
+
+// Moving twice is the thing that gave it away: each move piled another
+// alteration on, so a part put up a tone and back down was not the part it
+// started as.
+func TestMovingAndMovingBackLeavesTheMusicAsItWas(t *testing.T) {
+	h := newHarness(t)
+	tuneIn(h, 0, "a4", "c4", "f4")
+	was := pitches(h)
+
+	h.post("/api/transpose?semitones=2&key=0")
+	if got := pitches(h); got != "B4 D4 G4" {
+		t.Fatalf("up a tone gave %q, want %q", got, "B4 D4 G4")
+	}
+	h.post("/api/transpose?semitones=-2&key=0")
+	if got := pitches(h); got != was {
+		t.Errorf("back down gave %q, want %q", got, was)
+	}
+}
+
+// A steps that was given is honoured, however odd it looks: the caller
+// knows which of the two spellings of that distance they want.
+func TestAnIntervalThatWasSpeltOutIsLeftAlone(t *testing.T) {
+	// Zero letters and one semitone: an augmented unison.
+	sharp := newHarness(t)
+	tuneIn(sharp, 0, "c4")
+	sharp.post("/api/transpose?steps=0&semitones=1&key=0")
+	if got := pitches(sharp); got != "C#4" {
+		t.Errorf("an augmented unison above C gave %s, want C#4", got)
+	}
+
+	// One letter and one semitone: the minor second, the other reading of
+	// the same distance.
+	flat := newHarness(t)
+	tuneIn(flat, 0, "c4")
+	flat.post("/api/transpose?steps=1&semitones=1&key=0")
+	if got := pitches(flat); got != "Db4" {
+		t.Errorf("a minor second above C gave %s, want Db4", got)
+	}
+
+	// And a diminished fourth, which is four semitones spelled the long
+	// way round and is exactly what a guess would have overwritten.
+	dim := newHarness(t)
+	tuneIn(dim, 0, "c4")
+	dim.post("/api/transpose?steps=3&semitones=4&key=0")
+	if got := pitches(dim); got != "Fb4" {
+		t.Errorf("a diminished fourth above C gave %s, want Fb4", got)
+	}
+}
+
+func TestStepsThatIsNotANumberIsRefused(t *testing.T) {
+	h := newHarness(t)
+	tuneIn(h, 0, "c4")
+	if got := h.postFails("/api/transpose?steps=up&semitones=2"); got == "" {
+		t.Error("a steps of \"up\" was allowed")
+	}
+}
+
+// The table itself, where the arithmetic around the octave boundary goes
+// wrong: Go rounds towards zero, so a negative remainder has to be brought
+// back before it is looked up.
+func TestTheLetterCountOfEveryDistance(t *testing.T) {
+	for _, tc := range []struct{ semis, want int }{
+		{0, 0}, {1, 1}, {2, 1}, {3, 2}, {4, 2}, {5, 3}, {6, 3},
+		{7, 4}, {8, 5}, {9, 5}, {10, 6}, {11, 6}, {12, 7},
+		{13, 8}, {14, 8}, {24, 14},
+		// Down a semitone and down a tone are both down one letter:
+		// C to B and C to B flat.
+		{-1, -1}, {-2, -1}, {-3, -2}, {-5, -3}, {-7, -4},
+		{-12, -7}, {-13, -8}, {-14, -8}, {-24, -14},
+	} {
+		if got := lettersFor(tc.semis); got != tc.want {
+			t.Errorf("%+d semitones is %d letters, want %d",
+				tc.semis, got, tc.want)
+		}
 	}
 }

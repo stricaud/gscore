@@ -165,6 +165,23 @@ func (a *App) handlePickFile(w http.ResponseWriter, r *http.Request) {
 		a.importSymbolsFrom(w, path)
 		return
 	}
+	// And picking a picture to trace a symbol from.
+	//
+	// The drawing window has a file box of its own for this, which does
+	// nothing at all in the native window: a hidden <input type="file">
+	// needs the shell to put a dialog up, and this shell does not. So the
+	// same button asks here instead, and the picture comes back as the
+	// grid rather than as a file.
+	if r.URL.Query().Get("picture") == "1" {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		name := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
+		writePictureGrid(w, data, name)
+		return
+	}
 	if err := a.openPath(path); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return

@@ -157,3 +157,49 @@ test("the symbol is let go once it has gone", () => {
   const body = grab("deleteSelected");
   assert.match(body, /pickedSymbol = null;\s*await refreshScore\(\)/);
 });
+
+/*
+ * Importing a picture to trace.
+ *
+ * The button did nothing in the native window. A hidden
+ * <input type="file"> needs the shell to put a panel up, and this shell
+ * does not — so it sat there, silent, with no way to tell why. The symbol
+ * packs already went the other way round, through a dialog the core asks
+ * for; this now does the same.
+ */
+
+test("the button asks the core for a dialog where there is one", () => {
+  const body = grab("importPicture");
+  assert.match(body, /state\.info\?\.local/);
+  assert.match(body, /api\/pickfile\?picture=1/);
+});
+
+test("and falls back to the file box in a browser", () => {
+  const body = grab("importPicture");
+  assert.match(body, /\$\("#sym-file"\)\.click\(\)/);
+  // The fallback is outside the local branch, so a served editor and a
+  // dialog that cannot be had both reach it.
+  const local = body.indexOf("state.info?.local");
+  const box = body.lastIndexOf('$("#sym-file").click()');
+  assert.ok(box > local, "the file box is unreachable");
+});
+
+test("cancelling says so rather than looking broken", () => {
+  assert.match(grab("importPicture"), /d\.cancelled/);
+});
+
+test("both ways in share the one piece of code", () => {
+  // The window that receives a picture cannot tell which way it came and
+  // should not have to.
+  assert.match(grab("importPicture"), /usePicture\(d, d\.name \|\| ""\)/);
+  assert.match(src, /usePicture\(await res\.json\(\), file\.name\)/);
+});
+
+test("the picture fills the canvas and offers a name", () => {
+  const body = grab("usePicture");
+  assert.match(body, /drawInit\(/);
+  assert.match(body, /draw\.pixels\[y \* draw\.size \+ x\]/);
+  assert.match(body, /drawRender\(\)/);
+  // The name is only a suggestion: one already typed is not overwritten.
+  assert.match(body, /if \(!\$\("#sym-name"\)\.value && named\)/);
+});

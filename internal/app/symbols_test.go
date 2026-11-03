@@ -20,7 +20,11 @@
 package app
 
 import (
+	"bytes"
 	"encoding/json"
+	"image"
+	"image/color"
+	"image/png"
 	"strings"
 	"testing"
 
@@ -258,5 +262,49 @@ func TestRemovingASymbolThatIsNotThereSaysSo(t *testing.T) {
 
 	if got := h.postFails("/api/removesymbol?part=0&measure=0&at=1&name=blob"); got == "" {
 		t.Error("removing nothing was allowed")
+	}
+}
+
+// A picture handed up from the page comes back as the grid the drawing
+// window works in. The native dialog answers with the same shape, read
+// off the disk instead — see handlePickFile's picture mode.
+func TestAPictureComesBackAsAGrid(t *testing.T) {
+	h := newHarness(t)
+
+	img := image.NewNRGBA(image.Rect(0, 0, 3, 2))
+	for x := 0; x < 3; x++ {
+		for y := 0; y < 2; y++ {
+			img.Set(x, y, color.NRGBA{R: 255, G: 255, B: 255, A: 255})
+		}
+	}
+	img.Set(0, 0, color.NRGBA{A: 255}) // one black pixel
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, img); err != nil {
+		t.Fatal(err)
+	}
+
+	got := h.postBody("/api/symbolimport", buf.String())
+	if got["w"].(float64) != 3 || got["h"].(float64) != 2 {
+		t.Errorf("the grid is %vx%v", got["w"], got["h"])
+	}
+	px, ok := got["pixels"].([]any)
+	if !ok || len(px) != 6 {
+		t.Fatalf("the pixels came back as %T %v", got["pixels"], got["pixels"])
+	}
+	ink := 0
+	for _, v := range px {
+		if v.(float64) != 0 {
+			ink++
+		}
+	}
+	if ink != 1 {
+		t.Errorf("%d pixels are ink, want the one black one", ink)
+	}
+}
+
+func TestNonsenseIsNotAPicture(t *testing.T) {
+	h := newHarness(t)
+	if got := h.postBodyFails("/api/symbolimport", "this is not a picture"); got == "" {
+		t.Error("it was read as a picture")
 	}
 }

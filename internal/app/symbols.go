@@ -257,8 +257,19 @@ func (a *App) handleSymbolImport(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	writePictureGrid(w, data, "")
+}
 
+// writePictureGrid turns a picture into the grid the drawing window works
+// in and answers with it.
+//
+// Shared by the two ways a picture arrives: handed up from the page as a
+// body, and read off the disk after a native dialog. The reading is the
+// same either way and belongs in one place — the window that receives it
+// cannot tell, and should not have to.
+func writePictureGrid(w http.ResponseWriter, data []byte, name string) {
 	var bm *symbol.Bitmap
+	var err error
 	if bytes.Contains(data[:min(len(data), 256)], []byte("XPM")) {
 		bm, err = symbol.DecodeXPM(bytes.NewReader(data))
 	} else {
@@ -291,7 +302,7 @@ func (a *App) handleSymbolImport(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, symbolDoc{
-		W: bm.W, H: bm.H, Pixels: pix,
+		Name: name, W: bm.W, H: bm.H, Pixels: pix,
 		PixelSize: bm.PixelSize, OriginX: bm.OriginX, OriginY: bm.OriginY,
 	})
 }

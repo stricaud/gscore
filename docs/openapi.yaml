@@ -273,6 +273,16 @@ paths:
           in: query
           description: Offer symbol packs rather than scores.
           schema: { type: string }
+        - name: picture
+          in: query
+          description: >
+            Pick a picture to trace a symbol from, and answer with it as
+            the grid the drawing window works in — the same shape
+            `/api/symbolimport` gives — rather than opening anything. The
+            drawing window has a file box of its own for this, which does
+            nothing in the native window, since a hidden file input needs
+            the shell to put a panel up and this shell does not.
+          schema: { type: string, enum: ["1"] }
       responses:
         "200":
           description: What was chosen, or that nothing was.

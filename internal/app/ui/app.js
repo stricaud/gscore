@@ -5769,7 +5769,7 @@ function setupDrawing() {
   $("#sym-size").addEventListener("change", (e) => drawInit(Number(e.target.value)));
   $("#sym-scale").addEventListener("change", (e) => { draw.scale = Number(e.target.value); });
   $("#sym-clear").addEventListener("click", () => drawInit(draw.size));
-  $("#sym-import").addEventListener("click", () => $("#sym-file").click());
+  $("#sym-import").addEventListener("click", () => void importPicture());
 
   $("#pack-file").addEventListener("change", async (e) => {
     const file = e.target.files[0];
@@ -5796,30 +5796,60 @@ function setupDrawing() {
       status("Could not read that picture: " + (await res.text()).trim());
       return;
     }
-    const d = await res.json();
-    // Fit the imported picture into a grid the editor offers.
-    const n = Math.max(d.w, d.h);
-    const choices = [12, 16, 24, 32, 48].filter((v) => v >= n);
-    drawInit(choices.length ? choices[0] : 48);
-    for (let y = 0; y < d.h && y < draw.size; y++) {
-      for (let x = 0; x < d.w && x < draw.size; x++) {
-        draw.pixels[y * draw.size + x] = d.pixels[y * d.w + x];
-      }
-    }
-    if (d.pixelSize) {
-      draw.scale = d.pixelSize;
-      $("#sym-scale").value = String(d.pixelSize);
-    }
-    if (!$("#sym-name").value) {
-      $("#sym-name").value = file.name.replace(/\.[^.]+$/, "").replace(/[^\w-]+/g, "");
-    }
-    drawRender();
-    status("Imported " + file.name + " — edit and save");
+    usePicture(await res.json(), file.name);
     e.target.value = "";
   });
 
   $("#sym-name").addEventListener("input", () => symbolNameIsFine());
   $("#sym-save").addEventListener("click", () => void saveDrawnSymbol());
+}
+
+// importPicture asks for a picture to trace a symbol from.
+//
+// Through the native dialog where there is one. The window has a hidden
+// file box for this, and in the native shell clicking it does nothing at
+// all: <input type="file"> needs the shell to put a panel up and this one
+// does not, so the button sat there doing nothing with no way to tell
+// why. The same route the symbol packs already take.
+async function importPicture() {
+  if (state.info?.local) {
+    const res = await fetch("/api/pickfile?picture=1", { method: "POST" });
+    if (res.ok) {
+      const d = await res.json();
+      if (!d.cancelled) {
+        usePicture(d, d.name || "");
+      } else {
+        status("Ready");
+      }
+      return;
+    }
+    // Served rather than local, or no dialog to be had: fall through to
+    // the file box, which is what a browser answers with.
+  }
+  $("#sym-file").click();
+}
+
+// usePicture puts an imported picture onto the drawing canvas.
+function usePicture(d, filename) {
+  // Fit the imported picture into a grid the editor offers.
+  const n = Math.max(d.w, d.h);
+  const choices = [12, 16, 24, 32, 48].filter((v) => v >= n);
+  drawInit(choices.length ? choices[0] : 48);
+  for (let y = 0; y < d.h && y < draw.size; y++) {
+    for (let x = 0; x < d.w && x < draw.size; x++) {
+      draw.pixels[y * draw.size + x] = d.pixels[y * d.w + x];
+    }
+  }
+  if (d.pixelSize) {
+    draw.scale = d.pixelSize;
+    $("#sym-scale").value = String(d.pixelSize);
+  }
+  const named = String(filename || "").replace(/\.[^.]+$/, "").replace(/[^\w-]+/g, "");
+  if (!$("#sym-name").value && named) $("#sym-name").value = named;
+  drawRender();
+  status(filename
+    ? "Imported " + filename + " — edit and save"
+    : "Imported — edit and save");
 }
 
 // symbolNameIsFine clears the complaint about the name as soon as it is

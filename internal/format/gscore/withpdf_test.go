@@ -140,3 +140,51 @@ func TestTheOrdinaryWriterIsUnchanged(t *testing.T) {
 		t.Error("Write no longer writes a plain container")
 	}
 }
+
+// Saving a score back after an edit that does not touch the music — adding
+// a tag to it — should leave the drawing in front exactly as it was. The
+// alternative is to engrave it again, which quietly redraws the music with
+// whatever the engraver does this week.
+func TestTheCarriedPDFCanBeHandedBack(t *testing.T) {
+	var b bytes.Buffer
+	if err := WriteWithPDF(&b, aScore(), nil, pretendPDF); err != nil {
+		t.Fatal(err)
+	}
+
+	got := PDFPrefix(b.Bytes())
+	if !bytes.Equal(got, pretendPDF) {
+		t.Errorf("got %q in front, want the %d bytes that were put there",
+			got, len(pretendPDF))
+	}
+
+	// Written back out with those same bytes, the file is the one we started
+	// with: that is what makes tagging a shelf of scores safe to repeat.
+	var again bytes.Buffer
+	if err := WriteWithPDF(&again, aScore(), nil, got); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(again.Bytes(), b.Bytes()) {
+		t.Error("writing the score back with its own PDF did not reproduce it")
+	}
+}
+
+func TestAScoreWithNoPDFHasNothingInFrontOfIt(t *testing.T) {
+	var b bytes.Buffer
+	if err := Write(&b, aScore(), nil); err != nil {
+		t.Fatal(err)
+	}
+	if got := PDFPrefix(b.Bytes()); len(got) != 0 {
+		t.Errorf("found %d bytes in front of a score saved without a PDF", len(got))
+	}
+}
+
+// Nothing here may read past the end of a short or truncated file: the
+// scan starts from the tail and the tail is where the damage is.
+func TestLookingForAPDFInRubbishIsSafe(t *testing.T) {
+	for _, junk := range [][]byte{nil, {}, []byte("PK"), []byte("%PDF-"),
+		[]byte("PK\x05\x06"), bytes.Repeat([]byte{0}, 40)} {
+		if got := PDFPrefix(junk); len(got) != 0 {
+			t.Errorf("PDFPrefix(%q) found %d bytes", junk, len(got))
+		}
+	}
+}

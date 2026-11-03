@@ -136,7 +136,15 @@ func main() {
 				fmt.Fprintf(os.Stderr, "gscore:   %s\n", d)
 			}
 		} else {
-			fmt.Fprintf(os.Stderr, "gscore: %v\n", err)
+			// Which file. One file opened by hand makes that obvious and a
+			// run over a shelf of fifteen hundred does not: a reason with
+			// no name attached leaves somebody grepping the corpus for the
+			// one score that would not open.
+			if path != "" {
+				fmt.Fprintf(os.Stderr, "gscore: %s: %v\n", path, err)
+			} else {
+				fmt.Fprintf(os.Stderr, "gscore: %v\n", err)
+			}
 			os.Exit(1)
 		}
 	}
@@ -269,15 +277,32 @@ func saveTags(s *model.Score, path string, added, asked []string, withPDF bool) 
 	}
 
 	// What the file was before we touched it. Adding a tag is the smallest
-	// edit there is and it should leave everything else as it found it: a
-	// score saved without a PDF of itself in front stays that way — put one
-	// in and a two-kilobyte file comes back as four hundred — and the file
-	// keeps the permissions it had, which a fresh temporary file does not.
+	// edit there is and it should leave everything else as it found it: the
+	// file keeps the permissions it had, which a fresh temporary file does
+	// not, and it keeps the drawing it had in front of it — the one that is
+	// there, not a fresh one. A score saved without a PDF stays that way
+	// too: put one in and a two-kilobyte file comes back as four hundred.
 	info, err := os.Stat(path)
 	if err != nil {
 		return err
 	}
-	withPDF = withPDF && hasPDFWrapper(path)
+	was, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	pdf := gscorefmt.PDFPrefix(was)
+	if !withPDF {
+		pdf = nil
+	}
+	// And the marks whoever wrote this drew for themselves, which live in
+	// the container beside the music and are not part of it. The importer
+	// that loaded the score for tagging hands back the music alone, so a
+	// save that did not go looking for these would write the score back
+	// without the artwork its own notes point at.
+	_, symbols, err := gscorefmt.Read(bytes.NewReader(was))
+	if err != nil {
+		return err
+	}
 
 	tmp, err := os.CreateTemp(filepath.Dir(path), ".gscore-tag-*")
 	if err != nil {
@@ -285,7 +310,7 @@ func saveTags(s *model.Score, path string, added, asked []string, withPDF bool) 
 	}
 	defer os.Remove(tmp.Name())
 
-	if err := writeGscore(tmp, s, withPDF); err != nil {
+	if err := gscorefmt.WriteWithPDF(tmp, s, symbols, pdf); err != nil {
 		tmp.Close()
 		return err
 	}
@@ -300,43 +325,6 @@ func saveTags(s *model.Score, path string, added, asked []string, withPDF bool) 
 	}
 	fmt.Printf("%s: added %s\n", path, strings.Join(added, ", "))
 	return nil
-}
-
-// hasPDFWrapper says whether this .gscore carries a PDF of itself in front
-// of the music, which is what makes it open in anything that reads one.
-//
-// A file too short to tell, or one that cannot be read at all, is treated
-// as not having one: the caller is about to rewrite it either way, and the
-// smaller of the two guesses is the one that cannot surprise anybody.
-func hasPDFWrapper(path string) bool {
-	f, err := os.Open(path)
-	if err != nil {
-		return false
-	}
-	defer f.Close()
-	var head [5]byte
-	if _, err := io.ReadFull(f, head[:]); err != nil {
-		return false
-	}
-	return string(head[:]) == "%PDF-"
-}
-
-// writeGscore writes the score as a .gscore, with a PDF of itself in front
-// unless that was turned off. See convertTo, which does the same for a file
-// being written under a new name.
-func writeGscore(w io.Writer, s *model.Score, withPDF bool) error {
-	if !withPDF {
-		exp, err := format.ExporterFor(".gscore")
-		if err != nil {
-			return err
-		}
-		return exp.Export(w, s)
-	}
-	var pdf bytes.Buffer
-	if err := renderPDFTo(&pdf, s); err != nil {
-		return err
-	}
-	return gscorefmt.WriteWithPDF(w, s, nil, pdf.Bytes())
 }
 
 func usage() {

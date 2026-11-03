@@ -30,6 +30,7 @@ package gscore
 import (
 	"archive/zip"
 	"bytes"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -251,6 +252,44 @@ func safeName(s string) string {
 /*
  * Read
  */
+
+// PDFPrefix returns the PDF a .gscore carries in front of its container, or
+// nothing where it carries none.
+//
+// For saving a file back with the drawing it already had. Engraving it again
+// is the obvious way to put a PDF on a score being rewritten, and it is the
+// wrong one for an edit that does not touch the music: the engraver changes
+// between versions — this week it stopped drawing a slur that crossed a page
+// as a line down the middle of one — so adding a tag with one gscore and
+// then another would quietly redraw the music twice. Handing the old bytes
+// back writes exactly the file that was there, bar the field that changed.
+//
+// Found the way a zip reader finds its own directory: from the end. The
+// record that closes a zip says how big its central directory is and where
+// it starts, and anything in front of where those two meet is the prefix.
+// Looking instead for the first PK signature would find one inside the PDF
+// the first time a compressed stream happened to contain those two bytes.
+func PDFPrefix(data []byte) []byte {
+	// The closing record is 22 bytes, plus up to 64k of comment after it.
+	const minEnd, maxComment = 22, 1 << 16
+	from := len(data) - minEnd - maxComment
+	if from < 0 {
+		from = 0
+	}
+	for i := len(data) - minEnd; i >= from; i-- {
+		if data[i] != 'P' || data[i+1] != 'K' || data[i+2] != 5 || data[i+3] != 6 {
+			continue
+		}
+		size := binary.LittleEndian.Uint32(data[i+12:])
+		offset := binary.LittleEndian.Uint32(data[i+16:])
+		start := int64(i) - int64(size) - int64(offset)
+		if start <= 0 || start > int64(len(data)) {
+			return nil // no prefix, or a zip64 whose fields do not say
+		}
+		return data[:start]
+	}
+	return nil
+}
 
 // Read loads a score and any symbols stored with it.
 func Read(r io.Reader) (*model.Score, *symbol.Registry, error) {

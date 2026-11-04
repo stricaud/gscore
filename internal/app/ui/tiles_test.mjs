@@ -386,12 +386,21 @@ test("the music does not write to the page while a gesture is in flight", () => 
 
 test("music deeper than the window is not followed down the page", () => {
   const fn = grab("followCursor");
-  assert.match(fn, /if \(bottom - top > wrap\.clientHeight\) return;/,
-    "a system taller than the window has no scroll position that shows all " +
-    "of it, so the test below never passes and the page is pinned to the " +
-    "top of the score for the whole piece");
+  // In the editor. A system taller than the window has no scroll position
+  // that shows all of it, so which staves to watch is a decision and it is
+  // the reader's — and taking the top of the band instead pinned the page
+  // to the first few staves of the score for the whole piece.
+  //
+  // A player is the other case and is let through here: its frame is
+  // sized to about one system on purpose, so this test decides it at
+  // random, and a player that stops following is a player you drive by
+  // hand. See playfollow_test.mjs, which exercises both.
+  assert.match(fn, /if \(!fits && !state\.player\) return;/,
+    "the editor no longer leaves a system deeper than the window alone");
+  assert.match(fn, /const fits = bottom - top <= wrap\.clientHeight;/,
+    "the question is not being asked at all");
   // And that question is asked before the one it would otherwise defeat.
-  assert.ok(fn.indexOf("bottom - top > wrap.clientHeight") <
+  assert.ok(fn.indexOf("!fits && !state.player") <
             fn.indexOf("top >= wrap.scrollTop"),
     "the impossible test is reached first");
 });

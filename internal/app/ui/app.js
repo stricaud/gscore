@@ -12649,26 +12649,57 @@ function followCursor(pt) {
   const want = Math.min(max, Math.max(0, pt.x * z - wrap.clientWidth * cursorLead));
   // Set rather than animated: it is already a frame at a time, and asking
   // for a smooth scroll sixty times a second makes each one fight the last.
-  wrap.scrollLeft = want;
+  //
+  // Only when it would move. Writing a scroll offset is not free even when
+  // the number is the one already there: it ends whatever scrolling is
+  // under way, which on a wrapped score is the smooth scroll down to the
+  // next system that this function asked for a frame ago. Written every
+  // frame, it cancelled that scroll before it could start, over and over
+  // — so a wrapped score in a frame never moved, and the music played on
+  // off the bottom of it while the reader scrolled by hand.
+  if (Math.abs(wrap.scrollLeft - want) >= 1) wrap.scrollLeft = want;
 
   // Down the page the music does not move continuously — it steps from one
   // system to the next — so this moves only when the cursor has left the
   // one in view.
   const top = pt.top * z + off;
   const bottom = pt.bottom * z + off;
+  // Whether a whole system fits in the room there is.
+  const fits = bottom - top <= wrap.clientHeight;
+
   // Nothing to bring into view when the music is deeper than the window.
   //
   // A system of fifty-three staves is eight thousand pixels of it and the
   // window holds nine hundred, so no scroll position shows the cursor's
-  // whole band and the test below can never pass. What it did instead was
-  // take the top of the band as the thing to show, which pinned the page to
-  // the first few staves of the score for the whole piece.
+  // whole band. Taking the top of the band as the thing to show instead
+  // pinned the page to the first few staves of the score for the whole
+  // piece.
   //
   // There is no right answer to pick here: which of fifty-three staves to
   // watch is a decision, and it is the reader's. So the page is left where
   // they put it.
-  if (bottom - top > wrap.clientHeight) return;
-  if (top >= wrap.scrollTop && bottom <= wrap.scrollTop + wrap.clientHeight) {
+  //
+  // A player is the other case, and the rule above turned it into a bug.
+  // Its frame is sized to about one system on purpose — that is what an
+  // embedded score opens at — so the band and the room for it are within a
+  // few pixels of each other, and which side of this test a given score
+  // falls on is a coin toss. A three-staff exercise in a frame nine pixels
+  // too short stopped following at the first system and left the reader
+  // scrolling by hand through a piece that was playing. And there is no
+  // decision of the reader's to protect: there is nothing to edit, nothing
+  // else on the screen, and one system is all the frame was ever going to
+  // hold. So it follows anyway, and shows the top of the system.
+  if (!fits && !state.player) return;
+
+  // Whether the music is on screen, which is a different question when it
+  // is taller than the screen: then the top of the system is as much of it
+  // as any scroll position can show, and asking for all of it is a test
+  // that never passes — which would leave following switched off from the
+  // first time the reader touched the page.
+  const inView = fits
+    ? top >= wrap.scrollTop && bottom <= wrap.scrollTop + wrap.clientHeight
+    : top >= wrap.scrollTop && top < wrap.scrollTop + wrap.clientHeight;
+  if (inView) {
     // The music is on screen. Whatever you were looking at, you are looking
     // at it again, so following takes over from here.
     userScrolled = false;
@@ -12679,7 +12710,17 @@ function followCursor(pt) {
   // gone to look at something else. Only the first is ours to answer.
   if (userScrolled) return;
 
-  const target = Math.max(0, top - wrap.clientHeight * 0.3);
+  // A little of the system above the fold, so it does not sit hard against
+  // the top edge.
+  //
+  // Less of it where the system is already taller than the view, because
+  // every pixel spent above it is a pixel of music lost — but not none:
+  // what is measured here is the top staff *line*, and the ledger lines
+  // and slurs of a high passage are drawn above that. At nothing the
+  // flute's top notes were scrolled off the top of the frame, which is
+  // the one part of a solo nobody wants cut.
+  const lead = fits ? wrap.clientHeight * 0.3 : Math.min(wrap.clientHeight * 0.15, 4 * z);
+  const target = Math.max(0, top - lead);
   // Asked for once per move, not once per frame.
   //
   // A smooth scroll takes a few hundred milliseconds to arrive, and for the

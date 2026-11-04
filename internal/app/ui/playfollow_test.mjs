@@ -117,3 +117,112 @@ test("a sounding note is found by number rather than searched for", () => {
   assert.ok(!/for \(const ev of pb\.events\)/.test(fn),
     "every frame still walks every event in the performance");
 });
+
+/*
+ * Keeping the music on screen.
+ *
+ * Two faults, which together meant an embedded score played on off the
+ * bottom of its frame while the reader scrolled by hand after it.
+ *
+ * Reported as "when I play the embedded content the page mode does not
+ * follow the note being played, so I have to manually move to the right
+ * place".
+ */
+
+// A view onto a score, with every write to it recorded. Shaped like the
+// real element: scrollLeft and scrollTop are properties that can be read
+// and written, scrollTo is the smooth one.
+function view({ clientHeight, clientWidth = 800, scrollWidth = 800 }) {
+  const wrote = { left: 0, smooth: [] };
+  let left = 0;
+  return {
+    wrote,
+    el: {
+      clientHeight, clientWidth, scrollWidth,
+      scrollHeight: 20000,
+      scrollTop: 0,
+      get scrollLeft() { return left; },
+      set scrollLeft(v) { left = v; wrote.left++; },
+      scrollTo(opts) { wrote.smooth.push(Math.round(opts.top)); },
+    },
+  };
+}
+
+// followCursor and the handful of things it reaches for. The two flags it
+// keeps between frames are passed in, so that assigning to them inside
+// behaves as the module's own variables do.
+function follower({ player = false, clientHeight = 700 } = {}) {
+  const v = view({ clientHeight });
+  const api = build(["followCursor"], {
+    $: () => v.el,
+    state: { zoom: 9, player },
+    tuneOffsetY: () => 0,
+    readerIsScrolling: () => false,
+    userScrolled: false,
+    followTop: null,
+    cursorLead: 0.32,
+    Math,
+  });
+  return { ...api, ...v };
+}
+
+// A score wrapped to the width of its frame has nowhere to go sideways.
+// Writing the offset anyway is not free: a write ends whatever scrolling
+// is under way, and what was under way was the smooth scroll down to the
+// next system that the frame before had asked for. Written sixty times a
+// second it cancelled that scroll before it could start, every time.
+test("a score with nothing to scroll sideways is left alone sideways", () => {
+  const f = follower();
+  for (let i = 0; i < 60; i++) {
+    f.followCursor({ x: i, top: 0, bottom: 20, measure: 0 });
+  }
+  assert.equal(f.wrote.left, 0,
+    "the sideways offset was written " + f.wrote.left + " times on a score " +
+    "that cannot scroll sideways, which cancels the scroll down the page");
+});
+
+// And where there is somewhere to go, it still goes.
+test("a strip is still followed sideways", () => {
+  const f = follower();
+  f.el.scrollWidth = 40000;
+  f.followCursor({ x: 500, top: 0, bottom: 20, measure: 0 });
+  assert.ok(f.wrote.left > 0, "a strip stopped following sideways");
+  assert.ok(f.el.scrollLeft > 0, "the strip did not move");
+});
+
+// A player's frame is sized to about one system on purpose, so the system
+// and the room for it are within a few pixels of each other and the rule
+// written for a fifty-three-stave score in a window decided it at random.
+// On the wrong side of it, following stopped at the first system.
+test("a player follows a system taller than its frame", () => {
+  const f = follower({ player: true, clientHeight: 190 });
+  // Four staves at nine pixels a space: deeper than the frame.
+  f.followCursor({ x: 0, top: 269, bottom: 297, measure: 20 });
+  assert.ok(f.wrote.smooth.length > 0,
+    "a player stopped following as soon as a system did not fit");
+  // And it shows the top of the system, with a little room over it for
+  // the ledger lines of a high passage.
+  const at = f.wrote.smooth[0];
+  assert.ok(at > 0 && at < 269 * 9,
+    "scrolled to " + at + ", which is not the top of the system");
+});
+
+// The editor keeps the other answer: which of fifty-three staves to watch
+// is the reader's decision, so the page is left where they put it.
+test("the editor leaves a system deeper than the window alone", () => {
+  const f = follower({ player: false, clientHeight: 190 });
+  f.followCursor({ x: 0, top: 269, bottom: 297, measure: 20 });
+  assert.equal(f.wrote.smooth.length, 0,
+    "the editor dragged the page to the top of a system too deep to show");
+});
+
+// Within one system nothing moves: the music steps from system to system,
+// and a page that re-scrolled on every frame would never settle.
+test("following down the page is once per system, not once per frame", () => {
+  const f = follower({ clientHeight: 300 });
+  for (let i = 0; i < 60; i++) {
+    f.followCursor({ x: i, top: 500, bottom: 520, measure: 30 });
+  }
+  assert.equal(f.wrote.smooth.length, 1,
+    "asked for " + f.wrote.smooth.length + " scrolls to the same system");
+});

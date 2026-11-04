@@ -237,13 +237,23 @@ func Render(w io.Writer, lay *engrave.Layout, opt Options) error {
 		if opt.Interactive && g.Ref != 0 {
 			attr = fmt.Sprintf(` data-ref="%d"`, g.Ref)
 		}
+		// Both go in one inline style, not in presentation attributes. A
+		// presentation attribute is author-level styling of the lowest
+		// priority, so the .g rule in the stylesheet above beat it and every
+		// glyph asking to be drawn smaller — a grace note, the accidental in
+		// a chord symbol — came out full size.
+		style := ""
 		if g.Size > 0 {
-			// An inline style, not a font-size attribute. A presentation
-			// attribute is author-level styling of the lowest priority, so
-			// the .g rule in the stylesheet above beat it and every glyph
-			// asking to be drawn smaller — a grace note, the accidental in a
-			// chord symbol — came out full size.
-			attr += fmt.Sprintf(` style="font-size:%.2fpx"`, g.Size*s)
+			style += fmt.Sprintf("font-size:%.2fpx;", g.Size*s)
+		}
+		// A glyph that is a reading aid rather than ink: the beat marks. The
+		// .g rule fills them with the score's colour, so saying it here is
+		// the only way it holds.
+		if g.Colour != "" {
+			style += "fill:" + html.EscapeString(g.Colour) + ";"
+		}
+		if style != "" {
+			attr += fmt.Sprintf(` style="%s"`, style)
 		}
 		fmt.Fprintf(&b, `<text class="g" x="%.2f" y="%.2f"%s>%s</text>`+"\n",
 			g.X*s, g.Y*s, attr, html.EscapeString(string(r)))

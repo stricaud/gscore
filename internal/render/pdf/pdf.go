@@ -739,6 +739,19 @@ func (r *renderer) drawGlyphs(top, bottom float64) {
 		if g.Size > 0 {
 			size = pdf.Point(g.Size) * r.s
 		}
+		// A glyph with a colour of its own — a note coloured by its pitch,
+		// a beat mark — is printed in it. Wrapped in a save and a restore so
+		// the colour lasts exactly as long as the glyph: set and left, it
+		// would run on through every note after it, and a page printed in
+		// the colour of whichever glyph happened to be coloured last is a
+		// sheet of paper and a cartridge wasted.
+		if cr, cg, cb, ok := engrave.RGB(g.Colour); ok {
+			r.page.Save()
+			r.page.SetFillRGB(cr, cg, cb)
+			r.page.Text(r.music, size, r.x(g.X), r.y(g.Y), string(run))
+			r.page.Restore()
+			continue
+		}
 		r.page.Text(r.music, size, r.x(g.X), r.y(g.Y), string(run))
 	}
 }

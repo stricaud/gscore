@@ -258,7 +258,14 @@ const MESSAGES = {
   "Measures after this one…": "Mesures après celle-ci…",
   "Measure": "Mesure",
   "Measure numbers": "Numéros de mesure",
+  // The arrows over the beats, which is what this entry draws now. The
+  // words over the first bar are "Indication de tempo", below.
   "Metronome marking": "Indication métronomique",
+  "Metronome click": "Clic du métronome",
+  "Note colours…": "Couleurs des notes…",
+  "Note colours": "Couleurs des notes",
+  "Colour the noteheads": "Colorer les têtes de note",
+  "Back to the usual colours": "Revenir aux couleurs habituelles",
   "MIDI keyboard…": "Clavier MIDI…",
   "Multi-measure rests": "Silences multimesures",
   "Melodic shape": "Profil mélodique",
@@ -417,6 +424,10 @@ const MESSAGES = {
   "Composer": "Compositeur",
   "Copyright": "Droits",
   "Tempo": "Tempo",
+  // The words and the metronome mark over the first bar — "Andante
+  // (♩ = 58)" — as against the arrows over the beats, which the View menu
+  // calls "Indication métronomique".
+  "Tempo marking": "Indication de tempo",
   "Group name": "Nom du groupe",
   "Staff name": "Nom de la portée",
   "Rehearsal mark": "Repère de répétition",

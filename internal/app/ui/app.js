@@ -58,6 +58,14 @@ const state = {
   // with the mouse turns it back on for anyone who prefers it, and shift
   // still selects while it is on.
   mouseWrites: false,
+  // Whether a click sounds on every beat while the music plays. Off until
+  // somebody asks for it: nobody presses Play expecting a metronome.
+  // Remembered between sessions, like the mouse. See setMetronome.
+  metronome: false,
+  // Whether the noteheads are coloured by what note they are. Kept on the
+  // server, because the printed page is drawn there too; this is a copy for
+  // the tick in the menu. See noteColoursDialog.
+  colourNotes: false,
 
   hits: [],
   // The performance, kept until the music changes. See playbackData.
@@ -95,8 +103,11 @@ const state = {
   // What the drawing shows. The metronome marking starts on, which is
   // what DefaultOptions does on the other side — a tick that starts out
   // lying is worse than no tick.
+  // The beat marks start off: they are an aid to reading rather than
+  // notation, and a score nobody asked to have marked up should open
+  // looking like the score.
   view: { names: false, numbers: true, multirest: false, tempomark: true,
-          concert: false },
+          beatmarks: false, concert: false },
   // Whether a bar that is too long has its last notes moved along. Read from
   // the server at startup, because it is remembered between sessions.
   trackBarlines: true,
@@ -996,6 +1007,9 @@ async function action(name) {
     case "stop":
       stop();
       break;
+    case "metronome":
+      setMetronome(!state.metronome);
+      break;
     case "type-music": toggleTypeBar(); break;
     case "typing-help": openTypingHelp(); break;
     case "show-score": await showSheet("score"); break;
@@ -1248,6 +1262,8 @@ async function action(name) {
     case "view-numbers": await setView("numbers", !state.view.numbers); break;
     case "view-multirest": await setView("multirest", !state.view.multirest); break;
     case "view-tempomark": await setView("tempomark", !state.view.tempomark); break;
+    case "view-beatmarks": await setView("beatmarks", !state.view.beatmarks); break;
+    case "note-colours": await noteColoursDialog(); break;
     case "view-concert": await setView("concert", !state.view.concert); break;
 
     case "insert-chord": await chordSymbolDialog(); break;
@@ -7210,6 +7226,91 @@ function markBarlineTick() {
 }
 
 // settingsDialog is what gscore remembers between sessions.
+// The notes, in the order the palette is indexed in: the scale spelled
+// from C, which is model.Step's own order on the other side.
+const NOTE_LETTERS = ["C", "D", "E", "F", "G", "A", "B"];
+
+// noteColoursDialog turns the coloured noteheads on and off, and changes the
+// colours.
+//
+// Everything in it takes effect as it is changed, with the score behind the
+// window redrawn each time. There is nothing to confirm: what the colours
+// look like is the whole question, and a window that hid the answer until it
+// was closed would be asking somebody to choose blind. The one button that
+// is not immediate is the one that puts the palette back, because that is
+// the only thing in here that throws work away.
+//
+// The colours are sent to the server rather than kept in the page. They are
+// remembered for the person and they have to reach the engraver, which is
+// where the PDF and the printed page are drawn: a palette that lived in the
+// browser would colour the screen and print black.
+async function noteColoursDialog() {
+  const dlg = $("#notecolours");
+  const on = $("#notecolours-on");
+  const list = $("#notecolours-list");
+
+  let now = await (await fetch("/api/settings")).json().catch(() => ({}));
+  let colours = { ...(now.noteColours || {}) };
+
+  // Sent as the whole palette, the way the key bindings are: the server
+  // takes a complete set, and nothing in between is a half-written palette.
+  const send = async (params) => {
+    const res = await fetch("/api/settings?" + new URLSearchParams(params),
+                            { method: "POST" });
+    if (!res.ok) {
+      status("Could not change the colours");
+      return;
+    }
+    now = await res.json().catch(() => now);
+    colours = { ...(now.noteColours || {}) };
+    state.colourNotes = !!now.colourNotes;
+    markViewTicks();
+    draw();
+    await refreshScore();
+  };
+
+  const draw = () => {
+    on.checked = !!now.colourNotes;
+    list.innerHTML = "";
+    for (const letter of NOTE_LETTERS) {
+      const row = document.createElement("label");
+      row.className = "tempo-bar";
+      const says = document.createElement("span");
+      says.textContent = letter;
+      row.appendChild(says);
+      const pick = document.createElement("input");
+      pick.type = "color";
+      pick.value = colours[letter] || "#000000";
+      // On change and not on input: dragging round a colour wheel fires
+      // every few pixels, and each one is a round trip and a redrawn
+      // score. The colour follows the pointer in the picker itself either
+      // way, so nothing is lost by waiting for the choice.
+      pick.onchange = () => {
+        colours[letter] = pick.value;
+        void send({ noteColours: JSON.stringify(colours) });
+      };
+      row.appendChild(pick);
+      list.appendChild(row);
+    }
+  };
+
+  on.onchange = () => void send({ colourNotes: on.checked ? "1" : "0" });
+  draw();
+
+  const answer = await new Promise((resolve) => {
+    const done = () => {
+      dlg.removeEventListener("close", done);
+      resolve(dlg.returnValue);
+    };
+    dlg.addEventListener("close", done);
+    dlg.showModal();
+  });
+  // An empty palette is how the server is told to go back to its own
+  // colours, which is the same way an empty set of bindings works.
+  if (answer === "reset") await send({ noteColours: "{}" });
+  status("Ready");
+}
+
 async function settingsDialog() {
   const dlg = $("#settings");
   const pdf = $("#setting-score-pdf");
@@ -9197,6 +9298,7 @@ async function setView(what, on) {
   state.view.numbers = !!d.numbers;
   state.view.multirest = !!d.multirest;
   state.view.tempomark = !!d.tempomark;
+  state.view.beatmarks = !!d.beatmarks;
   state.view.concert = !!d.concert;
   markViewTicks();
   await refreshScore();
@@ -9210,8 +9312,13 @@ async function setView(what, on) {
       : "Every bar drawn",
     // Said in full too: taking the mark off does not change the speed.
     tempomark: on
-      ? "Metronome marking shown"
-      : "Metronome marking hidden — the piece still plays at that speed",
+      ? "Tempo marking shown"
+      : "Tempo marking hidden — the piece still plays at that speed",
+    // Said in full as well, because what it draws is not notation and
+    // nobody should print it by accident.
+    beatmarks: on
+      ? "Beats marked — an arrow over every beat, to read by rather than to print"
+      : "Beat marks hidden",
     // Said in full as well: what is stored has not changed, and writing
     // on a transposing staff still goes in as what its player reads.
     concert: on
@@ -9224,11 +9331,17 @@ async function setView(what, on) {
 function markViewTicks() {
   const n = $("#names-tick"), m = $("#numbers-tick"), r = $("#multirest-tick");
   const c = $("#concert-tick"), t = $("#tempomark-tick");
+  const b = $("#beatmarks-tick");
   if (n) n.textContent = state.view.names ? "✓" : "";
   if (m) m.textContent = state.view.numbers ? "✓" : "";
   if (r) r.textContent = state.view.multirest ? "✓" : "";
   if (t) t.textContent = state.view.tempomark ? "✓" : "";
+  if (b) b.textContent = state.view.beatmarks ? "✓" : "";
   if (c) c.textContent = state.view.concert ? "✓" : "";
+  const k = $("#metronome-tick");
+  if (k) k.textContent = state.metronome ? "✓" : "";
+  const nc = $("#notecolours-tick");
+  if (nc) nc.textContent = state.colourNotes ? "✓" : "";
   const w = $("#mouse-tick");
   if (w) w.textContent = state.mouseWrites ? "✓" : "";
 }
@@ -9257,6 +9370,40 @@ function loadMouseWrites() {
     state.mouseWrites = localStorage.getItem("mousewrites") === "1";
   } catch (_) {
     /* the default stands */
+  }
+  markViewTicks();
+}
+
+// setMetronome turns the click on the beat on or off, and remembers which.
+//
+// Remembered the same way and for the same reason as the mouse: somebody
+// practising with a click wants it still there when they open the next
+// piece, and somebody who has never asked for one should never get one.
+//
+// It takes effect at the next play rather than in the middle of this one.
+// Starting a click halfway through a bar is a click out of time, and a
+// metronome out of time is the one thing a metronome must not be.
+function setMetronome(on) {
+  state.metronome = !!on;
+  try {
+    localStorage.setItem("metronome", on ? "1" : "0");
+  } catch (_) {
+    /* a private window may refuse; it still holds for this session */
+  }
+  markViewTicks();
+  status(on
+    ? (state.playing
+      ? "Metronome on — it starts with the next play"
+      : "Metronome on — a click on every beat while the music plays")
+    : "Metronome off");
+}
+
+// loadMetronome brings back what was chosen last time.
+function loadMetronome() {
+  try {
+    state.metronome = localStorage.getItem("metronome") === "1";
+  } catch (_) {
+    /* off, which is the default */
   }
   markViewTicks();
 }
@@ -11770,6 +11917,119 @@ function scheduleOscillators(events, from, t0, master) {
   if (next < todo.length) scheduleTimer = setInterval(tick, scheduleEvery);
 }
 
+/* ---------- the metronome ---------- */
+
+// A click on every beat while the music plays.
+//
+// The same beats the View menu draws arrows over — both are counted in
+// model.TimeSignature.BeatUnit, on the Go side, so a 6/8 jig clicks twice a
+// bar and is marked twice a bar. A metronome that ticks somewhere the page
+// does not show a beat is worse than none: the player trusts the click, and
+// then the click and the score disagree.
+//
+// It is not an instrument of the score. It is scheduled alongside whatever is
+// playing the notes — the soundfont or the oscillators, it makes no
+// difference — into a gain of its own, so that its level is its own and it
+// cannot be mistaken for something somebody wrote.
+
+// metronomeBeats turns the bar timeline into the moments a click sounds.
+//
+// Each bar is divided by the number of beats the score says it holds, which
+// is counted from the music in it rather than from the signature over it: a
+// pickup is the bar where those differ, and a metronome that ticks a full bar
+// through a one-beat pickup is three ticks of silence before the music.
+function metronomeBeats(measures) {
+  const out = [];
+  for (const m of measures || []) {
+    const beats = m.beats || 0;
+    if (beats < 1 || !(m.dur > 0)) continue;
+    const step = m.dur / beats;
+    for (let i = 0; i < beats; i++) {
+      // The first beat of a bar is the one you count from, so it is the one
+      // that sounds different. A row of identical clicks tells you the
+      // speed and not the place, and the place is the harder thing to keep.
+      out.push({ at: m.start + i * step, strong: i === 0 });
+    }
+  }
+  // The bars come in the order they are played, repeats and all, so the
+  // clicks already do too.
+  return out;
+}
+
+let metronomeTimer = null;
+
+// stopMetronome drops whatever clicks were still to be built. What has been
+// scheduled already is silenced with everything else, in silence().
+function stopMetronome() {
+  if (metronomeTimer) clearInterval(metronomeTimer);
+  metronomeTimer = null;
+}
+
+// scheduleMetronome builds the clicks a window ahead of the music, the way
+// the notes are built.
+//
+// A click is three Web Audio nodes and a symphony is fourteen thousand of
+// them; built all at once that is the same wall the notes ran into.
+function scheduleMetronome(measures, from, t0) {
+  stopMetronome();
+  if (!state.metronome) return;
+
+  const beats = metronomeBeats(measures).filter((b) => b.at >= from);
+  if (!beats.length) return;
+
+  const dest = audio.createGain();
+  // Under the music rather than over it. The click is there to be followed,
+  // not listened to, and a metronome louder than the piece is one somebody
+  // turns off.
+  dest.gain.value = 0.5;
+  dest.connect(audio.destination);
+
+  let next = 0;
+  const tick = () => {
+    const until = audio.currentTime - t0 + from + scheduleAhead;
+    while (next < beats.length && beats[next].at <= until) {
+      const b = beats[next++];
+      click(t0 + b.at - from, b.strong, dest);
+    }
+    if (next >= beats.length) stopMetronome();
+  };
+
+  tick();
+  if (next < beats.length) metronomeTimer = setInterval(tick, scheduleEvery);
+}
+
+// click is one tick of the metronome.
+//
+// A short burst of a high tone with the edge taken off it, which is what a
+// mechanical metronome sounds like and what carries over a piano without
+// being part of it. Pitched rather than noisy on purpose: a noise burst
+// disappears into a loud bar, and the thing has to be audible at the exact
+// moment it is needed or it is no use at all.
+function click(when, strong, dest) {
+  const osc = audio.createOscillator();
+  osc.type = "square";
+  // The downbeat higher than the rest, which is the convention every
+  // metronome with a bell follows.
+  osc.frequency.value = strong ? 1600 : 1100;
+
+  const gain = audio.createGain();
+  const peak = strong ? 0.5 : 0.3;
+  // Struck and gone: an attack short enough to be a click rather than a
+  // beep, and a decay that is over well before the next beat at any speed
+  // anybody plays at. Ramped and not switched, because a gain that jumps to
+  // zero clicks a second time on its own.
+  gain.gain.setValueAtTime(0.0001, when);
+  gain.gain.exponentialRampToValueAtTime(peak, when + 0.001);
+  gain.gain.exponentialRampToValueAtTime(0.0001, when + 0.05);
+
+  osc.connect(gain);
+  gain.connect(dest);
+  osc.start(when);
+  osc.stop(when + 0.06);
+  // Collected with the notes so that stopping cuts the click short too.
+  voices.push(osc);
+}
+
 function sound(ev, start, master) {
   if (ev.drum) {
     hit(ev, start, master);
@@ -12053,6 +12313,9 @@ async function playNow(opts) {
     master.gain.value = 0.22; // keep simultaneous notes from clipping
     scheduleOscillators(pb.events, from, t0, master);
   }
+  // The click runs alongside whichever of those is playing the notes, on the
+  // same clock and into a gain of its own. It is not one of the instruments.
+  scheduleMetronome(pb.measures, from, t0);
 
   state.playing = true;
   // Starting is asking to be shown the music, so the page follows again
@@ -12805,6 +13068,9 @@ function silence() {
   // Nothing more is to be built. Without this the window went on filling
   // itself after the music had been stopped, and the piece played on.
   stopScheduling();
+  // And the clicks, which are built on a window of their own: stopped
+  // without this, the music went quiet and the metronome kept going.
+  stopMetronome();
   for (const v of voices) {
     try {
       v.stop();
@@ -13872,6 +14138,9 @@ const MENU_ICONS = {
   // The metronome mark: the note the beats are counted in, which is the
   // left half of what the mark says.
   "view-tempomark": "\ueca5",      // metNoteQuarterUp
+  "view-beatmarks": "\ueb64",      // arrowBlackDown: the mark it draws
+  "metronome": "\ueca5",           // metNoteQuarterUp: the beat it ticks
+  "note-colours": "\ue0a4",       // noteheadBlack: the head it colours
 
   // What is written on a note or a staff.
   "insert-note": "\ue1d5",         // noteQuarterUp
@@ -14953,6 +15222,10 @@ async function main() {
     kept = await (await fetch("/api/settings")).json();
     state.trackBarlines = kept.trackBarlines !== false;
     state.keys = kept.keys || {};
+    // So the tick in the View menu tells the truth from the first look:
+    // the colours are remembered for the person, so a score opened today
+    // comes up coloured if that is how it was left.
+    state.colourNotes = !!kept.colourNotes;
     // Before anything is drawn, so the interface does not come up at one
     // size and jump to another.
     applyUIScale(rememberedUIScale(kept));
@@ -14971,6 +15244,7 @@ async function main() {
   // After the language, since the sizes are named in it.
   fillUIScaleMenu();
   loadMouseWrites();
+  loadMetronome();
   syncMenuKeys();
   syncMenuIcons();
 

@@ -135,6 +135,54 @@ func (t TimeSignature) BarDuration() Duration {
 	return Duration{t.Beats, t.BeatValue}.Reduced()
 }
 
+// BeatUnit is the note the meter is counted in: what a conductor's hand
+// marks and what a metronome ticks.
+//
+// Not the lower number of the signature. A compound meter is written in
+// eighths and counted in threes — 6/8 is two beats of a dotted quarter, not
+// six of an eighth — which is why its notes are beamed in threes and why a
+// metronome mark for it is written over a dotted crotchet. Counting the
+// bottom number gives three times as many ticks as anybody beats, and at a
+// jig's speed that is a rattle rather than a pulse.
+//
+// 3/8 is the exception the rule needs: it is one bar of three quavers at
+// speed and is beaten in three, so the threes only start once there are more
+// of them than one bar's worth.
+//
+// The one place this is decided. The beaming asks it, the row of beat marks
+// over the staff asks it, and the metronome that ticks under the playback
+// asks it — and a beat that is one thing to the eye and another to the ear
+// is worse than no beat at all.
+func (t TimeSignature) BeatUnit() Duration {
+	if t.BeatValue == 0 {
+		return Duration{Num: 1, Den: 4}
+	}
+	if t.Beats%3 == 0 && t.Beats > 3 {
+		return Duration{Num: 3, Den: t.BeatValue}.Reduced()
+	}
+	return Duration{Num: 1, Den: t.BeatValue}
+}
+
+// BeatsPerBar is how many of those beats a full bar of this meter holds.
+func (t TimeSignature) BeatsPerBar() int {
+	u := t.BeatUnit()
+	if u.IsZero() {
+		return 0
+	}
+	bar := t.BarDuration()
+	if bar.IsZero() {
+		return 0
+	}
+	// Rounded rather than truncated: the division is exact in every meter
+	// that divides evenly, and the float is there only for the ones that do
+	// not — 7/8, which is seven eighths counted in sevens.
+	n := int(bar.Float()/u.Float() + 0.5)
+	if n < 1 {
+		return 1
+	}
+	return n
+}
+
 func (t TimeSignature) String() string { return fmt.Sprintf("%d/%d", t.Beats, t.BeatValue) }
 
 // BarlineStyle is the kind of barline closing a measure.

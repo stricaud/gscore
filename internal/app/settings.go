@@ -25,6 +25,8 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+
+	"github.com/stricaud/gscore/internal/engrave"
 )
 
 // settings is everything kept between sessions.
@@ -80,6 +82,28 @@ type settings struct {
 	// correcting the arithmetic.
 	LooseBarlines bool `json:"looseBarlines,omitempty"`
 
+	// ColourNotes draws every notehead in a colour that says which note it
+	// is, and NoteColours is the palette, as the note's letter against a
+	// CSS hex colour: {"C": "#d0312d"}.
+	//
+	// Kept for the person and not in the score, which is the whole of what
+	// makes it useful. Somebody learning to read is learning to read, not
+	// learning to read this piece: the colours have to be there in the next
+	// score they open and in the one after that, or they have to be set up
+	// again every time — and a beginner who has to configure the program
+	// before they can practise does not practise.
+	//
+	// It also means the printed page agrees with the screen. The PDF is
+	// rendered here, from these, so what comes out of the printer is what
+	// was being read on the way to it.
+	//
+	// A letter and not a number as the key, so that a settings file can be
+	// read and edited by a person: "C" says which note it is and 0 does
+	// not. Missing letters fall back to the built-in palette, so a file
+	// naming one colour changes one colour.
+	ColourNotes bool              `json:"colourNotes,omitempty"`
+	NoteColours map[string]string `json:"noteColours,omitempty"`
+
 	// UIScale is how big the interface is drawn, where one is the size it
 	// was designed at.
 	//
@@ -90,6 +114,89 @@ type settings struct {
 	// of any score, so it is remembered for the person and not kept in a
 	// file. Zero means nobody has chosen, which is one.
 	UIScale float64 `json:"uiScale,omitempty"`
+}
+
+// noteLetters is the order the engraver indexes a palette in, which is
+// model.Step's own order: the scale spelled from C.
+var noteLetters = [7]string{"C", "D", "E", "F", "G", "A", "B"}
+
+// cleanNoteColours keeps the entries that name a note and a colour gscore can
+// actually draw.
+//
+// Checked here rather than trusted, because this is written to a file that
+// outlives the session and is read back without the browser in the way: a
+// colour nobody can parse, stored, is a score that comes out wrong every time
+// it is opened from then on, with nothing on the screen saying why.
+func cleanNoteColours(in map[string]string) map[string]string {
+	out := map[string]string{}
+	for _, letter := range noteLetters {
+		v, ok := in[letter]
+		if !ok {
+			continue
+		}
+		v = strings.TrimSpace(v)
+		if v == "" {
+			continue
+		}
+		if _, _, _, good := engrave.RGB(v); !good {
+			continue
+		}
+		out[letter] = v
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// NoteColourMap is the palette as it stands, letter by letter, with the
+// built-in colours filling in whatever has not been changed.
+//
+// Always a full set. The editor's colour picker shows seven colours whether
+// or not anybody has chosen any, and a picker with blanks in it is a picker
+// that cannot say what the score currently looks like.
+func NoteColourMap() map[string]string {
+	stored := loadSettings().NoteColours
+	out := make(map[string]string, len(noteLetters))
+	for i, letter := range noteLetters {
+		if v, ok := stored[letter]; ok {
+			out[letter] = v
+			continue
+		}
+		out[letter] = engrave.DefaultNoteColours[i]
+	}
+	return out
+}
+
+// NoteColours is that palette in the form the engraver takes it.
+func NoteColours() engrave.NoteColours {
+	m := NoteColourMap()
+	var out engrave.NoteColours
+	for i, letter := range noteLetters {
+		out[i] = m[letter]
+	}
+	return out
+}
+
+// ColourNotes says whether the noteheads are drawn by what note they are.
+func ColourNotes() bool { return loadSettings().ColourNotes }
+
+// engraving is the engraving options with the person's own settings folded
+// in, which is what every drawing of the score is made with.
+//
+// Read at the moment of drawing rather than copied into the app when they
+// change. The colours belong to the person and not to the score, so they
+// are not part of the document's state, and there is more than one way into
+// a drawing — the editor's own view, the print, the PDF a .gscore carries,
+// each export. Every one of them has to agree, and the only way to be sure
+// they do is for every one of them to ask the same question here. A copy
+// kept on the app is a copy that is right until somebody adds a fourth
+// route and forgets it.
+func (a *App) engraving() engrave.Options {
+	opt := a.engraveOpt
+	opt.ColourNotes = ColourNotes()
+	opt.NoteColours = NoteColours()
+	return opt
 }
 
 // uiScaleRange is what the interface may be scaled to.
@@ -286,6 +393,19 @@ func (a *App) handleSettings(w http.ResponseWriter, r *http.Request) {
 				s.Lang = v[0]
 			}
 		}
+		if v, ok := r.URL.Query()["colourNotes"]; ok && len(v) > 0 {
+			s.ColourNotes = v[0] == "1"
+		}
+		if v, ok := r.URL.Query()["noteColours"]; ok && len(v) > 0 {
+			// The whole palette each time, the same way the bindings are
+			// sent: going back to the built-in colours is sending nothing.
+			// Unreadable is a request gscore did not send and is left
+			// alone rather than quietly wiping somebody's palette.
+			var cols map[string]string
+			if err := json.Unmarshal([]byte(v[0]), &cols); err == nil {
+				s.NoteColours = cleanNoteColours(cols)
+			}
+		}
 		if v, ok := r.URL.Query()["keys"]; ok && len(v) > 0 {
 			// The whole set each time, so taking a binding back to its
 			// default is sending a set without it. Unreadable means a
@@ -320,6 +440,8 @@ func (a *App) handleSettings(w http.ResponseWriter, r *http.Request) {
 		"trackBarlines":    TrackBarlines(),
 		"keys":             loadSettings().Keys,
 		"lang":             loadSettings().Lang,
+		"colourNotes":      loadSettings().ColourNotes,
+		"noteColours":      NoteColourMap(),
 		"uiScale":          UIScale(),
 	})
 }

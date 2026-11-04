@@ -43,6 +43,16 @@ type Glyph struct {
 	// the score is read. Playback numbers its events the same way, which is
 	// what lets the editor highlight the note that is sounding.
 	Ref int
+	// Colour is a CSS colour the glyph is drawn in, where it is not the ink
+	// of the score. Empty is the ordinary black that everything else on the
+	// page is.
+	//
+	// It exists for the marks that are an aid to reading rather than part of
+	// the notation — the row of beat marks over a staff is the first of them.
+	// Drawn in black they read as something the composer wrote, which is the
+	// one thing they are not; a player seeing them in print would look for
+	// what they mean.
+	Colour string `json:"colour,omitempty"`
 }
 
 // Beams returns the beams of a drawing.
@@ -598,6 +608,28 @@ type Options struct {
 	// above the first staff.
 	ShowTempoMark bool
 
+	// ShowBeatMarks draws an arrow over every beat of the music, on the top
+	// staff of each system.
+	//
+	// What a metronome would be ticking on, shown. The speed is written once
+	// at the head of the score and says nothing about where the beats fall in
+	// any particular bar, which is exactly what somebody learning a syncopated
+	// line or counting an odd meter needs to see: the second beat of a bar of
+	// 7/8 is not where the eye guesses it is.
+	//
+	// A reading aid and not notation, so it is off by default and drawn in a
+	// colour of its own. See beatmark.go.
+	ShowBeatMarks bool
+
+	// ColourNotes draws each notehead in a colour that says which note it
+	// is, so that a reader who cannot yet name a line by looking at it can
+	// read the music anyway. Off by default. See notecolour.go.
+	ColourNotes bool
+	// NoteColours is the colour per diatonic step, where ColourNotes is on.
+	// Empty falls back to DefaultNoteColours, so turning the option on is
+	// enough on its own.
+	NoteColours NoteColours
+
 	// RepeatMarkers writes the rehearsal letter again further down a large
 	// score, over the top staff of each bracketed family.
 	//
@@ -887,6 +919,11 @@ type engraver struct {
 	// tab is the tuning of the part being drawn, where it is written as
 	// tablature, and nil where it is not.
 	tab *model.Tablature
+	// unpitched says the staff being drawn is read by position on a kit
+	// rather than by pitch, so that nothing treats its noteheads as notes
+	// with letters. See notecolour.go, which is the first thing that had
+	// to care.
+	unpitched bool
 	// tabGaps are the pieces of this staff's lines that are not drawn,
 	// because a fret number is sitting on them. They are collected as the
 	// bars are drawn and used when the lines are ruled, which happens after.
@@ -1009,6 +1046,17 @@ type engraver struct {
 	// collected as the staff is drawn and placed once it is finished, from
 	// the staff outwards.
 	waiting []waitingMark
+
+	// collectBeats says the staff being drawn is the one the row of beat
+	// marks goes over, and beatMarks is where those beats turned out to be.
+	//
+	// Collected as the bars are drawn, because only the drawing knows where
+	// a beat landed: a bar is spaced by what is in it, so the third beat of
+	// one bar and the third of the next are nowhere near the same fraction
+	// of the way across them. Drawn once the staff is finished, which is
+	// when there is an outline for the row to clear. See beatmark.go.
+	collectBeats bool
+	beatMarks    []float64
 
 	// ledgers are the ledger lines as they were drawn, so that one can be
 	// pulled back off its neighbour once everything is placed. See
@@ -3075,6 +3123,17 @@ func (e *engraver) drawSystem(parts []*model.Part, boxes [][]measureBox,
 			e.systemTop, e.systemTopReach = e.y, e.y
 		}
 
+		// A kit is read by where a head sits and not by what it is called,
+		// so nothing on it has a letter to be coloured by.
+		e.unpitched = p.Unpitched()
+
+		// The beats are marked over the top staff only. The pulse belongs to
+		// the whole system — every staff of a score is beating the same bar
+		// — so a row over each of twenty staves is the same statement made
+		// twenty times, and makes a page of a band score unreadable.
+		e.collectBeats = e.opt.ShowBeatMarks && pi == 0
+		e.beatMarks = nil
+
 		staffTop := e.y
 		staffMark := e.marked()
 		e.staffMark, e.staffTop = staffMark, staffTop
@@ -3200,6 +3259,10 @@ func (e *engraver) drawSystem(parts []*model.Part, boxes [][]measureBox,
 		// The chord symbols first, because they are a row above the music
 		// and everything else is a row above them.
 		e.placeChords(sky, sp.Margin, right)
+		// The row of beat marks joins the queue now rather than when the
+		// beats were met, because it is one row across the whole system and
+		// only the finished staff says how high that row has to be.
+		e.drawBeatMarks(sp.Margin, right)
 		e.placeWaiting(sky)
 		// How far down this staff's music and marks actually went. The room
 		// reserved for them was counted from the model before anything was

@@ -368,7 +368,7 @@ type writeRefused struct{ error }
 func (a *App) renderTo(w io.Writer, r *http.Request) error {
 	a.mu.RLock()
 	score := a.score
-	eopt := a.engraveOpt
+	eopt := a.engraving()
 	symbols := a.symbols
 	a.mu.RUnlock()
 
@@ -400,7 +400,7 @@ func (a *App) renderTo(w io.Writer, r *http.Request) error {
 func (a *App) renderPage(w io.Writer, r *http.Request) error {
 	a.mu.RLock()
 	score := a.score
-	eopt := a.engraveOpt
+	eopt := a.engraving()
 	symbols := a.symbols
 	a.mu.RUnlock()
 
@@ -488,6 +488,14 @@ func (a *App) renderPDF(w io.Writer, r *http.Request) error {
 	a.mu.RLock()
 	score, book, symbols := a.score, a.book, a.symbols
 	filename := a.filename
+	// Whether the beats are marked, as the editor is showing them. Most of
+	// the view's options are deliberately not inherited here — a printed
+	// part is set up in the print dialog and not by whatever the editor
+	// happened to be showing — but this one is off unless somebody has
+	// turned it on, so carrying it can only ever give them what they asked
+	// for. Somebody who marks the beats to practise a passage and then
+	// prints it is printing it to practise from.
+	beatMarks := a.engraveOpt.ShowBeatMarks
 	a.mu.RUnlock()
 
 	q := r.URL.Query()
@@ -523,6 +531,13 @@ func (a *App) renderPDF(w io.Writer, r *http.Request) error {
 	eopt.Mode = engrave.Paginated
 	eopt.ShowMeasureNumbers = q.Get("numbers") != "0"
 	eopt.MultiRests = q.Get("multirest") == "1"
+	// The coloured noteheads go to the paper too. Somebody reading by the
+	// colours is reading by them away from the screen as much as at it —
+	// that is most of what printing a part is for — and a PDF that came out
+	// black would be the one copy they cannot use.
+	eopt.ColourNotes = ColourNotes()
+	eopt.NoteColours = NoteColours()
+	eopt.ShowBeatMarks = beatMarks
 	// As it sounds, or as it is read. A copy is moved to concert pitch and
 	// that copy is drawn; what is saved in the file is untouched.
 	concert := q.Get("concert") == "1"

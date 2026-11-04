@@ -2931,6 +2931,20 @@ func (a *App) handleView(w http.ResponseWriter, r *http.Request) {
 		changed = append(changed, "tempomark")
 	}
 
+	// An arrow over every beat of the music: where the pulse falls, rather
+	// than how fast it goes.
+	//
+	// A different question from the one above, which is why it is a
+	// different entry. The marking at the head of the score says "crotchet
+	// = 58" once and says nothing about where the beats are in any
+	// particular bar — and where they are is what somebody counting a tied
+	// entry or an odd meter needs. Off unless asked for: it is an aid to
+	// reading and not part of the notation.
+	if v := q.Get("beatmarks"); v != "" {
+		a.engraveOpt.ShowBeatMarks = v == "1"
+		changed = append(changed, "beatmarks")
+	}
+
 	// Showing the score as it sounds rather than as each player reads it.
 	// Not an engraving option: it is a different score on the screen, made
 	// by moving every transposing part. See concert.go.
@@ -2945,6 +2959,7 @@ func (a *App) handleView(w http.ResponseWriter, r *http.Request) {
 		"numbers":   a.engraveOpt.ShowMeasureNumbers,
 		"multirest": a.engraveOpt.MultiRests,
 		"tempomark": a.engraveOpt.ShowTempoMark,
+		"beatmarks": a.engraveOpt.ShowBeatMarks,
 		"concert":   a.concert,
 	})
 }

@@ -619,7 +619,7 @@ func (a *App) viewOptions(r *http.Request) (*model.Score, engrave.Options, svg.O
 			score = a.book[i]
 		}
 	}
-	eopt := a.engraveOpt
+	eopt := a.engraving()
 	ropt := a.renderOpt
 	ropt.Symbols = a.symbols
 	// The views: the score as it sounds, and the score as one of its parts.
@@ -1214,6 +1214,10 @@ func (a *App) handlePrint(w http.ResponseWriter, r *http.Request) {
 	book := a.book
 	symbols := a.symbols
 	page := a.score.Page
+	// Carried from the editor for the same reason the PDF carries it: the
+	// marks are off unless asked for, so printing them can only be what
+	// was asked for. See renderPDF.
+	beatMarks := a.engraveOpt.ShowBeatMarks
 	a.mu.RUnlock()
 
 	what := r.URL.Query().Get("what")
@@ -1271,6 +1275,10 @@ func (a *App) handlePrint(w http.ResponseWriter, r *http.Request) {
 	// continuous strip has no page breaks to print at.
 	eopt := engrave.DefaultOptions()
 	eopt.Mode = engrave.Paginated
+	// And prints the noteheads in whatever colours they are being read in.
+	eopt.ColourNotes = ColourNotes()
+	eopt.NoteColours = NoteColours()
+	eopt.ShowBeatMarks = beatMarks
 	// As wide as the paper the score says it is printed on allows, rather
 	// than a fixed number that was right for one size of paper. A score
 	// set up for A3 landscape and printed at a hundred and fifty spaces

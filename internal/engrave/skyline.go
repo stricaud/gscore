@@ -444,8 +444,16 @@ type waitingMark struct {
 // metronome mark, the signs and the rehearsal letters, which are the things
 // somebody has to find from across a room.
 const (
-	rankTrill     = 50 // TrillSpanner: nearer the staff than anything else
-	rankOrnament  = 60 // Script: a mordent or a turn, just outside the trill
+	rankTrill    = 50 // TrillSpanner: nearer the staff than anything else
+	rankOrnament = 60 // Script: a mordent or a turn, just outside the trill
+	// rankBeatMark: the row of beat marks, just inside the bar numbers.
+	//
+	// Nearest the music of anything that belongs to the whole system,
+	// because it is read against the music: an arrow four spaces above the
+	// note it is pointing at is pointing at nothing in particular. It is
+	// booked across the system's whole width, so the bar numbers and
+	// everything beyond them ride above the row rather than through it.
+	rankBeatMark  = 80
 	rankBarNumber = 100
 	rankDynamic   = 250 // DynamicLineSpanner: a dynamic and a hairpin share it
 	rankHairpin   = 250

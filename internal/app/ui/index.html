@@ -445,9 +445,25 @@
            click in. It is here so that what will be printed can be looked
            at without printing it. -->
       <button data-action="view-multirest"><span>Multi-measure rests</span><kbd id="multirest-tick"></kbd></button>
-      <!-- The metronome mark over the first bar. Off is for a part being
-           read for its notes, or a piece whose speed the title says. -->
-      <button data-action="view-tempomark"><span>Metronome marking</span><kbd id="tempomark-tick"></kbd></button>
+      <!-- The words and the metronome mark over the first bar: "Andante
+           (♩ = 58)". Off is for a part being read for its notes, or a piece
+           whose speed the title says.
+
+           Called the tempo marking and not the metronome marking, which is
+           what it said and was the wrong name for it twice over: it is the
+           words as much as the number, and somebody who turns on a thing
+           called "metronome marking" is asking to be shown the beat, not a
+           line of text over the first bar. That is the entry below. -->
+      <button data-action="view-tempomark"><span>Tempo marking</span><kbd id="tempomark-tick"></kbd></button>
+      <!-- An arrow over every beat: where the pulse falls, bar by bar.
+           What a metronome would be ticking on, drawn. Off by default —
+           it is an aid to reading and not part of the notation, which is
+           also why it is drawn in a colour of its own. -->
+      <button data-action="view-beatmarks"><span>Metronome marking</span><kbd id="beatmarks-tick"></kbd></button>
+      <!-- A colour per note name, for a reader who cannot yet name a line
+           by looking at it. Kept for the person rather than in the score,
+           and printed as well as shown: see the dialog. -->
+      <button data-action="note-colours"><span>Note colours…</span><kbd id="notecolours-tick"></kbd></button>
       <!-- The score as it sounds, rather than as each player reads it. A
            clarinet in B flat reads a C and a B flat comes out; three staves
            in three keys playing the same line look like three lines until
@@ -488,6 +504,15 @@
       <button data-action="play"><span>Play / Pause</span><kbd>⇧Space</kbd></button>
       <button data-action="play-from-start"><span>Play from the beginning</span><kbd>⌃⇧Space</kbd></button>
       <button data-action="stop"><span>Stop</span><kbd>Esc</kbd></button>
+      <hr>
+      <!-- A click on every beat while the music plays, at the speed the
+           score is marked. Separate from the arrows the View menu draws,
+           because wanting to hear the beat and wanting to see it are two
+           different wants: a player counting a hard entry wants the click
+           and no marks on the page, and somebody reading away from the
+           computer wants the marks and no click. Off by default — nobody
+           asks for a metronome by pressing Play. -->
+      <button data-action="metronome"><span>Metronome click</span><kbd id="metronome-tick"></kbd></button>
       <hr>
       <!-- What the editor plays through. Only where there is a disk to keep
            a soundfont on. -->
@@ -1124,6 +1149,42 @@
     <div class="ask-buttons">
       <button value="ok" type="submit" class="primary">Start again there</button>
       <button value="cancel" type="submit" formnovalidate>Close</button>
+    </div>
+  </form>
+</dialog>
+
+<!-- Colouring the noteheads by what note they are.
+     For a reader who has not yet learnt to name a line by looking at it.
+     The colours belong to the person rather than to the score — they are
+     learning to read, not learning to read this piece — so they are kept
+     between sessions and apply to every score opened, and they go to the
+     printed page as well as the screen.
+
+     The colours are listed C to B, the order they are spelled in and the
+     order the palette is indexed in, so that what the window shows and
+     what the engraver draws cannot get out of step. -->
+<dialog id="notecolours">
+  <h2>Note colours</h2>
+  <p class="small">A colour for each note, so a line can be read before its
+     name is known. C sharp is a C and takes C's colour; so does every C in
+     every octave.</p>
+  <form method="dialog" id="notecolours-form">
+    <label class="tempo-bar" for="notecolours-on">
+      <span>Colour the noteheads</span>
+      <input type="checkbox" id="notecolours-on">
+    </label>
+    <hr>
+    <div id="notecolours-list"></div>
+    <p class="small">Kept for you and not in the score: every score you open
+       is coloured this way, and so is anything you print or export.</p>
+    <!-- Close first, so Enter closes the window. There is nothing in here
+         to confirm — every change takes effect as it is made — and the
+         other button is the one that throws a palette away, which is not
+         what a stray Enter should do. The stylesheet puts them back in
+         their usual order on the screen. -->
+    <div class="ask-buttons">
+      <button value="cancel" type="submit" formnovalidate>Close</button>
+      <button value="reset" type="submit" class="linklike" formnovalidate>Back to the usual colours</button>
     </div>
   </form>
 </dialog>

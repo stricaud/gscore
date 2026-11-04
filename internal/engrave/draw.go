@@ -226,10 +226,21 @@ func (e *engraver) drawMeasure(part *model.Part, b measureBox, x, end float64, s
 		x = e.drawSignatureChange(part, b, x)
 	}
 
+	// Where the bar's own music begins, after any key or meter change written
+	// at its head: the first beat belongs over the first note, not over the
+	// new key signature in front of it.
+	music := x
+	// The columns, for the row of beat marks over the staff. Collected here
+	// because this is the only place that knows where a column ended up.
+	var anchors []beatAnchor
+
 	items := make([]*placed, 0, len(b.slots))
 	for i := range b.slots {
 		s := &b.slots[i]
 		x += s.lead * stretch
+		if e.collectBeats {
+			anchors = append(anchors, beatAnchor{at: s.at, x: x})
+		}
 
 		// Everything that starts at this moment, whatever voice it is in,
 		// at the same x. That is what makes two lines of music on one staff
@@ -286,6 +297,11 @@ func (e *engraver) drawMeasure(part *model.Part, b measureBox, x, end float64, s
 	if len(b.slots) == 0 {
 		x += sp.NoteBase * 2 * stretch
 	}
+	// Now that the bar has been laid out, where its beats fell can be read
+	// off it. Before the whole-bar rest is centred below, so that the first
+	// beat is where the bar begins rather than where the rest was moved to:
+	// a semibreve rest sits in the middle of the bar and beat one does not.
+	e.noteBeats(part, b, anchors, music, x)
 
 	// A rest that is the whole bar is centred in it.
 	//
@@ -931,6 +947,7 @@ func (e *engraver) drawNoteHead(p *placed) {
 	}
 	e.lay.Glyphs = append(e.lay.Glyphs, Glyph{
 		Name: head, X: p.x, Y: y, Ref: p.index, Size: e.glyphSize(),
+		Colour: e.noteColour(n),
 	})
 	e.lay.Refs[p.index] = RefPos{X: p.x, Y: y, Staff: e.y}
 	e.ledgerLines(p.x, e.adv(head), p.step)
@@ -1007,6 +1024,10 @@ func (e *engraver) drawChordHeads(p *placed) {
 			Y:    e.y + stepY(float64(at)),
 			Ref:  p.index,
 			Size: e.glyphSize(),
+			// Each head of a chord by its own letter: a C major triad is
+			// three different notes and comes out in three colours, which
+			// is exactly what somebody learning to read one needs to see.
+			Colour: e.noteColour(n),
 		})
 		if i == 0 {
 			e.lay.Refs[p.index] = RefPos{X: p.x, Y: e.y + stepY(float64(at)), Staff: e.y}
@@ -1106,14 +1127,12 @@ func abs(n int) int {
 // beatDuration returns the span that notes are grouped within. Compound
 // meters beat in threes, so 6/8 groups by a dotted quarter rather than an
 // eighth, which is what makes its beaming look right.
+//
+// The rule itself lives on the meter, because the beaming is not the only
+// thing that asks what a beat is: so do the marks drawn over the beats and
+// the metronome that ticks on them. See model.TimeSignature.BeatUnit.
 func beatDuration(t model.TimeSignature) model.Duration {
-	if t.BeatValue == 0 {
-		return model.Duration{Num: 1, Den: 4}
-	}
-	if t.Beats%3 == 0 && t.Beats > 3 {
-		return model.Duration{Num: 3, Den: t.BeatValue}
-	}
-	return model.Duration{Num: 1, Den: t.BeatValue}
+	return t.BeatUnit()
 }
 
 // beamGroups splits a measure into runs of notes that share beams.

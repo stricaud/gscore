@@ -173,6 +173,56 @@ type MeasureTime struct {
 	Index int     `json:"index"`
 	Start float64 `json:"start"`
 	Dur   float64 `json:"dur"`
+	// Beats is how many beats this bar is counted in, for the metronome.
+	//
+	// Counted, not worked out from the signature: a pickup of one quarter
+	// in 4/4 is one beat and not four, and a metronome that ticks four
+	// through it is three ticks of silence before the music starts. The
+	// beat itself is the meter's, so what is heard falls where the marks
+	// over the staff are drawn — see model.TimeSignature.BeatUnit.
+	//
+	// The bar is divided evenly by it rather than each tick being timed on
+	// its own: the bar's length already has that bar's speed in it, so the
+	// division is exact wherever the speed holds across the bar.
+	Beats int `json:"beats,omitempty"`
+}
+
+// beatsInBar is how many beats the metronome ticks through one bar.
+//
+// From what is written in the bar rather than from the signature over it.
+// They are the same in nearly every bar of nearly every piece and they are
+// not the same in the two that matter: a pickup, which is a bar of one or two
+// beats whatever the meter says, and the last bar of a piece that finishes
+// short. Ticking a full bar through either is a metronome counting beats that
+// are not there, which is exactly when somebody using one loses their place.
+func beatsInBar(s *model.Score, i int) int {
+	unit := meterAt(s, i).BeatUnit()
+	if unit.IsZero() {
+		return 0
+	}
+	bar := s.MeasureDuration(i)
+	if bar.IsZero() {
+		return 0
+	}
+	n := int(bar.Float()/unit.Float() + 0.5)
+	if n < 1 {
+		return 1
+	}
+	return n
+}
+
+// meterAt is the meter in force at a bar, from the first staff that has one.
+//
+// Every staff of a score is in the same meter — that is what a barline down a
+// system means — so the first that reaches this bar can answer for all of
+// them.
+func meterAt(s *model.Score, i int) model.TimeSignature {
+	for _, p := range s.Parts {
+		if i < len(p.Measures) {
+			return p.TimeAt(i)
+		}
+	}
+	return model.TimeSignature{Beats: 4, BeatValue: 4}
 }
 
 // Playback is a whole score's worth of events.
@@ -231,6 +281,7 @@ func buildPlayback(s *model.Score) Playback {
 		}
 		out.Measures = append(out.Measures, MeasureTime{
 			Index: order[k], Start: start, Dur: d,
+			Beats: beatsInBar(s, order[k]),
 		})
 	}
 	out.Duration = total

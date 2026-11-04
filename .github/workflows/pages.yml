@@ -92,6 +92,15 @@ jobs:
           import os, re, sys
           root = "web/dist"
           pat = re.compile(r'(?<![-\w])(?:src|href)="([^"#?][^"]*?)"')
+          # The markup, with the inside of every script taken out. What a
+          # script says is code and not the page's own furniture: a page
+          # that builds an iframe for the reader to copy writes
+          # src="' + HERE + '" in its source, which is a working line of
+          # JavaScript and not a file anybody can be asked to put on disk.
+          # The opening tag is left in place, so <script src="…"> is still
+          # checked — it is the one reference on the line that is real.
+          body = re.compile(r'(<script\b[^>]*>).*?(</script\s*>)',
+                            re.IGNORECASE | re.DOTALL)
           missing = []
           checked = 0
           for dirpath, _, files in os.walk(root):
@@ -100,6 +109,7 @@ jobs:
                       continue
                   page = os.path.join(dirpath, f)
                   html = open(page, encoding="utf-8", errors="replace").read()
+                  html = body.sub(lambda m: m.group(1) + m.group(2), html)
                   for ref in set(pat.findall(html)):
                       if ref.startswith(("http://", "https://", "data:", "mailto:", "//")):
                           continue

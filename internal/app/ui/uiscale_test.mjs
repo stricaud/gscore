@@ -93,7 +93,12 @@ test("it is remembered, and the endpoint takes it", () => {
   assert.match(api, /name: uiScale/);
   // And applied before anything is drawn, so the interface does not come
   // up at one size and jump to another.
-  assert.match(src, /applyUIScale\(kept\.uiScale \|\| 1\)/);
+  assert.match(src, /applyUIScale\(rememberedUIScale\(kept\)\)/);
+  // A page has no settings file behind it, so the browser's own store is
+  // where its answer comes from — written on every change, and read when
+  // the settings have nothing to say.
+  assert.match(grab("setUIScale"), /localStorage\.setItem\("uiScale"/);
+  assert.match(grab("rememberedUIScale"), /localStorage\.getItem\("uiScale"\)/);
 });
 
 // An open flyout is placed by script against the window, and the panel it

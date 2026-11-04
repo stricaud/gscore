@@ -600,6 +600,24 @@ function fillUIScaleMenu() {
   markUIScaleTicks();
 }
 
+// rememberedUIScale is the size to come up at.
+//
+// The settings first, where a desktop build keeps it. One is what they say
+// when nobody has chosen — there is no telling that from a deliberate one
+// — so the browser's own store answers for a page, which has no settings
+// file behind it at all.
+function rememberedUIScale(kept) {
+  const said = Number(kept && kept.uiScale);
+  if (said > 0 && said !== 1) return said;
+  try {
+    const mine = Number(localStorage.getItem("uiScale"));
+    if (mine > 0) return mine;
+  } catch (_) {
+    // A private window may refuse to say.
+  }
+  return said > 0 ? said : 1;
+}
+
 function applyUIScale(v) {
   if (!(v > 0)) v = 1;
   state.uiScale = v;
@@ -615,12 +633,25 @@ function markUIScaleTicks() {
   }
 }
 
+// setUIScale changes it and remembers it.
+//
+// In two places, as the language is: the settings file, which is where a
+// desktop build remembers things, and the browser's own store, which is
+// the only one a page served from a web server has. Written together so
+// they cannot disagree, and the page's store is what answers when the
+// settings have nothing to say — a page has no disk to keep a file on, so
+// without this the menus went back to their old size on every visit.
 async function setUIScale(v) {
   const res = await fetch("/api/settings?uiScale=" + encodeURIComponent(v),
-                          { method: "POST" });
-  if (!res.ok) {
+                          { method: "POST" }).catch(() => null);
+  if (res && !res.ok) {
     status("Could not change the interface size: " + (await res.text()).trim());
     return;
+  }
+  try {
+    localStorage.setItem("uiScale", String(v));
+  } catch (_) {
+    // A private window may refuse. The size still changes for this visit.
   }
   applyUIScale(v);
   // The menu panels are placed by script against the window, and the
@@ -7088,7 +7119,6 @@ async function setTrackBarlines(on) {
   }
   state.trackBarlines = on;
   markBarlineTick();
-  fillUIScaleMenu();
   status(on
     ? "Bars are kept to the meter — what will not fit moves into the next bar"
     : "Bars are left as written — notes stay in the bar they are typed in");
@@ -14580,15 +14610,19 @@ async function main() {
     state.keys = kept.keys || {};
     // Before anything is drawn, so the interface does not come up at one
     // size and jump to another.
-    applyUIScale(kept.uiScale || 1);
+    applyUIScale(rememberedUIScale(kept));
   } catch (_) {
-    // Served without a disk behind it. The default stands.
+    // Served without a core behind it. What the browser remembers still
+    // holds: the interface size is the browser's to know.
+    applyUIScale(rememberedUIScale(null));
   }
   // Before the menus are filled in and the keys are written into them: a
   // menu translated after its keystrokes were put there would have to have
   // them put there twice.
   await startLanguage(kept);
   markBarlineTick();
+  // After the language, since the sizes are named in it.
+  fillUIScaleMenu();
   loadMouseWrites();
   syncMenuKeys();
   syncMenuIcons();

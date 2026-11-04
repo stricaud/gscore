@@ -379,6 +379,7 @@ const MESSAGES = {
   "Repeats and jumps": "Reprises et renvois",
   "Report a bug": "Signaler une anomalie",
   "reset": "réinitialiser",
+  "Remove this measure": "Supprimer cette mesure",
   "Reset all": "Tout réinitialiser",
   "Rest": "Silence",
   "Rests": "Silences",

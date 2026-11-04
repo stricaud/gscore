@@ -146,3 +146,70 @@ func TestTheFigureIsTheNumberOfNotes(t *testing.T) {
 		}
 	}
 }
+
+/* ---------- the figure is something to point at ---------- */
+
+// The figure belongs to the whole run and to no one note of it, so nothing
+// in the music can be clicked to reach it. The engraver is the only thing
+// that knows where it went, so it says.
+func TestTheTupletFigureIsReportedAsSomethingToClick(t *testing.T) {
+	score := model.NewScore()
+	v := score.Parts[0].Measures[0].Voices[0]
+	for i := 0; i < 3; i++ {
+		n := &model.Note{
+			Pitch: model.Pitch{Step: model.StepG, Octave: 4},
+			Dur:   model.Duration{Num: 1, Den: 12},
+		}
+		n.Marks.Tuplet = &model.Tuplet{
+			Actual: 3, Normal: 2, Start: i == 0, Stop: i == 2,
+		}
+		v.Elements = append(v.Elements, n)
+	}
+
+	lay := Engrave(score, DefaultOptions())
+	if len(lay.Tuplets) != 1 {
+		t.Fatalf("the layout reports %d figures, want 1", len(lay.Tuplets))
+	}
+	box := lay.Tuplets[0]
+	if box.Figure != 3 {
+		t.Errorf("the figure is %d, want 3", box.Figure)
+	}
+	if box.Width <= 0 || box.Height <= 0 {
+		t.Errorf("the box is %v by %v", box.Width, box.Height)
+	}
+	// The numbers the engraver gives elements, which the editor uses to
+	// find them again — counted from one, as every other Ref here is.
+	if box.From != 1 || box.To != 3 {
+		t.Errorf("it names notes %d to %d, want 1 to 3", box.From, box.To)
+	}
+}
+
+// Over a beamed group the figure is all that is drawn, and the notes are
+// directly under it: a box as wide as the group would swallow every click
+// meant for one of them.
+func TestTheFigureOverABeamedGroupIsNotAsWideAsTheGroup(t *testing.T) {
+	score := model.NewScore()
+	v := score.Parts[0].Measures[0].Voices[0]
+	for i := 0; i < 3; i++ {
+		n := &model.Note{
+			Pitch: model.Pitch{Step: model.StepG, Octave: 4},
+			Dur:   model.Duration{Num: 1, Den: 12},
+		}
+		n.Marks.Tuplet = &model.Tuplet{
+			Actual: 3, Normal: 2, Start: i == 0, Stop: i == 2,
+		}
+		v.Elements = append(v.Elements, n)
+	}
+
+	lay := Engrave(score, DefaultOptions())
+	box := lay.Tuplets[0]
+	if box.Bracketed {
+		t.Fatal("a beamed group of three eighths was given a bracket")
+	}
+	// The run of three eighths is several staff spaces wide; the figure is
+	// one character.
+	if box.Width > 3 {
+		t.Errorf("the figure's box is %v spaces wide, which is the group "+
+			"rather than the number", box.Width)
+	}
+}

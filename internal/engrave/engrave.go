@@ -193,6 +193,17 @@ type Layout struct {
 	// tremolo — or to see that one had been picked up.
 	Tremolos []TremoloPos `json:"tremolos"`
 
+	// Tuplets are where each group's figure and bracket ended up, so one
+	// can be clicked and taken off.
+	//
+	// The figure is the whole of what a tuplet looks like. It belongs to a
+	// run of notes and to no one of them, so nothing in the music could be
+	// pointed at to reach it: the way to say "this is not a triplet after
+	// all" was to find the menu entry, and the menu entry collapses the
+	// group back into the single note it would have been made from, which
+	// is not what somebody looking at twelve notes under a 12 wants.
+	Tuplets []TupletPos `json:"tuplets"`
+
 	// Tempos are where the tempo markings ended up, so one can be clicked.
 	//
 	// A change of speed is written above the staff, between the bars rather
@@ -324,6 +335,29 @@ type TremoloPos struct {
 	Width  float64 `json:"width"`
 	Height float64 `json:"height"`
 	Beams  int     `json:"beams"`
+}
+
+// TupletPos is one group's figure, and its bracket where it has one, as a
+// box on the page in staff spaces.
+//
+// The box is only as wide as what is drawn. Over a beamed group that is
+// the figure alone, a couple of spaces over the beam — not the width of
+// the group, which would swallow every click on the notes under it.
+type TupletPos struct {
+	Part    int `json:"part"`
+	Measure int `json:"measure"`
+	// From and To are the first and last members of the group, so the
+	// editor can name it the way it names any other run of notes.
+	From   int     `json:"from"`
+	To     int     `json:"to"`
+	X      float64 `json:"x"`
+	Y      float64 `json:"y"`
+	Width  float64 `json:"width"`
+	Height float64 `json:"height"`
+	// Figure is the number written over it, and Bracketed says the group
+	// is drawn with one rather than relying on its beam.
+	Figure    int  `json:"figure"`
+	Bracketed bool `json:"bracketed,omitempty"`
 }
 
 // TempoPos is one tempo marking's box on the page, in staff spaces.

@@ -198,6 +198,9 @@
       <!-- Bars to the right of the one picked, for the ones missed while
            typing and found four pages later. -->
       <button data-action="insert-measures"><span>Measures after this one…</span></button>
+      <!-- And the way back. Emptying a bar is not removing it: an empty bar
+           is a bar of rest, which the player counts. -->
+      <button data-action="remove-measure"><span>Remove this measure</span></button>
       <!-- Ends the bar where the cursor is. With the barlines kept to the
            meter a bar ends when it is full; with them left loose nothing
            ends one, and this is how you say where. -->

@@ -151,3 +151,139 @@ func (s *Score) shiftBarIndices(at, count, onlyPart int) {
 		s.Cursor.Measure += count
 	}
 }
+
+// Taking bars out again.
+//
+// The other half of putting them in, and missing until somebody typed two
+// bars too many at the end of a piece and found there was no way to say so:
+// bars could be added, split, joined, emptied and pushed in, and never
+// removed. Emptying one leaves a bar of rest, which is a bar the player
+// counts; it is not the same answer at all.
+
+// RemoveMeasures takes count bars out of a score from the bar at, and
+// returns how many went.
+//
+// Out of every staff. A bar is a bar across the score — the barlines stay
+// in a column and every player has the same bar twenty-six — so there is
+// no per-staff form of this, as there is for putting them in. Taking a bar
+// out of one staff would leave that staff a bar short of the others for
+// the rest of the piece, which is not a thing anybody means by "remove
+// this bar".
+//
+// A score is never left with no bars at all. The last one is emptied
+// instead of going, because somewhere to write is the one thing the editor
+// cannot do without: with no bars there is nothing on the page to click
+// and no way back.
+func (s *Score) RemoveMeasures(at, count int) int {
+	if s == nil || count <= 0 || len(s.Parts) == 0 {
+		return 0
+	}
+	bars := s.MeasureCount()
+	if at < 0 || at >= bars {
+		return 0
+	}
+	if at+count > bars {
+		count = bars - at
+	}
+	// Everything would go. Keep one, emptied, so there is a bar to write
+	// in — and then there is one fewer bar to take out.
+	if count >= bars {
+		count = bars - 1
+		for _, p := range s.Parts {
+			if p.Mirrors() || len(p.Measures) == 0 {
+				continue
+			}
+			last := p.Measures[len(p.Measures)-1]
+			for _, v := range last.Voices {
+				if v != nil {
+					v.Elements = nil
+				}
+			}
+		}
+		if count <= 0 {
+			return 0
+		}
+	}
+
+	for _, p := range s.Parts {
+		if p.Mirrors() {
+			continue
+		}
+		p.removeMeasures(at, count)
+	}
+
+	s.shiftBarIndices(at+count, -count, -1)
+	// What pointed into the run that went now points at where it was.
+	s.clampBarIndices(at)
+	return count
+}
+
+// removeMeasures takes count bars out of one staff at an index.
+func (p *Part) removeMeasures(at, count int) {
+	if at >= len(p.Measures) {
+		return
+	}
+	if at+count > len(p.Measures) {
+		count = len(p.Measures) - at
+	}
+	// The barline the last bar of the run was closed with belongs to the
+	// end of the music, not to the bars that went. A final barline on the
+	// last bar of a piece is the end of the piece wherever the end now is,
+	// and a repeat closing the run still closes what is left of it.
+	//
+	// The mirror of what insertMeasures does, for the same reason: the
+	// alternative is a piece whose last bar ends on a plain line because
+	// the double bar was on a bar that was deleted.
+	gone := p.Measures[at+count-1]
+	p.Measures = append(p.Measures[:at], p.Measures[at+count:]...)
+	if gone.RightBarline != BarSingle && at > 0 && at <= len(p.Measures) {
+		if at == len(p.Measures) || p.Measures[at-1].RightBarline == BarSingle {
+			p.Measures[at-1].RightBarline = gone.RightBarline
+		}
+	}
+}
+
+// clampBarIndices brings anything left pointing inside a run of bars that
+// no longer exists back to where the run was.
+//
+// shiftBarIndices moves what is after the run; this is for what was in it.
+// A system break on a bar that has gone, left where it was, is a page turn
+// in the middle of the bar that took its place.
+func (s *Score) clampBarIndices(at int) {
+	bars := s.MeasureCount()
+	last := bars - 1
+	if last < 0 {
+		last = 0
+	}
+	hold := func(n int) int {
+		if n < at {
+			return n
+		}
+		if n > last {
+			return last
+		}
+		return n
+	}
+	for si := range s.Sheets {
+		sh := &s.Sheets[si]
+		kept := sh.Breaks[:0]
+		seen := map[int]bool{}
+		for _, b := range sh.Breaks {
+			b = hold(b)
+			// A run of bars that went leaves several breaks on the one bar
+			// that took their place, and a bar cannot be broken twice.
+			if b <= 0 || seen[b] {
+				continue
+			}
+			seen[b] = true
+			kept = append(kept, b)
+		}
+		sh.Breaks = kept
+		for i := range sh.Cues {
+			sh.Cues[i].At = hold(sh.Cues[i].At)
+		}
+	}
+	if s.Cursor != nil {
+		s.Cursor.Measure = hold(s.Cursor.Measure)
+	}
+}

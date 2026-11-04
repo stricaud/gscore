@@ -207,3 +207,56 @@ func TestDeletingSeveralMembersAtOnceLeavesNoTuplet(t *testing.T) {
 		}
 	}
 }
+
+/* ---------- taking the grouping off by its figure ---------- */
+
+// Clicking the 12 over twelve notes means "that run is not a tuplet". It
+// does not mean "throw eleven of them away", which is what the menu's
+// "back to one note" does — right for a group made out of one note, and
+// ruinous for one made out of a passage that was already written.
+func TestTheGroupingComesOffAndTheNotesStay(t *testing.T) {
+	h := newHarness(t)
+	triplet(t, h)
+
+	got := h.post("/api/tuplet?part=0&measure=0&at=1&free=1")
+	if freed, _ := got["freed"].(float64); freed != 3 {
+		t.Fatalf("it says it freed %v notes, want 3", got["freed"])
+	}
+
+	left := h.elements(0, 0)
+	notes := 0
+	for i, el := range left {
+		if mk := marksOfElement(el); mk != nil && mk.Tuplet != nil {
+			t.Errorf("element %d is still in a tuplet", i)
+		}
+		if _, ok := el.(*model.Note); ok {
+			notes++
+		}
+	}
+	if notes != 3 {
+		t.Errorf("%d of the three notes are left", notes)
+	}
+}
+
+// Each note goes back to the length it was drawn as, so nothing on the
+// page moves but the figure.
+func TestFreedNotesAreTheLengthTheyWereDrawn(t *testing.T) {
+	h := newHarness(t)
+	triplet(t, h)
+	h.post("/api/tuplet?part=0&measure=0&at=1&free=1")
+
+	for i, el := range h.elements(0, 0)[:3] {
+		if want := (model.Duration{Num: 1, Den: 8}); el.Duration().Cmp(want) != 0 {
+			t.Errorf("note %d is %s, want the eighth it was drawn as",
+				i, el.Duration())
+		}
+	}
+}
+
+func TestFreeingSomethingThatIsNotAGroupSaysSo(t *testing.T) {
+	h := newHarness(t)
+	h.note(0, 0, 6, "quarter")
+	if why := h.postFails("/api/tuplet?part=0&measure=0&at=1&free=1"); why == "" {
+		t.Error("it was refused without saying why")
+	}
+}

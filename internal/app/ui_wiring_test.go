@@ -162,8 +162,18 @@ func TestMenusDoNotForceSubmenusOpen(t *testing.T) {
 	if !strings.Contains(css, ".menu.open > .menu-items") {
 		t.Error("nothing opens a menu's own panel")
 	}
-	if !strings.Contains(css, ".submenu.open > .menu-items") {
+	// A submenu's panel is shown by being parked on the body rather than by
+	// a rule about where it sits: WebKit clips a position: fixed panel
+	// inside a scrolling menu away to nothing, so an open one is lifted out
+	// of the menu altogether. See openSubmenu in app.js.
+	if !strings.Contains(css, ".menu-items.flyout { display: block; }") {
 		t.Error("nothing opens a submenu's panel")
+	}
+	// And the same trap in the new clothes: a rule matching every flyout,
+	// parked or not, would show all eighteen of them at once.
+	if strings.Contains(css, ".submenu .menu-items {") {
+		t.Error(".submenu .menu-items is a descendant selector: " +
+			"use a child combinator")
 	}
 }
 

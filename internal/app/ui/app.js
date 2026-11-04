@@ -256,6 +256,66 @@ function pickDuration(dur, dots) {
   status(durationName(dur, state.tool.dots));
 }
 
+// removeMeasure takes the bar being looked at out of the score.
+//
+// The bar the selection is in, or the last one where nothing is picked up,
+// which is what somebody who has typed two bars too many at the end of a
+// piece means. Every staff loses it: a bar is a bar across the score, and
+// taking one out of a single staff would leave that staff a bar short of
+// the others for the rest of the piece.
+//
+// A bar with music in it is worth a question first. It can be taken back —
+// everything here can — but a passage that goes because somebody meant to
+// press the entry above is a passage they have to notice going.
+async function removeMeasure() {
+  const sel = state.selection;
+  const bars = state.info?.measures ?? 0;
+  const at = sel && sel.measure !== undefined && sel.measure !== null
+    ? sel.measure
+    : bars - 1;
+  if (at < 0) {
+    status("There is no bar to remove");
+    return;
+  }
+
+  if (barHasMusic(at)) {
+    const sure = await confirmThat({
+      title: `Bar ${at + 1} has music in it — remove it anyway?`,
+      note: "The bar goes from every staff and the ones after it move up. " +
+            "Undo puts it back.",
+      ok: "Remove it",
+    });
+    if (!sure) return;
+  }
+
+  const res = await fetch("/api/removemeasure?measure=" + at,
+                          { method: "POST" });
+  if (!res.ok) {
+    status("Could not remove it: " + (await res.text()).trim());
+    return;
+  }
+  const d = await res.json();
+  state.selection = null;
+  state.multi = [];
+  await reload();
+  status(`Bar ${at + 1} removed — ${d.measures} ` +
+    (d.measures === 1 ? "bar" : "bars") + " left");
+}
+
+// barHasMusic says whether anything is written in a bar, on any staff.
+//
+// A rest is not music for this: an empty bar is drawn as a bar of rest, so
+// asking about one would be asking about every untouched bar in the score.
+function barHasMusic(measure) {
+  for (const h of state.hits || []) {
+    if (h.measure !== measure) continue;
+    for (const el of h.elements || []) {
+      if (el.kind && el.kind !== "rest") return true;
+    }
+  }
+  return false;
+}
+
 // dotSelection lengthens the note that is selected by half.
 //
 // The dot in the palette belongs to the value being held — "3" is the half
@@ -358,7 +418,29 @@ async function setStaffProperty(what, value) {
 /* ---------- menus ---------- */
 
 function setupMenus() {
+  // A menu does not take the focus.
+  //
+  // Pressing a button focuses it, and focusing something inside a box that
+  // scrolls makes the box scroll it into view. A menu too tall for the
+  // window is exactly such a box — so the press moved the entry out from
+  // under the finger, the release landed somewhere else, and a click is
+  // only delivered when the press and the release are on the same thing.
+  // No click: the entry did nothing at all.
+  //
+  // Which is why it was the Edit and Insert menus and no others. They are
+  // the two long enough to scroll, so they are the two whose entries moved
+  // when pressed. Everything short enough to fit worked, in every engine,
+  // which is why it never showed up in a browser on a big screen.
+  //
+  // mousedown rather than pointerdown: calling preventDefault on a
+  // pointerdown is allowed to suppress the mouse events that follow it,
+  // the click among them, which would be this bug again by another route.
+  const dontFocus = (e) => {
+    if (e.target.closest && e.target.closest("button")) e.preventDefault();
+  };
+
   $$(".menu").forEach((menu) => {
+    menu.querySelector(".menu-items")?.addEventListener("mousedown", dontFocus);
     menu.querySelector(".menu-title").addEventListener("click", (e) => {
       e.stopPropagation();
       const wasOpen = menu.classList.contains("open");
@@ -375,9 +457,7 @@ function setupMenus() {
     // matched by the same selector, so hovering "Crescendo" would have
     // closed the submenu it is in.
     menu.querySelectorAll(":scope > .menu-items > button").forEach((b) => {
-      b.addEventListener("mouseenter", () => {
-        $$(".submenu").forEach((s) => s.classList.remove("open", "flip"));
-      });
+      b.addEventListener("mouseenter", closeSubmenusSoon);
     });
     menu.addEventListener("mouseenter", () => {
       // Once one menu is open, sliding along the bar opens the others, the
@@ -391,10 +471,38 @@ function setupMenus() {
   // A submenu opens on hover, but a click has to work too: on a touch screen
   // and with a keyboard there is no hover to open it with.
   $$(".submenu").forEach((sub) => {
-    sub.querySelector(".submenu-title").addEventListener("click", (e) => {
+    const title = sub.querySelector(".submenu-title");
+    // Opened by the press, not by the click. The press is the half of the
+    // gesture that is certainly delivered: a click needs the release to
+    // land on the same entry, and in a menu that scrolls it may not.
+    //
+    // preventDefault here too, for the focus — this is the same button the
+    // panel's own handler covers, and saying it twice costs nothing and
+    // means the rule holds wherever this listener is reached from.
+    let justPressed = false;
+    title.addEventListener("mousedown", (e) => {
+      // Only the plain button of the mouse opens things.
+      if (e.button !== 0) return;
+      e.preventDefault();
       e.stopPropagation();
+      justPressed = true;
       if (sub.classList.contains("open")) {
-        sub.classList.remove("open", "flip");
+        closeSubmenu(sub);
+        justPressed = false;
+        return;
+      }
+      openSubmenu(sub);
+    });
+    title.addEventListener("click", (e) => {
+      e.stopPropagation();
+      // The press already decided. Without this the click that follows it
+      // would close what the press opened, and the panel would flash.
+      if (justPressed) {
+        justPressed = false;
+        return;
+      }
+      if (sub.classList.contains("open")) {
+        closeSubmenu(sub);
         return;
       }
       openSubmenu(sub);
@@ -403,8 +511,21 @@ function setupMenus() {
     // menu bar behaves. Hovering the open panel itself must not close it, so
     // the listener is on the title and not on the submenu as a whole.
     sub.querySelector(".submenu-title").addEventListener("mouseenter", () => {
-      openSubmenu(sub);
+      openSubmenuSoon(sub);
     });
+    // Moved on without stopping: it was being crossed, not chosen.
+    sub.querySelector(".submenu-title").addEventListener("mouseleave",
+      cancelSubmenuOpen);
+    // Reaching the panel is arriving. Whatever was pending because the
+    // pointer crossed other entries on the way here — a close from the
+    // plain ones, an open from the other titles — is called off.
+    panelOf(sub)?.addEventListener("mouseenter", () => {
+      cancelSubmenuOpen();
+      keepSubmenus();
+    });
+    // Parked on the body, a flyout is outside the menu panel that holds
+    // the rule off the focus, so it carries its own.
+    panelOf(sub)?.addEventListener("mousedown", dontFocus);
   });
 
   // A menu too tall for the window scrolls, and a submenu opened out of it
@@ -430,19 +551,135 @@ function setupMenus() {
 }
 
 function closeMenus() {
+  keepSubmenus();
+  cancelSubmenuOpen();
   $$(".menu").forEach((m) => m.classList.remove("open"));
-  $$(".submenu").forEach((m) => m.classList.remove("open", "flip"));
+  shutSubmenus();
+}
+
+// How long the pointer has to reach a submenu it opened, in milliseconds.
+//
+// Moving to another entry closes the open submenu, so that its panel is not
+// left sitting over the item being reached for. That is right when the
+// pointer is leaving and wrong while it is arriving, and the two look
+// identical at the moment an entry is crossed — so the close waits to see
+// which it was.
+//
+// It has to wait, because the journey crosses other entries. A submenu too
+// tall for the room under it is pulled up the window to fit, which puts its
+// panel above its own entry: the line from Insert ▸ Tab to the panel it
+// just opened runs back over three plain items, and each of them shut it.
+// The panel flashed open and was gone before the hand arrived. Reported as
+// "I cannot open the submenus".
+// The other half of the same journey: a submenu title the pointer is only
+// passing over must not open. The Insert menu has six of them, so going up
+// to a panel that was pulled above its entry crosses three or four, each
+// opening itself and closing the one being reached for. Waiting for the
+// pointer to settle is how every menu bar tells crossing from choosing.
+const submenuGrace = 400;
+const submenuHoverDelay = 180;
+let closingSubmenus = null;
+let openingSubmenu = null;
+
+function shutSubmenus() {
+  $$(".submenu").forEach(closeSubmenu);
+}
+
+// closeSubmenusSoon closes them unless the pointer arrives somewhere that
+// says it was on its way.
+function closeSubmenusSoon() {
+  keepSubmenus();
+  closingSubmenus = setTimeout(() => {
+    closingSubmenus = null;
+    shutSubmenus();
+  }, submenuGrace);
+}
+
+// keepSubmenus calls off a close that has not happened yet.
+function keepSubmenus() {
+  if (closingSubmenus === null) return;
+  clearTimeout(closingSubmenus);
+  closingSubmenus = null;
+}
+
+// openSubmenuSoon opens one if the pointer is still on it a moment from
+// now, which is what tells a choice from a pointer on its way past.
+function openSubmenuSoon(sub) {
+  cancelSubmenuOpen();
+  openingSubmenu = setTimeout(() => {
+    openingSubmenu = null;
+    openSubmenu(sub);
+  }, submenuHoverDelay);
+}
+
+// cancelSubmenuOpen calls off an open that has not happened yet: the
+// pointer moved on, so it was passing over and not choosing.
+function cancelSubmenuOpen() {
+  if (openingSubmenu === null) return;
+  clearTimeout(openingSubmenu);
+  openingSubmenu = null;
+}
+
+// The panel belonging to each submenu, found wherever it is.
+//
+// It is not always where the markup put it: while a submenu is open its
+// panel is parked on the body. See openSubmenu.
+const flyouts = new WeakMap();
+
+function panelOf(sub) {
+  let panel = flyouts.get(sub);
+  if (!panel) {
+    panel = sub.querySelector(".menu-items");
+    if (panel) flyouts.set(sub, panel);
+  }
+  return panel;
 }
 
 // openSubmenu shows one submenu and closes the rest.
 //
 // Exactly one is open at a time, and this is the only thing that decides it.
+//
+// The panel is lifted out of the menu and parked on the body for as long as
+// it is open, and this is not tidiness: a menu too tall for the window
+// scrolls, and WebKit clips a position: fixed element inside a scrolling
+// box away to nothing. Nothing about that reads as clipping. The panel is
+// open, it is display: block, it is where it should be on the page, and
+// elementFromPoint at its middle answers with the panel — every way of
+// asking says it is there, and the screen shows nothing. Hence a submenu
+// that could not be opened in the Edit and Insert menus, which are the two
+// long enough to scroll, and nowhere else and in no browser.
+//
+// On the body there is no scrolling ancestor to be clipped by, in any
+// engine. Everything else about the panel stays as it was, its listeners
+// with it.
 function openSubmenu(sub) {
+  // Opening one is arriving somewhere, so nothing is still on its way.
+  keepSubmenus();
+  cancelSubmenuOpen();
   $$(".submenu").forEach((s) => {
-    if (s !== sub) s.classList.remove("open", "flip");
+    if (s !== sub) closeSubmenu(s);
   });
   sub.classList.add("open");
+  const panel = panelOf(sub);
+  if (panel && panel.parentNode !== document.body) {
+    panel.classList.add("flyout");
+    document.body.appendChild(panel);
+  }
   placeSubmenu(sub);
+}
+
+// closeSubmenu shuts one and puts its panel back where the markup has it.
+//
+// Back, rather than left on the body: the markup is where the panel
+// belongs, and a page with eighteen stray panels on its body is one where
+// nothing can be found by reading it.
+function closeSubmenu(sub) {
+  sub.classList.remove("open", "flip");
+  const panel = flyouts.get(sub);
+  if (panel && panel.parentNode === document.body) {
+    panel.classList.remove("flyout");
+    sub.appendChild(panel);
+  }
 }
 
 // placeSubmenu puts a submenu where it can be read.
@@ -459,7 +696,7 @@ function openSubmenu(sub) {
 // nothing said they were there. Reported as "menus are sometimes cut".
 function placeSubmenu(sub) {
   sub.classList.remove("flip");
-  const items = sub.querySelector(".menu-items");
+  const items = panelOf(sub);
   if (!items) return;
 
   // Measured where it will be read: the panel is already shown by the time
@@ -621,6 +858,7 @@ async function action(name) {
       status("Measure added");
       break;
     case "insert-measures": await insertMeasuresDialog(); break;
+    case "remove-measure": await removeMeasure(); break;
     case "delete":
       await deleteSelected();
       break;
@@ -3505,6 +3743,7 @@ async function loadHits() {
   state.hairpins = d.hairpins || [];
   state.arcs = d.arcs || [];
   state.tremolos = d.tremolos || [];
+  state.tuplets = d.tuplets || [];
   state.barlines = d.barlines || [];
   state.headers = d.headers || [];
   state.strips = d.strips || [];
@@ -3663,6 +3902,26 @@ function tremoloAt(x, y) {
   for (const t of state.tremolos || []) {
     if (x >= t.x && x <= t.x + t.width &&
         y >= t.y - 0.2 && y <= t.y + t.height + 0.2) {
+      return t;
+    }
+  }
+  return null;
+}
+
+// tupletAt finds the tuplet figure a click landed on.
+//
+// The figure — the 3 over a triplet, the 12 over a run — belongs to all of
+// the notes under it and to none of them, so nothing in the music could be
+// clicked to reach it. The box comes from the engraver, which is the only
+// thing that knows how far over the group the figure had to go.
+//
+// Over a beamed group the box is the figure alone, not the width of the
+// run: the notes are right underneath, and a box across them would swallow
+// every click meant for a note.
+function tupletAt(x, y) {
+  for (const t of state.tuplets || []) {
+    if (x >= t.x - 0.3 && x <= t.x + t.width + 0.3 &&
+        y >= t.y - 0.3 && y <= t.y + t.height + 0.3) {
       return t;
     }
   }
@@ -4019,6 +4278,14 @@ function setupCanvasClicks() {
     const trem = tremoloAt(x, y);
     if (trem) {
       selectTremolo(trem);
+      return;
+    }
+
+    // The figure over a group. Before the notes, since over a beamed group
+    // it sits just above them.
+    const tup = tupletAt(x, y);
+    if (tup) {
+      selectTuplet(tup);
       return;
     }
 
@@ -4484,6 +4751,24 @@ function selectTremolo(t) {
   markSelection();
   const beams = t.beams === 1 ? "one beam" : `${t.beams} beams`;
   status(`Two-note tremolo, ${beams} \u2014 press Backspace to take it away`);
+}
+
+// selectTuplet picks up a group by its figure.
+//
+// Taking it off leaves the notes where they are: a run of twelve under a 12
+// that turns out not to be a tuplet is still twelve notes, and the menu's
+// "back to one note" — right for a group made out of one note — would throw
+// eleven of them away.
+function selectTuplet(t) {
+  state.multi = [];
+  state.anchor = state.focus = null;
+  state.selection = {
+    part: t.part, measure: t.measure, ref: t.from,
+    at: 0, step: 0, tuplet: t,
+  };
+  markSelection();
+  status(`${t.figure} in the time of the notes under it — ` +
+    "press Backspace to take the grouping off and keep the notes");
 }
 
 // selectMeasure picks up a whole bar rather than a note in it.
@@ -5158,6 +5443,32 @@ async function deleteSelected() {
     return;
   }
 
+  // A group was picked up by its figure. The figure goes and the notes
+  // stay, each written as it was drawn.
+  const tup = state.selection?.tuplet;
+  if (tup && !state.multi.length) {
+    const where = refTarget(tup.from);
+    if (!where) {
+      status("Could not find that tuplet any more");
+      return;
+    }
+    const [part, measure, index] = where.split(":");
+    const p = new URLSearchParams({
+      free: "1", part, measure, at: String(Number(index) + 1),
+    });
+    const res = await fetch("/api/tuplet?" + p.toString(), { method: "POST" });
+    if (!res.ok) {
+      status("Could not take it off: " + (await res.text()).trim());
+      return;
+    }
+    const d = await res.json();
+    state.selection.tuplet = null;
+    await refreshScore();
+    status(`Grouping taken off — ${d.freed} ` +
+      (d.freed === 1 ? "note is" : "notes are") + " written as they stand");
+    return;
+  }
+
   // A tempo marking was picked up by clicking it, so it is the change that
   // goes and the bar carries on at the speed it had before.
   const atBar = state.selection?.tempo;
@@ -5381,6 +5692,16 @@ function markSelection() {
     const t = sel.tremolo;
     svg.insertBefore(
       selectionRect(t.x - 0.4, t.y - 0.4, t.width + 0.8, t.height + 0.8, z),
+      svg.firstChild);
+    return;
+  }
+
+  // The figure alone, not the notes under it: lighting those would say
+  // Backspace was about to take the music away.
+  if (sel.tuplet) {
+    const t = sel.tuplet;
+    svg.insertBefore(
+      selectionRect(t.x - 0.3, t.y - 0.3, t.width + 0.6, t.height + 0.6, z),
       svg.firstChild);
     return;
   }
@@ -5716,7 +6037,7 @@ function pickedNotes() {
   const sel = state.selection;
   if (!sel || sel.ref === null || sel.ref === undefined) return false;
   if (sel.bar) return false;
-  return !(sel.arc || sel.hairpin || sel.tremolo || sel.dynamic ||
+  return !(sel.arc || sel.hairpin || sel.tremolo || sel.tuplet || sel.dynamic ||
     sel.chordSymbol || (sel.tempo !== undefined && sel.tempo !== null));
 }
 
@@ -13110,6 +13431,9 @@ const MENU_ICONS = {
   // Bars pushed in rather than added on: the repeat-dots barline, which
   // is the one that reads as "and more of it here".
   "insert-measures": "\ue034",     // barlineHeavy
+  // And the bar taken out again: the final barline, which is what the end
+  // of the music looks like once the spare bars after it have gone.
+  "remove-measure": "\ue032",      // barlineFinal
   "split-measure": "\ue036",       // barlineDashed
   "track-barlines": "\ue030",      // barlineSingle
 

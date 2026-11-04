@@ -1368,6 +1368,14 @@ paths:
         - $ref: "#/components/parameters/measure"
         - $ref: "#/components/parameters/at"
         - $ref: "#/components/parameters/sel"
+        - name: free
+          in: query
+          description: >-
+            `1` takes the grouping off and leaves the notes where they are,
+            each written as it is drawn. Not the same as `n=1`, which
+            collapses the group back into the one note it would have been
+            made from.
+          schema: { type: string, enum: ["0", "1"] }
         - name: n
           in: query
           description: How many in the time of how many fewer — 3 for a triplet. `0` frees it.
@@ -2469,6 +2477,43 @@ paths:
                   measures: { type: integer }
                   at: { type: integer }
                   count: { type: integer }
+        "400": { $ref: "#/components/responses/Error" }
+
+  /api/removemeasure:
+    post:
+      tags: [structure]
+      summary: Take bars out of the piece
+      description: >
+        The way back from adding one, and not the same as emptying it: an
+        emptied bar is a bar of rest, which the player counts. The bar goes
+        from every staff, since a bar is a bar across the score and the
+        barlines stay in a column, and everything that names a bar by its
+        number moves up with the music — a part's system breaks, the bars a
+        cue is taken from, where the cursor was left. A barline that is not
+        a plain one stays at the end of the music, so a piece whose last bar
+        is deleted still ends on its final barline. A score is never left
+        with no bars at all: the last one is emptied instead of going.
+      parameters:
+        - name: measure
+          in: query
+          description: The first bar to go, counted from zero. The last bar where it is left out.
+          schema: { type: integer }
+        - name: count
+          in: query
+          description: How many, 1 to 100. One where it is left out.
+          schema: { type: integer }
+      responses:
+        "200":
+          description: How many went, and how long the score is now.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string }
+                  removed: { type: integer }
+                  measures: { type: integer }
+                  at: { type: integer }
         "400": { $ref: "#/components/responses/Error" }
 
   /api/joinmeasure:
@@ -4480,4 +4525,24 @@ components:
             the page that stands for the mark, so they are what a click on
             it finds; from and to name the two notes it alternates between.
           items: { type: object }
+        tuplets:
+          type: array
+          description: >
+            Each group's figure, and its bracket where it has one, so the
+            grouping can be pointed at and taken off; from and to name the
+            first and last notes of the group. Over a beamed group the box
+            is the figure alone, since the notes are directly under it.
+          items:
+            type: object
+            properties:
+              part: { type: integer }
+              measure: { type: integer }
+              from: { type: integer }
+              to: { type: integer }
+              x: { type: number }
+              y: { type: number }
+              width: { type: number }
+              height: { type: number }
+              figure: { type: integer }
+              bracketed: { type: boolean }
         tempos: { type: array, items: { type: object } }

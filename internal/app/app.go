@@ -522,6 +522,7 @@ func (a *App) APIRoutes(mux *http.ServeMux) {
 		"/api/shift":           a.handleShift,
 		"/api/addmeasure":      a.handleAddMeasure,
 		"/api/insertmeasure":   a.handleInsertMeasure,
+		"/api/removemeasure":   a.handleRemoveMeasure,
 		"/api/splitmeasure":    a.handleSplitMeasure,
 		"/api/joinmeasure":     a.handleJoinMeasure,
 		"/api/clearmeasure":    a.handleClearMeasure,

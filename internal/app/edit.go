@@ -61,6 +61,7 @@ func (a *App) handleHits(w http.ResponseWriter, r *http.Request) {
 		"hairpins":    lay.Hairpins,
 		"arcs":        lay.Arcs,
 		"tremolos":    lay.Tremolos,
+		"tuplets":     lay.Tuplets,
 		"barlines":    lay.Barlines,
 		"strips":      lay.Strips,
 		"headers":     lay.Headers,
@@ -4266,9 +4267,20 @@ func tupletFromSelection(p *model.Part, measIdx int, targets []target, n int) (n
 	// more time than it was given rather than less, and then there is
 	// nothing to give back and the bar overflows into the next, which is
 	// what every other overfull bar here does.
+	//
+	// The rests are there so the bar still adds up, which is the same job
+	// spill does and answers to the same switch. Somebody who has turned
+	// the arithmetic off is typing music whose bars are their own business
+	// — the twelve-in-the-time-of-eight of the Altes among it — and a rest
+	// they did not write, appearing at the end of the bar because they
+	// grouped some notes, is the program correcting them again. Reported
+	// as "it adds rests that are not written in the score", which is
+	// exactly what it was.
 	if before.Cmp(after) > 0 {
 		freed = before.Sub(after).Reduced()
-		extra = append(extra, restsGivenBack(freed, n, normal)...)
+		if TrackBarlines() {
+			extra = append(extra, restsGivenBack(freed, n, normal)...)
+		}
 	}
 
 	// The group closes on its last member, which is the last of the rests it
@@ -4329,6 +4341,25 @@ func (a *App) handleTuplet(w http.ResponseWriter, r *http.Request) {
 		at = len(v.Elements)
 	}
 	idx := at - 1
+
+	// Taking the figure off and keeping the notes.
+	//
+	// What somebody clicking the 12 over twelve notes means: that run is
+	// not a tuplet, leave the notes where they are. It is not what "back
+	// to one note" means — that collapses the group into the single note
+	// it would have been made from, which is right for a group that was
+	// made from one note and throws away eleven of them otherwise.
+	if q.Get("free") == "1" {
+		freed := freeTuplet(v, idx)
+		if freed == 0 {
+			http.Error(w, "that note is not in a tuplet", http.StatusBadRequest)
+			return
+		}
+		writeJSON(w, map[string]any{
+			"freed": freed, "measure": measIdx, "at": idx + 1,
+		})
+		return
+	}
 
 	if n <= 1 {
 		changed := ungroupTuplet(v, idx)
@@ -6000,4 +6031,58 @@ func (a *App) handleTextStyles(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	writeJSON(w, out)
+}
+
+// handleRemoveMeasure takes bars out of the score.
+//
+// The one thing that could not be done to a bar. They could be added,
+// pushed in, split, joined and emptied, and an emptied bar is not a bar
+// removed — it is a bar of rest, which the player counts. Somebody who
+// typed two bars too many at the end of a piece had no way to say so.
+func (a *App) handleRemoveMeasure(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST required", http.StatusMethodNotAllowed)
+		return
+	}
+	q := r.URL.Query()
+
+	a.lock()
+	defer a.mu.Unlock()
+
+	bars := a.score.MeasureCount()
+	// The last bar where none is named, which is the one somebody typing
+	// at the end of a piece means.
+	at := bars - 1
+	if v := q.Get("measure"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 0 || n >= bars {
+			http.Error(w, "there is no bar "+v, http.StatusBadRequest)
+			return
+		}
+		at = n
+	}
+	count := 1
+	if v := q.Get("count"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 1 || n > 100 {
+			http.Error(w, v+" is not a number of bars — 1 to 100",
+				http.StatusBadRequest)
+			return
+		}
+		count = n
+	}
+
+	gone := a.score.RemoveMeasures(at, count)
+	if gone == 0 {
+		http.Error(w, "there was nothing there to remove", http.StatusBadRequest)
+		return
+	}
+	// The bar that is left where they were is a bar of rest until
+	// something is written in it, as every empty bar is.
+	restEmptyMeasures(a.score)
+
+	writeJSON(w, map[string]any{
+		"status": "ok", "removed": gone,
+		"measures": a.score.MeasureCount(), "at": at,
+	})
 }

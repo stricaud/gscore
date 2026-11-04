@@ -650,9 +650,24 @@ func (e *engraver) drawTuplet(group []*placed, tp *model.Tuplet, beam map[*place
 		Size: tupletNumberSize, Anchor: "middle", Italic: true, Bold: true,
 	})
 
+	// Where it was drawn, so it can be pointed at. The figure's own box
+	// first; a bracketed group widens it below, since then the bracket is
+	// part of the mark and is drawn in clear air over the whole run.
+	fw := textWidth(strconv.Itoa(tp.Actual), tupletNumberSize)
+	box := TupletPos{
+		Part: e.partIndex, Measure: e.barIndex,
+		From: group[0].index, To: group[len(group)-1].index,
+		X: cx - fw/2, Y: y - tupletNumberSize,
+		Width: fw, Height: tupletNumberSize * 1.25,
+		Figure: tp.Actual,
+	}
+
 	if oneBeam(group, beam) {
+		e.lay.Tuplets = append(e.lay.Tuplets, box)
 		return // the beam says it already
 	}
+	box.X, box.Width, box.Bracketed = x0, x1-x0, true
+	e.lay.Tuplets = append(e.lay.Tuplets, box)
 
 	// The bracket sits on the figure's own line, with a gap cut in it for
 	// the figure, and a hook at each end turning in towards the notes.

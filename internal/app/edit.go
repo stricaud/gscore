@@ -37,20 +37,13 @@ import (
 
 // handleHits reports the clickable regions for the current view.
 func (a *App) handleHits(w http.ResponseWriter, r *http.Request) {
-	a.mu.RLock()
-	opt := a.engraveOpt
-	a.mu.RUnlock()
-
-	switch r.URL.Query().Get("mode") {
-	case "strip":
-		opt.Mode = engrave.Strip
-	case "page":
-		opt.Mode = engrave.Paginated
-	}
-
-	a.mu.RLock()
-	score := a.sounding(a.score)
-	a.mu.RUnlock()
+	// Through viewOptions, as the drawing and its size are: where a note
+	// went depends on every one of the settings an address can carry, not
+	// on the mode alone. A width taken from a different picture reports
+	// notes at coordinates nothing on the screen is drawn at — a click
+	// lands in the wrong bar, and a score wrapped to the width of a frame
+	// is measured as though it were not wrapped at all.
+	score, opt, _ := a.viewOptions(r)
 	lay := a.layout(score, opt)
 
 	writeJSON(w, map[string]any{

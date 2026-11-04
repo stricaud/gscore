@@ -158,12 +158,28 @@
     frame.setAttribute("title", "Music, engraved by gscore");
     frame.style.width = "100%";
     frame.style.border = "0";
+    // A height to start at. The frame says how tall the music really is
+    // once it has drawn it, and this follows — see named below — unless
+    // the page gave a height of its own, which is then its own business.
     frame.style.height = (el.dataset.height || "240") + "px";
     frame.loading = "lazy";
 
     // Waiting for the frame to say it is up. The core is WebAssembly and
     // takes a moment; sending before then sends into a page that has no
     // listener yet and the tune is silently never read.
+    // The piece's name, under the music rather than engraved into it.
+    //
+    // A title block inside the frame takes the top of it, so the first
+    // thing a reader sees is a name they have just read in the page,
+    // with the music below the fold. Written as the page's own text
+    // instead: it can be styled, selected and read aloud, and the frame
+    // gets on with showing music. A page that has named the piece itself
+    // says data-title="off".
+    const figure = document.createElement("figure");
+    figure.className = "gscore-figure";
+    figure.style.margin = "0";
+    figure.appendChild(frame);
+
     const sent = (e) => {
       if (e.source !== frame.contentWindow) return;
       const m = e.data;
@@ -172,11 +188,37 @@
         { gscore: "open", value: content, name }, "*");
       window.removeEventListener("message", sent);
     };
+    // The title arrives with the score that was sent, which is a second
+    // "ready" — the first is the empty page saying it is up.
+    const named = (e) => {
+      if (e.source !== frame.contentWindow) return;
+      const m = e.data;
+      if (!m || typeof m !== "object" || m.gscore !== "ready") return;
+      // As tall as one system of it, where the page did not say: every
+      // instrument once, which is the unit the music is read in. The
+      // whole piece would open a frame as long as the piece. A page that
+      // wants it shorter gives data-height and the frame scrolls; one
+      // that wants no scrolling at all can size it from m.height, which
+      // is all of the music.
+      const want = m.system > 40 ? m.system : m.height;
+      if (!el.dataset.height && want > 40) {
+        frame.style.height = Math.min(2000, want) + "px";
+      }
+      if (!m.title || (el.dataset.title || "") === "off") return;
+      let cap = figure.querySelector("figcaption");
+      if (!cap) {
+        cap = document.createElement("figcaption");
+        cap.className = "gscore-caption";
+        figure.appendChild(cap);
+      }
+      cap.textContent = m.title;
+    };
     window.addEventListener("message", sent);
+    window.addEventListener("message", named);
 
     el.hidden = true;
     el.style.display = "none";   // in case the page styles it visible
-    el.parentNode.insertBefore(frame, el.nextSibling);
+    el.parentNode.insertBefore(figure, el.nextSibling);
   }
 
   function engraveAll(root) {

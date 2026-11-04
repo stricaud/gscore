@@ -90,7 +90,12 @@ It sends two of its own back:
 ```js
 window.addEventListener("message", (e) => {
   if (e.data?.gscore === "ready") {
-    // The score is up. e.data.title and e.data.tunes say what it is.
+    // The score is up. e.data.title and e.data.tunes say what it is, and
+    // e.data.system how tall one system of it is — every instrument
+    // once, which is what a frame should open at — and e.data.height how
+    // tall all of the music is, for a page that wants no scrolling at
+    // all. It is sent again whenever a score is opened, so a page that
+    // sends one of its own hears what it turned out to be.
   }
   if (e.data?.gscore === "ended") {
     // The music has finished.
@@ -165,7 +170,7 @@ which is what `base64 -w0 tune.mxl` gives you.
 |---|---|
 | `data-format=abc` | What the music is written in; the default is ABC |
 | `data-encoding=base64` | The text is base64; decode it first |
-| `data-height=240` | How tall the frame is, in pixels |
+| `data-height=240` | How tall the frame is, in pixels. Left out, it comes up as tall as one system — every instrument of the score, once — and a frame made shorter than that simply scrolls |
 | `data-player=1` | As `player=` above: `1` or `bare` |
 | `data-zoom=N` | Staff space in pixels |
 | `data-autoplay=1`, `data-loop=1`, `data-tune=N` | As in the address |
@@ -175,6 +180,11 @@ which is what `base64 -w0 tune.mxl` gives you.
 |---|---|
 | `data-selector=…` | What to look for; the default is `.gscore` |
 | `data-app=URL` | Where gscore is, for a page hosting its own copy of this script |
+
+The piece's name is written under the music as the page's own text rather
+than engraved into the frame — a title block inside the frame takes the top
+of it, and what a reader sees first is a name they have just read. Say
+`data-title="off"` where the page has named the piece itself.
 
 A page that writes music into itself later can engrave it with
 `window.gscoreEmbed(element)`.

@@ -26,6 +26,8 @@ const docs = readFileSync(
   new URL("../../../docs/embedding.md", import.meta.url), "utf8");
 const build = readFileSync(
   new URL("../../../web/build.sh", import.meta.url), "utf8");
+const api = readFileSync(
+  new URL("../../../docs/openapi.yaml", import.meta.url), "utf8");
 
 const grab = (where, name) => {
   const m = where.match(
@@ -88,7 +90,7 @@ test("something that is not text can be written in as base64", () => {
 // The author's own text stays where they put it.
 test("the source is kept in the page", () => {
   assert.match(embed, /el\.hidden = true/);
-  assert.match(embed, /insertBefore\(frame, el\.nextSibling\)/);
+  assert.match(embed, /insertBefore\(figure, el\.nextSibling\)/);
   assert.doesNotMatch(embed, /el\.remove\(\)|innerHTML = ""/);
 });
 
@@ -97,4 +99,92 @@ test("the script is published with the site, and documented", () => {
   assert.match(docs, /Music written into the page/);
   assert.match(docs, /data-encoding=base64|data-encoding="base64"/);
   assert.match(docs, /gscore: "open"/);
+});
+
+/*
+ * What a reader sees first.
+ *
+ * A score embedded in a page was drawn as the editor draws it: one
+ * unbroken strip, with the title block above it. In a frame a few hundred
+ * pixels wide that is a title the reader has just read in the page, a
+ * scrollbar, and two bars of music. Reported as "the embed looks ugly,
+ * cannot see the score right away".
+ */
+
+test("a player wraps the music to the frame", () => {
+  const body = grab(src, "playerWidth");
+  assert.match(body, /clientWidth/);
+  assert.match(src, /if \(!opt\.mode\) state\.mode = "page"/);
+  // The server works the margins out, because it is the one that knows
+  // what they are.
+  assert.match(src, /p\.set\("fit", String\(fit\)\)/);
+  assert.match(api, /name: fit\b/);
+});
+
+test("a player leaves the title block out", () => {
+  assert.match(src, /if \(state\.player\) p\.set\("title", "0"\)/);
+  assert.match(api, /name: title\b/);
+  // And hands the title to the page, which writes it in its own type.
+  assert.match(embed, /figcaption/);
+  assert.match(embed, /m\.title/);
+});
+
+// The title arrives with the score that was sent, not with the empty
+// frame that was waiting for it.
+test("the frame says what it is once it has a score", () => {
+  assert.match(src, /case "open": \{[\s\S]*?tellParent\("ready"\)/);
+  assert.match(grab(src, "tellParent"), /title:/);
+  assert.match(grab(src, "tellParent"), /height:/);
+  // Two sizes, because they answer different questions: one system of
+  // the music, and all of it.
+  assert.match(grab(src, "tellParent"), /system: oneSystem\(\)/);
+});
+
+// A frame guessed at is a frame that cuts a system in half — and a frame
+// as tall as the whole piece is a page with one tune on it. One system of
+// every instrument is the unit the music is read in.
+test("a frame opens as tall as one system", () => {
+  assert.match(embed, /m\.system/);
+  assert.match(embed, /!el\.dataset\.height/);
+  // Still the whole music where there is no system to measure.
+  assert.match(embed, /m\.height/);
+  assert.match(docs, /e\.data\.system/);
+  assert.match(docs, /e\.data\.height/);
+});
+
+// A page that wants less room than that says so, and the music scrolls:
+// the height it gives is used as it stands and nothing overrides it.
+test("a page can ask for a shorter frame", () => {
+  assert.match(embed, /el\.dataset\.height/);
+  assert.match(docs, /data-height/);
+});
+
+// Measured from the staves as they were drawn, so that whatever a system
+// carries above and below it — bar numbers, dynamics, a volta — is in the
+// number. The first bar of the music is in the first system of it.
+test("one system is every staff of the first bar", () => {
+  // Read from the file rather than from grab(), whose idea of where a
+  // function ends is the first line that closes a block at two spaces —
+  // which here is the loop over the staves and not the function.
+  const one = src.slice(src.indexOf("function oneSystem()"));
+  assert.match(one, /state\.hits/);
+  assert.match(one, /h\.staffTop \+ h\.staffHeight/);
+  // In pixels, which is what a frame is measured in.
+  assert.match(one, /\(bottom \+ 2\) \* state\.zoom/);
+});
+
+// The music is re-wrapped when the frame changes size, or a phone turned
+// on its side shows the first half of each system.
+test("it re-wraps when the frame is resized", () => {
+  assert.match(grab(src, "applyPlayerMode"), /addEventListener\("resize"/);
+  assert.match(grab(src, "applyPlayerMode"), /refreshScore/);
+});
+
+// Where the notes are depends on how wide the systems were allowed to be,
+// so asking about one picture and drawing another puts every note
+// somewhere it is not: a click lands in the wrong bar, and a score
+// wrapped to a frame measures as though it had never been wrapped.
+test("the clickable places are asked about the picture on the screen", () => {
+  assert.match(grab(src, "loadHits"), /viewParams\(\)/);
+  assert.doesNotMatch(grab(src, "loadHits"), /"\/api\/hits\?mode="/);
 });

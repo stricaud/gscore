@@ -59,7 +59,12 @@
     padding: 12px 14px;
     overflow-x: auto;
   }
-  /* The player is an ordinary iframe. Give it a height and it fills it. */
+  /* The player is an ordinary iframe. Give it a height and it fills it.
+     Tall enough for the music: a player wraps the score to the width of
+     the frame, so a frame two systems tall shows two systems and a frame
+     one system tall shows one and the top of the next. A page driving
+     gscore from script can ask the frame how tall the music came out —
+     the "ready" message carries it. */
   .score {
     width: 100%;
     border: 1px solid var(--line);
@@ -98,7 +103,7 @@
              why this one reaches back out with ../../
   zoom=9     staff space in pixels
 -->
-<iframe class="score" id="first" height="200"
+<iframe class="score" id="first" height="330"
         title="Exercise in C major"
         src="../build/web/app/?player=1&zoom=9&score=../../samples/boite-musique.abc"></iframe>
 
@@ -107,7 +112,7 @@
   With <code>player=bare</code> there is no transport at all: the score itself
   is the button, and clicking it starts and stops the music.
 </p>
-<iframe class="score" id="second" height="180"
+<iframe class="score" id="second" height="300"
         title="The same exercise, with no controls"
         src="../build/web/app/?player=bare&zoom=9&loop=1&score=../../samples/boite-musique.abc"></iframe>
 <p class="note"><code>loop=1</code> makes it go round again, which is what you

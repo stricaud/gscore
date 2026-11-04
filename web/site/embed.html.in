@@ -28,8 +28,13 @@ nothing is uploaded, and there is no server behind any of it.</p>
         <option value="mscx">MuseScore (uncompressed)</option>
         <option value="nwctxt">NoteWorthy (text)</option>
       </select></span>
+      <!-- Empty, because the frame knows better than this field does: it
+           opens as tall as one system of every instrument. A number here
+           is a page saying it wants less room than that, and the music
+           then scrolls. -->
       <span><label for="height">Tall</label>
-      <input id="height" type="number" min="80" max="1200" step="20" value="240"></span>
+      <input id="height" type="number" min="80" max="2000" step="20"
+             placeholder="one system"></span>
       <span><label for="player">Showing</label>
       <select id="player">
         <option value="1">the score and a play button</option>
@@ -119,7 +124,7 @@ from your own page, the settings, and hosting gscore yourself — is in
   function snippet(abc, fmt, height, player) {
     const attrs = ['class="gscore"'];
     if (fmt !== "abc") attrs.push('data-format="' + fmt + '"');
-    if (height !== "240") attrs.push('data-height="' + height + '"');
+    if (height) attrs.push('data-height="' + height + '"');
     if (player !== "1") attrs.push('data-player="' + player + '"');
     return '<script src="' + HERE + '"><\/script>\n\n' +
       "<div " + attrs.join(" ") + ">\n" + abc + "\n</div>";
@@ -132,7 +137,7 @@ from your own page, the settings, and hosting gscore yourself — is in
   function show() {
     const abc = $("#abc").value.trim() || EXAMPLE;
     const fmt = $("#fmt").value;
-    const height = $("#height").value || "240";
+    const height = $("#height").value.trim();
     const player = $("#player").value;
     $("#snippet").value = snippet(abc, fmt, height, player);
 
@@ -141,7 +146,7 @@ from your own page, the settings, and hosting gscore yourself — is in
     const block = document.createElement("div");
     block.className = "embed-demo-source";
     block.dataset.format = fmt;
-    block.dataset.height = height;
+    if (height) block.dataset.height = height;
     block.dataset.player = player;
     block.textContent = abc;
     demo.appendChild(block);

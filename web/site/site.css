@@ -514,5 +514,17 @@ footer p { max-width: var(--wide); margin: 0 auto 6px; }
   align-items: center;
   gap: .35rem;
 }
+/* Wide enough for what it says when it is empty: left to itself a number
+   field is sized for the digits, and "one system" came out as "one s". */
+.embed-half .fine input[type="number"] { width: 7.5rem; }
 .embed-demo { margin: 1rem 0 2rem; }
 .embed-demo iframe { border: 1px solid var(--line, #ccc); border-radius: 6px; }
+
+/* The name of an embedded piece, written under the music as the page's
+   own text rather than engraved inside the frame. */
+.gscore-figure { margin: 0; }
+.gscore-caption {
+  margin-top: .4rem;
+  color: var(--dim, #777);
+  font-size: 0.9rem;
+}

@@ -30,6 +30,9 @@ function currentSVG() {
 
 const state = {
   zoom: 8,
+  // Embedded in a page as a player rather than opened as the editor.
+  // See applyPlayerMode.
+  player: false,
   // How big the interface is drawn, where one is the size it was designed
   // at. Read from the settings at boot; see applyUIScale.
   uiScale: 1,
@@ -1341,7 +1344,35 @@ function viewParams(opts = {}) {
   const mode = opts.mode ?? state.mode;
   p.set("mode", mode === "strip" ? "strip" : "page");
   if (opts.width) p.set("width", String(opts.width));
+  // How much room there is on the screen, in pixels. The server turns
+  // that into a system width, because the margins it has to take off are
+  // an engraving setting and it is the one that knows them.
+  const fit = playerWidth();
+  if (fit) p.set("fit", String(fit));
+  // A player shows the music, not the name of the piece: the page around
+  // it has said that already, in its own type, and the title block
+  // engraved inside the frame takes the top of it. What a reader saw
+  // first was a title they had just read, with the music below the fold.
+  // The title goes to the embedding page instead — see announceToParent.
+  if (state.player) p.set("title", "0");
   return p;
+}
+
+// playerWidth is how wide a system may be when the score is embedded, in
+// staff spaces.
+//
+// A frame in a page is a few hundred pixels wide and the music has to
+// fit it: drawn as one unbroken strip, a tune of forty bars is forty
+// bars wide and the reader sees the first two with a scrollbar under
+// them. Wrapped to the frame, the whole tune is on the screen.
+//
+// Zero when gscore is not embedded, which leaves the layout as it was:
+// the editor scrolls, and its strip is the point of it.
+function playerWidth() {
+  if (!state.player || state.mode === "strip") return 0;
+  const room = $("#canvas-wrap");
+  const px = (room ? room.clientWidth : window.innerWidth) - 16;
+  return Math.max(160, Math.round(px));
 }
 
 function scoreURL(opts = {}) {
@@ -3908,7 +3939,12 @@ async function loadHits() {
   // The music may have changed, so the performance worked out from it is no
   // longer the performance.
   state.playback = null;
-  const res = await fetch("/api/hits?mode=" + state.mode);
+  // The same picture the score is drawn from — viewParams and not the mode
+  // alone. A staff space or a width that belongs to a different picture
+  // puts the notes somewhere they are not: the editor sends a click to the
+  // wrong bar, and an embedded score, whose systems are wrapped to the
+  // frame, measures a system the reader is not looking at.
+  const res = await fetch("/api/hits?" + viewParams().toString());
   const d = await res.json();
   state.hits = d.hits || [];
   state.dynamics = d.dynamics || [];
@@ -14737,6 +14773,24 @@ function readOptions() {
 async function applyPlayerMode(opt) {
   document.body.classList.add("player");
   if (opt.bare) document.body.classList.add("bare");
+  state.player = true;
+
+  // Wrapped to the frame unless the page asked for the strip. The strip
+  // is the editor's view and the right one for a band across a page; for
+  // a frame it shows the first two bars and a scrollbar.
+  if (!opt.mode) state.mode = "page";
+
+  // A frame can be resized — by the page, by the reader turning a phone
+  // — and the music has to be re-wrapped when it is. Settled a moment
+  // after the last change rather than on every pixel of a drag.
+  let settling = null;
+  window.addEventListener("resize", () => {
+    if (settling) clearTimeout(settling);
+    settling = setTimeout(() => {
+      settling = null;
+      void refreshScore();
+    }, 150);
+  });
 
   // Nothing writes any more, so a click on the staff is not an edit.
   state.readOnly = true;
@@ -15000,7 +15054,10 @@ function setupEmbedMessages() {
       case "stop": stop(); break;
       case "toggle": await togglePlay(); break;
       case "tune": await selectTune(Number(m.value) || 0); break;
-      case "load": await loadFromURL(String(m.value)); break;
+      case "load":
+        await loadFromURL(String(m.value));
+        tellParent("ready");
+        break;
       // A score written into the page rather than kept in a file.
       //
       // Whatever arrives is handed to the reader the name belongs to,
@@ -15014,6 +15071,8 @@ function setupEmbedMessages() {
           ? String(m.value)
           : new Uint8Array(m.value);
         await openFile(new File([what], String(m.name || "tune.abc")));
+        // What it turned out to be, for the page to write under it.
+        tellParent("ready");
         break;
       }
       case "zoom": setZoom(Number(m.value) || state.zoom); break;
@@ -15042,18 +15101,84 @@ window.addEventListener("beforeunload", (e) => {
 // may start sending messages.
 function announceToParent() {
   if (window.parent === window) return;
-  const send = (what, extra) => {
-    try {
-      window.parent.postMessage(Object.assign({ gscore: what }, extra), "*");
-    } catch (_) {
-      /* a parent on another origin that refuses messages is not an error */
-    }
-  };
-  send("ready", {
-    title: state.info?.title || "",
-    tunes: (state.info?.tunes || []).length,
-  });
-  window.addEventListener("gscore:ended", () => send("ended"));
+  tellParent("ready");
+  window.addEventListener("gscore:ended", () => tellParent("ended"));
+}
+
+// oneSystem is how tall one system of this score is, in pixels: every
+// instrument of it, once, with the room its marks take above and below.
+//
+// It is what an embedded score should come up at. The whole music is the
+// wrong answer — a tune of forty systems would open a frame forty
+// systems tall — and a fixed number is the wrong answer too, because a
+// song is one staff and a symphony is twenty-nine. A system is the unit
+// the music is actually read in: a frame that tall shows every
+// instrument playing at once, and a reader who wants less says so and
+// scrolls.
+//
+// Measured from where the staves were drawn rather than counted from the
+// parts: what a system costs is its staves plus whatever the slurs, the
+// dynamics and the bar numbers needed, and only the engraver knows that.
+function oneSystem() {
+  const hits = state.hits || [];
+  if (!hits.length) return 0;
+  // The first system is every staff drawn at the first bar of it.
+  let first = Infinity;
+  for (const h of hits) first = Math.min(first, h.measure);
+  let top = Infinity, bottom = -Infinity;
+  for (const h of hits) {
+    if (h.measure !== first) continue;
+    top = Math.min(top, h.staffTop);
+    bottom = Math.max(bottom, h.staffTop + h.staffHeight);
+  }
+  if (!isFinite(top) || !isFinite(bottom)) return 0;
+
+  // From the top of the drawing to the foot of the system: the room
+  // above the first staff is where its marks went, so measuring from
+  // zero counts them, and a couple of spaces under the last staff keeps
+  // the system off the edge. Adding the room above a second time, as
+  // this did at first, opened a frame half again as tall as it needed
+  // for a score with anything written over it.
+  const music = (bottom + 2) * state.zoom;
+
+  // And the chrome around the music: the transport, if there is one.
+  const wrap = $("#canvas-wrap");
+  const chrome = wrap
+    ? Math.max(0, document.documentElement.clientHeight - wrap.clientHeight)
+    : 0;
+  return Math.round(music + chrome + 8);
+}
+
+// tellParent sends one of gscore's own messages out to the page that
+// embedded it.
+//
+// "ready" is sent again whenever a score is opened, not only at startup.
+// A page that writes the music into itself sends it after the frame is
+// up, so the first "ready" is the empty page saying it is listening and
+// the second carries what the piece turned out to be — which is how the
+// page gets the title to write under the music. Nothing is lost on a
+// page that only reads the first: the fields say the same things.
+function tellParent(what) {
+  if (window.parent === window) return;
+  try {
+    window.parent.postMessage({
+      gscore: what,
+      title: state.info?.title || "",
+      tunes: (state.info?.tunes || []).length,
+      // How tall the music turned out to be, so that a page sizing a
+      // frame for it need not guess. A frame guessed at is a frame that
+      // cuts the second system in half.
+      //
+      // Two numbers, because they answer different questions: system is
+      // one system of every instrument, which is what a frame should
+      // open at, and height is all of the music, which is what a page
+      // that wants no scrollbar at all would need.
+      system: oneSystem(),
+      height: Math.ceil(document.documentElement.scrollHeight),
+    }, "*");
+  } catch (_) {
+    /* a parent on another origin that refuses messages is not an error */
+  }
 }
 
 main();

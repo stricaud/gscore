@@ -272,10 +272,15 @@ test("the empty drawing really is empty", () => {
   assert.ok(m, "drawScore no longer asks for an empty drawing");
   const box = new Function("return " + m[1])();
 
-  const state = { zoom: 8, mode: "strip" };
-  const scope = { state, URLSearchParams, Date, Math };
+  // Not a player: the editor's own strip, which is what this is about.
+  // A player asks for the music wrapped to its frame instead, which is
+  // playerWidth's business and is tested where that is.
+  const state = { zoom: 8, mode: "strip", player: false };
+  const scope = { state, URLSearchParams, Date, Math,
+    $: () => null, window: { innerWidth: 1000 } };
   const api = new Function(...Object.keys(scope),
-    grab("viewParams") + "\n" + grab("scoreURL") + "\nreturn { scoreURL };"
+    grab("viewParams") + "\n" + grab("playerWidth") + "\n" +
+    grab("scoreURL") + "\nreturn { scoreURL };"
   )(...Object.values(scope));
   const q = new URLSearchParams(api.scoreURL({ window: box }).split("?")[1]);
 

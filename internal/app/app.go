@@ -659,6 +659,39 @@ func (a *App) viewOptions(r *http.Request) (*model.Score, engrave.Options, svg.O
 	case "page":
 		eopt.Mode = engrave.Paginated
 	}
+	// Wrapped to fit a given width on the screen, in pixels.
+	//
+	// The caller knows how much room it has and not how much of that the
+	// margins take, which is an engraving setting; the arithmetic belongs
+	// here, where both are known. A score embedded in a page asks for
+	// this: a frame is a few hundred pixels wide and an unbroken strip is
+	// as wide as the tune is long.
+	if v := r.URL.Query().Get("fit"); v != "" {
+		if px, err := strconv.ParseFloat(v, 64); err == nil && px > 0 {
+			w := px/ropt.StaffSpace - 2*eopt.Spacings.Margin
+			// A floor, not a refusal. A frame narrower than a bar of music
+			// is still the room there is, and ignoring what it asked for
+			// left the score at its full width — the one layout that
+			// certainly does not fit. Twenty spaces is about two bars, and
+			// below that the music overflows and the frame scrolls, which
+			// is at least what a reader can see the edge of.
+			if w < 20 {
+				w = 20
+			}
+			eopt.LineWidth = w
+		}
+	}
+
+	// The music without its title block.
+	//
+	// For a score embedded in a page: the page already says what the
+	// piece is, in its own type, and the title block engraved inside the
+	// frame takes the top of it — so what a reader sees first is a name
+	// they have just read and no music. The title is still the score's;
+	// it is handed to the page instead, which can set it as it likes.
+	if r.URL.Query().Get("title") == "0" {
+		eopt.ShowTitle = false
+	}
 	if v := r.URL.Query().Get("width"); v != "" {
 		if f, err := strconv.ParseFloat(v, 64); err == nil && f >= 40 && f <= 600 {
 			eopt.LineWidth = f

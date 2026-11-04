@@ -520,6 +520,20 @@ paths:
       tags: [export, render]
       summary: The score as SVG
       parameters:
+        - name: fit
+          in: query
+          description: >-
+            Wrap the music to this many pixels of screen, margins
+            included. For a score in a frame, which is a few hundred
+            pixels wide while an unbroken strip is as wide as the tune is
+            long.
+          schema: { type: number }
+        - name: title
+          in: query
+          description: >-
+            `0` leaves the score's title block out, for a score shown
+            inside a page that names the piece itself.
+          schema: { type: string, enum: ["0", "1"] }
         - name: mode
           in: query
           description: "`strip` is the editing view, one long system; `page` is paper."

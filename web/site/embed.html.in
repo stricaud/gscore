@@ -1,0 +1,169 @@
+<!--
+  The page that shows how to put music in a page.
+  gscore - a musical score editor
+  (C) Copyright 2026 Sebastien Tricaud. MIT licence; see LICENSE.
+
+  It is a tool rather than an explanation: the music is on the left, what
+  to paste is on the right, and what you paste is what you are looking
+  at. Somebody who came here to embed a tune can take the snippet and go.
+-->
+<h1>Embed it</h1>
+
+<p class="lead">Write the music into your page and load one script. gscore
+engraves it where it stands and plays it in the reader's own browser —
+nothing is uploaded, and there is no server behind any of it.</p>
+
+<div class="embed-tool">
+  <div class="embed-half">
+    <label for="abc"><b>The music</b> — ABC, MusicXML, or anything else
+      gscore reads</label>
+    <textarea id="abc" spellcheck="false" rows="12"></textarea>
+    <!-- Each label with the control it names, so a narrow page wraps
+         between the three and never between a label and its menu. -->
+    <p class="fine">
+      <span><label for="fmt">Written in</label>
+      <select id="fmt">
+        <option value="abc">ABC</option>
+        <option value="musicxml">MusicXML</option>
+        <option value="mscx">MuseScore (uncompressed)</option>
+        <option value="nwctxt">NoteWorthy (text)</option>
+      </select></span>
+      <span><label for="height">Tall</label>
+      <input id="height" type="number" min="80" max="1200" step="20" value="240"></span>
+      <span><label for="player">Showing</label>
+      <select id="player">
+        <option value="1">the score and a play button</option>
+        <option value="bare">the score alone, which plays when clicked</option>
+      </select></span>
+    </p>
+  </div>
+
+  <div class="embed-half">
+    <label for="snippet"><b>What to paste</b> — the script once per page,
+      the block once per tune</label>
+    <textarea id="snippet" rows="12" readonly spellcheck="false"></textarea>
+    <p class="fine">
+      <button id="copy-snippet" class="button" type="button">Copy it</button>
+      <span id="copied" role="status"></span>
+    </p>
+  </div>
+</div>
+
+<h2>What that gives you</h2>
+
+<div class="embed-demo" id="demo"></div>
+
+<h2>A format that is not text</h2>
+
+<p>A MuseScore file or a compressed MusicXML is a zip, and a zip cannot be
+written into a page as itself. Say how it is written and gscore reads it:</p>
+
+<pre><code>&lt;div class="gscore" data-format="mxl" data-encoding="base64"&gt;
+UEsDBBQAAAgAAAAAIQAuQhWCIgAAACIAAAAIAAAAbWltZXR5cGVhcHBsaWNh…
+&lt;/div&gt;</code></pre>
+
+<p>Which is what <code>base64 -w0 tune.mxl</code> gives you.</p>
+
+<h2>Markdown already does half of it</h2>
+
+<p>A fenced code block becomes <code>&lt;pre&gt;&lt;code
+class="language-abc"&gt;</code>, and that is a format marked up plainly
+enough to use. Point the script at it and the tunes in your documentation
+engrave themselves:</p>
+
+<pre><code>&lt;script src="@ROOT@app/embed.js"
+        data-selector="code[class^=language-abc]"&gt;&lt;/script&gt;</code></pre>
+
+<h2>The rest of it</h2>
+
+<p>Everything else — the <code>&lt;iframe&gt;</code> form, driving a score
+from your own page, the settings, and hosting gscore yourself — is in
+<a href="@ROOT@docs/embedding.html">Putting gscore in a page</a>.</p>
+
+<script src="@ROOT@app/embed.js" data-selector=".embed-demo-source"></script>
+<script>
+(function () {
+  "use strict";
+  const $ = (s) => document.querySelector(s);
+  // Absolute, because the snippet is going into somebody else's page:
+  // "app/embed.js" is this site's address for it and means nothing
+  // anywhere else. Taken from where this page is being read, so a copy
+  // of the site offers its own copy of the script.
+  const HERE = new URL("@ROOT@app/embed.js", location.href).href;
+  const EXAMPLE = [
+    "X:1",
+    "T:N° 1",
+    "M:C",
+    "L:1/4",
+    "K:C",
+    "c2 c'2 | b2 a2 | g2 f2 | e2 d2 :|",
+  ].join("\n");
+
+  // The piece the front page sent here, where it sent one: the address
+  // carries the music itself, exactly as the editor's links do.
+  function fromLink() {
+    const at = location.hash.indexOf("s=");
+    if (at < 0 || !window.gscoreShare) return null;
+    try {
+      const got = window.gscoreShare.decode(location.hash.slice(at + 2));
+      if (!got || !got.bytes) return null;
+      const text = new TextDecoder().decode(got.bytes);
+      // Only what a page can hold as text. Anything else is left to the
+      // example, rather than printing a zip into a textarea.
+      return /[\u0000-\u0008\u000e-\u001f]/.test(text) ? null : text;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  function snippet(abc, fmt, height, player) {
+    const attrs = ['class="gscore"'];
+    if (fmt !== "abc") attrs.push('data-format="' + fmt + '"');
+    if (height !== "240") attrs.push('data-height="' + height + '"');
+    if (player !== "1") attrs.push('data-player="' + player + '"');
+    return '<script src="' + HERE + '"><\/script>\n\n' +
+      "<div " + attrs.join(" ") + ">\n" + abc + "\n</div>";
+  }
+
+  // The demonstration is the snippet, run: the block is written into the
+  // page and the same script engraves it, so what is shown below cannot
+  // drift from what is offered above.
+  let run = 0;
+  function show() {
+    const abc = $("#abc").value.trim() || EXAMPLE;
+    const fmt = $("#fmt").value;
+    const height = $("#height").value || "240";
+    const player = $("#player").value;
+    $("#snippet").value = snippet(abc, fmt, height, player);
+
+    const demo = $("#demo");
+    demo.innerHTML = "";
+    const block = document.createElement("div");
+    block.className = "embed-demo-source";
+    block.dataset.format = fmt;
+    block.dataset.height = height;
+    block.dataset.player = player;
+    block.textContent = abc;
+    demo.appendChild(block);
+    if (window.gscoreEmbed) window.gscoreEmbed(demo);
+    run++;
+  }
+
+  $("#abc").value = fromLink() || EXAMPLE;
+  for (const id of ["#abc", "#fmt", "#height", "#player"]) {
+    $(id).addEventListener("change", show);
+  }
+  $("#abc").addEventListener("blur", show);
+  $("#copy-snippet").addEventListener("click", async () => {
+    try {
+      await navigator.clipboard.writeText($("#snippet").value);
+      $("#copied").textContent = "Copied.";
+    } catch (_) {
+      $("#snippet").select();
+      $("#copied").textContent = "Press copy — the text is selected.";
+    }
+    setTimeout(() => { $("#copied").textContent = ""; }, 2500);
+  });
+  show();
+})();
+</script>

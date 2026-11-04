@@ -71,7 +71,35 @@ func run(out, site, docsDir, samples, version string) error {
 	if err := writeGallery(out, site, pieces); err != nil {
 		return err
 	}
+	if err := writePage(out, site, "embed.html", "Embed it"); err != nil {
+		return err
+	}
 	return writeDocs(out, site, docsDir)
+}
+
+// writePage puts one of the site's own written pages into the shell the
+// documentation uses.
+//
+// The body is kept as HTML rather than as markdown because these pages
+// are tools and not prose: the embedding page has a textarea, a preview
+// and a script of its own, and none of that survives being written as
+// markdown.
+func writePage(out, site, name, title string) error {
+	body, err := os.ReadFile(filepath.Join(site, name+".in"))
+	if err != nil {
+		return err
+	}
+	// At the top of the site, so the shell's links are relative to here.
+	//
+	// The body's own @ROOT@ markers are filled in here: shellPage fills
+	// the shell's before the body goes into it, so a marker written in
+	// the body would come out as it stands.
+	page, err := shellPage(site, title, "",
+		strings.ReplaceAll(string(body), "@ROOT@", ""))
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(out, name), []byte(page), 0o644)
 }
 
 /*

@@ -260,6 +260,15 @@
       linkFor = base + "app/?score=../scores/" + current.src;
     }
     $("#open").href = linkFor;
+    // The embedding page takes the piece the same way the editor does,
+    // so "Embed it" is about the tune on the screen and not about an
+    // example.
+    const embed = $("#embed");
+    if (embed) {
+      embed.href = packed
+        ? "embed.html#s=" + packed
+        : "embed.html";
+    }
 
     if (packed && linkFor.length <= COMFORTABLE) {
       size.textContent = linkFor.length + " characters";

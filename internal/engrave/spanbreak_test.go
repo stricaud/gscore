@@ -12,6 +12,7 @@ package engrave
 
 import (
 	"math"
+	"sort"
 	"testing"
 
 	"github.com/stricaud/gscore/internal/model"
@@ -242,5 +243,129 @@ func TestABrokenCurveRunsToTheEndOfItsSystem(t *testing.T) {
 		if !found {
 			t.Errorf("system %d leaves a tie open but nothing reaches x=%.2f", i, end)
 		}
+	}
+}
+
+/*
+ * The brackets of a repeat.
+ *
+ * Three things were wrong with them at once in the Tico-Tico, and each
+ * was a different mistake: the height came from the whole system rather
+ * than the bars under the bracket, the ends were put at the next bar's
+ * first note rather than at the barline, and the number was written on
+ * the line instead of inside the bracket.
+ */
+
+// voltaScore is two endings over two bars, with the repeat between them.
+func voltaScore() *model.Score {
+	score := model.NewScore()
+	p := score.Parts[0]
+	for len(p.Measures) < 4 {
+		p.AppendMeasure()
+	}
+	for i, m := range p.Measures {
+		m.Voices[0].Elements = []model.Element{
+			&model.Note{Pitch: model.Pitch{Step: model.StepG, Octave: 4},
+				Dur: model.Duration{Num: 1, Den: 1}},
+		}
+		_ = i
+	}
+	p.Measures[1].Ending = &model.Ending{Numbers: []int{1}, Start: true, Stop: true}
+	p.Measures[1].RightBarline = model.BarRepeatEnd
+	p.Measures[2].Ending = &model.Ending{Numbers: []int{2}, Start: true, Stop: true}
+	return score
+}
+
+// bracketsOf finds the horizontal lines of the volta brackets: the long
+// level lines above the staff.
+func bracketsOf(lay *Layout, top float64) []Line {
+	var out []Line
+	for _, l := range lay.Lines {
+		if math.Abs(l.Y1-l.Y2) < 0.01 && l.Y1 < top-0.5 && l.X2-l.X1 > 2 {
+			out = append(out, l)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].X1 < out[j].X1 })
+	return out
+}
+
+func TestAVoltaClosesAtItsBarline(t *testing.T) {
+	lay := Engrave(voltaScore(), DefaultOptions())
+	top := lay.Hits[0].StaffTop
+	br := bracketsOf(lay, top)
+	if len(br) < 2 {
+		t.Fatalf("%d brackets were drawn, want two", len(br))
+	}
+	// The barline the first ending closes at: a repeat, drawn inside the
+	// bar rather than at the column where the next one starts.
+	var repeat float64
+	for _, b := range lay.Barlines {
+		if b.Measure == 1 {
+			repeat = b.X
+		}
+	}
+	if repeat == 0 {
+		t.Fatal("no barline was recorded for the first ending")
+	}
+	if math.Abs(br[0].X2-repeat) > 0.3 {
+		t.Errorf("the first bracket ends at %.2f and its barline is at %.2f",
+			br[0].X2, repeat)
+	}
+	// And the second begins after it, not where the first stopped.
+	if br[1].X1 <= br[0].X2 {
+		t.Errorf("the second bracket begins at %.2f, at or before the end "+
+			"of the first at %.2f", br[1].X1, br[0].X2)
+	}
+}
+
+// The number goes inside the bracket, under the line. Written on the
+// line, the bracket runs through the top of the digits.
+func TestTheVoltaNumberIsInsideTheBracket(t *testing.T) {
+	lay := Engrave(voltaScore(), DefaultOptions())
+	top := lay.Hits[0].StaffTop
+	br := bracketsOf(lay, top)
+	if len(br) == 0 {
+		t.Fatal("no bracket was drawn")
+	}
+	line := br[0].Y1
+	var number *Text
+	for i := range lay.Texts {
+		if lay.Texts[i].S == "1." {
+			number = &lay.Texts[i]
+		}
+	}
+	if number == nil {
+		t.Fatal("the first ending has no number")
+	}
+	// A text's baseline is under its letters, so the top of the digits is
+	// a cap height above it. All of it must be below the line.
+	capHeight := number.Size * 0.72
+	if number.Y-capHeight < line {
+		t.Errorf("the number's top is at %.2f and the bracket line at %.2f: "+
+			"the line goes through the digits", number.Y-capHeight, line)
+	}
+	// And inside the hook, not hanging below the bracket.
+	hook := DefaultOptions().Spacings.VoltaHook
+	if number.Y > line+hook+0.1 {
+		t.Errorf("the number's baseline is %.2f below the line, past the "+
+			"%.2f hook", number.Y-line, hook)
+	}
+}
+
+// A slur goes into the outline as the arc it is. As the box round its
+// ends and its control point it stood at its full height across its whole
+// width, and everything above it — bar numbers, and the volta brackets
+// above those — was lifted clear of a shape that is not there.
+func TestASlurIsMeasuredAsAnArcAndNotAsABox(t *testing.T) {
+	s := newSkyline(0, 20, 0, 4)
+	addCurve(s, Curve{X1: 0, Y1: 0, CX: 10, CY: -8, X2: 20, Y2: 0})
+	// At the ends the arc is at the staff; the box would be eight spaces
+	// tall there too.
+	if at := s.reach(0, 1, false); at < -2 {
+		t.Errorf("the arc is %.1f spaces tall at its left end", -at)
+	}
+	// And in the middle it really is high.
+	if at := s.reach(9, 11, false); at > -3 {
+		t.Errorf("the arc is only %.1f spaces tall in the middle", -at)
 	}
 }

@@ -263,6 +263,39 @@ func (e *engraver) noteSlur(at int) {
 	e.slurCurve[at] = true
 }
 
+// curveSteps is how many pieces a slur is measured in.
+//
+// Sixteen is enough that the error at the top of an arc is under a tenth
+// of a space at any width a slur is ever drawn, and few enough that a
+// score of some thousands of slurs costs nothing noticeable.
+const curveSteps = 16
+
+// addCurve puts a slur or a tie into an outline as the shape it is.
+//
+// It used to go in as the box round its ends and its control point, which
+// is a safe outline and the wrong one: an arc is only at its highest in
+// the middle, and the box is that high across the whole width. A slur
+// over three bars then stood seven spaces tall over the bar where it has
+// already come back down to the notes, and everything placed above it —
+// the bar numbers, and the volta brackets above those — was lifted clear
+// of a shape that is not there. The voltas of the Tico-Tico floated
+// fifteen spaces over the staff for want of this.
+//
+// Measured in pieces instead, each piece the box of its own span, which
+// is the curve to within a tenth of a space.
+func addCurve(s *skyline, c Curve) {
+	px, py := c.X1, c.Y1
+	for i := 1; i <= curveSteps; i++ {
+		t := float64(i) / curveSteps
+		u := 1 - t
+		x := u*u*c.X1 + 2*u*t*c.CX + t*t*c.X2
+		y := u*u*c.Y1 + 2*u*t*c.CY + t*t*c.Y2
+		s.add(math.Min(px, x), math.Max(px, x),
+			math.Min(py, y), math.Max(py, y))
+		px, py = x, y
+	}
+}
+
 // addSince registers everything drawn since a mark on an outline.
 func (e *engraver) addSince(s *skyline, from mark) {
 	e.addSinceExcept(s, from, nil)
@@ -294,11 +327,7 @@ func (e *engraver) addSinceExcept(s *skyline, from mark, skip map[int]bool) {
 		if skip != nil && skip[from.curves+i] {
 			continue // a slur, which other slurs are not placed against
 		}
-		// A quadratic never leaves the box of its ends and its control
-		// point, so the box is a safe outline and a cheap one.
-		lo := math.Min(c.Y1, math.Min(c.Y2, c.CY))
-		hi := math.Max(c.Y1, math.Max(c.Y2, c.CY))
-		s.add(math.Min(c.X1, c.X2), math.Max(c.X1, c.X2), lo, hi)
+		addCurve(s, c)
 	}
 	for _, t := range e.lay.Texts[from.texts:] {
 		w := textWidth(t.S, t.Size)

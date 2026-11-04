@@ -52,8 +52,12 @@ const (
 
 	// voltaRise is how far above the top staff of the system the brackets of
 	// a repeat are drawn, and voltaHook how far their ends turn down.
+	//
+	// The hook is as deep as it is so that the number fits inside the
+	// bracket: a 1. written tight under the line has the line through
+	// the top of its digits, and a hook shallower than the number leaves
+	// the number hanging out of the bracket it belongs to.
 	voltaRise = 3.0
-	voltaHook = 1.1
 )
 
 // resumeRoom is the blank held back at the head of a system, after the meter
@@ -418,43 +422,97 @@ func (e *engraver) drawOctave(o *openSpan, to float64, complete bool) {
 	})
 }
 
+// voltaHook and voltaGap are the measurements the brackets are drawn by,
+// which a score may set for itself: see Spacings.
+func (e *engraver) voltaHook() float64 {
+	if v := e.opt.Spacings.VoltaHook; v > 0 {
+		return v
+	}
+	return 1.6
+}
+
+func (e *engraver) voltaGap() float64 {
+	if v := e.opt.Spacings.VoltaGap; v > 0 {
+		return v
+	}
+	return 0.8
+}
+
 // drawVoltas draws the first-time and second-time brackets over a system.
 //
 // They are drawn once, above the top staff, because a repeat belongs to the
 // piece and not to one instrument in it: every player goes back at the same
 // bar. The measures are taken from the first part that has them, which is
 // where MusicXML keeps them too.
+//
+// A run of brackets at a time, rather than all of a system's at one height.
+// Within a run — a first ending and the second beside it — one height is
+// right, and a bracket that stepped up and down over the bars it covers
+// would not read as one bracket. Across a whole system it is wrong, and in
+// the editor's strip, where the system is the entire piece, it is badly
+// wrong: the brackets at bar 85 of the Tico-Tico were lifted fifteen staff
+// spaces to clear the highest note anywhere in the piece, and floated there
+// over nothing.
 func (e *engraver) drawVoltas(parts []*model.Part, columns []float64, start, end int) {
 	if len(parts) == 0 || end <= start {
 		return
 	}
-	// Nothing to draw unless some bar of this system carries a bracket; a
-	// system without one must not reserve a row for it.
-	any := false
-	for _, p := range parts {
-		for mi := start; mi < end && mi < len(p.Measures); mi++ {
-			if p.Measures[mi].Ending != nil {
-				any = true
+	has := func(mi int) bool {
+		for _, p := range parts {
+			if mi < len(p.Measures) && p.Measures[mi].Ending != nil {
+				return true
 			}
 		}
+		return false
 	}
-	if !any {
-		return
+	for mi := start; mi < end; mi++ {
+		if !has(mi) {
+			continue
+		}
+		run := mi
+		for run+1 < end && has(run+1) {
+			run++
+		}
+		first, last := mi, run
+		// The ink hangs below the line — the hook turns down and the
+		// number is written inside it — so the band is claimed as what
+		// is actually drawn, and the line goes at the top of it. Claimed
+		// above the line and drawn below it, a bracket reserved empty
+		// air and then hung its hook into the music underneath.
+		height := e.voltaHook() + 0.2
+		e.wait(waitingMark{
+			x0: columns[first-start], x1: e.voltaEnd(parts, columns, start, last),
+			height: height, gap: e.voltaGap(), rank: rankVolta,
+			draw: func(y float64) {
+				e.drawVoltasAt(parts, columns, start, first, last+1, y-height)
+			},
+		})
+		mi = run
 	}
-	e.wait(waitingMark{
-		x0: columns[0], x1: columns[len(columns)-1],
-		height: voltaHook + 0.4, gap: 0.8, rank: rankVolta,
-		draw: func(y float64) { e.drawVoltasAt(parts, columns, start, end, y) },
-	})
 }
 
-// drawVoltasAt draws the brackets once the row they share has been found.
+// voltaEnd is where the bracket over a bar stops: at the barline that ends
+// it, which is where the reader's eye leaves the ending.
 //
-// One height for the whole system's brackets, clear of everything under any
-// of them: a bracket that stepped up and down over the bars it covers would
-// not read as one bracket.
-func (e *engraver) drawVoltasAt(parts []*model.Part, columns []float64, start, end int, y float64) {
+// Not at the next bar's first note, which is what the column is. Between
+// the two lies the barline and the air around it, so a bracket closed on
+// the column overshot the repeat it belongs to by three staff spaces and
+// the next bracket began that far inside the bar after it.
+func (e *engraver) voltaEnd(parts []*model.Part, columns []float64, start, mi int) float64 {
+	next := columns[mi-start+1]
+	for _, p := range parts {
+		if mi < len(p.Measures) {
+			_, right := e.barlineRoom(p.Measures[mi].RightBarline)
+			return e.barlineAt(next, right)
+		}
+	}
+	return next
+}
+
+// drawVoltasAt draws the brackets of one run once its height is known.
+func (e *engraver) drawVoltasAt(parts []*model.Part, columns []float64, start, from, to int, y float64) {
 	t := e.opt.Defaults.StaffLineThickness * 1.4
+	depth := e.voltaHook()
 
 	var open *model.Ending
 	openX := 0.0
@@ -465,41 +523,56 @@ func (e *engraver) drawVoltasAt(parts []*model.Part, columns []float64, start, e
 		}
 		e.lay.Lines = append(e.lay.Lines,
 			Line{X1: openX, Y1: y, X2: x, Y2: y, Thickness: t},
-			Line{X1: openX, Y1: y, X2: openX, Y2: y + voltaHook, Thickness: t})
+			Line{X1: openX, Y1: y, X2: openX, Y2: y + depth, Thickness: t})
 		if hook && !open.Open {
 			e.lay.Lines = append(e.lay.Lines,
-				Line{X1: x, Y1: y, X2: x, Y2: y + voltaHook, Thickness: t})
+				Line{X1: x, Y1: y, X2: x, Y2: y + depth, Thickness: t})
 		}
 		if s := open.Label(); s != "" {
+			// Inside the bracket and under the line, not on it.
+			// The number is sized by the hook it sits in, so that
+			// changing the one does not leave the other hanging out of
+			// the bracket.
 			e.lay.Texts = append(e.lay.Texts, Text{
-				S: s, X: openX + 0.5, Y: y + voltaHook - 0.15, Size: 1.9, Anchor: "start",
+				S: s, X: openX + 0.5, Y: y + depth*0.9,
+				Size: depth, Anchor: "start",
 			})
 		}
 		open = nil
 	}
 
-	for mi := start; mi < end; mi++ {
-		var end *model.Ending
+	for mi := from; mi < to; mi++ {
+		var ending *model.Ending
 		for _, p := range parts {
 			if mi < len(p.Measures) && p.Measures[mi].Ending != nil {
-				end = p.Measures[mi].Ending
+				ending = p.Measures[mi].Ending
 				break
 			}
 		}
-		if end == nil {
+		if ending == nil {
 			continue
 		}
-		if end.Start {
-			closeAt(columns[mi-start], false)
-			open, openX = end, columns[mi-start]
+		if ending.Start {
+			// A bracket already open ends at the barline of the bar
+			// before this one, with its hook: a first ending closes at
+			// the repeat it sends the player back from, and the second
+			// begins after it. Closed at this bar's column instead, the
+			// two met three spaces inside the second ending and the
+			// repeat sign sat under the first ending's bracket.
+			if mi > from {
+				closeAt(e.voltaEnd(parts, columns, start, mi-1), true)
+			} else {
+				closeAt(columns[mi-start], false)
+			}
+			open, openX = ending, columns[mi-start]
 		}
-		if end.Stop {
-			closeAt(columns[mi-start+1], true)
+		if ending.Stop {
+			closeAt(e.voltaEnd(parts, columns, start, mi), true)
 		}
 	}
-	// A bracket still open at the end of the line is cut at the margin and
-	// has no closing hook; the next system opens one again.
-	closeAt(columns[end-start], false)
+	// A bracket still open at the end of the run is cut where the run
+	// ends and has no closing hook; the next system opens one again.
+	closeAt(e.voltaEnd(parts, columns, start, to-1), false)
 }
 
 /*

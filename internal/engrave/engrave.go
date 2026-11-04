@@ -1362,7 +1362,7 @@ func (e *engraver) systemMarkRoom(parts []*model.Part, start, end int) float64 {
 		need += 2.4
 	}
 	if hasVolta {
-		need += voltaHook + 1.2
+		need += e.voltaHook() + 1.2
 	}
 	if e.opt.ShowMeasureNumbers && (start > 0 || e.opt.Mode == Strip) {
 		need += measureNumberSize + 0.8

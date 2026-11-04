@@ -48,6 +48,8 @@
       <button id="play" class="play">Play it</button>
       <button id="copy" class="button">Copy the link</button>
       <a id="open" class="button" href="app/">Open it in the editor</a>
+      <!-- The same piece, as something to put in a page of your own. -->
+      <a id="embed" class="button" href="embed.html">Embed it</a>
       <a id="file" class="button" href="scores/" download>Download the page</a>
       <p id="said" role="status"></p>
       <p class="fine">

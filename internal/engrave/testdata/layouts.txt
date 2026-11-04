@@ -2,12 +2,12 @@
 # drawing, and how many marks are on the page. Written by
 #     go test ./internal/engrave -run Golden -update
 # A diff here is a change in the engraver. Read it before committing.
-abc/boite-musique.abc 84a778127d158b86 514
+abc/boite-musique.abc af8f09d19049c598 514
 abc/decoration.abc dd0d53d1a96528ca 31
 abc/pitch.abc 7cf41b23d8ff2a5e 227
-abc/sunshine.abc 31303b321c36b2eb 136
-samples/altes-10e-solo.abc 2d667dd0d58c27c5 9839
-samples/boite-musique.abc 84a778127d158b86 514
+abc/sunshine.abc b40ebe5a78a4e63c 136
+samples/altes-10e-solo.abc c5124b9031adcdae 9839
+samples/boite-musique.abc af8f09d19049c598 514
 suite/01a-Pitches-Pitches.musicxml 90d22d2bc8924919 555
 suite/01b-Pitches-Intervals.musicxml 0c3bedd724616c0a 412
 suite/01c-Pitches-NoVoiceElement.musicxml eac9833cd7fda241 13
@@ -94,14 +94,14 @@ suite/33b-Spanners-Tie.musicxml 35bb1a123552be56 15
 suite/33c-Spanners-Slurs.musicxml 75db1eba23b087e1 44
 suite/33d-Spanners-OctaveShifts.musicxml 9383ede393d11aa5 50
 suite/33e-Spanners-OctaveShifts-InvalidSize.musicxml a6a26e93b45bed66 29
-suite/33f-Trill-EndingOnGraceNote.musicxml 296faa88c18cc655 42
+suite/33f-Trill-EndingOnGraceNote.musicxml 03c9a6a494642968 42
 suite/33g-Slur-ChordedNotes.musicxml fec9a9712ea7b2de 23
 suite/33h-Spanners-Glissando.musicxml 616de9fc292ddbd4 56
 suite/33i-Ties-NotEnded.musicxml 4e3515703cd81d7d 22
 suite/33j-Beams-Tremolos.musicxml 6cd67fc325e1b2cb 66
 suite/33k-Tie-Types.musicxml ec9a0dfbe2f8132d 63
 suite/34a-Print-Object-Spanners.musicxml 8d1f94845efed9f9 133
-suite/34b-Colors.musicxml 9dac2b1cbee9fd2a 274
+suite/34b-Colors.musicxml 5058f02bd9615d7a 274
 suite/34c-Font-Size.musicxml 17c2d1ce9997fc3e 199
 suite/34d-Note-Attributes.musicxml 7940fae8b5386f48 66
 suite/41a-MultiParts-Partorder.musicxml 45938c76c7659a20 59
@@ -118,13 +118,13 @@ suite/41j-PartNameDisplay-Multiple-DisplayText-Children.musicxml 03714a78934d725
 suite/41k-PartName-Print.musicxml f02000eaf2e248dc 16
 suite/41l-GroupNameDisplay-Override.musicxml 394e1a5af4372582 58
 suite/42a-MultiVoice-TwoVoicesOnStaff-Lyrics.musicxml 506d48747d07142c 54
-suite/42b-MultiVoice-MidMeasureClefChange.musicxml 88caa65599117df6 109
+suite/42b-MultiVoice-MidMeasureClefChange.musicxml f0e9ec8615b9fe4a 109
 suite/43a-PianoStaff.musicxml a306b3498cde7a5e 25
 suite/43b-MultiStaff-DifferentKeys.musicxml 37990b03992dd83e 29
 suite/43c-MultiStaff-DifferentKeysAfterBackup.musicxml 37990b03992dd83e 29
 suite/43d-MultiStaff-StaffChange.musicxml 5aef0356bb94eb83 77
 suite/43e-Multistaff-ClefDynamics.musicxml e7e27760e28123ac 116
-suite/43f-MultiStaff-Lyrics.musicxml 803758101b4b05ed 66
+suite/43f-MultiStaff-Lyrics.musicxml 059c646594aa1e66 66
 suite/43g-MultiStaff-PartSymbol.musicxml 09809c8e9b770224 58
 suite/43h-MultiStaff-Chords.musicxml 8c0298cf3ad53d3c 174
 suite/43i-MultiStaff-StaffChange-SingleVoice.musicxml c402e5aa87048631 44

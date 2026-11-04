@@ -82,6 +82,16 @@ type Spacings struct {
 	StaffGap  float64
 	SystemGap float64
 
+	// VoltaHook is how far the ends of a repeat's bracket turn down, and
+	// VoltaGap the air between the bracket and whatever is under it.
+	//
+	// The hook is also what the number inside the bracket is sized by: a
+	// 1. has to fit within it, or it hangs out of the bracket it belongs
+	// to. They are settable because how far a volta stands off the music
+	// is exactly the sort of thing an engraver has a house style about.
+	VoltaHook float64
+	VoltaGap  float64
+
 	// Margin is the blank border around the music.
 	Margin float64
 
@@ -150,6 +160,8 @@ func DefaultSpacings() Spacings {
 		// and a page held less music than it should. This is a floor, not
 		// the answer — the gap below opens as far as the music between the
 		// staves actually needs.
+		VoltaHook: 1.6,
+		VoltaGap:  0.8,
 		StaffGap:  7,
 		SystemGap: 5,
 

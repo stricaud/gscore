@@ -59,7 +59,7 @@ for f in "$root"/internal/app/ui/*; do
     [ "$name" = "index.html" ] && continue   # patched below, not copied
     cp "$f" "$out/app/"
 done
-cp "$root/web/boot.js" "$site/share.js" "$out/app/"
+cp "$root/web/boot.js" "$site/share.js" "$site/embed.js" "$out/app/"
 cp "$root/internal/brand/gilbert.png" "$root/internal/brand/gilbert.svg" "$out/app/"
 cp "$root/internal/smufl/data/Bravura.otf" "$out/app/font.otf"
 

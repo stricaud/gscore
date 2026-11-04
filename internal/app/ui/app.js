@@ -14985,6 +14985,8 @@ async function main() {
 //   { gscore: "toggle" }                 play, or pause where it is
 //   { gscore: "tune",  value: 3 }       show tune 3 of a book
 //   { gscore: "load",  value: "x.abc" } open another score
+//   { gscore: "open",  value: "X:1\n…", name: "tune.abc" }
+//                                       one written into the page itself
 //   { gscore: "zoom",  value: 10 }
 //
 // It sends two of its own back to whoever embedded it: "ready" once the score
@@ -14999,6 +15001,21 @@ function setupEmbedMessages() {
       case "toggle": await togglePlay(); break;
       case "tune": await selectTune(Number(m.value) || 0); break;
       case "load": await loadFromURL(String(m.value)); break;
+      // A score written into the page rather than kept in a file.
+      //
+      // Whatever arrives is handed to the reader the name belongs to,
+      // which is how a file dropped on the window is read too — so every
+      // format gscore knows works here, and one it learns later will too.
+      // Text for ABC and MusicXML, bytes for the zipped ones: a
+      // MuseScore file cannot be written into a page as itself, so a
+      // page sends it decoded. Both are what File takes.
+      case "open": {
+        const what = typeof m.value === "string"
+          ? String(m.value)
+          : new Uint8Array(m.value);
+        await openFile(new File([what], String(m.name || "tune.abc")));
+        break;
+      }
       case "zoom": setZoom(Number(m.value) || state.zoom); break;
     }
   });

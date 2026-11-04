@@ -382,6 +382,8 @@ const MESSAGES = {
   "Remove this measure": "Supprimer cette mesure",
   "Interface size": "Taille de l'interface",
   "Flute fingerings…": "Doigtés de flûte…",
+  "Depth of a repeat bracket's ends": "Profondeur des crochets de reprise",
+  "Air under a repeat bracket": "Air sous le crochet de reprise",
   "Flute fingerings": "Doigtés de flûte",
   "Fingerings": "Doigtés",
   "Trills": "Trilles",

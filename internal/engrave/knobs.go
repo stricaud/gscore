@@ -179,6 +179,14 @@ var Knobs = []Knob{
 		func(o *Options) float64 { return o.Defaults.TupletBracketThickness },
 		func(o *Options, v float64) { o.Defaults.TupletBracketThickness = v }},
 
+	// Repeats
+	{"voltaHook", "Depth of a repeat bracket's ends", "Barlines", 0.8, 3, "spaces",
+		func(o *Options) float64 { return o.Spacings.VoltaHook },
+		func(o *Options, v float64) { o.Spacings.VoltaHook = v }},
+	{"voltaGap", "Air under a repeat bracket", "Barlines", 0.2, 4, "spaces",
+		func(o *Options) float64 { return o.Spacings.VoltaGap },
+		func(o *Options, v float64) { o.Spacings.VoltaGap = v }},
+
 	// The page
 	{"staffGap", "Space between staves", "The page", 3, 20, "spaces",
 		func(o *Options) float64 { return o.Spacings.StaffGap },

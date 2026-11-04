@@ -77,6 +77,11 @@ frame.contentWindow.postMessage({ gscore: "stop" }, "*");
 frame.contentWindow.postMessage({ gscore: "toggle" }, "*");
 frame.contentWindow.postMessage({ gscore: "tune", value: 3 }, "*");
 frame.contentWindow.postMessage({ gscore: "load", value: "other.abc" }, "*");
+// A score written into your page rather than kept in a file. The value is
+// the text, or the bytes for a format that is not text; the name picks the
+// reader, as a filename does everywhere else in gscore.
+frame.contentWindow.postMessage(
+  { gscore: "open", value: "X:1\nK:C\nc d e f|", name: "tune.abc" }, "*");
 frame.contentWindow.postMessage({ gscore: "zoom", value: 11 }, "*");
 ```
 
@@ -95,6 +100,87 @@ window.addEventListener("message", (e) => {
 
 Wait for `ready` before sending anything: the core is a WebAssembly module and
 takes a moment to start.
+
+## Music written into the page
+
+A file beside the page is the wrong shape for eight bars in the middle of a
+paragraph: a file, a path and a deploy step for four lines of ABC, and the
+music ends up somewhere other than the writing. So write it where it belongs
+and load one script:
+
+```html
+<script src="https://stricaud.github.io/gscore/app/embed.js"></script>
+
+<div class="gscore">
+X:1
+T:N&deg; 1
+M:C
+L:1/4
+K:C
+c2 c'2 | b2 a2 | g2 f2 | e2 d2 :|
+</div>
+```
+
+Everything the script finds is engraved where it stands. The text is read with
+`textContent`, so HTML entities are letters by the time gscore sees them —
+`&deg;` is ° — and the block's own indentation comes off, so the music can be
+indented to match the page around it.
+
+The source stays in the page, hidden, with the frame beside it. A reader who
+wants the notes can still find them, and so can a search engine.
+
+### Saying what it is
+
+gscore reads several formats and the text does not always say which. The
+element does, in whichever way the page already says such things:
+
+```html
+<div class="gscore" data-format="musicxml">…</div>
+<pre><code class="language-abc">…</code></pre>
+```
+
+The second is what a fenced code block in markdown already produces, so the
+tunes in a page of documentation engrave themselves:
+
+```html
+<script src="…/embed.js" data-selector="code[class^=language-abc]"></script>
+```
+
+### Something that is not text
+
+A MuseScore file or a compressed MusicXML is a zip, and a zip cannot be
+written into a page as itself. Say how it is written:
+
+```html
+<div class="gscore" data-format="mxl" data-encoding="base64">
+UEsDBBQAAAgAAAAAIQAuQhWCIgAAACIAAAAIAAAAbWltZXR5cGU…
+</div>
+```
+
+which is what `base64 -w0 tune.mxl` gives you.
+
+### The settings
+
+| On the element | What it does |
+|---|---|
+| `data-format=abc` | What the music is written in; the default is ABC |
+| `data-encoding=base64` | The text is base64; decode it first |
+| `data-height=240` | How tall the frame is, in pixels |
+| `data-player=1` | As `player=` above: `1` or `bare` |
+| `data-zoom=N` | Staff space in pixels |
+| `data-autoplay=1`, `data-loop=1`, `data-tune=N` | As in the address |
+| `data-name=x.abc` | The filename, where the format alone is not enough |
+
+| On the script tag | What it does |
+|---|---|
+| `data-selector=…` | What to look for; the default is `.gscore` |
+| `data-app=URL` | Where gscore is, for a page hosting its own copy of this script |
+
+A page that writes music into itself later can engrave it with
+`window.gscoreEmbed(element)`.
+
+There is a page about all of this, with the snippet written for you as you
+type, at [stricaud.github.io/gscore/embed.html](https://stricaud.github.io/gscore/embed.html).
 
 ## On the same page rather than in a frame
 

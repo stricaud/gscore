@@ -235,6 +235,31 @@ func TestAFlatPhraseKeepsItsModestArch(t *testing.T) {
 // run through a notehead. The Altes solo is the hardest case in the
 // samples — a flute study of long slurred runs climbing two octaves at a
 // time — and it is where this was first seen.
+// nearestStaff says which staff a y belongs to: the one whose lines it is
+// nearest, measuring from the band itself so that anything between two
+// staves goes to the closer.
+func nearestStaff(lay *Layout, y float64) int {
+	best, at := math.Inf(1), -1
+	seen := map[float64]int{}
+	for _, h := range lay.Hits {
+		if _, ok := seen[h.StaffTop]; ok {
+			continue
+		}
+		seen[h.StaffTop] = len(seen)
+		d := 0.0
+		switch {
+		case y < h.StaffTop:
+			d = h.StaffTop - y
+		case y > h.StaffTop+h.StaffHeight:
+			d = y - (h.StaffTop + h.StaffHeight)
+		}
+		if d < best {
+			best, at = d, seen[h.StaffTop]
+		}
+	}
+	return at
+}
+
 func TestNoSlurInTheSamplesCutsANote(t *testing.T) {
 	files, err := filepath.Glob("../../samples/*.abc")
 	if err != nil || len(files) == 0 {
@@ -294,12 +319,16 @@ func TestNoSlurInTheSamplesCutsANote(t *testing.T) {
 				if !ok {
 					continue
 				}
-				// Only the staff the curve is on: staves sit about ten
-				// spaces apart, and a curve says nothing about the notes
-				// on the next one down.
-				lo := math.Min(math.Min(c.Y1, c.Y2), c.CY) - 6
-				hi := math.Max(math.Max(c.Y1, c.Y2), c.CY) + 6
-				if g.Y < lo || g.Y > hi {
+				// Only the staff the curve is on. A curve says nothing
+				// about the notes on the next staff down, and on a score
+				// of three staves they are close enough to be caught by
+				// any rule of thumb about distance: this one used to
+				// allow six spaces either side of the curve, and a
+				// notehead on the staff above came inside that by a
+				// tenth of a space the moment the staves were packed
+				// slightly closer. Each is assigned to the staff it is
+				// nearest, which is what "the staff it is on" means.
+				if nearestStaff(lay, (c.Y1+c.Y2)/2) != nearestStaff(lay, g.Y) {
 					continue
 				}
 				cut := y - (g.Y - 0.5)

@@ -479,3 +479,40 @@ footer p { max-width: var(--wide); margin: 0 auto 6px; }
   .loading .gilbert img,
   .loading .gilbert::after { animation: none; }
 }
+
+/* ---- the embedding page ---- */
+
+/* The music on the left and what to paste on the right, because the one
+   is the answer to the other: a reader here wants to see the two side by
+   side and take the right-hand one away. They stack on a narrow screen,
+   where side by side is two columns of nothing. */
+.embed-tool {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1.2rem;
+  margin: 1.5rem 0;
+}
+@media (max-width: 760px) {
+  .embed-tool { grid-template-columns: 1fr; }
+}
+.embed-half label { display: block; margin-bottom: .35rem; }
+.embed-half textarea {
+  width: 100%;
+  font: 13px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
+  padding: .6rem;
+  border: 1px solid var(--line, #ccc);
+  border-radius: 6px;
+  background: #fff;
+  color: #1c1a18;
+  resize: vertical;
+}
+.embed-half .fine { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; }
+.embed-half .fine label { display: inline; margin: 0; }
+/* A label and the control it names travel together when the row wraps. */
+.embed-half .fine > span {
+  display: inline-flex;
+  align-items: center;
+  gap: .35rem;
+}
+.embed-demo { margin: 1rem 0 2rem; }
+.embed-demo iframe { border: 1px solid var(--line, #ccc); border-radius: 6px; }

@@ -174,6 +174,17 @@ type Tempo struct {
 	// nearly every engraved score writes one that follows a word. Altes
 	// prints "All° Moderato (♩ = 116)", and so did everybody else in 1888.
 	Parens bool
+
+	// Silent keeps the number off the page while still playing at it.
+	//
+	// "Allegro Moderato" over a bar is an instruction to a player and a
+	// speed to a sequencer, and most scores print only the words. A file
+	// says so by giving a speed with no metronome mark to print: MusicXML
+	// writes <sound tempo="114"/> under the word and nothing else, which
+	// is what every editor does for a tempo the user did not ask to see.
+	// Drawing a crotchet and a number there puts a mark on the page that
+	// nobody wrote.
+	Silent bool
 }
 
 // Identity is the bibliographic header of a score, from the 0.0.9 Identity_t.

@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"io"
 	"strconv"
+	"strings"
 
 	"github.com/stricaud/gscore/internal/model"
 	"github.com/stricaud/gscore/internal/version"
@@ -56,9 +57,30 @@ func build(s *model.Score) *scorePartwise {
 		doc.Ident.Creators = append(doc.Ident.Creators,
 			creator{Type: "composer", Name: s.Identity.Composer})
 	}
+	// The subtitle, where the format has somewhere for it.
+	//
+	// Not as a creator: a subtitle is not a person, "subtitle" is not one
+	// of the kinds of creator the specification lists, and nothing else
+	// reading the file would have found it there — gscore included, which
+	// is how a file gscore wrote came back without the subtitle it went
+	// out with. It belongs in the credits, which are what is printed on
+	// the first page, and in <work-number>, which is where a catalogue
+	// number goes and is what a subtitle most often holds.
 	if s.Identity.Subtitle != "" {
-		doc.Ident.Creators = append(doc.Ident.Creators,
-			creator{Type: "subtitle", Name: s.Identity.Subtitle})
+		doc.Credits = append(doc.Credits, creditElem{
+			Type:  []string{"subtitle"},
+			Words: []string{s.Identity.Subtitle},
+		})
+		if doc.Work == nil {
+			doc.Work = &work{}
+		}
+		doc.Work.Number = s.Identity.Subtitle
+	}
+	if s.Identity.Composer != "" {
+		doc.Credits = append(doc.Credits, creditElem{
+			Type:  []string{"composer"},
+			Words: strings.Split(s.Identity.Composer, "\n"),
+		})
 	}
 	doc.Ident.Rights = s.Identity.Copyright
 
@@ -110,17 +132,48 @@ func buildPart(s *model.Score, p *model.Part, id string, index, divisions int) x
 			opening = nil
 		}
 
-		// The clef, key and meter are stated once, on the first measure.
-		if mi == 0 {
+		// The clef, key and meter: stated in full on the first measure,
+		// and again wherever the music changes one of them.
+		//
+		// They used to be written once and never again, which was the
+		// reading of them said back: a piece that changes key or meter
+		// halfway through came out of gscore having changed neither, and
+		// a file of three movements was written as one.
+		switch {
+		case mi == 0:
 			c := clefSigns[p.Clef]
 			xm.add(measureItem{Attributes: &attributes{
 				Divisions: divisions,
-				Key:       &key{Fifths: p.Key.Fifths, Mode: modeNames[p.Key.Mode]},
-				Time:      buildTime(p.Time),
+				Keys:      []key{{Fifths: p.Key.Fifths, Mode: modeNames[p.Key.Mode]}},
+				Times:     []time{*buildTime(p.Time)},
 				Clefs:     []clef{c},
 			}})
 			if index == 0 && s.Tempo.BPM > 0 {
 				d := buildTempo(s.Tempo)
+				xm.add(measureItem{Direction: &d})
+			}
+		case m.Key != nil || m.Time != nil || m.Clef != nil:
+			a := &attributes{}
+			if m.Key != nil {
+				a.Keys = []key{{
+					Fifths: m.Key.Fifths, Mode: modeNames[m.Key.Mode],
+				}}
+			}
+			if m.Time != nil {
+				a.Times = []time{*buildTime(*m.Time)}
+			}
+			if m.Clef != nil {
+				a.Clefs = []clef{clefSigns[*m.Clef]}
+			}
+			xm.add(measureItem{Attributes: a})
+		}
+
+		// And a change of speed, on the bar it is written over. Like the
+		// mark at the head of the score it belongs to the piece, so it is
+		// written once, on the first part.
+		if mi > 0 && index == 0 {
+			if t := s.TempoChangeAt(mi); t != nil {
+				d := buildTempo(*t)
 				xm.add(measureItem{Direction: &d})
 			}
 		}
@@ -136,7 +189,7 @@ func buildPart(s *model.Score, p *model.Part, id string, index, divisions int) x
 		if text := marks[mi]; index == 0 && text != "" {
 			d := direction{
 				Placement: "above",
-				Type:      directionType{Rehearsal: text},
+				Types:     []directionType{{Rehearsal: text}},
 			}
 			xm.add(measureItem{Direction: &d})
 		}
@@ -183,7 +236,7 @@ func buildDynamic(d model.Dynamic) direction {
 	dyn.set(d)
 	return direction{
 		Placement: "below",
-		Type:      directionType{Dynamics: dyn},
+		Types:     []directionType{{Dynamics: dyn}},
 		Sound:     &sound{Dynamics: float64(d.Velocity()) * 100 / 90},
 	}
 }
@@ -214,9 +267,17 @@ func buildTempo(t model.Tempo) direction {
 	// A sound element carries the tempo in quarter notes per minute, which is
 	// what a player reads; the metronome mark is what gets printed.
 	qpm := float64(t.BPM) * t.Unit.Float() * 4
+	dt := directionType{Metronome: m, Words: words(t.Text)}
+	// A speed that is played and not printed: the word stands over the
+	// bar and the number is only in the sound. Writing the metronome mark
+	// anyway would put a crotchet and a number on a page that had none,
+	// and the next read would believe it. See model.Tempo.Silent.
+	if t.Silent {
+		dt.Metronome = nil
+	}
 	return direction{
 		Placement: "above",
-		Type:      directionType{Metronome: m, Words: t.Text},
+		Types:     []directionType{dt},
 		Sound:     &sound{Tempo: qpm},
 	}
 }

@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -148,20 +149,7 @@ func convert(doc *scorePartwise, lg *log) (*model.Score, error) {
 	s := &model.Score{
 		Tempo: model.Tempo{BPM: 120, Unit: model.Duration{Num: 1, Den: 4}},
 	}
-	if doc.Work != nil {
-		s.Identity.Title = doc.Work.Title
-	}
-	if doc.Ident != nil {
-		s.Identity.Copyright = doc.Ident.Rights
-		for _, c := range doc.Ident.Creators {
-			switch c.Type {
-			case "composer":
-				s.Identity.Composer = c.Name
-			case "subtitle":
-				s.Identity.Subtitle = c.Name
-			}
-		}
-	}
+	readHeader(s, doc)
 
 	names := map[string]string{}
 	programs := map[string]model.Instrument{}
@@ -187,7 +175,15 @@ func convert(doc *scorePartwise, lg *log) (*model.Score, error) {
 		}
 	}
 
-	tempoSet := false
+	// Where the speed is set, by the bar it is set at.
+	//
+	// Kept by bar rather than applied as it is read, because a tempo
+	// belongs to the piece and not to a staff: a score writes "a tempo"
+	// over the top line only, and a part copied out of it writes the same
+	// mark on its own line. Gathering them all and settling afterwards
+	// means the first part to mention a bar speaks for everybody, and a
+	// second saying the same thing changes nothing.
+	tempoAt := map[int]model.Tempo{}
 	// The rehearsal marks, by the bar they name. Collected as the parts
 	// are read and written onto every staff once they are all in, because
 	// the mark belongs to the bar and not to whichever part the file
@@ -231,7 +227,41 @@ func convert(doc *scorePartwise, lg *log) (*model.Score, error) {
 		// What the last bar was called, for noticing where the file's
 		// own numbering stops simply counting on.
 		counted := 0
+		// What each staff is written in as the reading stands.
+		//
+		// A signature is not a property of a part: a piece changes key and
+		// meter, a hand drops into the bass clef and comes back, and a
+		// collection like this one is three movements in a single file,
+		// each with a key and a meter of its own. All of that used to be
+		// written onto the part, where each change overwrote the last —
+		// so the whole piece was drawn in whatever the file happened to
+		// say last. Altès's 10me Solo opens in E flat and 3/4 and came out
+		// in C and cut time, which is where the third movement ends up.
+		//
+		// The part keeps what the piece starts in, because that is what
+		// gets drawn at the head of every system. Everything after it is
+		// a change, written on the bar it happens at.
+		type signature struct {
+			key  model.KeySignature
+			time model.TimeSignature
+			clef model.Clef
+		}
+		state := make([]signature, staves)
+		for i, p := range parts {
+			// Seeded with what the part starts as, so that a file which
+			// states nothing until its second bar is not read as changing
+			// to the very thing it was already in.
+			state[i] = signature{key: p.Key, time: p.Time, clef: p.Clef}
+		}
 		for _, xm := range xp.Measures {
+			// What this bar changes, by staff, gathered before the bar is
+			// built so it can be written onto it.
+			type change struct {
+				key  *model.KeySignature
+				time *model.TimeSignature
+				clef *model.Clef
+			}
+			chg := make([]change, staves)
 			for _, it := range xm.Content {
 				a := it.Attributes
 				if a == nil {
@@ -240,21 +270,36 @@ func convert(doc *scorePartwise, lg *log) (*model.Score, error) {
 				if a.Divisions > 0 {
 					divisions = a.Divisions
 				}
-				for i, p := range parts {
+				for i := range parts {
 					staff := i + 1
-					if a.Key != nil {
-						p.Key = model.KeySignature{
-							Fifths: a.Key.Fifths,
-							Mode:   modeValues[strings.ToLower(a.Key.Mode)],
+					for ki := range a.Keys {
+						// No number means every staff of the part, which
+						// is what a part on one staff always writes.
+						if n := a.Keys[ki].Number; n != 0 && n != staff {
+							continue
 						}
+						k := model.KeySignature{
+							Fifths: a.Keys[ki].Fifths,
+							Mode:   modeValues[strings.ToLower(a.Keys[ki].Mode)],
+						}
+						chg[i].key = &k
 					}
-					if a.Time != nil && a.Time.Type > 0 {
-						p.Time = convertTime(a.Time, lg)
+					for ti := range a.Times {
+						if n := a.Times[ti].Number; n != 0 && n != staff {
+							continue
+						}
+						if a.Times[ti].Type <= 0 {
+							continue
+						}
+						t := convertTime(&a.Times[ti], lg)
+						chg[i].time = &t
 					}
 					for ci := range a.Clefs {
-						if staffOf(a.Clefs[ci].Number) == staff {
-							p.Clef = convertClef(&a.Clefs[ci])
+						if staffOf(a.Clefs[ci].Number) != staff {
+							continue
 						}
+						c := convertClef(&a.Clefs[ci], lg)
+						chg[i].clef = &c
 					}
 				}
 			}
@@ -279,10 +324,21 @@ func convert(doc *scorePartwise, lg *log) (*model.Score, error) {
 						barline = it.Barline
 					}
 				}
-				if it.Direction != nil && !tempoSet {
+				// A speed, written where it changes.
+				//
+				// A piece is not one tempo. This file is three movements
+				// — Allegro Moderato, Andantino, Allegro — and reading
+				// only the first meant the whole of it played at the
+				// first speed found, which was not even the opening one:
+				// the opening said "Allegro Moderato" with the number in
+				// <sound> and no metronome mark, so the reader walked
+				// past it and took a metronome mark from bar 24.
+				if it.Direction != nil {
 					if t, ok := convertTempo(*it.Direction); ok {
-						s.Tempo = t
-						tempoSet = true
+						at := len(parts[0].Measures)
+						if _, taken := tempoAt[at]; !taken {
+							tempoAt[at] = t
+						}
 					}
 				}
 				// A rehearsal mark names the bar for everybody in the
@@ -290,8 +346,8 @@ func convert(doc *scorePartwise, lg *log) (*model.Score, error) {
 				// the part it happened to be written on. Files write it
 				// once, nearly always on the top staff; gscore puts it
 				// on every staff of that bar once all the parts are in.
-				if it.Direction != nil && it.Direction.Type.Rehearsal != "" {
-					text := strings.TrimSpace(it.Direction.Type.Rehearsal)
+				if it.Direction != nil && it.Direction.rehearsal() != "" {
+					text := it.Direction.rehearsal()
 					switch at := len(parts[0].Measures); {
 					case marks[at] == "":
 						marks[at] = text
@@ -335,6 +391,46 @@ func convert(doc *scorePartwise, lg *log) (*model.Score, error) {
 					n := *from
 					ms[i].NumberFrom = &n
 				}
+				// The signature this bar is in, and whether it is news.
+				//
+				// A file restates the key and meter at the head of every
+				// system, and at the start of a movement whether or not
+				// anything changed. Written down as a change each time,
+				// that would draw a signature in the middle of the music
+				// saying what it already said — so only a difference
+				// from what is in force counts.
+				st := &state[i]
+				first := len(p.Measures) == 0
+				if k := chg[i].key; k != nil {
+					switch {
+					case first:
+						p.Key = *k
+					case *k != st.key:
+						c := *k
+						ms[i].Key = &c
+					}
+					st.key = *k
+				}
+				if tm := chg[i].time; tm != nil {
+					switch {
+					case first:
+						p.Time = *tm
+					case *tm != st.time:
+						c := *tm
+						ms[i].Time = &c
+					}
+					st.time = *tm
+				}
+				if c := chg[i].clef; c != nil {
+					switch {
+					case first:
+						p.Clef = *c
+					case *c != st.clef:
+						v := *c
+						ms[i].Clef = &v
+					}
+					st.clef = *c
+				}
 				p.Measures = append(p.Measures, ms[i])
 			}
 		}
@@ -358,6 +454,34 @@ func convert(doc *scorePartwise, lg *log) (*model.Score, error) {
 		for _, p := range s.Parts {
 			if at < len(p.Measures) {
 				p.Measures[at].Marker = text
+			}
+		}
+	}
+
+	// And the speeds, in bar order, because each one only counts as a
+	// change against the one before it. The piece's own tempo is whatever
+	// stands at the first bar; a mark later on is written onto its bar.
+	bars := make([]int, 0, len(tempoAt))
+	for at := range tempoAt {
+		bars = append(bars, at)
+	}
+	sort.Ints(bars)
+	inForce := s.Tempo
+	for i, at := range bars {
+		t := tempoAt[at]
+		if i == 0 && at == 0 {
+			s.Tempo = t
+			inForce = t
+			continue
+		}
+		if t == inForce {
+			continue
+		}
+		inForce = t
+		for _, p := range s.Parts {
+			if at < len(p.Measures) {
+				c := t
+				p.Measures[at].Tempo = &c
 			}
 		}
 	}
@@ -443,39 +567,94 @@ func convertTime(t *time, lg *log) model.TimeSignature {
 	return out
 }
 
-func convertClef(c *clef) model.Clef {
-	switch strings.ToUpper(c.Sign) {
+// convertClef is which of the five signs gscore draws this one is.
+//
+// MusicXML writes a clef as a letter and a line, which is seventeen signs
+// and not five: the C clef on any line from one to five, the G clef on the
+// first line, the F clef on the third, and any of them moved an octave.
+// gscore draws treble, bass, alto, tenor and percussion, so the rest are
+// read as the nearest of those and said out loud — a clef read as its
+// neighbour puts every note on the staff a line or two from where it was
+// written, which is not something to do quietly.
+func convertClef(c *clef, lg *log) model.Clef {
+	sign := strings.ToUpper(strings.TrimSpace(c.Sign))
+	switch sign {
 	case "F":
+		if c.Line != 0 && c.Line != 4 {
+			lg.say("an F clef on line %d is not one gscore draws; "+
+				"it was read as the bass clef", c.Line)
+		}
 		return model.Bass
 	case "C":
-		if c.Line == 4 {
+		switch c.Line {
+		case 4:
 			return model.Tenor
+		case 0, 3:
+			return model.Alto
 		}
+		lg.say("a C clef on line %d is not one gscore draws; "+
+			"it was read as the alto clef", c.Line)
 		return model.Alto
 	case "PERCUSSION":
 		return model.Percussion
+	case "G":
+		if c.Line != 0 && c.Line != 2 {
+			lg.say("a G clef on line %d is not one gscore draws; "+
+				"it was read as the treble clef", c.Line)
+		}
+	case "TAB", "JIANPU", "NONE", "":
+		lg.say("a %q clef is not one gscore draws; it was read as the "+
+			"treble clef", c.Sign)
+	default:
+		lg.say("a %q clef is not one gscore knows; it was read as the "+
+			"treble clef", c.Sign)
 	}
+	// The sign may also be moved an octave — the tenor's treble clef with
+	// an 8 under it. gscore has no such sign, and nothing is lost by
+	// drawing the plain one: MusicXML writes the pitches as they sound,
+	// so the music is right and only the clef is spelt differently.
 	return model.Treble
 }
 
+// convertTempo is the speed a direction sets, if it sets one.
+//
+// Two ways of saying it, and a file may use either. A metronome mark is
+// the printed one — a note, an equals sign and a number — and is what a
+// reader sees. <sound tempo="…"> is the played one, in quarter notes per
+// minute, and carries no instruction for the page.
+//
+// Taking only the metronome mark was wrong twice over: a word with a
+// <sound> behind it — "Allegro Moderato", 114 to the quarter, which is
+// how MuseScore writes every tempo it is not asked to print — set no
+// speed at all, and the word itself was thrown away with it.
 func convertTempo(d direction) (model.Tempo, bool) {
-	m := d.Type.Metronome
-	if m == nil {
-		return model.Tempo{}, false
+	text := d.words()
+	if m := d.metronome(); m != nil {
+		if bpm := m.bpm(); bpm > 0 {
+			v, ok := typeValues[m.BeatUnit]
+			if !ok {
+				v = model.Quarter
+			}
+			unit := v.Duration()
+			if m.Dot != nil {
+				unit = unit.Scale(3, 2)
+			}
+			return model.Tempo{BPM: bpm, Unit: unit, Text: text}, true
+		}
 	}
-	bpm := m.bpm()
-	if bpm <= 0 {
-		return model.Tempo{}, false
+	// No mark to print, but a speed to play at. Quarter notes per minute
+	// is what the attribute means, whatever the meter is.
+	if d.Sound != nil && d.Sound.Tempo > 0 {
+		return model.Tempo{
+			BPM:  int(d.Sound.Tempo + 0.5),
+			Unit: model.Duration{Num: 1, Den: 4},
+			Text: text,
+			// Nothing was written on the page beyond the word, so
+			// nothing but the word is drawn.
+			Silent: true,
+		}, true
 	}
-	v, ok := typeValues[m.BeatUnit]
-	if !ok {
-		v = model.Quarter
-	}
-	unit := v.Duration()
-	if m.Dot != nil {
-		unit = unit.Scale(3, 2)
-	}
-	return model.Tempo{BPM: bpm, Unit: unit, Text: d.Type.Words}, true
+	return model.Tempo{}, false
 }
 
 // joinBarlines is the one mark written between two bars, from what closes the
@@ -571,6 +750,19 @@ func convertNotes(notes []xmlNote, divisions int, v *model.Voice, lg *log) {
 		}
 		r := tupletRun{marks: m, actual: tm.Actual, normal: tm.Normal}
 		if xn.Notations != nil {
+			// A tremolo's arithmetic is not a tuplet.
+			//
+			// Two half notes shaken against each other are written as two
+			// half notes in the time of one, because that is how long the
+			// shake lasts — and what a reader sees is the strokes, not a
+			// 2. The file says so by leaving the <tuplet> element out, or
+			// by marking it unprinted; where it leaves it out the ratio
+			// would otherwise be inferred and a figure drawn over music
+			// that has none.
+			if o := xn.Notations.Ornaments; o != nil && len(o.Tremolo) > 0 {
+				m.Tuplet = &model.Tuplet{Hidden: true}
+				r.explicit, r.start, r.stop = true, true, true
+			}
 			for _, t := range xn.Notations.Tuplets {
 				r.explicit = true
 				switch strings.ToLower(t.Type) {
@@ -590,6 +782,15 @@ func convertNotes(notes []xmlNote, divisions int, v *model.Voice, lg *log) {
 			}
 		}
 		runs = append(runs, r)
+	}
+	// moveTuplet follows a run from one set of marks to another, for when
+	// what carries them changes after the run was filed.
+	moveTuplet := func(from, to *model.Marks) {
+		for i := range runs {
+			if runs[i].marks == from {
+				runs[i].marks = to
+			}
+		}
 	}
 
 	for i := range notes {
@@ -625,6 +826,15 @@ func convertNotes(notes []xmlNote, divisions int, v *model.Voice, lg *log) {
 			r := &model.Rest{Dur: dur}
 			takeGrace(&r.Marks)
 			takeTuplet(&r.Marks, xn)
+			// A rest is marked too: the fermata over the pause at the
+			// end, the breath before the next phrase, a syllable held
+			// across it.
+			applyNotations(&r.Marks, xn)
+			// A rest the file says not to print is space and not
+			// silence: the other voice's music is there.
+			if strings.EqualFold(xn.PrintObject, "no") {
+				r.Hidden = true
+			}
 			v.Elements = append(v.Elements, r)
 			continue
 		}
@@ -645,6 +855,7 @@ func convertNotes(notes []xmlNote, divisions int, v *model.Voice, lg *log) {
 			// This note sounds with the one before it.
 			if pending != nil {
 				pending.Notes = append(pending.Notes, n)
+				joinChordMarks(&pending.Marks, &n.Marks)
 				continue
 			}
 			if k := len(v.Elements); k > 0 {
@@ -655,6 +866,16 @@ func convertNotes(notes []xmlNote, divisions int, v *model.Voice, lg *log) {
 						Dur:   prev.Dur,
 						Marks: prev.Marks,
 					}
+					// The chord takes the first note's marks by value,
+					// and the tuplets are not settled until the whole
+					// voice has been read — so a run still pointing at
+					// that note writes its figure onto something no
+					// longer in the music. Every triplet of chords in
+					// the piano part of Altès's 10me Solo lost its 3
+					// this way: the notes were the right length and
+					// nothing was written over them.
+					moveTuplet(&prev.Marks, &pending.Marks)
+					joinChordMarks(&pending.Marks, &n.Marks)
 					continue
 				}
 			}
@@ -695,6 +916,56 @@ func convertNotes(notes []xmlNote, divisions int, v *model.Voice, lg *log) {
 			Actual: r.actual, Normal: r.normal,
 			Start: start, Stop: stop, Hidden: hidden,
 		}
+	}
+}
+
+// joinChordMarks carries up to a chord the marks written on one of its
+// noteheads that belong to the whole chord.
+//
+// A chord is one event written as several <note> elements, and the file is
+// free to put a mark on any of them. The spread of an arpeggio is written
+// on each notehead in turn; the syllable under a chord is written once, on
+// whichever note the editor was on; a fermata, a trill, a tremolo, the
+// word sung — all of them land wherever they land. gscore keeps a chord's
+// marks on the chord and reads only those, so everything written on the
+// second notehead onward was read and then dropped: four arpeggios in
+// fifteen, four syllables in twelve, two tremolos in five.
+//
+// Not everything moves. A tie belongs to the notehead it is written on —
+// holding the top note while the others move is ordinary writing — and the
+// engraver reads a chord's ties from the noteheads as well as the chord,
+// so they are left where they are.
+func joinChordMarks(dst, src *model.Marks) {
+	if dst.Arpeggio == nil {
+		dst.Arpeggio = src.Arpeggio
+	}
+	if dst.Tremolo == nil {
+		dst.Tremolo = src.Tremolo
+	}
+	if dst.Trill == nil {
+		dst.Trill = src.Trill
+	}
+	if dst.Glissando == nil {
+		dst.Glissando = src.Glissando
+	}
+	if dst.Chord == nil {
+		dst.Chord = src.Chord
+	}
+	if dst.Break == model.NoBreath {
+		dst.Break = src.Break
+	}
+	if dst.Dynamic == model.DynamicNone {
+		dst.Dynamic = src.Dynamic
+	}
+	// A slur drawn from inside a chord is a slur from the chord: there is
+	// one curve, however many noteheads it was written against.
+	dst.SlurStart = dst.SlurStart || src.SlurStart
+	dst.SlurStop = dst.SlurStop || src.SlurStop
+	dst.Lyrics = append(dst.Lyrics, src.Lyrics...)
+	dst.Fingering = append(dst.Fingering, src.Fingering...)
+	dst.Texts = append(dst.Texts, src.Texts...)
+	for _, a := range src.Articulations {
+		dst.AddArticulation(a)
 	}
 }
 
@@ -778,14 +1049,111 @@ func convertMeasure(xm xmlMeasure, divisions, staves int, lg *log) []*model.Meas
 		notes[w] = append(notes[w], t)
 	}
 
-	// A dynamic belongs to the next thing written on its staff.
-	pending := map[int]model.Dynamic{}
-	var dyns []dynMark
+	// What has been written on each staff and is waiting for something to
+	// be written against.
+	//
+	// A direction stands before the music it applies to: the dynamic, the
+	// hairpin's open end, the "cresc.", the pedal going down. It belongs
+	// to the next thing on that staff, which has not been made yet — the
+	// voices are built afterwards — so each one is kept with the staff and
+	// the moment it was written at, and applied once there is something
+	// there to apply it to.
+	var standing []marking
+	queue := func(staff int, at model.Duration, f func(*model.Marks)) {
+		standing = append(standing, marking{staff: staffOf(staff), at: at, apply: f})
+	}
 	// Grace notes waiting for the note they lean on.
 	var graces []xmlNote
+	// The chord symbol last written, waiting for its note.
+	var harmony *model.ChordSymbol
 
 	for _, it := range xm.Content {
 		switch {
+		case it.Harmony != nil:
+			h := convertHarmony(it.Harmony)
+			switch {
+			case h == nil:
+			case harmony == nil:
+				harmony = h
+			default:
+				// Two symbols before one note: the chord changes partway
+				// through it. gscore writes one symbol over a note, so
+				// the one that sounds with the note is kept and the other
+				// is said out loud rather than dropped in silence.
+				lg.say("the chord symbol %q shares a note with %q and was "+
+					"left out", h.String(), harmony.String())
+			}
+
+		case it.Direction != nil:
+			d := it.Direction
+			// A direction may be several things at once — a word and the
+			// line that carries it, a dynamic and the wedge that follows
+			// — so each is asked about in turn rather than chosen between.
+			at := cursor
+			if dy := d.dynamic(); dy != model.DynamicNone {
+				queue(d.Staff, at, func(m *model.Marks) { m.Dynamic = dy })
+			}
+			// A span's two ends may land on the same note — a hairpin
+			// over a single whole note, an 8va lasting one bar — and the
+			// model holds a span as one mark with an end at each side, so
+			// the second to arrive is merged into the first rather than
+			// put in its place. Replacing it left a hairpin that only
+			// ever stopped.
+			if w := d.wedge(); w != nil {
+				if h, ok := convertWedge(w); ok {
+					queue(d.Staff, at, func(m *model.Marks) {
+						if m.Hairpin == nil {
+							m.Hairpin = &h
+							return
+						}
+						m.Hairpin.Start = m.Hairpin.Start || h.Start
+						m.Hairpin.Stop = m.Hairpin.Stop || h.Stop
+						if h.Start {
+							m.Hairpin.Kind = h.Kind
+						}
+					})
+				}
+			}
+			if o := d.octave(); o != nil {
+				if sh, ok := convertOctave(o, lg); ok {
+					queue(d.Staff, at, func(m *model.Marks) {
+						if m.Octave == nil {
+							m.Octave = &sh
+							return
+						}
+						m.Octave.Start = m.Octave.Start || sh.Start
+						m.Octave.Stop = m.Octave.Stop || sh.Stop
+						if sh.Start {
+							m.Octave.Amount = sh.Amount
+						}
+					})
+				}
+			}
+			if p := d.pedal(); p != nil {
+				if pm, ok := convertPedal(p); ok {
+					queue(d.Staff, at, func(m *model.Marks) {
+						if m.Pedal == nil {
+							m.Pedal = &pm
+							return
+						}
+						m.Pedal.Start = m.Pedal.Start || pm.Start
+						m.Pedal.Stop = m.Pedal.Stop || pm.Stop
+						m.Pedal.Change = m.Pedal.Change || pm.Change
+					})
+				}
+			}
+			// A word over the staff: "dolce", "cresc.", "con sordino".
+			// Not a tempo — those are read in convert, where the speed
+			// they set belongs to the piece — and not a rehearsal mark,
+			// which names the bar rather than saying anything about it.
+			if _, isTempo := convertTempo(*d); !isTempo && d.rehearsal() == "" {
+				if t, ok := convertWords(d); ok {
+					queue(d.Staff, at, func(m *model.Marks) {
+						m.Texts = append(m.Texts, t)
+					})
+				}
+			}
+
 		case it.Shift != nil:
 			by := model.Duration{Num: it.Shift.Duration, Den: 4 * divisions}.Reduced()
 			if it.Shift.Back {
@@ -797,11 +1165,6 @@ func convertMeasure(xm xmlMeasure, divisions, staves int, lg *log) []*model.Meas
 				}
 			} else {
 				cursor = cursor.Add(by)
-			}
-
-		case it.Direction != nil && it.Direction.Type.Dynamics != nil:
-			if d := it.Direction.Type.Dynamics.get(); d != model.DynamicNone {
-				pending[staffOf(it.Direction.Staff)] = d
 			}
 
 		case it.Note != nil:
@@ -830,11 +1193,13 @@ func convertMeasure(xm xmlMeasure, divisions, staves int, lg *log) []*model.Meas
 			}
 			file(w, timed{at: at, n: xn})
 
-			if d, ok := pending[w.staff]; ok {
-				// Where the marking falls, to be attached once the voices
-				// exist: an element cannot be marked before it is made.
-				dyns = append(dyns, dynMark{staff: w.staff, at: at, d: d})
-				delete(pending, w.staff)
+			// The chord symbol written just before this note stands over
+			// it. Only over a note that starts something: a symbol does
+			// not belong to the second note of a chord.
+			if harmony != nil && xn.Chord == nil {
+				h := harmony
+				queue(w.staff, at, func(m *model.Marks) { m.Chord = h })
+				harmony = nil
 			}
 
 			if xn.Chord == nil {
@@ -874,39 +1239,321 @@ func convertMeasure(xm xmlMeasure, divisions, staves int, lg *log) []*model.Meas
 			m.Voices = append(m.Voices, &model.Voice{})
 		}
 	}
-	for _, d := range dyns {
-		if d.staff >= 1 && d.staff <= len(out) {
-			markDynamic(out[d.staff-1], d.at, d.d)
+	for _, k := range standing {
+		if k.staff >= 1 && k.staff <= len(out) {
+			k.mark(out[k.staff-1])
 		}
 	}
 	return out
 }
 
-// dynMark is a dynamic and the moment in the bar it was written at.
-type dynMark struct {
-	staff int
-	at    model.Duration
-	d     model.Dynamic
+// readHeader is what goes above the first system: the title, whatever
+// stands under it, and the people whose names are at the right.
+//
+// MusicXML says this in three places and a file may use any of them. The
+// elements under <identification> are the catalogued form. <credit> is
+// what is actually printed on the first page, and is the only place the
+// format has for a subtitle. <miscellaneous> is where an encoder puts
+// what the format has no element for — MuseScore writes the subtitle
+// there, which is how "Op. 36" arrives.
+//
+// Reading only the creators lost the subtitle every time, and lost the
+// arranger always: "subtitle" is not a kind of creator and never matched,
+// and nothing looked for "arranger" at all.
+func readHeader(s *model.Score, doc *scorePartwise) {
+	if doc.Work != nil {
+		s.Identity.Title = doc.Work.Title
+	}
+
+	subtitle := ""
+	if doc.Ident != nil {
+		s.Identity.Copyright = doc.Ident.Rights
+		for _, f := range doc.Ident.Misc {
+			if strings.EqualFold(f.Name, "subtitle") && subtitle == "" {
+				subtitle = strings.TrimSpace(f.Value)
+			}
+		}
+		// gscore itself used to write the subtitle as a kind of creator,
+		// which is not one of the kinds there are. Files written that way
+		// are out in the world and are still read.
+		for _, c := range doc.Ident.Creators {
+			if strings.EqualFold(c.Type, "subtitle") && subtitle == "" {
+				subtitle = strings.TrimSpace(c.Name)
+			}
+		}
+	}
+
+	// What is printed on the first page, taken as it is set there.
+	//
+	// The credits win over the catalogue where there are any, and are not
+	// merged with it: a file writes "Joseph Henry Altès" as its composer
+	// and "Joseph Henry Altès / Bearbeitet von: Rainer Marwan (2025)" as
+	// its credit, and those are the same two people said twice. What the
+	// page says is the better of the two, because somebody set it.
+	var credit []string
+	for i := range doc.Credits {
+		c := &doc.Credits[i]
+		lines := c.lines()
+		if len(lines) == 0 {
+			continue
+		}
+		kind := ""
+		if len(c.Type) > 0 {
+			kind = strings.ToLower(strings.TrimSpace(c.Type[0]))
+		}
+		switch kind {
+		case "title":
+			if strings.TrimSpace(s.Identity.Title) == "" {
+				s.Identity.Title = c.text()
+			}
+		case "subtitle":
+			if subtitle == "" {
+				subtitle = c.text()
+			}
+		case "composer", "arranger", "lyricist", "poet":
+			credit = append(credit, lines...)
+		case "rights":
+			if strings.TrimSpace(s.Identity.Copyright) == "" {
+				s.Identity.Copyright = c.text()
+			}
+		}
+	}
+
+	// And the catalogue where the page said nothing: the names in the
+	// order a title page sets them, which is who wrote it, who wrote the
+	// words, and who arranged it.
+	if len(credit) == 0 && doc.Ident != nil {
+		seen := map[string]bool{}
+		add := func(v string) {
+			v = strings.TrimSpace(v)
+			if v == "" || seen[strings.ToLower(v)] {
+				return
+			}
+			seen[strings.ToLower(v)] = true
+			credit = append(credit, v)
+		}
+		for _, want := range []string{"composer", "lyricist", "poet", "arranger", ""} {
+			for _, c := range doc.Ident.Creators {
+				if strings.EqualFold(strings.TrimSpace(c.Type), want) {
+					add(c.Name)
+				}
+			}
+		}
+	}
+
+	if subtitle == "" && doc.Work != nil {
+		// A work number is what a subtitle usually holds anyway.
+		subtitle = strings.TrimSpace(doc.Work.Number)
+	}
+	s.Identity.Subtitle = subtitle
+	s.Identity.Composer = strings.Join(credit, "\n")
 }
 
-// markDynamic puts a dynamic on the first note of a staff at or after the
-// moment it was written.
-func markDynamic(m *model.Measure, at model.Duration, d model.Dynamic) {
+// convertWedge is a hairpin: where a crescendo opens and where it closes.
+//
+// The kind is only on the opening: "stop" says a hairpin ends here and not
+// which one, because the file has already said. gscore reads the kind from
+// the note that opens it too, so the end carries whatever is convenient.
+func convertWedge(w *wedgeElem) (model.Hairpin, bool) {
+	switch strings.ToLower(w.Type) {
+	case "crescendo":
+		return model.Hairpin{Kind: model.Crescendo, Start: true}, true
+	case "diminuendo":
+		return model.Hairpin{Kind: model.Diminuendo, Start: true}, true
+	case "stop":
+		return model.Hairpin{Stop: true}, true
+	}
+	// "continue" says a hairpin carries on through here, which is already
+	// true of every note between its two ends.
+	return model.Hairpin{}, false
+}
+
+// convertOctave is 8va and its relatives.
+//
+// The size is in notes and the model counts octaves: 8 is one, 15 two, 22
+// three. And the direction is the other way round from how a reader says
+// it — type="down" is the sign written *above* the staff, because the
+// notes are written down an octave from where they sound.
+func convertOctave(o *octaveShiftElem, lg *log) (model.OctaveShift, bool) {
+	size := o.Size
+	if size == 0 {
+		size = 8
+	}
+	amount := 0
+	switch size {
+	case 8:
+		amount = 1
+	case 15:
+		amount = 2
+	case 22:
+		amount = 3
+	default:
+		lg.say("an octave shift of %d notes is not one anybody writes; "+
+			"it was read as an octave", size)
+		amount = 1
+	}
+	switch strings.ToLower(o.Type) {
+	case "down":
+		return model.OctaveShift{Amount: amount, Start: true}, true
+	case "up":
+		return model.OctaveShift{Amount: -amount, Start: true}, true
+	case "stop":
+		return model.OctaveShift{Stop: true}, true
+	}
+	return model.OctaveShift{}, false
+}
+
+// convertPedal is the sustaining pedal going down, coming up, or being
+// flicked without being released.
+func convertPedal(p *pedalElem) (model.PedalMark, bool) {
+	out := model.PedalMark{
+		// "line=no" is the word "Ped." with a hook at the end; anything
+		// else is the bracketed line.
+		Text: strings.EqualFold(p.Line, "no"),
+	}
+	switch strings.ToLower(p.Type) {
+	case "start", "sostenuto":
+		out.Start = true
+	case "stop", "discontinue":
+		out.Stop = true
+	case "change":
+		out.Change = true
+	default:
+		return model.PedalMark{}, false
+	}
+	return out, true
+}
+
+// convertWords is a word written over or under the staff.
+func convertWords(d *direction) (model.TextMark, bool) {
+	text := d.words()
+	if text == "" {
+		return model.TextMark{}, false
+	}
+	out := model.TextMark{Text: text, Style: model.TextExpression}
+	switch strings.ToLower(d.Placement) {
+	case "above":
+		out.Placement = model.PlacementAbove
+	case "below":
+		out.Placement = model.PlacementBelow
+	}
+	// How it was set. A word in italic is an expression mark — "dolce",
+	// "cantabile" — and one in roman upright is usually an instruction.
+	for _, t := range d.Types {
+		for _, w := range t.Words {
+			if strings.EqualFold(w.Style, "italic") {
+				out.Italic = true
+			}
+			if strings.EqualFold(w.Weight, "bold") {
+				out.Bold = true
+			}
+		}
+	}
+	// A word carried on by a dashed line is a direction that lasts —
+	// "cresc. - - -" is not said once and done with.
+	if d.dashed() {
+		out.Style = model.TextDirection
+	}
+	return out, true
+}
+
+// convertHarmony is a chord symbol.
+func convertHarmony(h *harmonyElem) *model.ChordSymbol {
+	out := &model.ChordSymbol{}
+	if h.Root != nil {
+		out.Root = h.Root.name()
+	}
+	if h.Bass != nil {
+		out.Bass = h.Bass.name()
+	}
+	// What the file wants printed, where it says: "maj7" rather than the
+	// element name "major-seventh". The name is the fallback.
+	switch {
+	case strings.TrimSpace(h.Kind.Text) != "":
+		out.Quality = strings.TrimSpace(h.Kind.Text)
+	case strings.EqualFold(h.Kind.Value, "major"):
+		// A plain major chord is written as its letter and nothing else.
+	case strings.TrimSpace(h.Kind.Value) != "":
+		out.Quality = chordKinds[strings.ToLower(strings.TrimSpace(h.Kind.Value))]
+		if out.Quality == "" {
+			out.Quality = strings.TrimSpace(h.Kind.Value)
+		}
+	}
+	if out.Root == "" && out.Quality == "" && out.Bass == "" {
+		return nil
+	}
+	return out
+}
+
+// chordKinds is how the specification's names for chords are usually
+// printed. Only the ones a chart actually uses; anything else is written
+// out as the file names it, which is at least readable.
+var chordKinds = map[string]string{
+	"major":              "",
+	"minor":              "m",
+	"augmented":          "+",
+	"diminished":         "dim",
+	"dominant":           "7",
+	"major-seventh":      "maj7",
+	"minor-seventh":      "m7",
+	"diminished-seventh": "dim7",
+	"augmented-seventh":  "+7",
+	"half-diminished":    "m7b5",
+	"major-minor":        "mMaj7",
+	"major-sixth":        "6",
+	"minor-sixth":        "m6",
+	"dominant-ninth":     "9",
+	"major-ninth":        "maj9",
+	"minor-ninth":        "m9",
+	"dominant-11th":      "11",
+	"major-11th":         "maj11",
+	"minor-11th":         "m11",
+	"dominant-13th":      "13",
+	"major-13th":         "maj13",
+	"minor-13th":         "m13",
+	"suspended-second":   "sus2",
+	"suspended-fourth":   "sus4",
+	"power":              "5",
+	"none":               "N.C.",
+}
+
+// marking is something written on a staff at a moment in the bar, waiting
+// for the note it belongs to.
+type marking struct {
+	staff int
+	at    model.Duration
+	apply func(*model.Marks)
+}
+
+// mark writes the marking onto the note it belongs to.
+//
+// The first one at or after the moment it was written, which is what a
+// direction standing in front of the music means. Failing that, the last
+// note before it: a hairpin closes after the note it reaches, and a word
+// may be written against the end of a bar — and either dropped for want of
+// something to the right of it takes a crescendo's far end with it.
+func (k marking) mark(m *model.Measure) {
+	var fallback *model.Marks
 	for _, v := range m.Voices {
 		t := model.Duration{Num: 0, Den: 1}
 		for _, el := range v.Elements {
-			if t.Cmp(at) >= 0 {
-				switch e := el.(type) {
-				case *model.Note:
-					e.Dynamic = d
-					return
-				case *model.Chord:
-					e.Dynamic = d
-					return
-				}
+			mk := marksOfElement(el)
+			switch {
+			case mk == nil:
+			case t.Cmp(k.at) >= 0:
+				k.apply(mk)
+				return
+			default:
+				fallback = mk
 			}
 			t = t.Add(el.Duration())
 		}
+		if fallback != nil {
+			break
+		}
+	}
+	if fallback != nil {
+		k.apply(fallback)
 	}
 }
 
@@ -1019,6 +1666,18 @@ func convertNote(xn *xmlNote, dur model.Duration, lg *log) *model.Note {
 		n.Stem = model.StemDown
 	}
 
+	applyNotations(&n.Marks, xn)
+	return n
+}
+
+// applyNotations writes onto an element everything the file says about it
+// that is not its pitch or its length.
+//
+// Separate from convertNote because a rest carries marks too, and used to
+// carry none: the pause with a fermata over it — which is how half the
+// endings in the repertoire are written — came back as a plain pause, and
+// a syllable sung over a rest was dropped with it.
+func applyNotations(n *model.Marks, xn *xmlNote) {
 	for _, t := range xn.Tie {
 		switch t.Type {
 		case "start":
@@ -1069,9 +1728,172 @@ func convertNote(xn *xmlNote, dur model.Duration, lg *log) *model.Note {
 			if a.DownBow != nil {
 				n.AddArticulation(model.DownBow)
 			}
+			// Where a player breathes, and the two strokes that stop a
+			// phrase dead. The specification keeps them among the
+			// articulations; a reader sees them between the notes.
+			if a.Breath != nil {
+				n.Break = model.BreathComma
+				if strings.EqualFold(strings.TrimSpace(a.Breath.Value), "tick") {
+					n.Break = model.BreathTick
+				}
+			}
+			if a.Caesura != nil {
+				n.Break = model.Caesura
+			}
+		}
+		if o := nt.Ornaments; o != nil {
+			applyOrnaments(n, o)
+		}
+		if t := nt.Technical; t != nil {
+			// Fingering, which is most of what an exercise book is for.
+			for _, f := range t.Fingering {
+				if f = strings.TrimSpace(f); f != "" {
+					n.Fingering = append(n.Fingering, f)
+				}
+			}
+			if t.UpBow != nil {
+				n.AddArticulation(model.UpBow)
+			}
+			if t.DownBow != nil {
+				n.AddArticulation(model.DownBow)
+			}
+		}
+		if a := nt.Arpeggiate; a != nil {
+			n.Arpeggio = &model.Arpeggio{
+				Down: strings.EqualFold(a.Direction, "down"),
+			}
+		} else if nt.NonArpeggiate != nil {
+			n.Arpeggio = &model.Arpeggio{}
+		}
+		// A slide between two notes. <glissando> draws a wavy line and
+		// <slide> a straight one; to a player they are the same
+		// instruction, so the only difference kept is the line.
+		for _, g := range nt.Glissando {
+			applyGliss(n, g, true)
+		}
+		for _, g := range nt.Slide {
+			applyGliss(n, g, false)
 		}
 	}
-	return n
+	// The words sung on this note.
+	for _, l := range xn.Lyrics {
+		if ly, ok := convertLyric(l); ok {
+			n.Lyrics = append(n.Lyrics, ly)
+		}
+	}
+	// A cue note is drawn small: an orchestral part showing what the
+	// clarinet plays, so the player knows when to come in.
+	if xn.Cue != nil {
+		n.Small = true
+	}
+}
+
+// applyOrnaments writes what stands over a note: a trill and the line that
+// carries it, a turn, a mordent, the strokes of a tremolo.
+func applyOrnaments(n *model.Marks, o *ornaments) {
+	// The shake, and the wavy line saying how far it reaches.
+	//
+	// Both ends may be on the same note, and a file that means a shake on
+	// one note says so three times over — a trill-mark, a line that
+	// starts and a line that stops, all on that note. So each end is
+	// turned on and none of them turns the other off; written the other
+	// way, as an assignment per element, the last one read won and every
+	// such trill came back as an end with no beginning.
+	if o.Trill != nil || len(o.WavyLine) > 0 {
+		if n.Trill == nil {
+			n.Trill = &model.Trill{}
+		}
+	}
+	if o.Trill != nil {
+		n.Trill.Start = true
+	}
+	for _, w := range o.WavyLine {
+		switch strings.ToLower(w.Type) {
+		case "start":
+			n.Trill.Start = true
+		case "stop":
+			n.Trill.Stop = true
+		}
+	}
+	// A trill-mark with no line after it is a shake on this note and no
+	// further: it ends where it began.
+	if o.Trill != nil && len(o.WavyLine) == 0 {
+		n.Trill.Stop = true
+	}
+	if o.Turn != nil {
+		n.AddArticulation(model.Turn)
+	}
+	if o.TurnInv != nil {
+		n.AddArticulation(model.TurnInverted)
+	}
+	if o.Mordent != nil {
+		n.AddArticulation(model.Mordent)
+	}
+	if o.MordInv != nil {
+		n.AddArticulation(model.ShortTrill)
+	}
+	for i := range o.Tremolo {
+		t := &o.Tremolo[i]
+		strokes, _ := strconv.Atoi(strings.TrimSpace(t.Strokes))
+		if strokes <= 0 {
+			strokes = 3
+		}
+		tr := &model.Tremolo{Strokes: strokes}
+		switch strings.ToLower(t.Type) {
+		case "start":
+			tr.Start = true
+		case "stop":
+			tr.Stop = true
+		case "unmeasured":
+			tr.Buzz = true
+		}
+		n.Tremolo = tr
+	}
+}
+
+// applyGliss marks one end of a slide between two notes.
+func applyGliss(n *model.Marks, g glissElem, wavy bool) {
+	if n.Glissando == nil {
+		n.Glissando = &model.Glissando{Wavy: wavy}
+	}
+	switch strings.ToLower(g.Type) {
+	case "start":
+		n.Glissando.Start = true
+		if s := strings.TrimSpace(g.Text); s != "" {
+			n.Glissando.Text = s
+		}
+	case "stop":
+		n.Glissando.Stop = true
+	}
+}
+
+// convertLyric is one syllable under a note.
+func convertLyric(l lyricElem) (model.Lyric, bool) {
+	text := strings.Join(l.Text, "")
+	if strings.TrimSpace(text) == "" && l.Extend == nil {
+		return model.Lyric{}, false
+	}
+	out := model.Lyric{Text: text, Verse: 1, Extend: l.Extend != nil}
+	// Numbered by the file where there is more than one line of words.
+	// The attribute is text, because a file may name a line rather than
+	// number it ("chorus"), and a name has no place in the order.
+	if n, err := strconv.Atoi(strings.TrimSpace(l.Number)); err == nil && n > 0 {
+		out.Verse = n
+	}
+	// Which part of a word this is, and so whether a hyphen follows it.
+	if len(l.Syllabic) > 0 {
+		switch strings.ToLower(strings.TrimSpace(l.Syllabic[0])) {
+		case "begin":
+			out.Syllabic = model.SyllableBegin
+		case "middle":
+			out.Syllabic = model.SyllableMiddle
+		case "end":
+			out.Syllabic = model.SyllableEnd
+		default:
+			out.Syllabic = model.SyllableSingle
+		}
+	}
+	return out, true
 }
 
 func firstByte(s string) byte {

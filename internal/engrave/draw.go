@@ -63,6 +63,17 @@ type placed struct {
 	start model.Duration // position from the start of the measure
 	width float64
 
+	// fullBar says this rest is the whole of its bar's silence.
+	//
+	// A bar nobody plays is written as a semibreve rest hung under the
+	// fourth line, whatever the meter is — that is the sign for "this bar
+	// is silent" and not a note value, which is why it is the same mark
+	// in 3/4 as in 4/4 and why no dot is written after it. Drawn from the
+	// length instead, a silent bar of 3/4 came out as a dotted minim rest
+	// and one of 6/8 as a dotted crotchet: the right arithmetic and a
+	// sign no edition prints.
+	fullBar bool
+
 	// stemDir is the direction this note's stem is really drawn in: 1 up,
 	// -1 down, 0 before it has been settled.
 	//
@@ -292,9 +303,14 @@ func (e *engraver) drawMeasure(part *model.Part, b measureBox, x, end float64, s
 	if len(items) == 1 && items[0].rest != nil && !items[0].rest.Hidden &&
 		!b.ahead && barIsFull(part, b) {
 		p := items[0]
+		// The same test says which sign to draw as says where to draw it:
+		// a bar whose whole content is one rest is a silent bar, and a
+		// silent bar is a semibreve rest in the middle of it. See
+		// placed.fullBar.
+		p.fullBar = true
 		_, right := e.barlineRoom(b.m.RightBarline)
 		mid := (p.x + e.barlineAt(end, right)) / 2
-		if w := smufl.Advance(smufl.RestGlyph(p.value)); mid-w/2 > p.x {
+		if w := smufl.Advance(smufl.RestGlyph(model.Whole)); mid-w/2 > p.x {
 			p.x = mid - w/2
 		}
 	}
@@ -856,9 +872,14 @@ func (e *engraver) drawRestAt(p *placed) {
 	if p.rest.Hidden {
 		return
 	}
-	name := smufl.RestGlyph(p.value)
+	value, dots := p.value, p.dots
+	if p.fullBar {
+		// A silent bar, whatever its length. See placed.fullBar.
+		value, dots = model.Whole, 0
+	}
+	name := smufl.RestGlyph(value)
 	step := 4.0
-	if p.value == model.Whole {
+	if value == model.Whole {
 		step = 6
 	}
 	e.lay.Glyphs = append(e.lay.Glyphs, Glyph{
@@ -867,7 +888,7 @@ func (e *engraver) drawRestAt(p *placed) {
 	})
 	e.lay.Refs[p.index] = RefPos{X: p.x, Y: e.y + stepY(step), Staff: e.y}
 	// A rest has no stem for the dots to clear.
-	e.drawDots(p.x+e.adv(name)+e.opt.Spacings.DotToNote, step, p.dots)
+	e.drawDots(p.x+e.adv(name)+e.opt.Spacings.DotToNote, step, dots)
 }
 
 // drawAccidental writes a note's sign in front of it, in brackets where the

@@ -31,6 +31,10 @@ type measureItem struct {
 	Note       *xmlNote
 	Barline    *barline
 	Shift      *shift
+	// A chord symbol. It is written just before the note it stands over,
+	// so it belongs in the ordered stream like a direction and not in a
+	// list of its own.
+	Harmony *harmonyElem
 }
 
 // shift is <backup> or <forward>: a move of the place the next note is
@@ -93,6 +97,9 @@ func (m xmlMeasure) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
 		case it.Barline != nil:
 			err = e.EncodeElement(it.Barline, xml.StartElement{
 				Name: xml.Name{Local: "barline"}})
+		case it.Harmony != nil:
+			err = e.EncodeElement(it.Harmony, xml.StartElement{
+				Name: xml.Name{Local: "harmony"}})
 		case it.Shift != nil:
 			name := "forward"
 			if it.Shift.Back {
@@ -163,6 +170,12 @@ func (m *xmlMeasure) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error 
 					return err
 				}
 				m.add(measureItem{Barline: &v})
+			case "harmony":
+				var v harmonyElem
+				if err := d.DecodeElement(&v, &t); err != nil {
+					return err
+				}
+				m.add(measureItem{Harmony: &v})
 			default:
 				if err := d.Skip(); err != nil {
 					return err

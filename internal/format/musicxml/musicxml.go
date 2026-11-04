@@ -24,6 +24,7 @@ import (
 	"encoding/xml"
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/stricaud/gscore/internal/format"
 	"github.com/stricaud/gscore/internal/model"
@@ -67,22 +68,68 @@ func (compressedExporter) Export(w io.Writer, s *model.Score) error {
  */
 
 type scorePartwise struct {
-	XMLName  xml.Name  `xml:"score-partwise"`
-	Version  string    `xml:"version,attr"`
-	Work     *work     `xml:"work"`
-	Ident    *identity `xml:"identification"`
-	PartList partList  `xml:"part-list"`
-	Parts    []xmlPart `xml:"part"`
+	XMLName xml.Name  `xml:"score-partwise"`
+	Version string    `xml:"version,attr"`
+	Work    *work     `xml:"work"`
+	Ident   *identity `xml:"identification"`
+	// What is printed on the first page, as opposed to what the piece is
+	// called. A file often says the subtitle and the arranger only here —
+	// the specification has nowhere else for either — so a reader that
+	// skips credits loses them both.
+	Credits  []creditElem `xml:"credit"`
+	PartList partList     `xml:"part-list"`
+	Parts    []xmlPart    `xml:"part"`
 }
 
 type work struct {
-	Title string `xml:"work-title,omitempty"`
+	Number string `xml:"work-number,omitempty"`
+	Title  string `xml:"work-title,omitempty"`
+}
+
+// creditElem is one block of text on the title page, with the type the
+// file gives it ("title", "subtitle", "composer", "arranger", "rights").
+type creditElem struct {
+	Type  []string `xml:"credit-type"`
+	Words []string `xml:"credit-words"`
+}
+
+// lines is the credit as it is set on the page.
+//
+// Each <credit-words> is its own line, and a line may carry more of them
+// inside it: a credit block naming the composer and the arranger is one
+// <credit>, written as two <credit-words> or as one with a newline in it,
+// and both mean two lines on the page.
+func (c *creditElem) lines() []string {
+	var out []string
+	for _, w := range c.Words {
+		for _, line := range strings.Split(w, "\n") {
+			if s := strings.TrimSpace(line); s != "" {
+				out = append(out, s)
+			}
+		}
+	}
+	return out
+}
+
+// text is the whole of a credit on one line, for the parts of it that are
+// one thing however they were set — a title, a subtitle.
+func (c *creditElem) text() string {
+	return strings.Join(c.lines(), " ")
 }
 
 type identity struct {
 	Creators []creator `xml:"creator"`
 	Rights   string    `xml:"rights,omitempty"`
 	Encoding *encoding `xml:"encoding,omitempty"`
+	// Where an encoder puts what the format has no element for. MuseScore
+	// writes the subtitle here.
+	Misc []miscField `xml:"miscellaneous>miscellaneous-field"`
+}
+
+// miscField is one named scrap under <miscellaneous>.
+type miscField struct {
+	Name  string `xml:"name,attr"`
+	Value string `xml:",chardata"`
 }
 
 type creator struct {
@@ -123,20 +170,31 @@ type attributes struct {
 	// How many staves this part is written on. A piano part is one part on
 	// two staves, not two parts: both hands are one instrument, and the
 	// file says so here.
-	Staves int   `xml:"staves,omitempty"`
-	Key    *key  `xml:"key,omitempty"`
-	Time   *time `xml:"time,omitempty"`
+	Staves int `xml:"staves,omitempty"`
+	// Slices, not one of each: a part writes one signature per staff where
+	// its staves differ, and reading only the first gave both hands of a
+	// two-key exercise whichever key happened to be written first.
+	Keys  []key  `xml:"key,omitempty"`
+	Times []time `xml:"time,omitempty"`
 	// One per staff, each numbered. A part on a single staff writes one
 	// clef with no number at all, which reads as staff one.
 	Clefs []clef `xml:"clef,omitempty"`
 }
 
 type key struct {
+	// Which staff of the part it belongs to. A part may carry a different
+	// signature on each staff — a harp writing the pedal setting on one
+	// hand, an exercise in two keys at once — and the specification says
+	// so by numbering them. No number means the whole part.
+	Number int    `xml:"number,attr,omitempty"`
 	Fifths int    `xml:"fifths"`
 	Mode   string `xml:"mode,omitempty"`
 }
 
 type time struct {
+	// As for a key: which staff, where a part gives its staves different
+	// meters. No number means the whole part.
+	Number int    `xml:"number,attr,omitempty"`
 	Symbol string `xml:"symbol,attr,omitempty"`
 	// A string, not a number, because the specification says so and because
 	// files use it: a composite meter is written "3+2", three beats and two
@@ -163,18 +221,134 @@ func staffOf(n int) int {
 }
 
 type direction struct {
-	Placement string        `xml:"placement,attr,omitempty"`
-	Type      directionType `xml:"direction-type"`
-	Sound     *sound        `xml:"sound,omitempty"`
+	Placement string `xml:"placement,attr,omitempty"`
+	// A slice: one <direction> may hold several <direction-type> children
+	// and often does. "cresc." and the dashed line that carries it across
+	// four bars are two of them under one direction, and a reader that
+	// took only the first lost the line — or, where the file wrote the
+	// line first, lost the word.
+	Types []directionType `xml:"direction-type"`
+	Sound *sound          `xml:"sound,omitempty"`
 	// Which staff of the part it is written against: a piano's left hand
 	// has its own dynamics.
 	Staff int `xml:"staff,omitempty"`
 }
 
+// A direction's children are searched rather than indexed.
+//
+// One <direction> may hold several <direction-type>, and which one holds
+// what is the file's business: "cresc." and the dashed line under it, a
+// metronome mark and the word beside it, a dynamic and the wedge it opens.
+// Reaching for a particular one by position is how a reader loses the
+// others — and reading the element as a single struct, which is what Go's
+// decoder does with repeated elements, keeps only the last of them.
+
+// dynamic is the marking written under this direction, if any.
+func (d *direction) dynamic() model.Dynamic {
+	for i := range d.Types {
+		if dy := d.Types[i].Dynamics; dy != nil {
+			if v := dy.get(); v != model.DynamicNone {
+				return v
+			}
+		}
+	}
+	return model.DynamicNone
+}
+
+// metronome is the printed speed, if one is written here.
+func (d *direction) metronome() *metronome {
+	for i := range d.Types {
+		if m := d.Types[i].Metronome; m != nil {
+			return m
+		}
+	}
+	return nil
+}
+
+// rehearsal is the letter this direction names the bar by.
+func (d *direction) rehearsal() string {
+	for i := range d.Types {
+		if s := strings.TrimSpace(d.Types[i].Rehearsal); s != "" {
+			return s
+		}
+	}
+	return ""
+}
+
+// wedge is the hairpin this direction opens or closes.
+func (d *direction) wedge() *wedgeElem {
+	for i := range d.Types {
+		if w := d.Types[i].Wedge; w != nil {
+			return w
+		}
+	}
+	return nil
+}
+
+// octave is the 8va this direction opens or closes.
+func (d *direction) octave() *octaveShiftElem {
+	for i := range d.Types {
+		if o := d.Types[i].OctaveShift; o != nil {
+			return o
+		}
+	}
+	return nil
+}
+
+// pedal is the pedalling written here.
+func (d *direction) pedal() *pedalElem {
+	for i := range d.Types {
+		if p := d.Types[i].Pedal; p != nil {
+			return p
+		}
+	}
+	return nil
+}
+
+// dashed says whether a word written here is carried on by a dashed line,
+// which is how "cresc." is told from a word said once.
+func (d *direction) dashed() bool {
+	for i := range d.Types {
+		if s := d.Types[i].Dashes; s != nil && strings.EqualFold(s.Type, "start") {
+			return true
+		}
+	}
+	return false
+}
+
+// words is every word written under one direction, joined. A multi-line
+// marking is several <words> in a row — the specification's own
+// 31f-Direction-Multiline-Compounds does exactly that — and they are one
+// thing to a reader.
+func (d *direction) words() string {
+	var parts []string
+	for _, t := range d.Types {
+		for _, w := range t.Words {
+			if s := strings.TrimSpace(w.Text); s != "" {
+				parts = append(parts, s)
+			}
+		}
+	}
+	return strings.Join(parts, " ")
+}
+
 type directionType struct {
 	Metronome *metronome `xml:"metronome,omitempty"`
-	Words     string     `xml:"words,omitempty"`
-	Dynamics  *dynamics  `xml:"dynamics,omitempty"`
+	// Several, because a multi-line marking is written as several of
+	// them, and because the font of each is its own.
+	Words    []wordsElem `xml:"words,omitempty"`
+	Dynamics *dynamics   `xml:"dynamics,omitempty"`
+	// The hairpin: where a crescendo opens and where it closes.
+	Wedge *wedgeElem `xml:"wedge,omitempty"`
+	// The dashed line that carries a word on — "cresc. - - - -". It is
+	// kept so that the word it continues can be marked as lasting rather
+	// than said once.
+	Dashes *spanElem `xml:"dashes,omitempty"`
+	// 8va and 8vb: the sign that moves a passage an octave and the line
+	// under or over it saying how far it reaches.
+	OctaveShift *octaveShiftElem `xml:"octave-shift,omitempty"`
+	// The sustaining pedal.
+	Pedal *pedalElem `xml:"pedal,omitempty"`
 	// Rehearsal is the letter a conductor calls a bar by.
 	//
 	// Its own element and not words, which is the distinction the format
@@ -184,6 +358,59 @@ type directionType struct {
 	// it a square enclosure unless it says otherwise, which is what
 	// gscore draws, so nothing needs to be written for the box.
 	Rehearsal string `xml:"rehearsal,omitempty"`
+}
+
+// wordsElem is a line of text written over or under the staff, with
+// enough of its appearance to put it back the way it was read.
+type wordsElem struct {
+	Text   string `xml:",chardata"`
+	Style  string `xml:"font-style,attr,omitempty"`
+	Weight string `xml:"font-weight,attr,omitempty"`
+}
+
+// words is one line of text as a direction-type holds it, or nothing at
+// all where there is no text: an empty <words/> is a mark with no mark in
+// it, and every reader draws it as a blank.
+func words(s string) []wordsElem {
+	if strings.TrimSpace(s) == "" {
+		return nil
+	}
+	return []wordsElem{{Text: s}}
+}
+
+// wedgeElem is a hairpin. "crescendo" and "diminuendo" open one and "stop"
+// closes it; the number pairs the two ends where more than one is open.
+type wedgeElem struct {
+	Type   string `xml:"type,attr"`
+	Number int    `xml:"number,attr,omitempty"`
+}
+
+// spanElem is anything whose only content is a start, a stop and a number
+// to pair them by: dashes, and the wavy line of a trill.
+type spanElem struct {
+	Type   string `xml:"type,attr"`
+	Number int    `xml:"number,attr,omitempty"`
+}
+
+// octaveShiftElem is 8va, 8vb, 15ma and the rest.
+//
+// The size is in notes, not octaves: 8 is one octave, 15 two, 22 three.
+// "down" on the element means the notes are written an octave higher than
+// they sound, which is what 8va over a passage asks for — so the sign a
+// reader calls "up an octave" is type="down" in the file.
+type octaveShiftElem struct {
+	Type   string `xml:"type,attr"`
+	Size   int    `xml:"size,attr,omitempty"`
+	Number int    `xml:"number,attr,omitempty"`
+}
+
+// pedalElem is the sustaining pedal: down at "start", up at "stop", and
+// "change" for the flick that clears the harmony without letting go.
+type pedalElem struct {
+	Type string `xml:"type,attr"`
+	// "no" means the bracketed line rather than the word "Ped.".
+	Line string `xml:"line,attr,omitempty"`
+	Sign string `xml:"sign,attr,omitempty"`
 }
 
 // dynamics is a choice of empty elements, one per marking, which is how
@@ -356,6 +583,14 @@ type xmlNote struct {
 	// needed to get the timing right — it is needed to know that the
 	// group is a tuplet at all, and so to write the figure over it.
 	TimeMod *timeModElem `xml:"time-modification,omitempty"`
+	// The words sung on this note, one entry per verse.
+	Lyrics []lyricElem `xml:"lyric,omitempty"`
+	// "no" means the note is there and is not drawn: a tie's far end
+	// written out for playback, an editor's suggestion left invisible.
+	PrintObject string `xml:"print-object,attr,omitempty"`
+	// A cue note is drawn small and is not played. gscore keeps the size
+	// and plays it anyway, which is the lesser of the two wrongs.
+	Cue *empty `xml:"cue,omitempty"`
 }
 
 type timeModElem struct {
@@ -390,6 +625,20 @@ type notationsTag struct {
 	Slurs         []slurElem     `xml:"slur,omitempty"`
 	Articulations *articulations `xml:"articulations,omitempty"`
 	Fermata       *empty         `xml:"fermata,omitempty"`
+	// The ornaments: a trill and the wavy line that carries it, a turn, a
+	// mordent, and the strokes of a tremolo.
+	Ornaments *ornaments `xml:"ornaments,omitempty"`
+	// What the hand does: fingering above all, which is half the point of
+	// an exercise book.
+	Technical *technical `xml:"technical,omitempty"`
+	// The wavy stroke up a chord that says to spread it.
+	Arpeggiate *arpeggiateElem `xml:"arpeggiate,omitempty"`
+	// Also a spread chord, written the other way up.
+	NonArpeggiate *empty `xml:"non-arpeggiate,omitempty"`
+	// A slide between two notes: <glissando> draws a wavy line and
+	// <slide> a straight one, and they are the same thing to a player.
+	Glissando []glissElem `xml:"glissando,omitempty"`
+	Slide     []glissElem `xml:"slide,omitempty"`
 	// Where the figure over a tuplet begins and ends. A file may leave
 	// these out and give only the time-modification, which is why the
 	// ends are inferred where they are missing — see convertNotes.
@@ -421,8 +670,120 @@ type articulations struct {
 	Accent        *empty `xml:"accent,omitempty"`
 	Tenuto        *empty `xml:"tenuto,omitempty"`
 	Marcato       *empty `xml:"strong-accent,omitempty"`
-	UpBow         *empty `xml:"up-bow,omitempty"`
-	DownBow       *empty `xml:"down-bow,omitempty"`
+	// The bowing marks live under <technical> in the specification and
+	// not here; they are kept for the files that put them here anyway.
+	UpBow   *empty `xml:"up-bow,omitempty"`
+	DownBow *empty `xml:"down-bow,omitempty"`
+	// Where a player breathes, and the two strokes that cut a phrase off
+	// altogether.
+	Breath  *breathElem `xml:"breath-mark,omitempty"`
+	Caesura *empty      `xml:"caesura,omitempty"`
+}
+
+// breathElem is <breath-mark>, whose text says which sign to draw: a comma
+// by default, sometimes a tick.
+type breathElem struct {
+	Value string `xml:",chardata"`
+}
+
+// ornaments is what is written over a note rather than done to it.
+type ornaments struct {
+	Trill    *empty     `xml:"trill-mark,omitempty"`
+	WavyLine []spanElem `xml:"wavy-line,omitempty"`
+	Turn     *empty     `xml:"turn,omitempty"`
+	TurnInv  *empty     `xml:"inverted-turn,omitempty"`
+	Mordent  *empty     `xml:"mordent,omitempty"`
+	MordInv  *empty     `xml:"inverted-mordent,omitempty"`
+	Tremolo  []tremElem `xml:"tremolo,omitempty"`
+}
+
+// tremElem is the strokes through a stem. Its text is how many; "single"
+// shakes one note, and "start"/"stop" shake between two.
+type tremElem struct {
+	Type    string `xml:"type,attr,omitempty"`
+	Strokes string `xml:",chardata"`
+}
+
+// technical is what the hand does. Only fingering is read: the rest —
+// frets, bends, harmonics — has nowhere to go in gscore's model, and
+// leaving them out of the struct would be the same as reading them badly.
+type technical struct {
+	Fingering []string `xml:"fingering,omitempty"`
+	UpBow     *empty   `xml:"up-bow,omitempty"`
+	DownBow   *empty   `xml:"down-bow,omitempty"`
+}
+
+// arpeggiateElem is the stroke up a chord. "down" draws the arrow the
+// other way, for a chord spread from the top.
+type arpeggiateElem struct {
+	Direction string `xml:"direction,attr,omitempty"`
+}
+
+// glissElem is a slide from one note to another, start and stop, with
+// whatever word is written along it ("gliss.", "port.").
+type glissElem struct {
+	Type   string `xml:"type,attr"`
+	Number int    `xml:"number,attr,omitempty"`
+	Text   string `xml:",chardata"`
+}
+
+// lyricElem is a syllable under a note.
+type lyricElem struct {
+	// Which line of words it belongs to. Verse two of a hymn is written
+	// under verse one, not instead of it.
+	Number string `xml:"number,attr,omitempty"`
+	Name   string `xml:"name,attr,omitempty"`
+	// Whether the syllable begins a word, ends one, or stands alone —
+	// which is what decides the hyphen drawn after it.
+	Syllabic []string `xml:"syllabic,omitempty"`
+	Text     []string `xml:"text,omitempty"`
+	// The line drawn under a syllable held over several notes.
+	Extend *empty `xml:"extend,omitempty"`
+}
+
+// harmonyElem is a chord symbol: the letter written over the staff for a
+// player reading from chords rather than from notes.
+type harmonyElem struct {
+	Root *rootElem `xml:"root,omitempty"`
+	Kind kindElem  `xml:"kind"`
+	Bass *rootElem `xml:"bass,omitempty"`
+}
+
+// rootElem is the letter of a chord symbol, and the bass note under a
+// slash chord, which the format spells the same way.
+type rootElem struct {
+	Step  string  `xml:"root-step"`
+	Alter float64 `xml:"root-alter,omitempty"`
+	// A bass is written with its own element names and otherwise reads
+	// identically.
+	BassStep  string  `xml:"bass-step"`
+	BassAlter float64 `xml:"bass-alter,omitempty"`
+}
+
+// name is the letter, with its sharp or flat.
+func (r *rootElem) name() string {
+	step, alter := r.Step, r.Alter
+	if step == "" {
+		step, alter = r.BassStep, r.BassAlter
+	}
+	if step == "" {
+		return ""
+	}
+	switch {
+	case alter >= 1:
+		return step + strings.Repeat("#", int(alter))
+	case alter <= -1:
+		return step + strings.Repeat("b", int(-alter))
+	}
+	return step
+}
+
+// kindElem is what sort of chord: "major", "dominant", "half-diminished".
+// The text attribute is how the file wants it printed — "maj7" rather than
+// "major-seventh" — and is preferred wherever it is given.
+type kindElem struct {
+	Text  string `xml:"text,attr,omitempty"`
+	Value string `xml:",chardata"`
 }
 
 type pitch struct {
@@ -551,6 +912,13 @@ var modeValues = func() map[string]model.Mode {
 	for k, v := range modeNames {
 		m[v] = k
 	}
+	// The two modes with two names. Ionian is the major scale and aeolian
+	// the minor one, and a file that uses the older names was read as
+	// having no mode at all — so a piece in A aeolian came out in A major
+	// and the change into it was not drawn, both signatures being two
+	// sharps.
+	m["ionian"] = model.Major
+	m["aeolian"] = model.Minor
 	return m
 }()
 

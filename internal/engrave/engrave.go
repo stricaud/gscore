@@ -2099,6 +2099,10 @@ func (e *engraver) drawTempoMark(x float64) {
 func (e *engraver) drawTempoAt(t model.Tempo, x, y float64) float64 {
 	text := strings.TrimSpace(t.Text)
 	bpm := t.BPM
+	// A speed that is played and not printed. See model.Tempo.Silent.
+	if t.Silent {
+		bpm = 0
+	}
 	if text == "" && bpm <= 0 {
 		return 0
 	}

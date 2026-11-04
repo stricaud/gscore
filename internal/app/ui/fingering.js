@@ -242,3 +242,135 @@ function drawSax(p) {
     </div>
   </div>`;
 }
+
+/* ---------- the whole table, to be looked through ---------- */
+
+/*
+ * The charts above are one fingering a note: what a player holds, drawn
+ * beside the music as it goes past. This is the other thing a flute
+ * player wants — every fingering the instrument has, to look through.
+ *
+ * The keys are laid out as they sit on the instrument rather than listed,
+ * because the question being asked of a fingering is "what do my hands
+ * do", and that is a shape and not a sentence. The same drawing serves a
+ * fingering on its own, a fingering with the move out of it marked, and a
+ * trill, which is a fingering with one key shaking.
+ *
+ * The names are the table's own, which come from the endpoint: Th and the
+ * B flat thumb, the three fingers of each hand, the levers, the two trill
+ * keys and the gizmo. Nothing here writes them down a second time.
+ */
+
+// Where each key sits, in the picture's own coordinates. side tells the
+// two hands' first, second and third fingers apart, which share names.
+const FLUTE_PLAN = [
+  { id: "Th", side: "L", x: 16, y: 46, r: 9, label: "Th", at: "over" },
+  { id: "BbTh", side: "L", x: 16, y: 74, r: 7, label: "B♭ th", at: "under" },
+  { id: "1", side: "L", x: 44, y: 46, r: 9, label: "1", at: "under" },
+  { id: "A#", side: "L", x: 58, y: 22, r: 6, label: "A♯", at: "over" },
+  { id: "2", side: "L", x: 70, y: 46, r: 9, label: "2", at: "under" },
+  { id: "3", side: "L", x: 94, y: 46, r: 9, label: "3", at: "under" },
+  { id: "G#", side: "L", x: 112, y: 66, r: 6, label: "G♯", at: "under" },
+
+  { id: "G", side: "R", x: 132, y: 22, r: 6, label: "G", at: "over" },
+  { id: "F#", side: "R", x: 148, y: 22, r: 6, label: "F♯", at: "over" },
+  { id: "1", side: "R", x: 172, y: 46, r: 9, label: "1", at: "under" },
+  { id: "2", side: "R", x: 196, y: 46, r: 9, label: "2", at: "under" },
+  { id: "3", side: "R", x: 220, y: 46, r: 9, label: "3", at: "under" },
+  { id: "Bblever", side: "R", x: 150, y: 72, r: 6, label: "B♭ lev", at: "under" },
+  { id: "tr1", side: "R", x: 184, y: 72, r: 6, label: "tr1", at: "under" },
+  { id: "tr2", side: "R", x: 208, y: 72, r: 6, label: "tr2", at: "under" },
+  { id: "B", side: "R", x: 244, y: 26, r: 6, label: "B", at: "over" },
+  { id: "gizmo", side: "R", x: 266, y: 26, r: 5, label: "gizmo", at: "right" },
+  { id: "C", side: "R", x: 262, y: 46, r: 6, label: "C", at: "right" },
+  { id: "C#", side: "R", x: 256, y: 66, r: 6, label: "C♯", at: "under" },
+  { id: "D#", side: "R", x: 232, y: 66, r: 6, label: "D♯", at: "under" },
+];
+
+// fluteKeysDown reads a fingering's bits into the set of keys it holds.
+//
+// The bit order is the endpoint's key list, and the two hands are told
+// apart by where the list divides: everything before `left` is the left
+// hand's. A name appears on both sides — each hand has a 1, a 2 and a 3 —
+// so the side is part of what a key is.
+function fluteKeysDown(bits, names, left) {
+  const down = {};
+  for (let i = 0; i < names.length; i++) {
+    if (!(bits & (1 << i))) continue;
+    down[(i < left ? "L:" : "R:") + names[i]] = true;
+  }
+  return down;
+}
+
+// fluteChart draws one fingering.
+//
+// shake, where it is given, is the key of a trill: it is ringed rather
+// than filled, because it is neither down nor up — it is the one that
+// moves. Everything is currentColor, so the picture reads in the light
+// theme and the dark one alike.
+function fluteChart(bits, names, left, opts) {
+  const o = opts || {};
+  const down = fluteKeysDown(bits, names, left);
+  const shake = o.shake ? o.shake : null;
+  let out = '<svg viewBox="0 0 306 92" class="fl-chart" role="img" aria-label="' +
+    fluteSpell(bits, names, left) + '">';
+  out += '<line x1="122" y1="30" x2="122" y2="62" stroke="currentColor"' +
+    ' stroke-width="0.7" opacity="0.3"/>';
+  for (const k of FLUTE_PLAN) {
+    const id = k.side + ":" + k.id;
+    const on = !!down[id];
+    const moves = shake && shake.side === k.side && shake.id === k.id;
+    out += '<circle cx="' + k.x + '" cy="' + k.y + '" r="' + k.r +
+      '" stroke="currentColor" stroke-width="' + (moves ? "2" : "1.2") +
+      '" fill="' + (on ? "currentColor" : "none") + '"' +
+      (moves ? ' stroke-dasharray="3 2"' : "") + "/>";
+    let tx = k.x, ty = k.y + k.r + 11, anchor = "middle";
+    if (k.at === "over") ty = k.y - k.r - 4;
+    if (k.at === "right") { tx = k.x + k.r + 3; ty = k.y + 2; anchor = "start"; }
+    out += '<text x="' + tx + '" y="' + ty + '" font-size="6" text-anchor="' +
+      anchor + '" fill="currentColor" opacity="' +
+      (moves ? "1" : on ? "0.9" : "0.45") + '">' + fluteEsc(k.label) + "</text>";
+  }
+  out += "</svg>";
+  return out;
+}
+
+// fluteSpell writes a fingering the way a chart does, for the picture's
+// own description: somebody reading the page with a screen reader gets
+// the chart in words.
+function fluteSpell(bits, names, left) {
+  const l = [], r = [];
+  for (let i = 0; i < names.length; i++) {
+    if (!(bits & (1 << i))) continue;
+    (i < left ? l : r).push(names[i]);
+  }
+  return (l.join(" ") + " | " + r.join(" ")).trim();
+}
+
+function fluteEsc(s) {
+  return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
+// fluteNeeds is what a fingering asks of the instrument beyond the keys
+// in the picture.
+//
+// "Split E" is the one: it is a mechanism a flute either has or has not,
+// not something a finger does, so there is nothing to draw for it and
+// leaving it out silently would make two different fingerings look
+// identical. It is said in words beside the picture instead.
+function fluteNeeds(bits, names) {
+  const out = [];
+  for (let i = 0; i < names.length; i++) {
+    if ((bits & (1 << i)) && names[i] === "split E") out.push("split E");
+  }
+  return out;
+}
+
+// fluteTuning says what a number of cents means, in words a player uses.
+function fluteTuning(cents) {
+  if (!cents) return "in tune";
+  const how = Math.abs(cents) >= 25 ? "far " : Math.abs(cents) <= 5 ? "a shade " : "";
+  return how + (cents > 0 ? "sharp" : "flat") + " (" +
+    (cents > 0 ? "+" : "") + cents + ")";
+}

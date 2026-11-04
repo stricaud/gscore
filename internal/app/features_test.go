@@ -130,6 +130,17 @@ func (h *harness) get(path string) string {
 	return string(b)
 }
 
+// getFails expects a refusal of a GET, with a reason.
+func (h *harness) getFails(path string) string {
+	h.t.Helper()
+	rec := httptest.NewRecorder()
+	h.mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+	if rec.Code == http.StatusOK {
+		h.t.Fatalf("GET %s was meant to be refused, but succeeded", path)
+	}
+	return strings.TrimSpace(rec.Body.String())
+}
+
 func (h *harness) note(part, measure, step int, dur string) {
 	h.t.Helper()
 	h.post("/api/insert?part=" + itoa(part) + "&measure=" + itoa(measure) +

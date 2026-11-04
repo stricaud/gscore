@@ -11,6 +11,20 @@
  */
 
 (function () {
+  /*
+   * What the page comes up at, when nobody has said otherwise.
+   *
+   * A page is opened on whatever screen the reader has, and these days
+   * that is usually a large one: the sizes the desktop build starts at —
+   * eight pixels to a staff space, an interface drawn at the size it was
+   * designed — come out small on it. The desktop build keeps those,
+   * because somebody who installed it has a window they chose.
+   *
+   * Defaults, not settings. Anything the reader picks is remembered and
+   * wins over these; these only decide what the first visit looks like.
+   */
+  window.gscoreDefaults = { zoom: 15, uiScale: 1.5 };
+
   // Running as a page, the core is a WebAssembly module that takes a moment
   // to start. app.js runs as soon as it is parsed and immediately asks the
   // core for the score — so without something to wait on, that request goes

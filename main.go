@@ -517,6 +517,8 @@ func renderFile(s *model.Score, path string, strip bool, space float64,
 	lay := engrave.Engrave(s, eopt)
 	if wantPDF {
 		sayIfDivided(s, lay, popt)
+	} else {
+		lay = refill(s, eopt, lay)
 	}
 
 	f, err := os.Create(path)
@@ -558,6 +560,71 @@ func renderFile(s *model.Score, path string, strip bool, space float64,
 		return ghtml.Render(f, lay, s, nil, hopt)
 	}
 	return svg.Render(f, lay, ropt)
+}
+
+// refill engraves a second time, to the width the first time actually came
+// out at.
+//
+// A system is laid out to Options.LineWidth, and for anything but paper that
+// is a flat hundred and twenty staff spaces — a sheet's worth, and the only
+// width there is when there is no sheet to measure. The PDF branch above
+// does not use it: gpdf.Fit works the line width out from the paper it is
+// going to be printed on. A page has no paper, so nothing ever worked it out,
+// and the default stood.
+//
+// The canvas is not that width, though. It grows to hold the widest ink
+// drawn — see engrave.Layout.Width — so a single bar too wide to break drags
+// it out past every other system in the score. Rhapsody in Blue is the
+// extreme case: one system in a hundred and forty-three is half as wide
+// again as the rest, and every other line of music stops a third of the way
+// short of the right-hand edge because of that one bar.
+//
+// So ask the drawing how wide it came out, and engrave again to that. The
+// bars repack into the room that was there all along — on the Gershwin that
+// is four bars a system becoming six.
+//
+// Twice at most, and it keeps the better of what it has. A wider line
+// repacks the bars, and repacking can hand the overfull place to a different
+// bar: there is no guarantee of a fixed point to iterate to, and a build of
+// a thousand scores is not where one should be looked for. A score with
+// nothing overfull — most of them — measures as already full on the first
+// pass and is never engraved twice at all.
+func refill(s *model.Score, eopt engrave.Options, lay *engrave.Layout) *engrave.Layout {
+	// Strip mode has no line to fill: the music runs as far as it runs and
+	// the canvas is trimmed to it, so a width read off the drawing and fed
+	// back in would be chasing its own tail.
+	if lay == nil || eopt.Mode != engrave.Paginated {
+		return lay
+	}
+
+	// How much of the canvas is not the line the music was set to — the
+	// white strip down the right-hand side, as a fraction of the whole.
+	waste := func(l *engrave.Layout, lineWidth float64) float64 {
+		if l == nil || l.Width <= 0 {
+			return 0
+		}
+		return (l.Width - (lineWidth + 2*eopt.Spacings.Margin)) / l.Width
+	}
+
+	best, worst := lay, waste(lay, eopt.LineWidth)
+	for pass := 0; pass < 2; pass++ {
+		// Near enough full. A hair of rounding is not worth engraving the
+		// ninth symphony again for.
+		if worst <= 0.001 {
+			break
+		}
+		opt := eopt
+		opt.LineWidth = best.Width - 2*eopt.Spacings.Margin
+		cand := engrave.Engrave(s, opt)
+		w := waste(cand, opt.LineWidth)
+		if w >= worst {
+			// No better, and possibly worse: a bar that fitted before now
+			// does not. Keep what we had.
+			break
+		}
+		best, worst = cand, w
+	}
+	return best
 }
 
 // writeBands writes the drawing as pieces beside the page, and says where

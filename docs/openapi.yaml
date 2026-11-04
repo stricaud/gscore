@@ -2929,6 +2929,72 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Hits" }
 
+  /api/flute:
+    get:
+      tags: [score]
+      summary: The flute's fingerings, every one of them
+      description: |
+        The chart in the back of a method book gives one fingering a note.
+        This gives every one the instrument has — some twenty-nine thousand
+        — with how far out of tune each comes out and how many keys it is
+        from the standard chart. Those two are what make the table usable:
+        the alternate a player would reach for is one key from the chart
+        and in tune, and the ones eleven keys away are an acoustic model
+        saying a note can be got out of a shape nobody would use.
+
+        With no parameters it answers about the instrument: the key names,
+        how many belong to the left hand, and the notes it plays. With
+        `note` it answers about one note. With `from` and `to` it answers
+        with the ways of trilling between two notes — a trill being one
+        fingering for each, differing by the single key that shakes.
+      parameters:
+        - name: note
+          in: query
+          description: The note, as a name with an octave — `D5`, `A#4`.
+          schema: { type: string }
+        - { name: from, in: query, description: "The lower note of a trill.", schema: { type: string } }
+        - { name: to, in: query, description: "The upper note of a trill.", schema: { type: string } }
+        - name: away
+          in: query
+          description: At most this many keys different from the standard chart.
+          schema: { type: integer, minimum: 0 }
+        - name: within
+          in: query
+          description: At most this many cents out of tune, either way.
+          schema: { type: integer, minimum: 0 }
+        - name: using
+          in: query
+          description: Only fingerings that hold all of these keys, by name, comma separated.
+          schema: { type: string }
+        - name: without
+          in: query
+          description: Only fingerings that hold none of these keys.
+          schema: { type: string }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 2000, default: 60 } }
+        - { name: offset, in: query, schema: { type: integer, minimum: 0 } }
+      responses:
+        "200":
+          description: >
+            The instrument, and whichever of the note or the trill was
+            asked for. `keys` is the key names in the order a fingering's
+            bits are in, `left` how many of them are the left hand's.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  keys: { type: array, items: { type: string } }
+                  left: { type: integer }
+                  notes: { type: array, items: { type: string } }
+                  note: { type: string }
+                  standard: { type: object }
+                  total: { type: integer }
+                  shown: { type: array, items: { type: object } }
+                  from: { type: string }
+                  to: { type: string }
+                  trills: { type: array, items: { type: object } }
+        "400": { $ref: "#/components/responses/Error" }
+
   /api/harmonics:
     get:
       tags: [play, score]

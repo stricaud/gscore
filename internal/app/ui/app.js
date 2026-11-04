@@ -615,7 +615,30 @@ function rememberedUIScale(kept) {
   } catch (_) {
     // A private window may refuse to say.
   }
+  // Nobody has chosen, so whatever this way of running gscore comes up
+  // at: a page sets its own, the desktop build sets none. See
+  // gscoreDefaults in web/boot.js.
+  const page = Number(window.gscoreDefaults && window.gscoreDefaults.uiScale);
+  if (page > 0) return page;
   return said > 0 ? said : 1;
+}
+
+// startingZoom is how big the score is drawn to begin with, in pixels to
+// a staff space.
+//
+// The same question as the interface size and the same answer: a page
+// comes up at what a page should come up at, the desktop build at what it
+// always did, and a reader who moves the slider has moved it for good.
+function startingZoom() {
+  try {
+    const mine = Number(localStorage.getItem("zoom"));
+    if (mine >= 5 && mine <= 26) return mine;
+  } catch (_) {
+    // A private window may refuse to say.
+  }
+  const page = Number(window.gscoreDefaults && window.gscoreDefaults.zoom);
+  if (page >= 5 && page <= 26) return page;
+  return state.zoom;
 }
 
 function applyUIScale(v) {
@@ -992,6 +1015,7 @@ async function action(name) {
       break;
     case "insert-measures": await insertMeasuresDialog(); break;
     case "remove-measure": await removeMeasure(); break;
+    case "flute-chart": await fluteDialog(); break;
     case "delete":
       await deleteSelected();
       break;
@@ -2196,10 +2220,27 @@ async function reopen() {
   await reload();
 }
 
+// showZoom sets the size without drawing anything, for the one moment
+// that happens before there is anything to draw.
+function showZoom(z) {
+  state.zoom = Math.min(26, Math.max(5, Math.round(z)));
+  const slider = $("#zoom");
+  if (slider) slider.value = String(state.zoom);
+  const readout = $("#zoom-readout");
+  if (readout) readout.textContent = state.zoom + " px/space";
+}
+
 function setZoom(z) {
   state.zoom = Math.min(26, Math.max(5, Math.round(z)));
   $("#zoom").value = String(state.zoom);
   $("#zoom-readout").textContent = state.zoom + " px/space";
+  // Remembered, so that a reader who found the size they like finds it
+  // again next time. See startingZoom.
+  try {
+    localStorage.setItem("zoom", String(state.zoom));
+  } catch (_) {
+    // A private window may refuse. The size still holds for this visit.
+  }
   drawScore().then(markSelection);
 }
 
@@ -7924,6 +7965,194 @@ function knobPicture(spec) {
 
   return `<svg class="knob-pic" viewBox="0 0 ${w} ${h}" width="${w * z}" ` +
     `height="${h * z}" aria-hidden="true">${out.join("")}</svg>`;
+}
+
+/* ---------- the flute's fingerings ---------- */
+
+// fluteDialog is the whole table of them, to be looked through.
+//
+// Two questions, which are different questions. "How else can I play this
+// note" is asked of one note and answered by its alternates, nearest the
+// standard chart first. "How do I trill these two" is asked of a pair and
+// answered by the fingerings that differ by the one key that shakes —
+// which is what a trill is, and why the trill chart in a method book is
+// not derivable from the fingering chart beside it.
+//
+// Nothing about the instrument is written here. The keys, their names,
+// which hand they belong to and what notes there are all come from the
+// endpoint, so the picture and the table cannot drift apart.
+async function fluteDialog() {
+  const dlg = $("#flute");
+  const list = $("#flute-list");
+  const count = $("#flute-count");
+
+  let kit = null;              // the instrument: keys, left, notes
+  let note = "D5";             // the note being looked at
+  let to = null;               // the other note, for a trill
+  let trills = false;
+  let shown = 0;               // how many of the answer are on the page
+  const page = 24;
+
+  const ask = async (extra) => {
+    const p = new URLSearchParams(extra || {});
+    const res = await fetch("/api/flute?" + p.toString());
+    if (!res.ok) {
+      status("Could not read the fingerings: " + (await res.text()).trim());
+      return null;
+    }
+    return res.json();
+  };
+
+  // The note buttons, which are the whole range of the instrument.
+  const drawNotes = () => {
+    const box = $("#flute-notes");
+    box.innerHTML = "";
+    for (const n of kit.notes) {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.textContent = n.replace("#", "♯");
+      b.className = n === note ? "on" : "";
+      b.onclick = () => {
+        note = n;
+        if (trills) to = nextNote(n);
+        drawNotes();
+        fillTo();
+        void show(true);
+      };
+      box.appendChild(b);
+    }
+  };
+
+  // The note a trill goes to, which is nearly always the one above.
+  const nextNote = (n) => {
+    const i = kit.notes.indexOf(n);
+    return kit.notes[Math.min(i + 1, kit.notes.length - 1)];
+  };
+
+  const fillTo = () => {
+    const pick = $("#flute-to");
+    pick.innerHTML = "";
+    for (const n of kit.notes) {
+      if (n === note) continue;
+      const o = new Option(n.replace("#", "♯"), n);
+      pick.add(o);
+    }
+    pick.value = to || nextNote(note);
+    to = pick.value;
+  };
+
+  // The keys a fingering can be asked to hold, by the names the table
+  // uses: the list is the instrument's, not a second copy of it.
+  const fillUsing = () => {
+    const pick = $("#flute-using");
+    pick.innerHTML = "";
+    pick.add(new Option(t("any key"), ""));
+    const seen = new Set();
+    kit.keys.forEach((k, i) => {
+      const name = (i < kit.left ? "left " : "right ") + k;
+      if (seen.has(k)) return;
+      seen.add(k);
+      pick.add(new Option(name, k));
+    });
+  };
+
+  const card = (html, caption) => {
+    const box = document.createElement("figure");
+    box.className = "fl-card";
+    box.innerHTML = html + "<figcaption>" + caption + "</figcaption>";
+    return box;
+  };
+
+  const show = async (fresh) => {
+    if (fresh) {
+      list.innerHTML = "";
+      shown = 0;
+    }
+    const d = trills
+      ? await ask({ from: note, to, limit: String(page), offset: String(shown) })
+      : await ask({
+          note,
+          away: $("#flute-away").value,
+          within: $("#flute-within").value,
+          using: $("#flute-using").value,
+          limit: String(page), offset: String(shown),
+        });
+    if (!d) return;
+
+    if (fresh && !trills) {
+      // The standard chart first and on its own: it is the answer to the
+      // question nine times in ten, and burying it in five thousand
+      // alternates would be hiding it.
+      const std = d.standard;
+      const box = card(
+        fluteChart(std.keys, kit.keys, kit.left),
+        `<b>${note.replace("#", "♯")}</b> — the standard fingering, ` +
+        fluteTuning(std.cents));
+      box.classList.add("fl-standard");
+      list.appendChild(box);
+    }
+
+    const rows = trills ? d.trills : d.shown;
+    for (const row of rows || []) {
+      if (trills) {
+        const side = row.hold.spell.split("|")[0].includes(row.key) ? "L" : "R";
+        box(list, card(
+          fluteChart(row.hold.keys, kit.keys, kit.left,
+                     { shake: { id: row.key, side } }),
+          `shake <b>${row.key}</b> ${row.down ? "down" : "off"} — ` +
+          `${note.replace("#", "♯")} ${fluteTuning(row.hold.cents)}, ` +
+          `${to.replace("#", "♯")} ${fluteTuning(row.upper)}` +
+          (row.hold.away ? `, ${row.hold.away} from the chart` : ", on the chart") +
+          (fluteNeeds(row.hold.keys, kit.keys).length ? " — needs <b>split E</b>" : "")));
+      } else {
+        const needs = fluteNeeds(row.keys, kit.keys);
+        box(list, card(
+          fluteChart(row.keys, kit.keys, kit.left),
+          `${fluteTuning(row.cents)} — ` +
+          (row.away === 1 ? "1 key" : row.away + " keys") + " from the chart" +
+          (needs.length ? ` — needs <b>${needs.join(", ")}</b>` : "")));
+      }
+    }
+    shown += (rows || []).length;
+    count.textContent = trills
+      ? `${d.total} ways of trilling ${note.replace("#", "♯")} to ` +
+        `${to.replace("#", "♯")} — showing ${shown}`
+      : `${d.total} other fingerings for ${note.replace("#", "♯")}` +
+        (d.total ? ` — showing ${shown}` : "");
+    $("#flute-more").hidden = shown >= d.total;
+  };
+
+  const box = (into, el) => into.appendChild(el);
+
+  if (!kit) {
+    kit = await ask({});
+    if (!kit) return;
+  }
+  if (!kit.notes.includes(note)) note = kit.notes[0];
+  to = nextNote(note);
+  drawNotes();
+  fillTo();
+  fillUsing();
+
+  const mode = (onTrills) => {
+    trills = onTrills;
+    $("#flute-mode-note").classList.toggle("on", !onTrills);
+    $("#flute-mode-trill").classList.toggle("on", onTrills);
+    $("#flute-trill-to").hidden = !onTrills;
+    $("#flute-filters").hidden = onTrills;
+    void show(true);
+  };
+  $("#flute-mode-note").onclick = () => mode(false);
+  $("#flute-mode-trill").onclick = () => mode(true);
+  $("#flute-to").onchange = () => { to = $("#flute-to").value; void show(true); };
+  for (const id of ["#flute-away", "#flute-within", "#flute-using"]) {
+    $(id).onchange = () => void show(true);
+  }
+  $("#flute-more").onclick = () => void show(false);
+  $("#flute-done").onclick = () => dlg.close();
+
+  await show(true);
+  dlg.showModal();
 }
 
 /* ---------- how this score is engraved ---------- */
@@ -14611,10 +14840,12 @@ async function main() {
     // Before anything is drawn, so the interface does not come up at one
     // size and jump to another.
     applyUIScale(rememberedUIScale(kept));
+    showZoom(startingZoom());
   } catch (_) {
     // Served without a core behind it. What the browser remembers still
-    // holds: the interface size is the browser's to know.
+    // holds: the sizes are the browser's to know.
     applyUIScale(rememberedUIScale(null));
+    showZoom(startingZoom());
   }
   // Before the menus are filled in and the keys are written into them: a
   // menu translated after its keystrokes were put there would have to have
@@ -16001,6 +16232,13 @@ const typeBudget = 256;
 const REMOVE_MARK = '<circle cx="12" cy="12" r="8.5"/><path d="M6 18 18 6"/>';
 
 const MENU_DRAWINGS = {
+  // A fingering chart: the row of holes along an instrument, some
+  // stopped and some open, which is what every chart in every method
+  // book looks like and what the window draws.
+  "flute-chart": '<line x1="2.5" y1="12" x2="21.5" y2="12"/>' +
+    '<circle cx="6" cy="12" r="2.6" fill="currentColor"/>' +
+    '<circle cx="12" cy="12" r="2.6"/>' +
+    '<circle cx="18" cy="12" r="2.6" fill="currentColor"/>',
   undo: '<path d="M4.5 11h9.5a5 5 0 0 1 0 10H9"/><path d="M8.5 6.5 4 11l4.5 4.5"/>',
   redo: '<path d="M19.5 11H10a5 5 0 0 0 0 10h4.5"/><path d="M15.5 6.5 20 11l-4.5 4.5"/>',
   // Blades and handles, which is the one picture everybody reads as cut.

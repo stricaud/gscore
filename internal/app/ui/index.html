@@ -450,6 +450,11 @@
            this is on. -->
       <button data-action="view-concert"><span>Concert pitch</span><kbd id="concert-tick"></kbd></button>
       <hr>
+      <hr>
+      <!-- Every fingering the flute has, to be looked through: the
+           alternates, and the trills, which are a pair of notes rather
+           than a note. See /api/flute. -->
+      <button data-action="flute-chart"><span>Flute fingerings…</span></button>
       <!-- How big the menus, the palette and the panels are drawn. Not
            the score, which has a size of its own in staff spaces just
            above: a reader may want large menus over a small score, or the
@@ -1117,6 +1122,54 @@
       <button value="cancel" type="submit" formnovalidate>Close</button>
     </div>
   </form>
+</dialog>
+
+<!-- Every fingering the flute has.
+     The chart in a method book gives one fingering a note; the table
+     behind this gives every one the instrument has, with how far out of
+     tune each comes out and how many keys it is from the standard. Those
+     two are what make twenty-nine thousand of them worth having: the
+     alternate a player reaches for is one key from the chart and in
+     tune. Nothing here is written in the markup — the keys, their names
+     and the notes all come from the endpoint. -->
+<dialog id="flute" class="wide">
+  <h2>Flute fingerings</h2>
+  <p class="small" id="flute-about">Every fingering the instrument has, with
+     how far out of tune it comes out. Pick a note; the standard chart is
+     first and the alternates follow, nearest the chart first.</p>
+  <nav id="flute-notes" aria-label="Notes"></nav>
+  <div class="fl-modes">
+    <button id="flute-mode-note" class="on" type="button">Fingerings</button>
+    <button id="flute-mode-trill" type="button">Trills</button>
+    <span id="flute-trill-to" hidden>
+      <label for="flute-to">to</label>
+      <select id="flute-to"></select>
+    </span>
+  </div>
+  <div class="fl-filters" id="flute-filters">
+    <label for="flute-away">Keys from the chart</label>
+    <select id="flute-away">
+      <option value="">any</option>
+      <option value="1">1</option>
+      <option value="2">2</option>
+      <option value="3">3</option>
+    </select>
+    <label for="flute-within">In tune to</label>
+    <select id="flute-within">
+      <option value="">any</option>
+      <option value="5">±5 cents</option>
+      <option value="10">±10 cents</option>
+      <option value="20">±20 cents</option>
+    </select>
+    <label for="flute-using">Holding</label>
+    <select id="flute-using"><option value="">any key</option></select>
+  </div>
+  <p class="small" id="flute-count"></p>
+  <div id="flute-list"></div>
+  <div class="ask-buttons">
+    <button id="flute-more" type="button">Show more</button>
+    <button id="flute-done" type="button" class="primary">Done</button>
+  </div>
 </dialog>
 
 <!-- What this score is engraved by.

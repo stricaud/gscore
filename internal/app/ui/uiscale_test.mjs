@@ -111,3 +111,54 @@ test("a flyout is placed in the window's own pixels", () => {
   assert.doesNotMatch(body, /offsetWidth|offsetHeight/,
     "a measurement in the panel's own pixel, mixed with the window's");
 });
+
+/* ---------- what a page comes up at ---------- */
+
+/*
+ * A page is opened on whatever screen the reader has, and these days that
+ * is usually a large one: the sizes the desktop build starts at — eight
+ * pixels to a staff space, an interface at the size it was designed —
+ * come out small on it. So the page carries its own, and the desktop
+ * build carries none: somebody who installed it has a window they chose.
+ *
+ * Defaults, not settings. What the reader picks is remembered and wins.
+ */
+
+const boot = readFileSync(
+  new URL("../../../web/boot.js", import.meta.url), "utf8");
+
+test("the deployed page says what it comes up at", () => {
+  const m = /window\.gscoreDefaults = \{([^}]*)\}/.exec(boot);
+  assert.ok(m, "boot.js sets no defaults for the page");
+  assert.match(m[1], /zoom:\s*15\b/);
+  assert.match(m[1], /uiScale:\s*1\.5\b/);
+});
+
+// Only the page. The desktop build has no boot.js at all, which is how
+// the two can differ without either of them knowing about the other.
+test("nothing but the page sets them", () => {
+  assert.doesNotMatch(src, /gscoreDefaults\s*=/,
+    "the editor sets the page's defaults, so every build gets them");
+  assert.match(src, /window\.gscoreDefaults && window\.gscoreDefaults\.uiScale/);
+  assert.match(grab("startingZoom"), /window\.gscoreDefaults/);
+});
+
+test("a reader's own choice beats the default", () => {
+  const ui = grab("rememberedUIScale");
+  const zoom = grab("startingZoom");
+  // The stored answer is read before the page's default in both.
+  assert.ok(ui.indexOf("localStorage") < ui.indexOf("gscoreDefaults"),
+    "the page's default is read before what the reader chose");
+  assert.ok(zoom.indexOf("localStorage") < zoom.indexOf("gscoreDefaults"),
+    "the page's default is read before what the reader chose");
+  // And moving the slider is choosing.
+  assert.match(grab("setZoom"), /localStorage\.setItem\("zoom"/);
+});
+
+// Drawing is what the first one cannot do: it runs before there is a
+// score to draw.
+test("the size is set before anything is drawn", () => {
+  assert.match(grab("showZoom"), /state\.zoom =/);
+  assert.doesNotMatch(grab("showZoom"), /drawScore/);
+  assert.match(src, /showZoom\(startingZoom\(\)\)/);
+});

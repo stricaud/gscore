@@ -356,6 +356,10 @@ footer p { max-width: var(--wide); margin: 0 auto 6px; }
 .sheet th, .sheet td { border: 1px solid #e3e0d7; padding: 8px 11px; text-align: left; vertical-align: top; }
 .sheet th { background: #f1efe9; }
 .sheet hr { border: none; border-top: 1px solid #e3e0d7; margin: 2.4em 0; }
+/* A list of settings is a name and what it does, so the names are a
+   column of their own and not half the table. */
+.sheet table.settings th { width: 11rem; font-weight: normal; }
+@media (max-width: 40rem) { .sheet table.settings th { width: 8rem; } }
 
 .index { list-style: none; padding: 0; display: grid; gap: 14px; }
 .index li {

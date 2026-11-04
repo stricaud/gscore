@@ -12071,10 +12071,13 @@ async function playNow(opts) {
   // The cursor goes up before a note sounds, at the start of the music, so
   // pressing play is visibly answered even when the piece opens with rests —
   // Mozart's Introitus rests for nine bars before anyone sings.
-  makeCursor();
+  //
+  // Not in a player, which lights the notes instead and has a clock
+  // running in its own transport to answer the button. See follow.
+  if (!state.player) makeCursor();
   const at0 = cursorAt(pb.measures, from);
   if (at0) {
-    moveCursor(at0);
+    if (!state.player) moveCursor(at0);
     followCursor(at0);
   }
   follow(pb);
@@ -12376,7 +12379,22 @@ function follow(pb) {
     // Where the cursor is, from the clock rather than from any one staff.
     const pt = cursorAt(pb.measures, shown);
     if (pt) {
-      moveCursor(pt);
+      // Drawn, except in a player.
+      //
+      // The line crosses each bar at a steady rate because that is what
+      // time does, and the engraver spaces a bar by what is in it — so
+      // the two agree at the barlines and nowhere in between. The line
+      // leaves the barline while the first notehead is still a little to
+      // the right of it, and has overtaken by the middle of the bar. The
+      // editor wants it anyway: it is the one thing on the page that says
+      // where you are in the music rather than which note is sounding,
+      // and it is where playing will pick up from if you pause.
+      //
+      // A player wants neither. The sounding noteheads are already lit,
+      // exactly, on every staff at once — so the line adds nothing except
+      // a second opinion about the same moment, and a reader watching the
+      // two disagree believes the one that is wrong. See cursorX.
+      if (!state.player) moveCursor(pt);
       followCursor(pt);
       lastMeasure = pt.measure;
     }
@@ -15045,6 +15063,8 @@ async function main() {
 //   { gscore: "open",  value: "X:1\n…", name: "tune.abc" }
 //                                       one written into the page itself
 //   { gscore: "zoom",  value: 10 }
+//   { gscore: "mode",  value: "strip" } one unbroken line, or "page" to
+//                                       wrap it to the frame again
 //
 // It sends two of its own back to whoever embedded it: "ready" once the score
 // is up, and "ended" when the music stops.
@@ -15079,6 +15099,21 @@ function setupEmbedMessages() {
         break;
       }
       case "zoom": setZoom(Number(m.value) || state.zoom); break;
+      // Wrapped to the frame, or one unbroken line.
+      //
+      // The same switch as the View menu's, reachable from the page, so
+      // that a page offering its reader the choice can make it without
+      // reloading the frame and losing where the music had got to.
+      case "mode": {
+        const want = String(m.value) === "strip" ? "strip" : "page";
+        if (want === state.mode) break;
+        state.mode = want;
+        markMode();
+        await drawScore();
+        await loadHits();
+        tellParent("ready"); // the music is a different shape now
+        break;
+      }
     }
   });
 }

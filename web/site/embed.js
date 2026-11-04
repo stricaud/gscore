@@ -126,11 +126,17 @@
 
   // The address of the frame for one score. Everything the embedding
   // documentation lists can be set on the element: data-player,
-  // data-zoom, data-autoplay, data-loop, data-tune.
+  // data-zoom, data-autoplay, data-loop, data-tune, data-mode.
+  //
+  // data-mode="strip" draws the music as one unbroken line that scrolls
+  // sideways, instead of wrapping it to the width of the frame. A tune
+  // in a band across a page reads better as a line, and so does one bar
+  // of an exercise quoted in a sentence: wrapped, a short frame shows
+  // two systems and the top of a third.
   function address(el) {
     const q = new URLSearchParams();
     q.set("player", el.dataset.player || "1");
-    for (const name of ["zoom", "autoplay", "loop", "tune"]) {
+    for (const name of ["zoom", "autoplay", "loop", "tune", "mode"]) {
       if (el.dataset[name]) q.set(name, el.dataset[name]);
     }
     return APP + "?" + q.toString();

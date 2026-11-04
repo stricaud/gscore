@@ -58,6 +58,33 @@ They go in the address, after the `?`:
 | `loop=1` | Start again at the end |
 | `tune=N` | Which tune of a book to show, counted from 0 |
 | `zoom=N` | Staff space in pixels; 8 is the default, 12 is large |
+| `mode=page` | The music in lines, wrapped to the width of the frame. The default |
+| `mode=strip` | The music as one unbroken line, scrolling sideways |
+
+## Lines or one line
+
+An embedded score is wrapped to the frame by default: the music is broken
+into systems the width of the frame and the frame scrolls down, which is
+how a page of music is read.
+
+`mode=strip` draws it as one unbroken line instead, scrolling sideways. It
+is the right answer more often than it sounds:
+
+- **A band across a page.** A tune in a strip two staves tall sits in the
+  flow of the writing. The same tune wrapped needs a tall frame or it
+  shows two systems and the top of a third.
+- **One bar quoted in a sentence.** Nothing to wrap, and a wrapped frame
+  leaves white space under it where the next system would have gone.
+- **Something to play along with.** The music runs past as it is played,
+  the way a scrolling score does, instead of jumping from line to line.
+
+Wrapping is better for anything somebody is going to read as music —
+an exercise, a study, a piece. A reader following a line of notes does not
+want to be scrolling sideways to do it.
+
+Either way the frame opens as tall as the music needs, so a strip comes up
+exactly as tall as its one line. `data-height` or a height on the
+`<iframe>` overrides that and the frame scrolls.
 
 A browser will not make a sound until somebody has clicked on the page, so
 `autoplay=1` is a request rather than an instruction: if it is refused, the
@@ -172,6 +199,7 @@ which is what `base64 -w0 tune.mxl` gives you.
 | `data-encoding=base64` | The text is base64; decode it first |
 | `data-height=240` | How tall the frame is, in pixels. Left out, it comes up as tall as one system — every instrument of the score, once — and a frame made shorter than that simply scrolls |
 | `data-player=1` | As `player=` above: `1` or `bare` |
+| `data-mode=strip` | One unbroken line, scrolling sideways, instead of wrapped to the frame. See [Lines or one line](#lines-or-one-line) |
 | `data-zoom=N` | Staff space in pixels |
 | `data-autoplay=1`, `data-loop=1`, `data-tune=N` | As in the address |
 | `data-name=x.abc` | The filename, where the format alone is not enough |

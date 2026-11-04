@@ -59,18 +59,35 @@
     padding: 12px 14px;
     overflow-x: auto;
   }
-  /* The player is an ordinary iframe. Give it a height and it fills it.
-     Tall enough for the music: a player wraps the score to the width of
-     the frame, so a frame two systems tall shows two systems and a frame
-     one system tall shows one and the top of the next. A page driving
-     gscore from script can ask the frame how tall the music came out —
-     the "ready" message carries it. */
+  /* The player is an ordinary iframe. The height here is only what it
+     starts at, so the page does not jump about while the music is being
+     engraved: the frame measures the drawing and says how tall it came
+     out, and the script at the foot of this page sets the real height
+     from that. See "Tall enough for the music" below. */
   .score {
     width: 100%;
+    height: 180px;
     border: 1px solid var(--line);
     border-radius: 8px;
     background: #fff;
+    transition: height .25s ease;
   }
+  @media (prefers-reduced-motion: reduce) { .score { transition: none; } }
+  table.settings {
+    border-collapse: collapse;
+    width: 100%;
+    margin: 1.2rem 0;
+    display: block;
+    overflow-x: auto;
+  }
+  table.settings th, table.settings td {
+    border: 1px solid var(--line);
+    padding: 7px 10px;
+    text-align: left;
+    vertical-align: top;
+    font-size: .95rem;
+  }
+  table.settings th { width: 11rem; font-weight: normal; }
   .controls { margin-top: .6rem; }
   button {
     font: inherit;
@@ -103,7 +120,7 @@
              why this one reaches back out with ../../
   zoom=9     staff space in pixels
 -->
-<iframe class="score" id="first" height="330"
+<iframe class="score" id="first"
         title="Exercise in C major"
         src="../build/web/app/?player=1&zoom=9&score=../../samples/boite-musique.abc"></iframe>
 
@@ -112,11 +129,99 @@
   With <code>player=bare</code> there is no transport at all: the score itself
   is the button, and clicking it starts and stops the music.
 </p>
-<iframe class="score" id="second" height="300"
+<iframe class="score" id="second"
         title="The same exercise, with no controls"
         src="../build/web/app/?player=bare&zoom=9&loop=1&score=../../samples/boite-musique.abc"></iframe>
 <p class="note"><code>loop=1</code> makes it go round again, which is what you
    want for something to practise along with.</p>
+
+<h2>One line instead of a page</h2>
+<p>
+  The two above are wrapped to the frame: the music is broken into systems as
+  wide as the frame and the frame scrolls down, which is how a page of music is
+  read. <code>mode=strip</code> draws it as one unbroken line instead, and the
+  frame scrolls sideways.
+</p>
+<!--
+  mode=strip  one unbroken line, scrolling sideways
+  mode=page   wrapped to the frame — the default, so it need not be written
+-->
+<iframe class="score" id="line"
+        title="The same exercise, as one line"
+        src="../build/web/app/?player=1&mode=strip&zoom=9&score=../../samples/boite-musique.abc"></iframe>
+<p class="note">
+  Wrapped is better for music somebody is going to read — an exercise, a study,
+  a piece — because a reader following a line of notes should not have to
+  scroll sideways to do it. The line is better for a band across a page, for
+  the one bar quoted in the middle of a sentence, and for something to play
+  along with: the music runs past as it sounds instead of jumping from line to
+  line.
+</p>
+
+<h2>Everything you can put in the address</h2>
+<p>
+  After the <code>?</code>, joined with <code>&amp;</code>. Only
+  <code>score=</code> is needed; the rest have defaults.
+</p>
+<table class="settings">
+  <tr><th><code>score=URL</code></th>
+      <td>The file to open. Resolved against the <em>gscore page</em>, not
+      against yours, which is why the frames here reach back out with
+      <code>../../</code>. An absolute URL always works</td></tr>
+  <tr><th><code>player=1</code></th>
+      <td>No menus, no palette, no inspector: the score and a play
+      button</td></tr>
+  <tr><th><code>player=bare</code></th>
+      <td>Not even that — the score itself is the button</td></tr>
+  <tr><th><code>mode=strip</code></th>
+      <td>One unbroken line, scrolling sideways. Left out, the music is
+      wrapped to the width of the frame</td></tr>
+  <tr><th><code>zoom=N</code></th>
+      <td>Staff space in pixels: 8 is the default, 12 is large</td></tr>
+  <tr><th><code>loop=1</code></th>
+      <td>Start again at the end</td></tr>
+  <tr><th><code>autoplay=1</code></th>
+      <td>Start as soon as the browser allows it. A browser makes no sound
+      until the reader has clicked something, so this is a request rather
+      than an instruction: refused, the first click on the page plays
+      it</td></tr>
+  <tr><th><code>tune=N</code></th>
+      <td>Which tune of a book to show, counted from 0</td></tr>
+</table>
+<h2>Tall enough for the music</h2>
+<p>
+  None of the frames on this page is given a height. A number would be a
+  guess, and a guess is wrong as soon as the music changes: this exercise is
+  written for three flutes, and the 200 pixels that fitted a single line
+  showed two of them and the top of the third.
+</p>
+<p>
+  The frame knows better, because it is the thing that drew the music. When
+  it is ready it says how tall the drawing came out, and the page sets the
+  height from that:
+</p>
+<pre>&lt;iframe class="score" src="…?player=1&amp;score=tune.abc"&gt;&lt;/iframe&gt;
+
+&lt;script&gt;
+  window.addEventListener("message", (e) =&gt; {
+    if (!e.data || e.data.gscore !== "ready") return;
+    for (const f of document.querySelectorAll("iframe.score")) {
+      if (e.source === f.contentWindow) f.style.height = e.data.system + "px";
+    }
+  });
+&lt;/script&gt;</pre>
+<p>
+  <code>system</code> is one system of <em>every</em> instrument — all the
+  staves that sound together — which is the unit music is read in and the
+  right height for a frame. <code>height</code> is all of the music, which is
+  what you would use for a frame with no scrollbar at all; on a long piece
+  that is a frame as long as the piece.
+</p>
+<p class="note">
+  The <code>script</code> form below does this for you and needs no code at
+  all: give the <code>&lt;div&gt;</code> no <code>data-height</code> and the
+  frame comes up the right size by itself.
+</p>
 
 <h2>Driving it from the page</h2>
 <p>
@@ -127,6 +232,10 @@
 <div class="controls">
   <button onclick="send('first','play')">Play the first one</button>
   <button onclick="send('first','stop')">Stop</button>
+  <button onclick="send('first','zoom', 12)">Bigger</button>
+  <button onclick="send('first','zoom', 9)">Smaller</button>
+  <button onclick="send('first','mode','strip')">One line</button>
+  <button onclick="send('first','mode','page')">Wrapped</button>
 </div>
 
 <pre>&lt;iframe id="score" src="https://stricaud.github.io/gscore/?player=1&amp;score=tune.abc"&gt;&lt;/iframe&gt;
@@ -136,12 +245,68 @@
   frame.contentWindow.postMessage({ gscore: "play" }, "*");
 &lt;/script&gt;</pre>
 
+<p>
+  Every message carries a <code>gscore</code> key, so nothing else travelling
+  between your page and the frame can be mistaken for one. Anything gscore does
+  not recognise is ignored rather than guessed at.
+</p>
+
+<table class="settings">
+  <tr><th><code>{ gscore: "play" }</code></th>
+      <td>Start, from the beginning</td></tr>
+  <tr><th><code>{ gscore: "stop" }</code></th>
+      <td>Stop</td></tr>
+  <tr><th><code>{ gscore: "toggle" }</code></th>
+      <td>Play, or pause where it is</td></tr>
+  <tr><th><code>{ gscore: "mode", value: "strip" }</code></th>
+      <td>One unbroken line, or <code>"page"</code> to wrap it to the frame
+      again. The music stays where it is, so a reader following it does not
+      lose their place</td></tr>
+  <tr><th><code>{ gscore: "zoom", value: 10 }</code></th>
+      <td>Staff space in pixels</td></tr>
+  <tr><th><code>{ gscore: "tune", value: 3 }</code></th>
+      <td>Show tune 3 of a book, counted from 0</td></tr>
+  <tr><th><code>{ gscore: "load", value: "x.abc" }</code></th>
+      <td>Open another score, by address</td></tr>
+  <tr><th><code>{ gscore: "open", value: "X:1\n…", name: "tune.abc" }</code></th>
+      <td>Open one written into your page. Text for ABC and MusicXML, bytes
+      for the zipped formats</td></tr>
+</table>
+
+<p>And two it sends back to you:</p>
+
+<table class="settings">
+  <tr><th><code>{ gscore: "ready", … }</code></th>
+      <td>The score is up and may be sent to. It carries <code>title</code>,
+      the name of the piece; <code>tunes</code>, how many are in the book;
+      <code>height</code>, how tall all the music came out; and
+      <code>system</code>, how tall one system of it is — which is the
+      height to give the frame</td></tr>
+  <tr><th><code>{ gscore: "ended" }</code></th>
+      <td>The music reached the end</td></tr>
+</table>
+
+<pre>&lt;script&gt;
+  window.addEventListener("message", (e) =&gt; {
+    if (e.source !== frame.contentWindow) return;
+    if (!e.data || e.data.gscore !== "ready") return;
+    frame.style.height = e.data.system + "px";   // as tall as one system
+  });
+&lt;/script&gt;</pre>
+
 <h2>What it reads</h2>
 <p>
-  Whatever gscore reads: ABC, MusicXML (<code>.musicxml</code>,
-  <code>.mxl</code>), NoteWorthy Composer (<code>.nwc</code>,
-  <code>.nwctxt</code>) and gscore's own <code>.gscore</code>. The file is
-  fetched by the page and read in the browser; nothing is uploaded anywhere.
+  Whatever gscore reads: ABC (<code>.abc</code>), MusicXML
+  (<code>.musicxml</code>, <code>.xml</code>, <code>.mxl</code>), MuseScore
+  (<code>.mscz</code>, <code>.mscx</code>), NoteWorthy Composer
+  (<code>.nwc</code>, <code>.nwctxt</code>), GUIDO (<code>.gmn</code>),
+  Finale (<code>.musx</code>) and gscore's own <code>.gscore</code>.
+</p>
+<p>
+  The file is fetched by your page and read in the reader's own browser.
+  Nothing is uploaded anywhere, and there is no server behind any of it:
+  gscore itself is the editor compiled to WebAssembly, so the frame is doing
+  the engraving and the playing on the reader's machine.
 </p>
 
 <script>
@@ -151,6 +316,32 @@
     const f = document.getElementById(id);
     f.contentWindow.postMessage({ gscore: what, value: value }, "*");
   }
+
+  // Tall enough for the music, without anybody counting staves.
+  //
+  // A frame given a number is a guess, and a guess is wrong the moment the
+  // score changes: this one has three flutes on it, and 200 pixels showed
+  // two of them and the top of the third — so a reader following the music
+  // could not see one of the parts playing. The frame knows better. It
+  // engraves the score, measures what it drew, and says so.
+  //
+  // m.system is one system of every instrument: every staff of the score
+  // sounding at once, which is the unit music is read in and the right
+  // height for a frame. m.height is all of the music, which is what a page
+  // that wants no scrollbar at all would use — a long piece in a frame that
+  // tall is a frame as long as the piece.
+  //
+  // The same message arrives twice: once from the empty page saying it is
+  // up, and again once a score has been opened in it. The second is the one
+  // with a drawing behind it, which is why this listens rather than asking.
+  window.addEventListener("message", (e) => {
+    const m = e.data;
+    if (!m || typeof m !== "object" || m.gscore !== "ready") return;
+    for (const f of document.querySelectorAll("iframe.score")) {
+      if (e.source !== f.contentWindow) continue;
+      if (m.system > 40) f.style.height = Math.min(1200, m.system) + "px";
+    }
+  });
 </script>
 
 </body>

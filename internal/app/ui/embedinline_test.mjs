@@ -188,3 +188,75 @@ test("the clickable places are asked about the picture on the screen", () => {
   assert.match(grab(src, "loadHits"), /viewParams\(\)/);
   assert.doesNotMatch(grab(src, "loadHits"), /"\/api\/hits\?mode="/);
 });
+
+/*
+ * Lines, or one line.
+ *
+ * Wrapped is right for music somebody is going to read, and the line is
+ * right for a band across a page and for something to play along with.
+ * The editor has had both under View since the beginning; what was
+ * missing was any way for the page doing the embedding to say which it
+ * wanted — so every embedded score was wrapped, whatever it was for.
+ */
+
+test("a page can ask for one unbroken line", () => {
+  // Through the address, for a frame written by hand.
+  assert.match(src, /mode: q\.get\("mode"\)/);
+  assert.match(src, /opt\.mode === "strip" \|\| opt\.mode === "page"/);
+  // Through the element, for a score written into the page.
+  assert.match(grab(embed, "address"), /"mode"/);
+  // And both are written down.
+  assert.match(docs, /mode=strip/);
+  assert.match(docs, /data-mode=strip/);
+});
+
+// Changing it without reloading the frame, so that a page offering its
+// reader the choice does not throw away where the music had got to.
+test("the layout can be changed while it is open", () => {
+  assert.match(src, /case "mode": \{/);
+  assert.match(src, /case "mode": \{[\s\S]*?state\.mode = want/);
+  // And the page is told, because the music is a different shape now and
+  // whatever sized the frame has to size it again.
+  assert.match(src, /case "mode": \{[\s\S]*?tellParent\("ready"\)/);
+});
+
+// The tool that writes the snippet offers everything the snippet can
+// carry, or it is a tool for half the job.
+test("the embed page offers the choice", () => {
+  const page = readFileSync(
+    new URL("../../../web/site/embed.html.in", import.meta.url), "utf8");
+  assert.match(page, /id="mode"/);
+  assert.match(page, /value="strip"/);
+  assert.match(page, /data-mode="/);
+  // And says what each setting does, rather than only offering three of
+  // them in menus: somebody who came to learn how this works should be
+  // able to.
+  for (const name of ["data-format", "data-encoding", "data-mode",
+                      "data-height", "data-player", "data-zoom",
+                      "data-autoplay", "data-loop", "data-tune",
+                      "data-title", "data-name", "data-selector",
+                      "data-app"]) {
+    assert.match(page, new RegExp("<code>" + name + "</code>"),
+      name + " is not documented on the Embed it page");
+  }
+});
+
+/*
+ * The line that follows the music, and the notes that light up.
+ *
+ * They are two answers to one question and they do not agree: the line
+ * crosses each bar at a steady rate because that is what time does, and
+ * the engraver spaces a bar by what is in it — so they meet at the
+ * barlines and nowhere in between. The editor wants the line anyway; it
+ * says where you are in the music rather than which note is sounding,
+ * and it is where playing picks up from after a pause. A player, which
+ * lights every sounding notehead on every staff, wants only the notes.
+ */
+
+test("a player follows the music with the notes alone", () => {
+  assert.match(src, /if \(!state\.player\) moveCursor\(pt\)/);
+  assert.match(src, /if \(!state\.player\) makeCursor\(\)/);
+  // The editor still has it.
+  assert.match(src, /function makeCursor\(\)/);
+  assert.match(src, /classList\.add\("playing"\)/);
+});

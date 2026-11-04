@@ -25,8 +25,10 @@ nothing is uploaded, and there is no server behind any of it.</p>
       <select id="fmt">
         <option value="abc">ABC</option>
         <option value="musicxml">MusicXML</option>
+        <option value="gmn">GUIDO</option>
         <option value="mscx">MuseScore (uncompressed)</option>
         <option value="nwctxt">NoteWorthy (text)</option>
+        <option value="gscore">gscore</option>
       </select></span>
       <!-- Empty, because the frame knows better than this field does: it
            opens as tall as one system of every instrument. A number here
@@ -39,6 +41,14 @@ nothing is uploaded, and there is no server behind any of it.</p>
       <select id="player">
         <option value="1">the score and a play button</option>
         <option value="bare">the score alone, which plays when clicked</option>
+      </select></span>
+      <!-- Wrapped is right for a tune somebody is going to read; the
+           line is right for a band across a page, and for the one bar
+           quoted in the middle of a sentence. -->
+      <span><label for="mode">Laid out</label>
+      <select id="mode">
+        <option value="page">in lines, wrapped to the frame</option>
+        <option value="strip">as one line, scrolling sideways</option>
       </select></span>
     </p>
   </div>
@@ -57,6 +67,76 @@ nothing is uploaded, and there is no server behind any of it.</p>
 <h2>What that gives you</h2>
 
 <div class="embed-demo" id="demo"></div>
+
+<h2>Lines, or one line</h2>
+
+<p>A score is wrapped to the frame by default: broken into systems as wide
+as the frame, which is how a page of music is read. <code>data-mode="strip"</code>
+draws it as one unbroken line instead, and the frame scrolls sideways.</p>
+
+<p>Which one you want depends on what the music is for:</p>
+
+<ul>
+  <li><b>Wrapped</b> for anything somebody is going to read as music — an
+    exercise, a study, a piece. A reader following a line of notes should
+    not have to scroll sideways to do it.</li>
+  <li><b>One line</b> for a band across a page, for the single bar quoted
+    in the middle of a sentence, and for something to play along with: the
+    music runs past as it sounds, instead of jumping from line to line.</li>
+</ul>
+
+<p>Either way the frame opens as tall as the music needs — one system of
+every instrument, which for a strip is the whole of it. Give it
+<code>data-height</code> and that is your business instead, and the frame
+scrolls.</p>
+
+<h2>Everything you can set</h2>
+
+<p>On the <code>&lt;div&gt;</code>, one score at a time:</p>
+
+<table class="settings">
+  <tr><th><code>data-format</code></th>
+      <td>What the music is written in — <code>abc</code>,
+      <code>musicxml</code>, <code>mxl</code>, <code>mscx</code>,
+      <code>nwctxt</code>, <code>gmn</code>, <code>gscore</code>. ABC is
+      the default</td></tr>
+  <tr><th><code>data-encoding</code></th>
+      <td><code>base64</code> for a format that is not text. See below</td></tr>
+  <tr><th><code>data-mode</code></th>
+      <td><code>strip</code> for one unbroken line; wrapped to the frame
+      otherwise</td></tr>
+  <tr><th><code>data-height</code></th>
+      <td>How tall the frame is, in pixels. Left out, it comes up as tall
+      as one system and nothing is cut off</td></tr>
+  <tr><th><code>data-player</code></th>
+      <td><code>1</code> for the score and a play button, <code>bare</code>
+      for the score alone, which plays when it is clicked</td></tr>
+  <tr><th><code>data-zoom</code></th>
+      <td>Staff space in pixels: 8 is the default, 12 is large</td></tr>
+  <tr><th><code>data-autoplay</code></th>
+      <td><code>1</code> to start as soon as the browser allows it, which
+      is after the reader has clicked something on the page</td></tr>
+  <tr><th><code>data-loop</code></th>
+      <td><code>1</code> to start again at the end — what you want for
+      something to practise along with</td></tr>
+  <tr><th><code>data-tune</code></th>
+      <td>Which tune of a book to show, counted from 0</td></tr>
+  <tr><th><code>data-title</code></th>
+      <td><code>off</code> where your page has already named the piece.
+      Otherwise the name is written under the music as your page's own
+      text, not engraved inside the frame</td></tr>
+  <tr><th><code>data-name</code></th>
+      <td>The filename, where the format alone is not enough to read it</td></tr>
+</table>
+
+<p>And on the <code>&lt;script&gt;</code>, once for the page:</p>
+
+<table class="settings">
+  <tr><th><code>data-selector</code></th>
+      <td>What to look for; the default is <code>.gscore</code></td></tr>
+  <tr><th><code>data-app</code></th>
+      <td>Where gscore is, for a page hosting its own copy</td></tr>
+</table>
 
 <h2>A format that is not text</h2>
 
@@ -121,11 +201,12 @@ from your own page, the settings, and hosting gscore yourself — is in
     }
   }
 
-  function snippet(abc, fmt, height, player) {
+  function snippet(abc, fmt, height, player, mode) {
     const attrs = ['class="gscore"'];
     if (fmt !== "abc") attrs.push('data-format="' + fmt + '"');
     if (height) attrs.push('data-height="' + height + '"');
     if (player !== "1") attrs.push('data-player="' + player + '"');
+    if (mode !== "page") attrs.push('data-mode="' + mode + '"');
     return '<script src="' + HERE + '"><\/script>\n\n' +
       "<div " + attrs.join(" ") + ">\n" + abc + "\n</div>";
   }
@@ -139,7 +220,8 @@ from your own page, the settings, and hosting gscore yourself — is in
     const fmt = $("#fmt").value;
     const height = $("#height").value.trim();
     const player = $("#player").value;
-    $("#snippet").value = snippet(abc, fmt, height, player);
+    const mode = $("#mode").value;
+    $("#snippet").value = snippet(abc, fmt, height, player, mode);
 
     const demo = $("#demo");
     demo.innerHTML = "";
@@ -148,6 +230,9 @@ from your own page, the settings, and hosting gscore yourself — is in
     block.dataset.format = fmt;
     if (height) block.dataset.height = height;
     block.dataset.player = player;
+    // Only where it is not the default, so the demonstration is the
+    // snippet and not a second thing that behaves the same way.
+    if (mode !== "page") block.dataset.mode = mode;
     block.textContent = abc;
     demo.appendChild(block);
     if (window.gscoreEmbed) window.gscoreEmbed(demo);
@@ -155,7 +240,7 @@ from your own page, the settings, and hosting gscore yourself — is in
   }
 
   $("#abc").value = fromLink() || EXAMPLE;
-  for (const id of ["#abc", "#fmt", "#height", "#player"]) {
+  for (const id of ["#abc", "#fmt", "#height", "#player", "#mode"]) {
     $(id).addEventListener("change", show);
   }
   $("#abc").addEventListener("blur", show);

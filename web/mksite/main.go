@@ -38,6 +38,7 @@ import (
 
 	"github.com/yuin/goldmark"
 	"github.com/yuin/goldmark/extension"
+	"github.com/yuin/goldmark/parser"
 	ghtml "github.com/yuin/goldmark/renderer/html"
 )
 
@@ -379,14 +380,21 @@ func writeDocs(out, site, docsDir string) error {
 	if len(files) == 0 {
 		return fmt.Errorf("no markdown in %s", docsDir)
 	}
+	groups := docOrder(filepath.Join(docsDir, "ORDER"), files)
 
 	md := goldmark.New(
 		goldmark.WithExtensions(extension.GFM),
+		// Every heading gets an id made from its own words, so a section can
+		// be linked to. A manual is read by being pointed at — "see the
+		// scripting section" is a link or it is an instruction to go and
+		// scroll — and without this the links in the documentation pointed
+		// at headings that had no names to point at.
+		goldmark.WithParserOptions(parser.WithAutoHeadingID()),
 		goldmark.WithRendererOptions(ghtml.WithUnsafe()),
 	)
 
 	type entry struct{ name, title, blurb string }
-	var index []entry
+	index := map[string]entry{}
 
 	for _, f := range files {
 		src, err := os.ReadFile(f)
@@ -400,6 +408,7 @@ func writeDocs(out, site, docsDir string) error {
 		// A link from one document to another was written as a path to the
 		// markdown, which is right in the repository and a dead end here.
 		body := mdLink.ReplaceAllString(buf.String(), `href="$1.html$2"`)
+		body = chapterMark(body)
 
 		name := strings.TrimSuffix(filepath.Base(f), ".md")
 		title, blurb := summarise(string(src))
@@ -411,16 +420,32 @@ func writeDocs(out, site, docsDir string) error {
 			[]byte(page), 0o644); err != nil {
 			return err
 		}
-		index = append(index, entry{name, title, blurb})
+		index[name] = entry{name, title, blurb}
 	}
 
 	var body bytes.Buffer
-	body.WriteString("<h1>Documentation</h1>\n<ul class=\"index\">\n")
-	for _, e := range index {
-		fmt.Fprintf(&body, "<li>\n<h3><a href=%q>%s</a></h3>\n<p>%s</p>\n</li>\n",
-			e.name+".html", html.EscapeString(e.title), html.EscapeString(e.blurb))
+	body.WriteString("<h1>Documentation</h1>\n")
+	for _, g := range groups {
+		if g.title != "" {
+			fmt.Fprintf(&body, "<h2>%s</h2>\n", html.EscapeString(g.title))
+		}
+		if g.blurb != "" {
+			fmt.Fprintf(&body, "<p class=\"group-blurb\">%s</p>\n",
+				html.EscapeString(g.blurb))
+		}
+		body.WriteString("<ul class=\"index\">\n")
+		for _, id := range g.ids {
+			e, ok := index[id]
+			if !ok {
+				continue
+			}
+			fmt.Fprintf(&body,
+				"<li>\n<h3><a href=%q>%s</a></h3>\n<p>%s</p>\n</li>\n",
+				e.name+".html", html.EscapeString(unbacktick(e.title)),
+				html.EscapeString(e.blurb))
+		}
+		body.WriteString("</ul>\n")
 	}
-	body.WriteString("</ul>\n")
 
 	page, err := shellPage(site, "Documentation", "../", body.String())
 	if err != nil {
@@ -430,26 +455,147 @@ func writeDocs(out, site, docsDir string) error {
 	return os.WriteFile(filepath.Join(out, "docs", "index.html"), []byte(page), 0o644)
 }
 
+// h1 is the heading a document opens with, which is where the chapter mark
+// goes.
+var h1 = regexp.MustCompile(`(?s)<h1([^>]*)>(.*?)</h1>`)
+
+// chapterMark puts the program's own mark at the head of a chapter.
+//
+// Done here and not in the markdown, so that every document gets one without
+// anybody remembering to ask: a mark that is on eight pages out of nine looks
+// like a mistake on the ninth, and the markdown is also what somebody reads
+// in the repository, where an <img> tag at the top of every file is noise.
+//
+// Decorative, so it is marked as such: a screen reader announcing "gscore
+// logo" before the title of every page is reading the furniture aloud.
+func chapterMark(body string) string {
+	return h1.ReplaceAllString(body,
+		`<h1$1><img class="chapter-mark" src="../icon.png" alt="" `+
+			`width="170" height="192">$2</h1>`)
+}
+
+// docGroup is a run of documents under a heading on the index.
+type docGroup struct {
+	title string
+	blurb string
+	ids   []string
+}
+
+// docOrder reads docs/ORDER into the groups the index is listed in.
+//
+// The same idea as samples/ORDER, and for the same reason: alphabetical order
+// is an order nobody chose. A reader arriving at the documentation wants the
+// quick start first and the internals of the file format last, and sorting by
+// file name gives them the opposite.
+//
+// A line beginning "== " opens a group, and the line after it, in brackets,
+// is what that group is for. Everything not named in the file comes last, in
+// alphabetical order, so a document added and not listed still appears —
+// out of place, but never missing.
+func docOrder(orderFile string, files []string) []docGroup {
+	idOf := func(p string) string {
+		b := filepath.Base(p)
+		return strings.TrimSuffix(b, filepath.Ext(b))
+	}
+	all := map[string]bool{}
+	for _, f := range files {
+		all[idOf(f)] = true
+	}
+
+	raw, err := os.ReadFile(orderFile)
+	if err != nil {
+		// No ORDER file: one group of everything, as it was before.
+		var ids []string
+		for _, f := range files {
+			ids = append(ids, idOf(f))
+		}
+		return []docGroup{{ids: ids}}
+	}
+
+	var groups []docGroup
+	listed := map[string]bool{}
+	for _, line := range strings.Split(string(raw), "\n") {
+		line = strings.TrimSpace(line)
+		switch {
+		case line == "" || strings.HasPrefix(line, "#"):
+			continue
+		case strings.HasPrefix(line, "== "):
+			groups = append(groups, docGroup{title: strings.TrimSpace(line[3:])})
+		case strings.HasPrefix(line, "(") && strings.HasSuffix(line, ")"):
+			if len(groups) > 0 {
+				groups[len(groups)-1].blurb = strings.TrimSpace(line[1 : len(line)-1])
+			}
+		default:
+			if !all[line] || listed[line] {
+				continue // named but not there, or named twice
+			}
+			if len(groups) == 0 {
+				groups = append(groups, docGroup{})
+			}
+			listed[line] = true
+			i := len(groups) - 1
+			groups[i].ids = append(groups[i].ids, line)
+		}
+	}
+
+	// Anything the file did not mention, so a new document is never lost.
+	var rest []string
+	for _, f := range files {
+		if id := idOf(f); !listed[id] {
+			rest = append(rest, id)
+		}
+	}
+	if len(rest) > 0 {
+		groups = append(groups, docGroup{title: "Everything else", ids: rest})
+	}
+	return groups
+}
+
 // summarise takes a document's own heading and its first sentence, so the
 // index says what each one is without anybody maintaining a second copy of
 // the description.
 func summarise(src string) (title, blurb string) {
+	var para []string
 	for _, line := range strings.Split(src, "\n") {
 		line = strings.TrimSpace(line)
 		switch {
 		case title == "" && strings.HasPrefix(line, "# "):
 			title = strings.TrimSpace(line[2:])
-		case title != "" && blurb == "" && line != "" &&
-			!strings.HasPrefix(line, "#") && !strings.HasPrefix(line, ">"):
-			blurb = line
-			if i := strings.Index(blurb, ". "); i > 40 {
-				blurb = blurb[:i+1]
-			}
-			return
+		case title == "":
+			continue // still before the heading
+		case len(para) == 0 && (line == "" ||
+			strings.HasPrefix(line, "#") || strings.HasPrefix(line, ">") ||
+			strings.HasPrefix(line, "<")):
+			continue // blank, another heading, a quote, or raw HTML
+		case line == "":
+			// The paragraph has ended. Markdown is hard-wrapped, so the
+			// blurb is the whole of it joined back up: taking the first
+			// line alone cut every description off mid-sentence, which on
+			// the index read as a page whose text had failed to load.
+			return title, firstSentence(strings.Join(para, " "))
+		default:
+			para = append(para, line)
 		}
 	}
-	return
+	return title, firstSentence(strings.Join(para, " "))
 }
+
+// firstSentence trims a paragraph down to its opening sentence, where that
+// is long enough to say anything on its own.
+func firstSentence(s string) string {
+	s = unbacktick(strings.TrimSpace(s))
+	if i := strings.Index(s, ". "); i > 40 {
+		return s[:i+1]
+	}
+	return s
+}
+
+// unbacktick drops the backticks of inline code.
+//
+// The index escapes what it prints, so `.gscore` arrived on the page with
+// its backticks showing. They are markdown's way of saying "this is code",
+// and the index has no code formatting to put it in.
+func unbacktick(s string) string { return strings.ReplaceAll(s, "`", "") }
 
 /*
  * The shell both of them sit in

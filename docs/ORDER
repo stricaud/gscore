@@ -1,0 +1,32 @@
+# The order the documentation is listed in, first line first. One id per
+# line — the file name without its .md.
+#
+# A line beginning "== " opens a group; a line in (brackets) under it says
+# what that group is for. Anything in docs/ that is not listed here comes
+# last, under "Everything else", in alphabetical order — so a document added
+# and not listed still appears, out of place but never missing.
+#
+# Alphabetical order is an order nobody chose. A reader arriving at the
+# documentation wants the quick start first and the innards of the file
+# format last, and sorting by file name gives them exactly the opposite.
+
+== Start here
+(Written to be read in this order. About an hour for all three.)
+quickstart
+tour
+only-gscore
+
+== The reference
+(For when you know what you are looking for.)
+manual
+embedding
+symbols
+
+== Under the hood
+(How Gscore works inside, and why. Written for anybody changing it.)
+gscore-format
+engraving-layout
+engraving
+
+== The back of the book
+glossary

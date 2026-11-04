@@ -532,3 +532,189 @@ footer p { max-width: var(--wide); margin: 0 auto 6px; }
   color: var(--dim, #777);
   font-size: 0.9rem;
 }
+
+/* ---- the user documentation --------------------------------------------
+   The chapters are written to be read rather than searched, so they are
+   given the furniture a book has: a mark at the head of each one, a bullet
+   that belongs to this program and not to the browser, and a way of setting
+   a menu path or a keystroke so that it reads as a thing to press rather
+   than as a word in the sentence. */
+
+/* The program's own mark at the head of a chapter, put there by mksite so
+   that no document has to remember it. It hangs in the margin on a wide
+   screen and sits above the title on a narrow one, because a 44-pixel bug
+   beside a wrapping three-line heading is a bug in the way. */
+.sheet h1 { position: relative; }
+.chapter-mark {
+  width: 44px;
+  height: auto;
+  display: block;
+  margin: 0 0 10px;
+}
+@media (min-width: 60rem) {
+  .chapter-mark {
+    position: absolute;
+    /* Inside the sheet's own padding, not over its edge: the padding is
+       56px at this width and the mark is 38, so it hangs in the margin
+       with a little air either side and never bleeds onto the dark. */
+    left: -50px;
+    width: 38px;
+    top: 50%;
+    transform: translateY(-50%);
+    margin: 0;
+  }
+}
+
+/* Gilbert as the bullet.
+   He is the mascot and this is the one place on the site where a list is
+   long enough for him to be worth meeting. Only the outermost list: nested
+   under him he is a crowd, so the inner levels keep the ordinary marks. The
+   image is a background rather than a ::marker, because no browser agrees
+   about what may be put in a marker, and this way the spacing is ours. */
+.sheet ul:not(.plain) > li {
+  list-style: none;
+  padding-left: 1.9em;
+  background-image: url("gilbert.svg");
+  background-repeat: no-repeat;
+  background-position: 0 0.22em;
+  background-size: 1.15em 1.15em;
+}
+.sheet ul:not(.plain) > li > ul > li,
+.sheet ul:not(.plain) > li > ol > li {
+  list-style: revert;
+  padding-left: 0;
+  background: none;
+}
+/* A checklist of things the program does not do gets no mascot: Gilbert
+   beside "gscore will not do this" reads as him recommending it. */
+.sheet ul.plain { list-style: none; padding-left: 0; }
+.sheet ul.plain > li { padding-left: 1.1em; text-indent: -1.1em; }
+.sheet ul.plain > li::before { content: "—"; color: #9a958a; padding-right: .5em; }
+
+/* A key to press, and a path through the menus. Set apart from the prose
+   because a reader scanning for "the thing I actually press" should find it
+   without reading the sentence it is in. */
+.sheet kbd {
+  font: 0.85em/1 var(--mono);
+  background: #f1efe9;
+  border: 1px solid #ddd9cf;
+  border-bottom-width: 2px;
+  border-radius: 5px;
+  padding: 3px 6px;
+  white-space: nowrap;
+  color: #2b2f38;
+}
+.sheet .menu-path {
+  font-weight: 600;
+  white-space: nowrap;
+  color: #6b4a00;
+}
+
+/* A box for an aside: a thing worth knowing that is not the next step.
+   Three kinds, and the colour is the whole of the difference — a reader
+   learns in one page that amber means "this will bite". */
+.sheet .note,
+.sheet .tip,
+.sheet .warn {
+  border-left: 4px solid #c9c4b8;
+  background: #f6f4ee;
+  border-radius: 0 8px 8px 0;
+  padding: 12px 16px;
+  margin: 1.5em 0;
+}
+.sheet .note > :first-child,
+.sheet .tip > :first-child,
+.sheet .warn > :first-child { margin-top: 0; }
+.sheet .note > :last-child,
+.sheet .tip > :last-child,
+.sheet .warn > :last-child { margin-bottom: 0; }
+.sheet .tip { border-left-color: #3f9142; background: #f0f6ee; }
+.sheet .warn { border-left-color: #d08a00; background: #fbf4e6; }
+.sheet .note b, .sheet .tip b, .sheet .warn b { color: #3b3f48; }
+
+/* What you do, and what happens. A tutorial is a sequence, so it is
+   numbered, and the numbers are large enough to find your place again
+   after looking away at the program. */
+.sheet ol.steps { counter-reset: step; list-style: none; padding-left: 0; }
+.sheet ol.steps > li {
+  counter-increment: step;
+  position: relative;
+  padding-left: 3rem;
+  margin: 1.4em 0;
+  min-height: 2rem;
+}
+.sheet ol.steps > li::before {
+  content: counter(step);
+  position: absolute;
+  left: 0;
+  top: -0.15em;
+  width: 2rem;
+  height: 2rem;
+  border-radius: 50%;
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-weight: 700;
+  display: grid;
+  place-items: center;
+}
+
+/* The index of musical terms: two columns where there is room, because a
+   glossary is read by jumping about in it and a single column of ninety
+   short entries is a lot of scrolling to do that in. */
+.sheet dl.terms { margin: 1.6em 0; }
+@media (min-width: 52rem) {
+  .sheet dl.terms { columns: 2; column-gap: 40px; }
+}
+.sheet dl.terms > div {
+  break-inside: avoid;
+  margin: 0 0 1.1em;
+}
+.sheet dl.terms dt { font-weight: 700; }
+.sheet dl.terms dd { margin: 0.15em 0 0; color: #4c525e; }
+.sheet dl.terms dd .seen { color: #6b4a00; }
+
+/* The alphabet across the top of the index, to jump into it. */
+.sheet .alphabet {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 1.2em 0 2em;
+  padding: 0;
+  list-style: none;
+}
+/* Written as ul.alphabet > li so it outweighs the Gilbert bullet rule,
+   which is the same weight as a plainer selector here and would otherwise
+   win on source order and put a bug in front of every letter. */
+.sheet ul.alphabet > li { padding: 0; background: none; }
+.sheet .alphabet a {
+  display: grid;
+  place-items: center;
+  width: 2rem;
+  height: 2rem;
+  border: 1px solid #e3e0d7;
+  border-radius: 6px;
+  background: #f6f4ee;
+  text-decoration: none;
+  font-weight: 600;
+}
+.sheet .alphabet a:hover { background: var(--accent); color: var(--accent-ink); }
+
+/* Where a chapter ends, the next one is offered: a reader who has finished
+   the quick start wants the tour, not the browser's back button. */
+.sheet .next-chapter {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin: 3em 0 0;
+  padding: 16px 18px;
+  border: 1px solid #e3e0d7;
+  border-radius: var(--radius);
+  background: #f6f4ee;
+}
+.sheet .next-chapter img { width: 34px; height: auto; flex: none; }
+.sheet .next-chapter p { margin: 0; }
+.sheet .next-chapter .where { display: block; font-size: 0.85rem; color: #6c7280; }
+
+/* The group headings on the documentation index, which is dark like the
+   rest of the site rather than a sheet of paper. */
+.group-blurb { color: var(--dim); max-width: 72ch; margin: -6px 0 14px; }

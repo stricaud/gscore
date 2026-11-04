@@ -14,10 +14,12 @@ header came from the `abc2midi` package under the GPL — so it could not come
 along to an MIT-licensed tree. It remains in this repository's history, and
 the decisions it made are written down in [`docs/engraving.md`](docs/engraving.md).
 
-Version 0.1.1, from the [`VERSION`](VERSION) file at the root: the packages,
-the macOS `Info.plist` and the program's own `--version` all read it, so they
-cannot disagree. Tagging a commit builds the installers and publishes them —
-see [`.github/workflows/release.yml`](.github/workflows/release.yml).
+The version lives in the [`VERSION`](VERSION) file at the root, and nowhere
+else: the packages, the macOS `Info.plist` and the program's own `--version`
+all read it, so they cannot disagree — and neither can this paragraph, which
+is why it no longer names a number. Tagging a commit builds the installers and
+publishes them — see
+[`.github/workflows/release.yml`](.github/workflows/release.yml).
 
 ## Install
 
@@ -39,23 +41,38 @@ Or build it: `make` lists the targets.
 
 ## Status
 
-Headless so far — there is no editor yet, by design. The model, the importers
-and the engraver are being built as a library with tests before any window
-exists, so that both halves stay testable.
+There is an editor. It writes, plays, analyses, imports seven formats and
+exports nine, and it runs on a desktop and in a browser from the same source.
+
+The order it was built in was deliberate and is worth knowing, because it is
+why the tests are where they are: the model, the importers and the engraver
+were finished as a headless library first, and the window came last. Every
+musical decision is therefore testable without a screen, and the interface is
+a view of a thing that already worked.
 
 | | |
 |---|---|
-| Model | done — pitches, durations, chords, voices, measures, parts |
-| ABC import | done — no external dependency |
-| Symbols | done — SMuFL-ready, with XPM and hand-drawn grids |
-| Engraving | next, specified in [`docs/engraving.md`](docs/engraving.md) |
-| SVG rendering | after that |
-| Editor | Wails, once the above draws correctly |
+| Model | pitches, durations, chords, voices, measures, parts, no geometry |
+| Import | ABC, MusicXML, MuseScore, Finale, NoteWorthy, GUIDO, `.gscore` |
+| Export | PDF, SVG, web page, MIDI, MusicXML, ABC, LilyPond, GUIDO, FLAC |
+| Engraving | the rules are in [`docs/engraving-layout.md`](docs/engraving-layout.md) |
+| Rendering | SVG and PDF from one layout, measured in staff spaces |
+| Editor | a native window around a web interface, and the same interface as a page |
+| Playback | a General MIDI soundfont, or oscillators where there is no disk |
+| Analysis | harmonics, range, keys, shape, voice leading, spacing, rhythm, melody |
+
+The window is a [`webview`](https://github.com/webview/webview_go) around a
+local HTTP server — WebKit on macOS, WebKitGTK on Linux, WebView2 on Windows —
+and the *same* interface compiles to WebAssembly and runs with no server at
+all. One interface, two ways of hosting it, rather than two interfaces to keep
+in step.
 
 ```
 go build ./...
 go test ./...
-go run . samples/exercise.abc
+go run . samples/exercise.abc     # opens the editor
+go run . -o out.pdf samples/exercise.abc
+sh web/build.sh                   # the site, including these documents
 ```
 
 ## What changed, and why
@@ -111,6 +128,23 @@ score and a play button. There is a working page in
 
 ## Documents
 
+The whole of this is published at
+[stricaud.github.io/gscore/docs/](https://stricaud.github.io/gscore/docs/),
+built from these files by `web/build.sh`. `docs/ORDER` decides what the index
+lists first.
+
+For anybody using gscore:
+
+| | |
+|---|---|
+| [`docs/quickstart.md`](docs/quickstart.md) | twenty minutes from opening it to a printed part |
+| [`docs/tour.md`](docs/tour.md) | every window gscore can open, and what it is for |
+| [`docs/only-gscore.md`](docs/only-gscore.md) | the nine things no other notation editor does |
+| [`docs/manual.md`](docs/manual.md) | the user manual, in full |
+| [`docs/glossary.md`](docs/glossary.md) | an index of the musical terms used |
+
+For anybody changing it:
+
 | | |
 |---|---|
 | [`docs/engraving-layout.md`](docs/engraving-layout.md) | how a page is laid out: the rules to read before changing the engraver |
@@ -118,21 +152,35 @@ score and a play button. There is a working page in
 | [`docs/symbols.md`](docs/symbols.md) | drawing marks no font carries |
 | [`docs/gscore-format.md`](docs/gscore-format.md) | what is inside a `.gscore` file |
 | [`docs/embedding.md`](docs/embedding.md) | putting gscore in a page |
-| [`docs/comparison.md`](docs/comparison.md) | gscore beside MuseScore, NoteWorthy and Frescobaldi |
 | [`docs/presentation.tex`](docs/presentation.tex) | the talk — `make slides` builds it |
 
 ## Layout
 
+The one rule: music goes in, geometry comes out, and the two never meet in
+the same package. `model` knows no pixels; `engrave` knows no files; `render`
+knows no music.
+
 ```
-cmd/gscore/          the command-line entry point
+main.go              the entry point: a window, a server, or one file in and out
+
 internal/model/      music, with no geometry and no I/O
-internal/format/     the import and export registry
-internal/format/abc/ the ABC reader
-internal/symbol/     font glyphs, outlines and hand-drawn grids
-internal/version/
-assets/icon/         Gilbert, the application icon
-docs/                design decisions
-samples/             an embeddable page, and a score to put in it
+internal/format/     the import and export registry, one package per format
+internal/engrave/    music in, shapes out — the layout, in staff spaces
+internal/render/     those shapes as SVG, PDF or a standalone page
+internal/app/        the editor: HTTP endpoints, and ui/ is the interface
+internal/desktop/    the native window around it
+internal/analysis/   reading the music back: keys, range, voice leading
+internal/smufl/      the music font and the glyph names
+internal/symbol/     hand-drawn marks, for what no font carries
+internal/synth/      playback, and internal/midi, internal/flac beside it
+internal/flute/      every fingering the instrument has
+internal/brand/      Gilbert
+internal/pdf/        a PDF writer, and internal/sfnt reads the font for it
+
+web/                 the WebAssembly build and the site generator
+docs/                the documentation — user chapters and design decisions
+samples/             scores, and an embeddable page to put one in
+packaging/           what the installers are built from
 assets/history/      a screenshot of gscore 0.0.9, from 2005
 testdata/reference/  output the C engine produced in 2004
 ```

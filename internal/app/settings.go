@@ -22,6 +22,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 )
@@ -78,6 +79,37 @@ type settings struct {
 	// and none of it can be typed in at all while the program keeps
 	// correcting the arithmetic.
 	LooseBarlines bool `json:"looseBarlines,omitempty"`
+
+	// UIScale is how big the interface is drawn, where one is the size it
+	// was designed at.
+	//
+	// The menus, the palette and the panels are measured in pixels, which
+	// on a large high-resolution display is physically small: the whole
+	// interface came out tiny on a 2000-pixel-wide screen while the score
+	// beside it was readable. This is a property of the screen rather than
+	// of any score, so it is remembered for the person and not kept in a
+	// file. Zero means nobody has chosen, which is one.
+	UIScale float64 `json:"uiScale,omitempty"`
+}
+
+// uiScaleRange is what the interface may be scaled to.
+//
+// Below three-quarters the labels stop being legible, and past twice the
+// size the menus no longer fit a laptop screen — at which point the thing
+// to change is the window, not this.
+const (
+	uiScaleMin = 0.75
+	uiScaleMax = 2.0
+)
+
+// UIScale is how big to draw the interface, with nobody's choice meaning
+// the size it was designed at.
+func UIScale() float64 {
+	v := loadSettings().UIScale
+	if v < uiScaleMin || v > uiScaleMax {
+		return 1
+	}
+	return v
 }
 
 // mostRecent is how many files the list holds.
@@ -235,6 +267,16 @@ func (a *App) handleSettings(w http.ResponseWriter, r *http.Request) {
 		if v, ok := r.URL.Query()["trackBarlines"]; ok && len(v) > 0 {
 			s.LooseBarlines = v[0] == "0"
 		}
+		if v, ok := r.URL.Query()["uiScale"]; ok && len(v) > 0 {
+			n, err := strconv.ParseFloat(v[0], 64)
+			if err != nil || n < uiScaleMin || n > uiScaleMax {
+				http.Error(w, "the interface scale is a number between "+
+					trimFloat(uiScaleMin)+" and "+trimFloat(uiScaleMax),
+					http.StatusBadRequest)
+				return
+			}
+			s.UIScale = n
+		}
 		if v, ok := r.URL.Query()["lang"]; ok && len(v) > 0 {
 			// "auto" is not a language; it is the absence of a choice, and
 			// an empty setting is how that is stored.
@@ -278,6 +320,7 @@ func (a *App) handleSettings(w http.ResponseWriter, r *http.Request) {
 		"trackBarlines":    TrackBarlines(),
 		"keys":             loadSettings().Keys,
 		"lang":             loadSettings().Lang,
+		"uiScale":          UIScale(),
 	})
 }
 

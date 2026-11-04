@@ -380,6 +380,8 @@ const MESSAGES = {
   "Report a bug": "Signaler une anomalie",
   "reset": "réinitialiser",
   "Remove this measure": "Supprimer cette mesure",
+  "Interface size": "Taille de l'interface",
+  "Designed size": "Taille d'origine",
   "Reset all": "Tout réinitialiser",
   "Rest": "Silence",
   "Rests": "Silences",

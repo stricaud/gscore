@@ -97,7 +97,7 @@ html, body {
   overflow: hidden;
   background: var(--bg);
   color: var(--ink);
-  font: 13px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  font: calc(13px * var(--ui-scale))/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
   overflow: hidden;
 }
 
@@ -107,16 +107,85 @@ body {
   height: 100vh;
 }
 
+/* How big the interface is drawn.
+ *
+ * Everything in here is measured in pixels — a twelve-pixel menu, a
+ * hundred-and-sixty-four-pixel column — and a pixel is a physical size
+ * that depends on the screen. On a large high-resolution display the whole
+ * interface came out tiny while the score beside it was perfectly
+ * readable, because the score has a size of its own and the interface had
+ * the screen's.
+ *
+ * zoom rather than a transform: it changes the pixel the element's
+ * contents are laid out in, so every measurement inside follows without
+ * being written twice, and the element still takes part in the layout at
+ * its new size. A transform would scale the drawing and leave the layout
+ * where it was, overlapping whatever is beside it.
+ *
+ * The score is left out on purpose. It is scaled by View ▸ Zoom, in staff
+ * spaces, which is the measurement music is written in — and the two are
+ * different questions: a reader may want large menus and a small score,
+ * or the other way round. */
+:root { --ui-scale: 1; }
+/* Scaled by the type it is set in, and not by zoom.
+ *
+ * zoom is the obvious tool and it is the wrong one: with a zoom anywhere
+ * on the page, Chromium stops sending mouse events to the panels fixed to
+ * the body — the menus' own flyouts — while drawing them where they
+ * belong and telling elementFromPoint they are there. Nothing about that
+ * reads as a problem with zoom, and every variant of it fails the same
+ * way: on the panel or on an ancestor, fixed or absolute, transform
+ * instead of zoom.
+ *
+ * So the size of the interface is the size of its type. Every font-size
+ * in here is multiplied by the scale, the two fixed columns grow with it,
+ * and the boxes follow their contents as boxes do. Nothing is drawn at a
+ * size other than the one it was laid out at, so there is nothing for an
+ * engine to disagree with. */
+
+/* A menu's open flyout is parked in the menu bar, so it is inside the
+ * zoom rather than carrying one of its own.
+ *
+ * Scaling that panel itself does not work, either way round. It is the one
+ * scaled thing that is both fixed to the window and placed by script: with
+ * a zoom or a transform on it, the panel is drawn in the right place and
+ * elementFromPoint agrees it is there, and the mouse events go to whatever
+ * is behind it. Inheriting the bar's zoom leaves the panel an ordinary
+ * member of a scaled box, which every engine handles.
+ *
+ * The bar is not a scrolling box, so parking a panel there does not bring
+ * back the clipping that drove it out of the menu in the first place. See
+ * openSubmenu. */
+/* An open flyout grows with the interface by being set in bigger type.
+ *
+ * Not by zoom and not by a transform. It is the one panel that is both
+ * fixed to the window and placed by script, and scaling such a box — or
+ * putting it inside a scaled one — draws it in the right place and sends
+ * every click on it to whatever is behind: Chromium does this at any
+ * scale but one, WebKit at every scale when the box is scaled itself.
+ * Setting the type and letting the measurements follow it is a real
+ * layout rather than a drawing of one, so there is nothing to disagree
+ * about.
+ *
+ * Which is why everything inside a flyout is in em below: one font size
+ * at the top and the paddings, the gaps and the pictures all follow. */
+.menu-items.flyout {
+  /* Against the page rather than the window. The page does not scroll —
+     the body is a grid the height of the window — so the two are the same
+     place, and this is the one that every engine hits where it draws. */
+  position: absolute;
+}
+
 /* ---- menu bar ---- */
 
 #menubar {
   display: flex;
   align-items: stretch;
-  gap: 2px;
+  gap: calc(2px * var(--ui-scale));
   background: var(--panel);
   border-bottom: 1px solid var(--line);
-  padding: 0 8px;
-  height: 34px;
+  padding: 0 calc(8px * var(--ui-scale));
+  height: calc(34px * var(--ui-scale));
   user-select: none;
 }
 
@@ -137,7 +206,7 @@ body {
   border: 0;
   color: inherit;
   font: inherit;
-  padding: 0 11px;
+  padding: 0 calc(11px * var(--ui-scale));
   cursor: pointer;
   border-radius: 4px;
 }
@@ -147,14 +216,14 @@ body {
 .menu-items {
   display: none;
   position: absolute;
-  top: 33px;
+  top: calc(33px * var(--ui-scale));
   left: 0;
-  min-width: 210px;
+  min-width: calc(210px * var(--ui-scale));
   background: var(--panel);
   border: 1px solid var(--line);
   border-radius: 6px;
   box-shadow: 0 8px 24px rgba(0,0,0,.22);
-  padding: 4px;
+  padding: calc(4px * var(--ui-scale));
   z-index: 50;
 }
 /* The menu's OWN panel, not every panel inside it.
@@ -180,7 +249,7 @@ body {
 .menu > .menu-items {
   /* The bar above it, and a margin at the foot so the last entry does not
      sit flush against the edge of the screen. */
-  max-height: calc(100vh - 41px);
+  max-height: calc(100vh - 41px * var(--ui-scale));
   overflow-y: auto;
   /* A menu scrolled to its end should not then scroll the score behind it. */
   overscroll-behavior: contain;
@@ -192,14 +261,14 @@ body {
   align-items: center;
   /* The label takes up the slack, so the key still sits at the far end and
      the picture stays beside the words rather than a gap away from them. */
-  gap: 10px;
+  gap: calc(10px * var(--ui-scale));
   width: 100%;
   background: none;
   border: 0;
   color: inherit;
   font: inherit;
   text-align: left;
-  padding: 6px 10px;
+  padding: calc(6px * var(--ui-scale)) calc(10px * var(--ui-scale));
   border-radius: 4px;
   cursor: pointer;
 }
@@ -217,9 +286,9 @@ body {
   /* Big enough to read at a glance. A notehead at the size of the words
      beside it is a dot: the picture is there to be recognised from across
      the menu, which takes rather more room than the text does. */
-  flex: 0 0 24px;
-  width: 24px;
-  height: 23px;
+  flex: 0 0 calc(24px * var(--ui-scale));
+  width: calc(24px * var(--ui-scale));
+  height: calc(23px * var(--ui-scale));
   display: grid;
   place-items: center;
   font-style: normal;
@@ -252,7 +321,8 @@ body {
   white-space: nowrap;
 }
 .menu-items button > kbd, .submenu-title > kbd { white-space: nowrap; }
-.menu-items hr { border: 0; border-top: 1px solid var(--line); margin: 4px 2px; }
+.menu-items hr { border: 0; border-top: 1px solid var(--line);
+  margin: calc(4px * var(--ui-scale)) calc(2px * var(--ui-scale)); }
 
 /* Submenus. A menu with fifty entries in a column is a list to be read, not a
    menu to be used; grouping the long tails behind a name gives back a menu
@@ -268,7 +338,7 @@ body {
      price is that nothing places it any more, so placeSubmenu does — it
      sets left and top on every open, which is why there are none here. */
   position: fixed;
-  min-width: 190px;
+  min-width: calc(190px * var(--ui-scale));
   /* A submenu opens level with the entry that owns it, which may be near
      the bottom of the window — so it is held to the window's height, and
      script moves it up where that is not enough on its own. Nothing opens
@@ -290,14 +360,14 @@ body {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  gap: 24px;
+  gap: calc(24px * var(--ui-scale));
   width: 100%;
   background: none;
   border: 0;
   color: inherit;
   font: inherit;
   text-align: left;
-  padding: 6px 10px;
+  padding: calc(6px * var(--ui-scale)) calc(10px * var(--ui-scale));
   border-radius: 4px;
   cursor: pointer;
 }
@@ -310,7 +380,7 @@ body {
    no parent to measure "the left of" against. */
 
 kbd {
-  font: 11px ui-monospace, SFMono-Regular, Menlo, monospace;
+  font: calc(11px * var(--ui-scale)) ui-monospace, SFMono-Regular, Menlo, monospace;
   color: var(--muted);
   background: var(--panel-dark);
   border-radius: 3px;
@@ -342,11 +412,11 @@ kbd {
   border-radius: 4px;
   color: inherit;
   cursor: pointer;
-  font-size: 12px;
+  font-size: calc(12px * var(--ui-scale));
   line-height: 1;
 }
 .transport button:hover { background: var(--accent); color: #fff; border-color: var(--accent); }
-.transport .label { font-size: 11px; letter-spacing: .01em; }
+.transport .label { font-size: calc(11px * var(--ui-scale)); letter-spacing: .01em; }
 /* Play is the one thing a visitor is looking for, so it is the one thing
    that looks like a button rather than like a border. */
 #play-btn { background: var(--accent); color: #fff; border-color: var(--accent); font-weight: 600; }
@@ -361,7 +431,7 @@ kbd {
 }
 .transport button.active { background: var(--accent); color: #fff; }
 #clock {
-  font: 12px ui-monospace, SFMono-Regular, Menlo, monospace;
+  font: calc(12px * var(--ui-scale)) ui-monospace, SFMono-Regular, Menlo, monospace;
   color: var(--muted);
   min-width: 42px;
   text-align: right;
@@ -371,7 +441,11 @@ kbd {
 
 #main {
   display: grid;
-  grid-template-columns: 164px 1fr 232px;
+  /* The columns grow with the panels in them: the panel's own contents are
+     scaled by zoom, and a track left at its unscaled width would cut them
+     off. The middle one is what is left, which is the score. */
+  grid-template-columns:
+    calc(164px * var(--ui-scale)) 1fr calc(232px * var(--ui-scale));
   min-height: 0;
 }
 
@@ -390,7 +464,7 @@ kbd {
 .tool-group, .insp-group { margin-bottom: 16px; }
 
 .tool-label, .insp-label {
-  font-size: 10px;
+  font-size: calc(10px * var(--ui-scale));
   text-transform: uppercase;
   letter-spacing: .07em;
   color: var(--muted);
@@ -413,13 +487,13 @@ kbd {
   cursor: pointer;
   color: var(--ink);
   font-family: Bravura, serif;
-  font-size: 19px;
+  font-size: calc(19px * var(--ui-scale));
   line-height: 1;
   padding: 0;
 }
 .tool:hover { border-color: var(--accent); }
 .tool.selected { background: var(--accent); color: #fff; }
-.tool.small { font-size: 15px; }
+.tool.small { font-size: calc(15px * var(--ui-scale)); }
 
 #zoom { width: 100%; }
 
@@ -495,7 +569,7 @@ kbd {
   text-align: center;
 }
 
-.small { font-size: 11px; color: var(--muted); }
+.small { font-size: calc(11px * var(--ui-scale)); color: var(--muted); }
 
 /* ---- inspector ---- */
 
@@ -548,7 +622,7 @@ kbd {
   border-top: 1px solid var(--line);
   padding: 0 12px;
   height: 24px;
-  font-size: 11px;
+  font-size: calc(11px * var(--ui-scale));
   color: var(--muted);
 }
 #filename { margin-left: auto; }
@@ -578,7 +652,7 @@ dialog button {
 }
 
 @media (max-width: 900px) {
-  #main { grid-template-columns: 164px 1fr; }
+  #main { grid-template-columns: calc(164px * var(--ui-scale)) 1fr; }
   #inspector { display: none; }
 }
 
@@ -617,7 +691,7 @@ dialog button {
   cursor: pointer;
   color: var(--ink);
   font: inherit;
-  font-size: 11px;
+  font-size: calc(11px * var(--ui-scale));
 }
 .timesig-option:hover { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
 .timesig-option[aria-current="true"] {
@@ -647,7 +721,7 @@ body.native #menubar { padding-left: 12px; }
 .menu-items button:disabled kbd { opacity: .5; }
 
 .menu-section {
-  font-size: 10px;
+  font-size: calc(10px * var(--ui-scale));
   text-transform: uppercase;
   letter-spacing: .07em;
   color: var(--muted);
@@ -753,7 +827,7 @@ body.native #menubar { padding-left: 12px; }
   background: color-mix(in srgb, var(--panel) 86%, transparent);
   color: var(--muted);
   font: inherit;
-  font-size: 11px;
+  font-size: calc(11px * var(--ui-scale));
   line-height: 1;
   cursor: pointer;
   /* Out of the way until it is wanted: fifty-three of these down the side of
@@ -805,7 +879,7 @@ body.native #menubar { padding-left: 12px; }
 #busy-box {
   text-align: center;
   color: var(--muted);
-  font-size: 12px;
+  font-size: calc(12px * var(--ui-scale));
 }
 #busy-logo {
   display: block;
@@ -850,7 +924,7 @@ body.native #menubar { padding-left: 12px; }
   flex-wrap: wrap;
   margin: 8px 0;
 }
-.draw-row label { font-size: 11px; color: var(--muted); }
+.draw-row label { font-size: calc(11px * var(--ui-scale)); color: var(--muted); }
 .draw-row input[type="text"], .draw-row select {
   font: inherit;
   padding: 3px 5px;
@@ -900,7 +974,7 @@ body.native #menubar { padding-left: 12px; }
   border-radius: 5px;
   cursor: pointer;
   font: inherit;
-  font-size: 10px;
+  font-size: calc(10px * var(--ui-scale));
   color: var(--ink);
 }
 .palette-item:hover { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
@@ -967,7 +1041,7 @@ body.player #canvas text.g[data-ref] { cursor: default; }
 #tune-select {
   width: 100%;
   font: inherit;
-  font-size: 11px;
+  font-size: calc(11px * var(--ui-scale));
   padding: 3px;
   margin: 4px 0;
   border: 1px solid var(--line);
@@ -1010,7 +1084,7 @@ body.player #canvas text.g[data-ref] { cursor: default; }
   border: 0;
   color: var(--muted);
   font: inherit;
-  font-size: 10px;
+  font-size: calc(10px * var(--ui-scale));
   font-weight: 600;
   letter-spacing: .07em;
   text-transform: uppercase;
@@ -1021,7 +1095,7 @@ body.player #canvas text.g[data-ref] { cursor: default; }
 
 .pal-arrow {
   display: inline-block;
-  font-size: 9px;
+  font-size: calc(9px * var(--ui-scale));
   transition: transform .12s ease;
   opacity: .8;
 }
@@ -1051,7 +1125,7 @@ body.player #canvas text.g[data-ref] { cursor: default; }
   cursor: pointer;
   color: var(--ink);
   font-family: Bravura, serif;
-  font-size: 19px;
+  font-size: calc(19px * var(--ui-scale));
   /* SMuFL glyphs are drawn around a staff and hang well below their
      baseline; a flat line-height keeps them centred in the square. */
   line-height: 1;
@@ -1114,10 +1188,10 @@ body.player #canvas text.g[data-ref] { cursor: default; }
 /* ---- the one-question dialog ---- */
 
 #ask { min-width: 300px; max-width: 420px; }
-#ask h2 { margin: 0 0 6px; font-size: 15px; }
+#ask h2 { margin: 0 0 6px; font-size: calc(15px * var(--ui-scale)); }
 #ask label {
   display: block;
-  font-size: 11px;
+  font-size: calc(11px * var(--ui-scale));
   color: var(--muted);
   margin-bottom: 4px;
 }
@@ -1189,13 +1263,13 @@ body.fullscreen #canvas-wrap { padding: 10px; }
 .choices input { margin-top: 2px; }
 .choices span { display: flex; flex-direction: column; gap: 1px; }
 .choices b { font-weight: 600; }
-.choices em { font-style: normal; font-size: 11px; color: var(--muted); }
+.choices em { font-style: normal; font-size: calc(11px * var(--ui-scale)); color: var(--muted); }
 
 /* Recording the score. Wider than the other dialogs because the instrument
    review is a table, and a table of staves against what will play them is
    the one thing in here that cannot be made narrower. */
 #record { max-width: 560px; }
-#record h3 { margin: 18px 0 2px; font-size: 13px; }
+#record h3 { margin: 18px 0 2px; font-size: calc(13px * var(--ui-scale)); }
 .record-row { display: flex; align-items: center; gap: 10px; margin: 10px 0; }
 .record-row label { min-width: 104px; }
 .record-row select, .record-row input[type="number"] {
@@ -1210,23 +1284,23 @@ body.fullscreen #canvas-wrap { padding: 10px; }
 .record-row input[type="number"] { width: 70px; }
 .record-actions { display: flex; gap: 8px; }
 .record-actions button { margin-top: 0; }
-#record-voices { width: 100%; border-collapse: collapse; font-size: 12px; }
+#record-voices { width: 100%; border-collapse: collapse; font-size: calc(12px * var(--ui-scale)); }
 #record-voices td { padding: 5px 6px; border-top: 1px solid var(--line); vertical-align: middle; }
 #record-voices td:first-child { white-space: nowrap; }
-#record-voices select { font: inherit; font-size: 11px; max-width: 170px; }
+#record-voices select { font: inherit; font-size: calc(11px * var(--ui-scale)); max-width: 170px; }
 #record-voices .missing { color: var(--danger, #c0392b); }
 #record-voices .substitute { color: var(--muted); font-style: italic; }
 .record-check { display: flex; gap: 9px; align-items: flex-start; padding: 6px 0; cursor: pointer; }
 .record-check span { display: flex; flex-direction: column; gap: 1px; }
-.record-check em { font-style: normal; font-size: 11px; color: var(--muted); }
+.record-check em { font-style: normal; font-size: calc(11px * var(--ui-scale)); color: var(--muted); }
 #record details summary { cursor: pointer; margin-top: 16px; }
 
 /* The steps for fetching a soundfont by hand, which is the page's answer
    when it is not allowed to fetch one itself. */
 #get-font { max-width: 460px; }
-.get-font-steps { margin: 12px 0 0; padding-left: 20px; line-height: 1.6; font-size: 12px; }
+.get-font-steps { margin: 12px 0 0; padding-left: 20px; line-height: 1.6; font-size: calc(12px * var(--ui-scale)); }
 .get-font-steps li { margin-bottom: 8px; }
-#get-font-link { word-break: break-all; font-size: 11px; }
+#get-font-link { word-break: break-all; font-size: calc(11px * var(--ui-scale)); }
 
 /* A hand-drawn symbol can be picked up and moved. It shows the hand only
    while shift is held, with everything else that is picked up rather than
@@ -1241,7 +1315,7 @@ body.fullscreen #canvas-wrap { padding: 10px; }
   align-items: center;
   gap: 8px;
   margin: 12px 0 8px;
-  font-size: 11px;
+  font-size: calc(11px * var(--ui-scale));
   color: var(--muted);
 }
 .lyrics-row select, .lyrics-row input {
@@ -1254,7 +1328,7 @@ body.fullscreen #canvas-wrap { padding: 10px; }
 }
 #lyrics textarea {
   width: 100%;
-  font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+  font: calc(13px * var(--ui-scale))/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
   padding: 8px;
   border: 1px solid var(--line);
   border-radius: 5px;
@@ -1317,14 +1391,14 @@ body.player.bare { grid-template-rows: 1fr; }
   color: var(--ink);
   margin-bottom: 8px;
 }
-.fing-none { color: var(--muted); font-size: 12px; line-height: 1.5; }
+.fing-none { color: var(--muted); font-size: calc(12px * var(--ui-scale)); line-height: 1.5; }
 .fing-chart { display: flex; flex-direction: column; gap: 6px; }
 .fing-row { display: flex; align-items: center; gap: 5px; }
 .fing-row.extra { margin-top: 2px; opacity: .85; }
 .fing-label {
   width: 52px;
   flex: 0 0 auto;
-  font-size: 10px;
+  font-size: calc(10px * var(--ui-scale));
   color: var(--muted);
   text-transform: uppercase;
   letter-spacing: .04em;
@@ -1351,7 +1425,7 @@ body.player.bare { grid-template-rows: 1fr; }
   color: var(--muted);
   cursor: pointer;
   font: inherit;
-  font-size: 11px;
+  font-size: calc(11px * var(--ui-scale));
   line-height: 1;
   padding: 1px 4px;
 }
@@ -1370,7 +1444,7 @@ body.player.bare { grid-template-rows: 1fr; }
   margin-top: 6px;
   padding: 3px 6px;
   font: inherit;
-  font-size: 11px;
+  font-size: calc(11px * var(--ui-scale));
   background: var(--panel);
   border: 1px solid var(--accent);
   border-radius: 4px;
@@ -1404,7 +1478,7 @@ body.player.bare { grid-template-rows: 1fr; }
   font-weight: 600;
   letter-spacing: 0.04em;
   text-transform: uppercase;
-  font-size: 11px;
+  font-size: calc(11px * var(--ui-scale));
   color: var(--muted);
 }
 
@@ -1454,13 +1528,13 @@ body.player.bare { grid-template-rows: 1fr; }
 .pad-head {
   grid-row: 1 / 3;
   font-family: Bravura, serif;
-  font-size: 21px;
+  font-size: calc(21px * var(--ui-scale));
   line-height: 1;
   text-align: center;
 }
 
 .pad-name {
-  font-size: 11.5px;
+  font-size: calc(11.5px * var(--ui-scale));
   line-height: 1.15;
 }
 
@@ -1473,13 +1547,13 @@ body.player.bare { grid-template-rows: 1fr; }
 }
 
 .pad-key kbd {
-  font-size: 10px;
+  font-size: calc(10px * var(--ui-scale));
   padding: 1px 4px;
   text-transform: uppercase;
 }
 
 .pad-midi {
-  font-size: 9px;
+  font-size: calc(9px * var(--ui-scale));
   color: var(--muted);
   font-variant-numeric: tabular-nums;
 }
@@ -1502,7 +1576,7 @@ body.player.bare { grid-template-rows: 1fr; }
   gap: 4px 14px;
   align-items: center;
 }
-#tempo-notes legend { padding: 0 4px; font-size: 12px; color: var(--muted); }
+#tempo-notes legend { padding: 0 4px; font-size: calc(12px * var(--ui-scale)); color: var(--muted); }
 
 .tempo-grid {
   display: grid;
@@ -1521,7 +1595,7 @@ body.player.bare { grid-template-rows: 1fr; }
 .tempo-grid label:hover { background: var(--panel-dark); }
 .tempo-grid .music {
   font-family: Bravura, serif;
-  font-size: 24px;
+  font-size: calc(24px * var(--ui-scale));
   /* SMuFL glyphs hang well below their baseline; a flat line-height keeps
      them sitting on the row rather than pushing it apart. */
   line-height: 1;
@@ -1533,12 +1607,12 @@ body.player.bare { grid-template-rows: 1fr; }
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 12px;
+  font-size: calc(12px * var(--ui-scale));
   color: var(--muted);
   padding-left: 6px;
   cursor: pointer;
 }
-.tempo-dotted .music { font-family: Bravura, serif; font-size: 18px; }
+.tempo-dotted .music { font-family: Bravura, serif; font-size: calc(18px * var(--ui-scale)); }
 
 .tempo-bpm {
   grid-column: 2;
@@ -1547,7 +1621,7 @@ body.player.bare { grid-template-rows: 1fr; }
   align-items: center;
   gap: 8px;
 }
-.tempo-bpm .eq { font-size: 18px; color: var(--muted); }
+.tempo-bpm .eq { font-size: calc(18px * var(--ui-scale)); color: var(--muted); }
 .tempo-bpm input { width: 5.5em; }
 
 /* Which bar the marking lands on, at the top where it is read first. */
@@ -1593,12 +1667,12 @@ body.player.bare { grid-template-rows: 1fr; }
   align-items: center;
   gap: 6px;
   margin-top: 10px;
-  font-size: 12px;
+  font-size: calc(12px * var(--ui-scale));
   color: var(--muted);
   padding-left: 6px;
   cursor: pointer;
 }
-.tempo-parens .music { font-family: Bravura, serif; font-size: 16px; }
+.tempo-parens .music { font-family: Bravura, serif; font-size: calc(16px * var(--ui-scale)); }
 
 /* Air between the note picker and the words that go in front of it. They
    were hard against each other, which read as one control. */
@@ -1620,7 +1694,7 @@ body.player.bare { grid-template-rows: 1fr; }
 
 #keysig-name {
   text-align: center;
-  font-size: 15px;
+  font-size: calc(15px * var(--ui-scale));
   margin: 2px 0 10px;
 }
 #keysig-art {
@@ -1642,7 +1716,7 @@ body.player.bare { grid-template-rows: 1fr; }
 #keysig-scale {
   display: flex;
   justify-content: space-between;
-  font-size: 12px;
+  font-size: calc(12px * var(--ui-scale));
   color: var(--muted);
   margin-bottom: 12px;
 }
@@ -1681,7 +1755,7 @@ dialog.wide { max-width: 640px; }
 }
 .shortcuts h3 {
   margin: 14px 0 4px;
-  font-size: 12px;
+  font-size: calc(12px * var(--ui-scale));
   text-transform: uppercase;
   letter-spacing: .06em;
   color: var(--muted);
@@ -1698,7 +1772,7 @@ dialog.wide { max-width: 640px; }
 }
 .shortcut + .shortcut { border-top: 1px solid var(--line); }
 .shortcut kbd { justify-self: start; }
-.shortcut .linklike { opacity: 0; font-size: 12px; }
+.shortcut .linklike { opacity: 0; font-size: calc(12px * var(--ui-scale)); }
 .shortcut:hover .linklike, .shortcut.catching .linklike { opacity: 1; }
 /* A binding whose keys another one has taken over. It is still in the
    program, so it is still listed; showing it as live would be a lie. */
@@ -1744,7 +1818,7 @@ dialog.wide { max-width: 640px; }
   margin-top: 0;
   padding: 2px 9px;
   line-height: 1.2;
-  font-size: 15px;
+  font-size: calc(15px * var(--ui-scale));
 }
 
 #harm-staff {
@@ -1802,18 +1876,18 @@ dialog.wide { max-width: 640px; }
 #console-examples { display: flex; flex-wrap: wrap; gap: 6px; align-items: baseline; }
 #console-saved:empty, #console-examples:empty { display: none; }
 .console-script {
-  font: inherit; font-size: 12px;
+  font: inherit; font-size: calc(12px * var(--ui-scale));
   padding: 3px 9px; border-radius: 12px;
   border: 1px solid var(--line); background: var(--panel-dark);
   color: inherit; cursor: pointer;
 }
 .console-script:hover { border-color: var(--accent); }
-.console-saved-note { font-size: 11px; color: var(--muted); }
+.console-saved-note { font-size: calc(11px * var(--ui-scale)); color: var(--muted); }
 
 #console-source {
   flex: 1; min-height: 8em; resize: none;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 13px; line-height: 1.5;
+  font-size: calc(13px * var(--ui-scale)); line-height: 1.5;
   padding: 8px 10px; border-radius: 6px;
   border: 1px solid var(--line);
   background: var(--panel-dark); color: var(--ink);
@@ -1823,12 +1897,12 @@ dialog.wide { max-width: 640px; }
 #console-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 #console-bar button { margin-top: 0; }
 #console-name {
-  font: inherit; font-size: 12px; padding: 4px 8px;
+  font: inherit; font-size: calc(12px * var(--ui-scale)); padding: 4px 8px;
   border-radius: 5px; border: 1px solid var(--line);
   background: var(--panel-dark); color: var(--ink);
 }
 #console-help {
-  font-size: 11px; color: var(--muted); flex: 1; min-width: 0;
+  font-size: calc(11px * var(--ui-scale)); color: var(--muted); flex: 1; min-width: 0;
   line-height: 1.5;
 }
 
@@ -1857,7 +1931,7 @@ dialog.wide { max-width: 640px; }
 #script-result-said {
   flex: none; margin: 0; max-height: 14em; overflow-y: auto;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 12px; line-height: 1.5; white-space: pre-wrap;
+  font-size: calc(12px * var(--ui-scale)); line-height: 1.5; white-space: pre-wrap;
   padding: 6px 10px; border-radius: 6px;
   background: var(--panel-dark); color: var(--ink);
 }
@@ -1869,16 +1943,16 @@ dialog.wide { max-width: 640px; }
 #script-result-drawn:empty { display: none; }
 #script-result-drawn figure { margin: 0; }
 #script-result-drawn figcaption {
-  font-size: 11px; color: var(--muted); margin-top: 2px;
+  font-size: calc(11px * var(--ui-scale)); color: var(--muted); margin-top: 2px;
 }
 #script-result-drawn svg { max-width: 100%; height: auto; display: block; }
 #script-result-bar { display: flex; gap: 8px; flex-wrap: wrap; }
-#script-result-bar button { margin-top: 0; font-size: 12px; }
+#script-result-bar button { margin-top: 0; font-size: calc(12px * var(--ui-scale)); }
 
 #console-progress { display: flex; align-items: center; gap: 8px; }
 #console-progress progress { flex: 1; min-width: 0; height: 6px; }
 #console-progress-text {
-  font-size: 11px; color: var(--muted);
+  font-size: calc(11px * var(--ui-scale)); color: var(--muted);
   /* Wide enough for the longest count it will show, so the bar beside it
      does not shuffle sideways every time the number grows a digit. */
   min-width: 10em; text-align: right;
@@ -1887,7 +1961,7 @@ dialog.wide { max-width: 640px; }
 #console-out {
   flex: none; max-height: 9em; overflow-y: auto; margin: 0;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 12px; line-height: 1.5; white-space: pre-wrap;
+  font-size: calc(12px * var(--ui-scale)); line-height: 1.5; white-space: pre-wrap;
   padding: 6px 10px; border-radius: 6px;
   background: var(--panel-dark); color: var(--muted);
   min-height: 2.4em;
@@ -1907,7 +1981,7 @@ dialog.wide { max-width: 640px; }
 #typing-help-body { flex: 1; min-height: 0; overflow-y: auto; padding-right: 4px; }
 
 #typing-help-body h3 {
-  margin: 16px 0 6px; font-size: 13px; color: var(--muted);
+  margin: 16px 0 6px; font-size: calc(13px * var(--ui-scale)); color: var(--muted);
   font-weight: 600; text-transform: lowercase;
 }
 #typing-help-body h3:first-child { margin-top: 4px; }
@@ -1920,11 +1994,11 @@ dialog.wide { max-width: 640px; }
 }
 .syntax dt {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 13px; color: var(--ink);
+  font-size: calc(13px * var(--ui-scale)); color: var(--ink);
   background: var(--panel-dark); border-radius: 4px;
   padding: 2px 6px; justify-self: start;
 }
-.syntax dd { margin: 0; font-size: 13px; }
+.syntax dd { margin: 0; font-size: calc(13px * var(--ui-scale)); }
 .syntax dd em { color: var(--muted); font-style: normal; }
 
 /* The two rules worth stating in words, because both are places somebody
@@ -1932,7 +2006,7 @@ dialog.wide { max-width: 640px; }
 .syntax-rule {
   margin: 8px 0 0; padding: 8px 10px;
   border-left: 2px solid var(--accent);
-  font-size: 12px; line-height: 1.5;
+  font-size: calc(12px * var(--ui-scale)); line-height: 1.5;
 }
 
 /* ---- typing the music in ---- */
@@ -1955,7 +2029,7 @@ dialog.wide { max-width: 640px; }
    said in words now that it is not standing next to it. */
 #type-where {
   flex: none;
-  font-size: 12px;
+  font-size: calc(12px * var(--ui-scale));
   color: var(--muted);
   min-width: 9em;
   white-space: nowrap;
@@ -1967,7 +2041,7 @@ dialog.wide { max-width: 640px; }
   flex: 1;
   min-width: 10em;
   font: inherit;
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-scale));
   padding: 4px 8px;
   border: 1px solid var(--accent);
   border-radius: 5px;
@@ -1981,7 +2055,7 @@ dialog.wide { max-width: 640px; }
 #type-hint {
   flex: 2;
   min-width: 0;
-  font-size: 11px;
+  font-size: calc(11px * var(--ui-scale));
   color: var(--muted);
   white-space: nowrap;
   overflow: hidden;
@@ -2003,7 +2077,7 @@ dialog.wide { max-width: 640px; }
   flex: 1; min-height: 0; overflow-y: auto; padding-right: 4px;
 }
 #rhythm-body h3, #melody-body h3 {
-  margin: 14px 0 6px; font-size: 13px; color: var(--muted);
+  margin: 14px 0 6px; font-size: calc(13px * var(--ui-scale)); color: var(--muted);
   font-weight: 600; text-transform: lowercase;
 }
 #rhythm-body h3:first-child, #melody-body h3:first-child { margin-top: 2px; }
@@ -2013,7 +2087,7 @@ dialog.wide { max-width: 640px; }
 .beat-row { padding: 7px 0; border-bottom: 1px solid var(--line); }
 .beat-name { display: flex; align-items: baseline; gap: 8px; }
 .beat-name b { font-weight: 600; }
-.beat-of { color: var(--muted); font-size: 12px; }
+.beat-of { color: var(--muted); font-size: calc(12px * var(--ui-scale)); }
 .beat-bar { display: flex; height: 10px; border-radius: 3px; overflow: hidden; margin: 4px 0 2px; }
 .beat-bar span { height: 100%; }
 .beat-down { background: var(--accent); }
@@ -2027,8 +2101,8 @@ dialog.wide { max-width: 640px; }
 .shape-step { background: var(--accent); }
 .shape-same { background: var(--accent); opacity: .45; }
 .shape-leap { background: #d1702f; }
-.shape-says { color: var(--muted); font-size: 12px; }
-.shape-hum { color: var(--ink); font-size: 12px; }
+.shape-says { color: var(--muted); font-size: calc(12px * var(--ui-scale)); }
+.shape-hum { color: var(--ink); font-size: calc(12px * var(--ui-scale)); }
 
 /* ---- spacing ---- */
 
@@ -2050,7 +2124,7 @@ dialog.wide { max-width: 640px; }
   cursor: pointer; margin: 0;
 }
 .spacing-row:hover { background: var(--panel-dark); }
-.spacing-row .where { color: var(--muted); font-size: 12px; white-space: nowrap; }
+.spacing-row .where { color: var(--muted); font-size: calc(12px * var(--ui-scale)); white-space: nowrap; }
 
 /* How far under the limit it sits, as a bar rather than a number: the
    difference between one semitone and ten is the whole of the advice. */
@@ -2079,7 +2153,7 @@ dialog.wide { max-width: 640px; }
 .voices-tradition {
   margin: 2px 0 10px; padding: 8px 10px;
   border-left: 2px solid var(--line);
-  color: var(--muted); font-size: 12px; line-height: 1.5;
+  color: var(--muted); font-size: calc(12px * var(--ui-scale)); line-height: 1.5;
 }
 
 .voices-row {
@@ -2090,10 +2164,10 @@ dialog.wide { max-width: 640px; }
   cursor: pointer; margin: 0;
 }
 .voices-row:hover { background: var(--panel-dark); }
-.voices-row .where { color: var(--muted); font-size: 12px; white-space: nowrap; }
+.voices-row .where { color: var(--muted); font-size: calc(12px * var(--ui-scale)); white-space: nowrap; }
 .voices-kind {
   display: inline-block; min-width: 8.5em;
-  font-size: 11px; color: var(--muted); text-transform: lowercase;
+  font-size: calc(11px * var(--ui-scale)); color: var(--muted); text-transform: lowercase;
 }
 
 /* ---- the shape of a piece ---- */
@@ -2109,7 +2183,7 @@ dialog.wide { max-width: 640px; }
 #map-body { flex: 1; min-height: 0; overflow-y: auto; padding-right: 4px; }
 
 #map-body h3 {
-  margin: 14px 0 6px; font-size: 13px; color: var(--muted);
+  margin: 14px 0 6px; font-size: calc(13px * var(--ui-scale)); color: var(--muted);
   font-weight: 600; text-transform: lowercase;
 }
 #map-body h3:first-child { margin-top: 2px; }
@@ -2119,7 +2193,7 @@ dialog.wide { max-width: 640px; }
    rests for eighty bars leaves eighty bars of paper. */
 .map-row { display: grid; grid-template-columns: 9.5em 1fr; align-items: center; gap: 8px; }
 .map-staff {
-  font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  font-size: calc(12px * var(--ui-scale)); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .map-busy { width: 100%; height: 9px; display: block; }
 .map-rest { fill: var(--line); fill-opacity: .35; }
@@ -2136,7 +2210,7 @@ dialog.wide { max-width: 640px; }
   cursor: pointer; margin: 0;
 }
 .map-echo:hover { background: var(--panel-dark); }
-.map-echo .moved { color: var(--muted); font-size: 12px; }
+.map-echo .moved { color: var(--muted); font-size: calc(12px * var(--ui-scale)); }
 .map-echo b { font-weight: 600; }
 
 /* ---- keys and modulations ---- */
@@ -2157,7 +2231,7 @@ dialog.wide { max-width: 640px; }
 .keymap-seg.unsettled { opacity: .45; }
 .keymap-scale {
   display: flex; justify-content: space-between;
-  color: var(--muted); font-size: 11px; margin-top: 3px;
+  color: var(--muted); font-size: calc(11px * var(--ui-scale)); margin-top: 3px;
 }
 
 #keymap-body { flex: 1; min-height: 0; overflow-y: auto; padding-right: 4px; }
@@ -2171,8 +2245,8 @@ dialog.wide { max-width: 640px; }
 .keymap-row:hover { background: var(--panel-dark); }
 .keymap-swatch { width: 12px; height: 12px; border-radius: 3px; flex: none; }
 .keymap-name { font-weight: 600; min-width: 7.5em; }
-.keymap-bars { color: var(--muted); font-size: 12px; flex: 1; }
-.keymap-doubt { color: var(--muted); font-size: 12px; font-style: italic; }
+.keymap-bars { color: var(--muted); font-size: calc(12px * var(--ui-scale)); flex: 1; }
+.keymap-doubt { color: var(--muted); font-size: calc(12px * var(--ui-scale)); font-style: italic; }
 
 /* ---- range ---- */
 
@@ -2199,15 +2273,15 @@ dialog.wide { max-width: 640px; }
 .range-staff:last-child { border-bottom: 0; }
 .range-name { display: flex; align-items: baseline; gap: 8px; }
 .range-name b { font-weight: 600; }
-.range-inst { color: var(--muted); font-size: 12px; }
+.range-inst { color: var(--muted); font-size: calc(12px * var(--ui-scale)); }
 .range-strip { display: block; width: 100%; height: 20px; margin: 4px 0 2px; }
-.range-says { color: var(--muted); font-size: 12px; }
-.range-quiet { color: var(--muted); font-size: 12px; font-style: italic; }
+.range-says { color: var(--muted); font-size: calc(12px * var(--ui-scale)); }
+.range-quiet { color: var(--muted); font-size: calc(12px * var(--ui-scale)); font-style: italic; }
 
 /* The two kinds of finding are never run together: one is a fact about the
    instrument and the other is a judgement about the writing. */
 .range-findings { list-style: none; margin: 5px 0 0; padding: 0; }
-.range-findings li { margin: 2px 0; font-size: 13px; }
+.range-findings li { margin: 2px 0; font-size: calc(13px * var(--ui-scale)); }
 .range-go {
   background: none; border: 0; padding: 0; margin: 0; font: inherit;
   color: var(--ink); text-align: left; cursor: pointer;
@@ -2221,9 +2295,9 @@ dialog.wide { max-width: 640px; }
 /* What the chord is called, and what it is doing in the key. */
 #harm-chord { margin: 8px 0 0; display: flex; align-items: baseline; gap: 10px; }
 #harm-chord:empty { display: none; }
-.harm-numeral { font-size: 20px; font-weight: 600; font-variant-numeric: lining-nums; }
-.harm-chord-name { font-size: 14px; }
-.harm-in-key { color: var(--muted); font-size: 12px; }
+.harm-numeral { font-size: calc(20px * var(--ui-scale)); font-weight: 600; font-variant-numeric: lining-nums; }
+.harm-chord-name { font-size: calc(14px * var(--ui-scale)); }
+.harm-in-key { color: var(--muted); font-size: calc(12px * var(--ui-scale)); }
 
 /* The orchestrator's warning about the bottom of the chord, where it has
    one. Advice, so it is said quietly. */
@@ -2231,21 +2305,21 @@ dialog.wide { max-width: 640px; }
 #harm-thick[hidden] { display: none; }
 
 /* The staff a note is on, where the chord is spread over several. */
-.harm-on { color: var(--muted); font-size: 12px; }
+.harm-on { color: var(--muted); font-size: calc(12px * var(--ui-scale)); }
 
 #harm-spectrum { margin: 6px 0; }
 .harm-svg { width: 100%; height: auto; display: block; }
 .harm-partial { stroke-width: 2; stroke-linecap: round; opacity: .85; }
 .harm-grid { stroke: var(--line); stroke-width: 1; }
-.harm-tick { fill: var(--muted); font-size: 9px; text-anchor: middle; }
+.harm-tick { fill: var(--muted); font-size: calc(9px * var(--ui-scale)); text-anchor: middle; }
 .harm-meet { fill: var(--ink); }
 
 #harm-intervals { width: 100%; border-collapse: collapse; margin: 10px 0; }
 #harm-intervals th {
-  text-align: left; font-weight: 600; font-size: 12px;
+  text-align: left; font-weight: 600; font-size: calc(12px * var(--ui-scale));
   color: var(--muted); border-bottom: 1px solid var(--line); padding: 3px 6px;
 }
-#harm-intervals td { padding: 3px 6px; font-size: 13px; }
+#harm-intervals td { padding: 3px 6px; font-size: calc(13px * var(--ui-scale)); }
 #harm-intervals td.harm-near { color: var(--muted); }
 /* Fifteen cents is a tempered third, and audible as a slow beat; this is
    what makes it stand out from the two cents of a fifth. */
@@ -2274,7 +2348,7 @@ dialog.wide { max-width: 640px; }
 }
 #engraving-cats button {
   text-align: left;
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-scale));
   padding: 5px 8px;
   border: 1px solid transparent;
   border-radius: 5px;
@@ -2312,7 +2386,7 @@ dialog.wide { max-width: 640px; }
   padding: 5px 0;
 }
 .knob + .knob { border-top: 1px solid var(--line); }
-.knob label { font-size: 13px; }
+.knob label { font-size: calc(13px * var(--ui-scale)); }
 .knob input { width: 100%; }
 
 /* A measurement this score has an answer of its own for, as against one
@@ -2361,7 +2435,7 @@ dialog.wide { max-width: 640px; }
   grid-template-columns: 13em 1fr;
   gap: 8px;
   padding: 3px 0;
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-scale));
 }
 .find-hit + .find-hit { border-top: 1px solid var(--line); }
 .find-where { color: var(--muted); }
@@ -2379,7 +2453,7 @@ dialog.wide { max-width: 640px; }
    rather than each starting wherever its own label happens to end. */
 #score-about-form .tempo-bar > span {
   flex: 0 0 7em;
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-scale));
 }
 #score-about-form .tempo-bar input[type="text"] {
   flex: 1;
@@ -2407,7 +2481,7 @@ dialog.wide { max-width: 640px; }
   gap: 4px;
   margin: 0 0 12px;
 }
-.about-wide > span { font-size: 13px; }
+.about-wide > span { font-size: calc(13px * var(--ui-scale)); }
 .about-wide textarea,
 .about-wide input {
   width: 100%;
@@ -2435,7 +2509,7 @@ dialog.wide { max-width: 640px; }
   padding: 2px 8px;
   border-radius: 999px;
   background: var(--accent-soft);
-  font-size: 12px;
+  font-size: calc(12px * var(--ui-scale));
 }
 
 /* A box whose contents are the reason a window will not close.
@@ -2491,12 +2565,12 @@ input.wrong {
 .fb-name {
   width: 2.4em;
   text-align: right;
-  font-size: 11px;
+  font-size: calc(11px * var(--ui-scale));
   color: var(--muted);
 }
 .fb-open, .fb-mute, .fb-cell {
   font: inherit;
-  font-size: 11px;
+  font-size: calc(11px * var(--ui-scale));
   line-height: 1;
   color: var(--ink);
   background: var(--paper);
@@ -2527,7 +2601,7 @@ input.wrong {
   background: none;
   cursor: default;
   text-align: center;
-  font-size: 10px;
+  font-size: calc(10px * var(--ui-scale));
   color: var(--muted);
   height: auto;
 }
@@ -2541,7 +2615,7 @@ input.wrong {
   display: flex;
   flex-direction: column;
   gap: 3px;
-  font-size: 11px;
+  font-size: calc(11px * var(--ui-scale));
 }
 #fretboard-at { width: 5em; }
 #fretboard-shape { width: 10em; }
@@ -2559,7 +2633,7 @@ input.wrong {
   display: flex;
   flex-direction: column;
   gap: 3px;
-  font-size: 11px;
+  font-size: calc(11px * var(--ui-scale));
   color: var(--muted);
 }
 .ps-row input { width: 6em; }

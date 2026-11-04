@@ -30,6 +30,9 @@ function currentSVG() {
 
 const state = {
   zoom: 8,
+  // How big the interface is drawn, where one is the size it was designed
+  // at. Read from the settings at boot; see applyUIScale.
+  uiScale: 1,
   // The continuous strip is gscore's own view and stays the default: the
   // program called itself non-page-oriented, and the strip is what makes it
   // good to edit in. Pagination is for printing.
@@ -557,6 +560,79 @@ function closeMenus() {
   shutSubmenus();
 }
 
+/* ---------- how big the interface is drawn ---------- */
+
+// uiScale is the size of the menus, the palette and the panels, where one
+// is the size they were designed at.
+//
+// Everything in the interface is measured in pixels, and a pixel is a
+// physical size that depends on the screen: on a large high-resolution
+// display the whole interface came out tiny while the score beside it was
+// perfectly readable. The score is not scaled by this — it has a size of
+// its own, in staff spaces, under View ▸ Zoom — because the two are
+// different questions.
+//
+// Remembered for the person rather than kept in a score: it is a fact
+// about the screen in front of them.
+const UI_SCALES = [0.75, 0.9, 1, 1.15, 1.3, 1.5, 1.75, 2];
+
+// fillUIScaleMenu writes the sizes into the menu from the one list of
+// them, so that adding a size is adding it in one place.
+function fillUIScaleMenu() {
+  const box = $("#uiscale-menu");
+  if (!box) return;
+  box.innerHTML = "";
+  for (const v of UI_SCALES) {
+    const b = document.createElement("button");
+    b.dataset.action = "ui-scale-" + Math.round(v * 100);
+    const name = document.createElement("span");
+    name.textContent = v === 1
+      ? t("Designed size")
+      : Math.round(v * 100) + "%";
+    const tick = document.createElement("kbd");
+    b.append(name, tick);
+    b.addEventListener("click", () => {
+      closeMenus();
+      void setUIScale(v);
+    });
+    box.appendChild(b);
+  }
+  markUIScaleTicks();
+}
+
+function applyUIScale(v) {
+  if (!(v > 0)) v = 1;
+  state.uiScale = v;
+  document.documentElement.style.setProperty("--ui-scale", String(v));
+  markUIScaleTicks();
+}
+
+function markUIScaleTicks() {
+  for (const b of $$("[data-action^='ui-scale-']")) {
+    const want = Number(b.dataset.action.slice("ui-scale-".length)) / 100;
+    const tick = b.querySelector("kbd");
+    if (tick) tick.textContent = Math.abs(want - state.uiScale) < 1e-6 ? "✓" : "";
+  }
+}
+
+async function setUIScale(v) {
+  const res = await fetch("/api/settings?uiScale=" + encodeURIComponent(v),
+                          { method: "POST" });
+  if (!res.ok) {
+    status("Could not change the interface size: " + (await res.text()).trim());
+    return;
+  }
+  applyUIScale(v);
+  // The menu panels are placed by script against the window, and the
+  // window has not changed size — what changed is the pixel they are
+  // measured in. Anything open is in the wrong place until it is put
+  // there again.
+  for (const sub of $$(".submenu.open")) placeSubmenu(sub);
+  status(v === 1
+    ? "Interface at its designed size"
+    : `Interface at ${Math.round(v * 100)}%`);
+}
+
 // How long the pointer has to reach a submenu it opened, in milliseconds.
 //
 // Moving to another entry closes the open submenu, so that its panel is not
@@ -661,9 +737,10 @@ function openSubmenu(sub) {
   });
   sub.classList.add("open");
   const panel = panelOf(sub);
-  if (panel && panel.parentNode !== document.body) {
+  const park = flyoutHome();
+  if (panel && park && panel.parentNode !== park) {
     panel.classList.add("flyout");
-    document.body.appendChild(panel);
+    park.appendChild(panel);
   }
   placeSubmenu(sub);
 }
@@ -676,10 +753,25 @@ function openSubmenu(sub) {
 function closeSubmenu(sub) {
   sub.classList.remove("open", "flip");
   const panel = flyouts.get(sub);
-  if (panel && panel.parentNode === document.body) {
+  if (panel && panel.parentNode === flyoutHome()) {
     panel.classList.remove("flyout");
     sub.appendChild(panel);
   }
+}
+
+// flyoutHome is where an open submenu's panel is parked.
+//
+// The body, clear of every box that could clip it or scale it. Both of
+// those were tried: inside the menu it lives in, WebKit clips it away to
+// nothing, and inside anything the interface scale is applied to, the
+// panel is drawn where it belongs and the clicks on it go to whatever is
+// behind — in Chromium at any scale but one, in WebKit at none.
+//
+// So it is parked where nothing is done to it, and the interface scale
+// reaches it as type size rather than as a scaling of the whole box. See
+// .menu-items.flyout in the stylesheet.
+function flyoutHome() {
+  return document.body;
 }
 
 // placeSubmenu puts a submenu where it can be read.
@@ -701,9 +793,14 @@ function placeSubmenu(sub) {
 
   // Measured where it will be read: the panel is already shown by the time
   // this runs, and its size is what decides which side it goes on.
+  //
+  // Every measurement here is the window's own: the row it sits beside,
+  // its own size, innerWidth and innerHeight. One kind of pixel
+  // throughout, which is what keeps the arithmetic below honest.
   const row = sub.getBoundingClientRect();
-  const w = items.offsetWidth;
-  const h = items.offsetHeight;
+  const box = items.getBoundingClientRect();
+  const w = box.width;
+  const h = box.height;
 
   // To the right, unless that runs off the edge. Then to the left — and if
   // there is no room either side, the right is still the better guess,
@@ -723,6 +820,11 @@ function placeSubmenu(sub) {
   if (over > 0) top -= over;
   top = Math.max(8, top);
 
+  // In the window's own pixels, which is what everything here is
+  // measured in: the rectangles, innerWidth and innerHeight all answer in
+  // those, and the panel is fixed to the window and scaled by nothing. Its
+  // size grows with the interface because the type in it does, which is a
+  // real layout and not a scaling of one — see .menu-items.flyout.
   items.style.left = left + "px";
   items.style.top = top + "px";
 }
@@ -6986,6 +7088,7 @@ async function setTrackBarlines(on) {
   }
   state.trackBarlines = on;
   markBarlineTick();
+  fillUIScaleMenu();
   status(on
     ? "Bars are kept to the meter — what will not fit moves into the next bar"
     : "Bars are left as written — notes stay in the bar they are typed in");
@@ -14475,6 +14578,9 @@ async function main() {
     kept = await (await fetch("/api/settings")).json();
     state.trackBarlines = kept.trackBarlines !== false;
     state.keys = kept.keys || {};
+    // Before anything is drawn, so the interface does not come up at one
+    // size and jump to another.
+    applyUIScale(kept.uiScale || 1);
   } catch (_) {
     // Served without a disk behind it. The default stands.
   }

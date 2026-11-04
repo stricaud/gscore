@@ -450,6 +450,15 @@
            this is on. -->
       <button data-action="view-concert"><span>Concert pitch</span><kbd id="concert-tick"></kbd></button>
       <hr>
+      <!-- How big the menus, the palette and the panels are drawn. Not
+           the score, which has a size of its own in staff spaces just
+           above: a reader may want large menus over a small score, or the
+           other way round. The entries are filled in by script from the
+           one list of sizes there is. -->
+      <div class="submenu">
+        <button class="submenu-title"><span>Interface size</span><kbd>▸</kbd></button>
+        <div class="menu-items" id="uiscale-menu"></div>
+      </div>
       <div class="submenu">
         <button class="submenu-title"><span>Fingering</span><kbd>▸</kbd></button>
         <div class="menu-items" id="fingering-menu">

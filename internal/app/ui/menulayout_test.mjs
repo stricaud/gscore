@@ -52,9 +52,13 @@ test("a menu too tall for the window scrolls instead of running off it", () => {
 // bar — which is the bug, with an extra step.
 test("the room the menu is held to leaves out the bar above it", () => {
   const r = rule(".menu > .menu-items");
-  const m = /max-height:\s*calc\(100vh\s*-\s*(\d+)px\)/.exec(r);
+  // Both are multiplied by the interface scale, so the two numbers are
+  // compared as they are written.
+  const m = /max-height:\s*calc\(100vh\s*-\s*(\d+)px/.exec(r);
   assert.ok(m, "max-height is not measured from the window height: " + r);
-  const top = Number(/top:\s*(\d+)px/.exec(rule(".menu-items"))[1]);
+  assert.match(r, /max-height:[^;]*var\(--ui-scale\)/,
+    "the room left for the bar does not grow with the bar");
+  const top = Number(/top:\s*calc\((\d+)px/.exec(rule(".menu-items"))[1]);
   assert.ok(Number(m[1]) >= top,
     `the panel starts ${top}px down and is allowed ` +
     `100vh - ${m[1]}px, so it hangs over by ${top - Number(m[1])}px`);
@@ -85,7 +89,8 @@ test("a flyout is fixed to the window, not hung off the scrolling panel", () => 
  */
 test("an open flyout is taken out of the scrolling menu", () => {
   const body = grab("openSubmenu");
-  assert.match(body, /document\.body\.appendChild\(panel\)/);
+  assert.match(body, /park\.appendChild\(panel\)/);
+  assert.match(grab("flyoutHome"), /document\.body/);
   assert.match(body, /classList\.add\("flyout"\)/);
   // And it shows because it is parked, not because of where it sits.
   assert.match(css, /\.menu-items\.flyout \{ display: block; \}/);

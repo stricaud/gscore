@@ -3960,7 +3960,25 @@ paths:
     post:
       tags: [app]
       summary: The program's own settings
-      description: Keyboard shortcuts, the playback soundfont, whether a .gscore carries a PDF of itself.
+      description: >
+        Keyboard shortcuts, the playback soundfont, whether a .gscore
+        carries a PDF of itself, whether bars are kept to the meter, and
+        how big the interface is drawn. These belong to the person and the
+        machine rather than to any score, so they are remembered here and
+        not in the file.
+      parameters:
+        - { name: playbackFont, in: query, schema: { type: string } }
+        - { name: scorePDF, in: query, schema: { type: string, enum: ["0", "1"] } }
+        - { name: trackBarlines, in: query, schema: { type: string, enum: ["0", "1"] } }
+        - { name: lang, in: query, schema: { type: string } }
+        - name: uiScale
+          in: query
+          description: >-
+            How big to draw the menus, the palette and the panels, where 1
+            is the size they were designed at. Between 0.75 and 2: below
+            that the labels stop being legible, and past it the menus no
+            longer fit a laptop screen.
+          schema: { type: number, minimum: 0.75, maximum: 2 }
       responses:
         "200":
           description: The settings.

@@ -941,6 +941,9 @@ async function action(name) {
     case "save-lilypond":
       await exportAs("ly", "text/plain", "LilyPond");
       break;
+    case "save-guido":
+      await exportAs("gmn", "text/plain", "GUIDO");
+      break;
     case "save-audio":
       await recordAudio();
       break;
@@ -16433,6 +16436,8 @@ const MENU_DRAWINGS = {
     '<path d="M13.5 3v5.5H19"/><path d="M8.5 13h7M8.5 16h7M8.5 19h4"/>',
   "save-lilypond": '<path d="M13.5 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8.5z"/>' +
     '<path d="M13.5 3v5.5H19"/><circle cx="10" cy="17.5" r="2.1"/><path d="M12.1 17.5v-5.5"/>',
+  "save-guido": '<path d="M13.5 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8.5z"/>' +
+    '<path d="M13.5 3v5.5H19"/><path d="M11 12.5H9.4v6H11"/><path d="M14 12.5h1.6v6H14"/>',
   "save-midi": '<rect x="2.5" y="7" width="19" height="10" rx="1.5"/>' +
     '<path d="M8.2 7v6M12 7v6M15.8 7v6"/>',
   "save-audio": '<path d="M4 9.5h3.5L12 5.5v13L7.5 14.5H4z"/>' +

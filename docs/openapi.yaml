@@ -163,7 +163,7 @@ paths:
         - name: name
           in: query
           required: true
-          description: The filename, for its extension. `.abc`, `.gscore`, `.mscz`, `.mscx`, `.musicxml`, `.xml`, `.mxl`, `.nwctxt`, `.nwc`, `.musx`.
+          description: The filename, for its extension. `.abc`, `.gscore`, `.gmn` (GUIDO), `.mscz`, `.mscx`, `.musicxml`, `.xml`, `.mxl`, `.nwctxt`, `.nwc`, `.musx`.
           schema: { type: string }
       requestBody:
         required: true
@@ -410,8 +410,9 @@ paths:
       tags: [export]
       summary: The score in another program's format
       description: |
-        The exporters a built gscore carries: `abc`, `gscore`, `ly`
-        (LilyPond), `musicxml`, `xml`, `mxl` (compressed MusicXML). An
+        The exporters a built gscore carries: `abc`, `gscore`, `gmn`
+        (GUIDO), `ly` (LilyPond), `musicxml`, `xml`, `mxl` (compressed
+        MusicXML). An
         extension nothing claims is refused by name, which is the quickest
         way to ask what a particular build can write.
 

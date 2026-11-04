@@ -718,7 +718,7 @@ func leaveInEnglish(s string) bool {
 	switch s {
 	case "Gscore", "pppp", "ppp", "pp", "p", "mp", "mf", "f", "ff", "fff",
 		"ffff", "sf", "PDF…", "SVG…", "MIDI…", "MusicXML…", "ABC…",
-		"LilyPond…", "Tab", "Common", "Marcato", "Staccato", "Tenuto",
+		"LilyPond…", "GUIDO…", "Tab", "Common", "Marcato", "Staccato", "Tenuto",
 		"Accent", "Crescendo", "Diminuendo", "Tremolo", "Coda", "Segno":
 		return true
 	}

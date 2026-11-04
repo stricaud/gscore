@@ -1146,23 +1146,32 @@
       <select id="flute-to"></select>
     </span>
   </div>
+  <!-- Each label and its menu in one box, so that a row too narrow for
+       all three wraps between them and never between a label and the
+       thing it names. -->
   <div class="fl-filters" id="flute-filters">
-    <label for="flute-away">Keys from the chart</label>
-    <select id="flute-away">
-      <option value="">any</option>
-      <option value="1">1</option>
-      <option value="2">2</option>
-      <option value="3">3</option>
-    </select>
-    <label for="flute-within">In tune to</label>
-    <select id="flute-within">
-      <option value="">any</option>
-      <option value="5">±5 cents</option>
-      <option value="10">±10 cents</option>
-      <option value="20">±20 cents</option>
-    </select>
-    <label for="flute-using">Holding</label>
-    <select id="flute-using"><option value="">any key</option></select>
+    <span>
+      <label for="flute-away">Keys from the chart</label>
+      <select id="flute-away">
+        <option value="">any</option>
+        <option value="1">1</option>
+        <option value="2">2</option>
+        <option value="3">3</option>
+      </select>
+    </span>
+    <span>
+      <label for="flute-within">In tune to</label>
+      <select id="flute-within">
+        <option value="">any</option>
+        <option value="5">±5 cents</option>
+        <option value="10">±10 cents</option>
+        <option value="20">±20 cents</option>
+      </select>
+    </span>
+    <span>
+      <label for="flute-using">Holding</label>
+      <select id="flute-using"><option value="">any key</option></select>
+    </span>
   </div>
   <p class="small" id="flute-count"></p>
   <div id="flute-list"></div>

@@ -104,3 +104,40 @@ test("every class the window uses has a rule", () => {
       "[\\s,.:\\[{]"), "no rule for " + c);
   }
 });
+
+/*
+ * The paper does not change with the theme, so neither can the ink on it.
+ *
+ * --ink is the writing on the interface and flips to a light colour in
+ * the dark theme; --paper stays near white, because a score is printed on
+ * white whatever the screen is set to. Pairing the two gives light grey
+ * on white, which is what the fingering charts came out as. Reported as
+ * "in dark mode I am not seeing black on white but light grey on white".
+ */
+test("nothing drawn on paper takes the interface's ink", () => {
+  const bad = [];
+  for (const m of css.matchAll(/([^{}]+)\{([^}]*)\}/g)) {
+    const body = m[2];
+    if (!body.includes("background: var(--paper)")) continue;
+    if (/color:\s*var\(--ink\)|color:\s*var\(--muted\)/.test(body)) {
+      bad.push(m[1].trim().split("\n").pop());
+    }
+  }
+  assert.deepEqual(bad, [],
+    "these are drawn on paper and take an ink that flips with the theme");
+  // And the paper's own inks are defined in both themes, or the dark one
+  // falls back to nothing.
+  const dark = css.slice(css.indexOf("prefers-color-scheme: dark"));
+  for (const v of ["--paper-ink", "--paper-muted"]) {
+    assert.match(css, new RegExp("\\s" + v + ":"), v + " is not defined");
+    assert.match(dark, new RegExp("\\s" + v + ":"),
+      v + " is not defined for the dark theme");
+  }
+});
+
+// A label that wraps away from the menu it names is a label naming
+// nothing: they travel together.
+test("each filter keeps its menu beside it", () => {
+  assert.match(html, /<div class="fl-filters"[\s\S]*?<span>\s*<label for="flute-away"/);
+  assert.match(css, /\.fl-filters > span \{/);
+});

@@ -29,6 +29,13 @@
   --cursor: #4e4e4e;
   --accent-soft: #cfe2f0;
   --paper: #ffffff;
+  /* The ink used on paper, which is not the ink used on the interface.
+     The paper stays near white in the dark theme — a score is printed on
+     white whatever the screen is set to — so anything drawn on it has to
+     keep a dark ink, and --ink flips with the theme. Pairing the two put
+     light grey letters and light grey fingering charts on white, which is
+     nothing anybody can read. Reported on the fingering window. */
+  --paper-ink: #1c1a18;
   /* The red gscore 0.0.9 drew its menu pictures in: the note is the black
      it would be printed in, and what the entry actually writes is red. The
      eye finds the entry by the red rather than by reading seven words. */
@@ -53,6 +60,9 @@
     --accent: #6ba7d6;
     --accent-soft: #2a4357;
     --paper: #f7f6f3;
+    /* Dark, as in the light theme: the paper did not change. */
+    --paper-ink: #1c1a18;
+    --paper-muted: #6d6862;
     /* Lighter on a dark panel, where the printing red goes muddy. */
     --mark: #e8705f;
     /* The paper stays near white in the dark theme, so a note sounding on it
@@ -689,7 +699,7 @@ dialog button {
   border-radius: 5px;
   padding: 6px 4px;
   cursor: pointer;
-  color: var(--ink);
+  color: var(--paper-ink);
   font: inherit;
   font-size: calc(11px * var(--ui-scale));
 }
@@ -975,7 +985,7 @@ body.native #menubar { padding-left: 12px; }
   cursor: pointer;
   font: inherit;
   font-size: calc(10px * var(--ui-scale));
-  color: var(--ink);
+  color: var(--paper-ink);
 }
 .palette-item:hover { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
 .palette-item img {
@@ -2572,7 +2582,7 @@ input.wrong {
   font: inherit;
   font-size: calc(11px * var(--ui-scale));
   line-height: 1;
-  color: var(--ink);
+  color: var(--paper-ink);
   background: var(--paper);
   border: 1px solid var(--line);
   border-radius: 5px;
@@ -2685,6 +2695,12 @@ input.wrong {
 }
 .fl-modes button.on { background: var(--accent); color: #fff; border-color: var(--accent); }
 .fl-filters label { color: var(--muted); }
+/* A label and its menu travel together when the row wraps. */
+.fl-filters > span {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(5px * var(--ui-scale));
+}
 
 #flute-list {
   display: grid;
@@ -2700,7 +2716,7 @@ input.wrong {
   border: 1px solid var(--line);
   border-radius: 5px;
   background: var(--paper);
-  color: var(--ink);
+  color: var(--paper-ink);
 }
 /* The one everybody learns, across the whole row and marked as itself. */
 .fl-standard {
@@ -2713,6 +2729,8 @@ input.wrong {
 .fl-card figcaption {
   margin-top: calc(4px * var(--ui-scale));
   font-size: calc(11px * var(--ui-scale));
-  color: var(--muted);
+  /* On paper, so the paper's inks: the theme's are for the panels, and
+     the dark theme's are light. */
+  color: var(--paper-muted);
 }
-.fl-card figcaption b { color: var(--ink); font-weight: 600; }
+.fl-card figcaption b { color: var(--paper-ink); font-weight: 600; }

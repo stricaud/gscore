@@ -213,3 +213,56 @@ func TestTheFigureOverABeamedGroupIsNotAsWideAsTheGroup(t *testing.T) {
 			"rather than the number", box.Width)
 	}
 }
+
+// The figure goes outside the beam, not on it.
+//
+// Its height was worked out from the highest notehead and a stem's length,
+// which is where the beam is for an ordinary group and nowhere near it for
+// a wide one: a beam is drawn through the ends of the outermost stems, so a
+// run climbing two octaves has it a long way from the notes at one end. The
+// 17 over the opening run of the Rhapsody came out on top of its own beam.
+func TestTheFigureClearsTheBeamOfAWideRun(t *testing.T) {
+	score := model.NewScore()
+	v := score.Parts[0].Measures[0].Voices[0]
+	// Seventeen thirty-seconds climbing two octaves, beamed as one group.
+	for i := 0; i < 17; i++ {
+		n := &model.Note{
+			Pitch: model.PitchFromDiatonicIndex(-7 + i),
+			Dur:   model.Duration{Num: 1, Den: 48},
+		}
+		n.Marks.Tuplet = &model.Tuplet{
+			Actual: 17, Normal: 8, Start: i == 0, Stop: i == 16,
+		}
+		v.Elements = append(v.Elements, n)
+	}
+
+	lay := Engrave(score, DefaultOptions())
+	var figure *Text
+	for i := range lay.Texts {
+		if lay.Texts[i].S == "17" {
+			figure = &lay.Texts[i]
+		}
+	}
+	if figure == nil {
+		t.Fatal("no figure was written over the group")
+	}
+
+	// The beams are the thick level lines across the run. The figure must
+	// be clear of every one of them that is under it.
+	th := DefaultOptions().Defaults.BeamThickness
+	for _, l := range lay.Lines {
+		if math.Abs(l.Thickness-th) > 1e-6 {
+			continue // a stem or a staff line, not a beam
+		}
+		lo, hi := math.Min(l.X1, l.X2), math.Max(l.X1, l.X2)
+		if figure.X < lo || figure.X > hi {
+			continue
+		}
+		top := math.Min(l.Y1, l.Y2) - th/2
+		if figure.Y > top {
+			t.Errorf("the figure's baseline is at %.2f, which is %.2f into "+
+				"a beam whose top edge is %.2f", figure.Y, figure.Y-top, top)
+			break
+		}
+	}
+}

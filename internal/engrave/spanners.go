@@ -890,6 +890,11 @@ func (e *engraver) drawTieOrSlur(from *openSpan, toX, toY, lift float64, slur, c
 		y1, y2, cy = e.fitSlur(from.x, toX, y1, y2, dir)
 	}
 
+	if slur {
+		// Named before it is drawn, so the outline the next slur is
+		// placed against can leave this one out.
+		e.noteSlur(len(e.lay.Curves))
+	}
 	e.lay.Curves = append(e.lay.Curves, Curve{
 		X1: from.x, Y1: y1,
 		CX: (from.x + toX) / 2, CY: cy,
@@ -987,7 +992,7 @@ func (e *engraver) slurEndClear(x, y float64, above bool) float64 {
 // it counts.
 func (e *engraver) slurEndColumn(x, y, ownStem float64, above, onStem bool) float64 {
 	const near = 0.6
-	ink := e.staffInkline().reach(x-near, x+near, !above)
+	ink := e.slurInkline().reach(x-near, x+near, !above)
 	if math.IsInf(ink, 0) {
 		return y // nothing drawn there at all
 	}
@@ -1094,7 +1099,7 @@ func (e *engraver) slurShoulder(a, b, y, dir float64) float64 {
 	if b <= a {
 		return y
 	}
-	edge := e.staffInkline().reach(a, b, dir > 0)
+	edge := e.slurInkline().reach(a, b, dir > 0)
 	if math.IsInf(edge, 0) {
 		return y // nothing drawn there at all
 	}
@@ -1151,7 +1156,7 @@ func (e *engraver) archOver(x0, x1, y1, y2, cy, dir float64) (float64, float64) 
 	above := dir < 0
 	// The music, without the staff: a slur is drawn among the notes and
 	// has no business clearing the lines they are written on.
-	sky := e.staffInkline()
+	sky := e.slurInkline()
 
 	// Only what lies between the ends: the notes the slur starts and ends
 	// on are its own, and a slur is drawn from them, not over them.

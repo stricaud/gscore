@@ -6,7 +6,7 @@ abc/boite-musique.abc 84a778127d158b86 514
 abc/decoration.abc dd0d53d1a96528ca 31
 abc/pitch.abc 7cf41b23d8ff2a5e 227
 abc/sunshine.abc 31303b321c36b2eb 136
-samples/altes-10e-solo.abc bfaff94941d9f674 9839
+samples/altes-10e-solo.abc 2d667dd0d58c27c5 9839
 samples/boite-musique.abc 84a778127d158b86 514
 suite/01a-Pitches-Pitches.musicxml 90d22d2bc8924919 555
 suite/01b-Pitches-Intervals.musicxml 0c3bedd724616c0a 412
@@ -65,11 +65,11 @@ suite/22b-Staff-Notestyles.musicxml dcb0078c11166bf3 64
 suite/22c-Noteheads-Chords.musicxml 1558f2e68dd336d6 51
 suite/22d-Parenthesized-Noteheads.musicxml dab491b287b20a01 25
 suite/23a-Tuplets.musicxml c52381b5d60d9b05 118
-suite/23b-Tuplets-Styles.musicxml 721f5914e7f09899 192
-suite/23c-Tuplet-Display-NonStandard.musicxml ec10e5d6322e4325 125
-suite/23d-Tuplets-Nested.musicxml dcd97c32ffd9176c 93
+suite/23b-Tuplets-Styles.musicxml a61b7f7e7ec5888f 192
+suite/23c-Tuplet-Display-NonStandard.musicxml a31fa66c4cdd9a80 125
+suite/23d-Tuplets-Nested.musicxml b5de62f78cf1aac4 93
 suite/23e-Tuplets-Tremolo.musicxml 72283f0aa5552708 122
-suite/23f-Tuplets-DurationButNoBracket.musicxml d5e1bf5297a55943 77
+suite/23f-Tuplets-DurationButNoBracket.musicxml a3d7cd164e6a2782 77
 suite/24a-GraceNotes.musicxml 23e36d2df5b1cfc5 83
 suite/24b-ChordAsGraceNote.musicxml 4d54f108145c1828 42
 suite/24c-GraceNote-MeasureEnd.musicxml bb0602813bcd4de9 15
@@ -91,7 +91,7 @@ suite/32e-Arpeggios-Cross.musicxml 1c918e347de62efa 88
 suite/32e-Fermatas.musicxml b6cdae42d565049b 38
 suite/33a-Spanners.musicxml f374240c0926e0bb 210
 suite/33b-Spanners-Tie.musicxml 35bb1a123552be56 15
-suite/33c-Spanners-Slurs.musicxml bbf9b2bba38d0619 44
+suite/33c-Spanners-Slurs.musicxml 75db1eba23b087e1 44
 suite/33d-Spanners-OctaveShifts.musicxml 9383ede393d11aa5 50
 suite/33e-Spanners-OctaveShifts-InvalidSize.musicxml a6a26e93b45bed66 29
 suite/33f-Trill-EndingOnGraceNote.musicxml 296faa88c18cc655 42

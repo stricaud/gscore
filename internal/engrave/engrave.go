@@ -905,6 +905,15 @@ type engraver struct {
 	// systemTexts are the words for the whole system, kept back until
 	// every staff of it has been drawn. See placeSystemTexts.
 	systemTexts []pendingSystemText
+	// beamed is where each beam ended up, by the first note of its group.
+	//
+	// The figure over a tuplet has to go clear of the beam, and only the
+	// beaming knows where the beam went: it is drawn through the ends of
+	// the outermost stems, which on a run spanning two octaves is nowhere
+	// near a stem's length from the notes. Guessing from the highest
+	// notehead put the 17 of the Rhapsody's opening run on top of its own
+	// beam. See drawTuplet.
+	beamed map[*placed]beamRun
 	// scale is the size the engraver is drawing notes at, where one is full
 	// size. Anything but one is a cue: see cue.go, which has the reasoning
 	// and every measurement that reads this.
@@ -944,6 +953,22 @@ type engraver struct {
 	staffSky   *skyline
 	staffInk   *skyline
 	staffSkyAt mark
+	// staffMusic is the ink without the slurs in it, for placing slurs
+	// against.
+	//
+	// A slur is placed clear of what is under the phrase it covers, and a
+	// slur already drawn was part of that — so in a bar of four voices,
+	// each with a slur of its own, every slur cleared the one before it
+	// and the fourth hung ten spaces below the staff. It dragged the two
+	// hands of the piano apart for the whole system with it, leaving a gap
+	// nothing appeared to be in. Bar 75 of the Rhapsody.
+	//
+	// Slurs crossing each other is ordinary in music of several voices;
+	// slurs queueing underneath each other is not.
+	staffMusic *skyline
+	// slurCurve is which of lay.Curves are slurs, so they can be left out
+	// of that outline.
+	slurCurve map[int]bool
 	// headingTop is where the heading of the movement about to be drawn
 	// began, so that the system records its territory as starting there and
 	// the page is cut above the heading rather than below it.
@@ -3051,7 +3076,7 @@ func (e *engraver) drawSystem(parts []*model.Part, boxes [][]measureBox,
 		e.staffMark, e.staffTop = staffMark, staffTop
 		e.staffX0, e.staffX1 = sp.Margin, right
 		// A new staff, so the outline kept for the last one is of no use.
-		e.staffSky, e.staffInk = nil, nil
+		e.staffSky, e.staffInk, e.staffMusic = nil, nil, nil
 		staffTops = append(staffTops, e.y)
 		// Each staff's clef starts far enough right that its own key and
 		// meter end where everybody else's do, so a staff in C major and one

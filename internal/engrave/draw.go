@@ -574,6 +574,8 @@ const (
 	// The gap left in the bracket for the number to sit in, either side of
 	// it. A line drawn through the figure is a line drawn through it.
 	tupletNumberGap = 0.5
+	// The air between a beam and the figure written outside it.
+	tupletFigureGap = 0.4
 )
 
 // drawTuplets writes the ratio over each tuplet group, and brackets it where
@@ -645,6 +647,34 @@ func (e *engraver) drawTuplet(group []*placed, tp *model.Tuplet, beam map[*place
 	x1 := last.x + noteheadWidth(last.value)
 	cx := (x0 + x1) / 2
 
+	// Clear of the beam, where the group has one.
+	//
+	// The height above was worked out from the highest notehead and a
+	// stem's length, which is where the beam is for an ordinary group and
+	// nowhere near it for a wide one: a beam is drawn through the ends of
+	// the outermost stems, so a run climbing two octaves has it a long way
+	// from the notes at one end. The 17 over the Rhapsody's opening run
+	// came out on top of its own beam, unreadable.
+	//
+	// Outwards only. A group whose beam sits where a stem's length would
+	// put it keeps the figure exactly where it had it, so this moves
+	// nothing that was not already wrong.
+	if b, ok := e.beamed[first]; ok {
+		half := textWidth(strconv.Itoa(tp.Actual), tupletNumberSize)/2 + tupletNumberGap
+		edge := math.Min(b.at(cx-half), b.at(cx+half))
+		if !up {
+			edge = math.Max(b.at(cx-half), b.at(cx+half))
+		}
+		th := e.beamTh()
+		if up {
+			if clear := edge - th/2 - tupletFigureGap; clear < y {
+				y = clear
+			}
+		} else if clear := edge + th/2 + tupletNumberSize; clear > y {
+			y = clear
+		}
+	}
+
 	e.lay.Texts = append(e.lay.Texts, Text{
 		S: strconv.Itoa(tp.Actual), X: cx, Y: y,
 		Size: tupletNumberSize, Anchor: "middle", Italic: true, Bold: true,
@@ -687,6 +717,21 @@ func (e *engraver) drawTuplet(group []*placed, tp *model.Tuplet, beam map[*place
 	add(x0, ly, cx-half, ly) // up to the figure
 	add(cx+half, ly, x1, ly) // and on from it
 	add(x1, ly, x1, ly+hook) // the hook at the far end
+}
+
+// beamRun is where a beam was drawn: the centreline of its outermost beam,
+// from end to end, and which side of the notes it is on.
+type beamRun struct {
+	x0, y0, x1, y1 float64
+	up             bool
+}
+
+// at is the centreline of the beam at an x along it.
+func (b beamRun) at(x float64) float64 {
+	if b.x1 == b.x0 {
+		return b.y0
+	}
+	return b.y0 + (b.y1-b.y0)*(x-b.x0)/(b.x1-b.x0)
 }
 
 // oneBeam says whether the whole group is joined by a single beam, which is
@@ -1833,6 +1878,15 @@ func (e *engraver) drawBeamGroup(g []*placed) {
 		y1 += shift
 	}
 
+	// Where the beam ended up, for the figure a tuplet writes over it.
+	// Only here is it known: the line is drawn through the outermost stem
+	// ends and then pushed out to clear the furthest notehead, which on a
+	// wide run is a long way from where a stem's length would put it.
+	if e.beamed == nil {
+		e.beamed = map[*placed]beamRun{}
+	}
+	e.beamed[g[0]] = beamRun{x0: x0, y0: y0, x1: x1, y1: y1, up: up}
+
 	// Stems, now that the beam line is fixed.
 	//
 	// A stem runs the whole height of its chord: it starts at the notehead
@@ -2278,18 +2332,43 @@ func (e *engraver) drawTexts(m *model.Marks, p *placed) {
 		}
 
 		x := p.x + t.OffsetX
-		if look.Place == model.PlacementBelow {
-			for i, line := range lines {
-				if line == "" {
-					continue
-				}
-				e.lay.Texts = append(e.lay.Texts, Text{
-					S: line, X: x,
-					Y:    e.y + e.staffH() + 3.4 + t.OffsetY + float64(i)*textLine,
-					Size: textSize, Anchor: "start",
-					Italic: look.Italic, Bold: look.Bold,
-				})
+		widest := 0.0
+		for _, line := range lines {
+			if w := textWidth(line, textSize); w > widest {
+				widest = w
 			}
+		}
+
+		if look.Place == model.PlacementBelow {
+			// Below the staff it joins the queue, for the same reason the
+			// words above it do: what is under a stretch of staff is not
+			// known until the staff is finished. It used to be written at
+			// a fixed distance under the bottom line — three and a bit
+			// spaces — which is clear of nothing. The Rhapsody's opening
+			// is a clarinet low in its register, so "Solo" and "gliss"
+			// came out written through the ledger lines and the noteheads
+			// they belong to.
+			e.wait(waitingMark{
+				x0: x, x1: x + widest,
+				height: textSize + float64(len(lines)-1)*textLine,
+				gap:    0.6, below: true, rank: rankText,
+				draw: func(y float64) {
+					// place gives the top of the band, and words are drawn
+					// from their baselines, so the first line sits a
+					// line's height into it.
+					for i, line := range lines {
+						if line == "" {
+							continue
+						}
+						e.lay.Texts = append(e.lay.Texts, Text{
+							S: line, X: x,
+							Y:    y + textSize + t.OffsetY + float64(i)*textLine,
+							Size: textSize, Anchor: "start",
+							Italic: look.Italic, Bold: look.Bold,
+						})
+					}
+				},
+			})
 			continue
 		}
 		// Words for everybody go over the top staff of the system rather
@@ -2318,12 +2397,6 @@ func (e *engraver) drawTexts(m *model.Marks, p *placed) {
 		// than being written at a distance decided in advance. "rit." over
 		// a bar that also carries a chord symbol used to be printed through
 		// it whenever the fixed distances happened to coincide.
-		widest := 0.0
-		for _, line := range lines {
-			if w := textWidth(line, textSize); w > widest {
-				widest = w
-			}
-		}
 		// The whole block claims its room at once, so that the lines stay
 		// together and whatever is placed next clears all of them.
 		e.wait(waitingMark{

@@ -575,3 +575,65 @@ func TestASlurClearsTheOtherVoicesStems(t *testing.T) {
 		}
 	}
 }
+
+// A slur is placed clear of the music, not of other slurs.
+//
+// It was placed clear of everything drawn, and a slur already drawn was
+// part of that. In a bar of four voices each carrying a slur of its own,
+// every slur cleared the one before it: the fourth hung thirty-three
+// spaces below the staff and dragged the two hands of the piano apart for
+// the whole system with it. Bar 75 of the Rhapsody, where the gap between
+// the hands came to forty-six spaces with nothing in it.
+//
+// So the question this asks is not how deep a slur goes — that is the
+// chord under it, and the chord has every right to push it — but whether
+// the slurs of the other voices add to it. They must not.
+func TestSlursDoNotQueueUnderEachOther(t *testing.T) {
+	// A right hand of four voices, each a pair of notes. slurAll gives
+	// every voice a slur; otherwise only the lowest has one.
+	depth := func(slurAll bool) []float64 {
+		score := model.NewScore()
+		m := score.Parts[0].Measures[0]
+		steps := []int{7, 4, 2, 0}
+		for v, step := range steps {
+			if v > 0 {
+				m.Voices = append(m.Voices, &model.Voice{})
+			}
+			for i := 0; i < 2; i++ {
+				n := &model.Note{
+					Pitch: model.PitchFromDiatonicIndex(step + i),
+					Dur:   model.Duration{Num: 1, Den: 4},
+				}
+				if slurAll || v == len(steps)-1 {
+					n.Marks.SlurStart = i == 0
+					n.Marks.SlurStop = i == 1
+				}
+				m.Voices[v].Elements = append(m.Voices[v].Elements, n)
+			}
+		}
+		lay := Engrave(score, DefaultOptions())
+		out := []float64{}
+		for _, c := range lay.Curves {
+			out = append(out, c.CY)
+		}
+		return out
+	}
+
+	alone, crowded := depth(false), depth(true)
+	if len(alone) != 1 {
+		t.Fatalf("%d slurs drawn for the one voice that has one", len(alone))
+	}
+	if len(crowded) != 4 {
+		t.Fatalf("%d slurs drawn for four voices", len(crowded))
+	}
+	// The same slur, found among the four by being in the same place: if
+	// the others had pushed it, none of them would be.
+	for _, c := range crowded {
+		if math.Abs(c-alone[0]) < 0.01 {
+			return
+		}
+	}
+	t.Errorf("the lowest voice's slur arches at %.2f on its own, and the "+
+		"four in the bar arch at %v: it has been placed clear of the "+
+		"others", alone[0], crowded)
+}

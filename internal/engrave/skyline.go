@@ -227,12 +227,15 @@ func (e *engraver) staffOutline() *skyline {
 	if e.staffSky == nil {
 		e.staffSky = newSkyline(e.staffX0, e.staffX1, e.staffTop, e.staffH())
 		e.staffInk = newInkline(e.staffX0, e.staffX1)
+		e.staffMusic = newInkline(e.staffX0, e.staffX1)
 		e.staffSkyAt = e.staffMark
 	}
-	// Both from the same mark, and the mark moved once: the two outlines
-	// hold the same ink and differ only in what they start from.
+	// All from the same mark, and the mark moved once: the outlines hold
+	// the same ink and differ only in what they start from — and in
+	// whether the slurs are in them.
 	e.addSince(e.staffSky, e.staffSkyAt)
 	e.addSince(e.staffInk, e.staffSkyAt)
+	e.addSinceExcept(e.staffMusic, e.staffSkyAt, e.slurCurve)
 	e.staffSkyAt = e.marked()
 	return e.staffSky
 }
@@ -244,8 +247,29 @@ func (e *engraver) staffInkline() *skyline {
 	return e.staffInk
 }
 
+// slurInkline is that outline again with the slurs taken out of it, which
+// is what a slur is placed against. See the staffMusic field.
+func (e *engraver) slurInkline() *skyline {
+	e.staffOutline()
+	return e.staffMusic
+}
+
+// noteSlur records that a curve is a slur, so the outline slurs are placed
+// against can leave it out.
+func (e *engraver) noteSlur(at int) {
+	if e.slurCurve == nil {
+		e.slurCurve = map[int]bool{}
+	}
+	e.slurCurve[at] = true
+}
+
 // addSince registers everything drawn since a mark on an outline.
 func (e *engraver) addSince(s *skyline, from mark) {
+	e.addSinceExcept(s, from, nil)
+}
+
+// addSinceExcept is the same, leaving out the curves named in skip.
+func (e *engraver) addSinceExcept(s *skyline, from mark, skip map[int]bool) {
 	for _, g := range e.lay.Glyphs[from.glyphs:] {
 		up, down := glyphReach(g.Name)
 		w := glyphWidth(g)
@@ -266,7 +290,10 @@ func (e *engraver) addSince(s *skyline, from mark) {
 		}
 		s.add(xa, xb, lo, hi)
 	}
-	for _, c := range e.lay.Curves[from.curves:] {
+	for i, c := range e.lay.Curves[from.curves:] {
+		if skip != nil && skip[from.curves+i] {
+			continue // a slur, which other slurs are not placed against
+		}
 		// A quadratic never leaves the box of its ends and its control
 		// point, so the box is a safe outline and a cheap one.
 		lo := math.Min(c.Y1, math.Min(c.Y2, c.CY))

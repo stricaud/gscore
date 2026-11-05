@@ -173,7 +173,7 @@ so your invented articulation arrives at the other end as a smudge. In a
 still a score when it comes back, and one person's set of marks can be handed
 to another as a file.
 
-## 9. It was built for writing, not for printing
+## 9. It was built for writing fast
 
 Gscore opens as a **continuous strip**: one unbroken line of music, no page
 breaks, no justification. That was the original program's defining decision in

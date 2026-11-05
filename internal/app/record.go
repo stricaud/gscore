@@ -127,8 +127,22 @@ func (a *App) handleRecord(w http.ResponseWriter, r *http.Request) {
 	name := a.suggestedBase()
 	a.mu.RUnlock()
 
+	rec := readRecording(r.URL.Query())
+	// No soundfont named, so the one already chosen — which is the one
+	// pressing Play uses, and the only answer that is not a surprise.
+	//
+	// The window always names one, because its dialog is built around
+	// choosing it; a request that does not is somebody driving gscore from
+	// outside, and asking them to find the path to a file the program
+	// already knows about is asking them to answer a question that has an
+	// answer. Every other export works from a bare GET and this is the one
+	// that did not.
+	if rec.Font == "" {
+		rec.Font = a.playbackFont()
+	}
+
 	var buf bytes.Buffer
-	if err := recordFLAC(&buf, score, readRecording(r.URL.Query())); err != nil {
+	if err := recordFLAC(&buf, score, rec); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}

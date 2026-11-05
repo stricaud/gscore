@@ -15,6 +15,15 @@ pointed out as we come to them.</p>
 
 ## 1. Open it and look around
 
+<figure class="shot">
+<img src="images/editor.png" alt="The Gscore window: a toolbox of note values
+and marks down the left, a flute and piano score in the middle, and a panel on
+the right listing the score's title, tempo and staves.">
+<figcaption><b>The whole window.</b> Toolbox on the left, music in the middle,
+inspector on the right — and the music runs off to the right in one unbroken
+strip rather than breaking into pages.</figcaption>
+</figure>
+
 Three panels, and that is the whole window.
 
 - On the **left**, the toolbox: the note you are about to write, and a zoom
@@ -74,6 +83,15 @@ left, it moves what will not fit into the next bar and keeps the arithmetic
 right. <kbd>Tab</kbd> ends a bar early, for the times you meant it.
 
 ### The fast way: type it
+
+<figure class="shot">
+<img src="images/dialog-typing.png" alt="The How to type music window, listing
+8abcdef as six eighth notes climbing, and a table of lengths from 1 for a
+whole note to 64 for a sixty-fourth.">
+<figcaption><b>Help → How to type music.</b> The whole syntax, and it is
+generated from the parser itself — a length added to the program turns up
+here without anybody remembering to write it down.</figcaption>
+</figure>
 
 Press <kbd>Ctrl</kbd>+<kbd>K</kbd> (<kbd>⌘</kbd>+<kbd>K</kbd>). A bar opens at
 the bottom. Type this into it and press Enter:
@@ -153,6 +171,15 @@ than six times.
 
 This is the bit worth showing somebody who teaches.
 
+<figure class="shot">
+<img src="images/colours-and-beats.png" alt="The same score with every
+notehead coloured by its note name and a row of small blue arrows above the
+staff, one over each beat.">
+<figcaption><b>What this chapter is building towards.</b> Every notehead
+coloured by which note it is, and a blue arrow over every beat. Both print,
+and both are saved with the score.</figcaption>
+</figure>
+
 <span class="menu-path">View → Note colours…</span>, tick **Colour the
 noteheads**, and every C in the score goes red, every D orange, and so on up
 the spectrum to a violet B. It is the same order as coloured bells and
@@ -167,9 +194,11 @@ Three things make it more than a gimmick:
 - **It prints.** The colours go to the PDF and to the printer, not just the
   screen — so the student can take the part away and the colours come with it.
 
-The colours are yours, not the score's: pick your own in that dialog and
-*every* score you open afterwards is coloured that way, on screen and on
-paper, until you turn it off.
+The colours are kept twice over. Pick your own in that dialog and they become
+your default, so *every* score you open afterwards is coloured that way, on
+screen and on paper, until you turn it off — and they are written into the
+score when you save it, so a part sent to a pupil arrives in the colours you
+chose rather than in whatever theirs happen to be.
 
 Its neighbour <span class="menu-path">View → Metronome marking</span> draws a
 small arrow over every beat. Not the usual "♩ = 120" at the top of the page —

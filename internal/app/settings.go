@@ -194,8 +194,15 @@ func ColourNotes() bool { return loadSettings().ColourNotes }
 // route and forgets it.
 func (a *App) engraving() engrave.Options {
 	opt := a.engraveOpt
-	opt.ColourNotes = ColourNotes()
-	opt.NoteColours = NoteColours()
+	if a.score == nil {
+		opt.ColourNotes = ColourNotes()
+		opt.NoteColours = NoteColours()
+		return opt
+	}
+	// The score's own colours where the file named any, and the person's
+	// where it did not. See viewstate.go.
+	opt.ColourNotes = a.colourNotes()
+	opt.NoteColours = a.scoreNoteColours()
 	return opt
 }
 
@@ -393,10 +400,13 @@ func (a *App) handleSettings(w http.ResponseWriter, r *http.Request) {
 				s.Lang = v[0]
 			}
 		}
+		colours := false
 		if v, ok := r.URL.Query()["colourNotes"]; ok && len(v) > 0 {
 			s.ColourNotes = v[0] == "1"
+			colours = true
 		}
 		if v, ok := r.URL.Query()["noteColours"]; ok && len(v) > 0 {
+			colours = true
 			// The whole palette each time, the same way the bindings are
 			// sent: going back to the built-in colours is sending nothing.
 			// Unreadable is a request gscore did not send and is left
@@ -424,6 +434,14 @@ func (a *App) handleSettings(w http.ResponseWriter, r *http.Request) {
 		// disk to keep it on at all. Reporting that as an error would be an
 		// error message about something nobody asked for.
 		_ = saveSettings(s)
+		// Choosing a colour is an instruction about the score in front of
+		// you, so it lands on that score as well as on the settings — and
+		// is then saved with it. See App.adoptSettingsColours.
+		if colours {
+			a.lock()
+			a.adoptSettingsColours()
+			a.mu.Unlock()
+		}
 	}
 	chosen := a.playbackFont()
 	name := ""

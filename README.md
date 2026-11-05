@@ -70,8 +70,8 @@ in step.
 ```
 go build ./...
 go test ./...
-go run . samples/exercise.abc     # opens the editor
-go run . -o out.pdf samples/exercise.abc
+go run . samples/altes-10e-solo.abc          # opens the editor
+go run . -o out.pdf samples/the-entertainer.mxl
 sh web/build.sh                   # the site, including these documents
 ```
 

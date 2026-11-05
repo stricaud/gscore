@@ -823,6 +823,51 @@ type Cursor struct {
 	Step int
 }
 
+// ViewState is how a score was last being looked at.
+//
+// Not music either, and kept for the same reason the cursor is: it is work
+// somebody did on this score. Turning the beat marks on to pick apart a
+// syncopated entry, or colouring the noteheads for a pupil, is a decision
+// about *this* piece, and having to make it again every time the file is
+// opened is the kind of small daily friction that makes a program tiring.
+//
+// Every field is explicit rather than defaulted, because the struct is only
+// ever read when Score.View is non-nil — that is, when a file actually said
+// something. A file that says nothing leaves the person's own settings
+// alone. That is also why MeasureNumbers can be false here and still be
+// true by default everywhere else: "off" written down is a choice, and the
+// absence of the whole struct is the absence of one.
+//
+// What is deliberately *not* here: the zoom. How large the music is drawn is
+// a fact about the screen in front of you, not about the piece — the same
+// score wants one size on a laptop and another on a monitor — so it stays
+// with the person, as the interface scale does.
+type ViewState struct {
+	// Paginated draws pages rather than one continuous strip.
+	Paginated bool `json:"paginated,omitempty"`
+
+	// The drawing options from the View menu.
+	StaffNames     bool `json:"staffNames,omitempty"`
+	MeasureNumbers bool `json:"measureNumbers,omitempty"`
+	MultiRests     bool `json:"multiRests,omitempty"`
+	TempoMark      bool `json:"tempoMark,omitempty"`
+	BeatMarks      bool `json:"beatMarks,omitempty"`
+
+	// ConcertPitch shows the score as it sounds rather than as each player
+	// reads it. A view and not a change: what is stored stays as written.
+	ConcertPitch bool `json:"concertPitch,omitempty"`
+
+	// ColourNotes draws each notehead in the colour of the note it is, and
+	// NoteColours is the palette, by the note's letter: {"C": "#d0312d"}.
+	//
+	// The palette travels with the score as well as living in the person's
+	// own settings, so that a part sent to a pupil arrives in the colours it
+	// was prepared in. Where a file names colours, those are the ones drawn;
+	// where it does not, the reader's own are.
+	ColourNotes bool              `json:"colourNotes,omitempty"`
+	NoteColours map[string]string `json:"noteColours,omitempty"`
+}
+
 // Score is a complete piece of music.
 type Score struct {
 	Identity Identity
@@ -925,6 +970,28 @@ type Score struct {
 	// not lost among the music. A song wants one at the head of each line
 	// and nothing more.
 	Numbering MeasureNumbering
+
+	// View is how this score was last being looked at: which of the drawing
+	// options were on, and the colours the noteheads were read in.
+	//
+	// Not music, and said so — the same way Cursor is not music. It is the
+	// state of the desk rather than of the piece, and it is kept for the
+	// same reason: somebody who turned the beat marks on to work out a
+	// syncopated entry, or coloured the notes for a pupil, has done a piece
+	// of work on this score, and closing the file should not throw it away.
+	//
+	// What it is not is a decision about the printed page. Page, Numbering
+	// and Engraving are those, and they live on the score in their own
+	// right. This is "how I was looking at it", which is why a score that
+	// has never said anything carries nothing here and is drawn however the
+	// person's own settings say.
+	//
+	// A pointer, so that "this file says nothing about the view" and "this
+	// file says every option was off" are different answers. They have to
+	// be: every score written before this existed says nothing, and reading
+	// those as "everything off" would turn the bar numbers off on every
+	// score anybody already has.
+	View *ViewState `json:",omitempty"`
 
 	// Sheets are the parts: the separate documents this score is printed
 	// as, one for each player's stand.

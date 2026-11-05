@@ -164,6 +164,14 @@ for f in "$root"/samples/*.html; do
 done
 cp "$root/internal/smufl/data/Bravura.otf" "$out/font.otf"
 
+# The pictures the documentation shows: screenshots of the editor and of the
+# windows it opens. Copied rather than generated, because they are pictures
+# of a running program and nothing here runs one.
+if [ -d "$root/docs/images" ]; then
+    mkdir -p "$out/docs/images"
+    cp "$root"/docs/images/* "$out/docs/images/"
+fi
+
 echo "writing the pages…"
 go run "$root/web/mksite" \
     -out "$out" -site "$site" -docs "$root/docs" \

@@ -2952,15 +2952,44 @@ func (a *App) handleView(w http.ResponseWriter, r *http.Request) {
 		a.concert = v == "1"
 		changed = append(changed, "concert")
 	}
+
+	// Whether the music is drawn as pages or as one continuous strip. The
+	// editor has always known this and the server has not, because every
+	// drawing request carries it; it is asked for here as well so that the
+	// score can remember which way it was being read.
+	if v := q.Get("mode"); v != "" {
+		if v == "page" {
+			a.engraveOpt.Mode = engrave.Paginated
+		} else {
+			a.engraveOpt.Mode = engrave.Strip
+		}
+		changed = append(changed, "mode")
+	}
+
+	// Whatever has just changed, the score now knows how it is being looked
+	// at, and saving it keeps that. See viewstate.go.
+	if len(changed) > 0 {
+		a.rememberView()
+	}
+	mode := "strip"
+	if a.engraveOpt.Mode == engrave.Paginated {
+		mode = "page"
+	}
 	writeJSON(w, map[string]any{
 		"status":    "ok",
 		"changed":   changed,
+		"mode":      mode,
 		"names":     a.engraveOpt.ShowPartNames,
 		"numbers":   a.engraveOpt.ShowMeasureNumbers,
 		"multirest": a.engraveOpt.MultiRests,
 		"tempomark": a.engraveOpt.ShowTempoMark,
 		"beatmarks": a.engraveOpt.ShowBeatMarks,
 		"concert":   a.concert,
+		// Whether the noteheads are coloured for *this* score, which is not
+		// the same question as whether the person's own settings colour
+		// them: a file may carry a palette of its own. The menu's tick has
+		// to say what is on the page in front of it.
+		"colourNotes": a.colourNotes(),
 	})
 }
 

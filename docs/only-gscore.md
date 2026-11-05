@@ -135,9 +135,10 @@ What makes it work rather than merely exist:
 
 - **C sharp is a C**, so it takes C's colour. The colour teaches the *name*.
 - **Every octave the same**, so a C is a C all the way up.
-- **It is yours, not the score's.** Set it once and every score you open
-  afterwards is coloured that way. A beginner should not have to configure a
-  program before they can practise.
+- **It is yours *and* the score's.** Set it once and it becomes your default,
+  so every score you open afterwards is coloured that way — a beginner should
+  not have to configure a program before they can practise — and it is saved
+  into the file too, so a part you send arrives looking as you prepared it.
 - **It prints.** PDF and paper, not just screen. The student takes the part
   home and the colours come with it.
 

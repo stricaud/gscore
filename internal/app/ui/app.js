@@ -992,6 +992,12 @@ async function action(name) {
     case "mode-strip":
       state.mode = name === "mode-strip" ? "strip" : "page";
       markMode();
+      // Told to the core as well, which has always been sent the mode with
+      // each drawing but never kept it. It keeps it now so the score can
+      // remember which way it was being read, and saving the file keeps
+      // that with it.
+      void fetch(`/api/view?mode=${state.mode}`, { method: "POST" })
+        .catch(() => { /* the drawing still carries the mode */ });
       await drawScore();
       await loadHits();
       status(state.mode === "strip" ? "Continuous strip" : "Paginated");
@@ -2191,6 +2197,10 @@ async function reload() {
     state.selection = null;
     state.multi = [];
     await loadInfo();
+    // Before the drawing, because the drawing is made with the mode this
+    // reads. A .gscore carries the drawing options it was saved with, and
+    // this is where they arrive.
+    await syncView();
     await drawScore();
     await loadHits();
     placeCursorOnOpen();
@@ -9326,6 +9336,36 @@ async function setView(what, on) {
       : "Shown as each player reads it",
   };
   status(said[what] || "Ready");
+}
+
+// syncView reads back how the core says this score is being looked at.
+//
+// A .gscore carries the drawing options it was saved with — which staff
+// names, which marks, pages or strip, and the colours — and the core applies
+// them as it reads the file. Without this the editor would go on showing the
+// ticks and the mode of the score before it, and the menus would disagree
+// with the page.
+//
+// It is read rather than pushed because the core is where the answer is: for
+// every other reason the editor reloads, the two already agree and this
+// re-asserts what is already true.
+async function syncView() {
+  try {
+    const d = await (await fetch("/api/view", { method: "POST" })).json();
+    state.view.names = !!d.names;
+    state.view.numbers = !!d.numbers;
+    state.view.multirest = !!d.multirest;
+    state.view.tempomark = !!d.tempomark;
+    state.view.beatmarks = !!d.beatmarks;
+    state.view.concert = !!d.concert;
+    state.colourNotes = !!d.colourNotes;
+    if (d.mode) state.mode = d.mode === "page" ? "page" : "strip";
+    markViewTicks();
+    markMode();
+  } catch (_) {
+    /* No answer: the ticks go on saying what they said, which is better
+       than a menu that has gone blank. */
+  }
 }
 
 function markViewTicks() {

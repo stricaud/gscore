@@ -68,6 +68,16 @@ type scoreDoc struct {
 	// ordinary case.
 	Numbering *numberingDoc `json:"numbering,omitempty"`
 
+	// View is how the score was last being looked at: which drawing options
+	// were on, and the colours the noteheads were read in.
+	//
+	// Not music — the same kind of thing as the cursor, and kept for the
+	// same reason: it is work somebody did on this score. Omitted entirely
+	// where nothing has been chosen, so that every file written before this
+	// existed goes on being drawn however the reader's own settings say,
+	// rather than being read as "every option off".
+	View *viewDoc `json:"view,omitempty"`
+
 	// Sheets are the parts: the separate documents this score is printed
 	// as. No music in them — a part says which staves it prints and how it
 	// wants them laid out, and the notes it shows are the score's own, which
@@ -114,6 +124,19 @@ type cueDoc struct {
 type numberingDoc struct {
 	Every int  `json:"every,omitempty"`
 	Boxed bool `json:"boxed,omitempty"`
+}
+
+// How the score was last being looked at. See model.ViewState.
+type viewDoc struct {
+	Paginated      bool              `json:"paginated,omitempty"`
+	StaffNames     bool              `json:"staffNames,omitempty"`
+	MeasureNumbers bool              `json:"measureNumbers,omitempty"`
+	MultiRests     bool              `json:"multiRests,omitempty"`
+	TempoMark      bool              `json:"tempoMark,omitempty"`
+	BeatMarks      bool              `json:"beatMarks,omitempty"`
+	ConcertPitch   bool              `json:"concertPitch,omitempty"`
+	ColourNotes    bool              `json:"colourNotes,omitempty"`
+	NoteColours    map[string]string `json:"noteColours,omitempty"`
 }
 
 type scriptDoc struct {
@@ -472,6 +495,24 @@ func encodeScore(s *model.Score) *scoreDoc {
 			Every: s.Numbering.Every, Boxed: s.Numbering.Boxed,
 		}
 	}
+	if v := s.View; v != nil {
+		d := &viewDoc{
+			Paginated: v.Paginated, StaffNames: v.StaffNames,
+			MeasureNumbers: v.MeasureNumbers, MultiRests: v.MultiRests,
+			TempoMark: v.TempoMark, BeatMarks: v.BeatMarks,
+			ConcertPitch: v.ConcertPitch, ColourNotes: v.ColourNotes,
+		}
+		// Copied rather than shared: the score goes on being edited after
+		// it has been written out, and a map handed to the encoder is a map
+		// the editor can still change underneath it.
+		if len(v.NoteColours) > 0 {
+			d.NoteColours = make(map[string]string, len(v.NoteColours))
+			for k, c := range v.NoteColours {
+				d.NoteColours[k] = c
+			}
+		}
+		doc.View = d
+	}
 	for _, sh := range s.Sheets {
 		d := sheetDoc{
 			Name: sh.Name, StaffSpace: sh.StaffSpace,
@@ -829,6 +870,21 @@ func decodeScore(doc *scoreDoc) (*model.Score, error) {
 		s.Numbering = model.MeasureNumbering{
 			Every: doc.Numbering.Every, Boxed: doc.Numbering.Boxed,
 		}
+	}
+	if v := doc.View; v != nil {
+		st := &model.ViewState{
+			Paginated: v.Paginated, StaffNames: v.StaffNames,
+			MeasureNumbers: v.MeasureNumbers, MultiRests: v.MultiRests,
+			TempoMark: v.TempoMark, BeatMarks: v.BeatMarks,
+			ConcertPitch: v.ConcertPitch, ColourNotes: v.ColourNotes,
+		}
+		if len(v.NoteColours) > 0 {
+			st.NoteColours = make(map[string]string, len(v.NoteColours))
+			for k, c := range v.NoteColours {
+				st.NoteColours[k] = c
+			}
+		}
+		s.View = st
 	}
 	if p := doc.Page; p != nil {
 		s.Page = model.Page{

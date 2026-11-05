@@ -150,8 +150,19 @@ back.
 - **Metronome marking** — an arrow over every beat, where the beat actually
   falls. For counting a syncopated entry or an odd meter.
 - **Note colours…** — a colour per note name, for readers who cannot yet name
-  a line by looking at it. Kept for you rather than for the score, and it
-  prints.
+  a line by looking at it. Kept as your own default *and* saved with the
+  score, and it prints.
+
+<figure class="shot">
+<img src="images/dialog-note-colours.png" alt="The Note colours window: a
+switch marked Colour the noteheads, then seven colour swatches labelled C to
+B, running red, orange, amber, green, blue, indigo, violet.">
+<figcaption><b>View → Note colours…</b> Seven swatches, C to B, in the order
+coloured bells and keyboard stickers already use — so the page agrees with
+the instrument in front of the student. Every change redraws the score behind
+the window at once.</figcaption>
+</figure>
+
 - **Concert pitch** — the score as it *sounds* rather than as each player
   reads it. Three staves in three keys playing the same line look like three
   different lines until this is on.
@@ -214,6 +225,15 @@ not yours.)
 (every binding, and you can change any of them) and **How to type music**
 (the typing syntax, generated from the parser itself) — plus **Lines that
 could not be read**, the import log mentioned above.
+
+<figure class="shot">
+<img src="images/dialog-shortcuts.png" alt="The Keyboard shortcuts window,
+listing the writing commands: Space writes the note the palette is showing,
+Enter a rest of the same length, and so on.">
+<figcaption><b>Help → Keyboard shortcuts.</b> Every binding, grouped by what
+it is for. Click <i>Change</i> and press the keys you would rather use; only
+your changes are stored, so the defaults can improve under you.</figcaption>
+</figure>
 
 ## Where next
 

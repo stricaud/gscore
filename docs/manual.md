@@ -321,13 +321,43 @@ a bar that is not drawn is a bar you cannot click in, and on for the printed
 part, because a player counting fourteen empty bars is a player who loses
 count. The print and export dialogs ask for it separately for that reason.
 
+## What the score remembers about how you were reading it
+
+A `.gscore` file carries the drawing options it was saved with: pages or
+strip, staff names, bar numbers, multi-measure rests, the tempo marking, the
+beat marks, concert pitch, and the note colours. Open the file again — on
+another machine, by somebody else — and it comes back looking as it was left.
+
+It is kept for the same reason the cursor position is: it is work you did on
+*this* score. Turning the beat marks on to pick apart a syncopated entry, or
+colouring a part for a pupil, is a decision about this piece, and having to
+make it again every time the file is opened is wearing.
+
+Two rules follow from that, and they are worth knowing:
+
+- **A file that says nothing is left alone.** Every score written before this
+  existed, and every score imported from any other format, carries no view at
+  all — and is drawn however your own settings and the defaults say. "Nothing
+  recorded" and "everything turned off" are different answers.
+- **Where a file names colours, those are the ones drawn.** Your own palette
+  is the default for scores that have not been given one, not an override of
+  those that have. Change the colours while such a score is open and your
+  choice lands on it, because choosing a colour is an instruction about what
+  is in front of you.
+
+What is deliberately *not* kept with the score is the zoom. How large the
+music is drawn is a fact about the screen in front of you rather than about
+the piece — the same score wants one size on a laptop and another on a
+monitor — so it stays with you, as the interface scale does.
+
 ## Reading aids
 
 These change what *you* see. None of them changes the music.
 
 - **Note colours…** — a colour per note name. C sharp takes C's colour; every
-  octave matches; it is kept for you rather than for the score, so every score
-  you open is coloured that way; and it prints. See
+  octave matches; it is kept both as your own default and in the score you
+  save, so every score you open is coloured that way and a part you send
+  arrives as you prepared it; and it prints. See
   [things only Gscore does](only-gscore.md#6-colours-that-teach-reading-and-print).
 - **Metronome marking** — an arrow over every beat, where the beat falls in
   that bar. The same rule the metronome click counts by, so what you see and

@@ -231,6 +231,16 @@ func NewBook(scores []*model.Score, filename string) *App {
 		renderOpt:  ro,
 	}
 
+	// And whatever the file itself said about how it was last looked at.
+	//
+	// Here as well as in setBook, because the first document does not go
+	// through setBook: a score named on the command line is read before
+	// the App exists and is handed to it already loaded. Opening the same
+	// file from the menu applied its view and opening it from the command
+	// line did not, which is the kind of difference nobody thinks to test
+	// and everybody notices.
+	app.applyView()
+
 	// The person's own symbols, before anything a score carries: a score
 	// that has one by the same name writes over the folder's copy, which
 	// is what keeps somebody else's piece looking the way they drew it.
@@ -1091,6 +1101,12 @@ func (a *App) setBook(scores []*model.Score, filename string, err error) {
 	// own clefs and its own key: a quartet opened after a solo gets its
 	// staves named.
 	a.engraveOpt.ShowPartNames = nameTheStaves(a.score)
+	// And then whatever the file itself said, which wins: a score saved
+	// with its beats marked opens with them marked. Done after the line
+	// above rather than before, so that a file which has an opinion about
+	// the staff names is obeyed and one which has none still gets the
+	// sensible answer for its size.
+	a.applyView()
 	a.filename = filename
 	a.warning, a.importLog = readProblems(err)
 	a.forgetHistory()

@@ -2458,7 +2458,7 @@ func (a *App) handleCopy(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "there is nothing there to copy", http.StatusBadRequest)
 		return
 	}
-	a.clip = clipboard{elements: out}
+	*a.clipboard() = clipboard{elements: out}
 	writeJSON(w, map[string]int{"copied": len(out)})
 }
 
@@ -2479,7 +2479,7 @@ func (a *App) handlePaste(w http.ResponseWriter, r *http.Request) {
 	a.lock()
 	defer a.mu.Unlock()
 
-	if len(a.clip.elements) == 0 {
+	if len(a.clipboard().elements) == 0 {
 		http.Error(w, "nothing has been copied", http.StatusBadRequest)
 		return
 	}
@@ -2509,8 +2509,9 @@ func (a *App) handlePaste(w http.ResponseWriter, r *http.Request) {
 
 	// A fresh copy each time, so pasting twice does not give two references
 	// to the same notes — changing one would silently change the other.
-	add := make([]model.Element, len(a.clip.elements))
-	for i, el := range a.clip.elements {
+	clip := a.clipboard()
+	add := make([]model.Element, len(clip.elements))
+	for i, el := range clip.elements {
 		add[i] = cloneElement(el)
 	}
 

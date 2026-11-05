@@ -151,6 +151,33 @@ type App struct {
 	// disk. Set by the wrapper every edit goes through and cleared where the
 	// score is written or replaced, so no handler has to remember to.
 	unsaved bool
+
+	// mux is this document's own router, built once when the App is made.
+	//
+	// One router per session rather than one for the whole server, because
+	// every route is a closure over this App — and that is exactly what
+	// lets the hundred and twenty-eight handlers know nothing about
+	// sessions at all. A router of a hundred-odd entries is a few kilobytes
+	// beside a score and the layout engraved from it, which is the only
+	// reason it is affordable to have one each. See session.go.
+	mux *http.ServeMux
+
+	// server is the Server this document belongs to, for the few things
+	// shared between documents rather than owned by any one of them. Nil in
+	// a test that builds an App on its own.
+	server *Server
+}
+
+// clipboard is what this document copies into and pastes from.
+//
+// The server's where there is one, so that copying in one window and pasting
+// in another does what anybody would expect; this document's own where there
+// is not, which is every test that builds an App by itself.
+func (a *App) clipboard() *clipboard {
+	if a.server != nil {
+		return &a.server.clip
+	}
+	return &a.clip
 }
 
 // New returns an app showing the given score.
@@ -245,6 +272,12 @@ func NewBook(scores []*model.Score, filename string) *App {
 	// that has one by the same name writes over the folder's copy, which
 	// is what keeps somebody else's piece looking the way they drew it.
 	app.folderSymbols = app.loadFolderSymbols()
+
+	// This document's own router, built once. Every route below closes over
+	// this App, which is what lets a server hold several documents without
+	// a single handler having to know. See session.go.
+	app.mux = http.NewServeMux()
+	app.routes(app.mux)
 	return app
 }
 
@@ -297,10 +330,13 @@ func (a *App) Serve(addr string, native bool) (string, error) {
 		}
 	}
 
-	mux := http.NewServeMux()
-	a.routes(mux)
+	// One server, many documents. The App gscore was started on becomes the
+	// session that requests naming none are talking to, so everything
+	// written before sessions existed goes on working unchanged. See
+	// session.go.
+	a.server = NewServer(a, a.newScoreApp())
 
-	srv := &http.Server{Handler: mux}
+	srv := &http.Server{Handler: a.server}
 	go func() {
 		if err := srv.Serve(ln); err != nil && err != http.ErrServerClosed {
 			fmt.Fprintf(os.Stderr, "gscore: %v\n", err)

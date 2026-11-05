@@ -43,6 +43,88 @@ G=http://127.0.0.1:8080
 <p class="note"><b>From a source tree</b>, <code>go run . -headless -port
 8080</code> does the same thing.</p>
 
+## More than one score at once
+
+One server holds as many open scores as you like. Each is a **session**, and
+a request says which by naming it:
+
+```sh
+curl -s "$G/api/info?session=5fae3154fbb4303ec7c06b72973c8de9"
+```
+
+**A request that names no session talks to the default one** — the score the
+server was started on. That is what every example in this chapter does, and
+it is why none of them mention sessions: if you only ever work on one score
+at a time, you can forget this section exists.
+
+```sh
+# a new, empty score; the answer carries its token
+curl -s -X POST "$G/api/session"
+```
+
+```json
+{"status":"ok","session":"5fae3154fbb4303ec7c06b72973c8de9","reattached":false}
+```
+
+From there the token goes on every request for that score, beside whatever
+else that request takes:
+
+```sh
+S=5fae3154fbb4303ec7c06b72973c8de9
+curl -s -X POST "$G/api/abc?session=$S&part=0&measure=0&at=0" \
+     --data-binary 'G A B c | d e f g'
+curl -s "$G/api/pdf?session=$S" -o second.pdf
+```
+
+The two scores are entirely separate — different music, different undo
+history, different view settings — and each engraves and records on its own.
+
+### Opening a file finds it if it is already open
+
+```sh
+curl -s -G -X POST "$G/api/session" --data-urlencode "path=$PWD/tune.abc"
+```
+
+```json
+{"status":"ok","session":"c574f0c8…","reattached":false,
+ "filename":"/home/you/tune.abc"}
+```
+
+Ask for the same file again and you get **the same session back**, with
+`reattached` true. Two copies of one file open at once is how work gets
+lost — you edit one, save the other, and the program was right both times —
+so Gscore will not make the second copy.
+
+### The rest of it
+
+```sh
+curl -s "$G/api/sessions"                 # what is open
+curl -s -X POST "$G/api/session?close=$S" # done with this one
+```
+
+Closing says whether it dropped unsaved work:
+
+```json
+{"status":"ok","unsaved":false}
+```
+
+The default session cannot be closed — it is what every request naming
+nothing is talking to.
+
+<p class="note"><b>Two identifiers, on purpose.</b> The token you send is
+random, because whoever holds it can read and overwrite that score. The key
+Gscore uses internally to notice a file is already open is a UUIDv5 of its
+path — deterministic, so the same file is the same key after a restart.
+Using the <i>name-based</i> one as the credential would mean that knowing
+somebody's file path is knowing how to overwrite their work, which on a
+server started with <code>-serve</code> is a real person on a real
+network.</p>
+
+<p class="warn"><b>A session that has gone is a 404</b>, not a new empty
+score. A client holding a stale token has a bug or has been away too long,
+and handing it a fresh score to write into would look like working right up
+until somebody asked where their music went.</p>
+
 ## Make a score
 
 An empty score, then the things that are true about the whole of it.

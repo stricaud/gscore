@@ -141,6 +141,7 @@ For anybody using gscore:
 | [`docs/tour.md`](docs/tour.md) | every window gscore can open, and what it is for |
 | [`docs/only-gscore.md`](docs/only-gscore.md) | the nine things no other notation editor does |
 | [`docs/manual.md`](docs/manual.md) | the user manual, in full |
+| [`docs/curl.md`](docs/curl.md) | writing, engraving and recording a score with `curl` alone |
 | [`docs/glossary.md`](docs/glossary.md) | an index of the musical terms used |
 
 For anybody changing it:

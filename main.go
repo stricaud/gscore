@@ -41,6 +41,7 @@ import (
 	// Importers register themselves, which is what replaces the dlopen
 	// plugin loader of the C program.
 	_ "github.com/stricaud/gscore/internal/format/abc"
+	_ "github.com/stricaud/gscore/internal/format/engraved"
 	_ "github.com/stricaud/gscore/internal/format/gscore"
 	_ "github.com/stricaud/gscore/internal/format/guido"
 	_ "github.com/stricaud/gscore/internal/format/lilypond"

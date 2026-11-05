@@ -687,7 +687,7 @@
   <span id="version"></span>
 </div>
 
-<input type="file" id="file-input" accept=".abc,.mscz,.mscx,.musicxml,.xml,.mxl,.gscore,.nwctxt,.nwc,.musx,.gmn" hidden>
+<input type="file" id="file-input" accept=".abc,.mscz,.mscx,.musicxml,.xml,.mxl,.gscore,.nwctxt,.nwc,.musx,.gmn,.pdf" hidden>
 <!-- A soundfont off the disk, for the page: there is no file panel to open,
      so the browser's own picker does it. -->
 <input type="file" id="sf2-input" accept=".sf2,.SF2" hidden>
@@ -1993,6 +1993,27 @@
       <button value="cancel" type="submit" formnovalidate>Cancel</button>
     </div>
   </form>
+</dialog>
+
+<!-- What a PDF gives up on the way in.
+     Shown once, when a PDF is opened, because the gap between what the page
+     looked like and what arrives is wide enough that somebody who is not
+     told will think gscore lost it. Every other importer reads a file that
+     says what it contains; a PDF is a drawing of a page, and only the parts
+     of the drawing that are shaped like notes can be recovered. -->
+<dialog id="pdf-note">
+  <h2>Read from a PDF</h2>
+  <p class="small">A PDF is a picture of a page rather than a score. Gscore has
+     read what could be measured off it — the <strong>notes</strong>, with their
+     lengths, the clefs, the key and the time signature, the rests and the
+     barlines.</p>
+  <p class="small">It has <strong>not</strong> read the slurs and ties, which are
+     drawn as curves and carry no pitch; nor the dynamics, the articulations,
+     the lyrics, the tuplets or the directions. Those are still on the original
+     page, and will have to be put back by hand.</p>
+  <p class="small">A PDF that was scanned rather than engraved — a photograph of
+     paper — cannot be read at all, and will say so instead.</p>
+  <form method="dialog"><button class="primary">Go on</button></form>
 </dialog>
 
 <dialog id="import-log">

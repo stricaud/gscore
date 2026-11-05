@@ -909,3 +909,33 @@ func TestTheMultiMeasureRestBoxReachesThePrinterAndTheExporter(t *testing.T) {
 		}
 	}
 }
+
+// A PDF opens through Open score, like everything else, and says what it
+// could not bring with it.
+//
+// There is no menu entry of its own. One would put reading a PDF beside
+// reading a MusicXML, and they are not comparable: the second reads a file
+// that says what it contains, the first measures a drawing of a page. So the
+// difference is told at the moment it matters — when a PDF has just been
+// opened — rather than advertised beforehand.
+func TestOpeningAPDFSaysWhatItLoses(t *testing.T) {
+	html := readUI(t, "index.html")
+	js := readUI(t, "app.js")
+
+	if strings.Contains(html, `data-action="import-pdf"`) {
+		t.Error("there is an Import PDF menu entry again")
+	}
+	if !strings.Contains(html, `id="pdf-note"`) {
+		t.Fatal("nothing tells the person what a PDF does not carry")
+	}
+	// The three things it has to name are the ones somebody will go looking
+	// for and not find.
+	for _, word := range []string{"slurs", "dynamics", "lyrics"} {
+		if !strings.Contains(html, word) {
+			t.Errorf("the PDF notice does not mention %s", word)
+		}
+	}
+	if !strings.Contains(js, "tellAboutPDF") {
+		t.Error("the notice is never shown")
+	}
+}

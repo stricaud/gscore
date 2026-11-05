@@ -37,6 +37,7 @@ const grab = (name) => {
 function load(answer) {
   const said = [];
   let clicked = false;
+  let warned = false;
   const scope = {
     state: { info: { local: true } },
     status: (s) => said.push(s),
@@ -51,10 +52,16 @@ function load(answer) {
     // for him and a scope without him throws before it says anything.
     busy() {},
     idle() {},
+    // The notice that says what a PDF did not bring with it. Counted rather
+    // than shown, so that the test can ask whether it would have been.
+    tellAboutPDF() { warned = true; },
   };
-  const body = grab("openScore") + "\nreturn { openScore };";
+  // isPDF comes along for real rather than as a stub: what counts as a PDF
+  // is the thing being tested, and a stub would only agree with itself.
+  const body = grab("isPDF") + "\n" + grab("openScore") +
+    "\nreturn { openScore };";
   const api = new Function(...Object.keys(scope), body)(...Object.values(scope));
-  return { ...api, said, clicked: () => clicked };
+  return { ...api, said, clicked: () => clicked, warned: () => warned };
 }
 
 const answer = (status, body, json) => ({
@@ -105,4 +112,29 @@ test("cancelling leaves the score alone and says nothing more", async () => {
   await t.openScore();
   assert.equal(t.said[t.said.length - 1], "Ready");
   assert.equal(t.clicked(), false);
+});
+
+// Opening a PDF says what it could not bring with it, and opening anything
+// else does not.
+//
+// The notice is the only thing standing between somebody and the belief that
+// gscore lost their slurs, so it has to appear every time a PDF is opened —
+// and never when one was not, or it is noise and gets dismissed unread.
+test("a PDF says what it leaves behind", async () => {
+  const t = load(answer(200, "", { filename: "let-it-go.pdf" }));
+  await t.openScore();
+  assert.equal(t.warned(), true, "a PDF was opened and nothing was said");
+});
+
+test("a score that is not a PDF says nothing of the kind", async () => {
+  const t = load(answer(200, "", { filename: "Sanctus - Rossini.musx" }));
+  await t.openScore();
+  assert.equal(t.warned(), false,
+               "the PDF notice came up for a file that is not one");
+});
+
+test("the name decides, whatever its case", async () => {
+  const t = load(answer(200, "", { filename: "SCORE.PDF" }));
+  await t.openScore();
+  assert.equal(t.warned(), true, "an upper-case .PDF was not recognised");
 });

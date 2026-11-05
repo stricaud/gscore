@@ -11538,6 +11538,27 @@ function askPrint(many, parts, title, verb, paper) {
 
 /* ---------- opening a file ---------- */
 
+// isPDF says whether what was opened was a PDF, by its name.
+//
+// By the name and not by what the importer did, because the importer is on
+// the other side of the wire and hands back a score like any other. The
+// extension is what the person chose, which is the thing being answered.
+function isPDF(name) {
+  return typeof name === "string" && /\.pdf$/i.test(name.trim());
+}
+
+// tellAboutPDF explains, once per file opened, what a PDF does not carry.
+//
+// A status line was not enough. The gap between the page somebody was
+// looking at a moment ago and the score in front of them now is wide — no
+// slurs, no dynamics, no words — and a line that fades is a line that was
+// not read. This stops and says it.
+function tellAboutPDF() {
+  const dlg = $("#pdf-note");
+  if (!dlg || dlg.open) return;
+  dlg.showModal();
+}
+
 async function openFile(file) {
   if (!file) return;
   status("Opening " + file.name + "…");
@@ -11553,6 +11574,7 @@ async function openFile(file) {
     }
     await reopen();
     status("Opened " + file.name);
+    if (isPDF(file.name)) tellAboutPDF();
     return true;
   } finally {
     // Whatever happened, including nothing: a mascot left spinning over a
@@ -11585,6 +11607,7 @@ async function openScore() {
           idle();
         }
         status("Opened " + d.filename);
+        if (isPDF(d.filename)) tellAboutPDF();
         return;
       }
       // A file that was chosen and could not be read is not the same as

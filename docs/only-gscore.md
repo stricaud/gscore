@@ -54,7 +54,7 @@ Drop it on any host, or email it. It works where it lands.
 | From | Extension |
 |---|---|
 | ABC | `.abc` |
-| Finale | `.musx` |
+| Finale | `.musx`, `.mus` |
 | GUIDO | `.gmn` |
 | MuseScore | `.mscz`, `.mscx` |
 | MusicXML | `.musicxml`, `.xml`, `.mxl` |
@@ -65,6 +65,12 @@ Finale's own format. MuseScore's own format. NoteWorthy's own format. Not
 "export MusicXML from the other program first" — the actual files, directly.
 For anybody with a folder of work in a program they have stopped paying for,
 that is the whole ballgame.
+
+Both of Finale's, which is the point worth labouring: Finale stopped being
+sold in 2024, and for most of its life it wrote `.mus` rather than `.musx`.
+"Open it in Finale and save it as something else" is advice that no longer
+goes anywhere. A `.mus` loses more on the way in than a `.musx` does, and
+[says exactly what](finale-mus.md).
 
 And it writes back out as PDF, SVG, web page, MIDI, MusicXML, ABC, LilyPond,
 GUIDO and FLAC audio.

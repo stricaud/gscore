@@ -8,21 +8,31 @@
  * licence; see the LICENSE file at the root of this repository.
  */
 
-// Package musx reads Finale's .musx files.
+// Package musx reads Finale's files: the .musx it wrote from 2014, and the
+// older binary .mus it wrote until 2012.
 //
 // Finale was discontinued in 2024 and its files did not go anywhere: people
 // have decades of them, and the program that could open them is no longer
-// sold. The format is nobody's secret any more — the container is a zip, the
+// sold. The .musx is nobody's secret any more — the container is a zip, the
 // obfuscation over the music is a fixed stream cipher, and what is inside is
 // Finale's own document model as XML, documented unofficially by Project
 // Attacca. container.go gets at it; enigma.go reads it.
+//
+// The .mus is a different container entirely, and really two of them, since
+// Finale changed how it compressed the payload in 2011. Those are in mus.go,
+// muspool.go, musentries.go and musdoc.go, and they are kept apart from the
+// .musx on purpose: separate importers, separate errors, separate reports.
+// The two formats meet in exactly one place, build() in enigma.go, because
+// the document inside them is the same document — which is the only reason
+// reading the older one is a few hundred lines rather than a second program.
 //
 // What is read is the music: the staves of the score in score order, their
 // bars, meters, clefs and barlines, and in each bar the notes, chords and
 // rests with their pitches and lengths. What is not read is everything
 // Finale writes around the music, and every one of those is named in the log
 // the editor shows rather than dropped in silence — a score that opens
-// missing its slurs should say so.
+// missing its slurs should say so. A .mus loses more than a .musx does, and
+// says so in its own words.
 package musx
 
 import (

@@ -41,7 +41,7 @@ Or build it: `make` lists the targets.
 
 ## Status
 
-There is an editor. It writes, plays, analyses, imports seven formats and
+There is an editor. It writes, plays, analyses, imports eight formats and
 exports nine, and it runs on a desktop and in a browser from the same source.
 
 The order it was built in was deliberate and is worth knowing, because it is
@@ -53,7 +53,7 @@ a view of a thing that already worked.
 | | |
 |---|---|
 | Model | pitches, durations, chords, voices, measures, parts, no geometry |
-| Import | ABC, MusicXML, MuseScore, Finale, NoteWorthy, GUIDO, `.gscore`, engraved PDF |
+| Import | ABC, MusicXML, MuseScore, Finale `.musx` and `.mus`, NoteWorthy, GUIDO, `.gscore`, engraved PDF |
 | Export | PDF, SVG, web page, MIDI, MusicXML, ABC, LilyPond, GUIDO, FLAC |
 | Engraving | the rules are in [`docs/engraving-layout.md`](docs/engraving-layout.md) |
 | Rendering | SVG and PDF from one layout, measured in staff spaces |
@@ -195,6 +195,7 @@ For anybody changing it:
 | [`docs/engraving.md`](docs/engraving.md) | what the 2001 engine decided, kept or discarded on purpose |
 | [`docs/symbols.md`](docs/symbols.md) | drawing marks no font carries |
 | [`docs/gscore-format.md`](docs/gscore-format.md) | what is inside a `.gscore` file |
+| [`docs/finale-mus.md`](docs/finale-mus.md) | reading Finale's older `.mus`, which is really two formats |
 | [`docs/embedding.md`](docs/embedding.md) | putting gscore in a page |
 | [`docs/presentation.tex`](docs/presentation.tex) | the talk — `make slides` builds it |
 

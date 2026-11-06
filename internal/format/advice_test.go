@@ -33,7 +33,6 @@ import (
 func TestAFileThatCannotBeOpenedSaysWhatToDo(t *testing.T) {
 	for _, tc := range []struct{ name, want string }{
 		{"Overture.sib", "Sibelius"},
-		{"old.mus", "Finale"},
 		{"score.dorico", "Dorico"},
 		{"a scan.pdf", "picture of a score"},
 	} {
@@ -64,13 +63,29 @@ func TestAFileThatCannotBeOpenedSaysWhatToDo(t *testing.T) {
 }
 
 // Finale files open, which is the whole point of the musx package.
+//
+// Both of its formats, and by separate importers: they share a document
+// model and nothing else, and a message about one must never be about the
+// other.
 func TestFinaleFilesAreClaimed(t *testing.T) {
-	imp, err := format.ImporterFor("Sanctus.musx")
+	newer, err := format.ImporterFor("Sanctus.musx")
 	if err != nil {
 		t.Fatalf("a .musx is not claimed by anything: %v", err)
 	}
-	if imp.Name() != "Finale" {
-		t.Errorf("%q claims it, want Finale", imp.Name())
+	if newer.Name() != "Finale" {
+		t.Errorf("%q claims a .musx, want Finale", newer.Name())
+	}
+
+	older, err := format.ImporterFor("Sanctus.mus")
+	if err != nil {
+		t.Fatalf("a .mus is not claimed by anything: %v", err)
+	}
+	if !strings.Contains(older.Name(), "Finale") {
+		t.Errorf("%q claims a .mus, which does not say Finale", older.Name())
+	}
+	if older.Name() == newer.Name() {
+		t.Errorf("both Finale formats call themselves %q, so a message about "+
+			"one cannot be told from a message about the other", older.Name())
 	}
 }
 
@@ -78,7 +93,7 @@ func TestFinaleFilesAreClaimed(t *testing.T) {
 // has to be the registry and not a list written out beside it.
 func TestReadableListsEveryImporter(t *testing.T) {
 	got := strings.Join(format.Readable(), " ")
-	for _, want := range []string{".abc", ".gscore", ".mscz", ".musicxml", ".mxl", ".nwc", ".nwctxt", ".musx"} {
+	for _, want := range []string{".abc", ".gscore", ".mscz", ".musicxml", ".mxl", ".nwc", ".nwctxt", ".mus", ".musx"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("Readable() is %q, which leaves out %s", got, want)
 		}

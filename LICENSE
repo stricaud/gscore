@@ -39,6 +39,48 @@ Bravura
     which is what gscore does. It does not allow the font to be sold on its
     own, and it keeps the reserved name.
 
+PKWARE DCL decompression
+    internal/pkware. Finale's older .mus files compress their music with
+    the PKWARE Data Compression Library format, which nothing in Go's
+    standard library reads. The knowledge of that format in internal/pkware
+    — the three tables of code lengths, the inverted canonical code
+    assignment, and the length and distance encodings — is Mark Adler's,
+    taken from blast.c in zlib's contrib/blast.
+
+    That file is under the zlib licence, reproduced below, and this is an
+    altered version of it, which that licence asks be said plainly: it is
+    Go rather than C, it builds its whole output rather than flushing a
+    sliding window, and its limits and its errors are gscore's. gscore does
+    not claim to have written the original.
+
+        Copyright (C) 2003, 2012, 2013 Mark Adler
+
+        This software is provided 'as-is', without any express or implied
+        warranty.  In no event will the author be held liable for any damages
+        arising from the use of this software.
+
+        Permission is granted to anyone to use this software for any purpose,
+        including commercial applications, and to alter it and redistribute it
+        freely, subject to the following restrictions:
+
+        1. The origin of this software must not be misrepresented; you must not
+           claim that you wrote the original software. If you use this software
+           in a product, an acknowledgment in the product documentation would be
+           appreciated but is not required.
+        2. Altered source versions must be plainly marked as such, and must not be
+           misrepresented as being the original software.
+        3. This notice may not be removed or altered from any source distribution.
+
+        Mark Adler    madler@alumni.caltech.edu
+
+The .mus format itself
+    internal/format/musx/mus*.go. Finale's older format was never published
+    beyond one preliminary note from 1996, and what gscore knows of it was
+    worked out from files by the finale-file-parser project, which is MIT
+    licensed. No code was copied from it: what was taken is facts about a
+    file format, which are nobody's property. docs/finale-mus.md says which
+    facts, and credits it.
+
 SMuFL glyph names
     internal/smufl/data/glyphnames.json, the standard mapping of musical
     glyph names to codepoints, from the Standard Music Font Layout

@@ -481,7 +481,31 @@ func atBar(bar int) string { return fmt.Sprintf("at bar %d", bar) }
 
 // read parses the XML and builds the score.
 func read(data []byte, meta metadata) (*model.Score, []string, error) {
+	var doc document
+	if err := xml.Unmarshal(data, &doc); err != nil {
+		return nil, nil, fmt.Errorf("musx: the score inside is not readable: %w", err)
+	}
+	return build(doc, meta, surveyXML(data))
+}
+
+// build turns one Enigma document into a score, and says what it left out.
+//
+// This is where every musical decision in the package is made, and it is
+// kept apart from the XML on purpose: a Finale file from 2012 or earlier is
+// the same document written as binary, and mus.go assembles one of these
+// from it. The pitch spelling, the transposing staves, the percussion
+// mapping, the skip-and-report log — none of it knows or cares which
+// container it came out of, which is the only reason reading the older
+// format is a small job rather than a second program.
+//
+// census is what the file holds that this reader never looks at, counted by
+// the container rather than here, since the two containers have to count it
+// differently: one has element names to scan for and the other has record
+// tags. It may be nil, which claims the file holds nothing unread — true of
+// a file built by a test and of nothing else.
+func build(doc document, meta metadata, census map[string]int) (*model.Score, []string, error) {
 	rd := &reader{
+		doc:      doc,
 		skipped:  map[string]int{},
 		examples: map[string][]string{},
 		barAt:    map[int]int{},
@@ -489,9 +513,6 @@ func read(data []byte, meta metadata) (*model.Score, []string, error) {
 		places:   map[[2]int][]place{},
 		byEntry:  map[int]*model.Marks{},
 		perc:     map[int]int{},
-	}
-	if err := xml.Unmarshal(data, &rd.doc); err != nil {
-		return nil, nil, fmt.Errorf("musx: the score inside is not readable: %w", err)
 	}
 
 	score := model.NewScore()
@@ -642,7 +663,9 @@ func read(data []byte, meta metadata) (*model.Score, []string, error) {
 	// what was attempted, because a thing that is never read is never
 	// skipped either, and a log that stays silent about the slurs in a
 	// score full of slurs is worse than no log at all.
-	rd.survey(data)
+	for what, n := range census {
+		rd.skipped[what] += n
+	}
 
 	// What was left behind, said once each rather than once per note, and
 	// with a few of them named: a list of kinds says what sort of thing is
@@ -690,12 +713,12 @@ var unread = map[string]string{
 	"section":           "lyrics",
 }
 
-// survey counts what is in the file that this reader does not read.
+// surveyXML counts what is in a .musx that this reader does not read.
 //
 // A token scan rather than another unmarshal: the records are only being
 // counted by name, and naming each one in a struct would mean this list
 // growing a field for every kind of thing gscore cannot yet do.
-func (r *reader) survey(data []byte) {
+func surveyXML(data []byte) map[string]int {
 	dec := xml.NewDecoder(bytes.NewReader(data))
 	found := map[string]int{}
 	for {
@@ -719,9 +742,7 @@ func (r *reader) survey(data []byte) {
 			}
 		}
 	}
-	for what, n := range found {
-		r.skipped[what] += n
-	}
+	return found
 }
 
 // bars is the score's own measures, in order.

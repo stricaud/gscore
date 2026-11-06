@@ -26,6 +26,7 @@ symbols
 == Under the hood
 (How Gscore works inside, and why. Written for anybody changing it.)
 gscore-format
+finale-mus
 engraving-layout
 engraving
 

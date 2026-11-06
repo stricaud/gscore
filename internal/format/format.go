@@ -112,9 +112,8 @@ func matches(exts []string, ext string) bool {
 // file. Anything else falls through to the general answer, which says what
 // gscore does read.
 var otherPrograms = map[string]string{
-	// .musx is read — see internal/format/musx. This is the older binary
-	// one, from Finale 2012 and before, which is a different format again.
-	".mus":    "Finale",
+	// Finale is not here: both of its formats are read, the .musx and the
+	// older binary .mus — see internal/format/musx.
 	".sib":    "Sibelius",
 	".dorico": "Dorico",
 	".cap":    "capella",
@@ -162,19 +161,6 @@ func ImporterFor(filename string) (Importer, error) {
 	}
 	mu.RUnlock()
 
-	// The older Finale format gets its own answer, because the general
-	// one is now wrong about it: gscore does read Finale's own format —
-	// .musx — and somebody holding a .mus is one Save As away from a file
-	// that opens here. MusicXML is the answer for everyone else and the
-	// second-best answer for them, since it does not carry everything.
-	if ext == ".mus" {
-		return nil, fmt.Errorf(
-			"%q is Finale's older binary format, from 2012 and before, "+
-				"which gscore cannot read — open it in Finale and save it "+
-				"as .musx, which gscore does read; failing that, export it "+
-				"as MusicXML",
-			filepath.Base(filename))
-	}
 	if whose, ok := otherPrograms[ext]; ok {
 		return nil, fmt.Errorf(
 			"%q is %s's own format, which gscore cannot read — "+

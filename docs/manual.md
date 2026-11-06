@@ -375,8 +375,9 @@ These change what *you* see. None of them changes the music.
 
 ## Import and export
 
-Reads: ABC, Finale `.musx`, GUIDO, MuseScore `.mscz`/`.mscx`, MusicXML
-(`.musicxml`, `.xml`, `.mxl`), NoteWorthy `.nwctxt`/`.nwc`, and `.gscore`.
+Reads: ABC, Finale `.musx` and the older `.mus`, GUIDO, MuseScore
+`.mscz`/`.mscx`, MusicXML (`.musicxml`, `.xml`, `.mxl`), NoteWorthy
+`.nwctxt`/`.nwc`, and `.gscore`.
 
 Writes: PDF, SVG, web page, MIDI, MusicXML (compressed or not), ABC,
 LilyPond, GUIDO, and audio as FLAC.

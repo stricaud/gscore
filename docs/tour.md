@@ -19,9 +19,12 @@ The two entries that matter are the ones at the ends.
 
 **Open** reads rather more than you would expect. Gscore imports **ABC**,
 **MusicXML** (plain and compressed), **MuseScore** (`.mscz` and `.mscx`),
-**Finale** (`.musx`), **NoteWorthy Composer** (`.nwctxt`, `.nwc`) and
-**GUIDO** — no exporter from the other program required, no round trip
-through anything.
+**Finale** (`.musx`, and the older `.mus` it wrote until 2012),
+**NoteWorthy Composer** (`.nwctxt`, `.nwc`) and **GUIDO** — no exporter from
+the other program required, no round trip through anything. Which matters
+most for the Finale files: the program that wrote them stopped being sold in
+2024, so "export it from Finale" is not advice anybody can take any more.
+[What is read out of a `.mus`, and what is not](finale-mus.md).
 
 When an import hits something it cannot read, it does not refuse the file. It
 reads everything around the problem and lists what it skipped in

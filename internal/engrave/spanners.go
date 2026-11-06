@@ -1030,7 +1030,7 @@ func (e *engraver) slurEndClear(x, y float64, above bool) float64 {
 		if math.Abs(g.X-x) > near {
 			continue
 		}
-		up, down := glyphReach(g.Name)
+		up, down := glyphHeight(g)
 		if above {
 			if top := g.Y - up; top < y {
 				y = top

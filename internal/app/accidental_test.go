@@ -273,3 +273,22 @@ func TestBracketsCanBeTurnedOnAndOffOutright(t *testing.T) {
 		t.Error("parens=off did not take them off")
 	}
 }
+
+// notesIn is the noteheads of an element: one for a note, all of them for a
+// chord, none for anything else.
+//
+// It lives here because the tests are the only thing that wants it. It used
+// to sit in edit.go, where alterInForce read it to work out what a reader had
+// already been told in this bar — and when model.SpellAccidentals took that
+// job over, nothing in the program needed it any more. A helper kept in
+// production code for the sake of its tests reads as though something still
+// calls it.
+func notesIn(el model.Element) []*model.Note {
+	switch e := el.(type) {
+	case *model.Note:
+		return []*model.Note{e}
+	case *model.Chord:
+		return e.Notes
+	}
+	return nil
+}

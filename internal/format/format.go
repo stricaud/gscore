@@ -231,6 +231,18 @@ func ImportAll(imp Importer, r io.Reader) ([]*model.Score, error) {
 func normaliseAll(scores []*model.Score) {
 	for _, s := range scores {
 		s.Normalise()
+		// And which notes print an accidental, which is also not about
+		// any format — no file states it. A file says how each note is
+		// altered, and that is as true of the fourth F sharp in a bar as
+		// of the first; read as a sign to print it prints four sharps
+		// where one belongs. Worked out from the music, once, here, so
+		// that eight readers cannot disagree about it.
+		//
+		// A reader that knows better says so by marking a note Forced,
+		// and this leaves those alone. MusicXML is the one format that
+		// does: its <accidental> is a statement about a page somebody
+		// engraved rather than about a pitch.
+		s.SpellAccidentals()
 	}
 }
 

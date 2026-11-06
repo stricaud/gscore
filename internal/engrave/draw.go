@@ -2547,7 +2547,8 @@ func (e *engraver) drawArticulations(m *model.Marks, x float64, lo, hi int, stem
 		}
 		// A name the font does not know is one of the user's own symbols; the
 		// renderer resolves it from the symbol registry.
-		e.lay.Glyphs = append(e.lay.Glyphs, Glyph{Name: name, X: x, Y: y})
+		origin, _, _ := centred(name, x)
+		e.lay.Glyphs = append(e.lay.Glyphs, Glyph{Name: name, X: origin, Y: y})
 		if above {
 			y -= gap
 		} else {
@@ -2572,8 +2573,9 @@ func (e *engraver) drawArticulations(m *model.Marks, x float64, lo, hi int, stem
 		}
 		if a == model.UpBow || a == model.DownBow {
 			if name := smufl.ArticulationGlyph(a, true); name != "" {
+				origin, _, _ := centred(name, x)
 				e.lay.Glyphs = append(e.lay.Glyphs, Glyph{
-					Name: name, X: x, Y: overY,
+					Name: name, X: origin, Y: overY,
 				})
 				overY -= gap
 			}
@@ -2682,20 +2684,42 @@ func (e *engraver) clearOfNoteheads(x, y float64, above bool) float64 {
 // it waits for the staff to be finished and is then placed clear of
 // everything on it — the stem, the beam over it, the ledger lines, the slur
 // — the same way the dynamics and the octave lines are.
+// centred is where to put a glyph's origin so that its ink sits centred on
+// x, and how far its ink then reaches either side.
+//
+// A glyph is drawn from its origin, which is its left-hand edge and not its
+// middle, so a mark meant to sit over a note has to be moved back by half of
+// itself. Put at the note's centre instead, a tenuto landed 0.674 spaces to
+// the right of it — more than half a notehead, which is what it looks like
+// on the page: a row of dashes that do not line up with the notes under
+// them.
+//
+// Centred on the *ink* rather than on the advance width, because the ink is
+// what a reader sees and the two are not the same for every glyph. Where the
+// font declares no box the advance is the best there is.
+func centred(name string, x float64) (origin, left, right float64) {
+	if b, ok := smufl.BBox(name); ok {
+		origin = x - (b.Left+b.Right)/2
+		return origin, origin + b.Left, origin + b.Right
+	}
+	w := smufl.Advance(name)
+	return x - w/2, x - w/2, x + w/2
+}
+
 func (e *engraver) ornament(a model.Articulation, x float64) {
 	name := smufl.ArticulationGlyph(a, true)
 	if name == "" {
 		return
 	}
-	w := smufl.Advance(name)
+	// Centred on the note rather than starting at it: an ornament is a wide
+	// sign and sits over the middle of what it ornaments.
+	origin, x0, x1 := centred(name, x)
 	e.wait(waitingMark{
-		// Centred on the note rather than starting at it: an ornament is a
-		// wide sign and sits over the middle of what it ornaments.
-		x0: x - w/2, x1: x + w/2,
+		x0: x0, x1: x1,
 		height: ornamentHeight, gap: 0.5, rank: rankOrnament,
 		draw: func(y float64) {
 			e.lay.Glyphs = append(e.lay.Glyphs, Glyph{
-				Name: name, X: x - w/2, Y: y,
+				Name: name, X: origin, Y: y,
 			})
 		},
 	})

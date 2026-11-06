@@ -35,8 +35,10 @@ type Font struct {
 	key string
 	obj int
 
-	// For a standard font: the widths of the Latin-1 range.
-	std *stdFont
+	// For a standard font: which of the fourteen it is, so its widths can
+	// be looked up. The tables are in internal/textmetric, which the
+	// engraver shares — see metrics.go.
+	std StandardFont
 
 	// For an embedded font: what the glyphs are and how wide.
 	f        *sfnt.Font
@@ -68,7 +70,7 @@ func (d *Doc) Standard(name StandardFont) *Font {
 	// out right without a per-document encoding table.
 	obj := d.add("<< /Type /Font /Subtype /Type1 /BaseFont /%s "+
 		"/Encoding /WinAnsiEncoding >>", name)
-	f := &Font{key: key, obj: obj, std: stdMetrics(name)}
+	f := &Font{key: key, obj: obj, std: name}
 	d.fonts[key] = f
 	d.fontKeys = append(d.fontKeys, key)
 	return f
@@ -247,7 +249,7 @@ func (f *Font) width(s string) float64 {
 			total += f.f.Advance(f.f.GlyphIndex(r))
 			continue
 		}
-		total += f.std.width(r)
+		total += widthOf(f.std, r)
 	}
 	return float64(total)
 }

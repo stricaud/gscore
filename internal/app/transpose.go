@@ -52,11 +52,14 @@ type transposer struct {
 	keyMoves bool
 }
 
-// note moves one note, and writes whatever accidental it now has to carry.
+// note moves one note.
 //
-// at is where the note stands in its bar, because what a note has to say
-// depends on what has been said before it: a sharp earlier in the bar holds
-// until the barline, and a note that lands on that pitch is written plain.
+// What accidental it now has to carry is not worked out here. Moving the
+// music changes which notes need signs all over the bar — a note that needed
+// none may need one, and the note after it may stop needing the one it had —
+// so the whole score is spelled once when the edit lands, by
+// model.SpellAccidentals. A note that somebody insisted on a sign for keeps
+// it, which is the one thing a transposition must not quietly undo.
 func (t transposer) note(n *model.Note, m *model.Measure, at int, key model.KeySignature) {
 	switch {
 	case t.diatonic:
@@ -71,7 +74,6 @@ func (t transposer) note(n *model.Note, m *model.Measure, at int, key model.KeyS
 	default:
 		n.Pitch = n.Pitch.Transpose(t.steps, t.semis)
 	}
-	n.Accidental = signFor(n.Pitch, alterInForce(m, at, n.Pitch, key))
 }
 
 // element moves whatever is at one place in a bar, and says how many notes

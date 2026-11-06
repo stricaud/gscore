@@ -38,16 +38,15 @@ func tuneIn(h *harness, fifths int, pitches ...string) {
 		if !ok {
 			h.t.Fatalf("%s is not a pitch", name)
 		}
-		n := &model.Note{Pitch: got, Dur: model.Duration{Num: 1, Den: 4}}
-		// Written as the key spells it, which is what the editor stores
-		// when the note is typed.
-		n.Accidental = signFor(got, p.Key.AlterFor(got.Step))
-		els = append(els, n)
+		els = append(els, &model.Note{Pitch: got, Dur: model.Duration{Num: 1, Den: 4}})
 	}
 	p.Measures = append(p.Measures, &model.Measure{
 		Voices:       []*model.Voice{{Elements: els}},
 		RightBarline: model.BarSingle,
 	})
+	// With the signs a reader needs, which is what the editor stores: it
+	// spells the score after every edit, and this is standing in for one.
+	h.app.score.SpellAccidentals()
 }
 
 // An interval is two numbers: four semitones and two letters is a major

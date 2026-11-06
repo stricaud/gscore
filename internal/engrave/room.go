@@ -138,7 +138,7 @@ func roomAbove(lay *Layout) map[int]need {
 			}
 		}
 		for _, g := range lay.Glyphs {
-			up, down := glyphReach(g.Name)
+			up, down := glyphHeight(g)
 			if g.Size > 0 {
 				up, down = up*g.Size/4, down*g.Size/4
 			}

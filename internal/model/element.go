@@ -935,6 +935,23 @@ type Note struct {
 	// it draws nothing at all without one.
 	Parens bool
 
+	// Forced keeps the accidental that is written here, whatever the rules
+	// of notation would have printed.
+	//
+	// SpellAccidentals works out which notes need a sign and writes it, and
+	// without this there would be no way to tell it it was wrong. Two
+	// things need that. One is somebody who wants a sign where none is
+	// required, or none where one is — their own reading of a passage, and
+	// not a mistake to be corrected on the next edit. The other is a file
+	// that says what was printed rather than what sounds: MusicXML's
+	// <accidental> is a statement about a page somebody engraved, and
+	// throwing it away to recompute it would be gscore overruling the
+	// program the music came from.
+	//
+	// It says nothing about the pitch, which Pitch.Alter holds, and the
+	// note still alters everything after it in the bar either way.
+	Forced bool
+
 	// Head overrides the shape the notehead is drawn with. On a drum staff
 	// this is how a cymbal is told from a drum; elsewhere it is how a
 	// harmonic or an improvised bar is written.

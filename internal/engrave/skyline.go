@@ -304,7 +304,7 @@ func (e *engraver) addSince(s *skyline, from mark) {
 // addSinceExcept is the same, leaving out the curves named in skip.
 func (e *engraver) addSinceExcept(s *skyline, from mark, skip map[int]bool) {
 	for _, g := range e.lay.Glyphs[from.glyphs:] {
-		up, down := glyphReach(g.Name)
+		up, down := glyphHeight(g)
 		w := glyphWidth(g)
 		s.add(g.X, g.X+w, g.Y-up, g.Y+down)
 	}
@@ -355,24 +355,94 @@ func glyphWidth(g Glyph) float64 {
 	return w
 }
 
-// glyphReach estimates how far a glyph reaches above and below the point it
-// is drawn at, in staff spaces.
+// glyphHeight is how far a glyph reaches above and below the point it is
+// drawn at, in staff spaces, at the size it is drawn.
 //
-// Estimated, because the font carries advance widths and not bounding boxes:
-// reading those out of an OpenType font with CFF outlines means walking
-// charstrings, which is a lot of machinery for a number that only has to be
-// about right. Generous is the safe direction — a mark placed a little
-// further out than it had to be is tidy, one placed through a notehead is
-// wrong — so where a glyph is not known the answer is a whole space either
-// way.
+// The size matters and used to be left out. A cue note, a grace note and an
+// ossia staff are drawn from the same glyphs at a fraction of the size, and
+// a full-size reach booked for a two-thirds-size note is a third of a space
+// of nothing above every one of them — the same mistake glyphWidth beside
+// this was already careful not to make.
+func glyphHeight(g Glyph) (up, down float64) {
+	if isGroupFurniture(g.Name) {
+		// A brace or a bracket is not in the way of anything.
+		//
+		// It is drawn down the left of a system, outside the music, and it
+		// is stretched to span the staves it joins — so how tall it is is
+		// decided by where those staves were put. Feeding that back in as
+		// room the system needs is circular, and it is why a piano score
+		// came out with every system pushed apart: a brace spanning twelve
+		// spaces claimed twelve spaces of room, for a shape nothing is
+		// ever placed against.
+		return 0, 0
+	}
+	up, down = glyphReach(g.Name)
+	if g.Size > 0 {
+		// Four staff spaces is the size the font quotes its boxes at.
+		up *= g.Size / 4
+		down *= g.Size / 4
+	}
+	return up, down
+}
+
+// glyphReach is how far a glyph reaches above and below the point it is
+// drawn at, in staff spaces, at full size.
+//
+// The rules below come first, and where none of them answers, the font does:
+// a SMuFL font publishes a bounding box for every glyph it has, so a glyph
+// gscore has no rule for is measured rather than guessed. That replaced a
+// flat one space either way — the answer for 2,389 of Bravura's 3,434
+// glyphs, which is every ornament, every pedal mark and every piece of
+// furniture the rules below do not name.
+//
+// The rules come first on purpose, and it is worth writing down why, because
+// the obvious thing to do is delete them and read every glyph from the font.
+// That was tried. It makes the pages 23% taller and reads no better.
+//
+// A box is where a glyph's ink is, and that is not the same question as how
+// much room a glyph needs. Three cases came apart:
+//
+//   - A brace is drawn stretched to span the staves it joins, so its box,
+//     scaled, is three spaces taller than the rules said — and it sits in
+//     the margin, where no mark is ever placed against it. Counted as room
+//     above the system it pushes every system apart for ink nothing reads.
+//   - A flag's box reaches back along the stem it hangs from, which the stem
+//     has already booked. True, and already counted.
+//   - A treble clef really does reach 2.4 spaces above the top line, and an
+//     engraver lets it, rather than opening the gap between systems for it.
+//
+// That is the warning in the decision this came from, read the other way
+// round: finer geometry lets a program reserve more room than an engraver
+// would, and the restraint has to come from somewhere else. In Ooloi's
+// design that somewhere is its clearances and gap classes; gscore has no
+// such thing yet, so until it does, the rules a reader tuned by looking at
+// pages beat the font's own account of its outlines.
 func glyphReach(name string) (up, down float64) {
+	if up, down, ok := tunedReach(name); ok {
+		return up, down
+	}
+	if b, ok := smufl.BBox(name); ok {
+		// The font measures up as positive and the page measures down as
+		// positive, which is why the bottom of the box is the reach below.
+		return b.Top, -b.Bottom
+	}
+	// Neither a rule nor a box. Generous is the safe direction here: a mark
+	// placed further out than it had to be is untidy, one placed through a
+	// notehead is wrong.
+	return 1.0, 1.0
+}
+
+// tunedReach is the reach for the glyphs gscore has looked at, settled by
+// looking at pages rather than at outlines. ok is false where there is no
+// rule for a glyph, which is most of them.
+func tunedReach(name string) (up, down float64, ok bool) {
 	switch {
 	case has(name, "notehead"), has(name, "augmentationDot"):
-		return 0.55, 0.55
+		return 0.55, 0.55, true
 	case has(name, "accidental"):
-		return 1.4, 1.4
+		return 1.4, 1.4, true
 	case has(name, "rest"):
-		return 1.2, 1.2
+		return 1.2, 1.2, true
 	case has(name, "flag"):
 		// A flag is drawn at the end of its stem and hangs back along it,
 		// so it reaches one way only and the name says which: an Up flag
@@ -382,27 +452,34 @@ func glyphReach(name string) (up, down float64) {
 		// space and a fifth of nothing above every flagged note. A slur
 		// ending on one started that far over the stem it belongs to.
 		if strings.HasSuffix(name, "Up") {
-			return 0.1, 1.2
+			return 0.1, 1.2, true
 		}
-		return 1.2, 0.1
+		return 1.2, 0.1, true
 	case has(name, "dynamic"):
-		return 0.9, 0.5
+		return 0.9, 0.5, true
 	case has(name, "tremolo"), has(name, "buzzRoll"):
-		return 1.0, 1.0
+		return 1.0, 1.0, true
 	case has(name, "artic"), has(name, "fermata"), has(name, "strings"):
-		return 0.8, 0.8
+		return 0.8, 0.8, true
 	case has(name, "met"):
-		return 1.6, 0.6
+		return 1.6, 0.6, true
 	case has(name, "gClef"), has(name, "fClef"), has(name, "cClef"):
-		return 2.6, 2.6
+		return 2.6, 2.6, true
 	case has(name, "timeSig"):
-		return 1.1, 1.1
+		return 1.1, 1.1, true
 	case has(name, "segno"), has(name, "coda"):
-		return 1.6, 1.6
+		return 1.6, 1.6, true
 	case has(name, "repeat"):
-		return 2.1, 2.1
+		return 2.1, 2.1, true
 	}
-	return 1.0, 1.0
+	return 0, 0, false
+}
+
+// isGroupFurniture names the glyphs drawn down the left of a system to say
+// which staves belong together, rather than to be read.
+func isGroupFurniture(name string) bool {
+	return has(name, "brace") || has(name, "reversedBrace") ||
+		has(name, "bracket")
 }
 
 func has(s, prefix string) bool {

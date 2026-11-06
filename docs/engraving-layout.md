@@ -62,10 +62,32 @@ segno.
 **The outline is read off the layout**, from a snapshot taken before the
 staff's music (`e.marked()`, `e.outline(...)`). Stems, beams, ledger lines and
 slurs are lines and curves whose extents the engraver already computed, so
-those go in exactly. Only glyph heights are estimated, in `glyphReach` — the
-font carries advance widths but not bounding boxes, and reading those out of
-CFF outlines is a lot of machinery for a number that only has to be about
-right. Generous is the safe direction.
+those go in exactly.
+
+**Glyph heights come from the font.** A SMuFL font publishes a bounding box
+for every glyph it has, and `internal/smufl/data/bravura-bboxes.json` is
+Bravura's, embedded and read once. They used to be guessed from a list of
+rules by name, with a flat space either way for anything the list did not
+name — which was 2,389 of Bravura's 3,434 glyphs, and which left a treble
+clef 1.79 spaces short of its real height and a whole rest 1.16 spaces too
+tall.
+
+A short list of rules survives in `tunedReach`, and it is consulted **first**,
+because a box is where a glyph's ink is and that is not the same question as
+how much room a glyph needs. Reading everything from the font made the pages
+23% taller and read no better: a brace is stretched to span the staves it
+joins, so its box is the whole span of a system that nothing is ever placed
+against; a flag's box reaches back along a stem that is already in the
+outline; and a treble clef really does reach 2.4 spaces above the top line,
+which an engraver lets happen rather than opening the gap between systems
+for. A brace takes no room at all now (`isGroupFurniture`) — its height is
+decided by where the staves went, so feeding it back in is circular.
+
+The lesson, which is ADR-0056's own warning read the other way round: finer
+geometry lets a program reserve *more* room than an engraver would, and the
+restraint has to come from somewhere. Until gscore has somewhere — a
+clearance table and gap classes, which it does not — a rule somebody tuned by
+looking at pages beats the font's account of its outlines.
 
 **Marks that cannot be placed where they are met wait.** A hairpin is not even
 drawn until the bar it closes in, which can be four bars later. They are
@@ -297,7 +319,53 @@ system's top and the next one's may fall outside the first one's recorded
 extent**. Stating it as "a hairpin is inside some system" is not enough — the
 hairpin that caused this was inside the *next* system, which is the bug.
 
-## 15. Tablature is an ordinary staff with more lines and numbers on them
+## 15. An accidental fits inside its own note's room
+
+See `slot.tuck` and `columnInk` in `internal/engrave/engrave.go`.
+
+An accidental is read as part of the note it is written on. So it has to fit
+inside the room that note already has, rather than be given room of its own
+in front of it — because room in front pushes the note to the right, and then
+a bar of equal notes says on the page that one of them is longer than the
+rest.
+
+Four quarter notes with a sharp on the third used to space out as 2.800,
+4.446, 2.800: the gap in front of the sharpened note 59% wider than its
+neighbours, in a bar where every note is the same length. The rhythm is the
+thing notation exists to show, and that page showed the wrong one.
+
+**The room is usually already there.** A quarter note is given 2.8 staff
+spaces and its notehead is 1.18 of them; the rest is air, and a sharp with
+its clearances is 1.65 wide. So what is added to the page is only what the
+gap before cannot already hold:
+
+```
+air   = the previous column's width − the ink in it
+added = max(0, what the accidentals need − air)
+```
+
+The ink is the font's bounding box and not the advance width, because the
+question is where the ink stops rather than where the next thing would start,
+and the dots and a notehead that stepped across the stem are ink too. The
+same sharp now costs 0.026 spaces at a quarter and 0.826 at an eighth, where
+the duration's own space is down to the floor and the air has run out — and
+in every case it clears the ink before it by exactly `BeforeAccidental`.
+
+Over the corpus that is four fewer systems and no score needing more; the
+Altes solo lost two of its thirty-three.
+
+**It is added to `slot.lead` rather than kept beside it.** Two numbers for one
+thing are two numbers that can disagree, and when they did the measure grew
+by the room for the sharp while the notehead stayed where it was — so the
+sharp, which is drawn backwards from its own notehead, was printed through
+the notehead in front of it.
+
+`box.minimum` still carries the whole of what the accidentals asked for, so
+that a system squeezed for room would open the gap rather than crowd them.
+Nothing reads `box.minimum` yet, which is the next thing wrong with the
+spacing rather than something this rule assumes.
+
+## 16. Tablature is an ordinary staff with more lines and numbers on them
 
 See `internal/engrave/tab.go`.
 
@@ -347,6 +415,14 @@ tells the editor the same thing.
   chords belongs to the pair, not to either one, and changes how they are
   beamed. The MuseScore reader reports one rather than turning it into a mark
   on one of the two.
+- **The ideal width and the minimum width are not negotiated.** `box.minimum`
+  is computed for every measure and read by nothing: the layout is driven by
+  `box.ideal` alone. That is why everything that needs room has to be added
+  to the ideal, and why rule 15 had to work out how much room was already
+  there rather than simply declaring a floor. Honouring a per-column floor
+  means a spring model — Ooloi's ADR-0037, LilyPond's `simple-spacer` — and
+  that is the piece of work the rest of its spacing design waits on.
+
 - **A displaced head always goes to the right.** With the stem up that is
   the convention; with the stem down the chord should extend to the *left* of
   the stem instead, and gscore puts it on the same side either way. Doing it

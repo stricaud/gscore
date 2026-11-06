@@ -14,6 +14,8 @@ import (
 	"math"
 	"testing"
 
+	"github.com/stricaud/gscore/internal/textmetric"
+
 	"github.com/stricaud/gscore/internal/model"
 	"github.com/stricaud/gscore/internal/smufl"
 )
@@ -84,14 +86,26 @@ func piece(p chordPiece) string {
 	return p.text
 }
 
-// A bold capital is wider than the average letter, which is what the old
-// reckoning used for everything.
+// A chord root is measured as the bold capital it is set in.
+//
+// chordCharWidth is a hand-written table and it turns out to be Times-Bold:
+// for every capital and every digit it agrees to the last thousandth with
+// internal/textmetric, which holds Adobe's own numbers. So this asks that
+// rather than asking that a capital beats an average — which it used to,
+// back when textWidth gave every character the same width whatever it was,
+// and which stopped meaning anything when textWidth started measuring.
+//
+// Only the capitals and digits. The table is a little wider than Times-Bold
+// for the lowercase of a quality — 2.045 against 1.916 for an m — and that
+// looks deliberate, since a quality set tight against the root is harder to
+// read than one with air around it.
 func TestAChordRootIsMeasuredAsACapital(t *testing.T) {
-	for _, root := range []string{"A", "B", "C", "D", "E", "F", "G"} {
+	for _, root := range []string{"A", "B", "C", "D", "E", "F", "G", "7", "9"} {
 		got := chordTextWidth(root, chordSize)
-		if avg := textWidth(root, chordSize); got <= avg {
-			t.Errorf("%s is measured %.2f, no wider than the %.2f an average "+
-				"letter gets", root, got, avg)
+		want := textmetric.Width(root, chordSize, textmetric.Style{Bold: true})
+		if math.Abs(got-want) > 0.001 {
+			t.Errorf("%s is measured %.3f, and Times-Bold makes it %.3f",
+				root, got, want)
 		}
 	}
 	// Digits are narrower than capitals, and the quality is mostly digits.

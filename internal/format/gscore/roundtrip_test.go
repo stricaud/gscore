@@ -625,3 +625,49 @@ func TestATextThatLeftItsPlaceToItsStyleStillDoes(t *testing.T) {
 		t.Errorf("it came back pinned to %v", got.Texts[0].Placement)
 	}
 }
+
+// A sign somebody insisted on survives the file.
+//
+// Without this, a score read from a format that states what was printed —
+// MusicXML does, and a redundant accidental it asked for is its decision to
+// have made — would be respelled the next time it was opened, and would not
+// come back as it was saved. The flag is what tells SpellAccidentals to
+// leave the note alone, so if the flag does not survive, the sign does not
+// either.
+func TestAForcedAccidentalSurvivesARoundTrip(t *testing.T) {
+	s := viewScore()
+	p := s.Parts[0]
+	m := model.NewMeasure()
+	m.Voices = []*model.Voice{{Elements: []model.Element{
+		&model.Note{
+			Pitch:      model.Pitch{Step: model.StepF, Octave: 4, Alter: 1},
+			Dur:        model.Duration{Num: 1, Den: 4},
+			Accidental: model.Sharp, Forced: true,
+		},
+		&model.Chord{
+			Dur: model.Duration{Num: 1, Den: 4},
+			Notes: []*model.Note{{
+				Pitch:      model.Pitch{Step: model.StepC, Octave: 5, Alter: 1},
+				Accidental: model.Sharp, Forced: true,
+			}},
+		},
+	}}}
+	p.Measures = []*model.Measure{m}
+
+	got := roundTrip(t, s)
+
+	back := got.Parts[0].Measures[0].Voices[0].Elements
+	if n, ok := back[0].(*model.Note); !ok || !n.Forced {
+		t.Error("the note came back without its sign held")
+	}
+	if c, ok := back[1].(*model.Chord); !ok || !c.Notes[0].Forced {
+		t.Error("the chord's notehead came back without its sign held")
+	}
+
+	// And the proof that it matters: respelling must leave them alone.
+	got.SpellAccidentals()
+	back = got.Parts[0].Measures[0].Voices[0].Elements
+	if n := back[0].(*model.Note); n.Accidental != model.Sharp {
+		t.Errorf("the sign became %v after respelling", n.Accidental)
+	}
+}

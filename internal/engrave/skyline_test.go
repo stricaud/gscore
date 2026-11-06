@@ -14,6 +14,8 @@ import (
 	"math"
 	"testing"
 
+	"github.com/stricaud/gscore/internal/smufl"
+
 	"github.com/stricaud/gscore/internal/model"
 )
 
@@ -278,5 +280,64 @@ func TestASlurClearsTheNotesItArcsOver(t *testing.T) {
 	}
 	if checked == 0 {
 		t.Fatal("no notes were under the slur, so this proves nothing")
+	}
+}
+
+/*
+ * Where a glyph's height comes from.
+ */
+
+// A brace is not in the way of anything.
+//
+// It is stretched to span the staves it joins, so its height is decided by
+// where those staves were put; counting it as room the system needs is
+// circular. Left in, a two-staff system claimed the whole span of its own
+// brace as room above itself, and every system on the page moved apart —
+// 23% taller over the corpus, for a shape nothing is ever placed against.
+func TestGroupFurnitureTakesNoRoom(t *testing.T) {
+	for _, name := range []string{"brace", "reversedBrace", "bracketTop", "bracketBottom"} {
+		up, down := glyphHeight(Glyph{Name: name, Size: 40})
+		if up != 0 || down != 0 {
+			t.Errorf("%s reaches %v up and %v down; it should take no room",
+				name, up, down)
+		}
+	}
+	// And everything else still does.
+	if up, _ := glyphHeight(Glyph{Name: "gClef"}); up <= 0 {
+		t.Error("a clef takes no room, which cannot be right")
+	}
+}
+
+// A glyph drawn small reaches less far, which is what a cue note and a grace
+// note are. Left out, a full-size reach was booked for every one of them.
+func TestASmallGlyphReachesLessFar(t *testing.T) {
+	full, _ := glyphHeight(Glyph{Name: "noteheadBlack"})
+	half, _ := glyphHeight(Glyph{Name: "noteheadBlack", Size: 2})
+	if half >= full {
+		t.Errorf("drawn at half size it reaches %v, against %v at full size",
+			half, full)
+	}
+	if math.Abs(half-full/2) > 0.001 {
+		t.Errorf("half size reaches %v, want half of %v", half, full)
+	}
+}
+
+// The font answers for a glyph no rule names, which is most of them.
+func TestAGlyphWithNoRuleIsMeasured(t *testing.T) {
+	// An ornament: no rule names it, and the font has it.
+	const name = "ornamentTurn"
+	if _, _, ruled := tunedReach(name); ruled {
+		t.Skipf("%s has a rule now; pick another glyph for this test", name)
+	}
+	b, ok := smufl.BBox(name)
+	if !ok {
+		t.Fatalf("%s has no box", name)
+	}
+	up, down := glyphReach(name)
+	if up != b.Top || down != -b.Bottom {
+		t.Errorf("reach is %v/%v, want the font's %v/%v", up, down, b.Top, -b.Bottom)
+	}
+	if up == 1.0 && down == 1.0 {
+		t.Error("that is the blind guess, not a measurement")
 	}
 }

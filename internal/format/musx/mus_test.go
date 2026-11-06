@@ -822,6 +822,62 @@ func TestTheTwoFinaleFormatsAreSeparate(t *testing.T) {
 	}
 }
 
+// Four F sharps in a bar print one sharp.
+//
+// Finale records how far each note is altered from the key, which is as true
+// of the fourth as of the first — it is an alteration, not a sign to print.
+// Read as a sign this file printed four sharps, and a chromatic passage from
+// Finale came out with one on every note of it.
+//
+// SpellAccidentals is run by the importer for every format, so this asks the
+// question of a real Finale file rather than of a score built by hand.
+func TestFourSharpsInABarPrintOne(t *testing.T) {
+	b := newMus()
+	b.staff(1, 0, 0).used(1).bar(1, 4, 1024).frame(1, 1, 4).hold(1, 1, 1)
+	for i := range 4 {
+		next := i + 2
+		if i == 3 {
+			next = 0
+		}
+		// harmLev 3 is F, harmAlt 1 is a sharp.
+		b.entry(i+1, next, 1024, musSetBit|musNoteBit, b.note(3, 1, 0))
+	}
+
+	score, _, err := readMus(b.bytes())
+	if err != nil {
+		t.Fatalf("the fixture did not read: %v", err)
+	}
+	score.SpellAccidentals()
+
+	sharps, notes := 0, 0
+	for _, m := range score.Parts[0].Measures {
+		for _, v := range m.Voices {
+			for _, el := range v.Elements {
+				n, ok := el.(*model.Note)
+				if !ok {
+					continue
+				}
+				notes++
+				if n.Pitch.Alter != 1 {
+					t.Errorf("a note came through altered by %d, want a sharp",
+						n.Pitch.Alter)
+				}
+				if n.Accidental != model.NoAccidental {
+					sharps++
+				}
+			}
+		}
+	}
+	if notes != 4 {
+		t.Fatalf("got %d notes, want 4", notes)
+	}
+	if sharps != 1 {
+		t.Errorf("the page shows %d sharps, want 1 — the three after it are "+
+			"already sharp, and the file saying so again is not a second sign",
+			sharps)
+	}
+}
+
 // A repeat is a flag on a measure rather than a record of its own, so it
 // would be dropped without anything to count — and a piece whose repeats
 // have gone is a piece of a different length.

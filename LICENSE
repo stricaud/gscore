@@ -39,6 +39,15 @@ Bravura
     which is what gscore does. It does not allow the font to be sold on its
     own, and it keeps the reserved name.
 
+    internal/smufl/data/bravura-bboxes.json is from the same place and
+    under the same licence: it is the glyphBBoxes object of Bravura's own
+    redist/Bravura.json, which is the font's SMuFL metadata — Bravura's
+    account of where the ink is in each of its glyphs. Only that object is
+    kept, and the keys are sorted, so the file is a subset of the upstream
+    one rather than a rewriting of it. It carries the font name and version
+    it was taken from, and a test checks those still match the font that is
+    shipped beside it.
+
 PKWARE DCL decompression
     internal/pkware. Finale's older .mus files compress their music with
     the PKWARE Data Compression Library format, which nothing in Go's

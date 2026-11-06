@@ -13,6 +13,7 @@ package engrave
 import (
 	"github.com/stricaud/gscore/internal/model"
 	"github.com/stricaud/gscore/internal/smufl"
+	"github.com/stricaud/gscore/internal/textmetric"
 )
 
 // What is drawn down the left of a system: the staff names, and the braces and
@@ -164,10 +165,18 @@ func (e *engraver) labelWidth(parts []*model.Part, first bool) float64 {
 // little puts a name through a clef, and only one of those is a mistake a
 // reader notices.
 func textWidth(s string, size float64) float64 {
-	if s == "" {
-		return 0
-	}
-	return float64(len([]rune(s))) * size * 0.52
+	return textmetric.Width(s, size, textmetric.Style{})
+}
+
+// boldWidth is the same for text set bold, which is wider.
+//
+// Measuring bold text with the roman widths is how a boxed rehearsal letter
+// came to sit over the right-hand edge of its own box: a bold C is 0.722 of
+// the type size against the roman 0.667, and at the size a rehearsal mark is
+// set that is a sixth of a staff space of difference, on a box with four
+// tenths of padding.
+func boldWidth(s string, size float64) float64 {
+	return textmetric.Width(s, size, textmetric.Style{Bold: true})
 }
 
 // bracedStaves marks the drawn staves that have a brace between them and
@@ -666,10 +675,20 @@ func (e *engraver) drawMarkRow(m *model.Measure, tempo *model.Tempo,
 // row is the bottom edge of the band the mark sits in, found against
 // whatever is under it; everything in the band is measured from there.
 func (e *engraver) drawRehearsalMark(text string, x, row float64) float64 {
+	// Measured bold, because it is set bold, and centred in the box rather
+	// than started at its left edge. Started there and measured roman, a C
+	// ran over the right-hand edge of its own box and an M would have
+	// crossed it by a staff space.
+	//
+	// Centred as well as measured: the two renderers set this in different
+	// faces — Times in a PDF, Georgia in a page — so the width is right for
+	// one of them and close for the other, and a letter centred in its box
+	// is off by half of a small difference instead of all of it.
+	w := boldWidth(text, jumpTextSize) + 0.8
 	e.lay.Texts = append(e.lay.Texts, Text{
-		S: text, X: x, Y: row - 0.6, Size: jumpTextSize, Anchor: "start", Bold: true,
+		S: text, X: x - 0.4 + w/2, Y: row - 0.6, Size: jumpTextSize,
+		Anchor: "middle", Bold: true,
 	})
-	w := textWidth(text, jumpTextSize) + 0.8
 	t := e.opt.Defaults.StaffLineThickness * 1.3
 	y0, y1 := row-markBoxHeight, row
 	e.lay.Lines = append(e.lay.Lines,

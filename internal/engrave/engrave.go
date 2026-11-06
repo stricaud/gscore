@@ -1197,7 +1197,24 @@ type voiced struct {
 type slot struct {
 	at    model.Duration // when in the bar, counted from its start
 	elems []voiced
-	lead  float64 // room before the noteheads, for an accidental
+	lead  float64 // room before the noteheads that has to be added
+	// tuck is room the noteheads want before them which may be found in
+	// the gap that is already there rather than added to it: the
+	// accidentals.
+	//
+	// An accidental belongs to its note and is read as part of it, so it
+	// has to fit inside the note's own allocation rather than be given
+	// room at the note's expense. Added, it pushes its note to the right
+	// and the note reads late: four quarter notes with a sharp on the
+	// third came out spaced 2.80, 4.45, 2.80, so a bar of four equal notes
+	// said on the page that the third was longer than the others.
+	//
+	// What goes in is only what the gap before cannot already hold. The
+	// gap is the duration's own space, which for anything but the shortest
+	// values is mostly air: a quarter note gets 2.8 spaces and its
+	// notehead is 1.18 of them, so a sharp fits in what is left and costs
+	// nothing.
+	tuck  float64
 	width float64 // how wide the column is
 }
 
@@ -2417,6 +2434,9 @@ func (e *engraver) measureBox(p *model.Part, m *model.Measure, index int) measur
 		at   model.Duration
 		v    voiced
 		lead float64
+		// tuck is room the note wants before it that may already be
+		// there: see slot.tuck.
+		tuck float64
 		room float64 // what a flag needs, if this one has one
 	}
 	var entries []entry
@@ -2436,8 +2456,8 @@ func (e *engraver) measureBox(p *model.Part, m *model.Measure, index int) measur
 				// left needs the room, and so does the accidental column,
 				// which is drawn clear of the whole chord and moves left
 				// with it.
-				lead: e.accidentalLead(el) + graceLead(el) + chordStepOut(el) +
-					arpeggioLead(el),
+				lead: graceLead(el) + chordStepOut(el) + arpeggioLead(el),
+				tuck: e.accidentalLead(el),
 				room: flags[i],
 			})
 			at = at.Add(el.Duration())
@@ -2476,6 +2496,7 @@ func (e *engraver) measureBox(p *model.Part, m *model.Measure, index int) measur
 			e.nextRef++
 			col.elems = append(col.elems, en.v)
 			col.lead = math.Max(col.lead, en.lead)
+			col.tuck = math.Max(col.tuck, en.tuck)
 			col.width = math.Max(col.width, en.room)
 		}
 		// Two lines of music close enough to clash need room for the one
@@ -2535,8 +2556,29 @@ func (e *engraver) measureBox(p *model.Part, m *model.Measure, index int) measur
 			col.width = math.Max(col.width, need)
 			least = math.Max(least, need)
 		}
+		// What the accidentals need, less what the gap before them already
+		// holds. See slot.tuck: an accidental is read as part of its note,
+		// so it belongs inside the note's own allocation, and only what
+		// will not fit there is added to the page.
+		tuck := col.tuck
+		if i > 0 {
+			if air := box.slots[i-1].width - e.columnInk(box.slots[i-1]); air > 0 {
+				tuck = math.Max(0, tuck-air)
+			}
+		}
+		// Added to the lead rather than kept beside it, so that the one
+		// number decides both how wide the measure is and where the
+		// drawing puts the column. Two numbers for that is two numbers
+		// that can disagree, and when they did the measure grew by the
+		// room for the sharp while the notehead stayed where it was — so
+		// the sharp, which is drawn backwards from its own notehead, was
+		// printed through the notehead before it.
+		col.lead += tuck
 		box.ideal += col.lead + col.width
-		box.minimum += col.lead + least
+		// The minimum keeps the whole of what the accidentals asked for.
+		// A system squeezed for room has to open the gap rather than
+		// print the sharp through the notehead before it.
+		box.minimum += col.lead - tuck + col.tuck + least
 	}
 	// The last syllable of a bar needs its own half before the barline.
 	if n := len(words); n > 0 && words[n-1] > 0 {
@@ -2782,6 +2824,65 @@ func heldInBar(m *model.Measure) model.Duration {
 		}
 	}
 	return most
+}
+
+// columnInk is how wide the ink in a column is, as against how wide the
+// column is: the space from the leftmost of its noteheads to the rightmost
+// edge of anything attached to them.
+//
+// The difference between the two is the air in the gap that follows, and
+// that air is what an accidental on the next note can be tucked into. Taken
+// from the font's own bounding boxes rather than from advance widths, since
+// the question is where the ink ends and an advance is where the next thing
+// would start.
+func (e *engraver) columnInk(col slot) float64 {
+	widest := 0.0
+	for _, v := range col.elems {
+		w := 0.0
+		switch el := v.el.(type) {
+		case *model.Note:
+			w = noteheadInk(el.Head, el.Dur)
+		case *model.Chord:
+			for _, n := range el.Notes {
+				if x := noteheadInk(n.Head, el.Dur); x > w {
+					w = x
+				}
+			}
+		case *model.Rest:
+			v, _, ok := el.Dur.Written()
+			if !ok {
+				v = model.Quarter
+			}
+			if b, ok := smufl.BBox(smufl.RestGlyph(v)); ok {
+				w = b.Right
+			}
+		}
+		// Whatever hangs off the right of it: a dot, and a notehead that
+		// stepped across the stem.
+		if _, dots, ok := v.el.Duration().Written(); ok && dots > 0 {
+			sp := e.opt.Spacings
+			w += sp.DotToNote + float64(dots)*dotStep(sp)
+		}
+		if o := chordStepOut(v.el); o > 0 {
+			w += o
+		}
+		if w > widest {
+			widest = w
+		}
+	}
+	return widest
+}
+
+// noteheadInk is how wide a notehead's ink is.
+func noteheadInk(kind model.NoteheadKind, d model.Duration) float64 {
+	v, _, ok := d.Written()
+	if !ok {
+		v = model.Quarter
+	}
+	if b, ok := smufl.BBox(smufl.NoteheadGlyphOf(v, kind)); ok {
+		return b.Right
+	}
+	return smufl.Advance(smufl.NoteheadGlyphOf(v, kind))
 }
 
 func (e *engraver) spanWidth(span model.Duration, els []voiced) float64 {

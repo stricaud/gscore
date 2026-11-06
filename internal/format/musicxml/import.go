@@ -1658,6 +1658,36 @@ func convertNote(xn *xmlNote, dur model.Duration, lg *log) *model.Note {
 	}
 	if a, ok := accidentalValues[xn.Accidental]; ok {
 		n.Accidental = a
+		// And it stands. MusicXML keeps the pitch and the sign apart —
+		// <alter> is what sounds, <accidental> is what was printed — so
+		// an <accidental> here is the other program telling us what was
+		// on its page, decided by whatever its own rules and its own
+		// user said. Recomputing it would be gscore overruling that, and
+		// the two will usually agree anyway; where they do not, the file
+		// is the one that was looking at the page.
+		//
+		// A note with <alter> and no <accidental> says nothing about the
+		// sign, and SpellAccidentals works that one out — which is how
+		// the second B flat of a bar comes out without a flat on it,
+		// where the first has one.
+		n.Forced = true
+	} else if xn.Pitch.Alter == nil {
+		// Neither element: the file has said nothing about this note at
+		// all, and gscore must not answer a question nobody asked.
+		//
+		// Strictly, no <alter> is an alteration of nothing, so a C in the
+		// key of C flat major would be a C natural and would need a
+		// natural printed on it. Files do not mean that. The test suite
+		// alone has half a dozen that set a key signature and then write
+		// bare pitches under it — ten notes in D major with not one
+		// <alter> between them — and taken at its word every F and C in
+		// them grows a natural that no printed copy of the music has.
+		//
+		// So a note the file left bare is left bare. It costs nothing
+		// real: a file that means a note to be altered says so with
+		// <alter>, which is the case just above, and the accidental it
+		// needs is worked out there.
+		n.Forced = true
 	}
 	switch xn.Stem {
 	case "up":

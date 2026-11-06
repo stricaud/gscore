@@ -42,12 +42,12 @@ import (
 	// plugin loader of the C program.
 	_ "github.com/stricaud/gscore/internal/format/abc"
 	_ "github.com/stricaud/gscore/internal/format/engraved"
+	_ "github.com/stricaud/gscore/internal/format/enigma"
 	_ "github.com/stricaud/gscore/internal/format/gscore"
 	_ "github.com/stricaud/gscore/internal/format/guido"
 	_ "github.com/stricaud/gscore/internal/format/lilypond"
 	_ "github.com/stricaud/gscore/internal/format/musescore"
 	_ "github.com/stricaud/gscore/internal/format/musicxml"
-	_ "github.com/stricaud/gscore/internal/format/musx"
 	_ "github.com/stricaud/gscore/internal/format/nwc"
 )
 

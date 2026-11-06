@@ -1766,12 +1766,23 @@ func (e *engraver) layout() {
 		maxMeasures++
 	}
 
-	// A measure is as wide as the part that needs the most room for it.
+	// A measure is as wide as the part that needs the most room for it, and
+	// that is two numbers rather than one: what the music would like, and
+	// what it can be pressed into before the notes of one bar start
+	// crowding the next. The first decides the spacing; the second decides
+	// what a system may be asked to hold. See breakAt.
 	widths := make([]float64, maxMeasures)
+	least := make([]float64, maxMeasures)
 	for mi := 0; mi < maxMeasures; mi++ {
 		for pi := range parts {
-			if mi < len(boxes[pi]) && boxes[pi][mi].ideal > widths[mi] {
+			if mi >= len(boxes[pi]) {
+				continue
+			}
+			if boxes[pi][mi].ideal > widths[mi] {
 				widths[mi] = boxes[pi][mi].ideal
+			}
+			if boxes[pi][mi].minimum > least[mi] {
+				least[mi] = boxes[pi][mi].minimum
 			}
 		}
 	}
@@ -1791,8 +1802,11 @@ func (e *engraver) layout() {
 				}
 			}
 			widths[at] = multiRestWidth(run.count) + head
+			// A sign of a fixed width is its own minimum: there is
+			// nothing in it to press together.
+			least[at] = widths[at]
 			for i := at + 1; i < at+run.count; i++ {
-				widths[i] = 0
+				widths[i], least[i] = 0, 0
 			}
 		}
 	}
@@ -1819,7 +1833,7 @@ func (e *engraver) layout() {
 	if maxMeasures == 0 {
 		// A part with no measures still has a clef and a key signature, and
 		// drawing just those is what the key signature picker asks for.
-		e.drawSystem(parts, boxes, widths, 0, 0, prefix, 0, true, false)
+		e.drawSystem(parts, boxes, widths, least, 0, 0, prefix, 0, true, false)
 		// There is no next system, so the gap that separates them is just
 		// empty space under the staff.
 		e.y -= e.opt.Spacings.SystemGap
@@ -1845,7 +1859,7 @@ func (e *engraver) layout() {
 		if e.carriedCurves() {
 			carried = resumeRoom
 		}
-		n := e.breakAt(widths[start:], prefix+carried)
+		n := e.breakAt(widths[start:], least[start:], prefix+carried)
 		// And never past the end of a movement: whatever follows a section
 		// break begins a system of its own, in the strip as on the page.
 		if to := e.sectionEnd(parts, start, maxMeasures); to-start < n {
@@ -1862,7 +1876,7 @@ func (e *engraver) layout() {
 		}
 		end := start + n
 		last := end >= maxMeasures
-		e.drawSystem(parts, boxes, widths, start, end, prefix+carried, carried, last, forced)
+		e.drawSystem(parts, boxes, widths, least, start, end, prefix+carried, carried, last, forced)
 		if last {
 			// The gap belongs between systems, not after the final one.
 			// Leaving it there pads every score with empty space, which is
@@ -1992,23 +2006,59 @@ func (e *engraver) opensSection(parts []*model.Part, at int) bool {
 	return false
 }
 
-func (e *engraver) breakAt(widths []float64, prefix float64) int {
+func (e *engraver) breakAt(widths, least []float64, prefix float64) int {
 	if e.opt.Mode == Strip {
 		return len(widths)
 	}
 	avail := e.opt.LineWidth - prefix
-	used, n := 0.0, 0
-	for _, w := range widths {
-		if n > 0 && used+w > avail {
+	if avail <= 0 || len(widths) == 0 {
+		return 1
+	}
+
+	best, bestBad := 0, math.Inf(1)
+	ideal, floor := 0.0, 0.0
+	for i := range widths {
+		ideal += widths[i]
+		floor += least[i]
+		// Taking a bar the line would not hold at the width the music
+		// asked for means pressing the whole system in, and that is on
+		// offer only while every bar still clears its own minimum. The
+		// question is asked here and not sooner because a line that fits
+		// outright is not being squeezed and the minimum has nothing to
+		// say about it — a bar whose minimum is its ideal, which is what
+		// a bar thick with accidentals comes to, would otherwise be
+		// refused a place it fitted in.
+		if i > 0 && ideal > avail && floor > avail {
 			break
 		}
-		used += w
-		n++
+		if bad := lineBadness(avail, ideal); bad < bestBad {
+			best, bestBad = i+1, bad
+		}
+		// Once the line is over-full, every further bar only makes it
+		// worse, so there is nothing after this worth looking at.
+		if ideal >= avail {
+			break
+		}
 	}
-	if n == 0 {
-		n = 1 // a measure too wide for any line still has to go somewhere
+	if best == 0 {
+		best = 1 // a measure too wide for any line still has to go somewhere
 	}
-	return n
+	return best
+}
+
+// lineBadness is how far a system of this width is from the line it has to
+// fill, as a number that counts stretching and squeezing the same way.
+//
+// The ratio on its own will not do, because it is not symmetrical: a line
+// pulled out by a third is 1.33 and the same line pressed in by a third is
+// 0.75, and comparing those two numbers directly says the second is further
+// off. Their logarithms are 0.285 and 0.288, which is the answer anybody
+// looking at the page would give — the two are as bad as each other.
+func lineBadness(avail, width float64) float64 {
+	if width <= 0 {
+		return math.Inf(1)
+	}
+	return math.Abs(math.Log(avail / width))
 }
 
 // overhang is how far the music rises above the top staff line, in staff
@@ -2977,35 +3027,59 @@ func (e *engraver) elementWidth(el model.Element) float64 {
 // carried is how much of prefix is blank held back for the ties and slurs
 // coming in from the system above: it sits after the meter, before the music.
 func (e *engraver) drawSystem(parts []*model.Part, boxes [][]measureBox,
-	widths []float64, start, end int, prefix, carried float64, last, forced bool) {
+	widths, least []float64, start, end int, prefix, carried float64,
+	last, forced bool) {
 
 	sp := e.opt.Spacings
 
-	ideal := 0.0
+	ideal, floor := 0.0, 0.0
 	for mi := start; mi < end; mi++ {
 		ideal += widths[mi]
+		floor += least[mi]
 	}
+
+	// The gap after a barline is there to keep the next bar's music off it,
+	// and the last bar of a system has no next bar. Counted as part of what
+	// the line covers, it was drawn anyway: the staff lines ran a space past
+	// the barline that closes the system, and at the end of a piece past the
+	// one that ends it — ruling that carries on after the music has stopped,
+	// which reads as a stave somebody forgot to finish.
+	//
+	// So it is taken off both ends of the sum. The system is stretched to
+	// put the *barline* on the margin rather than the empty space behind it,
+	// and the staff lines stop where that barline does.
+	tail := 0.0
+	if end > start {
+		tail = sp.AfterBarline
+	}
+	ink := ideal - tail
 
 	// Stretch to the margin, except on the last system, which would look wrong
 	// pulled out to full width.
 	stretch := 1.0
-	if e.opt.Mode == Paginated && ideal > 0 {
+	if e.opt.Mode == Paginated && ink > 0 {
 		avail := e.opt.LineWidth - prefix
 		switch {
-		case !last && avail > ideal:
-			stretch = avail / ideal
-		// A line the writer asked for may hold more than fits by itself.
-		// That is what asking is for — "four bars to this line" is said
-		// about a line that would otherwise hold three — so the music is
-		// squeezed rather than the instruction quietly dropped.
-		//
-		// Down to a floor and no further. Past that the noteheads are
-		// closer together than they are wide and the line stops being
-		// readable, so what the reader gets is a line a little over the
-		// margin, which they can see and undo, rather than a line they
-		// cannot read and no clue why.
-		case forced && avail < ideal:
-			stretch = math.Max(avail/ideal, minSqueeze)
+		case !last && avail > ink:
+			stretch = avail / ink
+		case avail < ink:
+			// More on the line than it would hold at the width the music
+			// asked for. Either the writer said so — "four bars to this
+			// line" is said about a line that would otherwise hold three
+			// — or breakAt judged a line pressed in a little to be
+			// better than one pulled out a lot, which is the usual case
+			// and the reason a bar carries a minimum width at all.
+			//
+			// Down to that minimum and no further. Past it the noteheads
+			// are closer together than they are wide and the line stops
+			// being readable, so what the reader gets is a line a little
+			// over the margin, which they can see and undo, rather than a
+			// line they cannot read and no clue why.
+			limit := minSqueeze
+			if floor > tail {
+				limit = (floor - tail) / ink
+			}
+			stretch = math.Max(avail/ink, limit)
 		}
 	}
 	// Kept on the engraver so that a measure can place its barline against
@@ -3021,7 +3095,10 @@ func (e *engraver) drawSystem(parts []*model.Part, boxes [][]measureBox,
 		x += widths[mi] * stretch
 	}
 	columns[end-start] = x
-	right := x
+	// Where the system stops being drawn, which is the far edge of the
+	// barline that closes it and not the empty space allowed behind that
+	// barline for a bar that does not follow.
+	right := x - tail*stretch
 
 	// Room is reserved before the system is drawn, not claimed back over the
 	// one above it. Recording a system as reaching up into its predecessor
@@ -3421,6 +3498,7 @@ func (e *engraver) drawSystem(parts []*model.Part, boxes [][]measureBox,
 	// standing to the right of the lines on them.
 	for i := range columns {
 		x := columns[i]
+		style := model.BarSingle
 		if i == 0 {
 			// The first column is where the music starts, which is after
 			// the clef and the meter — there is no barline there, and a
@@ -3431,11 +3509,12 @@ func (e *engraver) drawSystem(parts []*model.Part, boxes [][]measureBox,
 			x = sp.Margin + lead
 		} else {
 			if mi := start + i - 1; mi >= 0 && mi < len(parts[0].Measures) {
-				_, right := e.barlineRoom(parts[0].Measures[mi].RightBarline)
+				style = parts[0].Measures[mi].RightBarline
+				_, right := e.barlineRoom(style)
 				x = e.barlineAt(columns[i], right)
 			}
 		}
-		e.drawGroupBarlines(parts, x, staffTops, i == 0)
+		e.drawGroupBarlines(parts, x, staffTops, style, i == 0)
 	}
 
 	// Back to the top of the system, then down past all of it.
@@ -3660,51 +3739,69 @@ func (e *engraver) drawBarline(style model.BarlineStyle, x float64) {
 	d := e.opt.Defaults
 	top, bottom := e.y, e.y+e.staffH()
 
-	thin := func(at float64) {
+	for _, s := range barlineStrokes(d, style) {
 		e.lay.Lines = append(e.lay.Lines, Line{
-			X1: at, Y1: top, X2: at, Y2: bottom, Thickness: d.ThinBarlineThickness,
-		})
-	}
-	thick := func(at float64) {
-		e.lay.Lines = append(e.lay.Lines, Line{
-			X1: at, Y1: top, X2: at, Y2: bottom, Thickness: d.ThickBarlineThickness,
+			X1: x + s.dx, Y1: top, X2: x + s.dx, Y2: bottom, Thickness: s.thick,
 		})
 	}
 
-	switch style {
-	case model.BarDouble:
-		thin(x)
-		thin(x + d.BarlineSeparation)
-	case model.BarFinal:
-		thin(x)
-		thick(x + d.BarlineSeparation + d.ThickBarlineThickness/2)
-	case model.BarRepeatEnd:
+	// And the dots, which go on the staff rather than beside it.
+	//
+	// Where they go was settled before there was anything to put there:
+	// barlineRoom has reserved 0.7 and a dot to the left and 1.1 and a dot
+	// to the right of a repeat all along, which is the room for exactly
+	// these two groups around the line.
+	if style == model.BarRepeatEnd || style == model.BarRepeatBoth {
 		e.repeatDots(x - 0.7)
-		thin(x)
-		thick(x + d.BarlineSeparation + d.ThickBarlineThickness/2)
-	case model.BarRepeatStart:
-		thick(x)
-		thin(x + d.BarlineSeparation + d.ThickBarlineThickness/2)
-		e.repeatDots(x + 1.1)
-	case model.BarRepeatBoth:
-		// One repeat closing where the next opens: the dots of the one that
-		// ends, a heavy line, and the dots of the one that begins.
-		//
-		// It fell through to a plain thin line, so a bar the music turns at
-		// was drawn like every other bar and there was nothing on the page
-		// to say it turned. The Badinerie goes back at bar 16 and showed a
-		// single line there.
-		//
-		// Where the dots go was settled before there was anything to put
-		// there: barlineRoom has reserved 0.7 and a dot to the left and 1.1
-		// and a dot to the right of this style all along, which is the room
-		// for exactly these two groups around one line.
-		e.repeatDots(x - 0.7)
-		thick(x)
-		e.repeatDots(x + 1.1)
-	default:
-		thin(x)
 	}
+	if style == model.BarRepeatStart || style == model.BarRepeatBoth {
+		e.repeatDots(x + 1.1)
+	}
+}
+
+// barStroke is one of the vertical lines a barline is drawn with: how far it
+// stands from the point the barline is at, and how heavy it is.
+type barStroke struct{ dx, thick float64 }
+
+// barlineStrokes is what a barline is made of, lines only.
+//
+// Asked in two places and so written in one. A barline is drawn down each
+// staff, and where a group's staves are barred together it is drawn again
+// through the gaps between them — and the two have to be the same marks in
+// the same places. Told only "a line goes here", the gap-filling drew a
+// plain thin stroke whatever the staves had drawn, so the final barline of a
+// bracketed score came out as a thin line through the gaps and a thin-thick
+// pair on the staves: the heavy half of the sign stopping at every staff and
+// starting again at the next.
+//
+// The dots of a repeat are not here. They sit between the lines of a staff
+// and a gap between two staves has nowhere to put them, which is right —
+// printed scores dot the staves and not the air between them.
+func barlineStrokes(d smufl.EngravingDefaults, style model.BarlineStyle) []barStroke {
+	thin, thick := d.ThinBarlineThickness, d.ThickBarlineThickness
+	// A thick stroke is measured from its middle, so the gap before it is
+	// the separation plus half of its own weight.
+	after := d.BarlineSeparation + d.ThickBarlineThickness/2
+	switch style {
+	case model.BarNone:
+		return nil
+	case model.BarDouble:
+		return []barStroke{{0, thin}, {d.BarlineSeparation, thin}}
+	case model.BarFinal, model.BarRepeatEnd:
+		return []barStroke{{0, thin}, {after, thick}}
+	case model.BarRepeatStart:
+		return []barStroke{{0, thick}, {after, thin}}
+	case model.BarRepeatBoth:
+		// One repeat closing where the next opens: the dots of the one
+		// that ends, a heavy line, and the dots of the one that begins.
+		//
+		// It fell through to a plain thin line, so a bar the music turns
+		// at was drawn like every other bar and there was nothing on the
+		// page to say it turned. The Badinerie goes back at bar 16 and
+		// showed a single line there.
+		return []barStroke{{0, thick}}
+	}
+	return []barStroke{{0, thin}}
 }
 
 // barlineRoom is how much space a barline needs on each side of the point it

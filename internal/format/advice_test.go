@@ -17,10 +17,10 @@ import (
 	"github.com/stricaud/gscore/internal/format"
 
 	_ "github.com/stricaud/gscore/internal/format/abc"
+	_ "github.com/stricaud/gscore/internal/format/enigma"
 	_ "github.com/stricaud/gscore/internal/format/gscore"
 	_ "github.com/stricaud/gscore/internal/format/musescore"
 	_ "github.com/stricaud/gscore/internal/format/musicxml"
-	_ "github.com/stricaud/gscore/internal/format/musx"
 	_ "github.com/stricaud/gscore/internal/format/nwc"
 )
 
@@ -62,7 +62,7 @@ func TestAFileThatCannotBeOpenedSaysWhatToDo(t *testing.T) {
 	}
 }
 
-// Finale files open, which is the whole point of the musx package.
+// Finale files open, which is the whole point of the enigma package.
 //
 // Both of its formats, and by separate importers: they share a document
 // model and nothing else, and a message about one must never be about the

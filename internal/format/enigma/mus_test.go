@@ -8,7 +8,7 @@
  * licence; see the LICENSE file at the root of this repository.
  */
 
-package musx
+package enigma
 
 import (
 	"bytes"
@@ -124,6 +124,69 @@ func (b *musBuild) staff(n, transposition, name int) *musBuild {
 
 func (b *musBuild) frame(n, start, end int) *musBuild {
 	return b.otherRow(n, "FR", b.u32s(start, end, 0))
+}
+
+// textBlock links a name to the words it stands for. A staff holds this
+// record's number and not the block's, and the two are not the same one.
+func (b *musBuild) textBlock(id, block int) *musBuild {
+	return b.otherRow(id, "TX", b.u16s(block, 0, 0, 0, 0, 0))
+}
+
+// group joins staves first to last with one of Finale's bracket shapes.
+// Two rows, which is as far along as the shape sits.
+func (b *musBuild) group(first, last, shape int) *musBuild {
+	data := make([]byte, 20)
+	b.order.PutUint16(data[musGroupStart:], uint16(first))
+	b.order.PutUint16(data[musGroupEnd:], uint16(last))
+	b.order.PutUint16(data[musGroupShape:], uint16(shape))
+	for i := 0; i < 2; i++ {
+		b.detailRow(0, 1, "NG", data[10*i:10*(i+1)])
+	}
+	return b
+}
+
+// exprDef defines one expression: what it does when the score is played,
+// and the words the library describes it by. Four rows, which is as far
+// along as the words sit.
+func (b *musBuild) exprDef(n, play int, words string) *musBuild {
+	data := make([]byte, 48)
+	data[musExprPlay] = byte(play)
+	copy(data[musExprWords:], words)
+	for i := 0; i < 4; i++ {
+		b.otherRow(n, "DT", data[12*i:12*(i+1)])
+	}
+	return b
+}
+
+// enclose draws a box round a definition, or stores one and leaves it
+// undrawn, which is what the top bit of its flags says.
+func (b *musBuild) enclose(n int, drawn bool) *musBuild {
+	data := make([]byte, 12)
+	if !drawn {
+		data[musEnclFlags] = musEnclHidden
+	}
+	return b.otherRow(n, "De", data)
+}
+
+// exprAt writes an expression against a bar, on one staff of it.
+func (b *musBuild) exprAt(bar, def, staff int) *musBuild {
+	data := make([]byte, 12)
+	b.order.PutUint16(data[musPlaceExpr:], uint16(def))
+	data[musPlaceStaff] = byte(staff)
+	return b.otherRow(bar, "DY", data)
+}
+
+// aNote is one staff and one sounding note, for the questions about how a
+// staff is written rather than what is on it. raw is the transposition word
+// as the staff record holds it and name is the staff's name id.
+func aNote(b *musBuild, raw, name int) *musBuild {
+	b.staff(1, raw, name).used(1)
+	b.bar(1, 4, 1024)
+	b.frame(1, 1, 1)
+	b.hold(1, 1, 1)
+	// The tonic of the key, which with no key is middle C.
+	b.sounds(1, 0, 1024, 0)
+	return b
 }
 
 // A frame hold: which frame fills a staff in a measure. The layers start at
@@ -608,7 +671,7 @@ func TestAMusSaysWhatItDidNotRead(t *testing.T) {
 	// A handful of records of kinds this reader has no name for, which is
 	// what the marks on the music are stored as.
 	for i := range 5 {
-		b.otherRow(i+1, "TX", b.u16s(0, 0, 0, 0, 0, 0))
+		b.otherRow(i+1, "sL", b.u16s(0, 0, 0, 0, 0, 0))
 	}
 	// And one grace note, which comes through at the wrong length.
 	b.entry(99, 0, 1024, musSetBit|musNoteBit|musGraceNote, b.note(0, 0, 0))
@@ -906,27 +969,82 @@ func TestFourSharpsInABarPrintOne(t *testing.T) {
 	}
 }
 
-// A repeat is a flag on a measure rather than a record of its own, so it
-// would be dropped without anything to count — and a piece whose repeats
-// have gone is a piece of a different length.
-func TestRepeatsAreCounted(t *testing.T) {
+// A repeat is a flag on a measure rather than a record of its own. A piece
+// whose repeats have gone is a piece of a different length, which is the
+// sort of thing somebody finds out in a rehearsal.
+func TestARepeatClosesTheBarItIsWrittenOn(t *testing.T) {
 	b := newMus()
 	b.staff(1, 0, 0).used(1).frame(1, 1, 1).hold(1, 1, 1)
 	// A measure with a double barline and a backward repeat on it.
 	b.otherRow(1, "MS", b.u16s(600, 0, 4, 1024, 0, 0x24))
 	b.sounds(1, 0, 4096, 0)
 
-	score, skipped, err := readMus(b.bytes())
+	score := readFixture(t, b)
+	if got := score.Parts[0].Measures[0].RightBarline; got != model.BarRepeatEnd {
+		t.Errorf("the bar closes with a %v, want a repeat", got)
+	}
+}
+
+// Finale writes a forward repeat on the bar it opens, against that bar's
+// left-hand edge. gscore stores one style per bar, on the bar the sign
+// stands after, so the sign has to move back one: left where it was, a
+// repeat opening bar five would be drawn closing it.
+func TestAForwardRepeatIsDrawnBeforeTheBarItOpens(t *testing.T) {
+	b := newMus()
+	b.staff(1, 0, 0).used(1)
+	b.bar(1, 4, 1024)
+	// The second bar opens a repeat; the first closes with it.
+	b.otherRow(2, "MS", b.u16s(600, 0, 4, 1024, 0, 0x18))
+	b.frame(1, 1, 1).frame(2, 2, 2)
+	b.hold(1, 1, 1).hold(1, 2, 2)
+	b.sounds(1, 0, 4096, 0).sounds(2, 0, 4096, 1)
+
+	ms := readFixture(t, b).Parts[0].Measures
+	if len(ms) != 2 {
+		t.Fatalf("got %d bars, want 2", len(ms))
+	}
+	if got := ms[0].RightBarline; got != model.BarRepeatStart {
+		t.Errorf("the first bar closes with a %v, want the repeat opening", got)
+	}
+	// And the second bar is the last of the piece, so it closes it.
+	if got := ms[1].RightBarline; got != model.BarFinal {
+		t.Errorf("the second bar closes with a %v, want the final barline", got)
+	}
+}
+
+// A section that ends where the next begins is one sign on the page — dots,
+// a heavy line, dots — and one style in the model.
+func TestARepeatClosingWhereAnotherOpensIsOneSign(t *testing.T) {
+	b := newMus()
+	b.staff(1, 0, 0).used(1)
+	b.otherRow(1, "MS", b.u16s(600, 0, 4, 1024, 0, 0x14)) // closes one
+	b.otherRow(2, "MS", b.u16s(600, 0, 4, 1024, 0, 0x18)) // opens the next
+	b.frame(1, 1, 1).frame(2, 2, 2)
+	b.hold(1, 1, 1).hold(1, 2, 2)
+	b.sounds(1, 0, 4096, 0).sounds(2, 0, 4096, 1)
+
+	ms := readFixture(t, b).Parts[0].Measures
+	if got := ms[0].RightBarline; got != model.BarRepeatBoth {
+		t.Errorf("the barline between the bars is a %v, want both signs", got)
+	}
+}
+
+// A numbered ending is a different thing and is still only counted: the bit
+// says one begins here and not which times through it is played nor where it
+// stops, and a first-time bar played every time is a piece of the wrong
+// length.
+func TestANumberedEndingIsReportedRatherThanGuessedAt(t *testing.T) {
+	b := newMus()
+	b.staff(1, 0, 0).used(1).frame(1, 1, 1).hold(1, 1, 1)
+	b.otherRow(1, "MS", b.u16s(600, 0, 4, 1024, 0, 0x12))
+	b.sounds(1, 0, 4096, 0)
+
+	_, skipped, err := readMus(b.bytes())
 	if err != nil {
 		t.Fatalf("the fixture did not read: %v", err)
 	}
-	if got := strings.Join(skipped, "\n"); !strings.Contains(got, "repeats") {
-		t.Errorf("the report is %q, which does not mention the repeat", got)
-	}
-	// The top half of the same byte is still read, so finding the repeat
-	// must not cost the barline.
-	if got := score.Parts[0].Measures[0].RightBarline; got == 0 {
-		t.Error("the double barline was lost along with the repeat")
+	if got := strings.Join(skipped, "\n"); !strings.Contains(got, "endings") {
+		t.Errorf("the report is %q, which does not mention the ending", got)
 	}
 }
 
@@ -1177,5 +1295,242 @@ func TestANonstandardKeySignatureIsReported(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("a nonstandard signature was not reported; got %v", skipped)
+	}
+}
+
+// A staff holds the number of a record that names its words, and not the
+// number of the words themselves. The two are different, and reading the
+// first as the second finds nothing — a nameless staff, which is a staff
+// played as a piano and never reported, because a staff with no name is not
+// an error. A saxophone quartet came through as four pianos that way.
+func TestAStaffIsNamedThroughItsTextBlock(t *testing.T) {
+	b := newMus()
+	aNote(b, 0, 50)
+	b.textBlock(50, 18)
+	b.text = "^block(18)^font(Times,8191)^size(12)Alto Sax.^end"
+
+	score := readFixture(t, b)
+	if got := score.Parts[0].Name; got != "Alto Sax." {
+		t.Errorf("the staff is called %q, want %q", got, "Alto Sax.")
+	}
+	// And the name is what says what the staff is, Finale's own instrument
+	// code being a key into a library that is not in the file.
+	if got := score.Parts[0].Instrument; got != model.AltoSax {
+		t.Errorf("the staff plays a %v, want an alto sax", got)
+	}
+}
+
+// Where there is no such record the block numbers are taken at face value,
+// which is what a file without them has to be read by.
+func TestWithoutThoseRecordsTheBlockNumberIsTheName(t *testing.T) {
+	score := readFixture(t, aTune(newMus()))
+	if got := score.Parts[0].Name; got != "Flute" {
+		t.Errorf("the staff is called %q, want %q", got, "Flute")
+	}
+}
+
+// A transposing staff is written at an interval from where it sounds, and
+// the interval has two halves that have to agree: so many steps up the
+// staff, and so many semitones.
+//
+// A .mus stores only the second, as the number of sharps the staff's key
+// gains. Taking that alone and leaving the steps at nothing wrote every note
+// where it sounds and then made up the difference in accidentals — a C with
+// nine semitones of sharp on it, which is an A, spelled as nothing anybody
+// could read. A page of double sharps is what it looked like.
+func TestATransposingStaffIsWrittenAtAnIntervalAndNotAnAccidental(t *testing.T) {
+	// Three sharps added: an instrument in E flat, written a sixth up.
+	score := readFixture(t, aNote(newMus(), 3, 0))
+
+	part := score.Parts[0]
+	if got := part.KeyAt(0).Fifths; got != 3 {
+		t.Errorf("the staff is written in %d sharps, want 3", got)
+	}
+	note := part.Measures[0].Voices[0].Elements[0].(*model.Note)
+	if got := note.Pitch.String(); got != "A4" {
+		t.Errorf("middle C sounding is written %q, want %q", got, "A4")
+	}
+	if note.Pitch.Alter != 0 {
+		t.Errorf("the written note carries %d semitones of accidental, want none",
+			note.Pitch.Alter)
+	}
+}
+
+// The one thing the interval does not say is how many octaves it spans:
+// Finale folds it into a residue within an octave and keeps the octaves in
+// its instrument library, which is not in the file. A tenor saxophone and a
+// soprano store the same bytes.
+//
+// So the name settles it, where the name is one gscore knows — and a tenor
+// saxophone is a tenor saxophone wherever it is written down.
+func TestTheOctaveOfATransposingStaffComesBackFromItsName(t *testing.T) {
+	b := newMus()
+	// Two sharps added, which an instrument in B flat is: a second up, and
+	// for a tenor an octave more.
+	aNote(b, 2, 50)
+	b.textBlock(50, 18)
+	b.text = "^block(18)^font(Times,8191)^size(12)Tenor Sax.^end"
+
+	score := readFixture(t, b)
+	want := model.Transposition{Diatonic: -1, Chromatic: -2, OctaveChange: -1}
+	if got := score.Parts[0].Transpose; got != want {
+		t.Errorf("the staff transposes %+v, want %+v", got, want)
+	}
+}
+
+// The name is trusted to settle the question the file leaves open and never
+// to overrule one it answers. A staff named for an instrument that does not
+// transpose the way the file says it does keeps what the file says, because
+// at that point the name is the thing that is wrong.
+func TestTheNameDoesNotOverruleTheFilesOwnInterval(t *testing.T) {
+	b := newMus()
+	aNote(b, 2, 50)
+	b.textBlock(50, 18)
+	b.text = "^block(18)^font(Times,8191)^size(12)Flute^end"
+
+	score := readFixture(t, b)
+	want := model.Transposition{Diatonic: -1, Chromatic: -2}
+	if got := score.Parts[0].Transpose; got != want {
+		t.Errorf("the staff transposes %+v, want %+v", got, want)
+	}
+}
+
+// Staves that belong together are joined down the left of the system. Without
+// the record that says so a saxophone quartet is four unconnected staves,
+// which is four soloists sharing a page.
+func TestStavesThatBelongTogetherAreBracketed(t *testing.T) {
+	b := newMus()
+	b.staff(1, 0, 0).staff(2, 0, 0).used(1, 2)
+	b.bar(1, 4, 1024)
+	b.frame(1, 1, 1)
+	b.hold(1, 1, 1).hold(2, 1, 1)
+	b.sounds(1, 0, 1024, 0)
+	b.group(1, 2, 6) // Finale's number for the straight bracket.
+
+	score := readFixture(t, b)
+	if len(score.Groups) != 1 {
+		t.Fatalf("got %d groups, want 1", len(score.Groups))
+	}
+	g := score.Groups[0]
+	if g.First != 0 || g.Last != 1 {
+		t.Errorf("the group covers staves %d to %d, want 0 to 1", g.First, g.Last)
+	}
+	if g.Symbol != model.GroupBracket {
+		t.Errorf("the group is drawn as %v, want a bracket", g.Symbol)
+	}
+	// A bracket is what says these staves are played together, and the
+	// barlines run through to say it again.
+	if !g.Barlines {
+		t.Error("the barlines stop at each staff, want them through the group")
+	}
+}
+
+// twoBars is a staff of two bars, for the marks that have to land on the
+// right one.
+func twoBars(b *musBuild) *musBuild {
+	b.staff(1, 0, 0).used(1)
+	b.bar(1, 4, 1024).bar(2, 4, 1024)
+	b.frame(1, 1, 1).frame(2, 2, 2)
+	b.hold(1, 1, 1).hold(1, 2, 2)
+	b.sounds(1, 0, 4096, 0).sounds(2, 0, 4096, 1)
+	return b
+}
+
+// A .mus has no categories — Finale did not group its expressions until
+// long after these files were written — so nothing in it says that a mark is
+// a rehearsal mark. What says it is the box: a marking drawn in one, against
+// a bar, is the one a conductor calls that bar by, which is what the box is
+// for in the first place.
+//
+// And a mark Finale numbers for itself carries no words, only the library's
+// description of it. What it prints is the bar it stands on, and that is a
+// thing a reader can work out rather than guess.
+func TestABoxedMarkAgainstABarNamesThatBar(t *testing.T) {
+	b := twoBars(newMus())
+	b.exprDef(1, 0, "Boxed Rehearsal Number").enclose(1, true)
+	b.exprAt(2, 1, 1)
+
+	ms := readFixture(t, b).Parts[0].Measures
+	if got := ms[1].Marker; got != "2" {
+		t.Errorf("the second bar is called %q, want %q", got, "2")
+	}
+	if got := ms[0].Marker; got != "" {
+		t.Errorf("the first bar is called %q, want nothing", got)
+	}
+}
+
+// Where the mark has words of its own they are what it is called, because a
+// lettered mark is a letter and not the bar it happens to fall on.
+func TestAMarkWithWordsOfItsOwnKeepsThem(t *testing.T) {
+	b := twoBars(newMus())
+	b.exprDef(1, 0, "B").enclose(1, true)
+	b.exprAt(2, 1, 1)
+
+	if got := readFixture(t, b).Parts[0].Measures[1].Marker; got != "B" {
+		t.Errorf("the bar is called %q, want %q", got, "B")
+	}
+}
+
+// A marking against a bar that is not in a box is something else — a
+// direction, a tempo word, a note to the player — and naming the bar after
+// it would put a word in the one place on a page that has to mean an
+// address. It is counted instead.
+func TestAMarkThatIsNotBoxedDoesNotNameTheBar(t *testing.T) {
+	b := twoBars(newMus())
+	b.exprDef(1, 0, "Solo").enclose(1, false)
+	b.exprAt(2, 1, 1)
+
+	score, skipped, err := readMus(b.bytes())
+	if err != nil {
+		t.Fatalf("the fixture did not read: %v", err)
+	}
+	if got := score.Parts[0].Measures[1].Marker; got != "" {
+		t.Errorf("the bar is called %q, want nothing", got)
+	}
+	if got := strings.Join(skipped, "\n"); !strings.Contains(got, "against a bar") {
+		t.Errorf("the report is %q, which does not mention the marking", got)
+	}
+}
+
+// Nor is a dynamic, which says so itself: a definition that sets the
+// loudness carries that in the one byte of it saying what it does to
+// playback. Boxing one would be unusual and reading it as an address would
+// still be wrong.
+func TestADynamicIsNotTakenForARehearsalMark(t *testing.T) {
+	b := twoBars(newMus())
+	b.exprDef(1, musPlayAmplitude, "ff").enclose(1, true)
+	b.exprAt(2, 1, 1)
+
+	if got := readFixture(t, b).Parts[0].Measures[1].Marker; got != "" {
+		t.Errorf("the bar is called %q, want nothing", got)
+	}
+}
+
+// Finale does not store the sign at the end of a piece: the style it keeps
+// for the last bar is the ordinary one, and the thin-thick line is drawn
+// because the music has stopped. So it is drawn here for the same reason —
+// a score that ends on a plain barline reads as a page torn off.
+func TestThePieceEndsWithAFinalBarline(t *testing.T) {
+	ms := readFixture(t, twoBars(newMus())).Parts[0].Measures
+	if got := ms[0].RightBarline; got != model.BarSingle {
+		t.Errorf("the first bar closes with a %v, want a plain barline", got)
+	}
+	if got := ms[len(ms)-1].RightBarline; got != model.BarFinal {
+		t.Errorf("the piece ends with a %v, want the final barline", got)
+	}
+}
+
+// Unless the last bar says something of its own. A piece can end on a repeat
+// — go back and play it again, and that is the end of it — and one that ends
+// on a double bar meant the double bar.
+func TestALastBarThatSaysSomethingElseKeepsIt(t *testing.T) {
+	b := newMus()
+	b.staff(1, 0, 0).used(1).frame(1, 1, 1).hold(1, 1, 1)
+	b.otherRow(1, "MS", b.u16s(600, 0, 4, 1024, 0, 0x14)) // a backward repeat
+	b.sounds(1, 0, 4096, 0)
+
+	ms := readFixture(t, b).Parts[0].Measures
+	if got := ms[0].RightBarline; got != model.BarRepeatEnd {
+		t.Errorf("the piece ends with a %v, want the repeat", got)
 	}
 }

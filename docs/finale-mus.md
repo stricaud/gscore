@@ -18,7 +18,7 @@ What they share is the header, the offset the payload starts at, the way the
 notes themselves are stored — and the document model, which is the same one
 the `.musx` carries as XML. That last point is the whole reason this is a few
 hundred lines rather than a second program: `build` in
-[`internal/format/musx/enigma.go`](https://github.com/stricaud/gscore/tree/main/internal/format/musx/enigma.go)
+[`internal/format/enigma/enigma.go`](https://github.com/stricaud/gscore/tree/main/internal/format/enigma/enigma.go)
 turns one Enigma document into a score, and it neither knows nor cares which
 of the three containers that document arrived in.
 
@@ -28,14 +28,16 @@ the other.
 
 ## What is read, and what is not
 
-Read: the staves in score order, their names, their transpositions, the bars
-with their meters, keys, clefs and barlines, and in each bar the notes, chords
+Read: the staves in score order, their names, their transpositions, the
+brackets and braces that join them, the bars with their meters, keys, clefs,
+barlines, repeat signs and rehearsal marks, and in each bar the notes, chords
 and rests with their pitches, lengths and ties.
 
-Not read: everything Finale writes around the music — articulations, slurs,
-hairpins, dynamics, tempo words, lyrics, tuplets, repeats, chord symbols. Each
-one is counted and named in the report the editor shows when the file opens, so
-a score that arrives without its slurs says so rather than looking finished.
+Not read: most of what Finale writes around the music — articulations, slurs,
+hairpins, dynamics, tempo words, lyrics, tuplets, numbered endings, chord
+symbols. Each one is counted and named in the report the editor shows when the
+file opens, so a score that arrives without its slurs says so rather than
+looking finished.
 
 This is a larger loss than a `.musx` takes, where most of that *is* read. The
 difference is not the container, it is that nobody has worked out what the
@@ -43,7 +45,28 @@ individual records of the older pools mean. The walk reaches every record and
 hands over its tag, its key and its bytes; what those bytes say is per-record
 work that has not been done.
 
-## Five things worth knowing
+## Eight things worth knowing
+
+**A `.mus` has no categories, so nothing in it says what kind of mark a
+marking is.** Finale did not group its expressions until long after these
+files were written: before that an expression was a line in one flat list,
+and all a definition carries is what the mark does when the score is played.
+That identifies the dynamics and the tempo marks, which set the loudness and
+the speed, and nothing else.
+
+What is left has to be told apart by how it is drawn, and one kind can be:
+a marking written against a bar and drawn inside a box is a rehearsal mark.
+That is what the box is for — it is the one marking on a page that has to be
+found from across a hall. A boxed direction would be read as one too, which
+is the cost of having no categories and is the right way round: the mark
+lands on the bar it was written on either way.
+
+A mark Finale numbers for itself carries no words, only the library's
+description of it — "Boxed Rehearsal Number". What it prints is the number of
+the bar it stands on, which is a thing a reader can work out. A mark Finale
+*letters* for itself is refused, because a letter depends on how many marks
+came before it, and a rehearsal mark guessed wrong is worse than one missing:
+it is an address.
 
 **Most `.mus` files hold no music, and that is not a failure.** A template is
 staves and bars and nothing else, and so is the file an exercise starts from.
@@ -80,12 +103,37 @@ stands and whatever earlier music has not been written over yet, and the frames
 are the only thing that says which is which. Read as a list, a score comes back
 with bars of deleted music in it.
 
-**A transposing staff's octave is not in the file.** Finale folds a
-transposition into a residue within an octave and keeps the octaves in its
-instrument definition, so two staves a unison and an octave apart store
-identical bytes. The octave is not hidden, it is absent, and no reader can
-recover it; Finale pinned it down when it wrote a `.musx`. A transposing staff
-from a `.mus` is therefore right to within an octave and no better.
+**A staff holds the number of a record that names its words, not the number
+of the words.** The two are different — in a saxophone quartet the staves ask
+for 50 to 57 and the words are in blocks 18 to 25 — and reading the first as
+the second looks for words that are not there. That is a nameless staff,
+which is a staff played as a piano, and nothing is reported, because a staff
+with no name is not an error. Four saxophones came through as four pianos
+that way, and the only sign of it was on the page.
+
+**A transposition is stored once and has to be said twice.** What the file
+holds is how many sharps the staff's key gains; what a written note needs is
+also how many steps up the staff it sits. The second is not missing, it is
+the same answer in other words — three sharps is three fifths up, which is a
+sixth, which is five steps and nine semitones — so the steps are worked out
+from the sharps and the two halves agree by construction.
+
+Leaving the steps at nothing while reading the semitones is the failure worth
+naming, because of how it looks: every note written where it sounds and then
+given nine semitones of accidental to make up the difference. The sound is
+right and the page is a wall of double sharps, two octaves from where a
+saxophone plays. A reader that gets half of a transposition is worse than one
+that gets none.
+
+**What the file really does not hold is the octave.** Finale folds the
+interval into a residue within an octave and keeps the octaves in its
+instrument definition, which is not in the file, so a tenor saxophone and a
+soprano store identical bytes. That much is absent rather than hidden — but
+the staff's name is not, and a tenor saxophone is a tenor saxophone wherever
+it is written down. So the name supplies the octave where gscore knows the
+instrument and the interval within the octave agrees; where it does not, the
+staff stays right to within an octave and no better. The name is trusted to
+settle what the file leaves open and never to overrule what it answers.
 
 ## Where this knowledge comes from
 
@@ -133,6 +181,28 @@ So where a field's position is taken on trust, the code says so where the
 offset is written down. A real file that disagrees has somewhere obvious to
 point, and if you have one that opens wrongly, that is still the bug report
 worth sending.
+
+**A repeat is a flag on a measure, and it is read from both sides.** The bar
+that closes a repeated section carries the backward sign; the bar that opens
+the next one carries the forward sign, against its own left-hand edge. gscore
+stores one style per bar, on the bar the sign stands after, so a forward sign
+is read off the bar after the one it is stored on — left where it was, a
+repeat opening bar five would be drawn closing it. A section that ends where
+another begins comes out as the one mark it is printed as.
+
+The numbered endings beside them are not read. The bit says one begins here
+and not which times through it is played nor where it stops, and a first-time
+bar played every time is a piece of the wrong length.
+
+**One offset has already disagreed and is not used.** A group record is meant
+to carry, at +21, a flag saying whether the barlines run down through the gaps
+between its staves. On the saxophone quartet this reader was fixed against,
+that byte is zero and the printed page runs them through plainly. So the
+offset is not the flag, or not only the flag, and gscore reads the shape
+instead: a bracket or a brace is what joins players into one thing and its
+barlines run through, a plain line stops short of saying so. That is Finale's
+default for a new group, and the case it does not cover is a group whose
+barlines have been turned off by hand.
 
 **What is still wrong in those files.** A staff's own default clef is not
 read, so a bar with no frame hold falls back to treble — which is invisible on

@@ -30,6 +30,23 @@ It is measured with the **system's** stretch (`e.stretch`), not the staff's
 own. Scaling the gap after the barline by the staff's rate is the same mistake
 one step further on — it was my first attempt and it made the spread worse.
 
+The air after the last barline of a system is not drawn, because there is no
+bar after it to keep off the line. Counted in, the staff lines ran a space
+past the sign that closes the system, and at the end of a piece past the one
+that ends it — ruling that carries on after the music has stopped. So the
+system is stretched to put the *barline* on the margin rather than the empty
+space behind it, and the staff lines stop where that barline does.
+
+A barline is also not always one line, and whatever it is made of it is made
+of all the way down. `barlineStrokes` says which strokes and where, and both
+the staff and the gap between barred staves are drawn from it. Told only
+"a line goes here", the gap-filling drew a plain thin stroke whatever the
+staves had drawn, so a bracketed score's final barline was thin through the
+gaps and thin-thick on the staves: the heavy half of the sign stopping at
+every staff and starting again at the next. The dots of a repeat are the one
+thing that stays on the staff — they sit between its lines, and the air
+between two staves has nowhere to put them.
+
 ## 2. Repeats and the final barline belong to the piece
 
 Written on any staff at a bar, they are given to every staff at that bar, in
@@ -116,6 +133,11 @@ closest of anything written above; the rehearsal letter is outermost because
 it is what somebody calls across a room. My own invented order had the bar
 number outside the volta brackets, which left it floating at the top of the
 gap.
+
+A bar that carries a rehearsal mark is not also numbered. The mark is the
+name that bar is called by, and a bar does not need two names — and where
+the mark *is* the bar's own number, which is what Finale's boxed rehearsal
+number is, the page read "5" beside a boxed "5".
 
 Dynamics and hairpins **share** a rank because in a printed score they sit on
 one line — `f ——— ff` lines up. gscore gives them the same rank so they do not
@@ -398,6 +420,41 @@ tells the editor the same thing.
 
 ---
 
+## 17. A line takes the bars that leave it least stretched
+
+A system is filled to the margin either way: whatever goes on it is scaled
+to reach the right-hand edge. So the question is not "what fits" but "what
+leaves the line closest to the width it has", and those are different
+questions. Taking bars while they fit and stopping — which is what this did
+— answers the first and produces lines three-quarters full pulled out by a
+third, with the bar that would have filled them sitting at the head of the
+next one.
+
+What decides it is the distance from the line's own width, counted the same
+way in both directions. The ratio will not do on its own: a line pulled out
+by a third is 1.33 and pressed in by a third is 0.75, and comparing those
+says the second is further off. Their logarithms are 0.285 and 0.288, which
+is the answer anybody looking at the page would give. So `lineBadness` is
+`|log(avail/width)|`, and `breakAt` takes the count that minimises it.
+
+A line may therefore be asked to hold more than it would at the width the
+music wanted — but only while every bar on it still clears its own minimum
+(see `box.minimum`). Past that the noteheads are closer together than they
+are wide, and the line stops being readable rather than becoming tighter.
+The minimum is a floor on the squeeze as well as on the count, so what a
+reader gets at the limit is a line a little over the margin, which they can
+see, rather than one they cannot read.
+
+Above the line sits the same question about the sheet. `pdf.tighten` picks
+the largest type that needs the fewest pages — and, where two sizes need the
+same number, the one that leaves less of a page standing empty *before the
+last one*. White at the foot of the last page is the tail of the document
+and every score has one; white in the middle is a hole, and a first page of
+two systems in front of two pages of three is a page the music was too big
+to fill.
+
+---
+
 ## What is still wrong
 
 - **Cross-staff collisions.** Each staff's outline covers only its own pass,
@@ -415,13 +472,17 @@ tells the editor the same thing.
   chords belongs to the pair, not to either one, and changes how they are
   beamed. The MuseScore reader reports one rather than turning it into a mark
   on one of the two.
-- **The ideal width and the minimum width are not negotiated.** `box.minimum`
-  is computed for every measure and read by nothing: the layout is driven by
-  `box.ideal` alone. That is why everything that needs room has to be added
-  to the ideal, and why rule 15 had to work out how much room was already
-  there rather than simply declaring a floor. Honouring a per-column floor
-  means a spring model — Ooloi's ADR-0037, LilyPond's `simple-spacer` — and
-  that is the piece of work the rest of its spacing design waits on.
+- **The ideal width and the minimum width are negotiated for the system, not
+  for the column.** `box.minimum` now decides two things — how many bars a
+  line may be asked to hold, and how far a system may be pressed in to hold
+  them (rule 17) — but it is one number for a whole measure. Inside the
+  measure the columns are scaled together, so a bar pressed to its floor
+  takes the squeeze evenly rather than giving it up where there is slack.
+  That is why everything that needs room is still added to the ideal, and
+  why rule 15 works out how much room was already there rather than
+  declaring a floor per column. Doing that properly means a spring model —
+  Ooloi's ADR-0037, LilyPond's `simple-spacer` — and that is the piece of
+  work the rest of its spacing design waits on.
 
 - **A displaced head always goes to the right.** With the stem up that is
   the convention; with the stem down the chord should extend to the *left* of

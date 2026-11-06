@@ -113,7 +113,7 @@ func matches(exts []string, ext string) bool {
 // gscore does read.
 var otherPrograms = map[string]string{
 	// Finale is not here: both of its formats are read, the .musx and the
-	// older binary .mus — see internal/format/musx.
+	// older binary .mus — see internal/format/enigma.
 	".sib":    "Sibelius",
 	".dorico": "Dorico",
 	".cap":    "capella",

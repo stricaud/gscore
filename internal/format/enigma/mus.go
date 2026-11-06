@@ -8,12 +8,12 @@
  * licence; see the LICENSE file at the root of this repository.
  */
 
-// This file and the two beside it — musrecords.go and musdoc.go — read
-// Finale's *older* format, the binary .mus that it wrote until 2012. It is a
-// different container from the .musx in container.go and shares not one byte
-// of framing with it: no zip, no XML, no stream cipher. What the two do share
-// is the document inside, which is why build() in enigma.go is where they
-// meet and the only place they do.
+// This file and the three beside it — muspool.go, musentries.go and
+// musdoc.go — read Finale's *older* format, the binary .mus that it wrote
+// until 2012. It is a different container from the .musx in container.go and
+// shares not one byte of framing with it: no zip, no XML, no stream cipher.
+// What the two do share is the document inside, which is why build() in
+// enigma.go is where they meet and the only place they do.
 //
 // Keeping them apart matters more than the code they save. A .mus is not a
 // .musx with a shorter name — it is two formats under one extension, since
@@ -29,7 +29,7 @@
 //	                   records are self-identifying and variable-length
 //
 // Both store the music itself identically, as a flat array of 38-byte entry
-// slots, which musrecords.go reads once for both.
+// slots, which musentries.go reads once for both.
 //
 // What this knows of the format is not Finale's doing: none of it was ever
 // published beyond one preliminary document from 1996, and the rest was
@@ -37,7 +37,7 @@
 // cited in docs/finale-mus.md. Finale was discontinued in 2024, so "open it
 // and save it as something else" stopped being advice anybody could take.
 
-package musx
+package enigma
 
 import (
 	"bytes"

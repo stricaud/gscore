@@ -8,7 +8,7 @@
  * licence; see the LICENSE file at the root of this repository.
  */
 
-package musx
+package enigma
 
 import (
 	"bytes"
@@ -84,6 +84,11 @@ var (
 		"FR": "frameSpec",
 		"IU": "instUsed",
 		"GF": "gfhold",
+		"TX": "textBlock",
+		"NG": "staffGroup",
+		"DT": "textExprDef",
+		"DY": "measExprAssign",
+		"De": "exprEnclosure",
 	}
 	musNumTags = map[int]string{
 		176:  "measSpec",
@@ -95,8 +100,11 @@ var (
 
 const (
 	// A row of the older pools, and how much of it is data.
-	musRow            = 16
-	musRowOthersData  = 4 // after cmper and tag
+	musRow           = 16
+	musRowOthersData = 4 // after cmper and tag
+	// What one row of the older `others` pool carries, which is also the
+	// size of one slot of a record written as an array of them.
+	musRowOthersSlot  = musRow - musRowOthersData
 	musRowDetailsData = 6 // after both cmpers and the tag
 	// Headers in the newer pools: tag, key or keys, and a length.
 	musRecOthersHead  = 10
@@ -126,7 +134,35 @@ const (
 	musStaffTrans  = 20
 	musStaffName   = 30
 	musStaffAbbrv  = 32
+	musGroupStart  = 0
+	musGroupEnd    = 2
+	musGroupShape  = 10
 	musHoldClefID  = 0
+
+	// An expression: what it is called, what it does to playback, and the
+	// words the library describes it by.
+	musExprPlay  = 11
+	musExprWords = 36
+	// Its enclosure, where it has one: the box drawn round a rehearsal
+	// mark. The top bit of the flags byte is a box that is not drawn.
+	musEnclFlags  = 10
+	musEnclHidden = 0x80
+	// One place an expression is written: which definition, and on which
+	// staff of the bar the record is keyed to.
+	musPlaceExpr  = 0
+	musPlaceStaff = 11
+
+	// The category a .mus reader invents for its rehearsal marks, these
+	// files having no categories of their own. Any number does; it is only
+	// ever compared with itself.
+	musRehearsalCategory = 1
+)
+
+// What an expression does when the score is played, which is the only thing
+// a .mus says about what kind of mark it is.
+const (
+	musPlayTempo     = 1
+	musPlayAmplitude = 2
 )
 
 // musBarlineStyles is the top half of a measure's flags byte.
@@ -135,19 +171,20 @@ const (
 // has counted, so it is left out rather than guessed at.
 var musBarlineStyles = map[int]string{1: "normal", 2: "double"}
 
-// musRepeatBits is the bottom half of the same byte: a repeat barline one way
-// or the other, and the start of a numbered ending.
+// The bottom half of the same byte: a repeat barline one way or the other,
+// and the start of a numbered ending.
 //
-// gscore has nowhere to put these yet — a measure read out of a .mus carries
-// its barline style and nothing else — so they are counted rather than read.
-// Counted, though, and not ignored: a piece whose repeats have gone is a
-// piece of a different length, which is the sort of thing somebody finds out
-// in a rehearsal.
-var musRepeatBits = map[string]int{
-	"an ending":             0x02,
-	"a repeat barline":      0x04,
-	"a forward repeat sign": 0x08,
-}
+// The two repeat signs are read. The ending is not: gscore draws a numbered
+// ending as a bracket over a run of bars, and the bit says only that one
+// begins here — not which times through it is played, nor where it stops,
+// and a first-time bar played every time is a piece of the wrong length.
+// So it is counted and named instead, because a piece whose repeats have
+// gone quiet is the sort of thing somebody finds out in a rehearsal.
+const (
+	musRepeatEnding  = 0x02
+	musRepeatBack    = 0x04
+	musRepeatForward = 0x08
+)
 
 // musDocument turns the pools into the document the score is built from.
 func musDocument(pools []musPool, order binary.ByteOrder, era musEra) (document, map[string]int, error) {
@@ -216,7 +253,30 @@ func musDocument(pools []musPool, order binary.ByteOrder, era musEra) (document,
 	doc.Others.Frames = musFrameSpecs(frames)
 	doc.Others.Used = musUsed(others, doc.Others.Staves, order, census)
 	doc.Details.Holds = holds
-	doc.Others.Blocks, doc.Texts.Blocks = musTexts(named[poolText])
+	doc.Details.Groups = musGroups(details, order)
+
+	// The marks written against a bar. Only the rehearsal marks are made
+	// sense of, so the one category this document needs is invented here
+	// rather than read: a file of this era has none to read.
+	defs, places, unknown := musRehearsals(others, order)
+	for i := range defs {
+		defs[i].Category = musRehearsalCategory
+	}
+	doc.Others.Exprs = defs
+	doc.Others.ExprPlaces = places
+	doc.Others.Categories = []markingsCategory{
+		{Cmper: musRehearsalCategory, Type: "rehearsalMarks"},
+	}
+	if unknown > 0 {
+		census["marks written against a bar, other than rehearsal marks"] = unknown
+	}
+	// The records that name the words come first, and the blocks pointing
+	// at themselves after them, because the lookup takes the first record
+	// of a number: a name a record speaks for is read through the record,
+	// and a name no record covers still finds its block.
+	selfs, texts := musTexts(named[poolText])
+	doc.Others.Blocks = append(musTextBlocks(others, order), selfs...)
+	doc.Texts.Blocks = texts
 
 	return doc, census, nil
 }
@@ -455,7 +515,8 @@ func musTiles(pool []byte, order binary.ByteOrder, head int) bool {
 // musTagKey keeps records of different types from colliding on one key.
 func musTagKey(what string) int {
 	for i, name := range []string{
-		"measSpec", "staffSpec", "frameSpec", "instUsed", "gfhold",
+		"measSpec", "staffSpec", "frameSpec", "instUsed", "gfhold", "textBlock",
+		"staffGroup", "textExprDef", "measExprAssign", "exprEnclosure",
 	} {
 		if name == what {
 			return i + 1
@@ -535,31 +596,45 @@ func musBars(others map[[3]int]*musRecord, order binary.ByteOrder,
 			if style, ok := musBarlineStyles[flags>>4]; ok {
 				bar.Barline = style
 			}
-			for _, bit := range musRepeatBits {
-				if flags&bit != 0 {
-					repeats++
-				}
+			bar.RepeatForward = flags&musRepeatForward != 0
+			bar.RepeatBack = flags&musRepeatBack != 0
+			if flags&musRepeatEnding != 0 {
+				repeats++
 			}
 		}
 		out = append(out, bar)
 	}
 	if repeats > 0 {
-		census["repeats and their endings"] = repeats
+		census["first and second endings, where a repeat is played differently"] = repeats
 	}
 	return out
 }
 
 // musStaves reads the staves.
 //
-// Only the transposition, and only the part of it that says how the key
-// signature changes — which, for the notes a player reads, is all of it.
+// Of the transposition a .mus holds only the part that says how the key
+// signature changes — so many sharps added — and not the interval the staff
+// is written at. The interval within the octave does not have to be stored,
+// because that number is the same answer said twice: a staff whose key gains
+// three sharps is written three fifths up, which is a sixth, and a sixth is
+// five steps and nine semitones however it is written down. So the steps are
+// worked out here from the sharps, and the two halves of the interval agree
+// by construction.
 //
-// What a .mus does not hold is how many octaves the transposition spans:
-// Finale folds the interval into a residue within an octave and keeps the
-// octaves in the instrument definition, not in the file, so two staves a
-// unison and an octave apart store the same bytes. The octave is not hidden
-// here, it is absent, and no reader can recover it. A .musx has it because
-// Finale wrote it out when it saved one.
+// They did not before, and that is worth saying because of what it looked
+// like. The steps were left at nothing while the semitones were read, so
+// every note of a transposing staff was written where it sounds and then
+// given nine semitones of accidental to make up the difference: a page of
+// double sharps, on notes two octaves from where a saxophone plays. The
+// music was not wrong — it was a sixth, spelled as a unison and a monstrous
+// accidental, which is the same sound and no part anybody could read.
+//
+// What is genuinely absent is how many octaves the interval spans: Finale
+// folds it into a residue within an octave and keeps the octaves in the
+// instrument definition, which is not in the file, so a tenor saxophone and
+// a soprano store the same bytes. That is recovered from the staff's name
+// where the name is one gscore knows — see withOctavesOf — and a .musx has
+// it outright, because Finale wrote it out when it saved one.
 func musStaves(others map[[3]int]*musRecord, order binary.ByteOrder) []staffSpec {
 	var out []staffSpec
 	for _, r := range musSorted(others, "staffSpec") {
@@ -572,6 +647,11 @@ func musStaves(others map[[3]int]*musRecord, order binary.ByteOrder) []staffSpec
 				adjust = -adjust
 			}
 			s.Transposition.Adjust = adjust
+			// Four steps to the fifth, folded into the octave. The octave
+			// itself is not in the file, so the staff is marked as having
+			// lost it rather than being given one that was guessed.
+			s.Transposition.Interval = mod(adjust*4, 7)
+			s.OctaveLost = adjust != 0
 		}
 		if len(p) >= musStaffName+2 {
 			s.FullName = int(order.Uint16(p[musStaffName:]))
@@ -785,16 +865,199 @@ func musUsed(others map[[3]int]*musRecord, staves []staffSpec,
 // musTextBlock matches one block of Finale's tagged text.
 var musTextBlock = regexp.MustCompile(`(?s)\^block\((\d+)\)(.*?)\^end`)
 
+// musRehearsals reads the marks a conductor calls a bar by.
+//
+// Finale says an expression in two records: a definition — what the mark is
+// and what it does when the score is played — and an assignment, one place
+// it is written. What a .mus does not say is what *kind* of mark it is.
+// Categories came to Finale long after these files were written, so there is
+// no record to ask and no field in the definition that names one: before
+// categories, an expression was a line in one flat list.
+//
+// So the kind has to be worked out from what the definition carries, and
+// only one kind can be worked out with any confidence:
+//
+//   - a definition that sets the speed or the loudness says so, in a byte
+//     that says what it does to playback. Those are the tempo marks and the
+//     dynamics, and neither is read here — a dynamic belongs to the note it
+//     stands over and this reader has no way to find that note, and a tempo
+//     mark needs the beat it counts in, which is somewhere this has not
+//     found.
+//   - of what is left, a mark written against a bar and drawn inside a box
+//     is a rehearsal mark. That is what the box is for: it is the one
+//     marking on a page that has to be found from across a hall.
+//
+// A boxed direction written on a bar would be read as a rehearsal mark too.
+// That is the cost of having no categories, and it is the right way round:
+// the mark lands on the bar it was written on either way, and a conductor
+// who calls a bar by the wrong name is better off than one with no name
+// for it at all.
+func musRehearsals(others map[[3]int]*musRecord, order binary.ByteOrder) (
+	[]textExprDef, []measExprAssign, int) {
+
+	// Which definitions are drawn in a box. An enclosure record exists for
+	// marks that are not boxed as well, with the top bit of its flags set
+	// to say the box is there and not drawn.
+	boxed := map[int]bool{}
+	for _, r := range musSorted(others, "exprEnclosure") {
+		p := r.all()
+		if len(p) > musEnclFlags && p[musEnclFlags]&musEnclHidden == 0 {
+			boxed[r.num] = true
+		}
+	}
+
+	defs := map[int]textExprDef{}
+	for _, r := range musSorted(others, "textExprDef") {
+		p := r.all()
+		if len(p) <= musExprPlay {
+			continue
+		}
+		switch p[musExprPlay] {
+		case musPlayTempo, musPlayAmplitude:
+			continue
+		}
+		if !boxed[r.num] {
+			continue
+		}
+		words := musExprDesc(p)
+		defs[r.num] = textExprDef{
+			Cmper: r.num, Words: words, Numbered: words == "",
+		}
+	}
+
+	var places []measExprAssign
+	var used []textExprDef
+	seen, other := map[int]bool{}, 0
+	for _, r := range musSorted(others, "measExprAssign") {
+		p := r.all()
+		for at := 0; at+musRowOthersSlot <= len(p); at += musRowOthersSlot {
+			slot := p[at : at+musRowOthersSlot]
+			id := int(order.Uint16(slot[musPlaceExpr:]))
+			def, ok := defs[id]
+			if !ok {
+				other++
+				continue
+			}
+			places = append(places, measExprAssign{
+				Meas:  r.num,
+				Expr:  id,
+				Staff: int(slot[musPlaceStaff]),
+				Inci:  len(places),
+			})
+			if !seen[id] {
+				seen[id] = true
+				used = append(used, def)
+			}
+		}
+	}
+	return used, places, other
+}
+
+// musExprDesc is how the library describes a definition, which is the words
+// it prints only when it has fixed words to print.
+//
+// A rehearsal mark Finale numbers or letters by itself has none — the mark
+// is worked out when the page is drawn — and what is stored in their place
+// is a phrase describing the mark: "Boxed Rehearsal Number". A mark is a
+// token and a description is a sentence, so a space tells them apart, and
+// the marks that have none are named after the bar they stand on, which is
+// what Finale prints for the numbered ones.
+func musExprDesc(p []byte) string {
+	if len(p) <= musExprWords {
+		return ""
+	}
+	raw := p[musExprWords:]
+	if i := bytes.IndexByte(raw, 0); i >= 0 {
+		raw = raw[:i]
+	}
+	words := strings.TrimSpace(string(raw))
+	if strings.ContainsAny(words, " \t") {
+		return ""
+	}
+	return words
+}
+
+// musGroups reads the brackets and braces down the left of a system.
+//
+// A group is two staff numbers and a shape, and the shape is the whole of
+// what it says on the page: a brace for the two hands of one player, a
+// bracket for a family of them, a plain line for staves that merely belong
+// near each other. Without it a saxophone quartet comes out as four
+// unconnected staves — which is four soloists who happen to share a page,
+// and not what the score says.
+//
+// One field of the record is deliberately not read. The catalogued layout
+// puts a flag at +21 saying whether the barlines run down through the gaps
+// between the staves, and on the quartet this was read against that byte is
+// zero while the printed page runs them through plainly — so the offset is
+// not the flag, or not only the flag, and reading it would draw a quartet
+// wrong on the strength of a number that has already been seen to be wrong.
+// The shape decides instead: a bracket or a brace is what joins players into
+// one thing, and a line is what stops short of saying so. That is Finale's
+// own default for a new group, and the case it does not cover is a group
+// whose barlines have been turned off by hand.
+func musGroups(details map[[3]int]*musRecord, order binary.ByteOrder) []staffGroup {
+	var out []staffGroup
+	for _, r := range musSorted(details, "staffGroup") {
+		p := r.all()
+		if len(p) < musGroupShape+2 {
+			continue
+		}
+		g := staffGroup{
+			StartInst: int(order.Uint16(p[musGroupStart:])),
+			EndInst:   int(order.Uint16(p[musGroupEnd:])),
+		}
+		g.Bracket.ID = int(order.Uint16(p[musGroupShape:]))
+		if g.Bracket.ID != 0 {
+			// Finale's own word for barlines drawn through the gap.
+			g.BarlineStyle = "group"
+		}
+		out = append(out, g)
+	}
+	return out
+}
+
+// musTextBlocks reads the records that say which words a name stands for.
+//
+// A staff does not name its words directly. It names a text-block record,
+// and that record names the block of words — and the two numbers are not the
+// same one: in the quartet this was found on, the staves ask for blocks 50
+// to 57 and the words are in blocks 18 to 25. Reading the first number as if
+// it were the second looks for words that are not there, which is a staff
+// with no name, which is a staff played as a piano. Four saxophones came
+// through as four pianos that way, and nothing said so, because a nameless
+// staff is not an error.
+//
+// The record is written over three rows and only the first holds the number.
+// The rest is which font the words are set in, which gscore does not keep.
+func musTextBlocks(others map[[3]int]*musRecord, order binary.ByteOrder) []textBlock {
+	var out []textBlock
+	for _, r := range musSorted(others, "textBlock") {
+		p := r.all()
+		if len(p) < 2 {
+			continue
+		}
+		id := int(order.Uint16(p))
+		if id == 0 {
+			continue
+		}
+		// A .mus keeps one pool of words, so there is no second pool for a
+		// block to be in and nothing to choose between.
+		out = append(out, textBlock{Cmper: r.num, TextID: id, Tag: "block"})
+	}
+	return out
+}
+
 // musTexts reads the words out of the text pool.
 //
 // The pool is Finale's own markup and is the same in both eras and in a
 // .musx: a run of blocks, each numbered, with the font and the size written
 // inline and the words among them.
 //
-// A .mus names a staff by the number of its block directly, where a .musx
-// goes through a record that says which of two pools of words to look in. So
-// a block is given here as both, pointing at itself, and the lookup that
-// already exists reads it unchanged.
+// Each block is given here as a record pointing at itself as well as as the
+// words, which is what a name is read by where no text-block record speaks
+// for it — in a newer .mus, whose record types this does not yet know by
+// number, that is every name. Where musTextBlocks finds one, it wins.
 func musTexts(pool []byte) ([]textBlock, []blockText) {
 	var blocks []textBlock
 	var texts []blockText

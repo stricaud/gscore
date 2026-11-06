@@ -278,3 +278,60 @@ func TestTheStampStaysInTheMargin(t *testing.T) {
 		t.Errorf("a narrow margin gave a %d byte document", buf.Len())
 	}
 }
+
+// A page that is not the last one and is not full is a hole in the middle of
+// the document rather than the tail of it, and the type is set smaller to
+// close it.
+//
+// Choosing the size by the sheet count alone cannot see this: the largest
+// size needing three sheets put nine bars of a saxophone quartet on the
+// first and fourteen on each of the others, which is three sheets either
+// way and a first page a third white.
+func TestAPageLeftEmptyBeforeTheLastIsClosedUp(t *testing.T) {
+	s := ensemble(4, 30)
+	eo := paginated(4)
+	o := DefaultOptions()
+
+	fitted, feo := Fit(s, o, eo)
+	pages, hole := fillAt(s, fitted, feo)
+	if pages < 2 {
+		t.Fatalf("the fixture came to %d pages, want several", pages)
+	}
+	// Averaged over the pages before the last: a tenth of a page standing
+	// empty is the slack the rule allows itself.
+	if worst := hole / float64(pages-1); worst > 0.15 {
+		t.Errorf("the pages before the last are %.0f%% empty on average, "+
+			"want them filled", 100*worst)
+	}
+}
+
+// But not at the cost of a sheet, and never past the size a part is printed
+// at: the hole is a tie-break between sizes that need the same number of
+// sheets, not a reason to shrink.
+func TestClosingThatGapNeverCostsASheetOrGoesBelowAPart(t *testing.T) {
+	s := ensemble(4, 44)
+	eo := paginated(4)
+	o := DefaultOptions()
+
+	fitted, feo := Fit(s, o, eo)
+	if fitted.StaffSpace < PartStaffSpace {
+		t.Errorf("the music is set at %.2f, smaller than a part at %.2f",
+			fitted.StaffSpace, PartStaffSpace)
+	}
+	if fitted.StaffSpace > o.StaffSpace {
+		t.Errorf("the music is set at %.2f, larger than the %.2f asked for",
+			fitted.StaffSpace, o.StaffSpace)
+	}
+	pages, _ := fillAt(s, fitted, feo)
+	best := pages
+	for size := o.StaffSpace; size >= PartStaffSpace; size -= tightenStep {
+		try := o
+		try.StaffSpace = size
+		if n := pagesAt(s, try, eo); n < best {
+			best = n
+		}
+	}
+	if pages > best {
+		t.Errorf("the score comes to %d sheets where %d was available", pages, best)
+	}
+}

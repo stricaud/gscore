@@ -8,7 +8,7 @@
  * licence; see the LICENSE file at the root of this repository.
  */
 
-package musx
+package enigma
 
 import (
 	"testing"

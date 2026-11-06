@@ -83,7 +83,7 @@ PKWARE DCL decompression
         Mark Adler    madler@alumni.caltech.edu
 
 The .mus format itself
-    internal/format/musx/mus*.go. Finale's older format was never published
+    internal/format/enigma/mus*.go. Finale's older format was never published
     beyond one preliminary note from 1996, and what gscore knows of it was
     worked out from files by the finale-file-parser project, which is MIT
     licensed. No code was copied from it: what was taken is facts about a

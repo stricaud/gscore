@@ -93,7 +93,10 @@ func TestEveryBuildReadsTheSameFiles(t *testing.T) {
 func TestTheBuildsRegisterTheFormatsThatMatter(t *testing.T) {
 	for name, path := range theBuilds {
 		have := strings.Join(formatImports(t, path), " ")
-		for _, want := range []string{"abc", "gscore", "musicxml", "musx", "nwc"} {
+		// "enigma" is the Finale reader: the package is named for the
+		// document model all three of its containers share, not for any one
+		// of the extensions it opens.
+		for _, want := range []string{"abc", "gscore", "musicxml", "enigma", "nwc"} {
 			if !strings.Contains(have, want) {
 				t.Errorf("%s does not register %s (it has %s)", name, want, have)
 			}

@@ -75,7 +75,7 @@ func TestTheInstrumentWrittenOverTheStaff(t *testing.T) {
 // confident wrong answer is worse than none: a reader that knows which kind
 // of score it has can decide, and the MusicXML reader falls back to the MIDI
 // program. The Finale reader does answer it, because its scores are
-// instrumental — see musx.instrumentNamed.
+// instrumental — see enigma.instrumentNamed.
 func TestAnAmbiguousNameIsLeftAlone(t *testing.T) {
 	for _, name := range []string{"Alto", "Tenore", "Basso", "", "Stimme 1"} {
 		if got, ok := InstrumentNamed(name); ok {

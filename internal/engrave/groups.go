@@ -430,8 +430,13 @@ func (e *engraver) drawGroups(parts []*model.Part, left float64, tops []float64,
 
 // drawGroupBarlines runs the barline down through the gap between the staves
 // of a group, so that a pianist's two hands are one instrument on the page.
-func (e *engraver) drawGroupBarlines(parts []*model.Part, x float64, tops []float64, full bool) {
+func (e *engraver) drawGroupBarlines(parts []*model.Part, x float64,
+	tops []float64, style model.BarlineStyle, full bool) {
+
 	d := e.opt.Defaults
+	// The same marks the staves drew, in the same places, so that a sign
+	// made of two lines is two lines all the way down the system.
+	strokes := barlineStrokes(d, style)
 	for _, g := range e.score.Groups {
 		if !g.Barlines {
 			continue
@@ -458,10 +463,12 @@ func (e *engraver) drawGroupBarlines(parts []*model.Part, x float64, tops []floa
 		// Between bars each staff has drawn its own barline through itself,
 		// so only the gaps are left to fill.
 		for i := fi; i < li; i++ {
-			e.lay.Lines = append(e.lay.Lines, Line{
-				X1: x, Y1: tops[i] + partH(parts[i]), X2: x, Y2: tops[i+1],
-				Thickness: d.ThinBarlineThickness,
-			})
+			for _, s := range strokes {
+				e.lay.Lines = append(e.lay.Lines, Line{
+					X1: x + s.dx, Y1: tops[i] + partH(parts[i]),
+					X2: x + s.dx, Y2: tops[i+1], Thickness: s.thick,
+				})
+			}
 		}
 	}
 }
@@ -743,6 +750,15 @@ func (e *engraver) numberedAt(mi, start int) (int, bool) {
 	// of the next bar's. The run keeps the number of the bar it begins
 	// at, which is the one a player counts from.
 	if e.multiHidden[mi] {
+		return 0, false
+	}
+	// Nor is a bar that carries a rehearsal mark. The mark is the name a
+	// conductor calls that bar by, and a bar does not need two names: a
+	// boxed letter beside a bare numeral is two addresses over one bar, and
+	// where the mark is the bar's own number — which is what Finale's boxed
+	// rehearsal number is — the page reads "5" next to a boxed "5", the same
+	// thing said twice and looking like a mistake.
+	if e.score != nil && e.markerText(mi) != "" {
 		return 0, false
 	}
 	n := e.barNumber(mi)

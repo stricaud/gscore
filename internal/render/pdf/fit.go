@@ -121,21 +121,33 @@ const tightenStep = 0.3
 // does — the largest type that needs the fewest pages, rather than the
 // largest type that fits at all.
 //
-// Only downwards, only as far as a printed part, and only for whole pages
-// saved: the point is the sheet count, so a size that merely leaves less
-// white at the bottom of the last page buys nothing and costs legibility.
+// Only downwards and only as far as a printed part. White at the foot of
+// the last page is not a reason to shrink: the tail of a document is where
+// the music runs out, every score has one, and buying it back costs
+// legibility for nothing.
+//
+// White on a page that is *not* the last one is a different thing. It is not
+// the tail, it is a hole: a first page of two systems in front of two pages
+// of three is a page the music was too big to fill, and a reader turning
+// past it sees the waste. So the sheet count decides first, and where two
+// sizes need the same number of sheets, the one that leaves less standing
+// empty before the last page wins. That is how a first page of nine bars
+// came to sit in front of two pages of fourteen.
 func tighten(sc *model.Score, o Options, eo engrave.Options) Options {
 	best := o
-	fewest := pagesAt(sc, o, eo)
+	fewest, hole := fillAt(sc, o, eo)
 	if fewest <= 1 {
-		return o // one sheet is as few as there are
+		return o // one sheet is as few as there are, and it is also the last
 	}
 	for size := o.StaffSpace - tightenStep; size >= PartStaffSpace; size -= tightenStep {
 		try := o
 		try.StaffSpace = size
-		n := pagesAt(sc, try, eo)
-		if n < fewest {
-			fewest, best = n, try
+		n, h := fillAt(sc, try, eo)
+		switch {
+		case n < fewest:
+			fewest, hole, best = n, h, try
+		case n == fewest && h < hole-holeSlack:
+			hole, best = h, try
 		}
 		if fewest <= 1 {
 			break
@@ -144,16 +156,43 @@ func tighten(sc *model.Score, o Options, eo engrave.Options) Options {
 	return best
 }
 
-// pagesAt is how many sheets the score comes to at a type size.
-func pagesAt(sc *model.Score, o Options, eo engrave.Options) int {
+// holeSlack is how much better the filling has to be before the type is set
+// smaller for it, as a fraction of one page.
+//
+// A tenth of a sheet. Smaller than that and the reader would not see the
+// difference, which makes it not worth the legibility: the rule is for the
+// page left a third empty, not for the page left a hair short.
+const holeSlack = 0.1
+
+// fillAt is how many sheets the score comes to at a type size, and how much
+// of a page is left standing empty before the last one — in pages, so that
+// the two sizes being compared are measured against their own sheets.
+func fillAt(sc *model.Score, o Options, eo engrave.Options) (int, float64) {
 	eo.LineWidth = o.LineWidth(eo.Spacings)
 	lay := engrave.Engrave(sc, eo)
 	if lay == nil {
-		return 0
+		return 0, 0
 	}
 	// The same cut the renderer makes, so that this counts the pages that
 	// will actually be printed and not an idea of them.
-	return len((&renderer{lay: lay, opt: o}).pages())
+	r := &renderer{lay: lay, opt: o}
+	bands := r.pages()
+	usable := (o.PageHeight - o.MarginTop - o.MarginBottom) / o.StaffSpace
+	hole := 0.0
+	if usable > 0 {
+		for _, b := range bands[:max(0, len(bands)-1)] {
+			if left := usable - (b.bottom - b.top); left > 0 {
+				hole += left / usable
+			}
+		}
+	}
+	return len(bands), hole
+}
+
+// pagesAt is how many sheets the score comes to at a type size.
+func pagesAt(sc *model.Score, o Options, eo engrave.Options) int {
+	n, _ := fillAt(sc, o, eo)
+	return n
 }
 
 // tallestSystem is the height of the system that needs the most room, in

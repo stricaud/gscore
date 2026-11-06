@@ -8,7 +8,46 @@
  * licence; see the LICENSE file at the root of this repository.
  */
 
-package musx
+// Package enigma reads Finale's scores.
+//
+// Enigma is Finale's own document model, and the package is named after it
+// rather than after any of the files it opens because that is the thing they
+// have in common: one document model arrives in three different wrappers, and
+// the wrapper is all that differs.
+//
+//	.musx          2014 onward. A zip, a fixed stream cipher over the
+//	               music, and the document inside written out as XML.
+//	               container.go and musx.go.
+//	.mus           until 2005. Four PKWARE DCL streams whose records are
+//	               16-byte rows carrying ETF's two-character tags.
+//	.mus           2011 and 2012. A chain of zlib streams whose records
+//	               are variable-length and carry their own tag and length.
+//	               Both eras are in mus.go, muspool.go, musentries.go and
+//	               musdoc.go.
+//
+// Each wrapper's job is to produce a document. build(), below, turns a
+// document into a score and is the one place all three meet — which is the
+// only reason reading the two older containers is a few hundred lines each
+// rather than a second program.
+//
+// Everywhere else they are kept apart on purpose: separate importers,
+// separate errors, separate reports. A .mus is not a .musx with a shorter
+// name, and a message about one must never be a message about the other.
+//
+// Finale was discontinued in 2024 and its files did not go anywhere: people
+// have decades of them, and the program that opened them is no longer sold.
+// Neither format is anybody's secret now. The .musx is documented
+// unofficially by Project Attacca; what is known of the .mus, and how it was
+// found out, is in docs/finale-mus.md.
+//
+// What is read is the music: the staves of the score in score order, their
+// bars, meters, keys, clefs and barlines, and in each bar the notes, chords
+// and rests with their pitches and lengths. What is not read is everything
+// Finale writes around the music, and every one of those is named in the log
+// the editor shows rather than dropped in silence — a score that opens
+// missing its slurs should say so. A .mus loses more than a .musx does, and
+// says so in its own words.
+package enigma
 
 import (
 	"bytes"
@@ -16,6 +55,7 @@ import (
 	"fmt"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/stricaud/gscore/internal/model"
@@ -259,6 +299,15 @@ type textExprDef struct {
 	// (no playback effect)" — which is written for whoever is choosing one
 	// out of a list and never appears on a page.
 	Block int `xml:"textIDKey"`
+	// Words is the mark itself, where the file gives it outright rather
+	// than through a block. Only a .mus does, its definitions carrying
+	// their own words; an empty one there means a mark Finale writes out
+	// itself when it draws the page.
+	Words string `xml:"-"`
+	// Numbered says the mark Finale writes out for itself is the number of
+	// the bar it stands on, which is a thing a reader can work out, rather
+	// than a letter in a sequence, which is not.
+	Numbered bool `xml:"-"`
 	// Beat is the note the speed is counted in, in Finale's own divisions:
 	// 1024 of them to a quarter. Only a mark that sets the speed has one.
 	Beat int `xml:"auxdata1"`
@@ -325,6 +374,12 @@ type staffSpec struct {
 		// An empty element: there to be there, with nothing in it.
 		SetToClef *struct{} `xml:"setToClef"`
 	} `xml:"transposition"`
+
+	// OctaveLost says the interval above was worked out from the key
+	// signature rather than read from the file, so it is right within the
+	// octave and says nothing about how many octaves there are. Only a .mus
+	// sets it; a .musx stores the whole interval and has nothing to recover.
+	OctaveLost bool `xml:"-"`
 }
 
 type measSpec struct {
@@ -342,6 +397,13 @@ type measSpec struct {
 	// it is a measurement. Zero is Major, which is both the right default
 	// and what the XML path has always assumed.
 	Mode int `xml:"-"`
+
+	// RepeatForward opens a repeated section at this bar's left-hand edge
+	// and RepeatBack closes one at its right. Only a .mus fills these; a
+	// .musx says its repeats in records of their own, which this reader
+	// does not yet read.
+	RepeatForward bool `xml:"-"`
+	RepeatBack    bool `xml:"-"`
 }
 
 type frameSpec struct {
@@ -596,21 +658,26 @@ func build(doc document, meta metadata, census map[string]int) (*model.Score, []
 
 	for _, staffID := range staves {
 		spec := specs[staffID]
-		rd.transpose = transpositionOf(spec)
 		rd.percussion = spec.Notation == "percussion"
+		// The name is also the best guess at what the staff is: Finale
+		// identifies its instruments by a code of its own, and the word
+		// over the staff is what a reader has to go on anyway.
+		name := rd.text(spec.FullName)
+		inst, known := instrumentNamed(name)
+		if !known {
+			inst = model.AcousticGrandPiano
+		}
+		rd.transpose = transpositionOf(spec)
+		if spec.OctaveLost && known {
+			rd.transpose = withOctavesOf(rd.transpose, model.TranspositionFor(inst))
+		}
 		part := &model.Part{
-			Name:       rd.text(spec.FullName),
-			Instrument: model.AcousticGrandPiano,
+			Name:       name,
+			Instrument: inst,
 			Clef:       model.Treble,
 			Key:        writtenKey(keyOf(bars[0], rd), spec),
 			Time:       meterOf(bars[0], rd),
 			Transpose:  rd.transpose,
-		}
-		// The name is also the best guess at what the staff is: Finale
-		// identifies its instruments by a code of its own, and the word
-		// over the staff is what a reader has to go on anyway.
-		if inst, ok := instrumentNamed(part.Name); ok {
-			part.Instrument = inst
 		}
 		if spec.StaffLines != 0 && spec.StaffLines != 5 {
 			rd.skip("staves ruled with something other than five lines")
@@ -624,10 +691,10 @@ func build(doc document, meta metadata, census map[string]int) (*model.Score, []
 		}
 		part.Clef = writtenClef(spec, first, rd)
 
-		for _, bar := range bars {
+		for at, bar := range bars {
 			m := &model.Measure{
 				Voices:       []*model.Voice{{}},
-				RightBarline: barlineOf(bar.Barline, rd),
+				RightBarline: barlineBetween(bars, at, rd),
 			}
 			rd.atStaff, rd.atBar = staffID, bar.Cmper
 			if h, ok := holds[[2]int{staffID, bar.Cmper}]; ok {
@@ -1116,6 +1183,47 @@ func barlineOf(style string, r *reader) model.BarlineStyle {
 	return model.BarSingle
 }
 
+// barlineBetween is the one mark drawn between a bar and the next.
+//
+// A score shows a single sign there and gscore stores a single style, on the
+// bar it stands after. Finale says it from both sides: the bar that closes a
+// repeated section carries the backward sign, and the bar that opens the
+// next one carries the forward sign on its own left-hand edge. So a forward
+// sign is read off the bar after the one it is stored on, and a section that
+// ends where another begins — dots, heavy line, dots — comes out as the one
+// mark it is printed as.
+func barlineBetween(bars []measSpec, at int, r *reader) model.BarlineStyle {
+	closing := barlineOf(bars[at].Barline, r)
+	end := bars[at].RepeatBack
+	start := at+1 < len(bars) && bars[at+1].RepeatForward
+	// Finale does not store the sign at the end of a piece. The style it
+	// keeps for the last bar is the ordinary one — a final barline would be
+	// the third style and that style does not occur once in the files
+	// anybody has counted — so the thin-thick line at the end is drawn
+	// because the music has stopped, and that is why it is drawn here. A
+	// last bar that says something else of its own keeps it: a piece can
+	// end on a repeat, and one that ends on a double bar meant the double
+	// bar.
+	if at == len(bars)-1 && closing == model.BarSingle && !end {
+		return model.BarFinal
+	}
+	switch {
+	case start && end:
+		return model.BarRepeatBoth
+	case end:
+		return model.BarRepeatEnd
+	case start:
+		// A repeat opening straight after a double or a final bar is not
+		// something one mark can say, and the bar already written is the
+		// more important of the two — the same choice the MusicXML reader
+		// makes where a file says both.
+		if closing == model.BarSingle || closing == model.BarNone {
+			return model.BarRepeatStart
+		}
+	}
+	return closing
+}
+
 func floorDiv(a, b int) int {
 	q := a / b
 	if a%b != 0 && (a < 0) != (b < 0) {
@@ -1201,6 +1309,29 @@ func transpositionOf(s staffSpec) model.Transposition {
 		Chromatic:    -mod(adjust*7, 12),
 		OctaveChange: -floorDiv(interval, 7),
 	}
+}
+
+// withOctavesOf puts back the octaves a .mus leaves out.
+//
+// What the file gives is the interval folded into one octave, which is the
+// right note and can be the wrong one by an octave or two: a tenor
+// saxophone and a soprano are both written a second above where they sound,
+// and the tenor is an octave lower again. Where the staff carries a name
+// gscore knows, the instrument says which — a tenor saxophone is a tenor
+// saxophone wherever it is written down — and that is a better answer than
+// leaving every large instrument in the register of a small one.
+//
+// It is only taken when the two agree on the interval within the octave, so
+// the name is trusted to settle a question the file does not answer and
+// never to overrule one it does. A staff named for one instrument and
+// transposed like another keeps what the file says, because at that point
+// the name is the thing that is wrong.
+func withOctavesOf(read, usual model.Transposition) model.Transposition {
+	if usual.Diatonic != read.Diatonic || usual.Chromatic != read.Chromatic {
+		return read
+	}
+	read.OctaveChange = usual.OctaveChange
+	return read
 }
 
 // barDuration is how much time a bar holds, for the rest that fills an empty
@@ -1427,14 +1558,17 @@ func (r *reader) expressions(score *model.Score) {
 			r.skip("expressions whose definition is missing from the file")
 			continue
 		}
-		words := r.text(def.Block)
+		words := def.Words
+		if words == "" {
+			words = r.text(def.Block)
+		}
 		switch cats[def.Category] {
 		case "dynamics":
 			r.dynamicMark(a, def, words)
 		case "tempoMarks", "tempoAlts":
 			r.tempoMark(score, a, def, words)
 		case "rehearsalMarks":
-			r.rehearsalMark(score, a, words)
+			r.rehearsalMark(score, a, def, words)
 		default:
 			// Expressive text, technique text, and whatever a document has
 			// made its own categories for: all of them are words written
@@ -1507,7 +1641,17 @@ func (r *reader) tempoMark(score *model.Score, a measExprAssign, def textExprDef
 }
 
 // rehearsalMark names a bar with the letter a conductor calls it by.
-func (r *reader) rehearsalMark(score *model.Score, a measExprAssign, words string) {
+func (r *reader) rehearsalMark(score *model.Score, a measExprAssign,
+	def textExprDef, words string) {
+
+	m := r.measureFor(score, a.Staff, a.Meas)
+	if words == "" && def.Numbered && m != nil {
+		// A mark Finale numbers rather than letters: what it prints is the
+		// bar, and the bar is a thing this knows. Which is the difference
+		// between the two kinds — a letter depends on how many marks came
+		// before it and has to be refused, a number does not.
+		words = strconv.Itoa(r.barAt[a.Meas] + 1)
+	}
 	if words == "" {
 		// Finale can letter a score as it goes, in which case the mark
 		// carries a style and no letter and the letters are whatever the
@@ -1517,7 +1661,6 @@ func (r *reader) rehearsalMark(score *model.Score, a measExprAssign, words strin
 		r.skipWhat("rehearsal marks Finale letters by itself", atBar(a.Meas))
 		return
 	}
-	m := r.measureFor(score, a.Staff, a.Meas)
 	if m == nil {
 		r.skipWhat("rehearsal marks on a bar this reader did not build",
 			detailOf(words, a.Meas))

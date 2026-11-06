@@ -249,3 +249,94 @@ func TestTheListSaysHowEachOneIsWritten(t *testing.T) {
 		}
 	}
 }
+
+// A staff that was never called anything takes the name of what it is told
+// it plays.
+//
+// A score read out of a PDF arrives as a stack of nameless staves — eight
+// of them, all drawn as "Staff" — and the one thing somebody does to it is
+// say what each one is. Having then to type the name as well would be
+// saying it twice, and a page of staves all labelled "Staff" is a page
+// nobody can read against the original.
+func TestANamelessStaffTakesItsInstrumentsName(t *testing.T) {
+	h := newHarness(t)
+	h.app.score.Parts[0].Name = ""
+	h.post("/api/staff?part=0&sound=wind.flutes.flute")
+	if got := h.app.score.Parts[0].Name; got != "Flute" {
+		t.Errorf("the staff is called %q after being made a flute", got)
+	}
+}
+
+// And a staff somebody has named keeps its name. A name quietly replaced is
+// a name lost, and "Solo" is not a thing the catalogue could have supplied.
+func TestANamedStaffKeepsItsName(t *testing.T) {
+	h := newHarness(t)
+	h.app.score.Parts[0].Name = "Solo"
+	h.post("/api/staff?part=0&sound=wind.flutes.flute")
+	if got := h.app.score.Parts[0].Name; got != "Solo" {
+		t.Errorf("a staff called Solo came back called %q", got)
+	}
+}
+
+// Which instruments are written on two staves has to reach the editor, or
+// it cannot tell a piano's pair of staves from two cellos standing next to
+// each other — and it must not keep a second list of them, which would be a
+// second thing to be wrong.
+func TestTheCatalogueSaysWhichInstrumentsTakeTwoStaves(t *testing.T) {
+	h := newHarness(t)
+	var out struct {
+		Instruments []struct {
+			Sound string `json:"sound"`
+			Grand bool   `json:"grand"`
+		} `json:"instruments"`
+	}
+	if err := json.Unmarshal([]byte(h.get("/api/instruments")), &out); err != nil {
+		t.Fatalf("the catalogue is not JSON: %v", err)
+	}
+	want := map[string]bool{
+		"keyboard.piano":    true,
+		"pluck.harp":        true,
+		"wind.flutes.flute": false,
+		"strings.cello":     false,
+	}
+	seen := 0
+	for _, i := range out.Instruments {
+		if w, ok := want[i.Sound]; ok {
+			seen++
+			if i.Grand != w {
+				t.Errorf("%s is reported grand=%v", i.Sound, i.Grand)
+			}
+		}
+	}
+	if seen != len(want) {
+		t.Errorf("found %d of the %d instruments looked for", seen, len(want))
+	}
+}
+
+// The braces have to reach the editor too. Nothing about two staves says
+// they are one player; the brace does, and until now it stopped at the
+// engraver.
+func TestTheBracesReachTheEditor(t *testing.T) {
+	h := newHarness(t)
+	h.post("/api/addstaff?sound=keyboard.piano")
+	h.post("/api/group?first=0&last=1&symbol=brace&barlines=1")
+
+	var out struct {
+		Groups []struct {
+			First    int    `json:"first"`
+			Last     int    `json:"last"`
+			Symbol   string `json:"symbol"`
+			Barlines bool   `json:"barlines"`
+		} `json:"groups"`
+	}
+	if err := json.Unmarshal([]byte(h.get("/api/info")), &out); err != nil {
+		t.Fatalf("the info is not JSON: %v", err)
+	}
+	if len(out.Groups) != 1 {
+		t.Fatalf("the score says it has %d groups", len(out.Groups))
+	}
+	g := out.Groups[0]
+	if g.First != 0 || g.Last != 1 || g.Symbol != "brace" || !g.Barlines {
+		t.Errorf("the brace came through as %+v", g)
+	}
+}

@@ -939,3 +939,61 @@ func TestOpeningAPDFSaysWhatItLoses(t *testing.T) {
 		t.Error("the notice is never shown")
 	}
 }
+
+// How many staves make a system is the one thing a PDF never says, and
+// guessing it wrong is not a small error: a band score read as single staves
+// arrives as one part thousands of bars long, perfectly well formed and
+// completely wrong. So the guess has to be shown, and it has to be possible
+// to overrule it.
+func TestTheGuessAtTheStaffGroupingCanBeSeenAndOverruled(t *testing.T) {
+	html := readUI(t, "index.html")
+	js := readUI(t, "app.js")
+	css := readUI(t, "style.css")
+
+	for _, id := range []string{
+		"pdf-review",  // the whole review
+		"pdf-staves",  // where the number is said
+		"pdf-reread",  // and acted on
+		"pdf-overlay", // the drawing
+		"pdf-verdict", // what it came to, in words
+		"pdf-page",    // which page is drawn
+		"pdf-zoom",    // close enough to read the pitches
+	} {
+		if !strings.Contains(html, `id="`+id+`"`) {
+			t.Errorf("the PDF review has no %s", id)
+		}
+	}
+	// Drawn over the page it was read from, which means asking for the
+	// reading rather than for the score.
+	for _, fn := range []string{
+		"loadPDFSurvey", "drawPDFPage", "rereadPDF", "setupPDFReview",
+	} {
+		if !strings.Contains(js, "function "+fn) &&
+			!strings.Contains(js, "async function "+fn) {
+			t.Errorf("%s is not there", fn)
+		}
+	}
+	if !strings.Contains(js, "/api/pdfsurvey") {
+		t.Error("nothing asks what the reader saw")
+	}
+	if !strings.Contains(js, "/api/pdfreread") {
+		t.Error("nothing can read the file again")
+	}
+	if !strings.Contains(js, "setupPDFReview()") {
+		t.Error("the review's controls are never wired up")
+	}
+	// A PDF counts upward from the foot of the page and SVG downward from
+	// the head. Flipping with a transform would mirror the pitch labels
+	// too, so the turn has to be in the arithmetic.
+	if strings.Contains(js, "scale(1, -1)") || strings.Contains(js, "scale(1,-1)") {
+		t.Error("the drawing is flipped with a transform, which mirrors the text")
+	}
+	// The dialog is the only one in gscore that is really a window: a
+	// drawing of a page in 400 pixels cannot be judged by.
+	if !strings.Contains(html, `id="pdf-note" class="wide"`) {
+		t.Error("the review opens in a dialog too narrow to see a page in")
+	}
+	if !strings.Contains(css, "dialog.wide") {
+		t.Error("nothing makes the wide dialog wide")
+	}
+}

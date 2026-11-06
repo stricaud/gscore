@@ -1514,6 +1514,22 @@ func (a *App) handleStaff(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "unknown instrument "+v, http.StatusBadRequest)
 			return
 		}
+		// A staff that has never been called anything takes the name of what
+		// it has just been told it is. A score read out of a PDF arrives as
+		// a stack of nameless staves, and naming them one by one after
+		// saying what they are would be saying it twice.
+		//
+		// Only where there is no name. A staff somebody called "Solo" is
+		// still called "Solo" when they give it a flute, and a name quietly
+		// replaced is a name lost.
+		if p.Name == "" {
+			if n, ok := model.SoundName(v); ok {
+				// Capitalised the same way the staves made from scratch
+				// are, so a staff named this way and a staff named by
+				// Score setup are not spelt differently.
+				p.Name = capitalised(n)
+			}
+		}
 		changed = append(changed, "instrument")
 		if q.Get("transpose") != "0" {
 			want, _ := model.SoundTransposition(v)
@@ -1853,6 +1869,13 @@ func (a *App) handleInstruments(w http.ResponseWriter, r *http.Request) {
 		// one of them asks for a plain staff.
 		Written string `json:"written,omitempty"`
 		Tuning  string `json:"tuning,omitempty"`
+		// Grand says this instrument is normally written on two staves
+		// joined by a brace — a piano's two hands, a harp's. The editor
+		// needs it to know a grand staff when it is looking at one: two
+		// staves of a piano are one player and one entry wherever the
+		// instruments are listed, where two staves of cello are two
+		// players and two entries.
+		Grand bool `json:"grand,omitempty"`
 	}
 	out := make([]item, 0, 320)
 	for _, c := range model.Catalogue() {
@@ -1861,6 +1884,7 @@ func (a *App) handleInstruments(w http.ResponseWriter, r *http.Request) {
 			Program: int(c.Program), Percussion: c.Percussion,
 			Low: c.Low, High: c.High, ScoreRank: c.ScoreRank,
 			Written: c.Written, Tuning: c.Tuning,
+			Grand: model.GrandStaff(c.Sound),
 		})
 	}
 	writeJSON(w, struct {

@@ -87,6 +87,24 @@ type App struct {
 	current  int
 	filename string
 
+	// source is the bytes the open score was read from, kept only for a PDF.
+	//
+	// A PDF is the one format whose reading is a judgement rather than a
+	// parse: how many staves make a system is written nowhere on the page,
+	// and getting it wrong turns a band score into one endless part. So the
+	// reading has to be reviewable — and a review that cannot be acted on is
+	// a complaint. The bytes stay here so the same file can be read again a
+	// different way without being asked for a second time.
+	//
+	// Only for a PDF, and only the one that is open: every other format says
+	// what it holds, and keeping a copy of every file ever opened would be a
+	// memory leak dressed as a feature.
+	source     []byte
+	sourceName string
+	// perSystem is the staves-per-system the open PDF was read with, so the
+	// review can show what was used and offer something else.
+	perSystem int
+
 	// clip is what was last copied, kept here because the music is here.
 	clip clipboard
 	// undoStack and redoStack hold the score as it was before and after the
@@ -541,6 +559,8 @@ func (a *App) APIRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/new", a.handleNew)
 	mux.HandleFunc("/api/open", a.handleOpen)
 	mux.HandleFunc("/api/openpath", a.handleOpenPath)
+	mux.HandleFunc("/api/pdfsurvey", a.handlePDFSurvey)
+	mux.HandleFunc("/api/pdfreread", a.handlePDFReread)
 	mux.HandleFunc("/api/importsymbols", a.handleImportSymbols)
 	mux.HandleFunc("/api/symbolimport", a.handleSymbolImport)
 
@@ -910,7 +930,15 @@ type info struct {
 	Tags        []string   `json:"tags"`
 	Tempo       int        `json:"tempo"`
 	Parts       []partInfo `json:"parts"`
-	Formats     []string   `json:"formats"`
+	// Groups are the runs of staves drawn as belonging together, which is
+	// how the editor can tell a grand staff from two staves that happen to
+	// be next to each other. A piano is one player on two staves joined by
+	// a brace, and anything that lists who is playing has to say "piano"
+	// once rather than twice; two cellos side by side are two players and
+	// are listed twice. Nothing in the staves themselves distinguishes the
+	// two cases — the brace does.
+	Groups  []groupInfo `json:"groups,omitempty"`
+	Formats []string    `json:"formats"`
 
 	// The beat the tempo counts and the words beside it. A number on its own
 	// does not say anything: 120 in 6/8 is a different speed depending on
@@ -957,6 +985,19 @@ type movementInfo struct {
 	First int    `json:"first"`
 	Last  int    `json:"last"`
 	Title string `json:"title,omitempty"`
+}
+
+// groupInfo is one run of staves drawn as belonging together.
+type groupInfo struct {
+	// First and Last are staff indices, inclusive, as the editor counts
+	// them everywhere else.
+	First int `json:"first"`
+	Last  int `json:"last"`
+	// Symbol is "brace", "bracket" or "line". A brace is the one that says
+	// one instrument: it is what makes a pair of staves a grand staff.
+	Symbol   string `json:"symbol"`
+	Barlines bool   `json:"barlines,omitempty"`
+	Name     string `json:"name,omitempty"`
 }
 
 type partInfo struct {
@@ -1021,6 +1062,12 @@ func (a *App) handleInfo(w http.ResponseWriter, r *http.Request) {
 	for _, sec := range a.score.Sections() {
 		out.Movements = append(out.Movements, movementInfo{
 			First: sec.First, Last: sec.Last, Title: sec.Title,
+		})
+	}
+	for _, g := range a.score.Groups {
+		out.Groups = append(out.Groups, groupInfo{
+			First: g.First, Last: g.Last, Symbol: g.Symbol.String(),
+			Barlines: g.Barlines, Name: g.Name,
 		})
 	}
 	out.Markers = markerCount(a.score)
@@ -1210,17 +1257,33 @@ func (a *App) handleOpen(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	imp, err := format.ImporterFor(name)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusUnsupportedMediaType)
-		return
-	}
-	scores, err := format.ImportAll(imp, bytesReader(body))
-	if len(scores) == 0 {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
+	var scores []*model.Score
+	if isPDFName(name) {
+		// A PDF keeps its bytes and its grouping, so the reading can be
+		// looked at and done again. See pdfimport.go.
+		per, _ := stavesParam(r)
+		scores, err = a.readPDF(name, body, per)
+		if len(scores) == 0 {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		err = nil
+	} else {
+		imp, ierr := format.ImporterFor(name)
+		if ierr != nil {
+			http.Error(w, ierr.Error(), http.StatusUnsupportedMediaType)
+			return
+		}
+		scores, err = format.ImportAll(imp, bytesReader(body))
+		if len(scores) == 0 {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
 	}
 	a.lock()
+	if !isPDFName(name) {
+		a.forgetPDF()
+	}
 	a.setBook(scores, name, err)
 	a.mu.Unlock()
 	writeJSON(w, map[string]any{"status": "ok", "filename": name, "tunes": len(scores)})

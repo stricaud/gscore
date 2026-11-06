@@ -10422,19 +10422,25 @@ async function scoreSetupDialog() {
   // What the score already holds, so the dialog opens on it rather than
   // on nothing: somebody reopening it means to change the ensemble, not
   // to start again from an empty list.
-  const sounds = (state.info?.parts || [])
-    .map((p) => p.sound).filter((s) => !!s)
-    // A grand staff is two staves and one instrument; listing it twice
-    // would add a second piano every time the dialog was reopened.
-    .filter((s, i, all) => s !== all[i - 1]);
-  setupChosen = sounds.map((sound) => ({ id: setupNextId++, sound }));
+  // An empty score is being built, not described. gscore opens with one
+  // staff ready so that a tune can be typed in without filling in a form
+  // first, and that staff is not an answer to "who is playing" — listing it
+  // would make somebody take a piano out of the score before they could put
+  // a wind quintet in.
+  const blank = !scoreHasMusic() &&
+    (state.info?.parts || []).every((p) => !p.sound);
+  setupChosen = blank ? [] : setupFromScore();
   setupGroups = [];
+
+  // The order the staves are actually in, not the order a score is
+  // conventionally laid out in: a dialog opened on an existing score is
+  // showing that score, and a list that silently reshuffles it cannot be
+  // read against the page. Putting them in order is still a tick away.
+  const order = $("#setup-order");
+  if (order) order.checked = !scoreHasMusic();
 
   drawSetupPick(options, "");
   drawSetupChosen();
-
-  const warn = $("#setup-warning");
-  if (warn) warn.hidden = !scoreHasMusic();
 
   const filter = $("#setup-filter");
   if (filter) {
@@ -10447,6 +10453,101 @@ async function scoreSetupDialog() {
 // scoreHasMusic says there is something here worth not throwing away.
 function scoreHasMusic() {
   return (state.info?.parts || []).some((p) => (p.notes || 0) > 0);
+}
+
+// setupFromScore is the staves that are in the score, as entries this
+// dialog can work on.
+//
+// One entry to a staff, and each remembers which staff or staves it came
+// from. That is what makes it possible to change an instrument without
+// rebuilding anything: the entry knows where to send the answer.
+//
+// A staff that was never told what it is comes back as a piano, because a
+// piano is what it plays. Saying nothing would be truer to the file and
+// useless here — a PDF read as eight staves arrives with eight blanks, and
+// a window that answers "who is playing" with an empty list is the window
+// that was wrong before. The blank is recorded all the same, in `said`, so
+// nothing claims the file named an instrument it did not.
+//
+// Two staves of one instrument — a piano's two hands, a harp's — are one
+// entry, or reopening the dialog would add a second piano every time.
+//
+// What makes them one is the brace. That is not a detail of drawing: a
+// brace is how a score says "one player, two staves", and a bracket says
+// "different players, same family". Two staves of a piano and two staves of
+// cello look alike in every other way, so the brace is the only thing that
+// tells them apart, and it is read rather than guessed at.
+//
+// Where there is no brace — a file that came in without one — a pair is
+// taken for a grand staff if it is exactly two staves, side by side, of the
+// same named instrument, and that instrument is one that is written on two
+// staves at all. Each clause is doing work. Two flutes in a row are Flute 1
+// and Flute 2 and must stay two; three pianos in a row are three pianos and
+// not one on three staves; and eight staves read out of a PDF, which name
+// no instrument whatever, are eight staves and not four pianos, which is
+// why a sound that was merely defaulted to never pairs.
+function setupFromScore() {
+  const parts = state.info?.parts || [];
+  const braced = new Map();
+  for (const g of state.info?.groups || []) {
+    if (g.symbol !== "brace") continue;
+    for (let n = g.first; n <= g.last; n++) braced.set(n, g.first);
+  }
+  const out = [];
+  parts.forEach((p, idx) => {
+    const last = out[out.length - 1];
+    const after = last && last.staves[last.staves.length - 1] === idx - 1;
+    // Joined by a brace to the staff above: the same instrument, said so
+    // by the score itself.
+    const sameBrace = after && braced.has(idx) &&
+      braced.get(idx) === braced.get(last.staves[0]);
+    // Or a pair that looks like one and says nothing to the contrary.
+    const looksGrand = after && !braced.has(idx) && !braced.has(last.staves[0]) &&
+      p.sound && last.said && last.sound === p.sound &&
+      last.staves.length === 1 && grandSound(p.sound);
+    if (sameBrace || looksGrand) {
+      last.staves.push(idx);
+      return;
+    }
+    out.push({
+      id: setupNextId++,
+      sound: p.sound || "keyboard.piano",
+      said: !!p.sound,
+      staves: [idx],
+    });
+  });
+  return out;
+}
+
+// grandSound says an instrument is normally written on two staves joined by
+// a brace. Asked of the catalogue the server sends, so there is one list of
+// them and it is the one the staves are made from.
+function grandSound(value) {
+  const { sound } = soundChosen(value);
+  return !!(instrumentCatalogue || []).find((x) => x.sound === sound)?.grand;
+}
+
+// setupInPlace is the chosen list where it still describes the score's own
+// staves, one for one and in their order — and null where it has become a
+// different ensemble.
+//
+// Adding an instrument, removing one or moving one about is a request to
+// lay the score out again, which throws the music away and has to be asked
+// about. Changing what a staff plays is not, and must not be charged the
+// same price. The test is exact rather than a guess at intent: every entry
+// still carries the staves it came from, and together they still come to
+// every staff in the score, in order.
+function setupInPlace() {
+  const list = setupOrdered();
+  const parts = state.info?.parts || [];
+  const seen = [];
+  for (const it of list) {
+    if (!it.staves) return null;
+    seen.push(...it.staves);
+  }
+  if (seen.length !== parts.length) return null;
+  if (seen.some((n, i) => n !== i)) return null;
+  return list;
 }
 
 // drawSetupPick fills the list of instruments to choose from, under the
@@ -10483,8 +10584,189 @@ function drawSetupChosen() {
     // something you can see rather than something you have to remember.
     const g = setupGroups.findIndex((ids) => ids.includes(it.id));
     const tag = g < 0 ? "" : "  ⌈" + (g + 1) + "⌉";
-    return `<option value="${i}">${escapeHTML(instrumentNamed(it.sound) + tag)}</option>`;
+    // Which staff on the page this is. Eight staves all reading "Piano" is
+    // a list nobody can change the third of; with the staff numbers on them
+    // the list can be read against the score.
+    const no = it.staves
+      ? it.staves.map((n) => n + 1).join("+") + ". "
+      : "";
+    return `<option value="${i}">${escapeHTML(no + instrumentNamed(it.sound) + tag)}</option>`;
   }).join("");
+  drawSetupBar();
+}
+
+// drawSetupBar settles which of the two things this dialog can do is the
+// one being offered.
+//
+// Both stay reachable. Which is primary follows from what is in front of
+// somebody: a score with music whose staves are all still listed is a score
+// whose instruments are being named, and making the staves again would
+// throw away what they came here to keep.
+function drawSetupBar() {
+  const inst = $("#setup-instruments");
+  const apply = $("#setup-apply");
+  if (!inst || !apply) return;
+  const live = setupLive();
+  // Over a score with music there is only one button, and it is the one
+  // that keeps the music. Laying the staves out again is not offered,
+  // because there is nothing it could do here that would not throw away
+  // what somebody came to name.
+  inst.hidden = !live;
+  inst.classList.toggle("primary", live);
+  apply.hidden = live;
+  apply.classList.toggle("primary", !live);
+  const warn = $("#setup-warning");
+  if (warn) warn.hidden = true;
+  const note = $("#setup-live");
+  if (note) note.hidden = !live;
+  // And the window says which of the two things it is doing, rather than
+  // describing the one it is not.
+  const blurb = $("#setup-blurb");
+  if (blurb) blurb.hidden = live;
+  const blurbLive = $("#setup-blurb-live");
+  if (blurbLive) blurbLive.hidden = !live;
+  // The automatic order rearranges a list; over a score it would be asking
+  // for the staves themselves to be moved, which is what the arrows are
+  // for and is done one at a time.
+  const order = $("#setup-order");
+  if (order) {
+    order.disabled = live;
+    order.closest("label")?.classList.toggle("off", live);
+  }
+}
+
+// setupChange asks what the staff that is picked should play, and changes
+// that entry rather than adding another.
+//
+// Remove-then-add would do the same to the list and not to the score: it
+// drops the staff the entry stood for, and with it the only means of
+// changing an instrument without laying every staff out again.
+// Picking two staves at once and naming one instrument is how a grand staff
+// gets made out of a score that arrived without one: a PDF of piano music
+// read two staves to a system comes in as two nameless staves, and what it
+// is is one pianist. So two staves side by side, given an instrument that is
+// written on two staves, become one entry and are braced when it is applied.
+// Two staves given a flute stay two flutes, because two flutes are two
+// players however close together they are printed.
+async function setupChange() {
+  const picked = setupPicked();
+  if (!picked.length) {
+    status("Pick a staff to change");
+    return;
+  }
+  const staves = picked.flatMap((it) => it.staves || []);
+  const v = await ask({
+    title: "Instrument",
+    label: staves.length
+      ? "What staff " + staves.map((n) => n + 1).join(" and ") + " plays"
+      : "Instrument",
+    value: picked[0].sound,
+    note: "Sets the clef, the transposition and the range it is checked " +
+          "against, as well as what it is played with. Type to search.",
+    search: true,
+    options: await instrumentOptions(),
+  });
+  if (v === null) return;
+  for (const it of picked) {
+    it.sound = v;
+    it.said = true;
+  }
+
+  // Two single staves, one under the other, of an instrument that is
+  // written on two: one player, and from here on one entry.
+  const pair = picked.length === 2 && grandSound(v) &&
+    picked.every((it) => (it.staves || []).length === 1) &&
+    picked[1].staves[0] === picked[0].staves[0] + 1;
+  if (pair) {
+    picked[0].staves = [picked[0].staves[0], picked[1].staves[0]];
+    picked[0].brace = true;
+    const gone = picked[1].id;
+    setupChosen = setupOrdered().filter((it) => it.id !== gone);
+    setupGroups = setupGroups
+      .map((ids) => ids.filter((id) => id !== gone))
+      .filter((ids) => ids.length > 1);
+    status("Staves " + picked[0].staves.map((n) => n + 1).join(" and ") +
+      " are one " + instrumentNamed(v));
+  }
+  drawSetupChosen();
+}
+
+// applySetupInstruments tells the staves that are already in the score what
+// they play, and leaves every note where it is.
+//
+// One request per staff rather than one for the lot, because that is the
+// request that already exists and already does the whole job — the clef,
+// the transposition, the sound. A second way of saying the same thing to
+// the server would be a second way for it to be said differently.
+async function applySetupInstruments() {
+  const list = setupInPlace();
+  if (!list) {
+    status("The staves have been added to or moved — make them instead");
+    return;
+  }
+  const parts = state.info?.parts || [];
+  const work = [];
+  for (const it of list) {
+    for (const n of it.staves) {
+      // A staff already playing this is left alone: an untouched staff
+      // should not come back transposed because the dialog was opened.
+      if ((parts[n]?.sound || "") === it.sound) continue;
+      work.push([n, it.sound]);
+    }
+  }
+  // Any bracket drawn here goes on too, since there is a way of drawing one
+  // round staves that already exist. Only the ones drawn here: this dialog
+  // never read the brackets the score came with, so it is in no position to
+  // take one away.
+  const runs = setupGroups.map((ids) => {
+    const of = list.filter((it) => ids.includes(it.id))
+      .flatMap((it) => it.staves);
+    return of.length > 1 ? [Math.min(...of), Math.max(...of), "bracket"] : null;
+  }).filter(Boolean);
+  // And a brace round each pair that has been made one instrument, with the
+  // barlines run through the gap: that is what says the two staves are
+  // played together rather than merely printed together.
+  for (const it of list) {
+    if (it.brace && it.staves.length === 2) {
+      runs.push([it.staves[0], it.staves[1], "brace"]);
+    }
+  }
+
+  if (!work.length && !runs.length) {
+    $("#score-setup")?.close();
+    status("Nothing to change — the staves already play that");
+    return;
+  }
+  busy("Setting the instruments…");
+  try {
+    for (const [n, sound] of work) {
+      const p = new URLSearchParams({
+        part: String(n), sound: soundChosen(sound).sound,
+      });
+      const res = await fetch("/api/staff?" + p, { method: "POST" });
+      if (!res.ok) {
+        status("Could not set staff " + (n + 1) + ": " +
+          (await res.text()).trim());
+        return;
+      }
+    }
+    for (const [first, last, symbol] of runs) {
+      const p = new URLSearchParams({
+        first: String(first), last: String(last), symbol,
+      });
+      if (symbol === "brace") p.set("barlines", "1");
+      await fetch("/api/group?" + p, { method: "POST" });
+    }
+  } finally {
+    idle();
+  }
+  $("#score-setup")?.close();
+  await reload();
+  status(work.length === 1
+    ? "Staff " + (work[0][0] + 1) + " is now " + instrumentNamed(work[0][1])
+    : work.length
+      ? "Set " + work.length + " staves"
+      : "Staves joined");
 }
 
 // setupOrdered is the chosen instruments in the order they will be laid
@@ -10513,17 +10795,88 @@ function inScoreOrder(chosen) {
   }).map(([it]) => it);
 }
 
+// setupLive says this window is working on a score that already has music
+// in it, and so must not replace it.
+//
+// This is the lesson of a score read out of a PDF and then emptied. The
+// window had two kinds of operation in it and no sign of which was which:
+// Change kept the music, Add and Remove quietly built a *different*
+// ensemble, and the button at the bottom laid that ensemble out over the
+// top of the old one. Somebody naming eight imported staves reaches for
+// Add and Remove — they are the obvious controls — and the music is gone.
+//
+// So over a score with music there is no second kind. Adding, removing,
+// moving and bracketing go straight to the score as they are done, each
+// one undoable on its own, and the list is read back from the score
+// afterwards rather than kept beside it. "Make the staves" is not offered
+// at all: there is no way through this window to empty a staff.
+function setupLive() {
+  return scoreHasMusic();
+}
+
+// setupReload reads the list back off the score, after a change that went
+// straight to it.
+async function setupReload() {
+  await reload();
+  setupChosen = setupFromScore();
+  setupGroups = [];
+  drawSetupChosen();
+}
+
 // setupAdd puts the instrument the cursor is on into the score.
-function setupAdd() {
+async function setupAdd() {
   const pick = $("#setup-pick");
   if (!pick || !pick.value) return;
+  if (setupLive()) {
+    const { sound, written } = soundChosen(pick.value);
+    const p = new URLSearchParams({ sound });
+    if (written) p.set("written", written);
+    const res = await fetch("/api/addstaff?" + p, { method: "POST" });
+    if (!res.ok) {
+      status("Could not add it: " + (await res.text()).trim());
+      return;
+    }
+    await setupReload();
+    status("Added " + instrumentNamed(pick.value));
+    return;
+  }
   setupChosen.push({ id: setupNextId++, sound: pick.value });
   drawSetupChosen();
 }
 
-function setupRemove() {
+async function setupRemove() {
   const picked = setupPicked();
   if (!picked.length) return;
+  if (setupLive()) {
+    // Highest first, so that taking one away does not renumber the ones
+    // still to go.
+    const staves = picked.flatMap((it) => it.staves || [])
+      .sort((a, b) => b - a);
+    if (!staves.length) return;
+    const parts = state.info?.parts || [];
+    const notes = staves.reduce((n, i) => n + (parts[i]?.notes || 0), 0);
+    if (notes > 0) {
+      // Taking away a staff that has music on it is the one thing here
+      // that loses any, so it is the one thing that asks.
+      const sure = await confirmThat({
+        title: staves.length === 1 ? "Remove this staff?" : "Remove these staves?",
+        note: "There " + (notes === 1 ? "is a note" : "are " + notes + " notes") +
+              " on " + (staves.length === 1 ? "it" : "them") +
+              ". Undo brings it back.",
+        ok: "Remove",
+      });
+      if (!sure) return;
+    }
+    for (const n of staves) {
+      const res = await fetch("/api/removestaff?part=" + n, { method: "POST" });
+      if (!res.ok) {
+        status("Could not remove it: " + (await res.text()).trim());
+        break;
+      }
+    }
+    await setupReload();
+    return;
+  }
   const gone = new Set(picked.map((it) => it.id));
   setupChosen = setupOrdered().filter((it) => !gone.has(it.id));
   // And out of whatever groups they were in, so a group does not go on
@@ -10548,9 +10901,13 @@ function setupPicked() {
 // Moving by hand is arranging the score, so it turns the automatic order
 // off: the two cannot both be in charge, and the one somebody just used
 // their hands on is the one that wins.
-function setupMove(dir) {
+async function setupMove(dir) {
   const box = $("#setup-chosen");
   if (!box || box.selectedIndex < 0) return;
+  if (setupLive()) {
+    await setupMoveStaves(box.selectedIndex, dir);
+    return;
+  }
   setupArrangedByHand();
   const i = box.selectedIndex;
   const j = i + dir;
@@ -10558,6 +10915,38 @@ function setupMove(dir) {
   [setupChosen[i], setupChosen[j]] = [setupChosen[j], setupChosen[i]];
   drawSetupChosen();
   box.selectedIndex = j;
+}
+
+// setupMoveStaves moves one entry past the one beside it, in the score
+// itself.
+//
+// A staff is moved by taking it out and putting it back somewhere else, so
+// a pair of staves is two of those, and the order they are done in matters:
+// going up, the top staff of the pair goes first and the rest follow it;
+// going down, the bottom goes first. Done the other way round, the pair
+// comes out inside out.
+async function setupMoveStaves(at, dir) {
+  const list = setupOrdered();
+  const me = list[at];
+  const other = list[at + dir];
+  if (!me || !other || !me.staves || !other.staves) return;
+  const n = me.staves.length;
+  const from = me.staves[0];
+  const to = dir < 0 ? other.staves[0] : from + other.staves.length;
+  const steps = [];
+  for (let i = 0; i < n; i++) steps.push([from + i, to + i]);
+  if (dir > 0) steps.reverse();
+  for (const [f, t] of steps) {
+    const res = await fetch(`/api/movestaff?part=${f}&to=${t}`,
+      { method: "POST" });
+    if (!res.ok) {
+      status("Could not move it: " + (await res.text()).trim());
+      break;
+    }
+  }
+  await setupReload();
+  const box = $("#setup-chosen");
+  if (box) box.selectedIndex = at + dir;
 }
 
 // setupArrangedByHand freezes the order somebody is about to rearrange.
@@ -10581,10 +10970,33 @@ function setupArrangedByHand() {
 // are therefore brought together first, under the topmost of them, which
 // is what somebody picking them apart is asking for. It is said out loud
 // rather than done quietly, because it moves the score about.
-function setupBracket() {
+async function setupBracket() {
   const picked = setupPicked();
   if (picked.length < 2) {
     status("Pick two staves or more to bracket them");
+    return;
+  }
+  if (setupLive()) {
+    const of = picked.flatMap((it) => it.staves || []).sort((a, b) => a - b);
+    // A bracket is a line down the side of a run, so the staves have to be
+    // a run. In the score itself they are where they are, and moving them
+    // to suit a bracket is a bigger thing than drawing one — so it is said
+    // rather than done.
+    if (of.some((n, i) => i > 0 && n !== of[i - 1] + 1)) {
+      status("Those staves are not next to each other — move them together first");
+      return;
+    }
+    const p = new URLSearchParams({
+      first: String(of[0]), last: String(of[of.length - 1]),
+      symbol: "bracket",
+    });
+    const res = await fetch("/api/group?" + p, { method: "POST" });
+    if (!res.ok) {
+      status("Could not bracket them: " + (await res.text()).trim());
+      return;
+    }
+    await setupReload();
+    status("Staves " + (of[0] + 1) + "–" + (of[of.length - 1] + 1) + " bracketed");
     return;
   }
   setupArrangedByHand();
@@ -10611,9 +11023,24 @@ function setupBracket() {
 }
 
 // setupUngroup takes the selected staves out of their brackets.
-function setupUngroup() {
+async function setupUngroup() {
   const picked = setupPicked();
   if (!picked.length) return;
+  if (setupLive()) {
+    const of = picked.flatMap((it) => it.staves || []).sort((a, b) => a - b);
+    if (!of.length) return;
+    const p = new URLSearchParams({
+      first: String(of[0]), last: String(of[of.length - 1]), symbol: "none",
+    });
+    const res = await fetch("/api/group?" + p, { method: "POST" });
+    if (!res.ok) {
+      status("Could not ungroup them: " + (await res.text()).trim());
+      return;
+    }
+    await setupReload();
+    status("Taken out of the bracket");
+    return;
+  }
   const want = new Set(picked.map((it) => it.id));
   setupGroups = setupGroups
     .map((g) => g.filter((id) => !want.has(id)))
@@ -10664,16 +11091,21 @@ async function applyScoreSetup() {
 }
 
 function setupScoreSetupDialog() {
-  $("#setup-add")?.addEventListener("click", setupAdd);
-  $("#setup-remove")?.addEventListener("click", setupRemove);
-  $("#setup-up")?.addEventListener("click", () => setupMove(-1));
-  $("#setup-bracket")?.addEventListener("click", setupBracket);
-  $("#setup-ungroup")?.addEventListener("click", setupUngroup);
-  $("#setup-down")?.addEventListener("click", () => setupMove(1));
+  $("#setup-add")?.addEventListener("click", () => void setupAdd());
+  $("#setup-remove")?.addEventListener("click", () => void setupRemove());
+  $("#setup-up")?.addEventListener("click", () => void setupMove(-1));
+  $("#setup-bracket")?.addEventListener("click", () => void setupBracket());
+  $("#setup-ungroup")?.addEventListener("click", () => void setupUngroup());
+  $("#setup-down")?.addEventListener("click", () => void setupMove(1));
   $("#setup-order")?.addEventListener("change", drawSetupChosen);
   $("#setup-apply")?.addEventListener("click", () => void applyScoreSetup());
+  $("#setup-change")?.addEventListener("click", () => void setupChange());
+  $("#setup-instruments")?.addEventListener("click",
+    () => void applySetupInstruments());
   // Double-clicking an instrument is how everybody expects to add one.
-  $("#setup-pick")?.addEventListener("dblclick", setupAdd);
+  $("#setup-pick")?.addEventListener("dblclick", () => void setupAdd());
+  // And double-clicking a staff is how everybody expects to change it.
+  $("#setup-chosen")?.addEventListener("dblclick", () => void setupChange());
 }
 
 /* ---------- tablature ---------- */
@@ -11547,16 +11979,328 @@ function isPDF(name) {
   return typeof name === "string" && /\.pdf$/i.test(name.trim());
 }
 
-// tellAboutPDF explains, once per file opened, what a PDF does not carry.
+// tellAboutPDF explains, once per file opened, what a PDF does not carry,
+// and shows what was made of it.
 //
 // A status line was not enough. The gap between the page somebody was
 // looking at a moment ago and the score in front of them now is wide — no
 // slurs, no dynamics, no words — and a line that fades is a line that was
 // not read. This stops and says it.
+//
+// It also draws the reading back over the page, because one thing a PDF
+// never says is how many staves make a system, and getting that wrong is
+// not a small error: a band score read as single staves arrives as one part
+// thousands of bars long, perfectly well formed and completely wrong. The
+// drawing is the only way to see it, and the number beside it is the way to
+// say otherwise.
 function tellAboutPDF() {
   const dlg = $("#pdf-note");
   if (!dlg || dlg.open) return;
   dlg.showModal();
+  loadPDFSurvey();
+}
+
+// pdfSurvey holds the last reading fetched, so that changing page or zoom
+// redraws without asking the server again.
+let pdfSurvey = null;
+
+async function loadPDFSurvey(staves) {
+  const box = $("#pdf-review");
+  if (!box) return;
+  const verdict = $("#pdf-verdict");
+  try {
+    let url = "/api/pdfsurvey";
+    if (staves !== undefined) url += "?staves=" + encodeURIComponent(staves);
+    const res = await fetch(url);
+    if (!res.ok) {
+      // Not every PDF gets this far: a scan has no glyphs to report. The
+      // explanation above is still worth showing, so only the drawing goes.
+      box.hidden = true;
+      return;
+    }
+    const d = await res.json();
+    pdfSurvey = d.survey || null;
+    box.hidden = false;
+    const pages = (pdfSurvey && pdfSurvey.pages) || [];
+    const sel = $("#pdf-page");
+    if (sel) {
+      sel.innerHTML = "";
+      pages.forEach((_, i) => {
+        const o = document.createElement("option");
+        o.value = String(i);
+        o.textContent = String(i + 1);
+        sel.appendChild(o);
+      });
+      sel.disabled = pages.length < 2;
+    }
+    // What the score was in fact read with, which is what a number typed
+    // into the box is afterwards compared against. Without it there is no
+    // telling an untouched box from one that has been changed and not yet
+    // acted on.
+    pdfReadAs = pdfSurvey ? pdfSurvey.perSystem || 0 : 0;
+    const num = $("#pdf-staves");
+    if (num && document.activeElement !== num) {
+      num.value = String(pdfReadAs);
+    }
+    markPDFPending();
+    if (verdict) describePDFReading(verdict, pdfSurvey);
+    drawPDFPage(0);
+  } catch (e) {
+    box.hidden = true;
+  }
+}
+
+// describePDFReading says in words what the drawing says in lines.
+//
+// Both, because they answer different questions. The drawing says whether
+// this page was read right; the sentence says what the whole file became,
+// which is the thing somebody is about to work in.
+function describePDFReading(el, sv) {
+  if (!sv) {
+    el.textContent = "";
+    return;
+  }
+  const per = sv.perSystem || 0;
+  const parts = sv.parts || 0;
+  let s = "Read as " + plural(parts, "part") +
+    ", " + plural(per, "staff", "staves") + " to a system.";
+  // The guess and the instruction are shown together only when they differ:
+  // agreeing, they are one fact said twice.
+  if (sv.detected && sv.detected !== per) {
+    s += " Reading the page alone would have given " +
+      plural(sv.detected, "staff", "staves") + ".";
+  }
+  // One part out of a file whose pages hold several staves is the failure
+  // this window exists for, so it is named rather than left to be noticed.
+  const many = (sv.pages || []).some((p) => (p.staves || []).length > 1);
+  const one = parts === 1 && many;
+  // A number that does not divide the page is the other way this goes wrong,
+  // and it is the quieter one: the grouping obeys, the parts come out, and
+  // they are cut across the middle of each system. It shows as a staff count
+  // per page that the number leaves a remainder in — a band score whose
+  // pages hold 9, 11, 10 and 11 staves cannot be read with any one number at
+  // all, and saying which pages disagree is more use than saying so vaguely.
+  const odd = (sv.pages || [])
+    .map((p, i) => [i + 1, (p.staves || []).length])
+    .filter(([, n]) => per > 0 && n > 0 && n % per !== 0);
+  if (odd.length) {
+    s += " Page " + odd.slice(0, 3).map(([i, n]) => i + " holds " + n)
+      .join(", page ") +
+      (odd.length > 3 ? ", and others" : "") +
+      " — not a whole number of systems of " + per + ".";
+  }
+  el.textContent = s;
+  el.classList.toggle("warn", one || odd.length > 0);
+  if (one) {
+    el.textContent += " Every staff became part of one long line — if the" +
+      " page shows players reading at once, say how many here.";
+  }
+}
+
+function plural(n, one, many) {
+  return n + " " + (n === 1 ? one : (many || one + "s"));
+}
+
+// drawPDFPage puts the reading back on the page it was read from.
+function drawPDFPage(i) {
+  const svg = $("#pdf-overlay");
+  if (!svg || !pdfSurvey) return;
+  const pages = pdfSurvey.pages || [];
+  const p = pages[i];
+  if (!p) return;
+  const zoom = parseFloat(($("#pdf-zoom") || {}).value || "1.5") || 1.5;
+  const W = p.width || 612, H = p.height || 792;
+  svg.setAttribute("viewBox", "0 0 " + W + " " + H);
+  svg.setAttribute("width", String(Math.round(W * zoom)));
+  svg.setAttribute("height", String(Math.round(H * zoom)));
+
+  // A PDF counts upward from the foot of the page and SVG downward from the
+  // head, so every y is turned over here rather than by a transform: a
+  // flipped transform would mirror the text too, and a pitch written upside
+  // down is worse than none.
+  const Y = (y) => H - y;
+  const ns = "http://www.w3.org/2000/svg";
+  const el = (name, attrs, text) => {
+    const n = document.createElementNS(ns, name);
+    for (const k in attrs) n.setAttribute(k, String(attrs[k]));
+    if (text !== undefined) n.textContent = text;
+    return n;
+  };
+  const frag = document.createDocumentFragment();
+
+  for (const r of p.rules || []) {
+    frag.appendChild(el("line", {
+      x1: r.x1, y1: Y(r.y1), x2: r.x2, y2: Y(r.y2),
+      stroke: "#cbd5e1", "stroke-width": Math.max(r.w || 0.4, 0.3),
+    }));
+  }
+
+  // Each part gets its own colour, so a page that should show one system of
+  // five staves and shows five systems of one is a change of colour down the
+  // page instead of across it.
+  const hue = (k) => "hsl(" + ((k * 47) % 360) + ", 70%, 45%)";
+  for (const st of p.staves || []) {
+    const top = Y(st.y[4]), bot = Y(st.y[0]);
+    frag.appendChild(el("rect", {
+      x: st.x0, y: top, width: Math.max(st.x1 - st.x0, 1),
+      height: Math.max(bot - top, 1),
+      fill: hue(st.part), "fill-opacity": 0.12,
+      stroke: hue(st.part), "stroke-width": 0.4, "stroke-opacity": 0.6,
+    }));
+    frag.appendChild(el("text", {
+      x: st.x0 - 2, y: (top + bot) / 2 + st.inter / 2,
+      "text-anchor": "end", "font-size": Math.max(st.inter * 1.4, 8 / zoom),
+      fill: hue(st.part),
+    }, "s" + (st.system + 1) + "·p" + (st.part + 1)));
+  }
+
+  for (const m of p.marks || []) {
+    const st = (p.staves || [])[m.staff];
+    const r = st ? Math.max(st.inter * 0.5, 0.8) : 2;
+    if (m.kind === "note") {
+      frag.appendChild(el("circle", {
+        cx: m.x + r, cy: Y(m.y), r: r,
+        fill: "none", stroke: "#dc2626", "stroke-width": r * 0.3,
+      }));
+      // Shown when they can be read, which is not the same as when the
+      // zoom is high: a band score sets its staves at three and a half
+      // points, a solo at ten, and the same zoom makes one legible and the
+      // other a smear. What matters is the size on the glass, so that is
+      // what is measured — and the type is held to a floor in those terms,
+      // or a label on a small staff shrinks with it to nothing.
+      if (m.pitch && st && st.inter * zoom >= 6) {
+        frag.appendChild(el("text", {
+          x: m.x + r, y: Y(m.y) - r * 1.7, "text-anchor": "middle",
+          "font-size": Math.max(r * 1.6, 7 / zoom), fill: "#dc2626",
+        }, m.pitch));
+      }
+    } else {
+      frag.appendChild(el("circle", {
+        cx: m.x, cy: Y(m.y), r: r * 0.5,
+        fill: "#9ca3af", "fill-opacity": 0.8,
+      }));
+    }
+  }
+
+  svg.innerHTML = "";
+  svg.appendChild(frag);
+}
+
+// setupPDFReview wires the controls of the drawing.
+//
+// Changing the page or the zoom only redraws what is already here; the number
+// of staves goes back to the server, because only it changes the score.
+//
+// The number is an instruction, not a note to be typed and then confirmed
+// somewhere else. That was wrong first: nothing but the button beside the box
+// ever read what was in it, so typing 8 and pressing the dialog's own "Go on"
+// threw the 8 away and left the file read exactly as it had been. What that
+// looked like from outside was the reader failing — "I enter 8 and still get
+// a single line" — when the reader had never been asked. So the number now
+// takes effect on its own: when the box is left, when the window is
+// dismissed, and still on the button or on Enter.
+let pdfReadAs = null; // the number the open score was last read with
+let pdfSoon = null; // a re-read waiting for the typing to settle
+
+function setupPDFReview() {
+  $("#pdf-reread")?.addEventListener("click", (e) => {
+    e.preventDefault();
+    rereadPDF();
+  });
+  $("#pdf-page")?.addEventListener("change", (e) =>
+    drawPDFPage(Number(e.target.value) || 0));
+  $("#pdf-zoom")?.addEventListener("input", () =>
+    drawPDFPage(Number(($("#pdf-page") || {}).value) || 0));
+  // Enter in the number box means the same as the button beside it; a form
+  // that swallows it and closes the dialog would look like the reading had
+  // been accepted.
+  $("#pdf-staves")?.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      rereadPDF();
+    }
+  });
+  // Typing marks the button as owing something, so a number sitting unread
+  // in the box is visible rather than silent.
+  $("#pdf-staves")?.addEventListener("input", markPDFPending);
+  // Leaving the box applies it. The pause is for the spinner arrows: each
+  // click is a change of its own, and a thirty-six page band score read once
+  // per click would be unusable.
+  $("#pdf-staves")?.addEventListener("change", () => {
+    clearTimeout(pdfSoon);
+    pdfSoon = setTimeout(() => {
+      pdfSoon = null;
+      if (pdfStaffBox() !== pdfReadAs) rereadPDF();
+    }, 400);
+  });
+  // And dismissing the window applies it at once. "Go on" is the button of
+  // somebody who has finished deciding, not of somebody throwing away what
+  // they decided.
+  $("#pdf-note")?.addEventListener("close", () => void (async () => {
+    clearTimeout(pdfSoon);
+    pdfSoon = null;
+    if (pdfReadAs !== null && pdfStaffBox() !== pdfReadAs) await rereadPDF();
+    await offerScoreSetup();
+  })());
+}
+
+// offerScoreSetup opens Score setup on staves that were just read off a
+// page and do not yet say what they are.
+//
+// This is the other half of reading a PDF, and it was missing. A page says
+// how many staves there are and nothing about what plays them, so an import
+// of a band score lands as eight staves called "Staff", all sounding like
+// pianos — and somebody who does not already know there is a window for
+// naming them has no reason to go looking for one. So the window comes to
+// them, once, at the moment the question arises.
+//
+// Not where there is nothing to ask. One staff is a solo and needs no
+// deciding, and a file that already named its instruments has answered.
+async function offerScoreSetup() {
+  const parts = state.info?.parts || [];
+  if (parts.length < 2 || parts.some((p) => p.sound)) return;
+  await scoreSetupDialog();
+}
+
+// pdfStaffBox is what the number box says, held to what the server accepts.
+function pdfStaffBox() {
+  const num = $("#pdf-staves");
+  if (!num) return null;
+  return Math.max(0, Math.min(64, parseInt(num.value, 10) || 0));
+}
+
+// markPDFPending shows whether the number in the box is still the number the
+// score was read with.
+function markPDFPending() {
+  const b = $("#pdf-reread");
+  if (!b) return;
+  b.classList.toggle("pending",
+    pdfReadAs !== null && pdfStaffBox() !== pdfReadAs);
+}
+
+// rereadPDF reads the same file again with the number that was given.
+async function rereadPDF() {
+  const num = $("#pdf-staves");
+  if (!num) return;
+  clearTimeout(pdfSoon);
+  pdfSoon = null;
+  const n = pdfStaffBox();
+  busy("Reading again…");
+  try {
+    const res = await fetch("/api/pdfreread?staves=" + n, { method: "POST" });
+    if (!res.ok) {
+      status("Could not read again: " + (await res.text()).trim());
+      return;
+    }
+    const d = await res.json();
+    pdfReadAs = n;
+    markPDFPending();
+    await reopen();
+    status("Read again as " + plural(d.parts || 0, "part"));
+    await loadPDFSurvey(n);
+  } finally {
+    idle();
+  }
 }
 
 async function openFile(file) {
@@ -15243,6 +15987,7 @@ async function main() {
   setupStripHover();
   setupVirtualDraw();
   setupDrawing();
+  setupPDFReview();
   markMode();
 
   $("#shortcuts-reset").addEventListener("click", async () => {

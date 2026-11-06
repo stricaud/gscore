@@ -1514,8 +1514,12 @@
   <div class="dlg-head">
     <div>
       <h2>Score setup</h2>
-      <p class="small">Who is playing. The staves are laid out in score
-        order, each family bracketed, with a piano given its two staves.</p>
+      <p class="small" id="setup-blurb">Who is playing. The staves are laid
+        out in score order, each family bracketed, with a piano given its
+        two staves.</p>
+      <p class="small" id="setup-blurb-live" hidden>What each staff is
+        playing. A PDF says how many staves there are and nothing about who
+        is reading them, so they arrive as pianos until they are told.</p>
     </div>
     <form method="dialog">
       <button value="close" type="submit" formnovalidate class="dlg-close" aria-label="Close">✕</button>
@@ -1542,6 +1546,7 @@
       <div class="tempo-bar">
         <button type="button" id="setup-up" aria-label="Move up">↑</button>
         <button type="button" id="setup-down" aria-label="Move down">↓</button>
+        <button type="button" id="setup-change">Change…</button>
         <button type="button" id="setup-remove">Remove</button>
       </div>
       <div class="tempo-bar">
@@ -1559,8 +1564,23 @@
     voices, strings</label>
   <p class="small" id="setup-warning" hidden>This score has music in it.
     Making the staves again will throw it away.</p>
+  <!-- Over a score that already has music, nothing in this window lays the
+       staves out again: adding, removing, moving and bracketing all go
+       straight to the score as they are done, and the instruments are set
+       when the button is pressed. There is no path through here that
+       empties a staff somebody imported. -->
+  <p class="small" id="setup-live" hidden>These are the staves in the score.
+    Adding, removing and moving happen as you do them and Undo takes them
+    back; the music stays where it is.</p>
 
+  <!-- Two different things can be wanted here, and only one of them is
+       destructive. Changing what the staves already in the score are playing
+       keeps every note where it is; laying the staves out again builds a new
+       ensemble and throws the music away. A score read out of a PDF arrives
+       as so many staves of nothing in particular, and what it needs is the
+       first of those, so that is the button that is offered. -->
   <div id="score-setup-bar">
+    <button type="button" id="setup-instruments" hidden>Set the instruments</button>
     <button type="button" id="setup-apply" class="primary">Make the staves</button>
   </div>
 </dialog>
@@ -2001,7 +2021,7 @@
      told will think gscore lost it. Every other importer reads a file that
      says what it contains; a PDF is a drawing of a page, and only the parts
      of the drawing that are shaped like notes can be recovered. -->
-<dialog id="pdf-note">
+<dialog id="pdf-note" class="wide">
   <h2>Read from a PDF</h2>
   <p class="small">A PDF is a picture of a page rather than a score. Gscore has
      read what could be measured off it — the <strong>notes</strong>, with their
@@ -2013,6 +2033,33 @@
      page, and will have to be put back by hand.</p>
   <p class="small">A PDF that was scanned rather than engraved — a photograph of
      paper — cannot be read at all, and will say so instead.</p>
+
+  <!-- How many staves make a system is the one thing the page does not say
+       and the reader has to guess. Below is the guess, drawn back over the
+       page it was made from, and the means to overrule it. -->
+  <div id="pdf-review">
+    <div class="row" id="pdf-controls">
+      <label>Instrument lines per system
+        <input type="number" id="pdf-staves" min="0" max="64" step="1" value="0">
+      </label>
+      <button id="pdf-reread">Read again</button>
+      <span class="sep"></span>
+      <label>Page <select id="pdf-page"></select></label>
+      <label>Zoom <input type="range" id="pdf-zoom" min="1" max="6" step="0.5" value="1.5"></label>
+    </div>
+    <p class="small" id="pdf-verdict"></p>
+    <div id="pdf-canvas"><svg id="pdf-overlay" xmlns="http://www.w3.org/2000/svg"></svg></div>
+    <p class="small" id="pdf-legend">
+      <span class="key stave"></span><span>a staff, coloured by the part it went into</span>
+      <span class="key note"></span><span>a notehead, with the pitch read</span>
+      <span class="key other"></span><span>a clef, a rest, an accidental</span>
+      <span class="key rule"></span><span>the strokes the page is drawn with</span>
+    </p>
+    <p class="small quiet">This is not a photograph of the page: it is the page
+       as the reader perceived it. Where this drawing and the real page
+       disagree, that disagreement is the mistake.</p>
+  </div>
+
   <form method="dialog"><button class="primary">Go on</button></form>
 </dialog>
 

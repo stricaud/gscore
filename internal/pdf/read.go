@@ -607,3 +607,39 @@ func (l *lexer) maybeStream(o Obj, data []byte) Obj {
 	}
 	return &Stream{Dict: dd, Raw: data[start:end]}
 }
+
+// Size is a page's width and height in points, from its MediaBox.
+//
+// The box is inherited down the page tree, and Pages() has already handed it
+// down, so the page's own dictionary always carries one by the time it gets
+// here. A page without one is still answered — with US Letter, the size a
+// PDF viewer assumes in the same situation — because a drawing laid over the
+// wrong-sized sheet is more useful than no drawing.
+func (d *Doc_) Size(n int) (w, h float64) {
+	pages := d.Pages()
+	if n < 0 || n >= len(pages) {
+		return 612, 792
+	}
+	box, _ := d.Resolve(pages[n]["MediaBox"]).(Array)
+	if len(box) != 4 {
+		return 612, 792
+	}
+	v := make([]float64, 4)
+	for i := range v {
+		switch x := d.Resolve(box[i]).(type) {
+		case float64:
+			v[i] = x
+		case int:
+			v[i] = float64(x)
+		case int64:
+			v[i] = float64(x)
+		default:
+			return 612, 792
+		}
+	}
+	w, h = v[2]-v[0], v[3]-v[1]
+	if w <= 0 || h <= 0 {
+		return 612, 792
+	}
+	return w, h
+}

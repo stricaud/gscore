@@ -223,6 +223,12 @@ func main() {
 			mode = app.Headless
 		}
 		ap := app.NewBook(scores, path)
+		// A PDF is read by judgement rather than parsed, so the editor keeps
+		// its bytes and can read it again a different way. See
+		// internal/app/pdfimport.go.
+		if data, err := os.ReadFile(path); err == nil {
+			ap.KeepPDFSource(path, data)
+		}
 		// Whatever the importer could not read goes with the score, so the
 		// log window has it for a file opened from the command line too.
 		ap.Opened(err)

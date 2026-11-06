@@ -218,6 +218,24 @@ func (a *App) handleOpenPath(w http.ResponseWriter, r *http.Request) {
 func (a *App) OpenPath(path string) error { return a.openPath(path) }
 
 func (a *App) openPath(path string) error {
+	// A PDF goes a different way: its bytes are kept so the reading can be
+	// reviewed and done again with the grouping said out loud. See
+	// pdfimport.go.
+	if isPDFName(path) {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		scores, err := a.readPDF(path, data, 0)
+		if len(scores) == 0 {
+			return err
+		}
+		a.lock()
+		a.setBook(scores, path, nil)
+		a.mu.Unlock()
+		a.remember(path)
+		return nil
+	}
 	imp, err := format.ImporterFor(path)
 	if err != nil {
 		return err
@@ -235,6 +253,7 @@ func (a *App) openPath(path string) error {
 		return err
 	}
 	a.lock()
+	a.forgetPDF()
 	a.setBook(scores, path, err)
 	a.mu.Unlock()
 	a.remember(path)

@@ -53,13 +53,56 @@ a view of a thing that already worked.
 | | |
 |---|---|
 | Model | pitches, durations, chords, voices, measures, parts, no geometry |
-| Import | ABC, MusicXML, MuseScore, Finale, NoteWorthy, GUIDO, `.gscore` |
+| Import | ABC, MusicXML, MuseScore, Finale, NoteWorthy, GUIDO, `.gscore`, engraved PDF |
 | Export | PDF, SVG, web page, MIDI, MusicXML, ABC, LilyPond, GUIDO, FLAC |
 | Engraving | the rules are in [`docs/engraving-layout.md`](docs/engraving-layout.md) |
 | Rendering | SVG and PDF from one layout, measured in staff spaces |
 | Editor | a native window around a web interface, and the same interface as a page |
 | Playback | a General MIDI soundfont, or oscillators where there is no disk |
 | Analysis | harmonics, range, keys, shape, voice leading, spacing, rhythm, melody |
+
+
+### Reading an engraved PDF
+
+A PDF made by a notation program still contains the music, glyph by glyph: a
+notehead is a named glyph at a position good to six decimal places, so its
+pitch is how far it sits above the bottom staff line. That is subtraction,
+not recognition — on a file from LilyPond or MuseScore the notes that come
+out are the notes that went in. A PDF that was *scanned* is a photograph and
+cannot be read this way; it says so rather than guessing.
+
+What is read: notes with their lengths, accidentals and dots, clefs, key and
+time signatures, rests, barlines. What is not, and has to be put back by
+hand: slurs and ties, which are curves carrying no pitch, and the dynamics,
+articulations, lyrics, tuplets and directions.
+
+One thing a PDF never says is **how many staves make a system** — which is to
+say how many players are reading at once. It has to be inferred from a line
+crossing the gap between two staves, and where an engraver draws each staff's
+barlines separately there is nothing to find: every staff becomes a system of
+its own, and the whole file arrives as one part thousands of bars long. That
+is not a subtle failure but it is an invisible one, because the score that
+comes out is perfectly well formed.
+
+So opening a PDF shows the reading rather than asserting it. The page is
+drawn back as the reader perceived it — the staves it found, coloured by the
+part each went into, every notehead ringed with the pitch it was given, over
+the strokes the page is actually made of — with the number of instrument
+lines beside it to overrule the guess and read again. Where that drawing and
+the real page disagree, the disagreement is the mistake, and it is visible at
+a glance.
+
+A PDF also never says **what each staff is**, so the staves arrive nameless
+and are played as pianos — and **Score setup** opens on them as soon as the
+reading is settled, listing them one by one in the order they are on the
+page. Over a score that already has music, nothing in that window lays the
+staves out again: adding, removing, moving and bracketing go straight to the
+score as they are done, each undoable on its own, and setting an instrument
+changes that staff and nothing else. A staff takes the name of what it has
+been told it plays. Two staves given a piano, a harp or another instrument
+written on two become a single braced grand staff — whereas two staves given
+a flute stay Flute 1 and Flute 2, because two flutes are two players however
+close together they are printed.
 
 The window is a [`webview`](https://github.com/webview/webview_go) around a
 local HTTP server — WebKit on macOS, WebKitGTK on Linux, WebView2 on Windows —

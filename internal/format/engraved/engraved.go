@@ -61,8 +61,34 @@ func (importer) Name() string                             { return "Engraved PDF
 func (importer) Extensions() []string                     { return []string{".pdf"} }
 func (importer) Import(r io.Reader) (*model.Score, error) { return Import(r) }
 
+// Options are what the person importing knows and the page does not say.
+type Options struct {
+	// StavesPerSystem is how many staves one system holds — which is to say
+	// how many instruments play at once. Zero means work it out from the
+	// page.
+	//
+	// Working it out is a guess, and it is the guess this reader is worst
+	// at. A system's staves are tied together by lines that cross the gap
+	// between them, so that is what joined() looks for; but an engraver who
+	// draws the barlines of a single-staff song right through to the staff
+	// below produces the same evidence as a duet, and a duet whose system
+	// happens to begin with an empty bar produces none. Get it wrong one way
+	// and a duet becomes one part played twice; the other, and a song becomes
+	// seven parts.
+	//
+	// Nobody looking at the page is in any doubt. So it can be said, and when
+	// it is said the grouping stops being a guess: the staves are taken in
+	// blocks of this many, in reading order, and joined() is not consulted.
+	StavesPerSystem int
+}
+
 // Import reads every page of an engraved PDF into one score.
 func Import(r io.Reader) (*model.Score, error) {
+	return ImportWith(r, Options{})
+}
+
+// ImportWith reads an engraved PDF, told what the page cannot say.
+func ImportWith(r io.Reader, opt Options) (*model.Score, error) {
 	data, err := io.ReadAll(r)
 	if err != nil {
 		return nil, err
@@ -83,7 +109,7 @@ func Import(r io.Reader) (*model.Score, error) {
 		if err != nil {
 			continue
 		}
-		for _, sys := range systems(c, staves(c)) {
+		for _, sys := range systems(c, staves(c), opt.StavesPerSystem) {
 			for k, st := range sys {
 				ms, key, time := readStaff(c, st)
 				if len(ms) == 0 {
@@ -278,9 +304,25 @@ func (st staff) holds(g pdf.Glyph) bool {
 // system holds one staff there is no such gap to find. The spacing between
 // systems varies with what hangs off the music — lyrics under one line,
 // nothing under the next — so the variation gets read as structure.
-func systems(c *pdf.Content, sts []staff) [][]staff {
+// perSystem, when not zero, settles the question instead: the staves are cut
+// into blocks of that many, in reading order. A page whose staff count is not
+// a multiple of it is not refused — the last short block is kept, since a
+// page that ends mid-system is likelier than a person who cannot count their
+// own instruments.
+func systems(c *pdf.Content, sts []staff, perSystem int) [][]staff {
 	if len(sts) == 0 {
 		return nil
+	}
+	if perSystem > 0 {
+		var out [][]staff
+		for i := 0; i < len(sts); i += perSystem {
+			j := i + perSystem
+			if j > len(sts) {
+				j = len(sts)
+			}
+			out = append(out, sts[i:j])
+		}
+		return out
 	}
 	var out [][]staff
 	cur := []staff{sts[0]}

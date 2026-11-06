@@ -208,6 +208,78 @@ paths:
         "400": { $ref: "#/components/responses/Error" }
         "403": { $ref: "#/components/responses/Error" }
 
+  /api/pdfsurvey:
+    get:
+      tags: [score]
+      summary: What the PDF reader saw
+      description: >
+        Reports the reading of the open PDF rather than its music: where the
+        staves were found, how they were grouped into systems, and the pitch
+        given to each notehead, all in the page's own coordinates so the
+        answer can be drawn back over the page. A PDF says nowhere on itself
+        how many staves make a system, so the grouping is inferred, and this
+        is how the inference is checked. Only a PDF has one; anything else
+        answers 404.
+      parameters:
+        - name: staves
+          in: query
+          required: false
+          description: >
+            Staves per system to survey with. Omit to use whatever the open
+            score was read with; 0 means work it out from the page.
+          schema: { type: integer, minimum: 0, maximum: 64 }
+      responses:
+        "200":
+          description: The reading.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  filename: { type: string }
+                  survey:
+                    type: object
+                    properties:
+                      parts: { type: integer }
+                      perSystem: { type: integer }
+                      detected: { type: integer }
+                      pages:
+                        type: array
+                        items: { type: object }
+        "400": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+
+  /api/pdfreread:
+    post:
+      tags: [score]
+      summary: Read the open PDF again with a given grouping
+      description: >
+        Reads the same bytes again, told how many staves a system holds, and
+        replaces the open score with the result. Nothing is merged: a
+        different grouping is a different reading of the same page, not an
+        edit of what is there.
+      parameters:
+        - name: staves
+          in: query
+          required: true
+          description: Staves per system; 0 means work it out from the page.
+          schema: { type: integer, minimum: 0, maximum: 64 }
+      responses:
+        "200":
+          description: Read again.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string }
+                  filename: { type: string }
+                  staves: { type: integer }
+                  parts: { type: integer }
+        "400": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "405": { $ref: "#/components/responses/Error" }
+
   /api/save:
     post:
       tags: [score]

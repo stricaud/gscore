@@ -626,33 +626,61 @@ func TestAMusSaysWhatItDidNotRead(t *testing.T) {
 }
 
 // A document with staves and bars but nothing saying what goes where is an
-// empty Finale document, and it has to say so. Built as a score it would be a
-// score with no parts, which looks like success to everything downstream.
-func TestAnEmptyDocumentIsRefused(t *testing.T) {
+// empty Finale document, and it opens as one.
+//
+// This test used to assert the opposite, on the reasoning that such a file
+// would build into a score with no parts and so look like success to
+// everything downstream. The reasoning was wrong and no real file had been
+// read when it was written: the staves and the bars are in the document, not
+// in the music, so what it builds is a ruled, named, empty score — which is
+// exactly what a Finale template is, and what most .mus files turn out to be.
+func TestAnEmptyDocumentOpens(t *testing.T) {
 	b := newMus()
 	b.staff(1, 0, 0).used(1).bar(1, 4, 1024)
 
-	_, _, err := readMus(b.bytes())
-	if err == nil {
-		t.Fatal("a document with no music was read as a score")
+	score, _, err := readMus(b.bytes())
+	if err != nil {
+		t.Fatalf("a document with no music was refused: %v", err)
 	}
-	if !strings.Contains(err.Error(), "no score in it") {
-		t.Errorf("the error is %q, which does not say what is wrong", err)
+	if len(score.Parts) != 1 {
+		t.Fatalf("got %d parts, want the one staff the document rules",
+			len(score.Parts))
+	}
+	if len(score.Parts[0].Measures) != 1 {
+		t.Errorf("got %d bars, want the one the document rules",
+			len(score.Parts[0].Measures))
 	}
 }
 
-// Music in the pool that nothing places is not a score either, and it is a
-// different fault from having no music at all.
-func TestMusicNothingPlacesIsRefused(t *testing.T) {
+// A document whose every frame names music that is not in the file opens too,
+// and reports the bars it lost.
+//
+// Refusing it would be refusing a score for being damaged, which leaves
+// somebody with nothing where they could have had the staves, the bars and
+// the words — and no way to tell which bars went.
+func TestADocumentWhoseMusicIsAllMissingStillOpens(t *testing.T) {
 	b := newMus()
 	b.staff(1, 0, 0).used(1).bar(1, 4, 1024)
 	// A hold naming a frame that names entries the pool does not hold.
 	b.frame(1, 900, 901).hold(1, 1, 1)
 	b.sounds(1, 0, 4096, 0)
 
-	_, _, err := readMus(b.bytes())
-	if err == nil {
-		t.Fatal("a document whose music is unreachable was read as a score")
+	score, skipped, err := readMus(b.bytes())
+	if err != nil {
+		t.Fatalf("a document with unreachable music was refused: %v", err)
+	}
+	if len(score.Parts) != 1 {
+		t.Fatalf("got %d parts, want the one staff the document rules",
+			len(score.Parts))
+	}
+	found := false
+	for _, s := range skipped {
+		if strings.Contains(s, "notes are not in the file") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("the bars that went were not reported; got %v", skipped)
 	}
 }
 
@@ -950,4 +978,204 @@ func countNotes(score *model.Score) int {
 		}
 	}
 	return n
+}
+
+/*
+ * A blank document is a document.
+ *
+ * Most .mus files hold no music. A template is staves and bars and nothing
+ * else, and so is the file an exercise starts from: of the hundred and two
+ * in the Berklee Press collection, seventy-one are blank, among them a
+ * thirty-six stave orchestral score with every instrument named and fifty-five
+ * bars ruled, waiting to be filled in. Refusing those loses a usable document
+ * and tells somebody their file is broken when it is not.
+ */
+func TestABlankDocumentOpensAsABlankDocument(t *testing.T) {
+	b := newMus()
+	b.title = "A Template"
+	b.staff(1, 0, 1).staff(2, 0, 2).used(1, 2)
+	for n := 1; n <= 8; n++ {
+		b.bar(n, 4, 1024)
+	}
+
+	score, skipped, err := readMus(b.bytes())
+	if err != nil {
+		t.Fatalf("a blank template was refused: %v", err)
+	}
+	if score.Identity.Title != "A Template" {
+		t.Errorf("title is %q, want the one in the file", score.Identity.Title)
+	}
+	if len(score.Parts) != 2 {
+		t.Fatalf("got %d staves, want the 2 the file rules", len(score.Parts))
+	}
+	for i, p := range score.Parts {
+		if len(p.Measures) != 8 {
+			t.Errorf("staff %d has %d bars, want the 8 the file rules",
+				i+1, len(p.Measures))
+		}
+	}
+	if countNotes(score) != 0 {
+		t.Error("a blank template came back with notes in it")
+	}
+	// Nothing was lost, so nothing is reported as lost. A template that
+	// warned about its own emptiness would be telling somebody to go and
+	// look for music that was never there.
+	for _, s := range skipped {
+		if strings.Contains(s, "cannot be followed") {
+			t.Errorf("a blank document reported %q", s)
+		}
+	}
+}
+
+// Deleted music does not make a blank document look like a broken one.
+//
+// A .mus is written in place, so a template that once had music in it still
+// carries the entries, reachable from nothing. That is the ordinary state of
+// the jazz templates in that collection: two hundred and forty-six entries
+// apiece, a hundred and ninety bars that each say they are empty, and not one
+// note. The entries are the space where music used to be, not music that
+// could not be read, and the file says which by naming no frame anywhere.
+func TestLeftoverEntriesInABlankDocumentAreNotReportedAsLost(t *testing.T) {
+	b := newMus()
+	b.staff(1, 0, 1).used(1)
+	b.bar(1, 4, 1024).bar(2, 4, 1024)
+	// Bars that exist and hold nothing, which is what Finale writes.
+	b.hold(1, 1, 0).hold(1, 2, 0)
+	for i := range 6 {
+		b.sounds(100+i, 101+i, 1024, 0)
+	}
+
+	score, skipped, err := readMus(b.bytes())
+	if err != nil {
+		t.Fatalf("a blank document with leftovers was refused: %v", err)
+	}
+	if n := countNotes(score); n != 0 {
+		t.Errorf("got %d notes; the leftovers are deleted music, not music", n)
+	}
+	for _, s := range skipped {
+		if strings.Contains(s, "cannot be followed") {
+			t.Errorf("deleted music was reported as lost: %q", s)
+		}
+	}
+}
+
+// A bar whose notes are missing from the file is a loss, and says so.
+//
+// This is the one case where a .mus holds music that cannot be read: a frame
+// naming a chain of entries the pool does not contain. The frame has to be
+// dropped — the score builder refuses a chain it cannot walk, so keeping it
+// would cost the whole document — and a bar that goes quietly is a bar
+// somebody finds missing in a rehearsal. It is the opposite of an entry no
+// frame names, which is deleted music and no loss at all.
+func TestABarWhoseNotesAreMissingIsReported(t *testing.T) {
+	b := aTune(newMus())
+	// A third bar whose frame names entries that were never written.
+	b.bar(3, 4, 1024)
+	b.frame(3, 900, 903)
+	b.hold(1, 3, 3)
+
+	score, skipped, err := readMus(b.bytes())
+	if err != nil {
+		t.Fatalf("the fixture did not read: %v", err)
+	}
+	// The rest of the music still arrives.
+	if n := countNotes(score); n != 8 {
+		t.Errorf("got %d notes, want the 8 that are in the file", n)
+	}
+	found := false
+	for _, s := range skipped {
+		if strings.Contains(s, "notes are not in the file") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("a bar whose notes are missing was not reported; got %v", skipped)
+	}
+}
+
+// A measure with a key signature word, written whole as the format packs it.
+func (b *musBuild) barWithKey(n, beats, div, key int) *musBuild {
+	return b.otherRow(n, "MS", b.u16s(600, key, beats, div, 0, 0))
+}
+
+/*
+ * A key signature is two fields in one word.
+ *
+ * The low byte counts the accidentals, sharps up and flats down as a signed
+ * byte; the high byte is the mode. Read whole, the word is right for sharps
+ * by accident and wrong for every flat: two flats is 0xFE, and 254 is not a
+ * signature anybody has, so the file's key was thrown away as nonstandard and
+ * the staff came out bare. A Bach fugue in G minor engraved with no flats at
+ * all is how this was found, and the two-flat word that file carries — 0x01FE
+ * — is the case below.
+ */
+func TestAKeySignatureIsACountAndAMode(t *testing.T) {
+	for _, c := range []struct {
+		what   string
+		word   int
+		fifths int
+		mode   model.Mode
+	}{
+		{"D major, the word a .mus carries for two sharps", 0x0002, 2, model.Major},
+		{"E major", 0x0004, 4, model.Major},
+		{"F major, one flat", 0x00ff, -1, model.Major},
+		{"G minor, two flats and the minor bit", 0x01fe, -2, model.Minor},
+		{"A minor, no accidentals and the minor bit", 0x0100, 0, model.Minor},
+		{"seven flats", 0x00f9, -7, model.Major},
+		{"seven sharps", 0x0007, 7, model.Major},
+	} {
+		b := newMus()
+		b.staff(1, 0, 1).used(1)
+		b.barWithKey(1, 4, 1024, c.word)
+		b.frame(1, 1, 1).hold(1, 1, 1)
+		b.sounds(1, 0, 4096, 0)
+
+		score, skipped, err := readMus(b.bytes())
+		if err != nil {
+			t.Errorf("%s: did not read: %v", c.what, err)
+			continue
+		}
+		for _, s := range skipped {
+			if strings.Contains(s, "key signature") || strings.Contains(s, "mode") {
+				t.Errorf("%s: reported %q", c.what, s)
+			}
+		}
+		key := score.Parts[0].KeyAt(0)
+		if key.Fifths != c.fifths {
+			t.Errorf("%s: got %d accidentals, want %d",
+				c.what, key.Fifths, c.fifths)
+		}
+		if key.Mode != c.mode {
+			t.Errorf("%s: got the %v mode, want %v", c.what, key.Mode, c.mode)
+		}
+	}
+}
+
+// A signature that is not a count of sharps or flats has nowhere to go in a
+// gscore key, so it is left out and said so rather than drawn as something
+// else.
+func TestANonstandardKeySignatureIsReported(t *testing.T) {
+	b := newMus()
+	b.staff(1, 0, 1).used(1)
+	// Nine flats, which is not a signature in the ordinary sense.
+	b.barWithKey(1, 4, 1024, 0x00f7)
+	b.frame(1, 1, 1).hold(1, 1, 1)
+	b.sounds(1, 0, 4096, 0)
+
+	score, skipped, err := readMus(b.bytes())
+	if err != nil {
+		t.Fatalf("the fixture did not read: %v", err)
+	}
+	if f := score.Parts[0].KeyAt(0).Fifths; f != 0 {
+		t.Errorf("a nonstandard signature was drawn as %d accidentals", f)
+	}
+	found := false
+	for _, s := range skipped {
+		if strings.Contains(s, "nonstandard key") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("a nonstandard signature was not reported; got %v", skipped)
+	}
 }

@@ -178,11 +178,6 @@ func musDocument(pools []musPool, order binary.ByteOrder, era musEra) (document,
 	// would cost the whole document rather than one frame of music.
 	frames, dropped := musFrames(others, entries, order)
 	holds := musHolds(details, others, dropped, order, era)
-	if len(holds) == 0 {
-		return doc, nil, fmt.Errorf(
-			"mus: this file says nothing about which music goes on which staff, " +
-				"so there is no score in it — it is most likely an empty document")
-	}
 
 	// A .mus is written in place, so an entry deleted in Finale keeps its
 	// slot in the pool until the file is next compacted. The pool therefore
@@ -191,16 +186,28 @@ func musDocument(pools []musPool, order binary.ByteOrder, era musEra) (document,
 	// which is which. Keeping the rest would put bars of deleted music in
 	// the score.
 	live := musLive(entries, frames, holds)
-	if len(entries) > 0 && len(live) == 0 {
-		return doc, nil, fmt.Errorf(
-			"mus: this file holds %d entries of music but nothing that places "+
-				"any of them on a staff", len(entries))
-	}
-	if gone := len(entries) - len(live); gone > 0 {
-		// Not reported as something lost: it is not music, it is the space
-		// where deleted music used to be. Counting it would say a score
-		// arrived incomplete when it arrived whole.
-		_ = gone
+
+	// A document with no music in it is a document, not a failure.
+	//
+	// Blank is the ordinary state of a great many .mus files: a template is
+	// staves and bars and nothing else, and so is the starting file of every
+	// exercise in a tutorial. Of the hundred and two files in the one
+	// collection large enough to argue from, seventy-one are blank, and
+	// every one of them has its staves, its bars, its names and its key —
+	// which is the whole of what a template is for. Refusing them, as this
+	// did until it was first run against real files, loses a usable document
+	// and tells somebody theirs is broken when it is not.
+	//
+	// So nothing here refuses. What is worth saying is the one case where
+	// the file does hold music that this cannot reach: a frame naming a
+	// chain of entries the pool does not contain. Those are dropped above,
+	// because the score builder refuses a chain it cannot walk, and a frame
+	// dropped silently is a bar of music gone with nothing said. Entries no
+	// frame names are the opposite case and are not counted: that is the
+	// space where deleted music used to be, and counting it would say a
+	// score arrived incomplete when it arrived whole.
+	if len(dropped) > 0 {
+		census["bars of music whose notes are not in the file"] = len(dropped)
 	}
 
 	doc.Entries.Entries = live
@@ -496,8 +503,27 @@ func musBars(others map[[3]int]*musRecord, order binary.ByteOrder,
 			Beats:   int(order.Uint16(p[musMeasBeats:])),
 			DivBeat: int(order.Uint16(p[musMeasDivBeat:])),
 		}
-		if k := int(order.Uint16(p[musMeasKey:])); k != 0 {
-			bar.Key = &k
+		if word := int(order.Uint16(p[musMeasKey:])); word != 0 {
+			// Two fields in one word: the low byte counts the accidentals,
+			// sharps up and flats down as a signed byte, and the high byte
+			// is the mode.
+			//
+			// Read whole, the word is right for sharps by accident and
+			// wrong for every flat: two flats is 0xFE, which as sixteen
+			// bits is 254, and 254 is not a key signature anybody has, so
+			// every flat key in the file was being thrown away as
+			// nonstandard. A Bach fugue in G minor came through in no key
+			// at all, with the two flats it is written in missing from
+			// every staff — the one musical error in that whole file.
+			//
+			// The split is what the hundred and two files say: of the six
+			// distinct words among them, five have a zero high byte and one
+			// is 0x01FE, which is the G minor file, and the low bytes are
+			// 0, ±1, 2 and 4. gscore's modes are numbered the way Finale
+			// numbers them, major first and minor second.
+			fifths := int(int8(uint8(word)))
+			bar.Key = &fifths
+			bar.Mode = word >> 8
 		}
 		if len(p) > musMeasFlags+1 {
 			// The low byte of the number at +10, not the byte at +10. The

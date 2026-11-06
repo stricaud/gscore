@@ -334,6 +334,14 @@ type measSpec struct {
 	DivBeat int    `xml:"divbeat"`
 	Barline string `xml:"barline"`
 	Key     *int   `xml:"keySig>key"`
+
+	// Mode is which mode the signature is in, where the format says so.
+	// Only a .mus fills it: the XML of a .musx carries the same word the
+	// binary does, but no .musx has been read here with anything but a
+	// major key in it, so decomposing it there would be a guess where here
+	// it is a measurement. Zero is Major, which is both the right default
+	// and what the XML path has always assumed.
+	Mode int `xml:"-"`
 }
 
 type frameSpec struct {
@@ -1037,20 +1045,32 @@ func isNoteValue(edu int) bool {
 
 // keyOf reads a bar's key signature.
 //
-// Finale counts sharps up and flats down, as everything does; what it does
-// not do is say so in a way that survives the modes and the nonstandard
-// signatures it also allows, and those are left for a later pass rather than
-// guessed at.
+// Finale counts sharps up and flats down, as everything does. What it also
+// allows is a signature that is not a count of either — a scale with its own
+// pattern of accidentals — and that is still left for a later pass rather
+// than guessed at, because there is nowhere in a gscore key signature to put
+// one.
+//
+// The mode arrives separately and only from a .mus, which is why it is read
+// here and not derived: the same seven accidentals are G minor or B flat
+// major depending on it, the staff looks identical either way, and the
+// difference shows up in how a chord over that bar is named.
 func keyOf(bar measSpec, r *reader) model.KeySignature {
 	if bar.Key == nil {
 		return model.KeySignature{}
 	}
 	k := *bar.Key
-	if k >= -7 && k <= 7 {
-		return model.KeySignature{Fifths: k}
+	if k < -7 || k > 7 {
+		r.skip("nonstandard key signatures")
+		return model.KeySignature{}
 	}
-	r.skip("modes and nonstandard key signatures")
-	return model.KeySignature{}
+	key := model.KeySignature{Fifths: k}
+	if bar.Mode >= int(model.Major) && bar.Mode <= int(model.Locrian) {
+		key.Mode = model.Mode(bar.Mode)
+	} else if bar.Mode != 0 {
+		r.skip("modes gscore has no name for")
+	}
+	return key
 }
 
 // clefOf maps Finale's clef numbers onto the clefs gscore draws.

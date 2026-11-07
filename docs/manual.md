@@ -188,6 +188,16 @@ Click the words to pick them up: Enter opens them for changing, with what
 they say already in the box, and Backspace takes them off. A note that
 carries two keeps the other one.
 
+### Printing
+
+<span class="menu-path">File → Print</span> lays the score out on the paper
+<span class="menu-path">File → Page setup</span> says it is printed on,
+chooses the type size the way the PDF does, and gives each page of the
+engraving a sheet of its own — so a staff is never cut in half by the edge
+of the paper, and what comes out of the printer is what comes out of
+<span class="menu-path">File → Export → PDF</span>. Gilbert goes in the
+corner of the first sheet, as he does in the PDF, and on no other.
+
 ## Marks
 
 Most have a single key. All are in <span class="menu-path">Edit</span> or

@@ -435,6 +435,28 @@ func (r *renderer) stamp() {
 // band is one page's worth of the layout, in staff spaces.
 type band struct{ top, bottom float64 }
 
+// Band is a stretch of a drawing that goes on one page, in staff spaces.
+type Band struct{ Top, Bottom float64 }
+
+// Bands cuts a layout into the pieces that each go on one page, where a
+// page holds `usable` staff spaces of height.
+//
+// Exported because the printed page needs the same cuts. A browser handed
+// the whole drawing breaks it wherever the paper runs out, which is through
+// the middle of a staff — so the print page asks for these and puts each
+// one on a sheet of its own, and what comes out of the printer is what
+// comes out of the PDF.
+func Bands(lay *engrave.Layout, usable float64) []Band {
+	r := &renderer{lay: lay, opt: Options{
+		PageHeight: usable, StaffSpace: 1,
+	}}
+	var out []Band
+	for _, b := range r.pages() {
+		out = append(out, Band{Top: b.top, Bottom: b.bottom})
+	}
+	return out
+}
+
 // pages cuts the layout between systems so that none is split in two.
 //
 // A system that will not fit a page on its own goes on a page of its own and

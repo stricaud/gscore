@@ -62,6 +62,21 @@ type Options struct {
 	// costs one piece rather than everything in view.
 	Fragment bool
 
+	// Crop is the part of the drawing this file holds, in staff spaces: a
+	// page of a paginated score, so that one drawing becomes one printed
+	// page and a page break falls where the engraver put it.
+	//
+	// It leaves out what does not reach into the box, exactly as Window
+	// does, and differs in what the drawing then is: a cropped file is the
+	// size of its box and its contents sit at the top of it, where a
+	// windowed one keeps the whole score's size and leaves a hole. The one
+	// is a page; the other is a screenful of a longer roll.
+	//
+	// Printing a paginated score as a single tall drawing was what made
+	// this necessary: the browser cut it into pages wherever the paper ran
+	// out, which was through the middle of a staff.
+	Crop *Box
+
 	// Window draws only the part of the score that reaches into a box,
 	// leaving the rest out. Nil draws the whole of it.
 	//
@@ -134,12 +149,18 @@ func DefaultOptions() Options {
 func writeOpen(b *strings.Builder, lay *engrave.Layout, opt Options) {
 	s := opt.StaffSpace
 	width, height := lay.Width*s, lay.Height*s
+	x0, y0 := 0.0, 0.0
+	if c := opt.Crop; c != nil {
+		x0, y0 = c.X0*s, c.Y0*s
+		width, height = (c.X1-c.X0)*s, (c.Y1-c.Y0)*s
+	}
 	class := "gscore-score"
 	if opt.Scope != "" {
 		class += " " + scopeClass(opt.Scope)
 	}
 	fmt.Fprintf(b, `<svg xmlns="http://www.w3.org/2000/svg" width="%.1f" height="%.1f" `+
-		`viewBox="0 0 %.1f %.1f" class="%s">`+"\n", width, height, width, height, class)
+		`viewBox="%.1f %.1f %.1f %.1f" class="%s">`+"\n",
+		width, height, x0, y0, width, height, class)
 	writeStyle(b, opt, s)
 }
 
@@ -168,6 +189,11 @@ func Render(w io.Writer, lay *engrave.Layout, opt Options) error {
 		writeOpen(&b, lay, opt)
 	}
 	win := opt.Window
+	// A cropped drawing holds what reaches into its own box and nothing
+	// else, which is the same question a window asks.
+	if win == nil && opt.Crop != nil {
+		win = opt.Crop
+	}
 
 	for _, ln := range lay.Lines {
 		if !win.touches(ln.X1, ln.Y1, ln.X2, ln.Y2) {

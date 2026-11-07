@@ -46,6 +46,7 @@ import (
 	"github.com/stricaud/gscore/internal/engrave"
 	"github.com/stricaud/gscore/internal/format"
 	"github.com/stricaud/gscore/internal/model"
+	gpdf "github.com/stricaud/gscore/internal/render/pdf"
 	"github.com/stricaud/gscore/internal/render/svg"
 	"github.com/stricaud/gscore/internal/symbol"
 	"github.com/stricaud/gscore/internal/version"
@@ -1434,22 +1435,55 @@ func (a *App) handlePrint(w http.ResponseWriter, r *http.Request) {
 	ropt.EmbedFont = true
 	ropt.StaffSpace = 6
 
+	// The type size, chosen from the music the same way the PDF chooses
+	// it. Without this the printed page and the exported PDF of the same
+	// score were two different documents: the PDF shrinks the type until a
+	// system fits the sheet and fills the page it is given, and printing
+	// engraved at whatever size the paper nominally asks for and let the
+	// browser deal with the consequences.
+	paper := paperFor(page)
+
 	var body strings.Builder
 	for i, sec := range sections {
 		if i == 1 {
 			ropt.EmbedFont = false
 		}
-		var drawing strings.Builder
-		if err := svg.Render(&drawing, engrave.Engrave(sec.score, eopt), ropt); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
+		po, eo := gpdf.Fit(sec.score, paper, eopt)
+		lay := engrave.Engrave(sec.score, eo)
+		ropt.StaffSpace = po.StaffSpace
+
+		// One drawing per page, cut where the engraver would cut it.
+		//
+		// The whole score as one tall drawing is what put a staff through
+		// the page break: the browser knows nothing about systems and
+		// breaks wherever the paper runs out. These are the same cuts the
+		// PDF makes, so the two come out the same.
+		usable := (po.PageHeight - po.MarginTop - po.MarginBottom) / po.StaffSpace
+		for b, band := range gpdf.Bands(lay, usable) {
+			var drawing strings.Builder
+			ropt.Crop = &svg.Box{
+				X0: 0, Y0: band.Top, X1: lay.Width, Y1: band.Bottom,
+			}
+			if err := svg.Render(&drawing, lay, ropt); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			body.WriteString(`<section>`)
+			// The maker's mark, on the first sheet and nowhere else —
+			// where the PDF of the same score puts it, so that printing
+			// and exporting give the same document. In the top corner,
+			// over the air the engraver leaves above the title and never
+			// over the music.
+			if i == 0 && b == 0 {
+				body.WriteString(`<img class="stamp" src="/gilbert.svg" alt="">`)
+			}
+			if sec.heading != "" && b == 0 {
+				fmt.Fprintf(&body, `<h2>%s</h2>`, html.EscapeString(sec.heading))
+			}
+			body.WriteString(drawing.String())
+			body.WriteString(`</section>`)
+			ropt.EmbedFont = false
 		}
-		body.WriteString(`<section>`)
-		if sec.heading != "" {
-			fmt.Fprintf(&body, `<h2>%s</h2>`, html.EscapeString(sec.heading))
-		}
-		body.WriteString(drawing.String())
-		body.WriteString(`</section>`)
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -1462,8 +1496,15 @@ func (a *App) handlePrint(w http.ResponseWriter, r *http.Request) {
   @page { size: %s; margin: %s; }
   html, body { margin: 0; padding: 0; background: #fff; }
   svg { display: block; width: 100%%; height: auto; }
-  /* Each tune, and each extracted part, starts its own page. */
-  section { break-before: page; page-break-before: always; }
+  /* The maker's mark sits over the air above the title, which is where
+     the PDF puts it. Eleven millimetres: big enough to recognise, small
+     enough to stay a mark in the corner. */
+  section { position: relative; }
+  .stamp { position: absolute; left: 0; top: 0; width: 32pt; height: auto; }
+  /* One drawing to a sheet: each is a page the engraver cut, so the
+     browser must not put two on one or break one across two. */
+  section { break-before: page; page-break-before: always;
+            break-inside: avoid; page-break-inside: avoid; }
   section:first-of-type { break-before: auto; page-break-before: auto; }
   h2 { font: 600 14pt Georgia, "Times New Roman", serif; margin: 0 0 6mm; }
   @media screen { body { padding: 16px; } section { margin-bottom: 24px; } }
@@ -1476,7 +1517,25 @@ func (a *App) handlePrint(w http.ResponseWriter, r *http.Request) {
     setTimeout(function () { window.print(); }, 600);
   }
 </script></body></html>`, html.EscapeString(title),
-		pageCSSSize(page), pageCSSMargin(page), body.String())
+		printPageCSS(paper), printMarginCSS(paper), body.String())
+}
+
+// printPageCSS and printMarginCSS say the paper the bands were cut for.
+//
+// In the paper's own units and not the score's, because the two have to be
+// the same page: the drawings are cut to a page of this height, and a
+// browser laying them out on a sheet of some other height either squeezes
+// two onto one or splits one across two — which is the staff cut in half
+// that this is here to stop. "auto" was that other height, since it means
+// whatever paper the printer happens to have loaded.
+func printPageCSS(o gpdf.Options) string {
+	return fmt.Sprintf("%.1fpt %.1fpt", o.PageWidth, o.PageHeight)
+}
+
+func printMarginCSS(o gpdf.Options) string {
+	// CSS orders them clockwise from the top.
+	return fmt.Sprintf("%.1fpt %.1fpt %.1fpt %.1fpt",
+		o.MarginTop, o.MarginRight, o.MarginBottom, o.MarginLeft)
 }
 
 // partLabel names a staff on its own page, so a player can tell which sheet
@@ -1554,31 +1613,3 @@ func (a *App) cursorInfo() cursorInfo {
 // middleStaffStep is the middle line, which is where a cursor with no reason
 // to be anywhere else sits.
 const middleStaffStep = 4
-
-// pageCSSSize and pageCSSMargin are the score's paper as a browser's print
-// machinery wants to hear it.
-//
-// Printing goes through the browser: the pages are drawn as SVG and the
-// browser's own print dialog puts them on paper. So the paper has to be
-// said again in CSS, or the dialog starts on whatever the last thing
-// printed used and the margins the music was engraved to are not the
-// margins it is printed with.
-//
-// Millimetres, which is what the model keeps and what @page takes.
-func pageCSSSize(p model.Page) string {
-	if p.IsZero() {
-		return "auto"
-	}
-	w, h := p.Size()
-	return fmt.Sprintf("%.1fmm %.1fmm", w, h)
-}
-
-func pageCSSMargin(p model.Page) string {
-	if p.IsZero() {
-		return "12mm"
-	}
-	// CSS orders them clockwise from the top, which is not the order they
-	// are asked for.
-	left, right, top, bottom := p.Margins()
-	return fmt.Sprintf("%.1fmm %.1fmm %.1fmm %.1fmm", top, right, bottom, left)
-}

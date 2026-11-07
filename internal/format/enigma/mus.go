@@ -105,7 +105,17 @@ const (
 	// letter of the title.
 	musTitleAt = 0xD8
 
-	// Where the pool container starts, in both eras.
+	// And where each of them sits inside that block, counted from the
+	// title. They are slots at fixed places, not one string after another:
+	// see musMetadata.
+	musComposerAt  = 64
+	musCopyrightAt = 96
+
+	// Where the header says the pool container starts. The value is usually
+	// musContainerAt and is not always, which musContainerStart explains.
+	musContainerWhere = 0x60
+
+	// Where the pool container starts when nothing says otherwise.
 	musContainerAt = 0x200
 
 	// The last year that wrote PKWARE DCL. After it, zlib.
@@ -259,8 +269,19 @@ func joinSemi(s []string) string {
 // wrong: a title read as empty is a score with no title on it, where a bar
 // read wrong is a score that is not the music. The block is fixed in size
 // and usually all zero — plenty of Finale documents simply carry no title —
-// so anything that is not plain printable text ends the reading rather than
-// being guessed at.
+// so anything that is not plain printable text is left out rather than
+// guessed at.
+//
+// The three sit at fixed places inside the block, each ending at its first
+// zero byte, and they are read that way rather than one after another
+// because the slots are not cleared when they are written. A document made
+// by opening another and typing over it keeps the tail of whatever was
+// longer: a file whose title is "Takai-Yama" still has "rry Blossom Song)"
+// lying behind the zero that ends it, and the one before that behind the
+// zero after *that*. Read in sequence, a song by a traditional Japanese
+// composer came out written by "rry Blossom Song)", which is not a mistake
+// anybody would make up. Read at its own offset, the composer is where it
+// has always been and the rubbish stays behind the zero where it belongs.
 func musMetadata(raw []byte) metadata {
 	var meta metadata
 	if len(raw) <= musTitleAt {
@@ -268,18 +289,25 @@ func musMetadata(raw []byte) metadata {
 	}
 	block := raw[musTitleAt:min(len(raw), musContainerAt)]
 
-	into := []*string{&meta.Title, &meta.Composer, &meta.Copyright}
-	for _, field := range into {
-		i := bytes.IndexByte(block, 0)
-		if i < 0 {
+	into := []struct {
+		at    int
+		field *string
+	}{
+		{0, &meta.Title},
+		{musComposerAt, &meta.Composer},
+		{musCopyrightAt, &meta.Copyright},
+	}
+	for _, f := range into {
+		if f.at >= len(block) {
 			break
 		}
-		text := string(block[:i])
-		if !printableASCII(text) {
-			break
+		slot := block[f.at:]
+		if i := bytes.IndexByte(slot, 0); i >= 0 {
+			slot = slot[:i]
 		}
-		*field = text
-		block = block[i+1:]
+		if text := string(slot); printableASCII(text) {
+			*f.field = text
+		}
 	}
 	return meta
 }

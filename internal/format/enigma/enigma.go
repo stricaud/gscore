@@ -132,6 +132,12 @@ type document struct {
 		// about one of them finds every tempo word and direction empty.
 		Exprs []blockText `xml:"expression"`
 	} `xml:"texts"`
+
+	// DrumsAreKeys says a note on a drum staff is the instrument's own MIDI
+	// key rather than a place on the staff. The two formats under this
+	// package disagree about that and nothing in either of them says which
+	// way round it is, so the reader of each says so: see musDocument.
+	DrumsAreKeys bool `xml:"-"`
 }
 
 // A staff's name is three lookups away from the staff: staffSpec names a
@@ -691,6 +697,15 @@ func build(doc document, meta metadata, census map[string]int) (*model.Score, []
 		}
 		part.Clef = writtenClef(spec, first, rd)
 
+		// A .mus does not say which staves are drum staves. What it says is
+		// which are read from the percussion clef, and they are the same
+		// staves: of the hundred and forty-four in the collection to hand,
+		// every note of every one is a percussion key and no staff of any
+		// other clef holds one.
+		if part.Clef == model.Percussion && rd.doc.DrumsAreKeys {
+			rd.percussion = true
+		}
+
 		for at, bar := range bars {
 			m := &model.Measure{
 				Voices:       []*model.Voice{{}},
@@ -929,9 +944,11 @@ func (r *reader) element(e *entry, bar measSpec) model.Element {
 	notes := make([]*model.Note, 0, len(e.Notes))
 	for _, n := range e.Notes {
 		note := r.note(n, dur, key)
-		if r.percussion {
+		if r.percussion && !r.doc.DrumsAreKeys {
 			// Which instrument it is decides how it is drawn: a cross for
-			// a cymbal, a plain head for a drum.
+			// a cymbal, a plain head for a drum. Where the note is the
+			// instrument's own key the head came with it, and there is no
+			// layout here to ask anyway.
 			note.Head = r.headFor(r.perc[e.Num], n.HarmLev)
 		}
 		notes = append(notes, note)
@@ -970,7 +987,7 @@ func (r *reader) note(n enigNote, dur model.Duration, key model.KeySignature) *m
 	// It is also why this was not noticed: the Rossini that went through
 	// this reader before is in C major, where the tonic is middle C and the
 	// old reading is the right one.
-	if r.percussion {
+	if r.percussion && !r.doc.DrumsAreKeys {
 		// A drum staff has no key and no transposition: what the number
 		// says is which line the note is written on. Read as a pitch it
 		// came out a sixth above the staff, where Finale draws it on the
@@ -992,6 +1009,10 @@ func (r *reader) note(n enigNote, dur model.Duration, key model.KeySignature) *m
 	}
 	sounds.Alter = key.AlterFor(sounds.Step) + n.HarmAlt
 
+	if r.percussion {
+		return r.drum(sounds, dur)
+	}
+
 	out := &model.Note{
 		// What Finale keeps is the note as it sounds. A clarinet's staff
 		// holds the note the player reads, which is another note entirely,
@@ -1009,6 +1030,54 @@ func (r *reader) note(n enigNote, dur model.Duration, key model.KeySignature) *m
 	out.TieStop = n.TieEnd != nil
 	return out
 }
+
+// drum turns a drum's own pitch into a note on a drum staff.
+//
+// On a staff of this kind the pitch is not a pitch. It is the General MIDI
+// key of the instrument — 38 is the snare, 51 the ride, 44 the hi-hat played
+// with the foot — and where it is written is a matter of convention, which
+// Finale keeps in a percussion layout beside the staff and gscore keeps in
+// model.DrumSet. So the key is looked up and the note is written where
+// drummers write that instrument, which is also what makes it sound right:
+// the key goes on the note and playback uses it rather than the pitch.
+//
+// This is not a reading of one file. Across the hundred and forty-four drum
+// staves of the one collection that has any, every note of every one of them
+// lands on a General MIDI percussion key and none lands anywhere else, in the
+// proportions a drum part has: the ride three hundred and eighty-five times,
+// the closed hi-hat a hundred and ninety-six, the snare a hundred and
+// thirty-one.
+//
+// Read as pitches — which is what they are, in the file — the same notes draw
+// a drum part two ledger lines below the staff with a flat on every cymbal.
+func (r *reader) drum(sounds model.Pitch, dur model.Duration) *model.Note {
+	key := sounds.MIDI()
+	pn, known := model.PercussionByKey(key)
+	if !known {
+		// An instrument the standard kit has no place for: a tambourine, a
+		// wood block, the castanets of an orchestral percussion part, each
+		// of which Finale gives a staff of its own with one line. Written on
+		// the middle line, which is where a staff of one instrument writes
+		// everything, and said rather than drawn where its key would fall.
+		r.skip("drums the standard layout has no place on the staff for")
+		return &model.Note{
+			Pitch:      middleLine[model.Percussion],
+			Dur:        dur,
+			Percussion: key,
+		}
+	}
+	return &model.Note{
+		Pitch:      model.PitchFromDiatonicIndex(pn.Step - percussionMiddle),
+		Dur:        dur,
+		Head:       pn.Head,
+		Percussion: pn.Key,
+	}
+}
+
+// percussionMiddle is the staff step the middle line is, counting half spaces
+// from the bottom line — where C4 sits on a percussion staff, which is what
+// model.DrumSet's own positions are measured against.
+const percussionMiddle = 4
 
 // articulate puts an entry's articulation marks on what was made of it.
 //
@@ -1276,15 +1345,39 @@ func (r *reader) text(block int) string {
 	}
 	for _, t := range pool {
 		if t.Number == id {
-			return strings.TrimSpace(enigmaTags.ReplaceAllString(t.Text, ""))
+			return enigmaText(t.Text)
 		}
 	}
 	return ""
 }
 
+// enigmaText is one piece of Finale's tagged text with the tags taken out.
+func enigmaText(s string) string {
+	return strings.TrimSpace(enigmaTags.ReplaceAllString(enigmaSymbols.Replace(s), ""))
+}
+
 // enigmaTags matches Finale's inline markup: a caret, a word, and what it
 // takes in brackets.
 var enigmaTags = regexp.MustCompile(`\^[A-Za-z]+\([^)]*\)|\^[A-Za-z]+`)
+
+// enigmaSymbols are the marks Finale writes into text as an instruction
+// instead of as a letter, and which have to become letters again here rather
+// than be stripped with the formatting around them.
+//
+// A trumpet's staff is called "Trumpet in B^flat() 1", and the flat is a sign
+// in the name, not a note about how to draw it: taken out with the font tags
+// the staff is called "Trumpet in B", which is an instrument in a different
+// key. The flat is the only one of these the files to hand use — five hundred
+// and seven times across the two collections — and the sharp and the natural
+// are the same insert from the same menu, written the same way. The copyright
+// sign is here for the same reason and is the one that turns up in a
+// copyright line rather than a name.
+var enigmaSymbols = strings.NewReplacer(
+	"^flat()", "♭",
+	"^sharp()", "♯",
+	"^natural()", "♮",
+	"^cprsym()", "©",
+)
 
 // transpositionOf reads how far a staff is written from where it sounds.
 //

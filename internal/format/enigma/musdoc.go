@@ -77,6 +77,15 @@ func (r musRecord) last() []byte {
 // The older era names a record type with two characters, held as a number so
 // that they come out back to front on a file written by a PC. The newer era
 // numbers them. Only the types gscore builds a score out of are here.
+//
+// Nothing publishes the numbers, so each was found by looking for the shape
+// of the record it had to be. A staff asks for its name by the number of a
+// record, not of the words, so the record had to be one whose numbers are the
+// ones staves ask for and whose first word is a block the text pool really
+// holds: 183, whose fifth word is also 100, Finale's line spacing in percent.
+// The staff order had to be a record kept at number 0 with one incidence per
+// staff, each naming a staff that exists: 159, which on an octet of guitars
+// lists eight staves in an order the file's own printed score agrees with.
 var (
 	musRowTags = map[string]string{
 		"MS": "measSpec",
@@ -95,6 +104,8 @@ var (
 		231:  "staffSpec",
 		146:  "frameSpec",
 		1044: "gfhold",
+		183:  "textBlock",
+		159:  "instUsed",
 	}
 )
 
@@ -134,10 +145,35 @@ const (
 	musStaffTrans  = 20
 	musStaffName   = 30
 	musStaffAbbrv  = 32
-	musGroupStart  = 0
-	musGroupEnd    = 2
-	musGroupShape  = 10
-	musHoldClefID  = 0
+
+	// The two clefs a staff carries, one byte each: the clef it is written
+	// in, and the clef to read it from instead when it is read transposed.
+	// Which is which is settled in musStaves.
+	musStaffClefTrans = 12
+	musStaffClef      = 13
+
+	// musTransSetToClef says this staff is one of those: the transposition
+	// moves the clef as well as the notes.
+	musTransSetToClef = 0x8000
+
+	// musTransChromatic says the staff's transposition is by a fixed
+	// interval rather than by key, and so leaves the key signature alone.
+	musTransChromatic = 0x2000
+
+	// musStaffDefaults is a staff record that is not a staff: the settings a
+	// new staff in this document would start from. It is in every file of
+	// the newer era and in none of the older, which is how it was spotted —
+	// every 2007, 2011 and 2012 score came through with one staff too many,
+	// an empty one ruled under the music.
+	musStaffDefaults = 32767
+
+	// One entry of the staff order, where the newer era writes the whole
+	// list into a single record.
+	musUsedEntry  = 24
+	musGroupStart = 0
+	musGroupEnd   = 2
+	musGroupShape = 10
+	musHoldClefID = 0
 
 	// An expression: what it is called, what it does to playback, and the
 	// words the library describes it by.
@@ -247,11 +283,15 @@ func musDocument(pools []musPool, order binary.ByteOrder, era musEra) (document,
 		census["bars of music whose notes are not in the file"] = len(dropped)
 	}
 
+	// A drum staff of this era holds each note as the instrument's own MIDI
+	// key, not as the line it is written on — see reader.drum.
+	doc.DrumsAreKeys = true
+
 	doc.Entries.Entries = live
 	doc.Others.Bars = musBars(others, order, census)
 	doc.Others.Staves = musStaves(others, order)
 	doc.Others.Frames = musFrameSpecs(frames)
-	doc.Others.Used = musUsed(others, doc.Others.Staves, order, census)
+	doc.Others.Used = musUsed(others, doc.Others.Staves, order, census, era)
 	doc.Details.Holds = holds
 	doc.Details.Groups = musGroups(details, order)
 
@@ -638,13 +678,39 @@ func musBars(others map[[3]int]*musRecord, order binary.ByteOrder,
 func musStaves(others map[[3]int]*musRecord, order binary.ByteOrder) []staffSpec {
 	var out []staffSpec
 	for _, r := range musSorted(others, "staffSpec") {
+		if r.num == musStaffDefaults {
+			continue
+		}
 		p := r.all()
 		s := staffSpec{Cmper: r.num, StaffLines: 5}
 		if len(p) >= musStaffTrans+2 {
 			raw := int(order.Uint16(p[musStaffTrans:]))
-			adjust := raw & musTCDAltSize
-			if raw&musTCDAltBelow != 0 {
-				adjust = -adjust
+
+			// Finale transposes a staff one of two ways, and only one of them
+			// touches the key signature. A transposition by key is the usual
+			// one — a clarinet in B flat is written two sharps sharper than
+			// it sounds — and the sharps it gains are in the low bits. A
+			// chromatic transposition moves the notes by a fixed interval and
+			// leaves the signature alone, which is how a guitar is set to
+			// sound an octave below where it is written.
+			//
+			// Reading the low bits either way is what put seven sharps on
+			// every staff of a guitar octet: the chromatic word says seven,
+			// meaning seven steps, meaning an octave, and seven steps read as
+			// seven sharps is C sharp major on a piece in G.
+			//
+			// Across the hundred and ninety-five files this has been run
+			// against, the bit holds: every word without it gives the right
+			// signature in its low bits — two for the clarinets and the B
+			// flat trumpets, three for the alto saxophones and the alto
+			// clarinet, one for the horns in F and the english horns, none
+			// for the rest — and the only words with it are guitars.
+			adjust := 0
+			if raw&musTransChromatic == 0 {
+				adjust = raw & musTCDAltSize
+				if raw&musTCDAltBelow != 0 {
+					adjust = -adjust
+				}
 			}
 			s.Transposition.Adjust = adjust
 			// Four steps to the fifth, folded into the octave. The octave
@@ -652,6 +718,31 @@ func musStaves(others map[[3]int]*musRecord, order binary.ByteOrder) []staffSpec
 			// lost it rather than being given one that was guessed.
 			s.Transposition.Interval = mod(adjust*4, 7)
 			s.OctaveLost = adjust != 0
+
+			if raw&musTransSetToClef != 0 {
+				s.Transposition.SetToClef = &struct{}{}
+			}
+		}
+		// Which clef the staff is read from. The one at musStaffClef is the
+		// clef the music is written in, and the one before it is read
+		// instead where the staff moves its clef as it transposes —
+		// writtenClef is where that choice is made.
+		//
+		// Which of the two bytes is which was settled by the instruments
+		// that disagree. A cello's staff holds 2 and 3: a cello is read in
+		// the bass clef, which is 3, and Finale's own export of that file
+		// says bass, so the second byte is the one the music is written in.
+		// The first is what a baritone saxophone needs: its staff holds 0
+		// and 3, it sounds where the bass clef is and is read in the treble,
+		// and given the second byte its part comes out three ledger lines
+		// above the staff. Every staff carrying the bit that says to move
+		// the clef — fifty-seven of them, every baritone saxophone, tenor
+		// saxophone and bass clarinet in a hundred and ninety-five files,
+		// and nothing else — holds the treble there, which is what those
+		// three instruments are read in.
+		if len(p) > musStaffClef {
+			s.DefaultClef = int(p[musStaffClef])
+			s.TransposedClef = int(p[musStaffClefTrans])
 		}
 		if len(p) >= musStaffName+2 {
 			s.FullName = int(order.Uint16(p[musStaffName:]))
@@ -819,13 +910,17 @@ func musLive(entries []entry, frames []musFrame, holds []gfhold) []entry {
 // musUsed is the order the staves are read in, top to bottom.
 //
 // Not the order the staff records are in: that is the order somebody built
-// the score in. The older pools hold the reading order outright; the newer
-// ones hold it under a name nobody has identified, so a file from 2011 or
-// 2012 falls back to the staff records and says so, since a score whose
-// staves are in the wrong order is wrong in a way that is easy to miss and
-// easy to fix by hand once somebody knows.
+// the score in, and the two part company as soon as anybody inserts a staff.
+// In the octet this was fixed against they share not one position: the staff
+// records run Guitar 5, 2, 7, 4, 6, 1, 3, 8, and the file prints them 1 to 8.
+//
+// The two eras write the same list differently. The older gives one row per
+// staff, so each incidence is one entry. The newer writes the whole list into
+// the first incidence and then repeats it an entry at a time, which is why
+// only the first is read: the repeats start one staff along, and reading them
+// as a continuation would name a staff twice and lose another.
 func musUsed(others map[[3]int]*musRecord, staves []staffSpec,
-	order binary.ByteOrder, census map[string]int) []instUsed {
+	order binary.ByteOrder, census map[string]int, era musEra) []instUsed {
 
 	rec := others[[3]int{musTagKey("instUsed"), 0, 0}]
 	if rec == nil {
@@ -835,29 +930,74 @@ func musUsed(others map[[3]int]*musRecord, staves []staffSpec,
 		return nil
 	}
 
+	parts := rec.parts
+	if era != eraDCL && len(parts) > 0 {
+		parts = musSplit(parts[0], musUsedEntry)
+	}
+
 	exists := map[int]bool{}
 	for _, s := range staves {
 		exists[s.Cmper] = true
 	}
 
 	var out []instUsed
-	for i, p := range rec.parts {
+	named := map[int]bool{}
+	for i, p := range parts {
 		if len(p) < 2 {
 			return nil
 		}
 		inst := int(order.Uint16(p))
-		if !exists[inst] {
-			// Not the layout order after all. Better to fall back to the
-			// staff records, which are at least every staff once, than to
-			// put the music on staves that are not there.
+		if !exists[inst] || named[inst] {
+			// Not the layout order after all: a staff that is not there, or
+			// one named twice. Better to fall back to the staff records,
+			// which are at least every staff once, than to put the music on
+			// staves that are not there.
 			census["the order the staves are read in, top to bottom"] = 1
 			return nil
 		}
+		named[inst] = true
 		out = append(out, instUsed{Inci: i, Inst: inst})
 	}
-	if len(out) != len(staves) {
+	if len(out) == 0 {
 		census["the order the staves are read in, top to bottom"] = 1
 		return nil
+	}
+
+	// A staff this does not name is not in the score.
+	//
+	// This list is the score's own statement of which staves it is made of,
+	// and it is shorter than the staff records whenever somebody has taken a
+	// staff out: the record stays in the file, with its music in it, and the
+	// score stops mentioning it. Requiring the list to cover every record —
+	// which this did, falling back to the records when it did not — put
+	// those staves back on the page. A piano piece came through on three
+	// staves, the grand staff the file prints and an empty one above it.
+	//
+	// What is dropped is counted, because a staff with music on it is worth
+	// saying out loud: it is the one case where the file holds more music
+	// than the score does, and somebody who put a staff away in 2006 may
+	// well want it back.
+	if len(out) < len(staves) {
+		gone := 0
+		for _, s := range staves {
+			if !named[s.Cmper] {
+				gone++
+			}
+		}
+		census["staves the score leaves out, which are still in the file"] = gone
+	}
+	return out
+}
+
+// musSplit cuts a record written as an array back into its entries.
+//
+// A short tail is dropped rather than padded: a partial entry is a record
+// this does not understand the shape of, and half a staff number is worse
+// than one staff fewer.
+func musSplit(p []byte, size int) [][]byte {
+	var out [][]byte
+	for at := 0; at+size <= len(p); at += size {
+		out = append(out, p[at:at+size])
 	}
 	return out
 }
@@ -1076,6 +1216,56 @@ func musTexts(pool []byte) ([]textBlock, []blockText) {
 }
 
 // musText is one block's words with the markup taken out.
+//
+// Both forms of it. A caret and a word in letters — ^font(Times,8192), ^size
+// — is what the older files write and what a .musx writes, and the shared
+// expression handles it. The newer files write the same instructions as a
+// caret and one byte above 127, followed by a fixed number of argument bytes,
+// and nothing in the shared expression touches those: a staff came through
+// called "^\x85\x01\x01\x01\x03^\x86\x01\x01\x01\x0f^\x84\x01\x01\x01\x01Guitar 1",
+// which is a name with the whole of its formatting still in front of it.
 func musText(raw []byte) string {
-	return strings.TrimSpace(enigmaTags.ReplaceAllString(string(raw), ""))
+	return enigmaText(string(musBinaryTags(raw)))
+}
+
+// musArgBytes is how many bytes follow each of the newer markup tags.
+//
+// Counted rather than guessed: in the text pools of 195 files these tags
+// occur some 37,000 times, and the bytes after each of them are below 32 for
+// exactly the length given here and no further. Reading the length off the
+// bytes instead would be wrong in the other direction — a name beginning
+// with a line break, which this corpus has, would lose it, and "VIOLON-
+// CELLE." would run together.
+var musArgBytes = map[byte]int{
+	0x81: 8, 0x87: 8, 0x95: 8,
+	0x84: 4, 0x85: 4, 0x86: 4, 0x8c: 4, 0x8d: 4, 0xa4: 4, 0xa5: 4, 0xa6: 4,
+}
+
+// musBinaryTags takes out the newer era's markup.
+//
+// A tag this has not met is taken to carry its arguments the way all of them
+// do — as bytes below 32 — and they are dropped to the first byte that is
+// not one. That is the reading that leaves words rather than control
+// characters in a name, which is the way round worth being wrong.
+func musBinaryTags(raw []byte) []byte {
+	if !bytes.ContainsRune(raw, '^') {
+		return raw
+	}
+	out := make([]byte, 0, len(raw))
+	for i := 0; i < len(raw); {
+		if raw[i] != '^' || i+1 >= len(raw) || raw[i+1] < 0x80 {
+			out = append(out, raw[i])
+			i++
+			continue
+		}
+		i += 2
+		if n, known := musArgBytes[raw[i-1]]; known {
+			i += min(n, len(raw)-i)
+			continue
+		}
+		for i < len(raw) && raw[i] < 0x20 {
+			i++
+		}
+	}
+	return out
 }

@@ -113,7 +113,16 @@ func (b *musBuild) bar(n, beats, div int) *musBuild {
 // A staff. Three rows, which is what a 2001 file writes and what says where
 // a frame hold keeps its layers.
 func (b *musBuild) staff(n, transposition, name int) *musBuild {
+	return b.staffClefs(n, transposition, name, musClefTreble, musClefTreble)
+}
+
+// staffClefs is a staff that is not read from the treble clef: the clef it
+// is written in, and the one to read it from instead where it moves its clef
+// as it transposes.
+func (b *musBuild) staffClefs(n, transposition, name, clef, whenTransposed int) *musBuild {
 	data := make([]byte, 36)
+	data[musStaffClef] = byte(clef)
+	data[musStaffClefTrans] = byte(whenTransposed)
 	b.order.PutUint16(data[musStaffTrans:], uint16(transposition))
 	b.order.PutUint16(data[musStaffName:], uint16(name))
 	for i := 0; i < 3; i++ {
@@ -121,6 +130,13 @@ func (b *musBuild) staff(n, transposition, name int) *musBuild {
 	}
 	return b
 }
+
+// Places in Finale's clef table, which is what a staff holds.
+const (
+	musClefTreble     = 0
+	musClefBass       = 3
+	musClefPercussion = 12
+)
 
 func (b *musBuild) frame(n, start, end int) *musBuild {
 	return b.otherRow(n, "FR", b.u32s(start, end, 0))
@@ -1532,5 +1548,381 @@ func TestALastBarThatSaysSomethingElseKeepsIt(t *testing.T) {
 	ms := readFixture(t, b).Parts[0].Measures
 	if got := ms[0].RightBarline; got != model.BarRepeatEnd {
 		t.Errorf("the piece ends with a %v, want the repeat", got)
+	}
+}
+
+/*
+ * What the files from 2007, 2011 and 2012 turned out to need
+ *
+ * The reader was built against Macs: a hundred and two files from one
+ * collection, every one written in 2005 by a Finale for the Mac. Everything
+ * below is something a file from somewhere else got wrong, found by reading
+ * ninety-three more against the MusicXML that Finale itself exported beside
+ * them — which says what the staves are called, what key they are in and what
+ * they transpose by, and so can be compared with rather than looked at.
+ */
+
+// A staff transposed by a fixed interval does not change key.
+//
+// Finale transposes either by key — a clarinet in B flat is written two
+// sharps sharper than it sounds — or chromatically, which moves the notes and
+// leaves the signature alone. A guitar is the second kind: it sounds an
+// octave below where it is written. Reading the key adjustment out of a
+// chromatic word put seven sharps on every staff of a guitar octet, because
+// the seven in it counts steps and not sharps.
+func TestAChromaticTranspositionLeavesTheKeyAlone(t *testing.T) {
+	for _, c := range []struct {
+		what  string
+		word  int
+		key   int
+		which model.Instrument
+	}{
+		{"a guitar, written an octave above where it sounds", 0x6007, 1, model.AcousticGuitar},
+		{"a clarinet in B flat", 0x0042, 3, model.Clarinet},
+		{"a horn in F", 0x0101, 2, model.FrenchHorn},
+		{"a staff that does not transpose", 0x4000, 1, model.Violin},
+	} {
+		b := newMus()
+		b.staff(1, c.word, 1).used(1).textBlock(1, 1)
+		b.text = "^block(1)^font(Times,0)Guitar^end"
+		b.barWithKey(1, 4, 1024, 1) // one sharp
+		b.frame(1, 1, 1).hold(1, 1, 1)
+		b.sounds(1, 0, 4096, 0)
+
+		got := readFixture(t, b).Parts[0].Key.Fifths
+		if got != c.key {
+			t.Errorf("%s is written with %d sharps, want %d", c.what, got, c.key)
+		}
+	}
+}
+
+// The last staff record of a newer file is not a staff.
+//
+// Every file from 2007 on carries one at 32767, holding what a new staff in
+// that document would start from. It is in all fifty-one of them and in none
+// of the hundred and forty-four older ones.
+//
+// What it costs to count it is not an extra staff on the page — staffOrder
+// has always left the number out of its fallback — but a miscount against
+// the score's own staff list, which names the real staves and not this one.
+// With the defaults counted the list is always one short of the records, so
+// every newer file reported a staff left out of it that is not a staff.
+func TestTheStaffDefaultsRecordIsNotAStaff(t *testing.T) {
+	b := newerMus()
+	b.record(&b.others, musRecOthersHead, 231, musStaffDefaults, 0, make([]byte, 36))
+	b.record(&b.others, musRecOthersHead, 159, 0, 0, b.usedEntry(1))
+
+	score, skipped, err := readMus(b.bytes())
+	if err != nil && score == nil {
+		t.Fatalf("the fixture did not read: %v", err)
+	}
+	if n := len(score.Parts); n != 1 {
+		t.Errorf("got %d staves, want the 1 that is a staff", n)
+	}
+	if hasSkip(skipped, "leaves out") {
+		t.Errorf("the defaults record was counted as a staff the score "+
+			"leaves out; got %v", skipped)
+	}
+}
+
+// The newer era writes the whole staff order into the first incidence.
+//
+// The older writes one row per staff. The newer writes the list once and then
+// repeats it an entry at a time, starting one staff along — so reading the
+// repeats as a continuation names one staff twice and loses another.
+func TestTheNewerStaffOrderIsInTheFirstRecord(t *testing.T) {
+	b := newerMus()
+	// A second staff, with a name on it, so the order can be read off the
+	// page instead of guessed at from where the music landed. The first
+	// staff is the one newerMus made, and has no name.
+	named := make([]byte, 36)
+	b.order.PutUint16(named[musStaffName:], 2)
+	b.record(&b.others, musRecOthersHead, 231, 2, 0, named)
+	b.record(&b.others, musRecOthersHead, 183, 2, 0, b.u16s(7))
+	b.text = "^block(7)Second staff, read first^end"
+
+	// The score reads the second staff first.
+	b.record(&b.others, musRecOthersHead, 159, 0, 0,
+		append(b.usedEntry(2), b.usedEntry(1)...))
+	// And then repeats the list an entry at a time, starting one along.
+	b.record(&b.others, musRecOthersHead, 159, 0, 1, b.usedEntry(1))
+	b.record(&b.others, musRecOthersHead, 159, 0, 2, b.usedEntry(2))
+
+	score := readFixture(t, b)
+	if len(score.Parts) != 2 {
+		t.Fatalf("got %d staves, want 2", len(score.Parts))
+	}
+	if got := score.Parts[0].Name; got != "Second staff, read first" {
+		t.Errorf("the top staff is %q, want the one the order names first; "+
+			"the order was not read, or was read rotated", got)
+	}
+}
+
+// A staff the score's own list leaves out is not in the score.
+//
+// Somebody takes a staff out of a score and Finale stops listing it; the
+// record stays in the file with whatever was on it. Requiring the list to
+// name every record — and falling back to the records when it did not — put
+// those staves back, which is how a piano piece came through on three staves,
+// the grand staff it prints and an empty one over the top.
+func TestAStaffTheScoreLeavesOutIsNotInIt(t *testing.T) {
+	b := newMus()
+	b.staff(1, 0, 0).staff(2, 0, 0)
+	b.used(2) // only the second is in the score
+	b.bar(1, 4, 1024)
+	b.frame(1, 1, 1).hold(2, 1, 1)
+	b.sounds(1, 0, 4096, 0)
+
+	score, skipped, err := readMus(b.bytes())
+	if err != nil && score == nil {
+		t.Fatalf("the fixture did not read: %v", err)
+	}
+	if n := len(score.Parts); n != 1 {
+		t.Errorf("got %d staves, want the 1 the score lists", n)
+	}
+	// And it is said out loud, because that staff may have music on it.
+	if !hasSkip(skipped, "leaves out") {
+		t.Errorf("the staff left out was not reported; got %v", skipped)
+	}
+}
+
+// The newer files write their formatting as bytes, not as words.
+//
+// An older file says ^font(Times New Roman,8192)^size(12); a newer one says
+// the same thing as a caret and a byte above 127 with its arguments after it.
+// Nothing stripped those, so a staff arrived called
+// "^\x85\x01\x01\x01\x03^\x86\x01\x01\x01\x0fGuitar 1" — a name with all of
+// its formatting still in front of it, which is no instrument gscore knows,
+// which is a staff played on a piano.
+func TestTheNewerMarkupIsNotPartOfTheName(t *testing.T) {
+	b := newMus()
+	b.staff(1, 0, 1).used(1).textBlock(1, 1)
+	b.text = "^block(1)^\x85\x01\x01\x01\x03^\x86\x01\x01\x01\x0fGuitar 1^end"
+	b.bar(1, 4, 1024)
+	b.frame(1, 1, 1).hold(1, 1, 1)
+	b.sounds(1, 0, 4096, 0)
+
+	score := readFixture(t, b)
+	if got := score.Parts[0].Name; got != "Guitar 1" {
+		t.Errorf("the staff is called %q, want %q", got, "Guitar 1")
+	}
+	if got := score.Parts[0].Instrument; got != model.AcousticGuitar {
+		t.Errorf("the staff is played on a %v, want a guitar", got)
+	}
+}
+
+// A name that is a line of text keeps its line break, which is the reason the
+// markup is measured rather than skipped to the first readable byte.
+func TestANameOfTwoLinesKeepsBoth(t *testing.T) {
+	b := newMus()
+	b.staff(1, 0, 1).used(1).textBlock(1, 1)
+	b.text = "^block(1)^\x84\x01\x01\x01\x01\r\nVIOLONCELLE^end"
+	b.bar(1, 4, 1024)
+	b.frame(1, 1, 1).hold(1, 1, 1)
+	b.sounds(1, 0, 4096, 0)
+
+	if got := readFixture(t, b).Parts[0].Name; got != "VIOLONCELLE" {
+		t.Errorf("the staff is called %q; the line break before it was read "+
+			"as part of the markup", got)
+	}
+}
+
+// The three words a document says about itself sit at fixed places, and the
+// places are not cleared when something shorter is written over them.
+//
+// Read one after another, each starting where the last one's zero left off,
+// the leftovers of whatever the file was made from become the composer: a
+// traditional Japanese song came through written by "rry Blossom Song)",
+// which is the tail of the title of the file it was copied from.
+func TestTheComposerIsNotTheTailOfAnOlderTitle(t *testing.T) {
+	b := newMus()
+	b.staff(1, 0, 0).used(1).bar(1, 4, 1024)
+	b.frame(1, 1, 1).hold(1, 1, 1)
+	b.sounds(1, 0, 4096, 0)
+	raw := b.bytes()
+	// A title, and behind the zero that ends it the tail of a longer one.
+	copy(raw[musTitleAt:], "Takai-Yama\x00rry Blossom Song)\x00")
+	copy(raw[musTitleAt+musComposerAt:], "Traditional Japanese Song\x00")
+
+	score, _, err := readMus(raw)
+	if err != nil {
+		t.Fatalf("the fixture did not read: %v", err)
+	}
+	if got := score.Identity.Title; got != "Takai-Yama" {
+		t.Errorf("the title is %q, want %q", got, "Takai-Yama")
+	}
+	if got := score.Identity.Composer; got != "Traditional Japanese Song" {
+		t.Errorf("the composer is %q, want %q", got, "Traditional Japanese Song")
+	}
+}
+
+// The pools do not always start at 0x200.
+//
+// They start where the header says, and that is 0x200 in every file written
+// on a Mac because the three words in front of them are given a fixed block
+// there. Finale for Windows wrote them as text of whatever length they are,
+// so the pools start past the end of it. Reading 0x200 as the answer rather
+// than as the usual value of the answer refused thirty-eight real files with
+// a message saying there was no container in a file that has one.
+func TestThePoolsStartWhereTheHeaderSays(t *testing.T) {
+	b := aTune(newMus())
+	raw := b.bytes()
+
+	// Push the container on by a round number and say so in the header.
+	const moved = 0x80
+	shifted := make([]byte, len(raw)+moved)
+	copy(shifted, raw[:musContainerAt])
+	copy(shifted[musContainerAt+moved:], raw[musContainerAt:])
+	b.order.PutUint16(shifted[musContainerWhere:], uint16(musContainerAt+moved))
+
+	score, _, err := readMus(shifted)
+	if err != nil {
+		t.Fatalf("a file whose header says where its pools are did not read: %v", err)
+	}
+	if n := countNotes(score); n != 8 {
+		t.Errorf("got %d notes, want the 8 in the fixture", n)
+	}
+}
+
+// And a header that says something absurd still finds them where they
+// usually are, because the offset is checked by looking for the pool chain
+// where it points rather than taken on its word.
+func TestAnImpossibleOffsetFallsBackToTheUsualPlace(t *testing.T) {
+	raw := aTune(newMus()).bytes()
+	binary.LittleEndian.PutUint16(raw[musContainerWhere:], 0xfffe)
+
+	score, _, err := readMus(raw)
+	if err != nil {
+		t.Fatalf("the fixture did not read: %v", err)
+	}
+	if n := countNotes(score); n != 8 {
+		t.Errorf("got %d notes, want 8", n)
+	}
+}
+
+// newerMus is the smallest newer-era file: one staff, one bar, one note.
+func newerMus() *musBuild {
+	b := newMus()
+	b.era = eraZlib
+	b.year = 2011
+	b.record(&b.others, musRecOthersHead, 231, 1, 0, make([]byte, 36))
+	b.record(&b.others, musRecOthersHead, 176, 1, 0, b.u16s(600, 0, 4, 1024, 0, 0))
+	b.record(&b.others, musRecOthersHead, 146, 1, 0, b.u32s(1, 1))
+	hold := make([]byte, 12)
+	b.order.PutUint16(hold[musFrameBase2005:], 1)
+	b.record(&b.details, musRecDetailsHead, 1044, 1, 1, hold)
+	b.sounds(1, 0, 4096, 0)
+	return b
+}
+
+// usedEntry is one staff's place in the newer era's staff order.
+func (b *musBuild) usedEntry(staff int) []byte {
+	out := make([]byte, musUsedEntry)
+	b.order.PutUint16(out, uint16(staff))
+	return out
+}
+
+// hasSkip says whether anything left out was reported in these words.
+func hasSkip(skipped []string, words string) bool {
+	for _, s := range skipped {
+		if strings.Contains(s, words) {
+			return true
+		}
+	}
+	return false
+}
+
+func TestAStaffIsReadFromItsOwnClef(t *testing.T) {
+	b := newMus()
+	b.staffClefs(1, 0, 1, musClefBass, musClefTreble).used(1).textBlock(1, 1)
+	b.text = "^block(1)Trombone^end"
+	b.bar(1, 4, 1024)
+	b.frame(1, 1, 1).hold(1, 1, 1)
+	b.sounds(1, 0, 4096, 0)
+
+	score := readFixture(t, b)
+	if got := score.Parts[0].Clef; got != model.Bass {
+		t.Errorf("the trombone is read from the %v clef, want the bass", got)
+	}
+}
+
+func TestAStaffThatMovesItsClefAsItTransposesIsReadFromTheOtherOne(t *testing.T) {
+	// A baritone saxophone: it sounds where the bass clef is and the player
+	// reads the treble, so the file holds both and says which to use.
+	b := newMus()
+	b.staffClefs(1, musTransSetToClef|3, 1, musClefBass, musClefTreble)
+	b.used(1).textBlock(1, 1)
+	b.text = "^block(1)Baritone Sax^end"
+	b.bar(1, 4, 1024)
+	b.frame(1, 1, 1).hold(1, 1, 1)
+	b.sounds(1, 0, 4096, 0)
+
+	score := readFixture(t, b)
+	if got := score.Parts[0].Clef; got != model.Treble {
+		t.Errorf("the baritone saxophone is read from the %v clef, want the treble", got)
+	}
+}
+
+func TestAFlatInAStaffsNameIsPartOfTheName(t *testing.T) {
+	b := newMus()
+	b.staff(1, 0, 1).used(1).textBlock(1, 1)
+	b.text = "^block(1)^font(JazzText,8191)Trumpet in B^flat() 1^end"
+	b.bar(1, 4, 1024)
+	b.frame(1, 1, 1).hold(1, 1, 1)
+	b.sounds(1, 0, 4096, 0)
+
+	score := readFixture(t, b)
+	if got, want := score.Parts[0].Name, "Trumpet in B♭ 1"; got != want {
+		t.Errorf("the staff is called %q, want %q", got, want)
+	}
+	if got := score.Parts[0].Instrument; got != model.Trumpet {
+		t.Errorf("the staff is played on a %v, want a trumpet", got)
+	}
+}
+
+func TestADrumIsWrittenWhereDrummersWriteIt(t *testing.T) {
+	// A note on a drum staff of this era is the instrument's own General
+	// MIDI key, not a place on the staff: D below the bass staff is the
+	// snare drum, the E flat above it the ride cymbal.
+	b := newMus()
+	b.staffClefs(1, 0, 1, musClefPercussion, musClefTreble)
+	b.used(1).textBlock(1, 1)
+	b.text = "^block(1)Drum Set^end"
+	b.bar(1, 4, 1024)
+	b.frame(1, 1, 2).hold(1, 1, 1)
+	b.entry(1, 2, 2048, musSetBit|musNoteBit, b.note(-13, 0, 0))
+	b.entry(2, 0, 2048, musSetBit|musNoteBit, b.note(-5, -1, 0))
+
+	score := readFixture(t, b)
+	part := score.Parts[0]
+	if got := part.Clef; got != model.Percussion {
+		t.Fatalf("the drum staff is read from the %v clef", got)
+	}
+	notes := part.Measures[0].Voices[0].Elements
+	if len(notes) != 2 {
+		t.Fatalf("got %d things in the bar, want 2", len(notes))
+	}
+	want := []struct {
+		key  int
+		head model.NoteheadKind
+		step int
+	}{
+		{38, model.HeadNormal, 5}, // the snare, in the third space
+		{51, model.HeadX, 8},      // the ride, on the top line
+	}
+	for i, w := range want {
+		note, ok := notes[i].(*model.Note)
+		if !ok {
+			t.Fatalf("note %d came back as a %T", i, notes[i])
+		}
+		if note.Percussion != w.key {
+			t.Errorf("note %d plays drum %d, want %d", i, note.Percussion, w.key)
+		}
+		if note.Head != w.head {
+			t.Errorf("note %d is drawn with a %v head, want %v", i, note.Head, w.head)
+		}
+		if got := note.Pitch.DiatonicIndex() + percussionMiddle; got != w.step {
+			t.Errorf("note %d sits on step %d of the staff, want %d", i, got, w.step)
+		}
 	}
 }

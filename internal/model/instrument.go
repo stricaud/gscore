@@ -304,7 +304,51 @@ func InstrumentNamed(name string) (Instrument, bool) {
 			return alias.inst, true
 		}
 	}
+
+	// A desk number is not part of the instrument's name.
+	//
+	// Scores number their players — Guitar 1, Oboe 1 & 2, Violin II — and the
+	// number says which stand it is, never what is played at it. Matched
+	// whole, "Guitar 1" is in no list of instruments there is, so an octet of
+	// guitars came through as eight pianos, which is the sound of nothing
+	// being recognised at all.
+	//
+	// Only a trailing word is dropped, and only one that is wholly a number,
+	// a roman numeral or an ampersand, so the stripping stops at the first
+	// word that could be part of a name: "Horn in F 1 & 3" loses "1 & 3" and
+	// keeps the F, and "Piano TC" keeps both its words.
+	if short := withoutDeskNumber(plain); short != plain {
+		return InstrumentNamed(short)
+	}
 	return 0, false
+}
+
+// withoutDeskNumber takes the player numbers off the end of a staff's name.
+func withoutDeskNumber(name string) string {
+	for {
+		i := strings.LastIndexByte(name, ' ')
+		if i < 0 || !isDeskNumber(name[i+1:]) {
+			return name
+		}
+		name = strings.TrimRight(name[:i], " ")
+	}
+}
+
+// isDeskNumber says whether a word is one of the ways a part is numbered.
+func isDeskNumber(word string) bool {
+	if word == "" || word == "&" {
+		return true
+	}
+	digits, romans := true, true
+	for _, c := range word {
+		if c < '0' || c > '9' {
+			digits = false
+		}
+		if c != 'i' && c != 'v' && c != 'x' {
+			romans = false
+		}
+	}
+	return digits || romans
 }
 
 // Family groups instruments by how they are sounded, which is what a

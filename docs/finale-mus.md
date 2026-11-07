@@ -12,7 +12,12 @@ changed; what Finale put inside it did.
 | | files from | the music is behind | records are |
 |---|---|---|---|
 | the older | 2001, 2004, 2005 | four **PKWARE DCL** streams, each labelled | fixed 16-byte rows with two-character tags |
-| the newer | 2011, 2012 | a chain of **zlib** streams, unlabelled | variable-length, each carrying its own tag and key |
+| the newer | 2007, 2011, 2012 | a chain of **zlib** streams, unlabelled | variable-length, each carrying its own tag and key |
+
+A 2007 file is the newer of the two and says 2007 in its banner, which is a
+year this reader had never met and did not need to: the scheme is chosen by
+trying both and keeping the one that decodes, so the banner only decides
+which to try first.
 
 What they share is the header, the offset the payload starts at, the way the
 notes themselves are stored — and the document model, which is the same one
@@ -28,10 +33,11 @@ the other.
 
 ## What is read, and what is not
 
-Read: the staves in score order, their names, their transpositions, the
-brackets and braces that join them, the bars with their meters, keys, clefs,
-barlines, repeat signs and rehearsal marks, and in each bar the notes, chords
-and rests with their pitches, lengths and ties.
+Read: the staves in score order, their names, their transpositions, the clefs
+they are read from, the brackets and braces that join them, the bars with
+their meters, keys, clefs, barlines, repeat signs and rehearsal marks, and in
+each bar the notes, chords and rests with their pitches, lengths and ties —
+and on a drum staff, which drum each note is and where a drummer writes it.
 
 Not read: most of what Finale writes around the music — articulations, slurs,
 hairpins, dynamics, tempo words, lyrics, tuplets, numbered endings, chord
@@ -45,7 +51,7 @@ individual records of the older pools mean. The walk reaches every record and
 hands over its tag, its key and its bytes; what those bytes say is per-record
 work that has not been done.
 
-## Eight things worth knowing
+## Fifteen things worth knowing
 
 **A `.mus` has no categories, so nothing in it says what kind of mark a
 marking is.** Finale did not group its expressions until long after these
@@ -88,6 +94,74 @@ fugue in G minor engraved with no flats at all is how that was found. The mode
 matters because the same two flats are G minor or B flat major depending on
 it: the staff looks identical, and the difference shows up in how a chord over
 that bar is named.
+
+**The pools do not always start at `0x200`.** They start where the header
+says, at `0x60`, and that comes to `0x200` in every file Finale wrote on a
+Mac, because the three words in front of them — title, composer, copyright —
+are given a fixed block there. Finale for Windows wrote them as text of
+whatever length they are, so the pools begin past the end of it: `0x244` for
+a short title, `0x298` for a long one. Reading `0x200` as the answer rather
+than as the usual value of the answer refused thirty-eight real files, every
+one of them written on a PC, with a message saying there was no container in
+a file that has one.
+
+**A staff transposed by a fixed interval does not change key.** Finale
+transposes a staff either by key — a clarinet in B flat is written two sharps
+sharper than it sounds — or chromatically, which moves the notes and leaves
+the signature alone. A guitar is the second kind: it sounds an octave below
+where it is written. Read as a key transposition, the seven in that word
+counts sharps instead of steps, and an octet of guitars in G major came out
+in C sharp major.
+
+**A staff carries two clefs, and the one it is read from is not always the
+first of them.** Finale transposes a staff either by key or chromatically —
+and it can move the clef as well, which is what a baritone saxophone needs: it
+sounds where the bass clef is and the player reads the treble. So a staff
+holds the clef it is written in and the clef to read it from instead when it
+is read transposed, and a bit in the transposition word says which. The bit is
+on fifty-seven staves of a hundred and ninety-five files — every baritone
+saxophone, tenor saxophone and bass clarinet in them, and nothing else.
+
+Read without any of this, a blank big-band template came out with its four
+trombones, its bass and its drum kit all in the treble clef, because the clef
+was taken from the first bar of music and a template has none.
+
+**A note on a drum staff is the drum, not a place on the staff.** What the
+file holds is the instrument's General MIDI key — 38 is the snare, 51 the
+ride, 44 the hi-hat played with the foot — and where each one is written is a
+convention Finale keeps in a percussion layout beside the staff. Read as
+pitches, which is what they are, a drum part draws two ledger lines below the
+staff with a flat on every cymbal. gscore holds the same convention, so the
+key is looked up there and the note is written where drummers write it, which
+is also what makes it play.
+
+That is not a reading of one file: across the hundred and forty-four drum
+staves in the collection that has any, every note lands on a General MIDI
+percussion key and none lands anywhere else, in the proportions a drum part
+has — the ride three hundred and eighty-five times, the closed hi-hat a
+hundred and ninety-six, the snare a hundred and thirty-one.
+
+**A flat in a name is an instruction, not a letter.** A trumpet's staff is
+called `Trumpet in B^flat() 1`, and the flat sits in the same markup as the
+font and the type size. Stripped along with them the staff is called "Trumpet
+in B", which is an instrument in a different key. The flat is the only one of
+these signs the files to hand use, five hundred and seven times; the sharp,
+the natural and the copyright sign are the same insert from the same menu.
+
+**A transposition is the one thing a Mac file and a PC file agree about.**
+Across a hundred and ninety-five files there are thirteen distinct
+transposition words and every one of them means the same thing on both: two
+sharps for the B flat clarinets and trumpets, three for the alto saxophones
+and the alto clarinet, one for the horns in F and the english horns, none for
+the rest.
+
+**Three words about the document sit in slots that are never cleared.** Title,
+composer and copyright are at fixed places, each ending at its first zero
+byte — and what is behind that zero is whatever was there before. Read one
+after another, starting each where the last one's zero left off, the leftovers
+of the file somebody copied become the composer: a traditional Japanese song
+came through written by "rry Blossom Song)", which is the tail of the title of
+the file it was made from.
 
 **The byte order is read off the file.** A Mac wrote its numbers big end first
 and a PC little, and nothing in the file says which. What says it is the first
@@ -167,15 +241,38 @@ the wrong offset, because the test puts it at the same wrong offset. The
 compression is the one part pinned against something outside gscore: the test
 vector `blast.c` documents.
 
-That limit was not theoretical. This reader was written without a single real
-file, and the first 102 it met — the companion files to a Berklee Press book
-on Finale, all written in 2004 and 2005 on a Mac, and freely downloadable —
+That limit was not theoretical, and it has now been tested twice.
+
+The first 102 real files were the companion files to a Berklee Press book on
+Finale, all written in 2004 and 2005 on a Mac, and freely downloadable. They
 found two faults of exactly the predicted kind. 71 of the 102 were refused for
 being blank. Of the 31 that opened, one engraved a Bach fugue in G minor with
 no key signature, because the key word was read whole instead of as its two
 halves. Everything else held: the framing, the byte order, the entry walk, the
 pitches, the ties, the beams, the clefs, the bar counts and the titles were
-right the first time. All 102 now open.
+right the first time.
+
+The next 93 were a different thing entirely, and worth more: an archive of
+guitar and Japanese music that publishes, beside each `.mus`, the MusicXML
+Finale itself exported from it. That is an oracle rather than a sample. It
+says in as many words what each staff is called, what key it is in and what it
+transposes by, so the reader can be compared against Finale instead of looked
+at. They were also written on PCs, in 2005, 2007 and 2011, which is three
+things the first hundred were not.
+
+Everything the second corpus found is above: 38 files refused outright for a
+container offset taken for a constant, 51 with a staff that is not a staff,
+every staff of every 2007 and 2011 file nameless because two record numbers
+were unknown, guitars in the wrong key, and composers made of the previous
+document's title. The reader now agrees with Finale's own export about the
+name, the key, the transposition and the clef of every staff of all 93, and
+all 195 files open.
+
+Going back to the first corpus with the oracle's habits found three more, all
+of them things a single-staff guitar piece cannot show: the two clefs a staff
+carries, the drum staff that is not pitches, and the flat in "Trumpet in B
+flat". Five hundred and seventy-one staves across eighty files were being
+drawn in the wrong clef.
 
 So where a field's position is taken on trust, the code says so where the
 offset is written down. A real file that disagrees has somewhere obvious to
@@ -204,9 +301,27 @@ barlines run through, a plain line stops short of saying so. That is Finale's
 default for a new group, and the case it does not cover is a group whose
 barlines have been turned off by hand.
 
-**What is still wrong in those files.** A staff's own default clef is not
-read, so a bar with no frame hold falls back to treble — which is invisible on
-a full score and shows up on a blank template, where a 36-stave orchestral
-skeleton comes out with its trombones and timpani in treble. Layers past the
-first are counted and not read. And a piano arrives as two staves rather than
-one braced instrument.
+**What is still wrong in those files.** Layers past the first are counted and
+not read, which on a guitar arrangement is most of the accompaniment. A piano
+arrives as two staves rather than one braced instrument. A percussion
+instrument the standard drum-set layout has no place for — a tambourine, a
+wood block, the castanets of an orchestral part — is written on the middle
+line and said rather than put where its own key would fall, which is the top
+of the staff or below the bottom of it.
+
+**No older file in either corpus says what order its staves go in.** The
+record that holds it exists in both eras and is read in both, but not one of
+the 144 files from 2001 to 2005 carries it, so they all fall back to the order
+the staves were added to the document and say so in the report. On every file
+checked that fallback was right, which is what a staff list usually is; it is
+not right by construction, and a score whose staves are shuffled is wrong in a
+way that is easy to miss and easy to put straight by hand once somebody knows
+to look.
+
+**A copyright line with a © in it is dropped.** The three words a document
+says about itself are taken only when they are plain printable text, and © is
+not: it is one byte whose meaning depends on whether a Mac or a PC wrote it.
+Both of the encodings in play happen to agree about this particular byte, so
+this is a rule being conservative rather than an unanswerable question — but
+the rest of the high half does not agree, and the question is really which
+encoding the file is in, which nothing in the file says.

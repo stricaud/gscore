@@ -62,14 +62,14 @@ const (
 // half a document read as a whole one is worse than an error, because nothing
 // downstream can tell.
 func musDCLPools(raw []byte) ([]musPool, binary.ByteOrder, error) {
-	order, err := musByteOrder(raw)
+	start, order, err := musContainerStart(raw)
 	if err != nil {
 		return nil, nil, err
 	}
 
 	var pools []musPool
 	budget := musMaxPayload
-	for at := musContainerAt; at < len(raw); {
+	for at := start; at < len(raw); {
 		if len(pools) >= musMaxPools {
 			return nil, nil, fmt.Errorf(
 				"the pool chain runs to more than %d records", musMaxPools)
@@ -123,11 +123,11 @@ func musDCLPools(raw []byte) ([]musPool, binary.ByteOrder, error) {
 // 3840 the other. So the check that finds the byte order is the same check
 // that there is a container here at all, which is why it gives up rather than
 // picking one.
-func musByteOrder(raw []byte) (binary.ByteOrder, error) {
-	if len(raw) < musContainerAt+musEmptyRecord {
+func musByteOrder(raw []byte, at int) (binary.ByteOrder, error) {
+	if len(raw) < at+musEmptyRecord {
 		return nil, fmt.Errorf("the file is too short to hold a pool container")
 	}
-	head := raw[musContainerAt:]
+	head := raw[at:]
 	if binary.BigEndian.Uint16(head) == poolOthers {
 		return binary.BigEndian, nil
 	}
@@ -137,8 +137,68 @@ func musByteOrder(raw []byte) (binary.ByteOrder, error) {
 	return nil, fmt.Errorf(
 		"there is no pool container at %#x: the first record calls itself %d "+
 			"one way round and %d the other, and a pool chain starts with %d",
-		musContainerAt, binary.BigEndian.Uint16(head),
+		at, binary.BigEndian.Uint16(head),
 		binary.LittleEndian.Uint16(head), poolOthers)
+}
+
+// musContainerStart finds where the pools begin, and which way round the file
+// writes its numbers.
+//
+// Not a fixed place, though it looks like one. The header carries the offset
+// at musContainerWhere, and it comes to 0x200 in every file written on a Mac
+// because what sits in front of the pools — the title, the composer, the
+// copyright — is given a fixed block there. A Finale for Windows wrote the
+// same three as text of the length they happen to be, so the pools start
+// wherever that text ends: 0x244 for a short title, 0x298 for a long one.
+//
+// Reading 0x200 as the answer rather than as the usual value of the answer
+// refused thirty-eight files of the hundred and forty-four to hand, every one
+// of them written on a PC, with a message saying there was no container in a
+// file that has one. The offset is read, and then checked by looking for the
+// pool chain where it points, so a header that says something absurd still
+// falls back to the place the pools nearly always are.
+func musContainerStart(raw []byte) (int, binary.ByteOrder, error) {
+	var first error
+	for _, at := range musContainerStarts(raw) {
+		order, err := musByteOrder(raw, at)
+		if err == nil {
+			return at, order, nil
+		}
+		if first == nil {
+			first = err
+		}
+	}
+	if first == nil {
+		first = fmt.Errorf("the file is too short to hold a pool container")
+	}
+	return 0, nil, first
+}
+
+// musContainerStarts is every place the pools might begin, likeliest first.
+//
+// The offset is a word, and which way round it is written is the thing not
+// known yet — that is settled by finding the pool chain — so both readings
+// are offered, and the place the pools nearly always are after them.
+func musContainerStarts(raw []byte) []int {
+	var out []int
+	add := func(at int) {
+		if at < musContainerWhere+2 || at+musEmptyRecord > len(raw) {
+			return
+		}
+		for _, had := range out {
+			if had == at {
+				return
+			}
+		}
+		out = append(out, at)
+	}
+	if len(raw) >= musContainerWhere+2 {
+		head := raw[musContainerWhere:]
+		add(int(binary.BigEndian.Uint16(head)))
+		add(int(binary.LittleEndian.Uint16(head)))
+	}
+	add(musContainerAt)
+	return out
 }
 
 // musZlibPools walks the chain of zlib streams of a 2011 or 2012 file.

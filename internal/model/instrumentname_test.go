@@ -100,3 +100,45 @@ func TestAVoiceIsSoundedAsAVoice(t *testing.T) {
 		}
 	}
 }
+
+// A desk number is not part of the instrument's name.
+//
+// Scores number their players, and the number says which stand it is and
+// never what is played at it. Matched whole, "Guitar 1" is in no list of
+// instruments there is: an octet of guitars came through as eight pianos,
+// which is the sound of nothing having been recognised at all. Most names
+// escaped it only because they are matched as substrings — "oboe" is inside
+// "Oboe 1 & 2" — so the ones it bit were those that have to match whole.
+func TestAPlayerNumberIsNotPartOfTheName(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		want Instrument
+	}{
+		{"Guitar 1", AcousticGuitar},
+		{"guitar 8", AcousticGuitar},
+		{"Violin II", Violin},
+		{"Violin I", Violin},
+		{"Oboe 1 & 2", Oboe},
+		{"Trumpet 1 & 2", Trumpet},
+	} {
+		got, ok := InstrumentNamed(c.name)
+		if !ok || got != c.want {
+			t.Errorf("%q is %v (known %v), want %v", c.name, got, ok, c.want)
+		}
+	}
+}
+
+// And only a trailing word that is wholly a number is dropped, so the
+// stripping stops at the first word that could be part of a name.
+func TestAWordThatIsNotANumberIsKept(t *testing.T) {
+	// "TC" is a treble-clef piano staff, not a piano numbered TC.
+	if got, ok := InstrumentNamed("Piano TC"); !ok || got != AcousticGrandPiano {
+		t.Errorf("Piano TC is %v (known %v), want the piano", got, ok)
+	}
+	// Nothing is left to match on once the numbers are gone.
+	for _, name := range []string{"1", "II", "1 & 2"} {
+		if got, ok := InstrumentNamed(name); ok {
+			t.Errorf("%q was read as %v; a number names no instrument", name, got)
+		}
+	}
+}

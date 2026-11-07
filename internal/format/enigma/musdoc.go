@@ -91,7 +91,15 @@ var (
 		"MS": "measSpec",
 		"IS": "staffSpec",
 		"FR": "frameSpec",
+		// The staff order, which this era writes with a small u. The pair
+		// of tags is kept because a tag is two characters of somebody
+		// else's file and not a thing to be sure about, and because a file
+		// holding both would have its list thrown out by musUsed rather
+		// than read as the two of them run together. Of the hundred and
+		// forty-four .mus files in two collections, every one that has
+		// this record at all writes "Iu" and none writes "IU".
 		"IU": "instUsed",
+		"Iu": "instUsed",
 		"GF": "gfhold",
 		"TX": "textBlock",
 		"NG": "staffGroup",
@@ -151,6 +159,12 @@ const (
 	// Which is which is settled in musStaves.
 	musStaffClefTrans = 12
 	musStaffClef      = 13
+
+	// Where the written clef is in a file of the earlier layout, which is
+	// one byte before it. The two go together with the frame: a file whose
+	// holds keep their frames where the earlier era put them keeps its
+	// clef a byte earlier as well. See musStaves.
+	musStaffClefEarly = 12
 
 	// musTransSetToClef says this staff is one of those: the transposition
 	// moves the clef as well as the notes.
@@ -250,7 +264,17 @@ func musDocument(pools []musPool, order binary.ByteOrder, era musEra) (document,
 	// the score builder refuses a chain it cannot walk — so keeping one
 	// would cost the whole document rather than one frame of music.
 	frames, dropped := musFrames(others, entries, order)
-	holds := musHolds(details, others, dropped, order, era)
+
+	// Which of the two layouts this file is written in, asked once and
+	// answered by the file: where it keeps the frame of a bar says where it
+	// keeps the clef of a staff, the two having moved together. See
+	// musFrameBase.
+	base := musFrameBase2005
+	if era == eraDCL {
+		base = musFrameBase(musSorted(details, "gfhold"), frames, order)
+	}
+	early := base == musFrameBase2001
+	holds := musHolds(details, dropped, order, base)
 
 	// A .mus is written in place, so an entry deleted in Finale keeps its
 	// slot in the pool until the file is next compacted. The pool therefore
@@ -289,7 +313,7 @@ func musDocument(pools []musPool, order binary.ByteOrder, era musEra) (document,
 
 	doc.Entries.Entries = live
 	doc.Others.Bars = musBars(others, order, census)
-	doc.Others.Staves = musStaves(others, order)
+	doc.Others.Staves = musStaves(others, order, early)
 	doc.Others.Frames = musFrameSpecs(frames)
 	doc.Others.Used = musUsed(others, doc.Others.Staves, order, census, era)
 	doc.Details.Holds = holds
@@ -675,7 +699,7 @@ func musBars(others map[[3]int]*musRecord, order binary.ByteOrder,
 // a soprano store the same bytes. That is recovered from the staff's name
 // where the name is one gscore knows — see withOctavesOf — and a .musx has
 // it outright, because Finale wrote it out when it saved one.
-func musStaves(others map[[3]int]*musRecord, order binary.ByteOrder) []staffSpec {
+func musStaves(others map[[3]int]*musRecord, order binary.ByteOrder, early bool) []staffSpec {
 	var out []staffSpec
 	for _, r := range musSorted(others, "staffSpec") {
 		if r.num == musStaffDefaults {
@@ -733,14 +757,27 @@ func musStaves(others map[[3]int]*musRecord, order binary.ByteOrder) []staffSpec
 		// the bass clef, which is 3, and Finale's own export of that file
 		// says bass, so the second byte is the one the music is written in.
 		// The first is what a baritone saxophone needs: its staff holds 0
-		// and 3, it sounds where the bass clef is and is read in the treble,
-		// and given the second byte its part comes out three ledger lines
-		// above the staff. Every staff carrying the bit that says to move
-		// the clef — fifty-seven of them, every baritone saxophone, tenor
-		// saxophone and bass clarinet in a hundred and ninety-five files,
-		// and nothing else — holds the treble there, which is what those
-		// three instruments are read in.
-		if len(p) > musStaffClef {
+		// and 3, it sounds where the bass clef is and is read in the
+		// treble, and given the second byte its part comes out three ledger
+		// lines above the staff. Every staff carrying the bit that says to
+		// move the clef — ninety of them in a collection of a hundred and
+		// forty-four files, every baritone saxophone, tenor saxophone and
+		// bass clarinet in it and nothing else — holds the treble there,
+		// which is what those three instruments are read in.
+		//
+		// All of which is the later layout. In the earlier one the clef is
+		// a byte before that, where this would read whatever the staff
+		// transposes to; the pair of them moved together with the frame in
+		// a hold, so the one reading settles both. Bach's cantata BWV 1,
+		// which Finale 2003 wrote the earlier way, has nothing at all in
+		// the later byte: read there, its violas, its tenors, its basses
+		// and its continuo all came out in the treble clef.
+		if early {
+			if len(p) > musStaffClefEarly {
+				s.DefaultClef = int(p[musStaffClefEarly])
+				s.TransposedClef = s.DefaultClef
+			}
+		} else if len(p) > musStaffClef {
 			s.DefaultClef = int(p[musStaffClef])
 			s.TransposedClef = int(p[musStaffClefTrans])
 		}
@@ -809,22 +846,67 @@ func musFrameSpecs(frames []musFrame) []frameSpec {
 	return out
 }
 
-// musHolds reads what puts music on a staff: for each staff and measure, the
-// clef and the frame of each layer.
+// musFrameBase works out where a hold keeps the frame of each layer, by
+// reading the holds both ways and seeing which the file itself agrees with.
 //
-// Where the layers start inside the record moved between 2001 and 2005, and
-// what says which is at hand already: a staff record is three rows in a 2001
-// file and six in a 2005 one. Guessing the later offset for both finds about
-// a third of the frames.
-func musHolds(details, others map[[3]int]*musRecord, dropped map[int]bool,
-	order binary.ByteOrder, era musEra) []gfhold {
-
-	base := musFrameBase2005
-	if era == eraDCL {
-		if specs := musSorted(others, "staffSpec"); len(specs) > 0 && len(specs[0].parts) == 3 {
-			base = musFrameBase2001
+// The field moved between Finale 2001 and 2005 and nothing in the file says
+// which layout it has. The size of the staff record was used to tell them
+// apart — three rows in a 2001 file, six in a 2005 one — and that is not
+// reliable: a 2003 score of Bach's cantata BWV 1 has the later staff record
+// and the earlier holds, and read two bytes along, every one of its two
+// thousand eight hundred frames was missed. Its music arrived as four
+// hundred and eighteen bars of rest on every staff.
+//
+// What does settle it is the frames. A frame is the music of one layer of
+// one bar of one staff and belongs to that one hold, so a document names
+// each of its frames once. Read at the wrong offset the field is not a frame
+// number at all: it is either nothing, or the same number in every hold —
+// both eras keep a constant 75 in the record, two bytes before the frames in
+// one and ten bytes after them in the other, and BWV 1 read the later way
+// gave 75 for all two thousand eight hundred and forty-five of its holds.
+//
+// So each offset is scored by how many frames it names exactly once, which
+// is what a real reading does and what a constant cannot do however many
+// valid numbers it collides with. A tie goes to the later layout, which is
+// how every file was read before this existed.
+func musFrameBase(holds []*musRecord, frames []musFrame, order binary.ByteOrder) int {
+	known := make(map[int]bool, len(frames))
+	for _, f := range frames {
+		known[f.num] = true
+	}
+	best, found := musFrameBase2005, -1
+	for _, base := range []int{musFrameBase2005, musFrameBase2001} {
+		times := map[int]int{}
+		for _, r := range holds {
+			p := r.all()
+			for layer := 0; layer < musFrameLayers; layer++ {
+				at := base + 2*layer
+				if at+2 > len(p) {
+					break
+				}
+				if f := int(order.Uint16(p[at:])); known[f] {
+					times[f]++
+				}
+			}
+		}
+		once := 0
+		for _, n := range times {
+			if n == 1 {
+				once++
+			}
+		}
+		if once > found {
+			best, found = base, once
 		}
 	}
+	return best
+}
+
+// musHolds reads what puts music on a staff: for each staff and measure, the
+// clef and the frame of each layer, with the frames at the offset musDocument
+// worked out for this file.
+func musHolds(details map[[3]int]*musRecord, dropped map[int]bool,
+	order binary.ByteOrder, base int) []gfhold {
 
 	var out []gfhold
 	for _, r := range musSorted(details, "gfhold") {
@@ -907,6 +989,34 @@ func musLive(entries []entry, frames []musFrame, holds []gfhold) []entry {
 	return out
 }
 
+// musUsedOrder reads one candidate list of staves, or nothing where the
+// bytes it was given are not a list of staves at all.
+//
+// Every staff named has to be one the file holds, and no staff twice: a
+// list that fails either is being read at the wrong stride, and saying so is
+// what lets musUsed try the other one.
+func musUsedOrder(parts [][]byte, exists map[int]bool,
+	order binary.ByteOrder) ([]instUsed, map[int]bool) {
+
+	var out []instUsed
+	named := map[int]bool{}
+	for i, p := range parts {
+		if len(p) < 2 {
+			return nil, nil
+		}
+		inst := int(order.Uint16(p))
+		if !exists[inst] || named[inst] {
+			return nil, nil
+		}
+		named[inst] = true
+		out = append(out, instUsed{Inci: i, Inst: inst})
+	}
+	if len(out) == 0 {
+		return nil, nil
+	}
+	return out, named
+}
+
 // musUsed is the order the staves are read in, top to bottom.
 //
 // Not the order the staff records are in: that is the order somebody built
@@ -914,11 +1024,23 @@ func musLive(entries []entry, frames []musFrame, holds []gfhold) []entry {
 // In the octet this was fixed against they share not one position: the staff
 // records run Guitar 5, 2, 7, 4, 6, 1, 3, 8, and the file prints them 1 to 8.
 //
-// The two eras write the same list differently. The older gives one row per
-// staff, so each incidence is one entry. The newer writes the whole list into
-// the first incidence and then repeats it an entry at a time, which is why
-// only the first is read: the repeats start one staff along, and reading them
-// as a continuation would name a staff twice and lose another.
+// The eras write the same list differently, and the older one is not even
+// consistent with itself. The newer writes the whole list into the first
+// incidence and then repeats it an entry at a time, which is why only the
+// first is read: the repeats start one staff along, and reading them as a
+// continuation would name a staff twice and lose another. The older gives
+// rows, and an entry is one row in some files and two in others — Bach's
+// cantata BWV 1 writes the staff in the first row of each pair and the same
+// constant in every second row.
+//
+// So the older list is read both ways and the answer that makes sense is
+// kept. A list read the wrong way names a staff twice or names one that is
+// not there, and that is a thing this can tell for itself, so nothing here
+// has to know which file it is holding. It matters because the fallback is
+// the order the staff records happen to be in: BWV 1 keeps its second horn,
+// second oboe and second concertante violin at the end of the file, so its
+// score came out with each of those below the continuo — and with the
+// groups that join each pair spanning the twelve staves in between.
 func musUsed(others map[[3]int]*musRecord, staves []staffSpec,
 	order binary.ByteOrder, census map[string]int, era musEra) []instUsed {
 
@@ -930,9 +1052,15 @@ func musUsed(others map[[3]int]*musRecord, staves []staffSpec,
 		return nil
 	}
 
-	parts := rec.parts
-	if era != eraDCL && len(parts) > 0 {
-		parts = musSplit(parts[0], musUsedEntry)
+	tries := [][][]byte{rec.parts}
+	if era != eraDCL {
+		if len(rec.parts) == 0 {
+			census["the order the staves are read in, top to bottom"] = 1
+			return nil
+		}
+		tries = [][][]byte{musSplit(rec.parts[0], musUsedEntry)}
+	} else {
+		tries = append(tries, musSplit(bytes.Join(rec.parts, nil), musUsedEntry))
 	}
 
 	exists := map[int]bool{}
@@ -942,23 +1070,17 @@ func musUsed(others map[[3]int]*musRecord, staves []staffSpec,
 
 	var out []instUsed
 	named := map[int]bool{}
-	for i, p := range parts {
-		if len(p) < 2 {
-			return nil
+	for _, parts := range tries {
+		out, named = musUsedOrder(parts, exists, order)
+		if out != nil {
+			break
 		}
-		inst := int(order.Uint16(p))
-		if !exists[inst] || named[inst] {
-			// Not the layout order after all: a staff that is not there, or
-			// one named twice. Better to fall back to the staff records,
-			// which are at least every staff once, than to put the music on
-			// staves that are not there.
-			census["the order the staves are read in, top to bottom"] = 1
-			return nil
-		}
-		named[inst] = true
-		out = append(out, instUsed{Inci: i, Inst: inst})
 	}
-	if len(out) == 0 {
+	if out == nil {
+		// Not the layout order after all: a staff that is not there, or one
+		// named twice, whichever way it is read. Better to fall back to the
+		// staff records, which are at least every staff once, than to put
+		// the music on staves that are not there.
 		census["the order the staves are read in, top to bottom"] = 1
 		return nil
 	}
@@ -1139,6 +1261,23 @@ func musExprDesc(p []byte) string {
 func musGroups(details map[[3]int]*musRecord, order binary.ByteOrder) []staffGroup {
 	var out []staffGroup
 	for _, r := range musSorted(details, "staffGroup") {
+		// The score's own groups and not the parts'.
+		//
+		// A group record is keyed by the document it belongs to, and a
+		// file that has had parts made from it holds the whole set again
+		// for each of them: Bach's cantata BWV 1 carries nine groups for
+		// the score and two hundred and forty more for fifty parts. Read
+		// together they are a score bracketed fifteen ways at once, with
+		// braces over twelve staves where the score has none — which is
+		// what it looked like. gscore keeps one set of groups, and the
+		// score's is the one it keeps.
+		//
+		// Of the ninety-one files in two collections that have any groups
+		// at all, every one has groups keyed to the score, so this loses
+		// nothing where there are no parts.
+		if r.num != 0 {
+			continue
+		}
 		p := r.all()
 		if len(p) < musGroupShape+2 {
 			continue

@@ -209,13 +209,57 @@ func aNote(b *musBuild, raw, name int) *musBuild {
 // +4 in a file whose staff records are three rows.
 func (b *musBuild) hold(staff, bar, frame int) *musBuild {
 	data := make([]byte, 10)
-	b.order.PutUint16(data[musFrameBase2001:], uint16(frame))
+	b.order.PutUint16(data[musFrameBase2005:], uint16(frame))
 	return b.detailRow(staff, bar, "GF", data)
 }
 
 func (b *musBuild) used(staves ...int) *musBuild {
 	for _, s := range staves {
 		b.otherRow(0, "IU", b.u16s(s, 0, 0, 0, 0, 0))
+	}
+	return b
+}
+
+// usedPairs is the staff order as Bach's cantata BWV 1 writes it: the tag
+// with a small u, two rows to a staff, the staff in the first of them and
+// the same constant in every second one.
+func (b *musBuild) usedPairs(staves ...int) *musBuild {
+	for _, s := range staves {
+		b.otherRow(0, "Iu", b.u16s(s, 0, 0, 0, 0, 0))
+		b.otherRow(0, "Iu", b.u16s(1, 0, 0, 0, 0, 0))
+	}
+	return b
+}
+
+// holdEarly puts a bar's music where the earlier layout keeps it, which is
+// two bytes before where hold puts it.
+func (b *musBuild) holdEarly(staff, bar, frame int) *musBuild {
+	data := make([]byte, 10)
+	b.order.PutUint16(data[musFrameBase2001:], uint16(frame))
+	return b.detailRow(staff, bar, "GF", data)
+}
+
+// staffEarly is a staff of the earlier layout, which keeps the clef it is
+// written in one byte before where the later one does.
+func (b *musBuild) staffEarly(n, name, clef int) *musBuild {
+	data := make([]byte, 36)
+	data[musStaffClefEarly] = byte(clef)
+	b.order.PutUint16(data[musStaffName:], uint16(name))
+	for i := 0; i < 3; i++ {
+		b.otherRow(n, "IS", data[12*i:12*(i+1)])
+	}
+	return b
+}
+
+// groupFor is a group belonging to one of the parts made from a score,
+// rather than to the score itself.
+func (b *musBuild) groupFor(part, first, last, shape int) *musBuild {
+	data := make([]byte, 20)
+	b.order.PutUint16(data[musGroupStart:], uint16(first))
+	b.order.PutUint16(data[musGroupEnd:], uint16(last))
+	b.order.PutUint16(data[musGroupShape:], uint16(shape))
+	for i := 0; i < 2; i++ {
+		b.detailRow(part, 1, "NG", data[10*i:10*(i+1)])
 	}
 	return b
 }
@@ -1924,5 +1968,129 @@ func TestADrumIsWrittenWhereDrummersWriteIt(t *testing.T) {
 		if got := note.Pitch.DiatonicIndex() + percussionMiddle; got != w.step {
 			t.Errorf("note %d sits on step %d of the staff, want %d", i, got, w.step)
 		}
+	}
+}
+
+// Where a bar's music is kept moved between 2001 and 2005, and the year on
+// the file does not say which way round this one is: Bach's cantata BWV 1,
+// written by Finale 2003, has the later era's staff records and the earlier
+// era's holds. Read at the later offset, not one of its two thousand eight
+// hundred frames was found and all sixteen staves of it came through as four
+// hundred and eighteen bars of rest.
+//
+// So both are read and the one the file agrees with is kept. These are the
+// two files that disagree.
+func TestTheMusicOfABarIsFoundWhicheverWayTheHoldIsWritten(t *testing.T) {
+	for _, c := range []struct {
+		what string
+		hold func(b *musBuild, staff, bar, frame int) *musBuild
+	}{
+		{"the earlier way", (*musBuild).holdEarly},
+		{"the later way", (*musBuild).hold},
+	} {
+		t.Run(c.what, func(t *testing.T) {
+			b := newMus()
+			b.staff(1, 0, 0).used(1).bar(1, 4, 1024).frame(1, 1, 1)
+			c.hold(b, 1, 1, 1)
+			b.sounds(1, 0, 4096, 0)
+
+			score := readFixture(t, b)
+			notes := 0
+			for _, m := range score.Parts[0].Measures {
+				for _, v := range m.Voices {
+					for _, el := range v.Elements {
+						if _, ok := el.(*model.Note); ok {
+							notes++
+						}
+					}
+				}
+			}
+			if notes != 1 {
+				t.Errorf("got %d notes, want the 1 in the file — the frame "+
+					"was looked for at the wrong offset, and a bar whose "+
+					"frame is not found is a bar of rest", notes)
+			}
+		})
+	}
+}
+
+// The staff order written two rows to a staff.
+//
+// Read a row at a time it names the second row's constant as a staff, which
+// is a staff named twice as soon as there are two of them — so the list is
+// thrown out and the staves fall back to the order their records happen to
+// be in. BWV 1 keeps its second horn, second oboe and second concertante
+// violin at the end of the file, and came out with each of those below the
+// continuo, twelve staves from the one it is paired with.
+func TestTheOlderStaffOrderIsReadTwoRowsToAStaff(t *testing.T) {
+	b := newMus()
+	b.staff(1, 0, 0)
+	b.staff(2, 0, 7).textBlock(7, 7)
+	b.text = "^block(7)Second staff, read first^end"
+	b.usedPairs(2, 1)
+	b.bar(1, 4, 1024)
+	b.frame(1, 1, 1).hold(1, 1, 1)
+	b.sounds(1, 0, 4096, 0)
+
+	score := readFixture(t, b)
+	if len(score.Parts) != 2 {
+		t.Fatalf("got %d staves, want 2", len(score.Parts))
+	}
+	if got := score.Parts[0].Name; got != "Second staff, read first" {
+		t.Errorf("the top staff is %q, want the one the order names first; "+
+			"the order was read a row at a time, or not at all", got)
+	}
+}
+
+// The groups a file carries for its parts are not the score's.
+//
+// A file that has had parts made from it holds the whole set of groups again
+// for each of them, keyed to the part. BWV 1 carries nine for the score and
+// two hundred and forty more for fifty parts; read together they bracket the
+// score fifteen ways at once, and the braces — drawn to the height of what
+// they join — come out as a black slab down the side of the page.
+func TestThePartsGroupsAreNotTheScores(t *testing.T) {
+	b := newMus()
+	b.staff(1, 0, 0).staff(2, 0, 0).used(1, 2)
+	b.bar(1, 4, 1024)
+	b.frame(1, 1, 1).hold(1, 1, 1)
+	b.sounds(1, 0, 4096, 0)
+	b.group(1, 2, 6)        // the score's own: a straight bracket
+	b.groupFor(41, 1, 2, 3) // and a part's copy of it, as a brace
+
+	score := readFixture(t, b)
+	if n := len(score.Groups); n != 1 {
+		t.Fatalf("got %d groups, want the 1 the score has", n)
+	}
+	if got := score.Groups[0].Symbol; got != model.GroupBracket {
+		t.Errorf("the group is a %v, want the bracket the score has — the "+
+			"part's copy was read as well", got)
+	}
+}
+
+// The clef moved with the frame, so the one reading settles both.
+//
+// A file of the earlier layout keeps the clef it is written in one byte
+// before where the later one does, and has nothing in the later byte at all.
+// Bach's cantata BWV 1 is one, and read the later way its violas, its
+// tenors, its basses and its continuo all came out in the treble clef.
+//
+// Nothing in the file says which layout it is; what says it is where the
+// frames turned out to be, which musFrameBase works out from the frames
+// themselves. So this fixture holds its music the earlier way and is
+// expected to have its clef read the earlier way too.
+func TestTheClefOfTheEarlierLayoutIsFoundWithItsFrames(t *testing.T) {
+	b := newMus()
+	b.staffEarly(1, 1, musClefBass).used(1).textBlock(1, 1)
+	b.text = "^block(1)Trombone^end"
+	b.bar(1, 4, 1024)
+	b.frame(1, 1, 1).holdEarly(1, 1, 1)
+	b.sounds(1, 0, 4096, 0)
+
+	score := readFixture(t, b)
+	if got := score.Parts[0].Clef; got != model.Bass {
+		t.Errorf("the trombone is read from the %v clef, want the bass — "+
+			"the clef was looked for where the later layout keeps it, "+
+			"which in a file like this one is empty", got)
 	}
 }

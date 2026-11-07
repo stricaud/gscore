@@ -1927,13 +1927,21 @@ func asWritten(sounds model.Pitch, t model.Transposition) model.Pitch {
 //
 // gscore keeps a transposing staff's music as the player reads it, so the
 // clef has to be the written one as well, and for some instruments that is
-// not the clef the music sounds in. Finale keeps the two apart: the bars
-// carry the sounding clef, and the staff carries a second clef to be read
-// from instead whenever it says to set the clef along with the pitches.
+// not the clef the music sounds in. Finale keeps the two apart on exactly
+// the staves that need it: where the staff says its clef moves along with
+// its pitches, the staff carries the clef it is read from and the bars carry
+// the one it sounds in.
 //
 // A baritone saxophone is the case that showed it. It sounds where the bass
-// clef is and is read in the treble, and given the sounding clef its part
-// came out with every note three ledger lines above the staff.
+// clef is and is read in the treble, and given the bar's clef its part came
+// out with every note three ledger lines above the staff. Of the ninety
+// staves in one collection whose clef moves with the transposition, every
+// one is written in the treble and eighteen have the bass clef in their
+// first bar.
+//
+// Every other staff is read from its first bar where that says anything,
+// because a clef written into bar one is the clef the music is in, and from
+// the staff where it does not.
 func writtenClef(s staffSpec, bar *int, r *reader) model.Clef {
 	if s.Transposition.SetToClef != nil {
 		return clefOf(s.TransposedClef, r)

@@ -131,9 +131,48 @@ const state = {
 
 /* ---------- toolbox ---------- */
 
+// hint says what the pointer is over, and unhint puts back whatever the
+// status line was saying before.
+//
+// A name shown while the pointer rests on a button is the cheapest
+// documentation there is: forty small pictures in a grid are forty things
+// to guess at otherwise, and a tooltip is a second late and in the way.
+let hintWas = null;
+
+function hint(text) {
+  const bar = document.getElementById("status");
+  if (!bar) return;
+  if (hintWas === null) hintWas = bar.textContent;
+  bar.textContent = text;
+}
+
+function unhint() {
+  const bar = document.getElementById("status");
+  if (!bar || hintWas === null) return;
+  bar.textContent = hintWas;
+  hintWas = null;
+}
+
+
 // The palette lives in palette.js, which holds what is in it. This is what
 // happens when one is clicked.
 async function paletteAction(item) {
+  // A mark picked up by clicking it on the page, and then an articulation
+  // chosen from the palette: that is asking for this mark to be written
+  // there instead — which, when it is the same mark, means move it to the
+  // side the palette's own Above and Below say.
+  if (item.apply === "articulation" && state.selection?.articulation &&
+      !state.multi.length) {
+    const was = state.selection.articulation;
+    if (item.value === was.mark) {
+      await mark("articulation",
+        { articulation: was.mark, placement: was.above ? "below" : "above",
+          ...pickedHead() },
+        `${t(item.label)} moved ${was.above ? "under" : "over"} the note`);
+      return;
+    }
+  }
+
   if (item.tool) {
     switch (item.tool) {
       case "rest":
@@ -3978,6 +4017,8 @@ async function loadHits() {
   state.hits = d.hits || [];
   state.dynamics = d.dynamics || [];
   state.textMarks = d.textMarks || [];
+  state.markers = d.markers || [];
+  state.articulations = d.articulations || [];
   state.chordMarks = d.chords || [];
   state.tempos = d.tempos || [];
   state.hairpins = d.hairpins || [];
@@ -4024,6 +4065,39 @@ function dynamicAt(x, y) {
     if (x >= d.x - 0.4 && x <= d.x + d.width + 0.4 &&
         y >= d.y - 0.4 && y <= d.y + d.height + 0.4) {
       return d;
+    }
+  }
+  return null;
+}
+
+// articulationAt finds the mark on a note that a click landed on.
+//
+// A staccato dot or a fermata is not where its note is: it is drawn clear
+// of the notehead, the stem and the staff, as far out as that stretch of
+// music needed. The box comes from the engraver for the same reason every
+// other one does.
+function articulationAt(x, y) {
+  for (const a of state.articulations || []) {
+    if (x >= a.x - 0.4 && x <= a.x + a.width + 0.4 &&
+        y >= a.y - 0.4 && y <= a.y + a.height + 0.4) {
+      return a;
+    }
+  }
+  return null;
+}
+
+// markerAt finds the rehearsal mark a click landed on.
+//
+// A letter belongs to a bar and not to any note in it, and is written in a
+// row above the music as far up as that bar needed — so there was nothing on
+// the page to point at: taking one away meant finding the bar, selecting a
+// note in it and asking the window. The box comes from the engraver, which
+// is the only thing that knows where the row ended up.
+function markerAt(x, y) {
+  for (const m of state.markers || []) {
+    if (x >= m.x - 0.4 && x <= m.x + m.width + 0.4 &&
+        y >= m.y - 0.4 && y <= m.y + m.height + 0.4) {
+      return m;
     }
   }
   return null;
@@ -4514,6 +4588,20 @@ function setupCanvasClicks() {
       return;
     }
 
+    // The marks written on a note, which are above it or below it.
+    const artic = articulationAt(x, y);
+    if (artic) {
+      selectArticulation(artic);
+      return;
+    }
+
+    // The rehearsal marks are in the row above everything.
+    const letter = markerAt(x, y);
+    if (letter) {
+      selectMarker(letter);
+      return;
+    }
+
     // Words written on a note, which are above the staff or below it.
     const words = textMarkAt(x, y);
     if (words) {
@@ -4950,6 +5038,53 @@ function selectChordSymbol(c) {
   markSelection();
   status(`${state.selection.chordSymbol} \u2014 press Enter to change it, ` +
          `Backspace to take it away`);
+}
+
+// selectArticulation picks up a mark written on a note.
+//
+// What is selected is the mark and not the note: Backspace takes the dot
+// away and leaves the music, and the status line says which mark it is —
+// which is also the answer to "what is this one called".
+function selectArticulation(a) {
+  state.multi = [];
+  state.anchor = state.focus = null;
+  let at = 1;
+  const target = refTarget(a.ref);
+  if (target) at = Number(target.split(":")[2]) + 1;
+
+  state.selection = {
+    part: a.part, measure: a.measure, ref: a.ref, at, step: 0, articulation: a,
+  };
+  markSelection();
+  status(`${t(articulationLabel(a.mark))} \u2014 ` +
+         `${a.above ? "over" : "under"} the note. Press Backspace to take ` +
+         `it away, or the palette to move it.`);
+}
+
+// articulationLabel is what a mark is called in front of somebody, from the
+// palette that writes it: one list of names, not two.
+function articulationLabel(name) {
+  for (const section of (typeof PALETTE === "undefined" ? [] : PALETTE)) {
+    for (const item of section.items || []) {
+      if (item.apply === "articulation" && item.value === name) return item.label;
+    }
+  }
+  return name;
+}
+
+// selectMarker picks up a rehearsal mark.
+//
+// What is selected is the mark, so Backspace takes the letter away and
+// leaves the bar, and Enter opens the window that names it.
+function selectMarker(m) {
+  state.multi = [];
+  state.anchor = state.focus = null;
+  state.selection = {
+    part: 0, measure: m.measure, ref: null, at: 0, step: 0, marker: m,
+  };
+  markSelection();
+  status(`Mark ${m.text} at bar ${barNumberOf(m.measure)} — press Enter to ` +
+         `change it, Backspace to take it away`);
 }
 
 // selectTextMark picks up the words written on a note.
@@ -5782,6 +5917,32 @@ async function deleteSelected() {
     if (state.selection) state.selection.chordSymbol = null;
     return;
   }
+  // A mark on a note was picked up by clicking it, so it is the mark that
+  // goes and the note stays.
+  if (state.selection?.articulation && !state.multi.length) {
+    const a = state.selection.articulation;
+    const d = await mark("articulation",
+      { articulation: a.mark, remove: "1", ...pickedHead() },
+      `${t(articulationLabel(a.mark))} removed`);
+    if (d && state.selection) state.selection.articulation = null;
+    return;
+  }
+  // A rehearsal mark was picked up by clicking it, so it is the letter
+  // that goes and the bar stays. The marks after it move up the sequence
+  // by themselves, which is what makes them worth keeping as places.
+  if (state.selection?.marker && !state.multi.length) {
+    const m = state.selection.marker;
+    const res = await fetch(
+      "/api/marker?measure=" + m.measure + "&text=", { method: "POST" });
+    if (!res.ok) {
+      status("Could not remove it: " + (await res.text()).trim());
+      return;
+    }
+    if (state.selection) state.selection.marker = null;
+    await refreshScore();
+    status(`Mark ${m.text} removed`);
+    return;
+  }
   // Words were picked up by clicking them, so it is the words that go and
   // not the note holding them up.
   if (state.selection?.textMark && !state.multi.length) {
@@ -6026,6 +6187,29 @@ function markSelection() {
     if (d) {
       svg.insertBefore(
         selectionRect(d.x - 0.4, d.y - 0.4, d.width + 0.8, d.height + 0.8, z),
+        svg.firstChild);
+      return;
+    }
+  }
+
+  if (sel.articulation) {
+    const a = (state.articulations || []).find(
+      (x) => x.part === sel.part && x.measure === sel.measure &&
+             x.ref === sel.ref && x.mark === sel.articulation.mark);
+    if (a) {
+      svg.insertBefore(
+        selectionRect(a.x - 0.4, a.y - 0.4, a.width + 0.8, a.height + 0.8, z),
+        svg.firstChild);
+      return;
+    }
+  }
+
+  if (sel.marker) {
+    const m = (state.markers || []).find(
+      (x) => x.measure === sel.marker.measure && !x.repeat);
+    if (m) {
+      svg.insertBefore(
+        selectionRect(m.x - 0.4, m.y - 0.4, m.width + 0.8, m.height + 0.8, z),
         svg.firstChild);
       return;
     }
@@ -6354,7 +6538,7 @@ function pickedNotes() {
   if (!sel || sel.ref === null || sel.ref === undefined) return false;
   if (sel.bar) return false;
   return !(sel.arc || sel.hairpin || sel.tremolo || sel.tuplet || sel.dynamic ||
-    sel.chordSymbol || sel.textMark ||
+    sel.chordSymbol || sel.textMark || sel.marker || sel.articulation ||
     (sel.tempo !== undefined && sel.tempo !== null));
 }
 
@@ -9954,7 +10138,9 @@ async function textDialog() {
   // The one most words are. Remembered between windows, because somebody
   // writing in the expression markings writes several in a row.
   pick.value = editing ? (editing.style || lastTextStyle) : lastTextStyle;
-  $("#tm-words").value = editing ? editing.text : "";
+  richFields();
+  richSet(richBoxes["tm-words"], editing && editing.runs,
+          editing ? editing.text : "");
   $("#tm-place").value = editing ? (editing.place || "") : "";
 
   // What the choice means, in the words a reader would use rather than as
@@ -9986,7 +10172,7 @@ async function textDialog() {
     };
     dlg.addEventListener("close", done);
     dlg.showModal();
-    $("#tm-words").focus();
+    richBoxes["tm-words"].focus();
   });
   if (answer === "cancel" || answer === "") {
     status("Ready");
@@ -9994,12 +10180,19 @@ async function textDialog() {
   }
 
   const sel = state.selection;
-  const words = answer === "remove" ? "" : $("#tm-words").value;
+  const runs = richRuns(richBoxes["tm-words"]);
+  const words = answer === "remove" ? "" : runs.map((r) => r.text).join("");
   if (answer !== "remove") lastTextStyle = pick.value;
   const p = new URLSearchParams({
     part: String(sel.part), measure: String(sel.measure), at: String(sel.at),
     text: words, style: pick.value, placement: $("#tm-place").value,
   });
+  // Plain words need no runs, and leaving them out keeps a score nobody
+  // formatted as small and as readable as it was.
+  if (answer !== "remove" && runs.some((r) => r.bold || r.italic || r.colour ||
+      (r.size && Math.abs(r.size - 1) >= 0.01))) {
+    p.set("runs", JSON.stringify(runs));
+  }
   // Changing the words that were picked up, rather than adding more to the
   // note: a note may carry two, and the other one stays as it is.
   if (editing) p.set("index", String(editing.index));
@@ -14405,6 +14598,8 @@ function setupFullscreen() {
 /* ---------- misc ---------- */
 
 function status(msg) {
+  // A message of its own replaces whatever the pointer was saying.
+  hintWas = null;
   $("#status").textContent = msg;
 }
 
@@ -14868,7 +15063,9 @@ const KEY_BINDINGS = [
       ? chordSymbolDialog()
       : state.selection?.textMark
         ? textDialog()
-        : insertAtSelection(true)) },
+        : state.selection?.marker
+          ? markerDialog()
+          : insertAtSelection(true)) },
   { id: "chord-note", keys: "Mod+Space", group: "Writing",
     label: "Add another notehead to the note just written",
     run: () => void chordAtCursor() },

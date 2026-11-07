@@ -331,6 +331,15 @@ function paletteButton(item, onAction, size) {
   // changes with the language is a name that cannot be matched against.
   b.title = t(item.label);
   b.dataset.label = item.label;
+  // And said in the status line while the pointer is over it. A tooltip
+  // takes a second to appear, lands over the next button along and is
+  // missed by anybody moving quickly — which is everybody picking a mark
+  // out of a grid of forty small pictures. The status line is where the
+  // program says what it is doing anyway.
+  b.addEventListener("mouseenter", () => hint(t(item.label)));
+  b.addEventListener("mouseleave", unhint);
+  b.addEventListener("focus", () => hint(t(item.label)));
+  b.addEventListener("blur", unhint);
 
   if (item.icon) {
     const img = document.createElement("img");

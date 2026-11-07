@@ -624,7 +624,9 @@ func (e *engraver) repeatMarkers(parts []*model.Part, columns []float64, start, 
 		}
 		e.wait(waitingMark{
 			x0: x, x1: right, height: markRowHeight, gap: 0.6, rank: rankMarks,
-			draw: func(row float64) { e.drawRehearsalMark(text, x, row) },
+			draw: func(row float64) {
+				e.drawRehearsalMarkAt(text, x, row, mi, true)
+			},
 		})
 	}
 }
@@ -636,7 +638,7 @@ func (e *engraver) drawMarkRow(m *model.Measure, tempo *model.Tempo,
 	columns []float64, mi, start int, x, row float64) {
 	if m != nil {
 		if text := e.markerText(mi); text != "" {
-			x = e.drawRehearsalMark(text, x, row) + afterMark
+			x = e.drawRehearsalMarkAt(text, x, row, mi, false) + afterMark
 		}
 		if g := m.Sign.Glyph(); g != "" {
 			e.lay.Glyphs = append(e.lay.Glyphs, Glyph{
@@ -682,6 +684,13 @@ func (e *engraver) drawMarkRow(m *model.Measure, tempo *model.Tempo,
 // row is the bottom edge of the band the mark sits in, found against
 // whatever is under it; everything in the band is measured from there.
 func (e *engraver) drawRehearsalMark(text string, x, row float64) float64 {
+	return e.drawRehearsalMarkAt(text, x, row, -1, false)
+}
+
+// drawRehearsalMarkAt is the same, and says which bar the mark is on so
+// that the editor can let it be clicked. Only here is its place known: the
+// row it sits in is found against whatever this bar has reaching up.
+func (e *engraver) drawRehearsalMarkAt(text string, x, row float64, measure int, repeat bool) float64 {
 	// Measured bold, because it is set bold, and centred in the box rather
 	// than started at its left edge. Started there and measured roman, a C
 	// ran over the right-hand edge of its own box and an M would have
@@ -703,6 +712,12 @@ func (e *engraver) drawRehearsalMark(text string, x, row float64) float64 {
 		Line{X1: x - 0.4, Y1: y1, X2: x - 0.4 + w, Y2: y1, Thickness: t},
 		Line{X1: x - 0.4, Y1: y0, X2: x - 0.4, Y2: y1, Thickness: t},
 		Line{X1: x - 0.4 + w, Y1: y0, X2: x - 0.4 + w, Y2: y1, Thickness: t})
+	if measure >= 0 {
+		e.lay.Markers = append(e.lay.Markers, MarkerPos{
+			Measure: measure, Repeat: repeat, Text: text,
+			X: x - 0.4, Y: y0, Width: w, Height: y1 - y0,
+		})
+	}
 	return x - 0.4 + w
 }
 

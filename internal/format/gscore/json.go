@@ -290,25 +290,29 @@ type symbolRef struct {
 }
 
 type marksDoc struct {
-	Articulations []string    `json:"articulations,omitempty"`
-	Techniques    []string    `json:"techniques,omitempty"`
-	Cross         string      `json:"cross,omitempty"`
-	Symbols       []symbolRef `json:"symbols,omitempty"`
-	TieStart      bool        `json:"tieStart,omitempty"`
-	TieStop       bool        `json:"tieStop,omitempty"`
-	SlurStart     bool        `json:"slurStart,omitempty"`
-	SlurStop      bool        `json:"slurStop,omitempty"`
-	Tuplet        *tupletDoc  `json:"tuplet,omitempty"`
-	Stem          string      `json:"stem,omitempty"`
-	Dynamic       string      `json:"dynamic,omitempty"`
-	Hairpin       *hairpinDoc `json:"hairpin,omitempty"`
-	Octave        *octaveDoc  `json:"octave,omitempty"`
-	Trill         *trillDoc   `json:"trill,omitempty"`
-	Tremolo       *tremoloDoc `json:"tremolo,omitempty"`
-	Lyrics        []lyricDoc  `json:"lyrics,omitempty"`
-	Beam          string      `json:"beam,omitempty"`
-	Chord         *chordDoc   `json:"chord,omitempty"`
-	Texts         []textDoc   `json:"texts,omitempty"`
+	Articulations []string `json:"articulations,omitempty"`
+	// Which side of the note each of those is written on, index for index
+	// with them, where somebody has said. An empty string, or a list that
+	// runs out, is left to the engraver.
+	ArticulationPlace []string    `json:"articulationPlace,omitempty"`
+	Techniques        []string    `json:"techniques,omitempty"`
+	Cross             string      `json:"cross,omitempty"`
+	Symbols           []symbolRef `json:"symbols,omitempty"`
+	TieStart          bool        `json:"tieStart,omitempty"`
+	TieStop           bool        `json:"tieStop,omitempty"`
+	SlurStart         bool        `json:"slurStart,omitempty"`
+	SlurStop          bool        `json:"slurStop,omitempty"`
+	Tuplet            *tupletDoc  `json:"tuplet,omitempty"`
+	Stem              string      `json:"stem,omitempty"`
+	Dynamic           string      `json:"dynamic,omitempty"`
+	Hairpin           *hairpinDoc `json:"hairpin,omitempty"`
+	Octave            *octaveDoc  `json:"octave,omitempty"`
+	Trill             *trillDoc   `json:"trill,omitempty"`
+	Tremolo           *tremoloDoc `json:"tremolo,omitempty"`
+	Lyrics            []lyricDoc  `json:"lyrics,omitempty"`
+	Beam              string      `json:"beam,omitempty"`
+	Chord             *chordDoc   `json:"chord,omitempty"`
+	Texts             []textDoc   `json:"texts,omitempty"`
 	// Arpeggio rolls the chord, Break is the breath or pause after the
 	// note, Fingering which fingers play it, Glissando the slide to the
 	// next, Pedal the sustaining pedal, and Small draws it at cue size.
@@ -364,12 +368,18 @@ type textDoc struct {
 	OffsetY   float64 `json:"offsetY,omitempty"`
 	Italic    bool    `json:"italic,omitempty"`
 	Bold      bool    `json:"bold,omitempty"`
+	// Runs is how the words are set, where somebody has set them in
+	// anything. The words themselves stay in Text.
+	Runs []spanDoc `json:"runs,omitempty"`
 }
 
 type hairpinDoc struct {
 	Kind  string `json:"kind"` // "crescendo" or "diminuendo"
 	Start bool   `json:"start,omitempty"`
 	Stop  bool   `json:"stop,omitempty"`
+	// Alone says the wedge begins and ends on this element, which is not
+	// the same as carrying both ends: see model.Hairpin.
+	Alone bool `json:"alone,omitempty"`
 }
 
 type octaveDoc struct {
@@ -717,8 +727,17 @@ func encodeMarks(m *model.Marks) *marksDoc {
 		Stem:    stemNames[m.Stem],
 		Dynamic: m.Dynamic.String(),
 	}
-	for _, a := range m.Articulations {
+	for i, a := range m.Articulations {
 		out.Articulations = append(out.Articulations, articNames[a])
+		// Only where somebody said, and only as far as the last one who
+		// did: a list of empty strings is noise in a file.
+		if where := m.ArticulationPlacement(i); where != model.PlacementAuto {
+			for len(out.ArticulationPlace) < i {
+				out.ArticulationPlace = append(out.ArticulationPlace, "")
+			}
+			out.ArticulationPlace = append(out.ArticulationPlace,
+				placementNames[where])
+		}
 	}
 	for _, t := range m.Techniques {
 		out.Techniques = append(out.Techniques, t.String())
@@ -742,6 +761,7 @@ func encodeMarks(m *model.Marks) *marksDoc {
 		out.Hairpin = &hairpinDoc{
 			Kind:  m.Hairpin.Kind.String(),
 			Start: m.Hairpin.Start, Stop: m.Hairpin.Stop,
+			Alone: m.Hairpin.Alone,
 		}
 	}
 	if m.Octave != nil {
@@ -803,6 +823,7 @@ func encodeMarks(m *model.Marks) *marksDoc {
 			Placement: placementNames[t.Placement],
 			OffsetX:   t.OffsetX, OffsetY: t.OffsetY,
 			Italic: t.Italic, Bold: t.Bold,
+			Runs: spansToDoc(t.Runs),
 		})
 	}
 	return out
@@ -1093,9 +1114,16 @@ func decodeMarks(md *marksDoc, m *model.Marks) {
 	if d, ok := model.DynamicFromName(md.Dynamic); ok {
 		m.Dynamic = d
 	}
-	for _, a := range md.Articulations {
-		if v, ok := articValues[a]; ok {
-			m.AddArticulation(v)
+	for i, a := range md.Articulations {
+		v, ok := articValues[a]
+		if !ok {
+			continue
+		}
+		m.AddArticulation(v)
+		if i < len(md.ArticulationPlace) {
+			if where := placementValues[md.ArticulationPlace[i]]; where != model.PlacementAuto {
+				m.PlaceArticulation(v, where)
+			}
 		}
 	}
 	// A technique the file names and this build does not know is dropped
@@ -1127,7 +1155,9 @@ func decodeMarks(md *marksDoc, m *model.Marks) {
 		if h.Kind == "diminuendo" {
 			kind = model.Diminuendo
 		}
-		m.Hairpin = &model.Hairpin{Kind: kind, Start: h.Start, Stop: h.Stop}
+		m.Hairpin = &model.Hairpin{
+			Kind: kind, Start: h.Start, Stop: h.Stop, Alone: h.Alone,
+		}
 	}
 	if o := md.Octave; o != nil && o.Amount != 0 {
 		m.Octave = &model.OctaveShift{Amount: o.Amount, Start: o.Start, Stop: o.Stop}
@@ -1184,6 +1214,7 @@ func decodeMarks(md *marksDoc, m *model.Marks) {
 			Placement: placementValues[t.Placement],
 			OffsetX:   t.OffsetX, OffsetY: t.OffsetY,
 			Italic: t.Italic, Bold: t.Bold,
+			Runs: spansFromDoc(t.Runs),
 		})
 	}
 	for _, ly := range md.Lyrics {

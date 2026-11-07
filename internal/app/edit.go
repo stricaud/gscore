@@ -47,19 +47,21 @@ func (a *App) handleHits(w http.ResponseWriter, r *http.Request) {
 	lay := a.layout(score, opt)
 
 	writeJSON(w, map[string]any{
-		"hits":        lay.Hits,
-		"dynamics":    lay.Dynamics,
-		"textMarks":   lay.TextMarks,
-		"chords":      lay.Chords,
-		"tempos":      lay.Tempos,
-		"hairpins":    lay.Hairpins,
-		"arcs":        lay.Arcs,
-		"tremolos":    lay.Tremolos,
-		"tuplets":     lay.Tuplets,
-		"barlines":    lay.Barlines,
-		"strips":      lay.Strips,
-		"headers":     lay.Headers,
-		"staffHeight": 4.0,
+		"hits":          lay.Hits,
+		"dynamics":      lay.Dynamics,
+		"textMarks":     lay.TextMarks,
+		"markers":       lay.Markers,
+		"articulations": lay.Articulations,
+		"chords":        lay.Chords,
+		"tempos":        lay.Tempos,
+		"hairpins":      lay.Hairpins,
+		"arcs":          lay.Arcs,
+		"tremolos":      lay.Tremolos,
+		"tuplets":       lay.Tuplets,
+		"barlines":      lay.Barlines,
+		"strips":        lay.Strips,
+		"headers":       lay.Headers,
+		"staffHeight":   4.0,
 	})
 }
 
@@ -1523,8 +1525,42 @@ func (a *App) handleArticulation(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unknown articulation "+name, http.StatusBadRequest)
 		return
 	}
+
+	// Which side of the note it is written on, where somebody has said.
+	// Left alone the engraver decides: away from the stem for most of
+	// them, and over the staff for the ones that always go there.
+	place, named := model.PlacementAuto, false
+	switch q.Get("placement") {
+	case "above":
+		place, named = model.PlacementAbove, true
+	case "below":
+		place, named = model.PlacementBelow, true
+	case "auto":
+		named = true
+	}
+
+	// Taking one off rather than putting it on: a mark picked up by
+	// clicking it is removed by name, and the others on the note stay.
+	if q.Get("remove") == "1" {
+		gone := 0
+		for _, m := range marks {
+			if m.RemoveArticulation(art) {
+				gone++
+			}
+		}
+		if gone == 0 {
+			http.Error(w, "there is no "+name+" there", http.StatusBadRequest)
+			return
+		}
+		writeJSON(w, map[string]int{"changed": gone})
+		return
+	}
+
 	for _, m := range marks {
 		m.AddArticulation(art)
+		if named {
+			m.PlaceArticulation(art, place)
+		}
 	}
 	writeJSON(w, map[string]int{"changed": len(marks)})
 }
@@ -2144,20 +2180,41 @@ func (a *App) handleHairpin(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	if len(marks) < 2 {
-		// A hairpin that opens and closes on the same note has no width, so
-		// it draws nothing. Saying so is better than appearing to work.
-		http.Error(w,
-			"a hairpin goes from one note to another — select a passage",
-			http.StatusBadRequest)
+	// One note is a hairpin on that note: a swell under a long note, drawn
+	// across the room the note takes. It used to be refused — "select a
+	// passage" — on the grounds that a wedge from a note to itself has no
+	// width, which is true of the drawing and not of the music: somebody
+	// marking one whole note had to pick up the note after it as well, and
+	// got a hairpin reaching into the next bar.
+	if len(marks) == 1 {
+		marks[0].Hairpin = &model.Hairpin{Kind: kind, Start: true, Stop: true, Alone: true}
+		writeJSON(w, map[string]int{"changed": 1})
 		return
 	}
 	for i, m := range marks {
-		m.Hairpin = &model.Hairpin{
+		h := &model.Hairpin{
 			Kind:  kind,
 			Start: i == 0,
 			Stop:  i == len(marks)-1,
 		}
+		// Where this one begins, another may end — a diminuendo running
+		// into a crescendo, which every edition writes point to point. The
+		// end that is already there stays: taken away, as it was, the first
+		// hairpin had no end left and ran on through the second to
+		// wherever it found one.
+		//
+		// And the other way round at the far end, where this one ends on a
+		// note another begins at. The kind belongs to whichever starts
+		// there, because that is the one a kind is read for.
+		if was := m.Hairpin; was != nil && !was.Alone {
+			if h.Start && was.Stop && !was.Start {
+				h.Stop = true
+			}
+			if h.Stop && was.Start && !was.Stop {
+				h.Start, h.Kind = true, was.Kind
+			}
+		}
+		m.Hairpin = h
 	}
 	writeJSON(w, map[string]int{"changed": len(marks)})
 }
@@ -2992,6 +3049,23 @@ func (a *App) handleText(w http.ResponseWriter, r *http.Request) {
 		index = n
 	}
 
+	// How the words are set, where the window that sent them knows: the
+	// same arrangement the title and the credits use. They arrive with the
+	// words they format, and are refused where they spell something else.
+	var runs []model.Span
+	if raw := q.Get("runs"); raw != "" {
+		if err := json.Unmarshal([]byte(raw), &runs); err != nil {
+			http.Error(w, "the formatting of the words is not readable",
+				http.StatusBadRequest)
+			return
+		}
+		if model.PlainSpans(runs) != text {
+			http.Error(w, "the formatting does not spell the words",
+				http.StatusBadRequest)
+			return
+		}
+	}
+
 	for _, m := range marks {
 		switch {
 		case index >= 0 && index < len(m.Texts) && text == "":
@@ -3001,13 +3075,13 @@ func (a *App) handleText(w http.ResponseWriter, r *http.Request) {
 			m.Texts = nil
 		case index >= 0 && index < len(m.Texts):
 			m.Texts[index] = model.TextMark{
-				Text: text, Style: style, Placement: place,
+				Text: text, Style: style, Placement: place, Runs: runs,
 				Italic: q.Get("italic") == "1", Bold: q.Get("bold") == "1",
 				OffsetX: m.Texts[index].OffsetX, OffsetY: m.Texts[index].OffsetY,
 			}
 		default:
 			m.Texts = append(m.Texts, model.TextMark{
-				Text: text, Style: style, Placement: place,
+				Text: text, Style: style, Placement: place, Runs: runs,
 				Italic: q.Get("italic") == "1", Bold: q.Get("bold") == "1",
 			})
 		}

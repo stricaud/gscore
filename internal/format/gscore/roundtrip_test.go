@@ -718,3 +718,35 @@ func TestRoundTripKeepsTheCreditsAndHowTheyAreSet(t *testing.T) {
 		t.Error("a copy of the score shares its title's formatting with it")
 	}
 }
+
+// Which side of a note a mark is written on survives a save.
+func TestRoundTripKeepsWhereAMarkIsWritten(t *testing.T) {
+	s := model.NewScore()
+	n := &model.Note{
+		Pitch: model.Pitch{Step: model.StepG, Octave: 4},
+		Dur:   model.Duration{Num: 1, Den: 4},
+	}
+	n.Marks.AddArticulation(model.Staccato)
+	n.Marks.AddArticulation(model.Fermata)
+	n.Marks.PlaceArticulation(model.Fermata, model.PlacementBelow)
+	s.Parts[0].Measures[0].Voices[0].Elements = []model.Element{n}
+
+	var buf bytes.Buffer
+	if err := Write(&buf, s, nil); err != nil {
+		t.Fatal(err)
+	}
+	got, _, err := Read(bytes.NewReader(buf.Bytes()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	back := got.Parts[0].Measures[0].Voices[0].Elements[0].(*model.Note)
+	if len(back.Articulations) != 2 {
+		t.Fatalf("%d marks came back", len(back.Articulations))
+	}
+	if back.ArticulationPlacement(0) != model.PlacementAuto {
+		t.Error("the staccato came back pinned to a side nobody asked for")
+	}
+	if got := back.ArticulationPlacement(1); got != model.PlacementBelow {
+		t.Errorf("the fermata came back %v, want below", got)
+	}
+}

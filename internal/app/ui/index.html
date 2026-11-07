@@ -1973,8 +1973,11 @@
      writing it is decides how it is set and where it goes — so every
      "rit." in the score comes out alike, and changes together.</p>
   <form method="dialog" id="textmark-form">
-    <label class="tempo-bar" for="tm-words">Words
-      <input type="text" id="tm-words" autocomplete="off" spellcheck="false"></label>
+    <!-- Set as well as typed, the same way the title and the credits are:
+         "cresc." is italic, a word somebody wants noticed is bold, and a
+         note to the player may run to two lines. The kind decides how a
+         marking is set to begin with; this is for the one that differs. -->
+    <div class="rich-field" data-field="tm-words" data-label="Words"></div>
     <label class="tempo-bar" for="tm-style">Kind
       <select id="tm-style"></select></label>
     <!-- Which side of the staff. The kind of writing decides it, which is

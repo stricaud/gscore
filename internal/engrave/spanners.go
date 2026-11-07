@@ -35,6 +35,9 @@ const (
 	hairpinDrop = 4.6
 	// hairpinMouth is how far the wedge opens, top to bottom.
 	hairpinMouth = 1.1
+	// The air between two wedges that meet on one note, so that the page
+	// shows two markings rather than one bowtie.
+	hairpinMeetGap = 0.6
 
 	// octaveRise is how far above the top staff line an 8va line runs, and
 	// octaveFall how far below the bottom line an 8vb does. Both are now
@@ -122,16 +125,78 @@ func (e *engraver) spanAt(m *model.Marks, p *placed, measure int) {
 	x := p.x + noteheadWidth(p.value)/2
 
 	if h := m.Hairpin; h != nil {
-		if h.Start && open.hairpin == nil {
-			open.hairpin = &openSpan{
-				x: x, kind: h.Kind,
-				ref: p.index, part: e.partIndex, measure: measure,
+		// What is open closes before anything new opens, so that a note
+		// which ends one hairpin and begins another is the point where the
+		// two meet. Opening first made it the middle of one long wedge: a
+		// crescendo asked for where a diminuendo ended took that
+		// diminuendo's end away, and the diminuendo ran on through the
+		// crescendo to wherever it finally found a stop.
+		//
+		// Which is also why the kind is read from the note a hairpin opens
+		// on and nowhere else: where two of them meet, the one kind a note
+		// can carry is the kind of the one that starts there.
+		wasOpen := open.hairpin != nil
+		// A wedge on this note and no further. Said outright by Alone, and
+		// read from the two ends together for a file written before there
+		// was a word for it — which is only those two ends where nothing
+		// else was open, since otherwise they are a meeting.
+		alone := h.Alone || (h.Start && h.Stop && !wasOpen)
+
+		// The line a hairpin beginning here belongs on: the one the last
+		// hairpin ended on, where it ended exactly here, and a line of its
+		// own otherwise. See waitingMark.join.
+		row := func() int {
+			if open.hadHairpin && math.Abs(open.lastHairpinX-x) < 0.001 {
+				return open.lastHairpinRow
+			}
+			e.hairpinRows++
+			return e.hairpinRows
+		}
+		ended := func(at float64, r int) {
+			open.lastHairpinX, open.lastHairpinRow, open.hadHairpin = at, r, true
+		}
+
+		// Where two wedges meet they are pulled apart a little, so that the
+		// page shows two markings and not one bowtie: the first ends short
+		// of the note and the second begins past it. Every edition leaves
+		// that air, and two points touching read as one shape.
+		meets := h.Stop && wasOpen && (alone || h.Start)
+		closeAt, openAt := x, x
+		if meets {
+			closeAt -= hairpinMeetGap / 2
+			openAt += hairpinMeetGap / 2
+			if closeAt <= open.hairpin.x {
+				closeAt, openAt = x, x
 			}
 		}
-		if h.Stop && open.hairpin != nil {
+
+		if h.Stop && wasOpen {
 			open.hairpin.toRef = p.index
-			e.drawHairpin(open.hairpin, x, true)
+			e.drawHairpin(open.hairpin, closeAt, true)
+			// The note is what the next hairpin is measured against, not
+			// the point this one was pulled back to: they meet at the note
+			// whether or not the ink does.
+			ended(x, open.hairpin.row)
 			open.hairpin = nil
+		}
+		switch {
+		case alone:
+			// Across the room the note itself takes, stopping short of the
+			// next one: a swell on a whole note is as wide as the bar it
+			// fills, and a wedge the width of a notehead under it would
+			// read as a mistake.
+			r := row()
+			to := x + p.width*0.9
+			e.drawHairpin(&openSpan{
+				x: openAt, kind: h.Kind, toRef: p.index, row: r,
+				ref: p.index, part: e.partIndex, measure: measure,
+			}, to, true)
+			ended(to, r)
+		case h.Start && open.hairpin == nil:
+			open.hairpin = &openSpan{
+				x: openAt, kind: h.Kind, row: row(),
+				ref: p.index, part: e.partIndex, measure: measure,
+			}
 		}
 	}
 
@@ -337,8 +402,21 @@ func (e *engraver) drawHairpin(h *openSpan, to float64, complete bool) {
 	if h.kind == model.Diminuendo {
 		kind = "diminuendo"
 	}
+	// What it asks to be kept clear is the room its mouth takes, not the
+	// whole of its length: a wedge has no height at its point, so there is
+	// nothing there for anything to collide with.
+	claim0, claim1 := h.x, to
+	if h.kind == model.Diminuendo {
+		claim1 -= skylineStep
+	} else {
+		claim0 += skylineStep
+	}
+	if claim1 <= claim0 {
+		claim0, claim1 = h.x, to
+	}
 	e.wait(waitingMark{
-		x0: h.x, x1: to, height: hairpinMouth, gap: 0.6,
+		x0: claim0, x1: claim1, height: hairpinMouth, gap: 0.6,
+		join:  h.row,
 		below: true, rank: rankHairpin,
 		draw: func(top float64) {
 			// Where it ended up, so the editor can let it be clicked. Only

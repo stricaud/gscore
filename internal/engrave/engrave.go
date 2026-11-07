@@ -261,6 +261,25 @@ type Layout struct {
 	// find was on the staff.
 	Dynamics []DynamicPos `json:"dynamics"`
 
+	// Articulations are where the staccato dots, the accents and the
+	// fermatas ended up, so one can be clicked.
+	//
+	// A mark on a note is not where the note is: it is drawn clear of the
+	// notehead, the stem, the staff and whatever else is in the way, and
+	// how far clear is not known until the music is on the page. Without
+	// this a fermata could be written and never pointed at again.
+	Articulations []ArticulationPos `json:"articulations"`
+
+	// Markers are where the rehearsal marks ended up, so one can be
+	// clicked.
+	//
+	// A rehearsal mark belongs to a bar rather than to any note in it, and
+	// is written in a row above the music as far up as that bar needed —
+	// so nothing on the page could be pointed at to reach one. Taking a
+	// letter away meant finding the bar it was on, selecting a note in it
+	// and asking the window to remove it.
+	Markers []MarkerPos `json:"markers"`
+
 	// TextMarks are where the words written on a note ended up, so a click
 	// on them reaches them.
 	//
@@ -436,6 +455,37 @@ type DynamicPos struct {
 	Name string `json:"name"`
 }
 
+// ArticulationPos is one articulation's box on the page.
+type ArticulationPos struct {
+	Part    int `json:"part"`
+	Measure int `json:"measure"`
+	// Ref is the element it is written on.
+	Ref int `json:"ref"`
+	// Name is the glyph it is drawn with, and Mark what the mark is
+	// called — "staccato", "fermata" — which is what the editor says in
+	// the status line and sends back to take it off.
+	Name   string  `json:"name"`
+	Mark   string  `json:"mark"`
+	Above  bool    `json:"above,omitempty"`
+	X      float64 `json:"x"`
+	Y      float64 `json:"y"`
+	Width  float64 `json:"width"`
+	Height float64 `json:"height"`
+}
+
+// MarkerPos is one rehearsal mark's box on the page.
+type MarkerPos struct {
+	Measure int `json:"measure"`
+	// Repeat says this is the same letter written again further down a
+	// large score, which is a copy of the mark and not another one.
+	Repeat bool    `json:"repeat,omitempty"`
+	X      float64 `json:"x"`
+	Y      float64 `json:"y"`
+	Width  float64 `json:"width"`
+	Height float64 `json:"height"`
+	Text   string  `json:"text"`
+}
+
 // TextPos is where one text mark was drawn, and what it says.
 //
 // It carries the mark itself as well as its box, so that the window that
@@ -457,6 +507,9 @@ type TextPos struct {
 
 	Text  string `json:"text"`
 	Style string `json:"style"`
+	// Runs is how the words are set, where they are set in anything, so
+	// the window that edits them opens on what is there.
+	Runs []model.Span `json:"runs,omitempty"`
 	// Place is "above", "below", or empty where the kind of writing
 	// decides.
 	Place string `json:"place,omitempty"`
@@ -948,6 +1001,12 @@ type engraver struct {
 	// lay.Texts, so they can be put back on the canvas once its width is
 	// known. See centreTitleBlock.
 	titleFrom, titleTo int
+	// hairpinRows hands out the lines hairpins are drawn on, so that two
+	// that meet share one and two that do not are placed apart.
+	hairpinRows int
+	// articMeasure is the bar whose marks are being drawn, so that an
+	// articulation can say where it belongs.
+	articMeasure int
 	// room is how much space each system's ink actually took above its
 	// staff, measured on a previous pass and keyed by the system's first
 	// bar. Empty on the first pass, when there is nothing to go on but the
@@ -1141,9 +1200,16 @@ type engraver struct {
 // openSpans are the spanners in progress on one staff.
 type openSpans struct {
 	hairpin *openSpan
-	octave  *openSpan
-	slur    *openSpan
-	trill   *openSpan
+	// Where the last hairpin on this staff ended, and the line it was
+	// drawn on. A hairpin that begins exactly there is the other half of
+	// one marking — a diminuendo running into a crescendo — and is drawn
+	// on that same line rather than on one of its own.
+	lastHairpinX   float64
+	lastHairpinRow int
+	hadHairpin     bool
+	octave         *openSpan
+	slur           *openSpan
+	trill          *openSpan
 	// gliss is the slide in progress, and pedal the sustaining pedal held
 	// down. The pedal keeps the places it was changed at along the way, so
 	// that the notch is drawn where the player is told to change it.
@@ -1176,6 +1242,9 @@ type openSpan struct {
 	measure int
 	amount  int    // octaves, for an octave line
 	label   string // what is written over an octave line
+	// row is the line this hairpin shares with whatever it meets, where it
+	// meets anything. Zero is a hairpin standing on its own.
+	row int
 
 	// y and above are where a slur or a tie left the note it started on,
 	// and which side of the music it arcs over.

@@ -19,6 +19,7 @@ import (
 
 	"github.com/stricaud/gscore/internal/model"
 	"github.com/stricaud/gscore/internal/smufl"
+	"github.com/stricaud/gscore/internal/textmetric"
 )
 
 // placed is one element with its position worked out, held until the whole
@@ -376,6 +377,7 @@ func (e *engraver) drawMeasure(part *model.Part, b measureBox, x, end float64, s
 	e.drawStemsAndBeams(items, part.Time)
 	for _, p := range items {
 		if m := p.marks(); m != nil {
+			e.articMeasure = b.index
 			e.drawArticulations(m, p.x+noteheadWidth(p.value)/2, p.lo, p.hi, e.stemUp(p), p.index)
 			e.drawDynamic(m, p, b.index)
 			e.spanAt(m, p, b.index)
@@ -2361,8 +2363,81 @@ func (e *engraver) textWasDrawn(t model.TextMark, p *placed, measure, index int,
 	e.lay.TextMarks = append(e.lay.TextMarks, TextPos{
 		Part: e.partIndex, Measure: measure, Ref: p.index, Index: index,
 		X: x, Y: top, Width: width, Height: height,
-		Text: t.Text, Style: t.Style.String(), Place: place,
+		Text: t.Text, Style: t.Style.String(), Place: place, Runs: t.Runs,
 	})
+}
+
+// markLines is a text mark's words as the lines they are written on, each
+// line being the runs it is set in.
+//
+// Empty lines are kept, unlike a credit's: a blank line in a note to the
+// player is air somebody asked for.
+func markLines(t model.TextMark) [][]model.Span {
+	var out [][]model.Span
+	line := []model.Span{}
+	for _, r := range t.Spans() {
+		parts := strings.Split(r.Text, "\n")
+		for i, part := range parts {
+			if i > 0 {
+				out = append(out, line)
+				line = []model.Span{}
+			}
+			if part == "" {
+				continue
+			}
+			piece := r
+			piece.Text = strings.TrimRight(part, " \t\r")
+			line = append(line, piece)
+		}
+	}
+	return append(out, line)
+}
+
+// spanLineWidth is how wide one line of runs comes to.
+func spanLineWidth(line []model.Span, size float64, look model.TextLook) float64 {
+	w := 0.0
+	for _, r := range line {
+		w += textmetric.Width(r.Text, size*r.Scale(), textmetric.Style{
+			Bold:   look.Bold || r.Bold,
+			Italic: look.Italic || r.Italic,
+		})
+	}
+	return w
+}
+
+// writeSpanLine puts one line of a text mark down, as one piece of text
+// where it is set in one style and as its runs where it is not. The
+// renderer lays the runs out, because the renderer is what knows the font.
+func (e *engraver) writeSpanLine(line []model.Span, x, y, size float64, look model.TextLook) {
+	if len(line) == 0 {
+		return
+	}
+	out := Text{
+		X: x, Y: y, Size: size, Anchor: "start",
+		Italic: look.Italic, Bold: look.Bold,
+	}
+	if len(line) == 1 {
+		r := line[0]
+		out.S = r.Text
+		out.Size = size * r.Scale()
+		out.Italic = look.Italic || r.Italic
+		out.Bold = look.Bold || r.Bold
+		out.Colour = r.Colour
+	} else {
+		for _, r := range line {
+			out.S += r.Text
+			out.Runs = append(out.Runs, TextRun{
+				S: r.Text, Size: size * r.Scale(),
+				Italic: look.Italic || r.Italic,
+				Bold:   look.Bold || r.Bold,
+				Colour: r.Colour,
+			})
+		}
+	}
+	if out.S == "" {
+		return
+	}
+	e.lay.Texts = append(e.lay.Texts, out)
 }
 
 // drawTexts writes the words attached to a note: "rit.", "solo", a reminder to
@@ -2390,15 +2465,18 @@ func (e *engraver) drawTexts(m *model.Marks, p *placed, measure int) {
 		// you: "Allein Gott in der Höhe\nund Dank" came out as
 		// "Allein Gott in der Höheund Dank", run together, in one line
 		// across the page.
-		lines := strings.Split(t.Text, "\n")
-		for i := range lines {
-			lines[i] = strings.TrimRight(lines[i], " \t\r")
-		}
+		//
+		// A line is kept as the runs it is set in, because a marking is
+		// set as well as typed: "cresc." is italic, a word somebody wants
+		// noticed is bold, and a note to the player may be in a colour.
+		// The words themselves are still t.Text and nothing that reads a
+		// score rather than drawing it needs to know about any of this.
+		lines := markLines(t)
 
 		x := p.x + t.OffsetX
 		widest := 0.0
 		for _, line := range lines {
-			if w := textWidth(line, textSize); w > widest {
+			if w := spanLineWidth(line, textSize, look); w > widest {
 				widest = w
 			}
 		}
@@ -2421,15 +2499,9 @@ func (e *engraver) drawTexts(m *model.Marks, p *placed, measure int) {
 					// from their baselines, so the first line sits a
 					// line's height into it.
 					for i, line := range lines {
-						if line == "" {
-							continue
-						}
-						e.lay.Texts = append(e.lay.Texts, Text{
-							S: line, X: x,
-							Y:    y + textSize + t.OffsetY + float64(i)*textLine,
-							Size: textSize, Anchor: "start",
-							Italic: look.Italic, Bold: look.Bold,
-						})
+						e.writeSpanLine(line, x,
+							y+textSize+t.OffsetY+float64(i)*textLine,
+							textSize, look)
 					}
 					e.textWasDrawn(t, p, measure, ti, x, y+t.OffsetY, widest,
 						textSize+float64(len(lines)-1)*textLine)
@@ -2475,14 +2547,8 @@ func (e *engraver) drawTexts(m *model.Marks, p *placed, measure int) {
 				// the queue put it, which is just above the music.
 				top := y - float64(len(lines)-1)*textLine
 				for i, line := range lines {
-					if line == "" {
-						continue
-					}
-					e.lay.Texts = append(e.lay.Texts, Text{
-						S: line, X: x, Y: top + t.OffsetY + float64(i)*textLine,
-						Size: textSize, Anchor: "start",
-						Italic: look.Italic, Bold: look.Bold,
-					})
+					e.writeSpanLine(line, x,
+						top+t.OffsetY+float64(i)*textLine, textSize, look)
 				}
 				// Words are drawn from their baselines, so the block's own
 				// top is a line's height above the first of them.
@@ -2573,18 +2639,52 @@ func (e *engraver) drawArticulations(m *model.Marks, x float64, lo, hi int, stem
 	// at from the model.
 	y = e.clearOfNoteheads(x, y, above)
 
-	emit := func(name string) {
+	// The other side of the note, for a mark that was asked to go there
+	// and for the ones that always do. Found the same way as the side the
+	// stem decides, so that a fermata over a stem-up note clears the note
+	// rather than being written on it.
+	otherStep := lo
+	if !above {
+		otherStep = hi
+	}
+	otherY := e.y + stepY(float64(otherStep))
+	if above {
+		otherY = math.Max(otherY+gap, e.y+e.staffH()+1.2)
+	} else {
+		otherY = math.Min(otherY-gap, e.y-1.2)
+	}
+	otherY = e.clearOfNoteheads(x, otherY, !above)
+
+	emit := func(a model.Articulation, name string, over bool) {
 		if name == "" {
 			return
 		}
 		// A name the font does not know is one of the user's own symbols; the
 		// renderer resolves it from the symbol registry.
 		origin, _, _ := centred(name, x)
-		e.lay.Glyphs = append(e.lay.Glyphs, Glyph{Name: name, X: origin, Y: y})
-		if above {
-			y -= gap
+		at := y
+		if over != above {
+			at = otherY
+		}
+		e.lay.Glyphs = append(e.lay.Glyphs, Glyph{
+			Name: name, X: origin, Y: at, Ref: ref,
+		})
+		// Where it ended up, so the editor can point at it: an
+		// articulation belongs to a note and is drawn clear of it, and
+		// until the music is on the page nothing knows how far clear.
+		e.lay.Articulations = append(e.lay.Articulations, ArticulationPos{
+			Part: e.partIndex, Measure: e.articMeasure, Ref: ref,
+			Name: name, Mark: a.String(), Above: over,
+			X: origin, Y: at - 0.5, Width: 1, Height: 1,
+		})
+		step := gap
+		if !over {
+			step = -gap
+		}
+		if over != above {
+			otherY -= step
 		} else {
-			y += gap
+			y -= step
 		}
 	}
 	// The bow and pick strokes go over the staff whichever way the stems
@@ -2598,22 +2698,41 @@ func (e *engraver) drawArticulations(m *model.Marks, x float64, lo, hi int, stem
 	// and sits on the side away from the stem.
 	overY := math.Min(e.y-1.2, e.y+stepY(float64(hi))-gap)
 	overY = e.clearOfNoteheads(x, overY, true)
-	for _, a := range m.Articulations {
+	for ai, a := range m.Articulations {
 		if a.Ornament() {
 			e.ornament(a, x)
 			continue
+		}
+		// Which side this one is written on. The stem decides unless
+		// somebody has said otherwise, or unless the mark is one that goes
+		// over the staff whatever the stem does.
+		over := above
+		switch m.ArticulationPlacement(ai) {
+		case model.PlacementAbove:
+			over = true
+		case model.PlacementBelow:
+			over = false
+		default:
+			if a.AlwaysAbove() {
+				over = true
+			}
 		}
 		if a == model.UpBow || a == model.DownBow {
 			if name := smufl.ArticulationGlyph(a, true); name != "" {
 				origin, _, _ := centred(name, x)
 				e.lay.Glyphs = append(e.lay.Glyphs, Glyph{
-					Name: name, X: origin, Y: overY,
+					Name: name, X: origin, Y: overY, Ref: ref,
+				})
+				e.lay.Articulations = append(e.lay.Articulations, ArticulationPos{
+					Part: e.partIndex, Measure: e.articMeasure, Ref: ref,
+					Name: name, Mark: a.String(), Above: true,
+					X: origin, Y: overY - 0.5, Width: 1, Height: 1,
 				})
 				overY -= gap
 			}
 			continue
 		}
-		emit(smufl.ArticulationGlyph(a, above))
+		emit(a, smufl.ArticulationGlyph(a, over), over)
 	}
 	for _, sm := range m.Symbols {
 		// A nudge moves the symbol from where it would otherwise land. It
@@ -2888,7 +3007,7 @@ func (e *engraver) separateColumn(col []*placed) {
 // to be finished so it can be put above the top staff of it.
 type pendingSystemText struct {
 	t     model.TextMark
-	lines []string
+	lines [][]model.Span
 	look  model.TextLook
 	x     float64
 	line  float64
@@ -2921,7 +3040,7 @@ func (e *engraver) placeSystemTexts() {
 	for _, p := range e.systemTexts {
 		widest := 0.0
 		for _, line := range p.lines {
-			if w := textWidth(line, p.look.Size); w > widest {
+			if w := spanLineWidth(line, p.look.Size, p.look); w > widest {
 				widest = w
 			}
 		}
@@ -2959,7 +3078,7 @@ func (e *engraver) writeSystemText(p pendingSystemText, y, height float64) {
 	top := y - height + p.look.Size
 	widest := 0.0
 	for _, line := range p.lines {
-		if w := textWidth(line, p.look.Size); w > widest {
+		if w := spanLineWidth(line, p.look.Size, p.look); w > widest {
 			widest = w
 		}
 	}
@@ -2974,16 +3093,11 @@ func (e *engraver) writeSystemText(p pendingSystemText, y, height float64) {
 		Part: p.part, Measure: p.measure, Ref: p.ref, Index: p.index,
 		X: p.x, Y: top + p.t.OffsetY - p.look.Size, Width: widest, Height: height,
 		Text: p.t.Text, Style: p.t.Style.String(), Place: place,
+		Runs: p.t.Runs,
 	})
 	for i, line := range p.lines {
-		if line == "" {
-			continue
-		}
-		e.lay.Texts = append(e.lay.Texts, Text{
-			S: line, X: p.x, Y: top + p.t.OffsetY + float64(i)*p.line,
-			Size: p.look.Size, Anchor: "start",
-			Italic: p.look.Italic, Bold: p.look.Bold,
-		})
+		e.writeSpanLine(line, p.x, top+p.t.OffsetY+float64(i)*p.line,
+			p.look.Size, p.look)
 	}
 }
 

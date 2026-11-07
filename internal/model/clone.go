@@ -199,6 +199,9 @@ func CloneMarks(m Marks) Marks {
 	if m.Articulations != nil {
 		out.Articulations = append([]Articulation(nil), m.Articulations...)
 	}
+	if m.ArticulationPlace != nil {
+		out.ArticulationPlace = append([]Placement(nil), m.ArticulationPlace...)
+	}
 	if m.Techniques != nil {
 		out.Techniques = append([]Technique(nil), m.Techniques...)
 	}
@@ -210,6 +213,13 @@ func CloneMarks(m Marks) Marks {
 	}
 	if m.Texts != nil {
 		out.Texts = append([]TextMark(nil), m.Texts...)
+		// The words come with the copy; how they are set is a slice and
+		// does not.
+		for i := range out.Texts {
+			if r := out.Texts[i].Runs; r != nil {
+				out.Texts[i].Runs = append([]Span(nil), r...)
+			}
+		}
 	}
 	if m.Tuplet != nil {
 		t := *m.Tuplet

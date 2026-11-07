@@ -349,6 +349,17 @@ func (d Dynamic) Velocity() int {
 // of its noteheads.
 type Marks struct {
 	Articulations []Articulation
+	// ArticulationPlace is where each of those is written, where somebody
+	// has said: index for index with Articulations, and PlacementAuto —
+	// which is also what a shorter list means — for the ones left to the
+	// engraver.
+	//
+	// Kept beside them rather than in them because an articulation is a
+	// number everywhere in this program and in every file it is read from,
+	// and a mark that is a number is a mark that can be compared, counted
+	// and looked up. Where it goes is a decision about the page and not
+	// about the music, which is why it lives apart from it.
+	ArticulationPlace []Placement
 
 	// Techniques are how a fretted instrument is played at this note: a
 	// hammer-on, a slide, a bend, a palm mute. See Technique.
@@ -700,7 +711,20 @@ type TextMark struct {
 	// that says plainly what it wants is worth more than one that can
 	// countermand its own style in both directions.
 	Italic, Bold bool
+
+	// Runs is the formatting of the words, where somebody has set them in
+	// anything: the same text broken into the runs it is set in.
+	//
+	// The words stay in Text, which is what every importer writes and
+	// every exporter reads, and this is extra — the same arrangement the
+	// title and the credits use, and for the same reason. A mark with no
+	// runs is plain, which is nearly every mark of nearly every score.
+	Runs []Span
 }
+
+// Spans is the words as they are drawn: their runs where those spell them,
+// and the words in one plain run where they do not. See model.Spans.
+func (t TextMark) Spans() []Span { return Spans(t.Text, t.Runs) }
 
 // Look is how this mark is set: its style, with whatever the mark itself
 // insists on.
@@ -764,10 +788,21 @@ func (h HairpinKind) String() string {
 // Hairpin is a gradual change of volume drawn as a wedge under the staff.
 type Hairpin struct {
 	Kind HairpinKind
-	// Start opens the wedge at this element, Stop closes it at this one. A
-	// hairpin over a single note has both, which is how it is removed from
-	// one note without disturbing its neighbours.
+	// Start opens the wedge at this element, Stop closes it at this one.
 	Start, Stop bool
+	// Alone says the wedge begins and ends on this element, drawn across
+	// the note's own width.
+	//
+	// It is a third thing and not the two others together, because of the
+	// one place in notation where they are not the same: a note where one
+	// hairpin ends and another begins — a diminuendo running into a
+	// crescendo, which is written point to point in every edition. That
+	// note stops what is open and starts what is new, so Start and Stop
+	// are both set and neither of them is about a wedge on this note
+	// alone. Without a third thing to say it, a swell on one long note and
+	// the meeting of two hairpins are the same mark, and one of them has
+	// to be drawn wrongly.
+	Alone bool
 }
 
 // Trill is an ornament held over a stretch of music: "tr" at the note it
@@ -896,6 +931,17 @@ func (m *Marks) WrittenDuration(sounding Duration) Duration {
 	return sounding.Scale(num, den)
 }
 
+// AlwaysAbove says this mark goes over the staff whichever way the stem
+// points.
+//
+// A fermata is the case worth naming: it is an instruction to everybody in
+// the room to hold, and it is written above the staff in every edition —
+// the one under a note means the lower of two parts holds, which is a
+// different mark with a glyph of its own. Put on the side away from the
+// stem like a staccato dot, a fermata over a whole note came out beneath
+// it, where it reads as belonging to music that is not there.
+func (a Articulation) AlwaysAbove() bool { return a == Fermata }
+
 // AddArticulation records an articulation, ignoring a repeat of one already
 // present.
 func (m *Marks) AddArticulation(a Articulation) {
@@ -905,6 +951,47 @@ func (m *Marks) AddArticulation(a Articulation) {
 		}
 	}
 	m.Articulations = append(m.Articulations, a)
+}
+
+// PlaceArticulation says which side of the note one of them is written on.
+// PlacementAuto hands the decision back to the engraver.
+func (m *Marks) PlaceArticulation(a Articulation, where Placement) bool {
+	for i, have := range m.Articulations {
+		if have != a {
+			continue
+		}
+		for len(m.ArticulationPlace) <= i {
+			m.ArticulationPlace = append(m.ArticulationPlace, PlacementAuto)
+		}
+		m.ArticulationPlace[i] = where
+		return true
+	}
+	return false
+}
+
+// ArticulationPlacement is where one of them is written, or PlacementAuto
+// where nobody has said.
+func (m *Marks) ArticulationPlacement(i int) Placement {
+	if i < 0 || i >= len(m.ArticulationPlace) {
+		return PlacementAuto
+	}
+	return m.ArticulationPlace[i]
+}
+
+// RemoveArticulation takes one off, and its placement with it.
+func (m *Marks) RemoveArticulation(a Articulation) bool {
+	for i, have := range m.Articulations {
+		if have != a {
+			continue
+		}
+		m.Articulations = append(m.Articulations[:i:i], m.Articulations[i+1:]...)
+		if i < len(m.ArticulationPlace) {
+			m.ArticulationPlace = append(
+				m.ArticulationPlace[:i:i], m.ArticulationPlace[i+1:]...)
+		}
+		return true
+	}
+	return false
 }
 
 // HasArticulation reports whether the mark is present.

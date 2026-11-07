@@ -504,7 +504,17 @@ type waitingMark struct {
 	gap    float64
 	below  bool
 	rank   int
-	draw   func(y float64)
+	// join puts marks on one line: everything with the same join is placed
+	// together, at the depth the deepest of them needs. Zero is a mark of
+	// its own.
+	//
+	// It is for the marks that are read as one thing and drawn as several
+	// — a diminuendo running into a crescendo, which is two wedges meeting
+	// at a point and one marking to anybody reading it. Placed one at a
+	// time they come out at two heights whenever the music under one of
+	// them hangs lower than under the other, which is a down stem away.
+	join int
+	draw func(y float64)
 }
 
 // How near the staff each kind of mark sits, smallest first.
@@ -561,7 +571,44 @@ func (e *engraver) placeWaiting(sky *skyline) {
 		}
 		return marks[i].x0 < marks[j].x0
 	})
-	for _, m := range marks {
-		m.draw(sky.place(m.x0, m.x1, m.height, m.gap, m.below))
+	for i := 0; i < len(marks); {
+		// The run that belongs on one line with this one. Contiguous
+		// because the sort above is by rank and then by x, and a joined
+		// run is marks of one rank following one another across the page.
+		j := i + 1
+		if marks[i].join != 0 {
+			for j < len(marks) && marks[j].join == marks[i].join {
+				j++
+			}
+		}
+		if j == i+1 {
+			marks[i].draw(sky.place(marks[i].x0, marks[i].x1,
+				marks[i].height, marks[i].gap, marks[i].below))
+			i = j
+			continue
+		}
+		// All of them against the whole run's reach, so the line is clear
+		// of everything under any of them, and all of them are on it.
+		x0, x1 := marks[i].x0, marks[i].x1
+		height, gap := marks[i].height, marks[i].gap
+		for _, m := range marks[i+1 : j] {
+			if m.x0 < x0 {
+				x0 = m.x0
+			}
+			if m.x1 > x1 {
+				x1 = m.x1
+			}
+			if m.height > height {
+				height = m.height
+			}
+			if m.gap > gap {
+				gap = m.gap
+			}
+		}
+		at := sky.place(x0, x1, height, gap, marks[i].below)
+		for _, m := range marks[i:j] {
+			m.draw(at)
+		}
+		i = j
 	}
 }

@@ -57,10 +57,21 @@ test("the kind chosen last time is offered again", () => {
 test("words being changed open on what they say", () => {
   const body = grab("textDialog");
   assert.match(body, /state\.selection\?\.textMark/);
-  assert.match(body, /\$\("#tm-words"\)\.value = editing \? editing\.text/);
+  // In the same box the title and the credits are written in, so that a
+  // marking can be set as well as typed — and it opens on the words it
+  // already says, in the face and the colour they are in.
+  assert.match(body, /richSet\(richBoxes\["tm-words"\], editing && editing\.runs/);
   assert.match(body, /\$\("#tm-place"\)\.value = editing/);
   // And they are changed rather than added to: a note may carry two.
   assert.match(body, /p\.set\("index", String\(editing\.index\)\)/);
+});
+
+test("a marking can be set in more than one face", () => {
+  const body = grab("textDialog");
+  assert.match(body, /richRuns\(richBoxes\["tm-words"\]\)/);
+  assert.match(body, /p\.set\("runs", JSON\.stringify\(runs\)\)/);
+  // The words are what the runs spell, so the two cannot disagree.
+  assert.match(body, /runs\.map\(\(r\) => r\.text\)\.join\(""\)/);
 });
 
 // Which side of the staff, where the music wants one mark to differ from

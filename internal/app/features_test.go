@@ -304,16 +304,25 @@ func TestPasteIntoTheBarAfterTheMusic(t *testing.T) {
 	}
 }
 
-// A hairpin covers a passage, and is refused when it has nowhere to go.
-func TestHairpinNeedsARange(t *testing.T) {
+// A hairpin covers whatever is picked up, which may be one note.
+func TestAHairpinCoversWhatIsPickedUp(t *testing.T) {
 	h := newHarness(t)
 	for i := 0; i < 4; i++ {
 		h.note(0, 0, 2+i, "quarter")
 	}
-	msg := h.postFails("/api/hairpin?hairpin=crescendo&part=0&measure=0&at=1")
-	if !strings.Contains(msg, "select a passage") {
-		t.Errorf("unhelpful refusal: %q", msg)
+	// One note is a swell on that note, drawn across the room it takes.
+	// It used to be refused, and somebody marking one long note had to
+	// pick up the note after it as well — which drew a wedge reaching
+	// into music they had not meant to mark.
+	h.post("/api/hairpin?hairpin=crescendo&part=0&measure=0&at=1")
+	one := h.app.score.Parts[0].Measures[0].Voices[0].Elements[0].(*model.Note)
+	if one.Hairpin == nil || !one.Hairpin.Alone {
+		t.Errorf("a hairpin on one note came out as %+v", one.Hairpin)
 	}
+	if lay := engrave.Engrave(h.app.score, engrave.DefaultOptions()); countWedges(lay) < 2 {
+		t.Error("the hairpin on one note was not drawn")
+	}
+
 	h.post("/api/hairpin?hairpin=crescendo&sel=0:0:0,0:0:1,0:0:2,0:0:3")
 
 	els := h.app.score.Parts[0].Measures[0].Voices[0].Elements
@@ -988,8 +997,8 @@ func TestEditingAfterUndoDropsTheRedo(t *testing.T) {
 func TestRefusedEditsAreNotUndoable(t *testing.T) {
 	h := newHarness(t)
 	h.note(0, 0, 2, "quarter")
-	// A hairpin on one note is refused.
-	h.postFails("/api/hairpin?hairpin=crescendo&part=0&measure=0&at=1")
+	// A hairpin of a kind there is no such thing as is refused.
+	h.postFails("/api/hairpin?hairpin=sideways&part=0&measure=0&at=1")
 	h.post("/api/undo")
 	if n := countNotes(h.app.score); n != 0 {
 		t.Errorf("undo went back only as far as the refused request: %d notes left", n)
@@ -2358,5 +2367,102 @@ func TestPastingTakesTheBarRestAway(t *testing.T) {
 	}
 	if _, ok := els[0].(*model.Note); !ok {
 		t.Errorf("the bar still opens with a %T", els[0])
+	}
+}
+
+// A crescendo asked for where a diminuendo ends starts a second hairpin
+// rather than swallowing the first.
+//
+// Reported from the staff it happens on: a diminuendo over two whole notes,
+// a crescendo asked for from the second of them, and what came out was one
+// long diminuendo running through both. The note where they meet carries
+// the end of one and the beginning of the other — point to point, which is
+// how every edition writes it — and taking its end away left the first
+// hairpin with nothing to close on.
+func TestACrescendoAfterADiminuendoIsASecondHairpin(t *testing.T) {
+	h := newHarness(t)
+	for i := 0; i < 3; i++ {
+		h.note(0, 0, 2+i, "quarter")
+	}
+	h.post("/api/hairpin?hairpin=diminuendo&sel=0:0:0,0:0:1")
+	h.post("/api/hairpin?hairpin=crescendo&sel=0:0:1,0:0:2")
+
+	els := h.app.score.Parts[0].Measures[0].Voices[0].Elements
+	join := els[1].(*model.Note).Hairpin
+	if join == nil {
+		t.Fatal("the note where they meet carries nothing")
+	}
+	if !join.Stop {
+		t.Error("the diminuendo lost its end, so it runs on through the crescendo")
+	}
+	if !join.Start || join.Kind != model.Crescendo {
+		t.Errorf("the crescendo does not begin there: %+v", join)
+	}
+	if join.Alone {
+		t.Error("the meeting of two hairpins was read as a wedge on one note")
+	}
+
+	// Two wedges on the page, not one: four sloping lines.
+	lay := engrave.Engrave(h.app.score, engrave.DefaultOptions())
+	if n := countWedges(lay); n != 4 {
+		t.Errorf("%d sloping lines were drawn, want 4 — two wedges", n)
+	}
+}
+
+// And the other way round: a hairpin ending where one begins.
+func TestAHairpinEndingWhereAnotherBeginsKeepsBoth(t *testing.T) {
+	h := newHarness(t)
+	for i := 0; i < 3; i++ {
+		h.note(0, 0, 2+i, "quarter")
+	}
+	h.post("/api/hairpin?hairpin=crescendo&sel=0:0:1,0:0:2")
+	h.post("/api/hairpin?hairpin=diminuendo&sel=0:0:0,0:0:1")
+
+	join := h.app.score.Parts[0].Measures[0].Voices[0].Elements[1].(*model.Note).Hairpin
+	if join == nil || !join.Stop || !join.Start {
+		t.Fatalf("the note where they meet carries %+v", join)
+	}
+	// The kind belongs to the one that starts there, which is the only
+	// one a kind is read for.
+	if join.Kind != model.Crescendo {
+		t.Errorf("the note says %v starts there, want the crescendo", join.Kind)
+	}
+	if n := countWedges(engrave.Engrave(h.app.score, engrave.DefaultOptions())); n != 4 {
+		t.Errorf("%d sloping lines were drawn, want 4", n)
+	}
+}
+
+// Two hairpins meeting point to point are drawn on one line.
+//
+// A wedge has no height at its point, so there is nothing there for the next
+// one to clear — and while both claimed their whole length, the crescendo
+// was placed a row under the diminuendo it meets. Two heights where every
+// edition draws one.
+func TestTwoHairpinsThatMeetAreDrawnOnOneLine(t *testing.T) {
+	h := newHarness(t)
+	for i := 0; i < 3; i++ {
+		h.note(0, 0, 2+i, "quarter")
+	}
+	h.post("/api/hairpin?hairpin=diminuendo&sel=0:0:0,0:0:1")
+	h.post("/api/hairpin?hairpin=crescendo&sel=0:0:1,0:0:2")
+
+	lay := engrave.Engrave(h.app.score, engrave.DefaultOptions())
+	if len(lay.Hairpins) != 2 {
+		t.Fatalf("%d hairpins were drawn, want 2", len(lay.Hairpins))
+	}
+	a, b := lay.Hairpins[0], lay.Hairpins[1]
+	if a.Y != b.Y {
+		t.Errorf("the %s is at y=%g and the %s at y=%g — they must line up",
+			a.Kind, a.Y, b.Kind, b.Y)
+	}
+	// And there is air between them: two points touching read as one
+	// bowtie rather than as two markings.
+	gap := b.X - (a.X + a.Width)
+	if gap <= 0 {
+		t.Errorf("the %s reaches x=%g and the %s starts at x=%g — they touch",
+			a.Kind, a.X+a.Width, b.Kind, b.X)
+	}
+	if gap > 1 {
+		t.Errorf("there is %g of a staff space between them, which is a hole", gap)
 	}
 }

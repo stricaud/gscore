@@ -103,10 +103,37 @@ type Text struct {
 	Anchor string // "start", "middle" or "end"
 	Italic bool
 	Bold   bool
+	// Colour is a CSS colour the words are drawn in, where it is not the
+	// ink of the page. Empty is the ink, which is nearly every word on a
+	// score: this is here for the ones somebody has coloured by hand.
+	Colour string `json:"colour,omitempty"`
+	// Runs is the line set in more than one style — "Music by" plain and
+	// the name bold after it — as the pieces it is set in.
+	//
+	// It is the renderer that lays these out and not the engraver, because
+	// it is the renderer that knows the font: the pieces have to sit one
+	// after another with no gap and no overlap, and where the line is
+	// centred its width has to be the width it is really drawn at. The
+	// engraver measures text from a table of Times widths, which is close
+	// enough to reserve room by and not close enough to set type with.
+	//
+	// S is the same words with the formatting dropped, so anything that
+	// reads the words rather than drawing them needs to know none of this.
+	Runs []TextRun `json:"runs,omitempty"`
 	// Ref is the element this belongs to, where it is one: a fret number on
 	// a tab staff is the note, the way a notehead is on a staff of pitches,
 	// and the editor and the player have to be able to find it.
 	Ref int `json:"ref,omitempty"`
+}
+
+// TextRun is one piece of a line of text, in one style. Size is the type
+// size this piece is set at, in staff spaces, and zero is the line's own.
+type TextRun struct {
+	S      string
+	Size   float64 `json:"size,omitempty"`
+	Italic bool    `json:"italic,omitempty"`
+	Bold   bool    `json:"bold,omitempty"`
+	Colour string  `json:"colour,omitempty"`
 }
 
 // Circle is a round mark: the dot on a chord diagram, the ring over a string
@@ -2134,52 +2161,157 @@ func (e *engraver) titleBlock() {
 	centre := sp.Margin + e.opt.LineWidth/2
 	e.titleFrom = len(e.lay.Texts)
 	defer func() { e.titleTo = len(e.lay.Texts) }()
+	id := e.score.Identity
 	// A title runs to several lines as often as a credit does — a work, a
 	// movement and a catalogue number, which is how a file written by hand
 	// in another program arrives. They were drawn as one string and the
 	// cursor moved by one line, so every line after the first was drawn on
 	// top of the line beneath it and the subtitle landed in the middle of
 	// the title.
-	for _, line := range strings.Split(e.score.Identity.Title, "\n") {
-		if line = strings.TrimSpace(line); line == "" {
-			continue
-		}
-		e.y += 3
-		e.lay.Texts = append(e.lay.Texts, Text{
-			S: line, X: centre, Y: e.y,
-			Size: 2.6, Anchor: "middle", Bold: true,
-		})
-		e.y += 1.6
+	e.creditLines(model.Spans(id.Title, id.TitleRuns), creditStyle{
+		X: centre, Anchor: "middle", Size: 2.6, Bold: true,
+		Before: 3, After: 1.6,
+	})
+	e.creditLines(model.Spans(id.Subtitle, id.SubtitleRuns), creditStyle{
+		X: centre, Anchor: "middle", Size: 1.5, Italic: true, After: 1.6,
+	})
+	// A credit runs to several lines as often as not — words by one person,
+	// music by another, arranged by a third — and they stack at the right
+	// rather than running off the edge as one long line.
+	right := creditStyle{
+		X: sp.Margin + e.opt.LineWidth, Anchor: "end",
+		Size: 1.5, Italic: true, After: 1.7,
 	}
-	for _, line := range strings.Split(e.score.Identity.Subtitle, "\n") {
-		if line = strings.TrimSpace(line); line == "" {
-			continue
-		}
-		e.lay.Texts = append(e.lay.Texts, Text{
-			S: line, X: centre, Y: e.y,
-			Size: 1.5, Anchor: "middle", Italic: true,
-		})
-		e.y += 1.6
-	}
-	if e.score.Identity.Composer != "" {
-		// A credit runs to several lines as often as not — words by one
-		// person, music by another, arranged by a third — and they stack at
-		// the right rather than running off the edge as one long line.
-		for _, line := range strings.Split(e.score.Identity.Composer, "\n") {
-			line = strings.TrimSpace(line)
-			if line == "" {
-				continue
-			}
-			e.lay.Texts = append(e.lay.Texts, Text{
-				S: line, X: sp.Margin + e.opt.LineWidth, Y: e.y,
-				Size: 1.5, Anchor: "end", Italic: true,
-			})
-			e.y += 1.7
-		}
+	had := e.y
+	e.creditLines(model.Spans(id.Composer, id.ComposerRuns), right)
+	// The arranger goes under the composer, which is where a score prints
+	// them: two people, two lines, the music before what was done to it.
+	e.creditLines(model.Spans(id.Arranger, id.ArrangerRuns), right)
+	if e.y != had {
 		e.y += 0.3
 	}
 	e.drawTempoMark(sp.Margin)
 	e.y += 2
+}
+
+// creditStyle is how one of the header's fields is set: where it sits, what
+// it is anchored by, and the face and size a run of it takes when it asks
+// for nothing of its own.
+type creditStyle struct {
+	X      float64
+	Anchor string // "middle" for a title, "end" for a credit
+	Size   float64
+	Bold   bool
+	Italic bool
+	// Before is the air left above each line and After the air below it.
+	Before, After float64
+}
+
+// creditLines draws one header field, line by line and run by run.
+//
+// A line is drawn as several pieces where it is set in several styles —
+// "Music by " and then a name in bold — and the pieces have to be placed
+// one after another rather than each anchored where the line is, or they
+// are drawn on top of each other. So the line is measured first: every run
+// at its own size and face, added up, which gives the width and therefore
+// where the left-hand edge of a centred or right-aligned line falls. After
+// that each run is laid down at that point and the point moves on.
+//
+// The measurement is the same one the staff names and the rehearsal marks
+// use, which is an average rather than the font's own metrics. A credit
+// that comes out a little off centre is the cost; the alternative is
+// carrying the text font's tables into the engraver for the four lines at
+// the top of the page.
+func (e *engraver) creditLines(runs []model.Span, st creditStyle) {
+	for _, line := range creditSplit(runs) {
+		if len(line) == 0 {
+			continue
+		}
+		// The room a line of larger type needs, which is its own size and
+		// not the size the field is usually set at.
+		tallest := st.Size
+		for _, r := range line {
+			if size := st.Size * r.Scale(); size > tallest {
+				tallest = size
+			}
+		}
+		e.y += st.Before + (tallest - st.Size)
+
+		text := Text{
+			X: st.X, Y: e.y, Size: st.Size, Anchor: st.Anchor,
+			Bold: st.Bold, Italic: st.Italic,
+		}
+		// A line in one style is one piece of text, which is every line of
+		// every score nobody has formatted by hand. Only a line that is
+		// set in several carries its runs, and then the renderer puts them
+		// one after another.
+		if len(line) == 1 {
+			r := line[0]
+			text.S = r.Text
+			text.Size = st.Size * r.Scale()
+			text.Bold = st.Bold || r.Bold
+			text.Italic = st.Italic || r.Italic
+			text.Colour = r.Colour
+		} else {
+			for _, r := range line {
+				text.S += r.Text
+				text.Runs = append(text.Runs, TextRun{
+					S:      r.Text,
+					Size:   st.Size * r.Scale(),
+					Bold:   st.Bold || r.Bold,
+					Italic: st.Italic || r.Italic,
+					Colour: r.Colour,
+				})
+			}
+		}
+		e.lay.Texts = append(e.lay.Texts, text)
+		e.y += st.After
+	}
+}
+
+// creditSplit breaks a field's runs into lines, a line break inside a run
+// splitting it in two, and drops the blank lines and the space around each
+// line the way the header has always done.
+func creditSplit(runs []model.Span) [][]model.Span {
+	var out [][]model.Span
+	var line []model.Span
+	flush := func() {
+		if len(line) > 0 {
+			out = append(out, line)
+			line = nil
+		}
+	}
+	for _, r := range runs {
+		parts := strings.Split(r.Text, "\n")
+		for i, p := range parts {
+			if i > 0 {
+				flush()
+			}
+			if p == "" {
+				continue
+			}
+			piece := r
+			piece.Text = p
+			line = append(line, piece)
+		}
+	}
+	flush()
+	// The space at the ends of a line is not drawn, and a line that is
+	// nothing but space is not a line.
+	for i, l := range out {
+		if len(l) > 0 {
+			l[0].Text = strings.TrimLeft(l[0].Text, " \t")
+			l[len(l)-1].Text = strings.TrimRight(l[len(l)-1].Text, " \t")
+		}
+		out[i] = l
+	}
+	kept := out[:0]
+	for _, l := range out {
+		if strings.TrimSpace(model.PlainSpans(l)) != "" {
+			kept = append(kept, l)
+		}
+	}
+	return kept
 }
 
 // drawTempoMark writes the metronome mark and whatever word goes with it.

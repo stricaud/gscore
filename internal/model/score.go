@@ -237,10 +237,100 @@ type Tempo struct {
 
 // Identity is the bibliographic header of a score, from the 0.0.9 Identity_t.
 type Identity struct {
-	Title     string
-	Subtitle  string
-	Composer  string
+	Title    string
+	Subtitle string
+	Composer string
+	// Arranger is its own field and not a second line of the composer.
+	//
+	// They are two people and a score credits them in two places — the
+	// composer above, the arranger under them, often in different type —
+	// and every format worth reading says which is which: MusicXML has
+	// <creator type="arranger">, Finale and MuseScore both keep their own
+	// field for it. Folded into the composer it comes back as part of
+	// somebody's name, and a search for the arranger's work finds nothing.
+	Arranger  string
 	Copyright string
+
+	// Runs is the formatting of the words above, where somebody has given
+	// them any: the same text broken into the runs it is set in.
+	//
+	// The words stay in the plain fields, which is what every importer
+	// writes and every exporter reads — formatting is for the page and
+	// nothing else should have to know about it. A field with no runs is
+	// plain, which is nearly every field of nearly every score.
+	TitleRuns    []Span
+	SubtitleRuns []Span
+	ComposerRuns []Span
+	ArrangerRuns []Span
+}
+
+// Span is a run of header text in one style.
+//
+// A credit is not one thing in one face as often as it is: "Music by" plain
+// with the name bold after it, an arranger's line in grey, a title with the
+// opus number smaller behind it. A span is one such piece of a line.
+type Span struct {
+	Text   string `json:"text"`
+	Bold   bool   `json:"bold,omitempty"`
+	Italic bool   `json:"italic,omitempty"`
+	// Colour is a CSS colour, empty being the ink the page is printed in.
+	Colour string `json:"colour,omitempty"`
+	// Size is a multiple of the size the field is set at, so that a run
+	// stays in proportion when the title size changes. Zero means one.
+	Size float64 `json:"size,omitempty"`
+}
+
+// Scale is Size with its zero read as the one it means.
+func (s Span) Scale() float64 {
+	if s.Size <= 0 {
+		return 1
+	}
+	return s.Size
+}
+
+// Spans is one header field as it is drawn: its runs, where they are the
+// words it holds, and the words in one plain run where they are not.
+//
+// The check is the point. The words and their formatting are stored apart,
+// so a file written by hand, an older file, or an importer that knows about
+// one and not the other can hand over runs that say something other than the
+// field does — and words on the page that the file does not say are worse
+// than words with no formatting. So they are only used when they add up.
+func Spans(text string, runs []Span) []Span {
+	if text == "" {
+		return nil
+	}
+	if PlainSpans(runs) == text {
+		return runs
+	}
+	return []Span{{Text: text}}
+}
+
+// Clone is an Identity sharing no run list with the one it came from. The
+// words are strings and come with the copy; the formatting is slices and
+// does not.
+func (i Identity) Clone() Identity {
+	out := i
+	for _, f := range []struct{ from, to *[]Span }{
+		{&i.TitleRuns, &out.TitleRuns},
+		{&i.SubtitleRuns, &out.SubtitleRuns},
+		{&i.ComposerRuns, &out.ComposerRuns},
+		{&i.ArrangerRuns, &out.ArrangerRuns},
+	} {
+		if *f.from != nil {
+			*f.to = append([]Span(nil), *f.from...)
+		}
+	}
+	return out
+}
+
+// PlainSpans is the words of a run list with the formatting dropped.
+func PlainSpans(runs []Span) string {
+	var b strings.Builder
+	for _, r := range runs {
+		b.WriteString(r.Text)
+	}
+	return b.String()
 }
 
 // Voice is one monophonic line of music within a measure.

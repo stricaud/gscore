@@ -88,6 +88,14 @@ Accidentals: <kbd>+</kbd> sharpens (again for a double sharp, again for none),
 set sharp, flat and natural outright — and <kbd>=</kbd> with nothing selected
 ties instead, because that is what the key is free for.
 
+A sign is printed where it tells the reader something they do not already
+know, and nowhere else. An accidental holds to the end of its bar, so a note
+written on a line something has already altered takes that alteration: write
+a B flat and the next B in the bar is a B flat too, with nothing in front of
+it. Ask for a natural and you get a natural — once, on the note that needs
+it, not again on the two after it. A reminder you want anyway is what the
+brackets are for.
+
 ### By typing
 
 <kbd>Ctrl</kbd>/<kbd>⌘</kbd>+<kbd>K</kbd> opens the typing bar. A note is two

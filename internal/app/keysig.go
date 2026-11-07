@@ -179,7 +179,22 @@ func (a *App) handleSetKey(w http.ResponseWriter, r *http.Request) {
 	// is written a major sixth up, and its signature with it, so each staff
 	// gets the signature its own player reads for the key that was asked for.
 	// That is the whole point of knowing a part's transposition.
+	//
+	// What arrives is the signature as it is drawn on the staff it was asked
+	// for, and not the key of the piece. That is the rule everything else
+	// here follows — see concert.go: what is clicked is what is seen, and it
+	// is turned into what is stored on the way in — and the picker is a
+	// picture of one staff, drawn in that staff's clef, opened on what that
+	// staff already reads. Taken for the key of the piece instead, asking an
+	// alto saxophone for one sharp wrote four on it: the one that was asked
+	// for, and the three the instrument adds.
+	//
+	// A staff showing concert pitch is already showing the key of the piece,
+	// so there is nothing to undo there.
 	asked := model.KeySignature{Fifths: fifths}
+	if !a.concert {
+		asked = a.score.Parts[part].Transpose.Sounding(asked)
+	}
 
 	// A key given for a measure past the first changes key there and leaves
 	// what came before alone, which is how a piece modulates. Given for the

@@ -31,7 +31,7 @@ func (s *Score) Clone() *Score {
 		return nil
 	}
 	out := &Score{
-		Identity:    s.Identity,
+		Identity:    s.Identity.Clone(),
 		Tempo:       s.Tempo,
 		Description: s.Description,
 		Numbering:   s.Numbering,

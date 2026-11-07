@@ -8867,13 +8867,235 @@ function tempoAtBar(bar) {
   return { ...best, text: "", written: false };
 }
 
+/* ---------- the header's rich text ---------- */
+
+/*
+ * A title and a credit are set, not just typed.
+ *
+ * "Music by" plain and the name bold after it; an arranger's line in grey
+ * under a composer's in black; a subtitle smaller than the rest of the
+ * subtitle. None of that is decoration — it is how a printed score says who
+ * did what — and a box that can only hold one face in one colour cannot
+ * write it down.
+ *
+ * So each of these fields is a small editor. What it holds is kept as the
+ * words and the runs they are set in: the words go on being the words, so
+ * everything that reads a score — a file, an export, a shelf of pieces —
+ * sees what it always saw, and the runs are extra.
+ *
+ * The runs are read back off the DOM by asking for the *computed* style of
+ * each piece of text rather than by trusting the tags. That is what makes
+ * pasted text work: whatever a browser or another program puts in the box,
+ * what comes out is what it looks like.
+ */
+
+// richBoxes is each field's box, by the name the server knows it as.
+const richBoxes = {};
+
+// richFields builds the boxes, once, out of the placeholders in the markup.
+function richFields() {
+  for (const field of $$(".rich-field")) {
+    const name = field.dataset.field;
+    if (richBoxes[name]) continue;
+    const id = "score-about-" + name;
+    field.innerHTML =
+      `<div class="rich-head"><label class="small" for="${id}">${field.dataset.label}</label>` +
+      `<span class="rich-bar">` +
+      `<button type="button" data-rich="bold" title="Bold"><b>B</b></button>` +
+      `<button type="button" data-rich="italic" title="Italic"><i>I</i></button>` +
+      `<select data-rich="size" title="Size" aria-label="Size">` +
+      `<option value="1">Size</option>` +
+      `<option value="0.75">Smaller</option>` +
+      `<option value="1">Normal</option>` +
+      `<option value="1.4">Larger</option>` +
+      `<option value="2">Largest</option>` +
+      `</select>` +
+      `<input type="color" data-rich="colour" value="#000000" title="Colour" aria-label="Colour">` +
+      `<button type="button" data-rich="plain" title="Take the formatting off">Plain</button>` +
+      `</span></div>` +
+      `<div class="rich-box" id="${id}" contenteditable="true" role="textbox" ` +
+      `aria-multiline="true" aria-label="${field.dataset.label}"></div>`;
+    const box = $("#" + id);
+    richBoxes[name] = box;
+    for (const b of field.querySelectorAll("[data-rich]")) {
+      const what = b.dataset.rich;
+      if (b.tagName === "BUTTON") {
+        // mousedown, not click: by the time a click lands the box has
+        // lost the selection to the button.
+        b.addEventListener("mousedown", (e) => {
+          e.preventDefault();
+          richApply(box, what);
+        });
+      } else {
+        b.addEventListener("input", () => richApply(box, what, b.value));
+        b.addEventListener("change", () => richApply(box, what, b.value));
+      }
+    }
+  }
+}
+
+// richApply puts one piece of formatting on whatever is picked out in a box.
+//
+// Nothing picked out is nothing to format: a face chosen with no selection
+// would have to be remembered until the next thing typed, which is a mode,
+// and a window with a mode in it is a window that surprises somebody.
+function richApply(box, what, value) {
+  const sel = window.getSelection();
+  if (!sel || !sel.rangeCount) return;
+  const range = sel.getRangeAt(0);
+  if (range.collapsed || !box.contains(range.commonAncestorContainer)) {
+    status("Pick out the words to change first");
+    return;
+  }
+  if (what === "plain") {
+    const text = range.toString();
+    range.deleteContents();
+    range.insertNode(document.createTextNode(text));
+    richNormalise(box);
+    return;
+  }
+  const at = range.startContainer.nodeType === 3
+    ? range.startContainer.parentElement : range.startContainer;
+  const now = getComputedStyle(at);
+  const span = document.createElement("span");
+  switch (what) {
+    case "bold":
+      span.style.fontWeight = richIsBold(now) ? "normal" : "bold";
+      break;
+    case "italic":
+      span.style.fontStyle = now.fontStyle === "italic" ? "normal" : "italic";
+      break;
+    case "colour":
+      span.style.color = value;
+      break;
+    case "size": {
+      // The size asked for is a multiple of the box's own, and the span
+      // goes inside whatever is already there — so what it is given is the
+      // step from where this piece of text already is to where it should
+      // be. Without that, setting the same size twice doubles it.
+      const base = parseFloat(getComputedStyle(box).fontSize);
+      const here = parseFloat(now.fontSize) / base;
+      span.style.fontSize = (Number(value) / here) + "em";
+      break;
+    }
+    default:
+      return;
+  }
+  span.appendChild(range.extractContents());
+  range.insertNode(span);
+  sel.removeAllRanges();
+  const kept = document.createRange();
+  kept.selectNodeContents(span);
+  sel.addRange(kept);
+}
+
+function richIsBold(style) {
+  const w = style.fontWeight;
+  return w === "bold" || w === "bolder" || parseInt(w, 10) >= 600;
+}
+
+// richNormalise writes a box out and reads it back, which flattens whatever
+// nest of tags an edit or a paste left behind into the runs it looks like.
+function richNormalise(box) {
+  richSet(box, richRuns(box), "");
+}
+
+// richRuns is what is in a box: the runs of text with how each is set.
+//
+// Read from the computed style of each piece of text, so that what comes out
+// is what the box looks like however it got that way — typed, pasted from a
+// word processor, or built by richSet.
+function richRuns(box) {
+  const base = getComputedStyle(box);
+  const baseSize = parseFloat(base.fontSize);
+  const baseColour = base.color;
+  const out = [];
+  const add = (text, el) => {
+    if (!text) return;
+    const st = el ? getComputedStyle(el) : base;
+    const run = { text: text };
+    if (richIsBold(st)) run.bold = true;
+    if (st.fontStyle === "italic") run.italic = true;
+    if (st.color !== baseColour) run.colour = richHex(st.color);
+    const size = parseFloat(st.fontSize) / baseSize;
+    if (Math.abs(size - 1) > 0.01) run.size = Math.round(size * 100) / 100;
+    const last = out[out.length - 1];
+    if (last && !!last.bold === !!run.bold && !!last.italic === !!run.italic &&
+        (last.colour || "") === (run.colour || "") &&
+        (last.size || 1) === (run.size || 1)) {
+      last.text += text;
+      return;
+    }
+    out.push(run);
+  };
+  const walk = (node) => {
+    for (const n of node.childNodes) {
+      if (n.nodeType === 3) {
+        add(n.nodeValue, n.parentElement);
+      } else if (n.nodeName === "BR") {
+        add("\n", n.parentElement);
+      } else if (n.nodeType === 1) {
+        // A block — which is what a browser leaves behind when Return is
+        // pressed — begins a line of its own.
+        if (out.length && getComputedStyle(n).display !== "inline") {
+          add("\n", n);
+        }
+        walk(n);
+      }
+    }
+  };
+  walk(box);
+  return out;
+}
+
+// richSet fills a box from runs, or from plain words where there are none.
+function richSet(box, runs, text) {
+  box.textContent = "";
+  const list = (runs && runs.length) ? runs : (text ? [{ text: text }] : []);
+  for (const r of list) {
+    const parts = String(r.text).split("\n");
+    parts.forEach((part, i) => {
+      if (i) box.appendChild(document.createElement("br"));
+      if (!part) return;
+      const plain = !r.bold && !r.italic && !r.colour &&
+        (!r.size || Math.abs(r.size - 1) < 0.01);
+      if (plain) {
+        box.appendChild(document.createTextNode(part));
+        return;
+      }
+      const span = document.createElement("span");
+      if (r.bold) span.style.fontWeight = "bold";
+      if (r.italic) span.style.fontStyle = "italic";
+      if (r.colour) span.style.color = r.colour;
+      if (r.size && Math.abs(r.size - 1) >= 0.01) {
+        span.style.fontSize = r.size + "em";
+      }
+      span.textContent = part;
+      box.appendChild(span);
+    });
+  }
+}
+
+// richHex turns whatever colour a browser reports into the #rrggbb a file
+// keeps and a colour picker shows.
+function richHex(colour) {
+  const m = /^rgba?\(([^)]+)\)$/.exec(colour);
+  if (!m) return colour;
+  const parts = m[1].split(",").map((v) => parseFloat(v));
+  const hex = (v) => Math.max(0, Math.min(255, Math.round(v)))
+    .toString(16).padStart(2, "0");
+  return "#" + hex(parts[0]) + hex(parts[1]) + hex(parts[2]);
+}
+
 async function setHeaderDialog() {
   const dlg = $("#score-about");
   const i = state.info || {};
   const field = (id, v) => { $("#score-about-" + id).value = v || ""; };
-  field("title", i.title);
-  field("subtitle", i.subtitle);
-  field("composer", i.composer);
+  richFields();
+  richSet(richBoxes.title, i.titleRuns, i.title);
+  richSet(richBoxes.subtitle, i.subtitleRuns, i.subtitle);
+  richSet(richBoxes.composer, i.composerRuns, i.composer);
+  richSet(richBoxes.arranger, i.arrangerRuns, i.arranger);
   field("copyright", i.copyright);
   field("description", i.description);
   field("tags", (i.tags || []).join(", "));
@@ -8913,21 +9135,31 @@ async function setHeaderDialog() {
     };
     dlg.addEventListener("close", done);
     dlg.showModal();
-    $("#score-about-title").focus();
+    richBoxes.title.focus();
   });
   if (answer !== "ok") {
     status("Ready");
     return;
   }
 
+  // The words and their formatting go together: each field is sent as the
+  // text it holds and the runs that spell it, and the server refuses a pair
+  // that disagree rather than keeping formatting of words nobody wrote.
   const p = new URLSearchParams({
-    title: $("#score-about-title").value,
-    subtitle: $("#score-about-subtitle").value,
-    composer: $("#score-about-composer").value,
     copyright: $("#score-about-copyright").value,
     description: $("#score-about-description").value,
     tags: tags.value,
   });
+  for (const name of ["title", "subtitle", "composer", "arranger"]) {
+    const runs = richRuns(richBoxes[name]);
+    const text = runs.map((r) => r.text).join("");
+    p.set(name, text);
+    // Plain words need no runs, and leaving them out keeps a file that
+    // nobody formatted exactly as small and as readable as it was.
+    const set = runs.some((r) => r.bold || r.italic || r.colour ||
+      (r.size && Math.abs(r.size - 1) >= 0.01));
+    if (set) p.set(name + "Runs", JSON.stringify(runs));
+  }
   const res = await fetch("/api/header?" + p.toString(), { method: "POST" });
   if (!res.ok) {
     status("Could not set it: " + (await res.text()).trim());
@@ -11102,6 +11334,11 @@ function setupScoreSetupDialog() {
   $("#setup-change")?.addEventListener("click", () => void setupChange());
   $("#setup-instruments")?.addEventListener("click",
     () => void applySetupInstruments());
+  // What the piece is called is the same window it has always been, opened
+  // over this one: the staves picked here are still picked when it closes.
+  // Not a data-action, which would put a menu icon in the middle of a row
+  // of plain buttons.
+  $("#setup-about")?.addEventListener("click", () => void setHeaderDialog());
   // Double-clicking an instrument is how everybody expects to add one.
   $("#setup-pick")?.addEventListener("dblclick", () => void setupAdd());
   // And double-clicking a staff is how everybody expects to change it.

@@ -57,6 +57,14 @@ func build(s *model.Score) *scorePartwise {
 		doc.Ident.Creators = append(doc.Ident.Creators,
 			creator{Type: "composer", Name: s.Identity.Composer})
 	}
+	// The arranger is a creator of its own kind, which is the whole reason
+	// for keeping it apart from the composer: written into the composer's
+	// name it comes back as part of it, and a catalogue looking for the
+	// arranger's work finds nothing.
+	if s.Identity.Arranger != "" {
+		doc.Ident.Creators = append(doc.Ident.Creators,
+			creator{Type: "arranger", Name: s.Identity.Arranger})
+	}
 	// The subtitle, where the format has somewhere for it.
 	//
 	// Not as a creator: a subtitle is not a person, "subtitle" is not one
@@ -80,6 +88,12 @@ func build(s *model.Score) *scorePartwise {
 		doc.Credits = append(doc.Credits, creditElem{
 			Type:  []string{"composer"},
 			Words: strings.Split(s.Identity.Composer, "\n"),
+		})
+	}
+	if s.Identity.Arranger != "" {
+		doc.Credits = append(doc.Credits, creditElem{
+			Type:  []string{"arranger"},
+			Words: strings.Split(s.Identity.Arranger, "\n"),
 		})
 	}
 	doc.Ident.Rights = s.Identity.Copyright

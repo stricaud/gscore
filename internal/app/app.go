@@ -919,6 +919,16 @@ type info struct {
 	Title    string `json:"title"`
 	Subtitle string `json:"subtitle"`
 	Composer string `json:"composer"`
+	// Arranger is its own field and not a second line of the composer:
+	// two people, credited in two places and on two lines of the page.
+	Arranger string `json:"arranger"`
+	// How those four are set, where somebody has set them in anything.
+	// The words are the fields above either way, so a window that knows
+	// nothing about formatting still shows the piece's name.
+	TitleRuns    []model.Span `json:"titleRuns,omitempty"`
+	SubtitleRuns []model.Span `json:"subtitleRuns,omitempty"`
+	ComposerRuns []model.Span `json:"composerRuns,omitempty"`
+	ArrangerRuns []model.Span `json:"arrangerRuns,omitempty"`
 	// Sent so the window that edits it can open on what is there. Left
 	// out, the box came up empty and saving wrote that emptiness back.
 	Copyright string `json:"copyright"`
@@ -1040,24 +1050,29 @@ func (a *App) handleInfo(w http.ResponseWriter, r *http.Request) {
 	defer a.mu.RUnlock()
 
 	out := info{
-		Warning:     a.warning,
-		Log:         a.importLog,
-		Current:     a.current,
-		Native:      a.native,
-		Local:       a.local,
-		InBrowser:   a.inBrowser,
-		Version:     version.Version,
-		Filename:    a.filename,
-		Unsaved:     a.unsaved,
-		CanUndo:     len(a.undoStack) > 0,
-		CanRedo:     len(a.redoStack) > 0,
-		Title:       a.score.Identity.Title,
-		Subtitle:    a.score.Identity.Subtitle,
-		Composer:    a.score.Identity.Composer,
-		Copyright:   a.score.Identity.Copyright,
-		Tags:        append([]string{}, a.score.Tags...),
-		Description: a.score.Description,
-		Tempo:       a.score.Tempo.BPM,
+		Warning:      a.warning,
+		Log:          a.importLog,
+		Current:      a.current,
+		Native:       a.native,
+		Local:        a.local,
+		InBrowser:    a.inBrowser,
+		Version:      version.Version,
+		Filename:     a.filename,
+		Unsaved:      a.unsaved,
+		CanUndo:      len(a.undoStack) > 0,
+		CanRedo:      len(a.redoStack) > 0,
+		Title:        a.score.Identity.Title,
+		Subtitle:     a.score.Identity.Subtitle,
+		Composer:     a.score.Identity.Composer,
+		Arranger:     a.score.Identity.Arranger,
+		TitleRuns:    a.score.Identity.TitleRuns,
+		SubtitleRuns: a.score.Identity.SubtitleRuns,
+		ComposerRuns: a.score.Identity.ComposerRuns,
+		ArrangerRuns: a.score.Identity.ArrangerRuns,
+		Copyright:    a.score.Identity.Copyright,
+		Tags:         append([]string{}, a.score.Tags...),
+		Description:  a.score.Description,
+		Tempo:        a.score.Tempo.BPM,
 	}
 	for _, sec := range a.score.Sections() {
 		out.Movements = append(out.Movements, movementInfo{

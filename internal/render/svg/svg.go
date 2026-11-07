@@ -278,8 +278,43 @@ func Render(w io.Writer, lay *engrave.Layout, opt Options) error {
 		if t.Bold {
 			style += "font-weight:bold;"
 		}
-		fmt.Fprintf(&b, `<text class="t" x="%.2f" y="%.2f" font-size="%.2f" text-anchor="%s" style="%s">%s</text>`+"\n",
-			t.X*s, t.Y*s, t.Size*s, anchor, style, html.EscapeString(t.S))
+		if t.Colour != "" {
+			style += "fill:" + html.EscapeString(t.Colour) + ";"
+		}
+		// A line set in more than one style is one text of several
+		// pieces, so that the browser lays them out and anchors the line
+		// by what it really drew. Spelling it as several texts, each
+		// placed by a measurement made here, is how a title in two faces
+		// came out with its two halves overlapping: the measuring was
+		// done from a table of Times widths and the drawing was done in
+		// Georgia.
+		//
+		// The spaces are kept, because the space between two such pieces
+		// is at the end of the first of them and SVG drops it otherwise.
+		inner := html.EscapeString(t.S)
+		if len(t.Runs) > 0 {
+			var runs strings.Builder
+			for _, r := range t.Runs {
+				rs := ""
+				if r.Italic != t.Italic {
+					rs += "font-style:" + ifElse(r.Italic, "italic", "normal") + ";"
+				}
+				if r.Bold != t.Bold {
+					rs += "font-weight:" + ifElse(r.Bold, "bold", "normal") + ";"
+				}
+				if r.Colour != "" {
+					rs += "fill:" + html.EscapeString(r.Colour) + ";"
+				}
+				if r.Size > 0 && r.Size != t.Size {
+					rs += fmt.Sprintf("font-size:%.2fpx;", r.Size*s)
+				}
+				fmt.Fprintf(&runs, `<tspan style="%s">%s</tspan>`, rs,
+					html.EscapeString(r.S))
+			}
+			inner = runs.String()
+		}
+		fmt.Fprintf(&b, `<text class="t" xml:space="preserve" x="%.2f" y="%.2f" font-size="%.2f" text-anchor="%s" style="%s">%s</text>`+"\n",
+			t.X*s, t.Y*s, t.Size*s, anchor, style, inner)
 	}
 
 	if !opt.Fragment {
@@ -287,6 +322,15 @@ func Render(w io.Writer, lay *engrave.Layout, opt Options) error {
 	}
 	_, err := io.WriteString(w, b.String())
 	return err
+}
+
+// ifElse is the conditional expression Go does not have, for the one place
+// here that wants a word chosen by a flag.
+func ifElse(cond bool, yes, no string) string {
+	if cond {
+		return yes
+	}
+	return no
 }
 
 // writeStyle writes the rules the shapes are drawn under.
@@ -314,7 +358,12 @@ func writeStyle(b *strings.Builder, opt Options, s float64) {
 	fmt.Fprintf(b, `%s{background:#fff;}`+"\n", self)
 	fmt.Fprintf(b, `%s.g{font-family:"%s";font-size:%.3fpx;fill:#000;}`+"\n",
 		under, smufl.FontFamily, 4*s)
-	fmt.Fprintf(b, `%s.t{font-family:Georgia,"Times New Roman",serif;fill:#000;}`+"\n", under)
+	// white-space, because a line of a credit set in two faces is drawn as
+	// two pieces and the space between them is at the end of the first.
+	// Left to itself SVG throws that space away — xml:space says to keep
+	// it, and is honoured when the drawing is parsed as XML but not always
+	// when it is put into a page as markup, so the rule says it too.
+	fmt.Fprintf(b, `%s.t{font-family:Georgia,"Times New Roman",serif;fill:#000;white-space:pre;}`+"\n", under)
 	fmt.Fprintf(b, `%sline{stroke:#000;stroke-linecap:butt;}`+"\n", under)
 	fmt.Fprintf(b, `%spath.curve{fill:none;stroke:#000;}`+"\n", under)
 	b.WriteString("</style>\n")

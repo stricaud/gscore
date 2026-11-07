@@ -28,10 +28,19 @@ type scoreDoc struct {
 	Title     string     `json:"title,omitempty"`
 	Subtitle  string     `json:"subtitle,omitempty"`
 	Composer  string     `json:"composer,omitempty"`
+	Arranger  string     `json:"arranger,omitempty"`
 	Copyright string     `json:"copyright,omitempty"`
-	Tempo     tempoDoc   `json:"tempo"`
-	Parts     []partDoc  `json:"parts"`
-	Cursor    *cursorDoc `json:"cursor,omitempty"`
+	// How the words above are set, where somebody has set them in
+	// anything. The words themselves stay where they are, so a file
+	// written by a gscore that knew nothing about this still opens and
+	// still says what the piece is called.
+	TitleRuns    []spanDoc  `json:"titleRuns,omitempty"`
+	SubtitleRuns []spanDoc  `json:"subtitleRuns,omitempty"`
+	ComposerRuns []spanDoc  `json:"composerRuns,omitempty"`
+	ArrangerRuns []spanDoc  `json:"arrangerRuns,omitempty"`
+	Tempo        tempoDoc   `json:"tempo"`
+	Parts        []partDoc  `json:"parts"`
+	Cursor       *cursorDoc `json:"cursor,omitempty"`
 	// Scripts are the programs somebody wrote to make this music. Kept
 	// because a piece built from a process is not fully written down by
 	// its notes: the notes are the output and the process is the thought.
@@ -477,11 +486,16 @@ func parseDur(s string) (model.Duration, error) {
 
 func encodeScore(s *model.Score) *scoreDoc {
 	doc := &scoreDoc{
-		Title:     s.Identity.Title,
-		Subtitle:  s.Identity.Subtitle,
-		Composer:  s.Identity.Composer,
-		Copyright: s.Identity.Copyright,
-		Cursor:    cursorToDoc(s.Cursor),
+		Title:        s.Identity.Title,
+		Subtitle:     s.Identity.Subtitle,
+		Composer:     s.Identity.Composer,
+		Arranger:     s.Identity.Arranger,
+		Copyright:    s.Identity.Copyright,
+		TitleRuns:    spansToDoc(s.Identity.TitleRuns),
+		SubtitleRuns: spansToDoc(s.Identity.SubtitleRuns),
+		ComposerRuns: spansToDoc(s.Identity.ComposerRuns),
+		ArrangerRuns: spansToDoc(s.Identity.ArrangerRuns),
+		Cursor:       cursorToDoc(s.Cursor),
 		Tempo: tempoDoc{
 			BPM: s.Tempo.BPM, Unit: durString(s.Tempo.Unit), Text: s.Tempo.Text,
 		},
@@ -821,7 +835,12 @@ func decodeScore(doc *scoreDoc) (*model.Score, error) {
 	s := &model.Score{}
 	s.Identity = model.Identity{
 		Title: doc.Title, Subtitle: doc.Subtitle,
-		Composer: doc.Composer, Copyright: doc.Copyright,
+		Composer: doc.Composer, Arranger: doc.Arranger,
+		Copyright:    doc.Copyright,
+		TitleRuns:    spansFromDoc(doc.TitleRuns),
+		SubtitleRuns: spansFromDoc(doc.SubtitleRuns),
+		ComposerRuns: spansFromDoc(doc.ComposerRuns),
+		ArrangerRuns: spansFromDoc(doc.ArrangerRuns),
 	}
 	unit := model.Duration{Num: 1, Den: 4}
 	if doc.Tempo.Unit != "" {
@@ -1184,4 +1203,44 @@ func cursorToDoc(c *model.Cursor) *cursorDoc {
 		return nil
 	}
 	return &cursorDoc{Part: c.Part, Measure: c.Measure, At: c.At, Step: c.Step}
+}
+
+// spanDoc is one run of a header field, as it is written to a file.
+//
+// Its own shape rather than the model's, for the reason everything else here
+// has one: the file is a promise and the struct is not.
+type spanDoc struct {
+	Text   string  `json:"text"`
+	Bold   bool    `json:"bold,omitempty"`
+	Italic bool    `json:"italic,omitempty"`
+	Colour string  `json:"colour,omitempty"`
+	Size   float64 `json:"size,omitempty"`
+}
+
+func spansToDoc(runs []model.Span) []spanDoc {
+	if len(runs) == 0 {
+		return nil
+	}
+	out := make([]spanDoc, 0, len(runs))
+	for _, r := range runs {
+		out = append(out, spanDoc{
+			Text: r.Text, Bold: r.Bold, Italic: r.Italic,
+			Colour: r.Colour, Size: r.Size,
+		})
+	}
+	return out
+}
+
+func spansFromDoc(runs []spanDoc) []model.Span {
+	if len(runs) == 0 {
+		return nil
+	}
+	out := make([]model.Span, 0, len(runs))
+	for _, r := range runs {
+		out = append(out, model.Span{
+			Text: r.Text, Bold: r.Bold, Italic: r.Italic,
+			Colour: r.Colour, Size: r.Size,
+		})
+	}
+	return out
 }

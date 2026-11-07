@@ -166,3 +166,61 @@ func TestChangingTheInstrumentBackRestoresTheSignature(t *testing.T) {
 		t.Errorf("the part came back in %d sharps, want the 4 it started in", got)
 	}
 }
+
+// The number the key picker sends is the signature on the staff it was
+// picked from, not the key of the piece.
+//
+// The picker is a picture of one staff: it is opened from that staff, drawn
+// in that staff's clef, and starts on what that staff already reads. Asking
+// it for one sharp on an alto saxophone and being given four — the one that
+// was asked for, and the three the instrument adds — is the window answering
+// a question nobody asked.
+func TestTheKeyPickedOnASaxophoneIsTheOneItReads(t *testing.T) {
+	h := newHarness(t)
+	h.post("/api/addstaff?instrument=alto%20sax")
+	h.post("/api/setkey?part=1&fifths=1")
+
+	if got := h.app.score.Parts[1].Key.Fifths; got != 1 {
+		t.Errorf("the saxophone reads %d sharps, want the 1 that was asked for", got)
+	}
+	// And the piece is in the key that gives it that: two flats, which is
+	// what the staff in C reads.
+	if got := h.app.score.Parts[0].Key.Fifths; got != -2 {
+		t.Errorf("the staff in C reads %d, want -2", got)
+	}
+}
+
+// The same, for a key change partway through.
+func TestAKeyChangePickedOnASaxophoneIsTheOneItReads(t *testing.T) {
+	h := newHarness(t)
+	h.post("/api/addmeasure")
+	h.post("/api/addmeasure")
+	h.post("/api/addstaff?instrument=alto%20sax")
+	h.post("/api/setkey?part=1&fifths=-1&at=2")
+
+	k := h.app.score.Parts[1].Measures[2].Key
+	if k == nil {
+		t.Fatal("the saxophone did not change key")
+	}
+	if k.Fifths != -1 {
+		t.Errorf("the saxophone changes to %d, want the 1 flat that was asked for", k.Fifths)
+	}
+}
+
+// But a staff showing concert pitch is already showing the key of the
+// piece, so there is nothing to undo.
+func TestOnAConcertPitchStaffTheKeyPickedIsThePiecesOwn(t *testing.T) {
+	h := newHarness(t)
+	h.post("/api/addstaff?instrument=alto%20sax")
+	h.post("/api/view?concert=1")
+	h.post("/api/setkey?part=1&fifths=1")
+
+	if got := h.app.score.Parts[0].Key.Fifths; got != 1 {
+		t.Errorf("the piece is in %d sharps, want 1", got)
+	}
+	// Which the saxophone reads as four, and its own staff says so as soon
+	// as the score is shown as written again.
+	if got := h.app.score.Parts[1].Key.Fifths; got != 4 {
+		t.Errorf("the saxophone reads %d sharps, want 4", got)
+	}
+}

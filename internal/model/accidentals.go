@@ -366,3 +366,94 @@ func accidentalFor(alter int) Accidental {
 	}
 	return NoAccidental
 }
+
+// AlterInForce is what a note written at a point in a bar is altered by when
+// nobody has said otherwise: whatever the bar has already done to that letter
+// in that octave, and the key signature where it has done nothing.
+//
+// This is the reading rule turned round. SpellAccidentals asks whether a note
+// needs a sign in front of it; a staff being written on asks the same
+// question from the other end, because the person writing is reading as they
+// go. A B written after a B flat in the same bar is a B flat — that is what
+// the player in front of it will read, and it is what the writer meant, or
+// they would have said otherwise.
+//
+// Answered with the key signature alone it comes out a B natural; and then,
+// correctly, a natural sign is printed in front of it to say so. Which is the
+// part that reads as a bug rather than a disagreement: a sign appears that
+// nobody asked for, on a note nobody altered, and the only way to be rid of
+// it is to flatten the note that was flat already.
+//
+// voice is which line of music on the staff, and at is where in that line the
+// note is going. Everything that starts before it is read first.
+func (p *Part) AlterInForce(bar, voice, at int, pitch Pitch) int {
+	if p == nil {
+		return 0
+	}
+	key := p.KeyAt(bar)
+	// A staff that prints no accidentals alters nothing: a fret number and
+	// a drum are not sharp or flat.
+	if !spellsAccidentals(p) {
+		return 0
+	}
+	plain := key.AlterFor(pitch.Step)
+	if bar < 0 || bar >= len(p.Measures) || p.Measures[bar] == nil {
+		return plain
+	}
+	m := p.Measures[bar]
+	if voice < 0 || voice >= len(m.Voices) || m.Voices[voice] == nil {
+		return plain
+	}
+
+	// When the new note starts, which is what decides how much of the bar
+	// is in front of it. Notes in another voice that start at the same
+	// moment are beside it rather than before it, and are left out: they
+	// are drawn in the same column, and which of them a reader meets first
+	// is not a thing the music says.
+	start := Duration{Num: 0, Den: 1}
+	for i, el := range m.Voices[voice].Elements {
+		if i >= at {
+			break
+		}
+		start = start.Add(el.Duration())
+	}
+
+	// Reading, not writing: nothing here touches a note. What a note did to
+	// its letter is its alteration — true of a tied note and of a grace
+	// note as much as of any other, since a reader meets them all the same
+	// way — and the last one before this point is what stands.
+	want := [2]int{int(pitch.Step), pitch.Octave}
+	alter := plain
+	read := func(n *Note) {
+		if n == nil {
+			return
+		}
+		if [2]int{int(n.Pitch.Step), n.Pitch.Octave} == want {
+			alter = n.Pitch.Alter
+		}
+	}
+	readGrace := func(g *GraceGroup) {
+		if g == nil {
+			return
+		}
+		for _, n := range g.Notes {
+			read(n)
+		}
+	}
+	for _, v := range m.Ordered() {
+		if v.At.Cmp(start) >= 0 {
+			break
+		}
+		switch el := v.El.(type) {
+		case *Note:
+			readGrace(el.Grace)
+			read(el)
+		case *Chord:
+			readGrace(el.Grace)
+			for _, n := range el.Notes {
+				read(n)
+			}
+		}
+	}
+	return alter
+}

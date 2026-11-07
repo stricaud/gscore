@@ -1079,13 +1079,25 @@
 <dialog id="score-about">
   <h2>About this score</h2>
   <form method="dialog" id="score-about-form">
-    <p class="small">Printed on the page.</p>
-    <label class="tempo-bar" for="score-about-title"><span>Title</span>
-      <input type="text" id="score-about-title" autocomplete="off"></label>
-    <label class="tempo-bar" for="score-about-subtitle"><span>Subtitle</span>
-      <input type="text" id="score-about-subtitle" autocomplete="off"></label>
-    <label class="tempo-bar" for="score-about-composer"><span>Composer</span>
-      <input type="text" id="score-about-composer" autocomplete="off"></label>
+    <!-- Everything but the buttons scrolls, so that Save is on the screen
+         whatever the window is the height of. See #score-about in
+         style.css, and #score-setup, which has the same shape. -->
+    <div class="about-body">
+    <p class="small">Printed on the page. Bold, italic, a colour and a size
+      are on the bar under each box, and Return starts a new line.</p>
+    <!-- Written in rather than typed out here: each of these is a box, a
+         label and a row of buttons, and four of them written by hand are
+         four chances for the fifth to be subtly different. See
+         richTextBox in app.js. -->
+    <div class="rich-field" data-field="title" data-label="Title"></div>
+    <div class="rich-field" data-field="subtitle" data-label="Subtitle"></div>
+    <div class="rich-field" data-field="composer" data-label="Composer"></div>
+    <!-- An arranger is not the composer and not a second line of them.
+         Every format worth reading keeps the two apart, and so does every
+         printed score: the music above, what was done to it below. -->
+    <div class="rich-field" data-field="arranger" data-label="Arranger"></div>
+    <!-- The copyright line is kept in the file and not printed on the
+         page, so there is nothing for a colour or a face to do to it. -->
     <label class="tempo-bar" for="score-about-copyright"><span>Copyright</span>
       <input type="text" id="score-about-copyright" autocomplete="off"></label>
     <hr>
@@ -1098,6 +1110,7 @@
       <input type="text" id="score-about-tags" autocomplete="off"
         placeholder="advent, flute duet, grade 3"></label>
     <div id="score-about-tagged" class="small"></div>
+    </div>
     <div class="ask-buttons">
       <button value="ok" type="submit" class="primary">Save</button>
       <button value="cancel" type="submit" formnovalidate>Cancel</button>
@@ -1526,6 +1539,10 @@
     </form>
   </div>
 
+  <!-- Everything between the heading and the buttons scrolls, so that the
+       button that does the thing is on the screen whatever the window is
+       the height of. See #score-setup in style.css. -->
+  <div class="setup-body">
   <div class="tempo-bar">
     <input type="search" id="setup-filter" autocomplete="off"
            placeholder="Search the instruments" aria-label="Search the instruments"
@@ -1572,6 +1589,7 @@
   <p class="small" id="setup-live" hidden>These are the staves in the score.
     Adding, removing and moving happen as you do them and Undo takes them
     back; the music stays where it is.</p>
+  </div>
 
   <!-- Two different things can be wanted here, and only one of them is
        destructive. Changing what the staves already in the score are playing
@@ -1579,7 +1597,12 @@
        ensemble and throws the music away. A score read out of a PDF arrives
        as so many staves of nothing in particular, and what it needs is the
        first of those, so that is the button that is offered. -->
+  <!-- What the piece is called belongs to the piece and not to who is
+       playing it, so it keeps its own window — but this is where a score
+       begins, and it is the moment somebody wants to name it. The window
+       opens over this one and leaves the staves picked here as they are. -->
   <div id="score-setup-bar">
+    <button type="button" id="setup-about">Title and composer…</button>
     <button type="button" id="setup-instruments" hidden>Set the instruments</button>
     <button type="button" id="setup-apply" class="primary">Make the staves</button>
   </div>

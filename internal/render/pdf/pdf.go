@@ -842,21 +842,60 @@ func (r *renderer) drawVectorSymbol(g engrave.Glyph, sym *symbol.Symbol) {
 	}
 }
 
+// face is the one of the four text faces a piece of writing is set in.
+func (r *renderer) face(bold, italic bool) *pdf.Font {
+	switch {
+	case bold && italic:
+		return r.textBoldItalic
+	case bold:
+		return r.textBold
+	case italic:
+		return r.textItalic
+	}
+	return r.text
+}
+
 func (r *renderer) drawTexts(top, bottom float64) {
 	for _, t := range r.lay.Texts {
 		if !visible(t.Y, top, bottom) {
 			continue
 		}
-		f := r.text
-		switch {
-		case t.Bold && t.Italic:
-			f = r.textBoldItalic
-		case t.Bold:
-			f = r.textBold
-		case t.Italic:
-			f = r.textItalic
-		}
+		f := r.face(t.Bold, t.Italic)
 		size := pdf.Point(t.Size) * r.s
+		// A line set in more than one style is laid out here rather than
+		// by the engraver, because this is where the real widths are: the
+		// pieces follow one another exactly, and the line is centred or
+		// ranged right by what it actually comes to.
+		if len(t.Runs) > 0 {
+			var rs []run
+			for _, piece := range t.Runs {
+				ps := size
+				if piece.Size > 0 {
+					ps = pdf.Point(piece.Size) * r.s
+				}
+				for _, one := range r.split(piece.S, r.face(piece.Bold, piece.Italic), ps) {
+					one.colour = piece.Colour
+					rs = append(rs, one)
+				}
+			}
+			lx := r.x(t.X)
+			switch t.Anchor {
+			case "middle":
+				lx -= r.width(rs) / 2
+			case "end":
+				lx -= r.width(rs)
+			}
+			r.drawRuns(rs, lx, r.y(t.Y))
+			continue
+		}
+		// Words with a colour of their own are printed in it, saved and
+		// restored around the drawing for the reason the glyphs are: a
+		// colour set and left runs on through the rest of the page.
+		cr, cg, cb, coloured := engrave.RGB(t.Colour)
+		if coloured {
+			r.page.Save()
+			r.page.SetFillRGB(cr, cg, cb)
+		}
 		// A line break in a text block — a composer credit over three lines —
 		// is drawn as the lines it is.
 		for i, line := range strings.Split(t.S, "\n") {
@@ -874,6 +913,9 @@ func (r *renderer) drawTexts(top, bottom float64) {
 				lx -= r.width(rs)
 			}
 			r.drawRuns(rs, lx, r.y(t.Y)-pdf.Point(i)*size*1.2)
+		}
+		if coloured {
+			r.page.Restore()
 		}
 	}
 }

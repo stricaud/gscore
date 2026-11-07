@@ -671,3 +671,50 @@ func TestAForcedAccidentalSurvivesARoundTrip(t *testing.T) {
 		t.Errorf("the sign became %v after respelling", n.Accidental)
 	}
 }
+
+// The header keeps its arranger and how it is set.
+func TestRoundTripKeepsTheCreditsAndHowTheyAreSet(t *testing.T) {
+	s := model.NewScore()
+	s.Identity = model.Identity{
+		Title:    "Sonata in G minor",
+		Composer: "Music by J. S. Bach",
+		Arranger: "A. Smith",
+		TitleRuns: []model.Span{
+			{Text: "Sonata "},
+			{Text: "in G minor", Italic: true, Size: 0.75},
+		},
+		ComposerRuns: []model.Span{
+			{Text: "Music by "},
+			{Text: "J. S. Bach", Bold: true, Colour: "#c01020"},
+		},
+	}
+
+	var buf bytes.Buffer
+	if err := Write(&buf, s, nil); err != nil {
+		t.Fatalf("writing: %v", err)
+	}
+	got, _, err := Read(bytes.NewReader(buf.Bytes()))
+	if err != nil {
+		t.Fatalf("reading: %v", err)
+	}
+
+	if got.Identity.Arranger != "A. Smith" {
+		t.Errorf("the arranger came back as %q", got.Identity.Arranger)
+	}
+	if len(got.Identity.TitleRuns) != 2 {
+		t.Fatalf("the title came back in %d pieces, want 2", len(got.Identity.TitleRuns))
+	}
+	if r := got.Identity.TitleRuns[1]; r.Text != "in G minor" || !r.Italic || r.Size != 0.75 {
+		t.Errorf("the second piece of the title came back as %+v", r)
+	}
+	if r := got.Identity.ComposerRuns[1]; r.Colour != "#c01020" || !r.Bold {
+		t.Errorf("the name came back as %+v", r)
+	}
+	// And a copy of the score shares none of it, or editing one would
+	// change the other.
+	clone := got.Clone()
+	clone.Identity.TitleRuns[0].Text = "changed"
+	if got.Identity.TitleRuns[0].Text != "Sonata " {
+		t.Error("a copy of the score shares its title's formatting with it")
+	}
+}

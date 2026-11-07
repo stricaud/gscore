@@ -1,6 +1,7 @@
 package app
 
 import (
+	"strconv"
 	"strings"
 	"testing"
 
@@ -65,11 +66,27 @@ func TestATypedSharpIsDrawn(t *testing.T) {
 	h := newHarness(t)
 	typed(h, "b#", "a", "b", "a")
 
+	// And the B after it is a B sharp too, with no sign of its own: an
+	// accidental holds to the end of its bar, and somebody writing is
+	// reading as they go. Typing a bare letter is not asking for the
+	// letter to be put back to what the key signature makes it.
+	if got, want := pitches(h), "B#3 A3 B#3 A3"; got != want {
+		t.Errorf("the file holds %q, want %q", got, want)
+	}
+	if got, want := signs(t, h), "#"; got != want {
+		t.Errorf("the page shows %q, want %q", got, want)
+	}
+}
+
+// Which is said by saying it: a natural is a thing you write, not a thing
+// that happens to a letter you did not spell.
+func TestANaturalIsWrittenWhenItIsAskedFor(t *testing.T) {
+	h := newHarness(t)
+	typed(h, "b#", "a", "bn", "a")
+
 	if got, want := pitches(h), "B#3 A3 B3 A3"; got != want {
 		t.Errorf("the file holds %q, want %q", got, want)
 	}
-	// And the natural that cancels it: an accidental holds to the end of
-	// its bar, so the third note needs a sign or it is read as B sharp too.
 	if got, want := signs(t, h), "# n"; got != want {
 		t.Errorf("the page shows %q, want %q", got, want)
 	}
@@ -108,45 +125,84 @@ func TestASignAgainstTheKeyIsWritten(t *testing.T) {
 }
 
 // An accidental holds for its own octave and not for the others.
-func TestAnAccidentalIsCancelledOnlyInItsOwnOctave(t *testing.T) {
+func TestAnAccidentalHoldsInItsOwnOctaveOnly(t *testing.T) {
 	h := newHarness(t)
 	typed(h, "f#4", "f5", "f4")
 
-	if got, want := pitches(h), "F#4 F5 F4"; got != want {
+	// The F in the octave above was never sharpened, so it is an F and
+	// needs no sign. The one that comes back to the sharpened octave is
+	// still sharp, and needs none either.
+	if got, want := pitches(h), "F#4 F5 F#4"; got != want {
 		t.Errorf("the file holds %q, want %q", got, want)
 	}
-	// The F in the octave above was never sharpened, so it needs no sign;
-	// the one that comes back to the sharpened octave does.
-	if got, want := signs(t, h), "# n"; got != want {
+	if got, want := signs(t, h), "#"; got != want {
 		t.Errorf("the page shows %q, want %q", got, want)
 	}
 }
 
-// A plain letter after an altered note of the same name needs the sign that
-// says so, however the note was put there.
-func TestAPlainNoteAfterAnAlteredOneIsCancelled(t *testing.T) {
+// A note written on a line an accidental has already altered takes the
+// alteration, and says nothing.
+//
+// Reported twice over. Clicking the same line again after flattening a B
+// gave a B natural and printed a natural in front of it: a sign nobody
+// asked for, on a note nobody altered, with nothing to take it off but
+// flattening a note that was flat already. What the person writing meant is
+// what the person reading will read, which is the whole of the rule.
+func TestANoteWrittenAfterAnAlteredOneTakesTheAlteration(t *testing.T) {
 	h := newHarness(t)
 	h.note(0, 0, 1, "quarter") // the F in the bottom space, by hand
 	h.post("/api/accidental?part=0&measure=0&at=1&accidental=sharp")
 	h.note(0, 0, 1, "quarter")
 
-	if got, want := pitches(h), "F#4 F4"; got != want {
+	if got, want := pitches(h), "F#4 F#4"; got != want {
 		t.Errorf("the file holds %q, want %q", got, want)
 	}
-	if got, want := signs(t, h), "# n"; got != want {
+	if got, want := signs(t, h), "#"; got != want {
 		t.Errorf("the page shows %q, want %q", got, want)
 	}
 }
 
-// Choosing a sign from the palette writes it, whether or not anything else
-// already said it: asking for a sharp is asking to see one.
-func TestAChosenAccidentalIsAlwaysWritten(t *testing.T) {
+// And a sign asked for twice over is printed once.
+//
+// Reported as three F naturals in a bar of a piece in G, each with a natural
+// in front of it, because each was asked for one by one. The first says
+// something — the key signature says sharp — and the two after it say what
+// the bar has already said.
+func TestASignAskedForAgainIsNotPrintedAgain(t *testing.T) {
+	h := newHarness(t)
+	h.post("/api/setkey?part=0&fifths=1") // G major: every F is sharp
+	for at := 1; at <= 3; at++ {
+		h.note(0, 0, 1, "quarter")
+		h.post("/api/accidental?part=0&measure=0&at=" + strconv.Itoa(at) +
+			"&accidental=natural")
+	}
+
+	if got, want := pitches(h), "F4 F4 F4"; got != want {
+		t.Errorf("the file holds %q, want %q", got, want)
+	}
+	if got, want := signs(t, h), "n"; got != want {
+		t.Errorf("the page shows %q, want %q", got, want)
+	}
+}
+
+// Choosing a sign from the palette says how the note sounds. Whether it is
+// printed is a question about the reader, and the answer is no when the
+// reader already knows.
+//
+// A sharp chosen in a key that sharpens that letter anyway is the note the
+// key already gives, so the page says nothing: the sign would be a second
+// opinion about a note nobody is in doubt over. A reminder that is wanted
+// regardless is what the brackets are for.
+func TestASignIsPrintedOnlyWhereItSaysSomething(t *testing.T) {
 	h := newHarness(t)
 	h.post("/api/setkey?part=0&fifths=1")
 	h.post("/api/insert?part=0&measure=0&at=-1&dur=quarter&kind=note&step=1&accidental=sharp")
 
-	if got, want := signs(t, h), "#"; got != want {
-		t.Errorf("the page shows %q, want %q", got, want)
+	if got, want := pitches(h), "F#4"; got != want {
+		t.Errorf("the file holds %q, want %q", got, want)
+	}
+	if got := signs(t, h); got != "" {
+		t.Errorf("the page shows %q, want nothing: the signature said it", got)
 	}
 }
 

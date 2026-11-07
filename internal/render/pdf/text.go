@@ -11,6 +11,7 @@
 package pdf
 
 import (
+	"github.com/stricaud/gscore/internal/engrave"
 	"github.com/stricaud/gscore/internal/pdf"
 	"github.com/stricaud/gscore/internal/smufl"
 )
@@ -88,6 +89,9 @@ type run struct {
 	s    string
 	size pdf.Point
 	dy   pdf.Point
+	// colour is a CSS colour this stretch is printed in, where it is not
+	// the ink the rest of the page is printed in.
+	colour string
 }
 
 // split cuts a line into the runs it is set in.
@@ -137,7 +141,17 @@ func (r *renderer) width(rs []run) pdf.Point {
 // drawRuns prints a line from a left baseline, each run after the last.
 func (r *renderer) drawRuns(rs []run, x, y pdf.Point) {
 	for _, s := range rs {
-		r.page.Text(s.f, s.size, x, y+s.dy, s.s)
+		// A stretch with a colour of its own is printed in it, saved and
+		// restored around the drawing so the colour lasts exactly as long
+		// as the words: set and left, it runs on through the page.
+		if cr, cg, cb, ok := engrave.RGB(s.colour); ok {
+			r.page.Save()
+			r.page.SetFillRGB(cr, cg, cb)
+			r.page.Text(s.f, s.size, x, y+s.dy, s.s)
+			r.page.Restore()
+		} else {
+			r.page.Text(s.f, s.size, x, y+s.dy, s.s)
+		}
 		x += r.page.TextWidth(s.f, s.size, s.s)
 	}
 }

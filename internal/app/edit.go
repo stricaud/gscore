@@ -262,7 +262,6 @@ func (a *App) handleInsert(w http.ResponseWriter, r *http.Request) {
 			named = false
 		}
 
-		key := p.KeyAt(measIdx)
 		// Whether the sign was asked for, which has to be noted before the
 		// switch below works one out: a sign somebody chose stands, and a
 		// sign this worked out is SpellAccidentals' to correct. Read after
@@ -272,23 +271,44 @@ func (a *App) handleInsert(w http.ResponseWriter, r *http.Request) {
 		chosen := acc != model.NoAccidental
 		switch {
 		case chosen:
-			// Chosen from the palette, so it is written whether or not the
-			// signature already said it: asking for a sharp is asking to
-			// see one. The sign decides how the note sounds.
+			// Chosen from the palette: the sign decides how the note
+			// sounds. Whether it is printed is another question, and not
+			// this one's — see below.
 			pitch.Alter = acc.Semitones()
 		case spelled || (named && hasAccidental(q.Get("pitch"))):
 			// Spelled already — as it was typed, or as the key spells the
 			// note that was played — so the pitch stands as it is.
 		default:
-			// A bare letter: the key says how it sounds.
-			pitch.Alter = key.AlterFor(pitch.Step)
+			// A bare letter: the bar says how it sounds. That is the key
+			// signature where nothing has happened yet, and whatever an
+			// accidental earlier in the bar made of that letter where
+			// something has — a B written after a B flat is a B flat,
+			// because that is what the player will read and what the
+			// writer, reading as they go, meant.
+			//
+			// The key alone put a B natural there, and then the page
+			// printed a natural in front of it to say so: a sign nobody
+			// asked for, on a note nobody altered, with nothing to take it
+			// off but flattening a note that was flat already.
+			before := at
+			if before < 0 || before > len(v.Elements) {
+				before = len(v.Elements)
+			}
+			pitch.Alter = p.AlterInForce(measIdx, 0, before, pitch)
 		}
-		// Asked for from the palette, so it stands: SpellAccidentals works
-		// out the signs nobody chose and leaves the chosen ones alone.
-		// Without this, a sharp asked for in a key that already has one
-		// would be rubbed out as redundant — which it is, and asking for
-		// it is asking to see it anyway.
-		el = &model.Note{Pitch: pitch, Dur: dur, Accidental: acc, Forced: chosen}
+		// A sign is printed when it tells the reader something they do not
+		// already know, and that is all. Asking for a natural on a note
+		// that is natural already is asking for the note to be natural,
+		// not for a sign saying so — and a bar of three F naturals, each
+		// with its own sign because each was asked for, is not a bar
+		// anybody wrote.
+		//
+		// So nothing here is forced and SpellAccidentals decides: the first
+		// of those three prints its natural, because the key signature says
+		// sharp, and the two after it print nothing, because by then the
+		// bar has said it. A sign that is wanted anyway — a reminder in a
+		// later bar — is what the brackets are for.
+		el = &model.Note{Pitch: pitch, Dur: dur, Accidental: acc}
 	}
 
 	if at < 0 || at > len(v.Elements) {
@@ -1094,14 +1114,19 @@ func (a *App) handleAccidental(w http.ResponseWriter, r *http.Request) {
 		default:
 			n.Accidental = acc
 		}
-		// A sign chosen here stands, and taking one away hands the
-		// question back to the rules of notation.
+		// What was chosen here is how the note sounds. Whether a sign is
+		// printed in front of it is for the rules of notation, which is
+		// where SpellAccidentals leaves it: a sign is drawn when it tells
+		// the reader something the key signature and the bar so far have
+		// not already told them.
 		//
-		// Those rules may still want a sign: clearing the second of two F
-		// sharps in a bar leaves an F natural, which has to say so, and
-		// SpellAccidentals writes the natural. What is given back is the
-		// decision, not the blank.
-		n.Forced = n.Accidental != model.NoAccidental
+		// Those rules may still want a sign where none was asked for:
+		// clearing the second of two F sharps in a bar leaves an F
+		// natural, which has to say so. And they may want none where one
+		// was: asking for a natural on a note already natural changes
+		// nothing, so nothing is printed. A reminder that is wanted anyway
+		// is what the brackets are for.
+		n.Forced = false
 
 		// Brackets belong to a sign. Taking the sign away takes them with
 		// it, or the next sign written there arrives already bracketed.
@@ -1793,8 +1818,48 @@ func (a *App) handleHeader(w http.ResponseWriter, r *http.Request) {
 	if q.Has("composer") {
 		a.score.Identity.Composer = q.Get("composer")
 	}
+	if q.Has("arranger") {
+		a.score.Identity.Arranger = q.Get("arranger")
+	}
 	if q.Has("copyright") {
 		a.score.Identity.Copyright = q.Get("copyright")
+	}
+	// And how those four are set, where the window that sent them knows.
+	// The words and their formatting arrive together or not at all: a
+	// caller that sends a field and no runs for it is saying the field is
+	// plain, which is what clearing them says.
+	for _, f := range []struct {
+		name string
+		into *[]model.Span
+	}{
+		{"title", &a.score.Identity.TitleRuns},
+		{"subtitle", &a.score.Identity.SubtitleRuns},
+		{"composer", &a.score.Identity.ComposerRuns},
+		{"arranger", &a.score.Identity.ArrangerRuns},
+	} {
+		if !q.Has(f.name) {
+			continue
+		}
+		*f.into = nil
+		raw := q.Get(f.name + "Runs")
+		if raw == "" {
+			continue
+		}
+		var runs []model.Span
+		if err := json.Unmarshal([]byte(raw), &runs); err != nil {
+			http.Error(w, "the formatting of the "+f.name+" is not readable",
+				http.StatusBadRequest)
+			return
+		}
+		// Formatting that does not spell the words it is formatting is not
+		// formatting of them. Refused here rather than at the far end,
+		// where all that can be done about it is to ignore it silently.
+		if model.PlainSpans(runs) != q.Get(f.name) {
+			http.Error(w, "the formatting of the "+f.name+
+				" does not spell the "+f.name, http.StatusBadRequest)
+			return
+		}
+		*f.into = runs
 	}
 	// Tags come as one line, the way somebody types them, and are split
 	// here rather than in the editor: a shelf built from the files has to

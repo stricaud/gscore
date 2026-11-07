@@ -1310,7 +1310,13 @@ func readHeader(s *model.Score, doc *scorePartwise) {
 			if subtitle == "" {
 				subtitle = c.text()
 			}
-		case "composer", "arranger", "lyricist", "poet":
+		case "arranger":
+			// Its own field, not a line of the composer's name. The two
+			// are different people and every format worth reading says so.
+			if strings.TrimSpace(s.Identity.Arranger) == "" {
+				s.Identity.Arranger = c.text()
+			}
+		case "composer", "lyricist", "poet":
 			credit = append(credit, lines...)
 		case "rights":
 			if strings.TrimSpace(s.Identity.Copyright) == "" {
@@ -1332,11 +1338,21 @@ func readHeader(s *model.Score, doc *scorePartwise) {
 			seen[strings.ToLower(v)] = true
 			credit = append(credit, v)
 		}
-		for _, want := range []string{"composer", "lyricist", "poet", "arranger", ""} {
+		for _, want := range []string{"composer", "lyricist", "poet", ""} {
 			for _, c := range doc.Ident.Creators {
 				if strings.EqualFold(strings.TrimSpace(c.Type), want) {
 					add(c.Name)
 				}
+			}
+		}
+	}
+
+	// The arranger, where the page did not say it and the catalogue does.
+	if strings.TrimSpace(s.Identity.Arranger) == "" && doc.Ident != nil {
+		for _, c := range doc.Ident.Creators {
+			if strings.EqualFold(strings.TrimSpace(c.Type), "arranger") {
+				s.Identity.Arranger = strings.TrimSpace(c.Name)
+				break
 			}
 		}
 	}

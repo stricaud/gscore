@@ -64,6 +64,7 @@ MACOSX_DEPLOYMENT_TARGET="$min" swiftc \
 	ui/macosx/Sources/*.swift \
 	"$lib/libgscore.a" \
 	-framework Cocoa -framework WebKit -framework UniformTypeIdentifiers \
+	-framework PDFKit \
 	-lresolv \
 	-o "$out" 2>&1 | grep -v 'was built for newer' || true
 

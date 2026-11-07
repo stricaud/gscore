@@ -24,6 +24,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate,
     private var window: NSWindow!
     private var web: WKWebView!
     private var ready = false
+    /// Where the editor is served from. Kept because the page asks for more
+    /// than the page: printing fetches the same document the PDF export
+    /// writes, and a path on its own is not something URLSession can fetch.
+    private var base: URL!
     /// A file the Finder handed us before the editor had started. Opening it
     /// has to wait, and dropping it would mean double-clicking a score
     /// sometimes opened an empty one.
@@ -37,6 +41,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate,
             return
         }
 
+        base = url
+
         let config = WKWebViewConfiguration()
         // The editor saves through its own panels and keeps nothing in the
         // page, so a fresh store every launch is one less thing to go stale.
@@ -47,8 +53,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate,
         // plain window, and in here that is the second menu bar on the
         // screen — the same commands twice, one of them in the wrong place
         // for a Mac. It hides its own and uses ours.
+        //
+        // And that printing is ours as well. A web view has no print panel
+        // behind it, so the page's own way of printing — opening the pages in
+        // another window and asking that to print itself — shows nothing at
+        // all in here. Told this, it hands the job over instead. See
+        // Printing.
         config.userContentController.addUserScript(WKUserScript(
-            source: "window.gscoreNativeMenu = true;",
+            source: "window.gscoreNativeMenu = true; window.gscoreNativePrint = true;",
             injectionTime: .atDocumentStart,
             forMainFrameOnly: true))
 
@@ -204,6 +216,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate,
             // never hears about the editing that follows, and never hears
             // about a file opened from inside the editor at all.
             window.title = String(title.dropFirst("title:".count)) + " — Gscore"
+        case let what where what.hasPrefix("print:"):
+            // What to print was decided in the editor's own dialog — the
+            // tune, the book or the parts, counted rests, concert pitch —
+            // and arrives as the address that answers with those pages.
+            Printing.show(path: String(what.dropFirst("print:".count)),
+                          base: base, over: window)
         default:
             break
         }

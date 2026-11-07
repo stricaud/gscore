@@ -12462,10 +12462,23 @@ async function printScore() {
     (choice.multiRests ? "&multirest=1" : "") +
     (choice.concert ? "&concert=1" : "");
 
-  // A native window has no print machinery and window.open returns nothing
-  // without a UI delegate, so printing is handed to the real browser, which
-  // has both. The page it opens prints itself.
+  // A native window has no print machinery: window.print() does nothing and
+  // window.open answers with nothing, so none of what follows can work in
+  // there.
   if (state.info?.local && state.info?.native) {
+    // Where the application can print for us, it does, and it prints the
+    // PDF rather than this page: the engraver has already cut those pages
+    // to the paper, so the panel's preview is the sheet that comes out.
+    if (window.gscoreNativePrint && window.webkit?.messageHandlers?.gscore) {
+      window.webkit.messageHandlers.gscore.postMessage("print:/api/pdf?what=" +
+        encodeURIComponent(choice.what) +
+        (choice.multiRests ? "&multirest=1" : "") +
+        (choice.concert ? "&concert=1" : ""));
+      status("Opening the print panel…");
+      return;
+    }
+    // And where it cannot — an older application than this page — the
+    // pages go to the real browser, which has both. It prints itself.
     const res = await fetch("/api/openbrowser?path=" + encodeURIComponent(path),
                             { method: "POST" });
     status(res.ok ? "Opened the print view in your browser"

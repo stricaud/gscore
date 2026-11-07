@@ -49,6 +49,7 @@ func (a *App) handleHits(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{
 		"hits":        lay.Hits,
 		"dynamics":    lay.Dynamics,
+		"textMarks":   lay.TextMarks,
 		"chords":      lay.Chords,
 		"tempos":      lay.Tempos,
 		"hairpins":    lay.Hairpins,
@@ -1099,7 +1100,41 @@ func (a *App) handleAccidental(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	// How many of them came out with a sign nothing in the music required,
+	// and how many had such a sign taken off again. The editor says so in
+	// the status bar: the sign is drawn because it was asked for, and
+	// somebody should be told that is why.
+	forced, unforced := 0, 0
 	for _, n := range notes {
+		inForce := n.inForce()
+
+		// A sign that says what the reader already knows.
+		//
+		// Asking for a sharp on an F in a key that sharpens every F changes
+		// nothing about the music, so the only thing it can mean is print
+		// it: a beginner reading the part has not learnt the signature yet,
+		// and the teacher writing it out wants the sign there. Asking again
+		// takes it off, which is the way back that this did not have.
+		//
+		// It is the only case where a sign is drawn against the rules of
+		// notation, and it is deliberate on somebody's part every time.
+		if cycle == "" && acc != model.NoAccidental &&
+			acc.Semitones() == n.Pitch.Alter && n.Pitch.Alter == inForce {
+			n.Forced = !n.Forced
+			if n.Forced {
+				n.Accidental = acc
+				forced++
+				if parens != "" {
+					n.Parens = parens == "on" || parens == "1"
+				}
+			} else {
+				n.Accidental = model.NoAccidental
+				n.Parens = false
+				unforced++
+			}
+			continue
+		}
+
 		switch {
 		case cycle == "up":
 			n.Accidental = sharpenBy(n.Accidental, 1)
@@ -1122,10 +1157,7 @@ func (a *App) handleAccidental(w http.ResponseWriter, r *http.Request) {
 		//
 		// Those rules may still want a sign where none was asked for:
 		// clearing the second of two F sharps in a bar leaves an F
-		// natural, which has to say so. And they may want none where one
-		// was: asking for a natural on a note already natural changes
-		// nothing, so nothing is printed. A reminder that is wanted anyway
-		// is what the brackets are for.
+		// natural, which has to say so.
 		n.Forced = false
 
 		// Brackets belong to a sign. Taking the sign away takes them with
@@ -1135,22 +1167,43 @@ func (a *App) handleAccidental(w http.ResponseWriter, r *http.Request) {
 		} else if parens != "" {
 			n.Parens = parens == "on" || parens == "1"
 		}
-		// The written accidental decides how the note sounds. Taking one away
-		// hands that decision back to the key signature.
+		// The written accidental decides how the note sounds. Taking one
+		// away hands that decision back to the bar: the key signature, and
+		// whatever an accidental earlier in it has already made of this
+		// letter.
 		if n.Accidental == model.NoAccidental {
-			n.Pitch.Alter = n.key.AlterFor(n.Pitch.Step)
+			n.Pitch.Alter = inForce
 		} else {
 			n.Pitch.Alter = n.Accidental.Semitones()
 		}
 	}
-	writeJSON(w, map[string]int{"changed": len(notes)})
+	writeJSON(w, map[string]int{
+		"changed": len(notes), "forced": forced, "unforced": unforced,
+	})
 }
 
-// keyedNote is a note together with the key signature in force where it sits,
-// which is what an accidental has to be removed back to.
+// keyedNote is a note together with where it sits, which is what says what
+// an accidental on it would mean and what taking one off would leave.
 type keyedNote struct {
 	*model.Note
 	key model.KeySignature
+	// Where it is, for asking the bar what this letter has already been
+	// made into — see model.Part.AlterInForce. A note with no place is a
+	// note read out of a selection that has since moved, and falls back
+	// to the key signature.
+	part    *model.Part
+	measure int
+	index   int
+}
+
+// inForce is what this note's letter is altered by where it stands, when
+// nobody has said otherwise: the key signature, and whatever an accidental
+// earlier in the bar has made of it.
+func (n keyedNote) inForce() int {
+	if n.part == nil {
+		return n.key.AlterFor(n.Pitch.Step)
+	}
+	return n.part.AlterInForce(n.measure, 0, n.index, n.Pitch)
 }
 
 // notesOf resolves a selection to the notes in it, a chord counting as all of
@@ -1177,10 +1230,11 @@ func (a *App) notesOf(q url.Values) ([]keyedNote, error) {
 	}
 
 	var out []keyedNote
-	collect := func(p *model.Part, measure int, el model.Element, head *int) {
+	collect := func(p *model.Part, measure, index int, el model.Element, head *int) {
 		switch e := el.(type) {
 		case *model.Note:
-			out = append(out, keyedNote{e, p.Key})
+			out = append(out, keyedNote{Note: e, key: p.Key,
+				part: p, measure: measure, index: index})
 		case *model.Chord:
 			// A tablature staff writes fret numbers where noteheads would
 			// go, and their height is which string rather than which pitch.
@@ -1197,7 +1251,8 @@ func (a *App) notesOf(q url.Values) ([]keyedNote, error) {
 				if one != nil && engrave.StaffStep(clef, n.Pitch) != *one {
 					continue
 				}
-				out = append(out, keyedNote{n, p.Key})
+				out = append(out, keyedNote{Note: n, key: p.Key,
+					part: p, measure: measure, index: index})
 			}
 		}
 	}
@@ -1219,7 +1274,7 @@ func (a *App) notesOf(q url.Values) ([]keyedNote, error) {
 			if t.index < 0 || t.index >= len(v.Elements) {
 				continue
 			}
-			collect(p, t.measure, v.Elements[t.index], head)
+			collect(p, t.measure, t.index, v.Elements[t.index], head)
 		}
 		if len(out) == 0 {
 			if head != nil {
@@ -1247,7 +1302,7 @@ func (a *App) notesOf(q url.Values) ([]keyedNote, error) {
 	if at <= 0 || at > len(v.Elements) {
 		at = len(v.Elements)
 	}
-	collect(p, measIdx, v.Elements[at-1], head)
+	collect(p, measIdx, at-1, v.Elements[at-1], head)
 	if len(out) == 0 {
 		if head != nil {
 			return nil, editError("there is no notehead there")
@@ -2923,15 +2978,39 @@ func (a *App) handleText(w http.ResponseWriter, r *http.Request) {
 	case "above":
 		place = model.PlacementAbove
 	}
-	for _, m := range marks {
-		if text == "" {
-			m.Texts = nil
-			continue
+	// Which of the note's texts this is about, where the editor is working
+	// on one it picked up by clicking it. A note may carry more than one —
+	// "pizz." over the staff and "dolce" under it — and changing the one
+	// somebody pointed at must leave the other where it is.
+	index := -1
+	if v := q.Get("index"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 0 {
+			http.Error(w, "index is which of the note's texts", http.StatusBadRequest)
+			return
 		}
-		m.Texts = append(m.Texts, model.TextMark{
-			Text: text, Style: style, Placement: place,
-			Italic: q.Get("italic") == "1", Bold: q.Get("bold") == "1",
-		})
+		index = n
+	}
+
+	for _, m := range marks {
+		switch {
+		case index >= 0 && index < len(m.Texts) && text == "":
+			// The one that was pointed at goes, and the rest stay.
+			m.Texts = append(m.Texts[:index:index], m.Texts[index+1:]...)
+		case text == "":
+			m.Texts = nil
+		case index >= 0 && index < len(m.Texts):
+			m.Texts[index] = model.TextMark{
+				Text: text, Style: style, Placement: place,
+				Italic: q.Get("italic") == "1", Bold: q.Get("bold") == "1",
+				OffsetX: m.Texts[index].OffsetX, OffsetY: m.Texts[index].OffsetY,
+			}
+		default:
+			m.Texts = append(m.Texts, model.TextMark{
+				Text: text, Style: style, Placement: place,
+				Italic: q.Get("italic") == "1", Bold: q.Get("bold") == "1",
+			})
+		}
 		// Words go on one note, not on every note of a passage.
 		break
 	}
@@ -4330,12 +4409,142 @@ func restsGivenBack(freed model.Duration, actual, normal int) []model.Element {
 // Fewer notes than the group needs is not an error either: a group of three
 // asked for on two eighths is a triplet with its third member still to be
 // written, and it comes in as a rest.
+// drawBackSpill brings the end of a run back from the bar it ran into, when
+// reading it as a tuplet makes room for it where it was written.
+//
+// The shape it answers to is the one writing a tuplet makes: some notes at
+// the end of a bar, the rest at the start of the next, nothing in between
+// and nothing of anybody else's among them. If the group is shorter once it
+// is read as n in the time of normal — which is every tuplet that is not a
+// duplet — and that length fits where the run began, the stragglers are
+// moved back and the selection comes back pointing at them.
+//
+// Anything else is left exactly as it was, for the caller to refuse: a
+// tuplet across a barline is not a thing notation can write, and moving
+// somebody's music about to make one would be worse than saying no.
+func drawBackSpill(p *model.Part, measIdx int, sorted []target, n int) ([]target, int, error) {
+	home := sorted[0].measure
+	if home < 0 || home >= len(p.Measures) {
+		return sorted, measIdx, editError("the selection is not in this score any more")
+	}
+	var spilled []target
+	for _, t := range sorted {
+		switch t.measure {
+		case home:
+			if len(spilled) > 0 {
+				// Back in the first bar after leaving it, which is not a
+				// run at all.
+				return sorted, measIdx, nil
+			}
+		case home + 1:
+			spilled = append(spilled, t)
+		default:
+			return sorted, measIdx, nil
+		}
+	}
+	if len(spilled) == 0 {
+		return sorted, home, nil
+	}
+
+	from, into := p.Measures[home], p.Measures[home+1]
+	if from == nil || into == nil || len(from.Voices) == 0 || len(into.Voices) == 0 {
+		return sorted, measIdx, nil
+	}
+	head, tail := from.Voices[0], into.Voices[0]
+	if head == nil || tail == nil {
+		return sorted, measIdx, nil
+	}
+
+	// The stragglers have to be the start of the bar they are in, and what
+	// they left behind has to be the end of the bar they came from, or this
+	// is not one run of notes with a barline through it.
+	for i, t := range spilled {
+		if t.index != i {
+			return sorted, measIdx, nil
+		}
+	}
+	kept := sorted[:len(sorted)-len(spilled)]
+	for i, t := range kept {
+		if t.index != len(head.Elements)-len(kept)+i {
+			return sorted, measIdx, nil
+		}
+	}
+
+	// Does it fit? The group's own length once it is read as a tuplet,
+	// against the room left in the bar it was written in.
+	normal := tupletNormal(n)
+	group := model.Duration{Num: 0, Den: 1}
+	for _, t := range kept {
+		group = group.Add(head.Elements[t.index].Duration())
+	}
+	for _, t := range spilled {
+		group = group.Add(tail.Elements[t.index].Duration())
+	}
+	pad := model.Duration{Num: 0, Den: 1}
+	if len(sorted) < n {
+		first := head.Elements[kept[0].index].Duration()
+		for i := len(sorted); i < n; i++ {
+			pad = pad.Add(first)
+		}
+	}
+	after := group.Add(pad).Scale(normal, n).Reduced()
+
+	before := model.Duration{Num: 0, Den: 1}
+	for i, el := range head.Elements {
+		if i >= len(head.Elements)-len(kept) {
+			break
+		}
+		before = before.Add(el.Duration())
+	}
+	if before.Add(after).Cmp(p.TimeAt(home).BarDuration()) > 0 {
+		return sorted, measIdx, nil
+	}
+
+	// Home they come, in the order they were written.
+	moved := make([]model.Element, len(spilled))
+	for i := range spilled {
+		moved[i] = tail.Elements[i]
+	}
+	tail.Elements = append([]model.Element{}, tail.Elements[len(spilled):]...)
+	head.Elements = append(head.Elements, moved...)
+
+	out := make([]target, 0, len(sorted))
+	for i := len(head.Elements) - len(sorted); i < len(head.Elements); i++ {
+		out = append(out, target{part: sorted[0].part, measure: home, index: i})
+	}
+	return out, home, nil
+}
+
 func tupletFromSelection(p *model.Part, measIdx int, targets []target, n int) (normal, members int, freed model.Duration, err error) {
 	freed = model.Duration{Num: 0, Den: 1}
 	sorted := append([]target{}, targets...)
-	sort.Slice(sorted, func(i, j int) bool { return sorted[i].index < sorted[j].index })
+	sort.Slice(sorted, func(i, j int) bool {
+		if sorted[i].measure != sorted[j].measure {
+			return sorted[i].measure < sorted[j].measure
+		}
+		return sorted[i].index < sorted[j].index
+	})
 	for _, t := range sorted {
-		if t.part != sorted[0].part || t.measure != measIdx {
+		if t.part != sorted[0].part {
+			return 0, 0, freed, editError("a tuplet is made out of one staff")
+		}
+	}
+
+	// A run that ran over the barline while it was being written.
+	//
+	// Three eighths take a beat and a half, and as a triplet they take one:
+	// the group that would not fit before the figure was asked for fits
+	// after it. So writing the third note of a triplet at the end of a bar
+	// puts it in the next bar — there is nowhere else for it to go yet —
+	// and asking for the triplet brings it home, which is what the asking
+	// meant. Refusing it, which is what this did, left somebody with three
+	// notes across a barline and no way to say what they are.
+	sorted, measIdx, err = drawBackSpill(p, measIdx, sorted, n)
+	if err != nil {
+		return 0, 0, freed, err
+	}
+	for _, t := range sorted {
+		if t.measure != measIdx {
 			return 0, 0, freed, editError("a tuplet is made out of one bar of one staff")
 		}
 	}

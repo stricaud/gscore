@@ -997,3 +997,34 @@ func TestTheGuessAtTheStaffGroupingCanBeSeenAndOverruled(t *testing.T) {
 		t.Error("nothing makes the wide dialog wide")
 	}
 }
+
+// Nothing in the editor may take a parameter called by the name of a helper
+// it goes on to use.
+//
+// saveScore took a boolean called ask, which is also the name of the
+// function that asks a question in a window — so in the one case that has
+// to ask where a file goes, a browser with no system save panel, Save
+// called a boolean and threw. The menu entry did nothing and said nothing.
+//
+// The helpers are few and their names are short, which is what makes this
+// worth checking rather than trusting: ask, status, action.
+func TestNoParameterShadowsAHelper(t *testing.T) {
+	js := readUI(t, "app.js")
+	helpers := []string{"ask", "status", "action", "mark"}
+	decl := regexp.MustCompile(`function\s+(\w+)\s*\(([^)]*)\)`)
+	for _, m := range decl.FindAllStringSubmatch(js, -1) {
+		for _, param := range strings.Split(m[2], ",") {
+			name := strings.TrimSpace(param)
+			if i := strings.IndexAny(name, "=:"); i >= 0 {
+				name = strings.TrimSpace(name[:i])
+			}
+			name = strings.TrimPrefix(name, "...")
+			for _, helper := range helpers {
+				if name == helper {
+					t.Errorf("%s takes a parameter called %q, "+
+						"which is the helper of that name", m[1], helper)
+				}
+			}
+		}
+	}
+}

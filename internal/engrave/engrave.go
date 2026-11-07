@@ -261,6 +261,17 @@ type Layout struct {
 	// find was on the staff.
 	Dynamics []DynamicPos `json:"dynamics"`
 
+	// TextMarks are where the words written on a note ended up, so a click
+	// on them reaches them.
+	//
+	// The same reason as the dynamics, and the same shape of complaint:
+	// words can be written beside a note and then there is no way back to
+	// them, because they are not where the note is — they are as far above
+	// or below the staff as that stretch of music pushed them, and only
+	// the engraver knows how far that was. Written and then unreachable is
+	// worse than not written.
+	TextMarks []TextPos `json:"textMarks"`
+
 	// Arcs are where the ties and the slurs were drawn.
 	//
 	// A curve belongs to the two notes at its ends and to neither of the
@@ -423,6 +434,32 @@ type DynamicPos struct {
 	Height float64 `json:"height"`
 	// Name is the dynamic as the editor spells it, "ff" and the like.
 	Name string `json:"name"`
+}
+
+// TextPos is where one text mark was drawn, and what it says.
+//
+// It carries the mark itself as well as its box, so that the window that
+// edits it can open on what is there rather than on an empty field: the
+// words, what kind of writing they are, and which side of the staff they
+// were asked for.
+type TextPos struct {
+	Part    int `json:"part"`
+	Measure int `json:"measure"`
+	// Ref is the element the words are written on, and Index which of that
+	// element's texts this is — a note may carry more than one.
+	Ref   int `json:"ref"`
+	Index int `json:"index"`
+	// The box the words occupy: x and y are its top left corner.
+	X      float64 `json:"x"`
+	Y      float64 `json:"y"`
+	Width  float64 `json:"width"`
+	Height float64 `json:"height"`
+
+	Text  string `json:"text"`
+	Style string `json:"style"`
+	// Place is "above", "below", or empty where the kind of writing
+	// decides.
+	Place string `json:"place,omitempty"`
 }
 
 // Hit is one measure's region on the page, in staff spaces.

@@ -106,6 +106,10 @@ Open these once per piece, early.
 - **Score setup…** — who is playing. Pick the instruments and Gscore lays the
   staves out in score order, brackets each family, and gives the piano its two
   staves. This is the fastest way to start anything bigger than a tune.
+- **Rehearsal marks…** — what the marks in the sequence are called:
+  letters, numbers, or the number of the bar each one stands on. The last
+  is also offered when you put a mark in, so a mark that says its own bar
+  needs no typing and goes on being right when bars move.
 - **About this score…** — what it is called and who wrote it: title,
   subtitle, composer, arranger. Each is a small rich text box, because a
   printed credit is set as well as typed — "Music by" plain and the name
@@ -113,8 +117,11 @@ Open these once per piece, early.
   title. Bold, italic, a size and a colour are on the bar over each box and
   Return starts a new line. Under the rule are the description and tags,
   which are kept in the file and never printed.
-- **Set tempo…**, **Key signature…**, **Time signature from here…** — the
-  obvious three, and the last one means *from here*, not *everywhere*. The
+- **Set tempo…**, **Key signature from here…**, **Time signature from
+  here…** — the obvious three. Both signatures mean *from here*: picked on
+  bar one they are what the piece is in, and picked anywhere else they are a
+  change written at that bar and holding to the end. The window says which
+  it is doing before you commit to it. The
   key you pick is the one that staff reads: on a transposing staff — an alto
   saxophone, a clarinet — asking for one sharp puts one sharp in front of
   that player, and every other staff gets the same key in its own reading of

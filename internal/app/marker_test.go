@@ -118,3 +118,39 @@ func TestAPartOnItsOwnKeepsTheMark(t *testing.T) {
 		t.Errorf("the score says B %d times, want once", n)
 	}
 }
+
+// Asking for a mark that says the number of its bar sets both at once: the
+// mark, and the way the score names the marks in its sequence.
+//
+// It is offered where the mark is put in and not only in the window that
+// sets the style, because that is where somebody is standing when they want
+// it — and the alternative they were reaching for, typing the number in by
+// hand, writes a mark that stops being true the moment a bar is put in
+// before it.
+func TestAMarkCanBeAskedForByItsBarNumber(t *testing.T) {
+	a := markerBand(t, 2, 12)
+	h := mounted(t, a)
+	h.post("/api/marker?measure=8&auto=1&style=bars")
+
+	if got := a.score.Markers.String(); got != "bars" {
+		t.Errorf("the marks are named by %q, want bars", got)
+	}
+	// The bar is in the sequence, which is what makes the name follow it
+	// rather than being written down once.
+	if !a.score.Parts[0].Measures[8].MarkerAuto {
+		t.Fatal("the bar was not put in the sequence")
+	}
+	named := a.score.RehearsalMarks(engrave.BarNumbers(a.score))
+	if got := named[8]; got != "9" {
+		t.Errorf("the mark at bar 9 is called %q, want 9", got)
+	}
+
+	// And it goes on being the number of its bar. A mark somebody typed
+	// out as "9" would still say 9 after a bar was put in front of it,
+	// which is the mistake this exists to stop.
+	h.post("/api/insertmeasure?measure=0")
+	named = a.score.RehearsalMarks(engrave.BarNumbers(a.score))
+	if got := named[9]; got != "10" {
+		t.Errorf("after a bar was put in, the mark is called %q, want 10", got)
+	}
+}

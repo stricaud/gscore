@@ -16,8 +16,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>gscore — music you can send to anyone</title>
-<meta name="description" content="A free, MIT-licensed music score editor. Write music, hear it, and share it as a link that holds the notes themselves — no account, no upload, no server.">
+<title>gscore — write music fast</title>
+<meta name="description" content="A free, MIT-licensed music score editor built for writing music quickly: type a bar in a second, one key per note value, no dialog in the way. Then send it as a link that holds the notes themselves — no account, no upload, no server.">
 <link rel="icon" href="icon.png">
 <link rel="stylesheet" href="site.css">
 </head>
@@ -36,10 +36,15 @@
 <main>
 
 <section class="hero">
-  <h1>Music you can send to&nbsp;anyone.</h1>
+  <h1>Write music as fast as you can&nbsp;think&nbsp;it.</h1>
   <p class="lead">
-    No account. No upload. No server at all — a gscore link <em>is</em> the
-    music. Press play, change it, then copy the link and paste it to someone.
+    gscore is a score editor built around one thing: getting the notes down
+    quickly. One key per note value, one key per mark, a typing bar that
+    writes a whole bar in a second — and nothing in the way while you work.
+  </p>
+  <p class="lead second">
+    Then send it to anyone. No account, no upload, no server at all — a
+    gscore link <em>is</em> the music.
   </p>
 
   <div class="player">
@@ -70,6 +75,58 @@
     </div>
 
   </div>
+</section>
+
+<!-- Said by showing. A claim about speed that a visitor cannot check is a
+     claim they have no reason to believe, and these are the four things
+     somebody notices in their first ten minutes. -->
+<section class="fast">
+  <h2>What "fast" means here</h2>
+  <div class="grid">
+    <article>
+      <h3>A bar in a second</h3>
+      <p>
+        Press <kbd>⌘K</kbd> and type <code>8abcdef</code> — six eighth notes,
+        climbing. A length, then the notes, and the length sticks until you
+        change it. A whole line is read before a single note is written, so a
+        typo writes nothing and tells you what was wrong with your line still
+        in the box.
+      </p>
+    </article>
+    <article>
+      <h3>The number row <em>is</em> the note value</h3>
+      <p>
+        <kbd>1</kbd> whole, <kbd>2</kbd> half, <kbd>4</kbd> quarter,
+        <kbd>8</kbd> eighth — and <kbd>3</kbd> and <kbd>5</kbd> for the
+        dotted half and dotted quarter, because those come up often enough to
+        deserve a key. Arrows pick the pitch, <kbd>Space</kbd> writes it.
+      </p>
+    </article>
+    <article>
+      <h3>One key per mark</h3>
+      <p>
+        <kbd>S</kbd> slur, <kbd>T</kbd> tie, <kbd>b</kbd> beam, <kbd>c</kbd>
+        chord symbol, <kbd>!</kbd> accent, <kbd>&lt;</kbd> crescendo. Not
+        <kbd>Ctrl</kbd>-anything: the letters are free because the music is
+        written with the numbers, and every one of them can be rebound.
+      </p>
+    </article>
+    <article>
+      <h3>No page to fight</h3>
+      <p>
+        It opens as one unbroken strip of music — no page breaks, no
+        justification — because pagination is noise while you are writing.
+        Bars make themselves as you fill them, and there is always an empty
+        one past the end to carry on into. Switch to pages when you want to
+        see what the printer sees.
+      </p>
+    </article>
+  </div>
+  <p class="more">
+    <a href="docs/quickstart.html">Twenty minutes from never having opened it
+    to a printed part</a> · <a href="docs/manual.html#by-typing">the whole
+    typing syntax</a>
+  </p>
 </section>
 
 <section class="points">

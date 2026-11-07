@@ -1,6 +1,11 @@
 # gscore
 
-A musical score editor, by Sébastien Tricaud.
+A musical score editor built for writing music fast, by Sébastien Tricaud.
+
+One key per note value and one per mark, a typing bar that writes a bar in a
+second — `8abcdef` is six eighth notes climbing — and a continuous strip of
+music rather than a page to fight while you work. Then it plays, prints, and
+goes out as a link that holds the notes themselves.
 
 gscore was written in C and GTK+ between 2001 and 2005, and released up to
 0.0.9 "harder, better, stronger, faster" in April 2005. It was a

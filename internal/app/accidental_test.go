@@ -1,7 +1,6 @@
 package app
 
 import (
-	"strconv"
 	"strings"
 	"testing"
 
@@ -162,26 +161,66 @@ func TestANoteWrittenAfterAnAlteredOneTakesTheAlteration(t *testing.T) {
 	}
 }
 
-// And a sign asked for twice over is printed once.
+// And the notes after it need no asking at all.
 //
 // Reported as three F naturals in a bar of a piece in G, each with a natural
-// in front of it, because each was asked for one by one. The first says
-// something — the key signature says sharp — and the two after it say what
-// the bar has already said.
-func TestASignAskedForAgainIsNotPrintedAgain(t *testing.T) {
+// in front of it, because each had to be asked for one by one. The asking is
+// what has gone: the first F is made natural and the two after it are
+// natural already, so they are written with nothing in front of them and
+// nobody has to touch them.
+func TestTheNotesAfterAnAlteredOneNeedNoAsking(t *testing.T) {
 	h := newHarness(t)
 	h.post("/api/setkey?part=0&fifths=1") // G major: every F is sharp
-	for at := 1; at <= 3; at++ {
-		h.note(0, 0, 1, "quarter")
-		h.post("/api/accidental?part=0&measure=0&at=" + strconv.Itoa(at) +
-			"&accidental=natural")
-	}
+	h.note(0, 0, 1, "quarter")            // the F in the bottom space
+	h.post("/api/accidental?part=0&measure=0&at=1&accidental=natural")
+	h.note(0, 0, 1, "quarter")
+	h.note(0, 0, 1, "quarter")
 
 	if got, want := pitches(h), "F4 F4 F4"; got != want {
 		t.Errorf("the file holds %q, want %q", got, want)
 	}
 	if got, want := signs(t, h), "n"; got != want {
 		t.Errorf("the page shows %q, want %q", got, want)
+	}
+}
+
+// But a sign can be insisted on, because sometimes it is wanted anyway.
+//
+// A teacher writing a part for somebody who has not learnt the key signature
+// yet wants the sharp in front of the F, redundant or not. It changes
+// nothing about the music, so the only thing asking for it can mean is
+// print it — and asking again takes it off, which is the way back that this
+// did not have. The editor says in the status bar that the sign is there
+// because it was asked for.
+func TestASignCanBeInsistedOnAndTakenBackOff(t *testing.T) {
+	h := newHarness(t)
+	h.post("/api/setkey?part=0&fifths=1") // G major: every F is sharp
+	h.note(0, 0, 1, "quarter")            // an F, which the key sharpens
+
+	if got := signs(t, h); got != "" {
+		t.Fatalf("the page already shows %q", got)
+	}
+	out := h.post("/api/accidental?part=0&measure=0&at=1&accidental=sharp")
+	if got, want := signs(t, h), "#"; got != want {
+		t.Errorf("after asking for it the page shows %q, want %q", got, want)
+	}
+	if out["forced"] != float64(1) {
+		t.Errorf("the editor was told %v notes were marked, want 1", out["forced"])
+	}
+	// The music is untouched: it was an F sharp before and it still is.
+	if got, want := pitches(h), "F#4"; got != want {
+		t.Errorf("the note is %q, want %q", got, want)
+	}
+
+	out = h.post("/api/accidental?part=0&measure=0&at=1&accidental=sharp")
+	if got := signs(t, h); got != "" {
+		t.Errorf("asking again left %q on the page", got)
+	}
+	if out["unforced"] != float64(1) {
+		t.Errorf("the editor was told %v notes were cleared, want 1", out["unforced"])
+	}
+	if got, want := pitches(h), "F#4"; got != want {
+		t.Errorf("the note is %q, want %q", got, want)
 	}
 }
 

@@ -385,3 +385,81 @@ func TestLengtheningTheNotesOfATripletAddsNoRest(t *testing.T) {
 			"a longer group gives nothing back", got-before, rests)
 	}
 }
+
+// A run written across a barline comes home when it is made into a triplet.
+//
+// Reported from the staff it happens on: a bar is full but for an eighth,
+// the third note of a triplet is written and there is nowhere for it to go
+// but the next bar, and then asking for the triplet was refused — "a tuplet
+// is made out of one bar of one staff" — leaving three notes across a
+// barline and no way to say what they are.
+//
+// Three eighths take a beat and a half and a triplet of them takes one, so
+// the group fits where it was written. It is the asking that makes the room,
+// which is why the answer is to bring the notes back rather than to refuse.
+func TestARunThatSpilledComesBackToMakeItsTriplet(t *testing.T) {
+	h := newHarness(t)
+	// Three quarters of a bar of 4/4, so there is a beat left.
+	for i := 0; i < 3; i++ {
+		h.post("/api/insert?part=0&measure=0&at=-1&step=4&dur=quarter&kind=note")
+	}
+	// Three eighths meant as a triplet. Two of them fill the bar and the
+	// third has nowhere to go but the next one.
+	for _, step := range []int{5, 6, 0} {
+		h.post(fmt.Sprintf(
+			"/api/insert?part=0&measure=0&at=-1&step=%d&dur=eighth&kind=note", step))
+	}
+	if n := len(h.elements(0, 1)); n != 1 {
+		t.Fatalf("%d notes went into the second bar, want 1", n)
+	}
+
+	d := h.post("/api/tuplet?part=0&measure=0&at=5&n=3&sel=0:0:3,0:0:4,0:1:0")
+	if d["measure"] != float64(0) {
+		t.Errorf("the group was made in bar %v, want the first", d["measure"])
+	}
+
+	// All three are in the first bar now, as a triplet.
+	got := spell(t, h, 0, 0)
+	if len(got) != 6 {
+		t.Fatalf("the first bar holds %v", got)
+	}
+	for i, want := range []string{
+		// The steps 5, 6 and 0 on a treble staff: C, D and E.
+		"note0 1/12 3:2 start", "note1 1/12 3:2", "note2 1/12 3:2 stop",
+	} {
+		if got[3+i] != want {
+			t.Errorf("element %d is %q, want %q", 3+i, got[3+i], want)
+		}
+	}
+	// The bar adds up to a bar: three quarters and a triplet worth one.
+	if want := (model.Duration{Num: 1, Den: 1}); total(h, 0, 0).Reduced().Cmp(want) != 0 {
+		t.Errorf("the bar lasts %s, want %s", total(h, 0, 0).Reduced(), want)
+	}
+	// And the second bar has given it up.
+	for _, el := range h.elements(0, 1) {
+		if _, isRest := el.(*model.Rest); !isRest {
+			t.Errorf("the second bar still holds a %T", el)
+		}
+	}
+}
+
+// But a group that would still not fit is refused rather than shuffled.
+//
+// Two in the time of three takes longer than it was given, so there is no
+// room to come back to, and moving somebody's notes about to make a tuplet
+// that cannot be written is worse than saying so.
+func TestARunThatStillWouldNotFitIsRefused(t *testing.T) {
+	h := newHarness(t)
+	for i := 0; i < 8; i++ {
+		h.post("/api/insert?part=0&measure=0&at=-1&step=4&dur=quarter&kind=note")
+	}
+	if n := len(h.elements(0, 1)); n != 4 {
+		t.Fatalf("%d notes went into the second bar, want 4", n)
+	}
+	if msg := h.postFails("/api/tuplet?part=0&measure=0&at=4&n=2&sel=0:0:3,0:1:0"); msg == "" {
+		t.Error("it was taken")
+	}
+	if n := len(h.elements(0, 0)); n != 4 {
+		t.Errorf("the first bar now holds %d notes, want 4", n)
+	}
+}

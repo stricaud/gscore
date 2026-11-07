@@ -238,7 +238,7 @@ const MESSAGES = {
   "Keep bars to the meter": "Garder les mesures à la mesure",
   "Keep with the score": "Garder avec la partition",
   "Key signature, flats to the left and sharps to the right": "Armature, bémols à gauche et dièses à droite",
-  "Key signature…": "Armature…",
+  "Key signature from here…": "Armature à partir d’ici…",
   "Keyboard shortcuts": "Raccourcis clavier",
   "Keys and modulations": "Tonalités et modulations",
   "Keys and modulations…": "Tonalités et modulations…",

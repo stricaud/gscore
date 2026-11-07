@@ -168,6 +168,26 @@ through a nonuplet; on a selection, those notes become the group.
 stranger. A group that is beamed together gets no bracket, which is the rule
 in Gould and in every published score.
 
+A run that ran over the barline while you were writing it comes home when
+you make it a group. Three eighths take a beat and a half and a triplet of
+them takes one, so the third note — which had nowhere to go but the next bar
+— fits in the bar you wrote it in as soon as you say what it is. Select all
+three across the barline and ask for the triplet. A group that still would
+not fit is refused rather than shuffled about.
+
+### Words on a note
+
+<span class="menu-path">Insert → Text…</span> writes words beside the note
+that is selected. The *kind* — expression, technique, tempo, direction,
+plain — decides how they are set and where they go, so every "rit." in the
+score comes out alike and they change together. **Where** overrules that for
+one mark where the music wants it: over the staff or under, whatever its
+kind usually does.
+
+Click the words to pick them up: Enter opens them for changing, with what
+they say already in the box, and Backspace takes them off. A note that
+carries two keeps the other one.
+
 ## Marks
 
 Most have a single key. All are in <span class="menu-path">Edit</span> or

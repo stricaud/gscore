@@ -2,6 +2,10 @@
 
 Twenty minutes from never having opened Gscore to a printed part, taken at a walk.
 
+Gscore is built for one thing above the rest: getting the notes down quickly.
+Section 2 is where you feel it — four ways to write the same eight bars, and
+the fastest of them is a line of typing that takes about a second.
+
 You will write eight bars, hear them played by a real flute, colour the notes
 so a beginner can read them, and print the lot. Nothing here needs you to know
 what a *mordent* is — and where a word like that turns up, it is in the

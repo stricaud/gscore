@@ -47,8 +47,31 @@ test("what a kind means is said in words a reader would use", () => {
 // a row.
 test("the kind chosen last time is offered again", () => {
   assert.match(src, /let lastTextStyle = "expression"/);
-  assert.match(grab("textDialog"), /pick\.value = lastTextStyle/);
+  assert.match(grab("textDialog"), /lastTextStyle/);
   assert.match(grab("textDialog"), /lastTextStyle = pick\.value/);
+});
+
+// Words picked up by clicking them open in the window as they are, or
+// changing a text means writing it again from nothing and guessing which
+// kind it was.
+test("words being changed open on what they say", () => {
+  const body = grab("textDialog");
+  assert.match(body, /state\.selection\?\.textMark/);
+  assert.match(body, /\$\("#tm-words"\)\.value = editing \? editing\.text/);
+  assert.match(body, /\$\("#tm-place"\)\.value = editing/);
+  // And they are changed rather than added to: a note may carry two.
+  assert.match(body, /p\.set\("index", String\(editing\.index\)\)/);
+});
+
+// Which side of the staff, where the music wants one mark to differ from
+// the rest of its kind.
+test("the window can say which side of the staff", () => {
+  assert.match(html, /<dialog id="textmark"[\s\S]*?id="tm-place"/);
+  const dlg = /<dialog id="textmark"[\s\S]*?<\/dialog>/.exec(html)[0];
+  for (const v of ["above", "below"]) {
+    assert.ok(dlg.includes(`value="${v}"`), `no ${v} choice`);
+  }
+  assert.match(grab("textDialog"), /placement: \$\("#tm-place"\)\.value/);
 });
 
 test("the dialog can remove the words as well as write them", () => {

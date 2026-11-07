@@ -38,7 +38,7 @@ test("French is French", () => {
   assert.equal(i.t("Sharp"), "Dièse");
   assert.equal(i.t("Treble"), "Clé de sol");
   assert.equal(i.t("Triplet"), "Triolet");
-  assert.equal(i.t("Key signature…"), "Armature…");
+  assert.equal(i.t("Key signature from here…"), "Armature à partir d’ici…");
 });
 
 // The browser's own list, in the order somebody put their languages in.

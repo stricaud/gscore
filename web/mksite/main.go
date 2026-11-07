@@ -526,8 +526,20 @@ func docOrder(orderFile string, files []string) []docGroup {
 				groups[len(groups)-1].blurb = strings.TrimSpace(line[1 : len(line)-1])
 			}
 		default:
-			if !all[line] || listed[line] {
-				continue // named but not there, or named twice
+			// A line that is neither a group, a blurb nor a document is a
+			// mistake in the file — a misspelt name, or a blurb that ran
+			// over onto a second line and so is not one. Said rather than
+			// dropped: a document named wrongly here is a document that
+			// quietly stops being listed, and the group it belonged to
+			// loses its words with no sign that anything is missing.
+			if !all[line] {
+				fmt.Fprintf(os.Stderr,
+					"docs/ORDER: %q is not a document, a group or a blurb "+
+						"on one line\n", line)
+				continue
+			}
+			if listed[line] {
+				continue // named twice
 			}
 			if len(groups) == 0 {
 				groups = append(groups, docGroup{})

@@ -369,7 +369,7 @@
       <button data-action="set-tempo"><span>Set tempo…</span></button>
       <button data-action="set-header"><span>About this score…</span></button>
       <hr>
-      <button data-action="set-key"><span>Key signature…</span></button>
+      <button data-action="set-key"><span>Key signature from here…</span></button>
       <!-- A piece that begins before the first beat. Everything else
            follows from the first bar being short: it is not numbered, and
            bar one is the first full bar. -->
@@ -1977,6 +1977,17 @@
       <input type="text" id="tm-words" autocomplete="off" spellcheck="false"></label>
     <label class="tempo-bar" for="tm-style">Kind
       <select id="tm-style"></select></label>
+    <!-- Which side of the staff. The kind of writing decides it, which is
+         what keeps a page readable — every "rit." in the score on the same
+         side — and this is how one mark is made to differ where the music
+         wants it: a technique under a staff whose notes are high, a word
+         over one whose lyrics are under it. -->
+    <label class="tempo-bar" for="tm-place">Where
+      <select id="tm-place">
+        <option value="">Wherever this kind goes</option>
+        <option value="above">Over the staff</option>
+        <option value="below">Under the staff</option>
+      </select></label>
     <p class="small" id="tm-look"></p>
     <div class="ask-buttons">
       <button value="ok" type="submit" class="primary">Write it</button>

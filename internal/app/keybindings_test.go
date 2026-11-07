@@ -54,6 +54,7 @@ func bindings(t *testing.T) []map[string]string {
 		out = append(out, map[string]string{
 			"id":    field(entry, "id"),
 			"keys":  field(entry, "keys"),
+			"also":  field(entry, "also"),
 			"group": field(entry, "group"),
 			"label": field(entry, "label"),
 		})
@@ -86,6 +87,33 @@ func TestNoTwoBindingsShareAKey(t *testing.T) {
 			continue
 		}
 		seen[b["keys"]] = b["id"]
+	}
+}
+
+// A command may answer to a second key as well as its own — Save is on S
+// and on Mod+S, which is what every other program on the machine uses — and
+// that second key must not be one something else already holds. A binding
+// in its own right beats a second key, so a clash would not be a clash
+// anybody could see: the second key would simply stop working.
+func TestASecondKeyIsNotSomebodyElsesFirst(t *testing.T) {
+	first := map[string]string{}
+	for _, b := range bindings(t) {
+		first[b["keys"]] = b["id"]
+	}
+	seen := map[string]string{}
+	for _, b := range bindings(t) {
+		also := b["also"]
+		if also == "" {
+			continue
+		}
+		if who, taken := first[also]; taken {
+			t.Errorf("%q also answers to %s, which is %q's own key",
+				b["id"], also, who)
+		}
+		if who, twice := seen[also]; twice {
+			t.Errorf("%q and %q both also answer to %s", who, b["id"], also)
+		}
+		seen[also] = b["id"]
 	}
 }
 

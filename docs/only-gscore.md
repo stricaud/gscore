@@ -6,6 +6,12 @@ Every notation program writes notes on staves. That part is solved. What
 follows is the list of things Gscore does that made it worth writing, roughly
 in order of how surprised people are when they see them.
 
+The one that is not a surprise is the one the program is designed around, so
+it is said here rather than left to its turn at number nine: **Gscore is
+built to enter music fast.** One key per note value, one key per mark, a
+typing bar that writes a bar in a second, and a continuous strip instead of
+a page to fight. Everything below is what the program does *besides* that.
+
 ## 1. The file is also a PDF
 
 Save a score as `.gscore`. Now rename it `.pdf` and double-click it.

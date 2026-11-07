@@ -3977,6 +3977,7 @@ async function loadHits() {
   const d = await res.json();
   state.hits = d.hits || [];
   state.dynamics = d.dynamics || [];
+  state.textMarks = d.textMarks || [];
   state.chordMarks = d.chords || [];
   state.tempos = d.tempos || [];
   state.hairpins = d.hairpins || [];
@@ -4023,6 +4024,24 @@ function dynamicAt(x, y) {
     if (x >= d.x - 0.4 && x <= d.x + d.width + 0.4 &&
         y >= d.y - 0.4 && y <= d.y + d.height + 0.4) {
       return d;
+    }
+  }
+  return null;
+}
+
+// textMarkAt finds the words a click landed on.
+//
+// The box comes from the engraver for the reason a dynamic's does: words
+// written on a note are not where the note is. They sit as far above or
+// below the staff as that stretch of music pushed them, and until the staff
+// was drawn nothing knew how far. Without this they could be written and
+// never pointed at again — which is how somebody ends up with a "pizz." on
+// the page and no way to take it off.
+function textMarkAt(x, y) {
+  for (const t of state.textMarks || []) {
+    if (x >= t.x - 0.4 && x <= t.x + t.width + 0.4 &&
+        y >= t.y - 0.4 && y <= t.y + t.height + 0.4) {
+      return t;
     }
   }
   return null;
@@ -4495,6 +4514,13 @@ function setupCanvasClicks() {
       return;
     }
 
+    // Words written on a note, which are above the staff or below it.
+    const words = textMarkAt(x, y);
+    if (words) {
+      selectTextMark(words);
+      return;
+    }
+
     // The chord symbols are up there too.
     const chord = chordSymbolAt(x, y);
     if (chord) {
@@ -4923,6 +4949,27 @@ function selectChordSymbol(c) {
   };
   markSelection();
   status(`${state.selection.chordSymbol} \u2014 press Enter to change it, ` +
+         `Backspace to take it away`);
+}
+
+// selectTextMark picks up the words written on a note.
+//
+// What is selected is the words and not the note under them: Backspace takes
+// them away and leaves the music, and Enter opens them for changing with
+// what they say already in the box.
+function selectTextMark(t) {
+  state.multi = [];
+  state.anchor = state.focus = null;
+  let at = 1;
+  const target = refTarget(t.ref);
+  if (target) at = Number(target.split(":")[2]) + 1;
+
+  state.selection = {
+    part: t.part, measure: t.measure, ref: t.ref,
+    at, step: 0, textMark: t,
+  };
+  markSelection();
+  status(`\u201c${t.text}\u201d \u2014 press Enter to change it, ` +
          `Backspace to take it away`);
 }
 
@@ -5735,6 +5782,24 @@ async function deleteSelected() {
     if (state.selection) state.selection.chordSymbol = null;
     return;
   }
+  // Words were picked up by clicking them, so it is the words that go and
+  // not the note holding them up.
+  if (state.selection?.textMark && !state.multi.length) {
+    const t = state.selection.textMark;
+    const p = new URLSearchParams({
+      part: String(t.part), measure: String(t.measure),
+      at: String(state.selection.at), text: "", index: String(t.index),
+    });
+    const res = await fetch("/api/text?" + p.toString(), { method: "POST" });
+    if (!res.ok) {
+      status("Could not remove it: " + (await res.text()).trim());
+      return;
+    }
+    if (state.selection) state.selection.textMark = null;
+    await refreshScore();
+    status(`\u201c${t.text}\u201d removed`);
+    return;
+  }
   // A dynamic was picked up by clicking it, so it is the dynamic that goes.
   if (state.selection?.dynamic && !state.multi.length) {
     const was = state.selection.dynamic;
@@ -5961,6 +6026,18 @@ function markSelection() {
     if (d) {
       svg.insertBefore(
         selectionRect(d.x - 0.4, d.y - 0.4, d.width + 0.8, d.height + 0.8, z),
+        svg.firstChild);
+      return;
+    }
+  }
+
+  if (sel.textMark) {
+    const t = (state.textMarks || []).find(
+      (x) => x.part === sel.part && x.measure === sel.measure &&
+             x.ref === sel.ref && x.index === sel.textMark.index);
+    if (t) {
+      svg.insertBefore(
+        selectionRect(t.x - 0.4, t.y - 0.4, t.width + 0.8, t.height + 0.8, z),
         svg.firstChild);
       return;
     }
@@ -6277,7 +6354,8 @@ function pickedNotes() {
   if (!sel || sel.ref === null || sel.ref === undefined) return false;
   if (sel.bar) return false;
   return !(sel.arc || sel.hairpin || sel.tremolo || sel.tuplet || sel.dynamic ||
-    sel.chordSymbol || (sel.tempo !== undefined && sel.tempo !== null));
+    sel.chordSymbol || sel.textMark ||
+    (sel.tempo !== undefined && sel.tempo !== null));
 }
 
 // heldForMoving says whether an arrow key should move the notes that are
@@ -6379,10 +6457,28 @@ const cycleAccidental = (dir) =>
   mark("accidental", { cycle: dir > 0 ? "up" : "down", ...pickedHead() },
        (dir > 0 ? "Sharpened" : "Flattened") + onThatNotehead());
 
-const setAccidental = (acc, said) =>
-  mark("accidental", { accidental: acc, ...pickedHead() },
-       (acc === "none" ? "Accidental removed" : "Written as " + said.toLowerCase()) +
-       onThatNotehead());
+// setAccidental writes a sign on what is picked up, and says what came of
+// it.
+//
+// A sign asked for where the music already says it is printed anyway — a
+// sharp on an F in a key that sharpens every F, which a beginner reading
+// the part has not learnt yet — and the status bar says that is why, so
+// that a sign nothing required does not look like a mistake. Asking again
+// takes it off.
+const setAccidental = async (acc, said) => {
+  const d = await mark("accidental", { accidental: acc, ...pickedHead() },
+    (acc === "none" ? "Accidental removed" : "Written as " + said.toLowerCase()) +
+    onThatNotehead());
+  if (!d) return d;
+  if (d.forced) {
+    status(said + " — the music already said it, so it is printed because " +
+           "you asked for it. Ask again to take it off.");
+  } else if (d.unforced) {
+    status(said + " taken off — the music said it anyway, so the note is " +
+           "unchanged.");
+  }
+  return d;
+};
 
 // beamOrBreak is what the b key does, which depends on how much is picked up.
 //
@@ -7123,7 +7219,15 @@ async function exportSymbolPack() {
 // setting, which is what it always was — a decision about the program, not
 // about this file — and it used to be a second menu entry that had to be
 // found and understood before the first one could be trusted.
-async function saveScore(ask) {
+// saveAs says to ask where this goes rather than writing it back where it
+// came from, which is what Save as… means and what a score with no file of
+// its own needs anyway.
+//
+// Not called "ask": that is the name of the window-asking helper, and a
+// parameter of that name shadowed it — so the one path that needs to ask
+// for a name, a browser with no system save panel, called a boolean and
+// threw. Save did nothing at all there, and said nothing about why.
+async function saveScore(saveAs) {
   const here = state.info?.filename || "";
 
   // Nowhere to write to: the file comes back and the browser asks where it
@@ -7142,7 +7246,7 @@ async function saveScore(ask) {
     return;
   }
 
-  if (!ask && here) {
+  if (!saveAs && here) {
     const back = await saveRequest("path=" + encodeURIComponent(here), "Saving…");
     if (back.ok) {
       const d = await back.json();
@@ -9842,10 +9946,16 @@ async function textDialog() {
   pick.innerHTML = styles
     .map((s) => `<option value="${escapeHTML(s.name)}">${escapeHTML(s.label)}</option>`)
     .join("");
+  // Words that were picked up by clicking them: the window opens on what
+  // they say, in the kind they are and on the side they were put, so that
+  // changing them is changing them rather than writing them again. Without
+  // it the only way back to a text was to write over the note and hope.
+  const editing = state.selection?.textMark || null;
   // The one most words are. Remembered between windows, because somebody
   // writing in the expression markings writes several in a row.
-  pick.value = lastTextStyle;
-  $("#tm-words").value = "";
+  pick.value = editing ? (editing.style || lastTextStyle) : lastTextStyle;
+  $("#tm-words").value = editing ? editing.text : "";
+  $("#tm-place").value = editing ? (editing.place || "") : "";
 
   // What the choice means, in the words a reader would use rather than as
   // a list of font settings: where it goes and who it is for.
@@ -9855,7 +9965,10 @@ async function textDialog() {
       $("#tm-look").textContent = "";
       return;
     }
-    const where = s.system
+    const chosen = $("#tm-place").value;
+    const where = chosen === "above" ? "Over the staff"
+      : chosen === "below" ? "Under the staff"
+      : s.system
       ? "Over the whole system, for everybody"
       : s.place === "below" ? "Under the staff" : "Over the staff";
     const how = [s.italic ? "italic" : "", s.bold ? "bold" : ""]
@@ -9863,6 +9976,7 @@ async function textDialog() {
     $("#tm-look").textContent = how ? `${where}, ${how}.` : `${where}.`;
   };
   pick.oninput = describe;
+  $("#tm-place").oninput = describe;
   describe();
 
   const answer = await new Promise((resolve) => {
@@ -9884,8 +9998,11 @@ async function textDialog() {
   if (answer !== "remove") lastTextStyle = pick.value;
   const p = new URLSearchParams({
     part: String(sel.part), measure: String(sel.measure), at: String(sel.at),
-    text: words, style: pick.value,
+    text: words, style: pick.value, placement: $("#tm-place").value,
   });
+  // Changing the words that were picked up, rather than adding more to the
+  // note: a note may carry two, and the other one stays as it is.
+  if (editing) p.set("index", String(editing.index));
   const res = await fetch("/api/text?" + p.toString(), { method: "POST" });
   if (!res.ok) {
     status("Could not write it: " + (await res.text()).trim());
@@ -9915,8 +10032,23 @@ async function markerDialog() {
     status("Click a measure first");
     return;
   }
+  const style = state.info?.markerStyle || "letters";
   const next = nextMarkerName(sel.measure);
+  const bar = String(barNumberOf(sel.measure));
   const here = (state.info?.marks || {})[sel.measure];
+
+  // The bar number is offered here as well as in the window that sets the
+  // style, because this is where somebody is standing when they want it:
+  // a mark that says which bar it is on is a mark nobody has to think of a
+  // name for, and typing the number by hand writes a mark that stops being
+  // true the moment a bar is put in before it.
+  //
+  // It is still one decision about the whole score — half the marks
+  // lettered and half numbered would be two systems of names for one set
+  // of places — so the label says that is what it does.
+  const byBar = style === "bars"
+    ? []
+    : [{ value: "bars", label: bar + " — the number of its bar, and the rest by theirs" }];
 
   const v = await ask({
     title: `Rehearsal mark at measure ${barNumberOf(sel.measure)}`,
@@ -9924,11 +10056,17 @@ async function markerDialog() {
     value: "auto",
     note: "Written over every staff, because “from B” has to mean the same " +
           "bar to everyone. A mark in the sequence renames itself when " +
-          "another is put in before it.",
+          "another is put in before it, and one that says the number of " +
+          "its bar follows the bar.",
     options: [
-      { value: "auto", label: next + " — next in the sequence" },
+      {
+        value: "auto",
+        label: next + (style === "bars"
+          ? " — the number of this bar" : " — next in the sequence"),
+      },
+    ].concat(byBar, [
       { value: "custom", label: "Something else…" },
-    ].concat(here ? [{ value: "remove", label: "Take the mark away" }] : []),
+    ]).concat(here ? [{ value: "remove", label: "Take the mark away" }] : []),
   });
   if (v === null) return;
 
@@ -9938,6 +10076,13 @@ async function markerDialog() {
     case "auto":
       p.set("auto", "1");
       said = "Mark " + next;
+      break;
+    case "bars":
+      // The style and the mark in one go: the server takes both, and
+      // doing it in two would redraw the score twice over.
+      p.set("auto", "1");
+      p.set("style", "bars");
+      said = "Mark " + bar + " — rehearsal marks are numbered by their bars";
       break;
     case "remove":
       p.set("text", "");
@@ -14721,7 +14866,9 @@ const KEY_BINDINGS = [
     // the key was pressed for.
     run: () => void (state.selection?.chordSymbol
       ? chordSymbolDialog()
-      : insertAtSelection(true)) },
+      : state.selection?.textMark
+        ? textDialog()
+        : insertAtSelection(true)) },
   { id: "chord-note", keys: "Mod+Space", group: "Writing",
     label: "Add another notehead to the note just written",
     run: () => void chordAtCursor() },
@@ -14962,7 +15109,11 @@ const KEY_BINDINGS = [
     label: "New score", run: () => action("new") },
   { id: "open", menu: "open", keys: "o", group: "The file",
     label: "Open", run: () => action("open") },
-  { id: "save", menu: "save", keys: "s", group: "The file",
+  // And the key every other program on the machine saves with, which is
+  // Mod — ⌘ on a Mac, Ctrl everywhere else. The bare letter stays: it is
+  // how the rest of these read, and taking it away would move the key
+  // under the hands of anybody already using it.
+  { id: "save", menu: "save", keys: "s", also: "Mod+s", group: "The file",
     label: "Save", run: () => action("save") },
   { id: "print", menu: "print", keys: "p", group: "The file",
     label: "Print", run: () => action("print") },
@@ -15289,7 +15440,14 @@ function syncMenuKeys() {
   for (const b of KEY_BINDINGS) {
     if (!b.menu) continue;
     const el = document.querySelector(`[data-action="${b.menu}"] kbd`);
-    if (el) el.textContent = shortcutText(keyFor(b), true);
+    if (!el) continue;
+    // Both keys where there are two, the command's own first. A menu that
+    // showed one of them would be telling half the truth about Save.
+    let text = shortcutText(keyFor(b), true);
+    if (b.also && !(b.id in (state.keys || {}))) {
+      text += " " + shortcutText(b.also, true);
+    }
+    el.textContent = text;
   }
 }
 
@@ -15326,6 +15484,9 @@ async function shortcutsDialog() {
 
         const key = document.createElement("kbd");
         key.textContent = shortcutText(chord);
+        if (b.also && !(b.id in (state.keys || {}))) {
+          key.textContent += "  " + shortcutText(b.also);
+        }
         // A binding another one has taken over is still listed, because it
         // is still in the program; saying so is better than showing a key
         // that does nothing.
@@ -15432,6 +15593,12 @@ function keyFor(b) {
 // still answering to it and the new binding dead.
 function boundKeys() {
   const out = new Map();
+  // The second key a command answers to as well as its own, where it has
+  // one. Laid down first, so a binding that holds that chord in its own
+  // right — its default or somebody's own — beats it.
+  for (const b of KEY_BINDINGS) {
+    if (b.also) out.set(b.also, b);
+  }
   for (const b of KEY_BINDINGS) {
     if (!(b.id in (state.keys || {}))) out.set(b.keys, b);
   }

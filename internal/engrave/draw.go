@@ -381,7 +381,7 @@ func (e *engraver) drawMeasure(part *model.Part, b measureBox, x, end float64, s
 			e.spanAt(m, p, b.index)
 			e.slurAt(part, m, p, b.index)
 			e.drawLyrics(m, p)
-			e.drawTexts(m, p)
+			e.drawTexts(m, p, b.index)
 			// How the note is played: a bend, a mute, a harmonic. The
 			// hammer-ons and the slides are not here — they need the
 			// note after this one, so spanAt carries them.
@@ -2341,13 +2341,37 @@ func (e *engraver) drawDynamic(m *model.Marks, p *placed, measure int) {
 	})
 }
 
+// textWasDrawn says where a block of words ended up, so that the editor can
+// let them be clicked.
+//
+// Only the engraver knows: a text is written as far above or below the staff
+// as that stretch of music pushed it, and until the staff is finished there
+// is no saying how far that is. The same reason the dynamics are recorded
+// and the same complaint without it — words written and then unreachable.
+func (e *engraver) textWasDrawn(t model.TextMark, p *placed, measure, index int,
+	x, top, width, height float64) {
+
+	place := ""
+	switch t.Placement {
+	case model.PlacementAbove:
+		place = "above"
+	case model.PlacementBelow:
+		place = "below"
+	}
+	e.lay.TextMarks = append(e.lay.TextMarks, TextPos{
+		Part: e.partIndex, Measure: measure, Ref: p.index, Index: index,
+		X: x, Y: top, Width: width, Height: height,
+		Text: t.Text, Style: t.Style.String(), Place: place,
+	})
+}
+
 // drawTexts writes the words attached to a note: "rit.", "solo", a reminder to
 // the player.
 //
 // Above the staff unless told otherwise, because that is where a direction to
 // the player goes and below is where the dynamics and the words already are.
-func (e *engraver) drawTexts(m *model.Marks, p *placed) {
-	for _, t := range m.Texts {
+func (e *engraver) drawTexts(m *model.Marks, p *placed, measure int) {
+	for ti, t := range m.Texts {
 		if t.Text == "" {
 			continue
 		}
@@ -2407,6 +2431,8 @@ func (e *engraver) drawTexts(m *model.Marks, p *placed) {
 							Italic: look.Italic, Bold: look.Bold,
 						})
 					}
+					e.textWasDrawn(t, p, measure, ti, x, y+t.OffsetY, widest,
+						textSize+float64(len(lines)-1)*textLine)
 				},
 			})
 			continue
@@ -2428,6 +2454,7 @@ func (e *engraver) drawTexts(m *model.Marks, p *placed) {
 			// above the flutes.
 			e.systemTexts = append(e.systemTexts, pendingSystemText{
 				t: t, lines: lines, look: look, x: x, line: textLine,
+				part: e.partIndex, measure: measure, ref: p.index, index: ti,
 			})
 			continue
 		}
@@ -2457,6 +2484,11 @@ func (e *engraver) drawTexts(m *model.Marks, p *placed) {
 						Italic: look.Italic, Bold: look.Bold,
 					})
 				}
+				// Words are drawn from their baselines, so the block's own
+				// top is a line's height above the first of them.
+				e.textWasDrawn(t, p, measure, ti, x,
+					top+t.OffsetY-textSize, widest,
+					textSize+float64(len(lines)-1)*textLine)
 			},
 		})
 	}
@@ -2860,6 +2892,10 @@ type pendingSystemText struct {
 	look  model.TextLook
 	x     float64
 	line  float64
+	// Where it came from, so that a click on it reaches the note it was
+	// written on — which may be on a staff far below the one it is
+	// printed over.
+	part, measure, ref, index int
 }
 
 // placeSystemTexts writes the words that belong to the whole system over
@@ -2921,6 +2957,24 @@ func (e *engraver) placeSystemTexts() {
 // writeSystemText puts one of them down, its bottom line at y.
 func (e *engraver) writeSystemText(p pendingSystemText, y, height float64) {
 	top := y - height + p.look.Size
+	widest := 0.0
+	for _, line := range p.lines {
+		if w := textWidth(line, p.look.Size); w > widest {
+			widest = w
+		}
+	}
+	place := ""
+	switch p.t.Placement {
+	case model.PlacementAbove:
+		place = "above"
+	case model.PlacementBelow:
+		place = "below"
+	}
+	e.lay.TextMarks = append(e.lay.TextMarks, TextPos{
+		Part: p.part, Measure: p.measure, Ref: p.ref, Index: p.index,
+		X: p.x, Y: top + p.t.OffsetY - p.look.Size, Width: widest, Height: height,
+		Text: p.t.Text, Style: p.t.Style.String(), Place: place,
+	})
 	for i, line := range p.lines {
 		if line == "" {
 			continue

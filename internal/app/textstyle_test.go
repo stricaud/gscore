@@ -25,6 +25,22 @@ import (
 	"github.com/stricaud/gscore/internal/model"
 )
 
+// textsOf is every text a part's first written-on note carries.
+func textsOf(t *testing.T, h *harness, part int) []model.TextMark {
+	t.Helper()
+	for _, m := range h.app.score.Parts[part].Measures {
+		for _, v := range m.Voices {
+			for _, el := range v.Elements {
+				if mk := marksOfElement(el); mk != nil && len(mk.Texts) > 0 {
+					return mk.Texts
+				}
+			}
+		}
+	}
+	t.Fatal("nothing was written")
+	return nil
+}
+
 func firstText(t *testing.T, h *harness, part int) model.TextMark {
 	t.Helper()
 	for _, m := range h.app.score.Parts[part].Measures {
@@ -218,5 +234,72 @@ func TestTheViewLeavesAloneWhatItIsNotAsked(t *testing.T) {
 	h.post("/api/view?tempomark=0")
 	if !h.app.engraveOpt.ShowPartNames {
 		t.Error("asking about the metronome mark turned the names off")
+	}
+}
+
+// Words that were picked up by clicking them are changed, not added to.
+//
+// A note may carry two — "pizz." over the staff and "dolce" under it — and
+// changing the one somebody pointed at must leave the other alone. Without
+// a way to say which, writing again appended a third, and the only way back
+// was to take all of them off.
+func TestChangingOneOfANotesTextsLeavesTheOther(t *testing.T) {
+	h := newHarness(t)
+	h.post("/api/insert?part=0&measure=0&at=0&step=4&dur=quarter")
+	h.post("/api/text?part=0&measure=0&at=1&text=pizz.&style=technique")
+	h.post("/api/text?part=0&measure=0&at=1&text=dolce&style=expression")
+
+	texts := textsOf(t, h, 0)
+	if len(texts) != 2 {
+		t.Fatalf("the note carries %d texts, want 2", len(texts))
+	}
+
+	h.post("/api/text?part=0&measure=0&at=1&text=arco&style=technique&index=0")
+	texts = textsOf(t, h, 0)
+	if len(texts) != 2 {
+		t.Fatalf("after changing one the note carries %d texts, want 2", len(texts))
+	}
+	if texts[0].Text != "arco" {
+		t.Errorf("the first says %q, want arco", texts[0].Text)
+	}
+	if texts[1].Text != "dolce" {
+		t.Errorf("the second says %q, want dolce", texts[1].Text)
+	}
+}
+
+// And removing the one that was pointed at removes that one.
+func TestRemovingOneOfANotesTextsLeavesTheOther(t *testing.T) {
+	h := newHarness(t)
+	h.post("/api/insert?part=0&measure=0&at=0&step=4&dur=quarter")
+	h.post("/api/text?part=0&measure=0&at=1&text=pizz.&style=technique")
+	h.post("/api/text?part=0&measure=0&at=1&text=dolce&style=expression")
+
+	h.post("/api/text?part=0&measure=0&at=1&text=&index=0")
+	texts := textsOf(t, h, 0)
+	if len(texts) != 1 {
+		t.Fatalf("the note carries %d texts, want 1", len(texts))
+	}
+	if texts[0].Text != "dolce" {
+		t.Errorf("what is left says %q, want dolce", texts[0].Text)
+	}
+}
+
+// Changing which side of the staff it goes on keeps the words and the kind.
+func TestWordsCanBeMovedToTheOtherSideOfTheStaff(t *testing.T) {
+	h := newHarness(t)
+	h.post("/api/insert?part=0&measure=0&at=0&step=4&dur=quarter")
+	h.post("/api/text?part=0&measure=0&at=1&text=pizz.&style=technique")
+	if got := firstText(t, h, 0).Look().Place; got != model.PlacementAbove {
+		t.Fatalf("a technique starts out %v", got)
+	}
+
+	h.post("/api/text?part=0&measure=0&at=1&text=pizz.&style=technique" +
+		"&placement=below&index=0")
+	mark := firstText(t, h, 0)
+	if got := mark.Look().Place; got != model.PlacementBelow {
+		t.Errorf("after asking for below it goes %v", got)
+	}
+	if mark.Text != "pizz." || mark.Style != model.TextTechnique {
+		t.Errorf("the words came back as %q in %v", mark.Text, mark.Style)
 	}
 }

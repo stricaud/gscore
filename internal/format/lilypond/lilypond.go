@@ -89,10 +89,25 @@ type writer struct {
 	// used keeps the names apart: two staves called "Flute" would
 	// otherwise be one variable written twice.
 	used map[string]bool
+	// marks is what is printed over each marked bar, with the rehearsal
+	// sequence worked out. A mark in the sequence is kept as a place and
+	// not as the letter — what it is called depends on every mark before
+	// it — so the letter has to be derived, and derived against the whole
+	// score. Written down once here because it is asked for by every bar
+	// of every staff.
+	//
+	// Counted by position, with no bar numbers handed in: that is what the
+	// bar numbers written down the side of this file are too, so a score
+	// whose marks are named after their bars comes out agreeing with its
+	// own comments. Where the numbering belongs to the page — an upbeat, a
+	// number a file stated for itself — it is the engraver's business, and
+	// this is a file rather than a page.
+	marks map[int]string
 }
 
 func (e *writer) run() {
 	e.used = map[string]bool{}
+	e.marks = e.s.RehearsalMarks(nil)
 
 	e.line(`\version "%s"`, lilypondVersion)
 	e.line(`%% Written by gscore %s. https://github.com/stricaud/gscore`,
@@ -224,8 +239,13 @@ func (e *writer) measure(st *state, p *model.Part, m *model.Measure, mi int) {
 		pre = append(pre, fmt.Sprintf("\\tempo %s = %d",
 			lilyDuration(m.Tempo.Unit), m.Tempo.BPM))
 	}
-	if m.Marker != "" {
-		pre = append(pre, fmt.Sprintf(`\mark \markup { \box "%s" }`, escape(m.Marker)))
+	// The letter, not what the bar says: a mark made as "the next one in
+	// the sequence" holds no text at all, and writing the text wrote
+	// nothing. The marks are on every staff, as they are in the score, and
+	// LilyPond draws one of them over the top staff — a mark belongs to
+	// the system and not to a line of it.
+	if mark := e.marks[mi]; mark != "" {
+		pre = append(pre, fmt.Sprintf(`\mark \markup { \box "%s" }`, escape(mark)))
 	}
 	if sign := signCommand(m.Sign); sign != "" {
 		pre = append(pre, sign)

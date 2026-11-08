@@ -440,3 +440,62 @@ func TestAShortNameIsCutByLettersNotBytes(t *testing.T) {
 		}
 	}
 }
+
+// A rehearsal mark is written as the letter it is called, not as the text
+// the bar holds.
+//
+// A mark in the sequence is kept as a place and the letter is derived from
+// where it falls, which is what renames B to C when one is put in before
+// it. The bar itself holds nothing, so writing what the bar said wrote
+// nothing at all, and a score whose marks were all made as "the next one"
+// exported to LilyPond with none of them. The .gscore format lost the same
+// marks the same way; this is the other door.
+func TestTheRehearsalMarksAreWrittenWithTheirLetters(t *testing.T) {
+	s := tune(fourFour,
+		[]model.Element{note(model.StepC, 4, whole)},
+		[]model.Element{note(model.StepD, 4, whole)},
+		[]model.Element{note(model.StepE, 4, whole)},
+		[]model.Element{note(model.StepF, 4, whole)},
+	)
+	// Two places in the sequence, and one mark written out as itself —
+	// which is left alone by the sequence and does not advance it.
+	s.SetMarker(1, "", true)
+	s.SetMarker(2, "Verse", false)
+	s.SetMarker(3, "", true)
+
+	src := render(t, s)
+	for _, want := range []string{
+		`\mark \markup { \box "A" }`,
+		`\mark \markup { \box "Verse" }`,
+		`\mark \markup { \box "B" }`,
+	} {
+		if !strings.Contains(src, want) {
+			t.Errorf("the file does not say %s:\n%s", want, src)
+		}
+	}
+	compiles(t, src)
+}
+
+// The marks are on every staff, because that is what a rehearsal mark is,
+// and LilyPond draws one of them: \mark belongs to the score and not to the
+// line of it that carries the command. So a two-staff score says it twice
+// and prints it once, which is what it did before the letters were derived
+// and is checked here because that is the thing a change of this kind can
+// quietly break.
+func TestAMarkOnEveryStaffIsStillOneMark(t *testing.T) {
+	s := tune(fourFour, []model.Element{note(model.StepC, 4, whole)})
+	s.Parts = append(s.Parts, &model.Part{
+		Name: "Cello", Clef: model.Bass, Time: fourFour,
+		Measures: []*model.Measure{{
+			Voices:       []*model.Voice{{Elements: []model.Element{note(model.StepC, 3, whole)}}},
+			RightBarline: model.BarSingle,
+		}},
+	})
+	s.SetMarker(0, "", true)
+
+	src := render(t, s)
+	if n := strings.Count(src, `\box "A"`); n != 2 {
+		t.Errorf("the letter is written %d times, want once a staff", n)
+	}
+	compiles(t, src)
+}

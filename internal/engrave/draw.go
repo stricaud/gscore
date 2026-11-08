@@ -2541,7 +2541,7 @@ func (e *engraver) drawTexts(m *model.Marks, p *placed, measure int) {
 		e.wait(waitingMark{
 			x0: x, x1: x + widest,
 			height: textSize + float64(len(lines)-1)*textLine,
-			gap:    0.6, rank: rankText,
+			gap:    textAir(look), rank: rankText,
 			draw: func(y float64) {
 				// Upwards from the bottom line: the block hangs from where
 				// the queue put it, which is just above the music.
@@ -3045,6 +3045,10 @@ func (e *engraver) placeSystemTexts() {
 			}
 		}
 		height := p.look.Size + float64(len(p.lines)-1)*p.line
+		// The room under the block, which has to hold the tail of a
+		// letter as well: these are placed by their baselines. See
+		// textAir.
+		air := textAir(p.look)
 
 		// The first row that is free where this text goes.
 		row := 0
@@ -3052,16 +3056,16 @@ func (e *engraver) placeSystemTexts() {
 			row++
 		}
 		if row == len(rows) {
-			top := e.systemTopReach - systemTextGap
+			top := e.systemTopReach - air
 			for i := 0; i < row; i++ {
 				top -= rows[i]
 			}
-			rows = append(rows, height+systemTextGap)
+			rows = append(rows, height+air)
 			right = append(right, p.x+widest)
 			e.writeSystemText(p, top, height)
 			continue
 		}
-		top := e.systemTopReach - systemTextGap
+		top := e.systemTopReach - air
 		for i := 0; i < row; i++ {
 			top -= rows[i]
 		}
@@ -3102,10 +3106,41 @@ func (e *engraver) writeSystemText(p pendingSystemText, y, height float64) {
 }
 
 const (
-	// systemTextGap is the air between the music and the words over the
-	// system, and between one row of them and the next.
-	systemTextGap = 0.6
+	// systemTextGap is the air between the music and the words written
+	// over the whole system — the tempo and the directions — and between
+	// one row of them and the next.
+	//
+	// More than a marking belonging to one staff is given. They are set
+	// larger, because they are read from across a desk and from the back
+	// of a section; and the row above them carries the metronome mark and
+	// the rehearsal letters, which are read along with them. Stood as
+	// close in as a "pizz.", "Allegro" came out with the noteheads under
+	// it and the speed over it and no air on either side.
+	systemTextGap = 1.4
+	// staffTextGap is the same for the words that belong to one staff —
+	// "pizz.", a note to the player — which sit close in, by the music
+	// they are about.
+	staffTextGap = 0.6
+	// textDescent is how far below its baseline a line of words reaches:
+	// the tail of a g or a p, as a fraction of the type size.
+	//
+	// Words are placed by their baselines, so without it the room left
+	// under a block of them is room above the letters that hang out of
+	// it. "Allegro" was placed clear of the music and its g was not, and
+	// "pizz." was placed clear of a notehead that its p was written
+	// through.
+	textDescent = 0.22
 	// textGap is how far apart two of them have to be along the line
 	// before they count as not colliding.
 	textGap = 1.0
 )
+
+// textAir is the room left between a block of words and the music it is
+// written over, with the tail of a letter counted in.
+func textAir(look model.TextLook) float64 {
+	gap := staffTextGap
+	if look.System {
+		gap = systemTextGap
+	}
+	return gap + look.Size*textDescent
+}

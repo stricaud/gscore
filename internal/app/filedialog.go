@@ -560,7 +560,14 @@ func (a *App) renderPDF(w io.Writer, r *http.Request) error {
 	// As it sounds, or as it is read. A copy is moved to concert pitch and
 	// that copy is drawn; what is saved in the file is untouched.
 	concert := q.Get("concert") == "1"
-	eopt.ShowPartNames = len(score.Parts) > 1
+	// The staves are named, however many there are. A printed score says
+	// what its lines are, and a piece on one staff is not the exception:
+	// it is read away from the program that knows, often by somebody who
+	// did not write it, and "which instrument is this" is not a question a
+	// sheet of music should leave to the person holding it. One staff is
+	// named once, at the head of the first system — see engrave.staffLabel
+	// — so the word is a heading and not a label down every page.
+	eopt.ShowPartNames = true
 	// Not fitted here: what the paper says about type size and line length
 	// is settled per piece below, because the pieces are different sizes of
 	// music.
@@ -584,9 +591,7 @@ func (a *App) renderPDF(w io.Writer, r *http.Request) error {
 			popt.Title = filepath.Base(filename)
 		}
 		for _, sc := range book {
-			o := eopt
-			o.ShowPartNames = len(sc.Parts) > 1
-			secs = append(secs, fit(sc, o, popt))
+			secs = append(secs, fit(sc, eopt, popt))
 		}
 	case "parts":
 		secs = append(secs, fit(score, eopt, popt))

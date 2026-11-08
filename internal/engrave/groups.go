@@ -80,6 +80,21 @@ func partLabel(p *model.Part, first bool) string {
 	return abbreviate(name)
 }
 
+// staffLabel is the same, with the one-staff case settled.
+//
+// A piece on one staff says what it is once, at the head, the way a solo is
+// printed: there is no second line to tell it from, so the name is a heading
+// rather than a label, and "Flu." written down the side of every system is a
+// word in the way on every page of the piece. A score of several staves
+// names them all on every system, which is what somebody turning a page of
+// it needs.
+func staffLabel(parts []*model.Part, p *model.Part, first bool) string {
+	if !first && len(parts) == 1 {
+		return ""
+	}
+	return partLabel(p, first)
+}
+
 // abbreviate shortens a name the way a score does: the first few letters of
 // each word, with a full stop.
 func abbreviate(name string) string {
@@ -114,7 +129,7 @@ func (e *engraver) labelWidth(parts []*model.Part, first bool) float64 {
 	widest := 0.0
 	braced := e.bracedStaves()
 	for i, p := range parts {
-		w := textWidth(partLabel(p, first), nameSize)
+		w := textWidth(staffLabel(parts, p, first), nameSize)
 		if braced[i] {
 			// The brace stands between this staff and its name, so the
 			// margin has to hold both. A grand staff that names no group
@@ -409,7 +424,7 @@ func (e *engraver) drawGroups(parts []*model.Part, left float64, tops []float64,
 		if i >= len(tops) || named[i] {
 			continue
 		}
-		label := partLabel(p, first)
+		label := staffLabel(parts, p, first)
 		if label == "" {
 			continue
 		}

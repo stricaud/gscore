@@ -1356,16 +1356,24 @@ func (a *App) handlePrint(w http.ResponseWriter, r *http.Request) {
 	type section struct {
 		heading string
 		score   *model.Score
+		// names says the staves are labelled at the head of the system.
+		//
+		// A score says what its lines are, however many it has: one staff
+		// is named once, at the head, which is how a solo is printed. A
+		// part printed on its own is not, because the heading over it is
+		// already its name — the same division the PDF makes, so that the
+		// printed page and the exported file are one document.
+		names bool
 	}
 	var sections []section
 
 	switch what {
 	case "book":
 		for _, sc := range book {
-			sections = append(sections, section{score: sc})
+			sections = append(sections, section{score: sc, names: true})
 		}
 	case "parts":
-		sections = append(sections, section{score: score})
+		sections = append(sections, section{score: score, names: true})
 		// The parts the score carries, where somebody has made them: those
 		// are the documents that were named, sized and laid out for the
 		// stands, and printing a staff apiece instead would be printing
@@ -1386,10 +1394,10 @@ func (a *App) handlePrint(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	default:
-		sections = append(sections, section{score: score})
+		sections = append(sections, section{score: score, names: true})
 	}
 	if len(sections) == 0 {
-		sections = append(sections, section{score: score})
+		sections = append(sections, section{score: score, names: true})
 	}
 
 	title := score.Identity.Title
@@ -1448,7 +1456,9 @@ func (a *App) handlePrint(w http.ResponseWriter, r *http.Request) {
 		if i == 1 {
 			ropt.EmbedFont = false
 		}
-		po, eo := gpdf.Fit(sec.score, paper, eopt)
+		so := eopt
+		so.ShowPartNames = sec.names
+		po, eo := gpdf.Fit(sec.score, paper, so)
 		lay := engrave.Engrave(sec.score, eo)
 		ropt.StaffSpace = po.StaffSpace
 
@@ -1557,9 +1567,12 @@ func partLabel(p *model.Part) string {
 func onePart(s *model.Score, p *model.Part) *model.Score {
 	out := *s
 	out.Parts = []*model.Part{p}
-	if p.Name != "" {
-		out.Identity.Subtitle = p.Name
-	}
+	// The subtitle is left as the score's own. It used to be overwritten
+	// with the name of the instrument, which is a second place to say what
+	// is already written in the margin of the first page — and it was
+	// said *instead of* what the piece is, so a part printed from "From
+	// Walt Disney Pictures' TARZAN" came out subtitled "Alto sax" and the
+	// player's copy no longer said where the music is from.
 	return &out
 }
 

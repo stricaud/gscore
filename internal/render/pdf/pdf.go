@@ -500,7 +500,17 @@ func (r *renderer) pages() []band {
 			}
 		}
 	}
-	cuts = append(cuts, cut{r.lay.Height, false})
+	// The drawing ends where the music does, not where its canvas does.
+	// The white under the last system is the drawing's own margin and the
+	// sheet has one already; counted here it is a page's worth of nothing
+	// that a system then has to be turned over for. A part whose last
+	// line finished two spaces inside the paper went onto a second page
+	// to make room for blank paper.
+	end := r.lay.Content
+	if end <= 0 || end > r.lay.Height {
+		end = r.lay.Height
+	}
+	cuts = append(cuts, cut{end, false})
 	sort.Slice(cuts, func(a, b int) bool { return cuts[a].at < cuts[b].at })
 
 	var out []band

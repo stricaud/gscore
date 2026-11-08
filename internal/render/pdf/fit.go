@@ -139,7 +139,7 @@ func tighten(sc *model.Score, o Options, eo engrave.Options) Options {
 	if fewest <= 1 {
 		return o // one sheet is as few as there are, and it is also the last
 	}
-	for size := o.StaffSpace - tightenStep; size >= PartStaffSpace; size -= tightenStep {
+	for _, size := range tightenSizes(o.StaffSpace) {
 		try := o
 		try.StaffSpace = size
 		n, h := fillAt(sc, try, eo)
@@ -154,6 +154,26 @@ func tighten(sc *model.Score, o Options, eo engrave.Options) Options {
 		}
 	}
 	return best
+}
+
+// tightenSizes is the sizes to try, largest first: down by a step at a
+// time, and the smallest the rule allows last of all.
+//
+// The floor is tried whether or not the steps land on it. From six and a
+// fifth they go five nine, five six, five three, five, four seven — and
+// then stop, a tenth of a point above a size the program was perfectly
+// willing to use. An alto part that fits one sheet at exactly four and six
+// tenths was printed across two for want of trying it, beside a flute part
+// of the same music on one.
+func tightenSizes(from float64) []float64 {
+	var out []float64
+	for size := from - tightenStep; size > PartStaffSpace; size -= tightenStep {
+		out = append(out, size)
+	}
+	if from > PartStaffSpace {
+		out = append(out, PartStaffSpace)
+	}
+	return out
 }
 
 // holeSlack is how much better the filling has to be before the type is set

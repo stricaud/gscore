@@ -160,11 +160,15 @@ type Curve struct {
 // Layout is a complete drawing, in staff spaces.
 type Layout struct {
 	Width, Height float64
-	Glyphs        []Glyph
-	Lines         []Line
-	Texts         []Text
-	Curves        []Curve
-	Circles       []Circle
+	// Content is how far down the drawing the music reaches, before the
+	// margin under it. Height is the whole canvas; this is the part of it
+	// that has anything on it. See run.
+	Content float64
+	Glyphs  []Glyph
+	Lines   []Line
+	Texts   []Text
+	Curves  []Curve
+	Circles []Circle
 	// Quads are filled four-sided shapes. Beams are what need them: a beam's
 	// ends are cut vertically, flush with its stems, and a stroked line
 	// cannot do that — its caps are square to the line, so a sloping beam
@@ -1407,6 +1411,15 @@ func (e *engraver) run() {
 	if low := e.lowestInk(); low+sp.marginY() > e.lay.Height {
 		e.lay.Height = low + sp.marginY()
 	}
+	// Where the music itself stops, with the margin under it left out.
+	//
+	// The difference matters to whatever cuts the drawing into pages. The
+	// margin at the foot of the drawing is not something to be printed: a
+	// sheet has a margin of its own and the room is already set aside, so
+	// counting this one against the page as well asks a sheet to hold two
+	// of them. A part whose last system ended two spaces inside the paper
+	// was pushed onto a second page by the white under it.
+	e.lay.Content = e.lay.Height - sp.marginY()
 	if e.lay.Width == 0 {
 		e.lay.Width = e.opt.LineWidth + 2*sp.Margin
 	}

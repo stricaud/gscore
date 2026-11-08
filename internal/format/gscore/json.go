@@ -41,6 +41,13 @@ type scoreDoc struct {
 	Tempo        tempoDoc   `json:"tempo"`
 	Parts        []partDoc  `json:"parts"`
 	Cursor       *cursorDoc `json:"cursor,omitempty"`
+	// MarkerStyle is what the marks in the rehearsal sequence are called:
+	// letters, numbers, or the number of the bar each one stands on. One
+	// decision about the whole score, and the companion of markerAuto on a
+	// bar — the bar says it is a place in the sequence and this says what
+	// the sequence calls its places. Omitted for letters, which is what a
+	// score that has never been asked uses.
+	MarkerStyle string `json:"markerStyle,omitempty"`
 	// Scripts are the programs somebody wrote to make this music. Kept
 	// because a piece built from a process is not fully written down by
 	// its notes: the notes are the output and the process is the thought.
@@ -225,6 +232,12 @@ type measureDoc struct {
 	// Marker is a rehearsal mark, and Repeat the sign that says to play the
 	// bar before again.
 	Marker string `json:"marker,omitempty"`
+	// MarkerAuto says the bar is a place in the rehearsal sequence rather
+	// than a mark written out as itself, so that what it is called is
+	// worked out from where it falls. Without it in the file, every mark
+	// made as "the next letter" was saved as a bar with nothing on it:
+	// Marker is empty for those, the letter being the sequence's to say.
+	MarkerAuto bool `json:"markerAuto,omitempty"`
 	// NumberFrom restarts the bar numbering at this bar, at the number it
 	// holds. A pointer, because restarting at 1 is a thing you can mean.
 	NumberFrom *int `json:"numberFrom,omitempty"`
@@ -516,6 +529,9 @@ func encodeScore(s *model.Score) *scoreDoc {
 			Barlines: g.Barlines, Name: g.Name,
 		})
 	}
+	if s.Markers != model.MarkerLetters {
+		doc.MarkerStyle = s.Markers.String()
+	}
 	doc.Description = s.Description
 	if len(s.Tags) > 0 {
 		doc.Tags = append([]string(nil), s.Tags...)
@@ -632,6 +648,7 @@ func encodeScore(s *model.Score) *scoreDoc {
 				}
 			}
 			md.Marker, md.Repeat = m.Marker, m.Repeat
+			md.MarkerAuto = m.MarkerAuto
 			md.NumberFrom = m.NumberFrom
 			md.SystemBreak = m.SystemBreak
 			if m.Sign != model.NoSign {
@@ -880,6 +897,12 @@ func decodeScore(doc *scoreDoc) (*model.Score, error) {
 		}
 	}
 
+	// An unknown name is read as letters rather than refused: a file is
+	// worth opening even where one word in it came from a later gscore.
+	if style, ok := model.MarkerStyleFromName(doc.MarkerStyle); ok {
+		s.Markers = style
+	}
+
 	s.Description = doc.Description
 	if len(doc.Tags) > 0 {
 		s.Tags = append([]string(nil), doc.Tags...)
@@ -998,6 +1021,7 @@ func decodeScore(doc *scoreDoc) (*model.Score, error) {
 				}
 			}
 			m.Marker, m.Repeat = md.Marker, md.Repeat
+			m.MarkerAuto = md.MarkerAuto
 			m.NumberFrom = md.NumberFrom
 			m.SystemBreak = md.SystemBreak
 			if sign, ok := model.SignFromName(md.Sign); ok {

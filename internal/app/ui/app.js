@@ -10225,6 +10225,20 @@ async function markerDialog() {
     status("Click a measure first");
     return;
   }
+  // The cursor is standing in the blank bar past the end the moment the
+  // last note of the last bar is written, which is exactly when somebody
+  // reaches for a letter — and that bar is somewhere to click to carry on
+  // writing rather than a bar of the piece, so there is nothing there for
+  // a mark to be written over. Said before the question rather than after
+  // it: the sequence named the mark, offered it, took the answer and then
+  // put "there is no such measure" in the status line, which from the
+  // other side of the screen is a letter that was asked for and silently
+  // not drawn.
+  if (blankBarPastTheEnd(sel.measure)) {
+    status("That is the blank bar past the end — click a bar of the music " +
+           "to mark it");
+    return;
+  }
   const style = state.info?.markerStyle || "letters";
   const next = nextMarkerName(sel.measure);
   const bar = String(barNumberOf(sel.measure));
@@ -16209,6 +16223,23 @@ function measureCount() {
     if (h.measure + 1 > most) most = h.measure + 1;
   }
   return most;
+}
+
+// blankBarPastTheEnd says a bar is the blank one drawn after the music.
+//
+// The engraver says so of the region it drew, which is the thing to ask:
+// the bar has a number, a clickable region and a cursor that lands in it
+// like any other, and the only thing that distinguishes it is that it is
+// not there. Whatever is to be written *on* a bar rather than in it — a
+// rehearsal letter over the bar line — has nothing to be written on.
+//
+// With no drawing to go by, nothing is past the end: it is better to ask
+// the server and be told no than to refuse a bar that is really there.
+function blankBarPastTheEnd(measure) {
+  const hits = state.hits || [];
+  const here = hits.find((h) => h.measure === measure);
+  if (here) return !!here.ahead;
+  return hits.length > 0 && measure >= measureCount();
 }
 
 // goToMeasure moves the page to a bar, selects it and says where it landed.

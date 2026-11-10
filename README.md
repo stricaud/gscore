@@ -13,11 +13,8 @@ gscore was written in C and GTK+ between 2001 and 2005, and released up to
 unbroken strip of music designed for editing rather than printing. Mandrake and
 Mandriva packaged it from December 2004, and OpenMandriva still ships it today.
 
-This tree is the 2026 rewrite. The 2001–2005 C source is not in it: it was
-somebody else's work in part — two other people contributed to it, and one
-header came from the `abc2midi` package under the GPL — so it could not come
-along to an MIT-licensed tree. It remains in this repository's history, and
-the decisions it made are written down in [`docs/engraving.md`](docs/engraving.md).
+This tree is the 2026 rewrite. The C version of Gscore still remains in this 
+repository's history, and the decisions it made are written down in [`docs/engraving.md`](docs/engraving.md).
 
 The version lives in the [`VERSION`](VERSION) file at the root, and nowhere
 else: the packages, the macOS `Info.plist` and the program's own `--version`

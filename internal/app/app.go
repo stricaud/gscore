@@ -1149,9 +1149,23 @@ func (a *App) handleInfo(w http.ResponseWriter, r *http.Request) {
 		if p.Clef == model.Percussion {
 			instrument = drumKitName
 		}
+		// The signature as the staff on screen is showing it.
+		//
+		// What is stored is what the player reads, and in the concert-pitch
+		// view that is not what is drawn: a clarinet staff showing one flat
+		// is stored as one sharp. The key picker opens on this number and
+		// the inspector prints it, and both are about the staff in front of
+		// you — so in that view a picker opened on a clarinet showed one
+		// sharp over a staff reading one flat, and pressing OK without
+		// touching the slider moved the piece from F major to A. See
+		// handleSetKey, which reads the number back the same way round.
+		key := p.Key
+		if a.concert {
+			key = p.Transpose.Sounding(key)
+		}
 		out.Parts = append(out.Parts, partInfo{
 			Name: name, Instrument: instrument, Sound: p.Sound,
-			Clef: p.Clef.String(), Key: keyText(p.Key),
+			Clef: p.Clef.String(), Key: keyText(key),
 			Time: p.Time.String(), Measures: len(p.Measures), Notes: notes,
 			TransposeSemitones: p.Transpose.Semitones(),
 			Hidden:             p.Hidden,

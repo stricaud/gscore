@@ -107,6 +107,15 @@ var catalogue = []struct {
 	{GroupWoodwind, "wind.reed.oboe-damore"},
 	{GroupWoodwind, "wind.reed.oboe.bass"},
 	{GroupWoodwind, "wind.reed.clarinet"},
+	// The one everybody means by "clarinet", and the one that was not
+	// here. Everything else about it was: the sound table names it, the
+	// transposing table puts it a major second down, and the score order
+	// has it between the plain clarinet and the one in A. Only the list
+	// somebody picks from left it out, so a player writing for the
+	// commonest clarinet there is had to choose the unqualified entry and
+	// hope. The trumpets are listed this way too — plain, then in B flat,
+	// then in C — which is what this was meant to match.
+	{GroupWoodwind, "wind.reed.clarinet.bflat"},
 	{GroupWoodwind, "wind.reed.clarinet.a"},
 	{GroupWoodwind, "wind.reed.clarinet.eflat"},
 	{GroupWoodwind, "wind.reed.clarinet.alto"},

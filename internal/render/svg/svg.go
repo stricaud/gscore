@@ -311,9 +311,10 @@ func Render(w io.Writer, lay *engrave.Layout, opt Options) error {
 		// pieces, so that the browser lays them out and anchors the line
 		// by what it really drew. Spelling it as several texts, each
 		// placed by a measurement made here, is how a title in two faces
-		// came out with its two halves overlapping: the measuring was
-		// done from a table of Times widths and the drawing was done in
-		// Georgia.
+		// came out with its two halves overlapping: the widths were read
+		// from a table and the type was set by the browser, and a table
+		// is near enough to reserve room by and not near enough to set
+		// type with.
 		//
 		// The spaces are kept, because the space between two such pieces
 		// is at the end of the first of them and SVG drops it otherwise.
@@ -389,7 +390,19 @@ func writeStyle(b *strings.Builder, opt Options, s float64) {
 	// Left to itself SVG throws that space away — xml:space says to keep
 	// it, and is honoured when the drawing is parsed as XML but not always
 	// when it is put into a page as markup, so the rule says it too.
-	fmt.Fprintf(b, `%s.t{font-family:Georgia,"Times New Roman",serif;fill:#000;white-space:pre;}`+"\n", under)
+	// The reading face is the one the engraver measured and the one a PDF
+	// prints in, and those have to be the same face.
+	//
+	// The words on a score are not laid out by the browser alone: the
+	// engraver reserves the room they need and then puts the next thing
+	// after them, and it does that from a table of Times widths. Drawn in
+	// Georgia, which is a fifth wider in the lower case, the next thing
+	// landed inside the words — a metronome mark came out with its note
+	// written over the last letter of "Molto moderato". Times New Roman is
+	// the same widths as the table, on every machine that has it, and
+	// Liberation Serif is drawn to the same widths for a machine that has
+	// not; the score on the screen is then the score that prints.
+	fmt.Fprintf(b, `%s.t{font-family:"Times New Roman",Times,"Liberation Serif",serif;fill:#000;white-space:pre;}`+"\n", under)
 	fmt.Fprintf(b, `%sline{stroke:#000;stroke-linecap:butt;}`+"\n", under)
 	fmt.Fprintf(b, `%spath.curve{fill:none;stroke:#000;}`+"\n", under)
 	b.WriteString("</style>\n")

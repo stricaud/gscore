@@ -798,11 +798,18 @@ func (e *engraver) slurAt(part *model.Part, m *model.Marks, p *placed, measure i
 	// one, so it has to be opened before the closing below or the stop
 	// finds nothing open and the curve is never drawn.
 	if open.slur == nil {
-		if gx, gstep, ok := e.graceSlurAnchor(part, p); ok {
+		if gx, gstep, gstem, ok := e.graceSlurAnchor(part, p); ok {
 			gy := e.y + stepY(float64(gstep))
 			open.slur = &openSpan{
 				x: gx, y: gy, rel: gy - e.y, above: true,
 				fromHi: gstep, fromLo: gstep,
+				// A grace note's stem always points up, whatever the note
+				// it leans on does. Saying so matters because the side the
+				// curve falls on is settled later, from the stems of the
+				// whole phrase: where it comes out below, the end is hung
+				// off the stem, and a stem left unsaid was read as pointing
+				// down and ending at y zero — the top of the drawing.
+				fromStemUp: true, fromStemY: gstem,
 				ref: p.index, part: e.partIndex, measure: measure,
 			}
 		}

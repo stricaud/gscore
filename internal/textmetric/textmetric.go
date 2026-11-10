@@ -28,11 +28,15 @@
 // came out with its letter over the right-hand edge of its own box, and an M
 // or a W would have crossed it by a whole staff space.
 //
-// The PDF renderer sets its text in Times and the SVG renderer in Georgia,
-// falling back to Times New Roman. Georgia's capitals are a little wider
-// than Times', so a page measured here and drawn as SVG has slightly more
-// room in its boxes than it needs. That is the safe direction, and it is a
-// great deal closer than a flat guess.
+// Both renderers set their text in Times — the PDF in the standard face it
+// carries without embedding, the SVG in Times New Roman, which is drawn to
+// these same widths — so what is measured here is what is drawn.
+//
+// It was not always so: the SVG asked for Georgia, which is about a fifth
+// wider in the lower case. Where the engraver merely reserves room, a width
+// read short is a box a little tight. Where it puts the next thing after the
+// words — the note of a metronome mark after "Molto moderato" — a width read
+// short is one thing drawn over another, and that is what happened.
 package textmetric
 
 type face struct {

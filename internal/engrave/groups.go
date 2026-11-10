@@ -194,6 +194,12 @@ func boldWidth(s string, size float64) float64 {
 	return textmetric.Width(s, size, textmetric.Style{Bold: true})
 }
 
+// boldItalicWidth is the same again for the face the signs are set in — a
+// "To Coda" or a "D.S." — which is bold and italic both.
+func boldItalicWidth(s string, size float64) float64 {
+	return textmetric.Width(s, size, textmetric.Style{Bold: true, Italic: true})
+}
+
 // bracedStaves marks the drawn staves that have a brace between them and
 // whatever is written to their left.
 func (e *engraver) bracedStaves() map[int]bool {
@@ -666,7 +672,9 @@ func (e *engraver) drawMarkRow(m *model.Measure, tempo *model.Tempo,
 				S: label, X: x, Y: row - 0.6, Size: jumpTextSize,
 				Anchor: "start", Bold: true, Italic: true,
 			})
-			x += textWidth(label, jumpTextSize) + afterMark
+			// Bold italic, which is what it is set in: the tempo that
+			// follows it on this row is placed after it.
+			x += boldItalicWidth(label, jumpTextSize) + afterMark
 		}
 	}
 
@@ -711,10 +719,9 @@ func (e *engraver) drawRehearsalMarkAt(text string, x, row float64, measure int,
 	// ran over the right-hand edge of its own box and an M would have
 	// crossed it by a staff space.
 	//
-	// Centred as well as measured: the two renderers set this in different
-	// faces — Times in a PDF, Georgia in a page — so the width is right for
-	// one of them and close for the other, and a letter centred in its box
-	// is off by half of a small difference instead of all of it.
+	// Centred as well as measured, so that what is left of the difference
+	// between the measured width and the drawn one is split between the two
+	// sides of the box rather than all falling on the right.
 	w := boldWidth(text, jumpTextSize) + 0.8
 	e.lay.Texts = append(e.lay.Texts, Text{
 		S: text, X: x - 0.4 + w/2, Y: row - 0.6, Size: jumpTextSize,

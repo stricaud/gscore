@@ -3041,12 +3041,24 @@ func firstOf(vs ...string) string {
  * Small tables that belong with the reader rather than with the format
  */
 
+// The names MuseScore gives an accidental, in every spelling it has used.
+//
+// Three generations of them. MuseScore 4 writes the SMuFL glyph name;
+// MuseScore 3 writes the enumerator, which doubles the letter — "sharp
+// sharp"; and MuseScore 2 writes the plain English, which is the same words
+// gscore uses itself. That last pair was missing, so a double sharp in a
+// file written by MuseScore 2 was dropped with a note saying gscore does not
+// draw one — which it does, and has all along. The 1812 Overture is where it
+// showed: the cor anglais at bar 61 and a grace note in the first violins at
+// bar 53 both lost their sign.
 var accidentals = map[string]model.Accidental{
 	"accidentalSharp": model.Sharp, "sharp": model.Sharp,
 	"accidentalFlat": model.Flat, "flat": model.Flat,
 	"accidentalNatural": model.Natural, "natural": model.Natural,
 	"accidentalDoubleSharp": model.DoubleSharp, "sharp sharp": model.DoubleSharp,
+	"double sharp":         model.DoubleSharp,
 	"accidentalDoubleFlat": model.DoubleFlat, "flat flat": model.DoubleFlat,
+	"double flat": model.DoubleFlat,
 }
 
 var headKinds = map[string]model.NoteheadKind{

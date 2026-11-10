@@ -2481,7 +2481,12 @@ func (e *engraver) drawTempoAt(t model.Tempo, x, y float64) float64 {
 		// Room between the word and the note that follows it. A metronome
 		// mark set hard against the end of "Allegro moderato" reads as one
 		// long word with a crotchet in the middle of it.
-		at += textWidth(text, 2.0) + tempoTextGap
+		//
+		// Measured bold, because it is set bold. Measured roman, the word
+		// was reckoned narrower than it is drawn and the note was put
+		// nearly a space inside the room it needed: "Molto moderato" came
+		// out with the crotchet over its last letter.
+		at += boldWidth(text, 2.0) + tempoTextGap
 	}
 	if bpm > 0 && t.Parens {
 		e.lay.Texts = append(e.lay.Texts, Text{

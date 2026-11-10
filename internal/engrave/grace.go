@@ -284,20 +284,28 @@ func (e *engraver) graceLedgerLines(x, headWidth float64, step int) {
 	}
 }
 
-// graceSlurAnchor is where a slur that begins on a grace note starts.
+// graceSlurAnchor is where a slur that begins on a grace note starts: the
+// notehead it leaves from, and the end of that note's stem.
 //
 // MuseScore writes an appoggiatura as a grace note slurred into the note it
 // leans on, and it is the commonest slur in keyboard music of the period.
 // The curve has to begin at the small notehead rather than at the note it
 // decorates, or it is drawn backwards — from the main note to itself.
 //
+// The stem comes back with it because a slur on the side the stems are on
+// hangs off the stem's end and not off the notehead — see the slur's close
+// in spanners.go. Left unsaid it was read as a stem ending at y zero, which
+// is the top of the whole drawing: the oboes of the 1812 Overture were set a
+// hundred spaces below the flutes to leave room for a curve that came down
+// out of the title.
+//
 // The geometry is drawGrace's, worked out the same way from the same layout,
 // because the two have to agree: a curve that starts half a space from the
 // notehead it belongs to is worse than no curve.
-func (e *engraver) graceSlurAnchor(part *model.Part, p *placed) (x float64, step int, ok bool) {
+func (e *engraver) graceSlurAnchor(part *model.Part, p *placed) (x float64, step int, stemY float64, ok bool) {
 	m := p.marks()
 	if m == nil || m.Grace == nil || len(m.Grace.Notes) == 0 {
-		return 0, 0, false
+		return 0, 0, 0, false
 	}
 	// Whichever of the group carries the mark: a group of three leaning into
 	// one note is slurred from the first of them, but nothing says it must
@@ -310,7 +318,7 @@ func (e *engraver) graceSlurAnchor(part *model.Part, p *placed) (x float64, step
 		}
 	}
 	if i < 0 {
-		return 0, 0, false
+		return 0, 0, 0, false
 	}
 
 	var el model.Element
@@ -323,6 +331,25 @@ func (e *engraver) graceSlurAnchor(part *model.Part, p *placed) (x float64, step
 	lay := graceLayout(m.Grace)
 	head := smufl.Advance("noteheadBlack") * graceScale
 	left := p.x - e.accidentalLead(el) - lay.width
+
+	// The stems, as drawGrace lays them out: one note carries a flag on a
+	// stem of its own, and two or more are beamed and each stem runs to the
+	// beam over it.
+	t := e.opt.Defaults.StemThickness * graceScale
+	xs := make([]float64, len(m.Grace.Notes))
+	ys := make([]float64, len(m.Grace.Notes))
+	for k, n := range m.Grace.Notes {
+		xs[k] = left + lay.heads[k] + head - t/2
+		ys[k] = e.y + stepY(float64(StaffStep(part.Clef, n.Pitch)))
+	}
+	top := ys[i] - graceStem
+	if len(xs) > 1 {
+		y0, y1 := e.graceBeam(xs, ys)
+		top = y0
+		if xs[len(xs)-1] != xs[0] {
+			top = y0 + (y1-y0)*(xs[i]-xs[0])/(xs[len(xs)-1]-xs[0])
+		}
+	}
 	return left + lay.heads[i] + head/2,
-		StaffStep(part.Clef, m.Grace.Notes[i].Pitch), true
+		StaffStep(part.Clef, m.Grace.Notes[i].Pitch), top, true
 }

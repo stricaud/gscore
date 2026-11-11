@@ -25,7 +25,33 @@ package app
 // inside it answering a request: the call waits for a reply that cannot
 // arrive until the call returns, and the program stops dead.
 
-import "errors"
+import (
+	"errors"
+	"os"
+	"path/filepath"
+)
+
+// soundfontDir is the name of a folder nothing here will ever open.
+//
+// The page reports it in the recording dialog and that is all it is for:
+// in a browser there is no disk to download to, and the answer only has to
+// be the same words it has always been. Left exactly as it was when the
+// folder on a real machine moved into Documents — that move is about a
+// folder somebody has to find in a Finder, and there is no Finder here.
+//
+// Worked out from the environment and nothing else. os.UserConfigDir reads
+// a variable; anything that asks the filesystem a question stops the
+// program dead, for the reason at the head of this file.
+func soundfontDir() (string, error) {
+	base, err := os.UserConfigDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(base, "Gscore", "soundfonts"), nil
+}
+
+// oldSoundfontDir is the same folder: there was never another one here.
+func oldSoundfontDir() (string, error) { return soundfontDir() }
 
 // diskSoundfonts finds none, there being nowhere to look.
 func diskSoundfonts() []installed { return nil }

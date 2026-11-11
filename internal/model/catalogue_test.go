@@ -232,3 +232,51 @@ func TestPluckedInstrumentsHaveTheirReach(t *testing.T) {
 		}
 	}
 }
+
+// A General MIDI program has a catalogue name, and it is the instrument
+// that program is for.
+//
+// Scores arrive knowing the program and not the name — a MIDI file, a
+// NoteWorthy staff, an ABC tune — and everything built on the catalogue
+// reads a part with no catalogue name as a piano.
+func TestAProgramHasACatalogueName(t *testing.T) {
+	for _, c := range []struct {
+		i    Instrument
+		want string
+	}{
+		{Flute, "wind.flutes.flute"},
+		{Oboe, "wind.reed.oboe"},
+		{Bassoon, "wind.reed.bassoon"},
+		{FrenchHorn, "brass.french-horn"},
+		{Violin, "strings.violin"},
+		{Cello, "strings.cello"},
+		{AcousticGrandPiano, "keyboard.piano"},
+		// Several instruments share a program, and the one that shares its
+		// name with it is the one it is for: a euphonium is filed under the
+		// tuba's program as the nearest thing, and a file saying 58 means a
+		// tuba.
+		{Tuba, "brass.tuba"},
+	} {
+		got, ok := SoundForInstrument(c.i)
+		if !ok {
+			t.Errorf("%v has no catalogue name", c.i)
+			continue
+		}
+		if got != c.want {
+			t.Errorf("%v came out as %q, want %q", c.i, got, c.want)
+		}
+	}
+}
+
+// Whatever comes back is a name the catalogue really knows, or nothing.
+func TestEveryProgramsNameIsOneTheCatalogueHas(t *testing.T) {
+	for p := 0; p < 128; p++ {
+		got, ok := SoundForInstrument(Instrument(p))
+		if !ok {
+			continue
+		}
+		if !SoundKnown(got) {
+			t.Errorf("program %d came out as %q, which is no instrument", p, got)
+		}
+	}
+}

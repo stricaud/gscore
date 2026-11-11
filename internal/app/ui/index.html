@@ -720,6 +720,21 @@
   </form>
 </dialog>
 
+<!-- A soundfont coming in.
+     Thirty to two hundred megabytes, which on an ordinary line is between
+     ten seconds and five minutes. A sentence that says "downloading" and
+     never changes is indistinguishable from a program that has stopped, so
+     this says how much has arrived, how fast, and how long is left. -->
+<dialog id="sfdownload">
+  <h2 id="sfdownload-title">Downloading</h2>
+  <p class="small" id="sfdownload-what"></p>
+  <progress id="sfdownload-bar" max="1" value="0"></progress>
+  <p id="sfdownload-numbers" aria-live="polite">Starting…</p>
+  <form method="dialog" class="ask-buttons">
+    <button value="hide" type="submit" formnovalidate id="sfdownload-hide">Carry on in the background</button>
+  </form>
+</dialog>
+
 <!--
   Drawing a symbol the music font does not have. This is gscore's oldest idea:
   every one of its 287 symbols was an XPM file, a grid of characters anyone
@@ -1592,6 +1607,22 @@
   <p class="small" id="setup-live" hidden>These are the staves in the score.
     Adding, removing and moving happen as you do them and Undo takes them
     back; the music stays where it is.</p>
+
+  <!-- Which recordings each instrument is played with.
+       Shut, because almost nobody wants it: one soundfont for the whole
+       score is the right answer for a first piece and for most pieces after
+       it. It is here for the person who has a real violin and a General
+       MIDI bank for everything else, and who would otherwise be setting
+       that on every staff of every score they write. -->
+  <details id="setup-sounds" hidden>
+    <summary>Which recordings each instrument plays through</summary>
+    <p class="small" id="setup-sounds-note">Said once about the instrument,
+      and it holds in every score you write. Kept on this machine rather
+      than in the score, because these are files on your own disk: a score
+      you send somebody names instruments, not the recordings you happen
+      to own.</p>
+    <table id="setup-sounds-table"><tbody></tbody></table>
+  </details>
   </div>
 
   <!-- Two different things can be wanted here, and only one of them is
@@ -1807,6 +1838,10 @@
   <div class="record-actions">
     <button type="button" id="record-pick">Choose a file…</button>
     <button type="button" id="record-get">Download one…</button>
+    <!-- Any staff may be put on a soundfont of its own, below. This is the
+         way back: one press and the whole score is on the one chosen here
+         again, without going down the list undoing them one at a time. -->
+    <button type="button" id="record-all" hidden>Use this for every staff</button>
   </div>
   <p class="small" id="record-font-note"></p>
 

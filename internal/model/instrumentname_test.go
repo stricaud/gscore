@@ -142,3 +142,87 @@ func TestAWordThatIsNotANumberIsKept(t *testing.T) {
 		}
 	}
 }
+
+// A staff names its instrument in the language the score is written in, and
+// a score is as likely to be Italian or German as English.
+//
+// Every one of these came out a piano before, which is the sound of nothing
+// being recognised: a reader that only knows English reads Rossini as two
+// dozen pianos.
+func TestAStaffIsNamedInWhateverLanguageItWasWrittenIn(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		want Instrument
+	}{
+		// Italian, and the plurals a desk of players is written in.
+		{"Flauto", Flute}, {"Flauti", Flute}, {"Ottavino", Piccolo},
+		{"Oboi", Oboe}, {"Clarinetti in A", Clarinet},
+		{"Fagotti", Bassoon}, {"Fagotto", Bassoon},
+		{"Corni in G", FrenchHorn}, {"Trombe in E", Trumpet},
+		{"Tromboni", Trombone}, {"Violino I", Violin},
+		{"Violoncelli", Cello}, {"Timpani", Timpani},
+		// German.
+		{"Flöte", Flute}, {"Klarinette", Clarinet}, {"Fagott", Bassoon},
+		{"Trompete", Trumpet}, {"Posaune", Trombone}, {"Pauken", Timpani},
+		{"Geige", Violin}, {"Bratsche", Viola},
+		// French, which was already there and must stay.
+		{"Flûte", Flute}, {"Hautbois", Oboe}, {"Basson", Bassoon},
+		{"Trompette", Trumpet}, {"Contrebasse", Contrabass},
+	} {
+		got, ok := InstrumentNamed(c.name)
+		if !ok {
+			t.Errorf("%q was not recognised", c.name)
+			continue
+		}
+		if got != c.want {
+			t.Errorf("%q came out %v, want %v", c.name, got, c.want)
+		}
+	}
+}
+
+// The english horn is neither english nor a horn, and every name it has
+// contains the word for horn. Matched against the french horn first, a cor
+// anglais came out a fifth away and in the wrong family.
+func TestAnEnglishHornIsNotAFrenchOne(t *testing.T) {
+	for _, name := range []string{
+		"English Horn", "Cor anglais", "Corno Inglese", "Englischhorn",
+	} {
+		got, ok := InstrumentNamed(name)
+		if !ok {
+			t.Errorf("%q was not recognised", name)
+			continue
+		}
+		if got != EnglishHorn {
+			t.Errorf("%q came out %v, want an english horn", name, got)
+		}
+	}
+	// And the french horn is still a french horn in its own languages.
+	for _, name := range []string{"Horn in F", "Cor en Fa", "Corni in G"} {
+		if got, _ := InstrumentNamed(name); got != FrenchHorn {
+			t.Errorf("%q came out %v, want a french horn", name, got)
+		}
+	}
+}
+
+// A trumpet and a trombone share five letters and an Italian score has both
+// on it, so the longer name is matched first.
+func TestATrumpetIsNotATrombone(t *testing.T) {
+	if got, _ := InstrumentNamed("Tromba"); got != Trumpet {
+		t.Errorf("Tromba came out %v", got)
+	}
+	if got, _ := InstrumentNamed("Tromboni"); got != Trombone {
+		t.Errorf("Tromboni came out %v", got)
+	}
+}
+
+// The two that are deliberately left alone: in an orchestral score they are
+// instruments and in a vocal one they are singers, and the word does not
+// say which. A confident wrong answer is worse than none.
+func TestTheAmbiguousNamesAreStillRefused(t *testing.T) {
+	for _, name := range []string{"Alto", "Altos"} {
+		if inst, ok := InstrumentNamed(name); ok {
+			t.Errorf("%q was read as %v, and it is a viola or a singer "+
+				"depending on the score", name, inst)
+		}
+	}
+}

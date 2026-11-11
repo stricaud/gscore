@@ -138,8 +138,14 @@ func (a *App) handleRecord(w http.ResponseWriter, r *http.Request) {
 	// answer. Every other export works from a bare GET and this is the one
 	// that did not.
 	if rec.Font == "" {
-		rec.Font = a.playbackFont()
+		rec.Font = a.recordFont()
 	}
+	// And whatever has been said about the instruments themselves, which
+	// the dialog's own choices win over. Resolved here because this is
+	// where the score is: what follows takes an assignment and plays it.
+	a.mu.RLock()
+	rec.Assign = a.partFonts(rec.Assign, rec.Font)
+	a.mu.RUnlock()
 
 	var buf bytes.Buffer
 	if err := recordFLAC(&buf, score, rec); err != nil {

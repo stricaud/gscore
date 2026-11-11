@@ -129,10 +129,14 @@ function scoreOf(parts, groups) {
     state: { info: { parts, groups: groups || [] } },
     setupNextId: 1,
     setupChosen: [],
+    // Nothing has been taken apart by hand: this is the reading as it
+    // comes off a score just opened.
+    setupApart: new Set(),
     instrumentCatalogue: GRAND,
     setupOrdered: () => scope.setupChosen,
   };
   const body = grab("soundChosen") + "\n" + grab("grandSound") + "\n" +
+    grab("sameSoundRun") + "\n" +
     grab("setupFromScore") + "\n" + grab("setupInPlace") +
     "\nreturn { setupFromScore, setupInPlace, grandSound };";
   const made = new Function("scope", "with (scope) { " + body + " }")(scope);
@@ -192,14 +196,17 @@ test("two of the same instrument are two players unless it takes two staves", ()
   ]);
   assert.equal(flutes.setupFromScore().length, 2);
 
-  // Three pianos in a row are three pianos, not one on three staves: a
-  // grand staff is a pair.
+  // Three pianos in a row are three pianos, and none of them is paired
+  // with another: a grand staff is a pair, so pairing the first two and
+  // leaving the third would be picking which of three identical staves
+  // gets a partner. Where the score means a pianist it says so with a
+  // brace, and a brace is read rather than guessed at.
   const three = scoreOf([
     { sound: "keyboard.piano" }, { sound: "keyboard.piano" },
     { sound: "keyboard.piano" },
   ]);
   const got = three.setupFromScore();
-  assert.deepEqual(got.map((it) => it.staves), [[0, 1], [2]]);
+  assert.deepEqual(got.map((it) => it.staves), [[0], [1], [2]]);
 });
 
 test("staves that name no instrument never pair off", () => {

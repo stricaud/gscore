@@ -100,6 +100,13 @@ func (a *App) handleLiveStart(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	// The staves that are not on the chosen soundfont: the ones this
+	// performance was told about, and the ones whose instrument has a
+	// standing answer of its own.
+	a.mu.RLock()
+	rec.Assign = a.partFonts(rec.Assign, rec.Font)
+	a.mu.RUnlock()
+
 	fonts := map[int]*synth.Font{}
 	for part, path := range rec.Assign {
 		if path == "" || path == rec.Font {
@@ -147,7 +154,12 @@ func (a *App) handleLiveStart(w http.ResponseWriter, r *http.Request) {
 		"rate":     stream.SampleRate(),
 		"chunk":    chunkFrames,
 		"duration": stream.Left(),
-		"font":     fallback.Name,
+		// Named as the lists name it, which is not always what the file
+		// calls itself inside: the bank in NAProGM.sf2 is called
+		// "NAProPercussionFull", so a status line reading the one and a
+		// dialog reading the other are two names for one thing and look
+		// like two soundfonts.
+		"font": soundfontDisplayName(rec.Font, fallback.Name),
 	})
 }
 

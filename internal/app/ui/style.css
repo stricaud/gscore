@@ -2035,6 +2035,23 @@ dialog.wide { max-width: 640px; }
 #script-result-bar { display: flex; gap: 8px; flex-wrap: wrap; }
 #script-result-bar button { margin-top: 0; font-size: calc(12px * var(--ui-scale)); }
 
+/* A soundfont on its way in. See drawDownload. */
+#sfdownload { min-width: min(420px, 90vw); }
+#sfdownload progress {
+  width: 100%;
+  height: 10px;
+  margin: 4px 0 2px;
+}
+#sfdownload-numbers {
+  /* The numbers change several times a second, and a proportional face
+     makes them jump sideways as the digits change under them. */
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: calc(12px * var(--ui-scale));
+  color: var(--muted);
+  margin: 0 0 4px;
+}
+#sfdownload-numbers.failed { color: var(--danger, #c33); }
+
 #console-progress { display: flex; align-items: center; gap: 8px; }
 #console-progress progress { flex: 1; min-width: 0; height: 6px; }
 #console-progress-text {

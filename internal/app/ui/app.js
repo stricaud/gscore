@@ -2801,12 +2801,21 @@ async function playbackSound() {
     value: f.path,
     label: f.name + (f.path === current.playbackFont ? " — playing now" : ""),
   }));
-  options.push({ value: "get", label: "Download another…" });
-  if (state.info?.inBrowser) {
-    options.push({ value: "file", label: "Open a .sf2 from this computer…" });
-    if (pageFont.url) {
-      options.push({ value: "forget", label: "Forget the kept instruments" });
-    }
+  // The three that are things to do rather than soundfonts to play
+  // through. Picked, they open what they are: the question has been
+  // answered by the picking and there is nothing for OK to add.
+  options.push({ value: "get", label: "Download another…", now: true });
+  options.push({
+    value: "file",
+    label: state.info?.inBrowser
+      ? "Open a .sf2 from this computer…"
+      : "Choose a .sf2 on this computer…",
+    now: true,
+  });
+  if (state.info?.inBrowser && pageFont.url) {
+    options.push({
+      value: "forget", label: "Forget the kept instruments", now: true,
+    });
   }
 
   const choice = await ask({
@@ -3742,8 +3751,26 @@ async function recordAudio() {
   $("#record-cancel").onclick = () => dlg.close();
   $("#record-pick").onclick = pickSoundfont;
   $("#record-get").onclick = getSoundfont;
+  // Everything back onto the one chosen above. The staves that were put on
+  // soundfonts of their own are not remembered afterwards: this is the
+  // simple answer to "how do I undo all that", and somebody who wants one
+  // of them back sets it again, which is one press rather than the hunt
+  // through the list they would otherwise be doing.
+  $("#record-all").onclick = async () => {
+    const own = Object.values(record.assign).filter(Boolean).length;
+    if (!own) return;
+    record.assign = {};
+    await refreshVoices();
+    status(own === 1
+      ? "One staff moved onto the chosen soundfont"
+      : own + " staves moved onto the chosen soundfont");
+  };
   $("#record-font").onchange = async (e) => {
     record.font = e.target.value;
+    // Remembered, so the next export opens on it. Written here rather than
+    // when the recording is made, because somebody who changes their mind
+    // and closes the dialog has still said which one they want.
+    void saveSetting("recordFont", record.font);
     await refreshVoices();
   };
   dlg.showModal();
@@ -3766,6 +3793,10 @@ function recordSettings() {
 }
 
 async function loadSoundfonts() {
+  // The one chosen last time, before anything is asked for: a recording is
+  // rendered through whichever bank was picked for it, and picking it again
+  // on every export is the kind of question a program should only ask once.
+  if (!record.font) record.font = await rememberedRecordFont();
   const p = new URLSearchParams({ font: record.font });
   const res = await fetch("/api/soundfonts?" + p.toString());
   if (!res.ok) return;
@@ -3775,6 +3806,12 @@ async function loadSoundfonts() {
   record.collection = d.collection || null;
   record.voices = d.voices || [];
   record.dir = d.dir;
+  // Whatever was remembered has to still be there: a soundfont is a file,
+  // and a file that has been deleted or moved since would leave the dialog
+  // pointing at nothing with no way to tell.
+  if (record.font && !record.fonts.some((f) => f.path === record.font)) {
+    record.font = "";
+  }
   if (!record.font && record.fonts.length) record.font = record.fonts[0].path;
   drawSoundfonts();
   await refreshVoices();
@@ -3801,6 +3838,123 @@ function drawSoundfonts() {
     : "Gscore does not come with instruments: they are recordings, and a good "
       + "set is tens of megabytes. Download one here, or point at any .sf2 you "
       + "already have.";
+}
+
+// downloadSoundfont fetches one and shows how it is getting on.
+//
+// The request answers when the file has arrived, which for two hundred
+// megabytes is minutes; the counting is a second conversation, asked for
+// under a job the server files the progress under. So the download is
+// started and deliberately not waited for, the bar is driven by asking, and
+// the two meet at the end.
+//
+// Returns the response where it worked, and nothing where it did not —
+// having already said why.
+async function downloadSoundfont(url, name) {
+  const job = "dl" + Date.now() + "-" + Math.random().toString(36).slice(2, 8);
+  const query = new URLSearchParams(name ? { url, name, job } : { url, job });
+
+  const dlg = $("#sfdownload");
+  $("#sfdownload-title").textContent = "Downloading " + (name || "a soundfont");
+  $("#sfdownload-what").textContent =
+    "It is kept in " + (record.dir || "your Gscore folder")
+    + ", and every score you write afterwards will find it.";
+  $("#sfdownload-bar").value = 0;
+  $("#sfdownload-bar").removeAttribute("value"); // indeterminate until the size is known
+  const numbers = $("#sfdownload-numbers");
+  numbers.className = "";
+  numbers.textContent = "Starting…";
+  dlg.showModal();
+
+  const fetching = fetch("/api/soundfont/fetch?" + query.toString(),
+    { method: "POST" });
+
+  let watching = true;
+  const watch = async () => {
+    while (watching) {
+      await new Promise((r) => setTimeout(r, 200));
+      if (!watching) break;
+      try {
+        const r = await fetch("/api/soundfont/progress?job=" + job);
+        if (!r.ok) continue;
+        const d = await r.json();
+        drawDownload(d);
+        if (d.done) break;
+      } catch (_) { /* the answer comes from the download itself */ }
+    }
+  };
+  void watch();
+
+  let res = null;
+  try {
+    res = await fetching;
+  } catch (e) {
+    watching = false;
+    if (dlg.open) dlg.close();
+    status("Could not download: " + e);
+    return null;
+  }
+  watching = false;
+  if (dlg.open) dlg.close();
+
+  if (!res.ok) {
+    status("Could not download: " + (await res.text()).trim());
+    return null;
+  }
+  return res;
+}
+
+// drawDownload puts one answer from the server on the bar.
+function drawDownload(d) {
+  const bar = $("#sfdownload-bar");
+  const numbers = $("#sfdownload-numbers");
+  const got = d.received || 0;
+  const total = d.total || 0;
+  if (total > 0) {
+    bar.value = Math.min(1, got / total);
+  } else {
+    // A server that would not say how big it is. The bar runs rather than
+    // filling, because a bar that pretends to a fraction it cannot know is
+    // worse than one that only says "still going".
+    bar.removeAttribute("value");
+  }
+  if (d.error) {
+    numbers.className = "failed";
+    numbers.textContent = d.error;
+    return;
+  }
+  const parts = [total > 0 ? megabytes(got) + " of " + megabytes(total)
+    : megabytes(got)];
+  if (d.bytesPerSecond) parts.push(megabytes(d.bytesPerSecond) + "/s");
+  if (d.secondsLeft > 0 && !d.done) parts.push(timeLeft(d.secondsLeft));
+  if (d.done) parts.push("reading it");
+  numbers.textContent = parts.join(" · ");
+}
+
+// timeLeft says how long is left, in units somebody waiting can use.
+function timeLeft(s) {
+  if (s < 1) return "nearly there";
+  if (s < 60) return Math.round(s) + "s left";
+  const m = Math.floor(s / 60);
+  return m + "m " + Math.round(s - m * 60) + "s left";
+}
+
+// rememberedRecordFont is the soundfont the last recording was rendered
+// through, or the one the editor plays through where there is none.
+//
+// Asked of the settings rather than kept in the page, because the page is
+// reloaded whenever the application is opened and the answer is supposed to
+// outlive that. An answer that cannot be had is no answer: the dialog then
+// falls back to the first bank installed, as it always did.
+async function rememberedRecordFont() {
+  try {
+    const res = await fetch("/api/settings");
+    if (!res.ok) return "";
+    const d = await res.json();
+    return d.recordFont || d.playbackFont || "";
+  } catch (_) {
+    return "";
+  }
 }
 
 function megabytes(n) {
@@ -3877,11 +4031,26 @@ function drawVoices() {
 
     body.append(tr);
   }
+  // How many staves have been put on a soundfont of their own, which is
+  // what the way back is for and what tells somebody it is there at all.
+  const own = Object.values(record.assign).filter(Boolean).length;
+  const all = $("#record-all");
+  if (all) {
+    all.hidden = own === 0;
+    all.textContent = own === 1
+      ? "Use this for every staff (1 is on another)"
+      : "Use this for every staff (" + own + " are on others)";
+  }
   $("#record-voices-note").textContent = missing
     ? "This soundfont has nothing for " + missing
       + (missing === 1 ? " instrument" : " instruments")
       + " below. They will be silent — choose another soundfont for them."
-    : "What each staff is scored for, and what the soundfont will play it with.";
+    : own
+      ? "What each staff is scored for. " + (own === 1 ? "One staff is" : own
+        + " staves are") + " on a soundfont of their own; the rest follow "
+        + "the one chosen above."
+      : "What each staff is scored for, and what the soundfont will play it "
+        + "with. Any staff can be put on a different one.";
   $("#record-go").disabled = !record.font;
 }
 
@@ -3970,10 +4139,22 @@ async function getSoundfont() {
         + (page && !record.collection.browser ? " (download them yourself)" : ""),
     });
   }
+  // A soundfont already on this machine, which is the first thing to try
+  // and was the one thing this list did not offer.
+  //
+  // It was offered only in the page, which is backwards: in a browser it
+  // is a file input and the bytes have to be handed to the core, and on a
+  // machine it is the system's own open panel over the whole disk. Anybody
+  // who already owns a soundfont — and anybody who has downloaded one
+  // outside gscore — was being asked for a web address for a file sitting
+  // in their Downloads folder.
+  options.unshift({
+    value: "file",
+    label: page
+      ? "Open a .sf2 from this computer…"
+      : "Choose a .sf2 on this computer…",
+  });
   options.push({ value: "url", label: "From a link to a .sf2 file…" });
-  if (page) {
-    options.push({ value: "file", label: "Open a .sf2 from this computer…" });
-  }
 
   // What each one is goes in the note rather than in the list: a list of
   // soundfonts tells you nothing, and the sentence about what is in one and
@@ -4031,14 +4212,8 @@ async function getSoundfont() {
     return;
   }
 
-  const query = new URLSearchParams(name ? { url, name } : { url });
-
-  status("Downloading the soundfont…");
-  const res = await fetch("/api/soundfont/fetch?" + query.toString(), { method: "POST" });
-  if (!res.ok) {
-    status("Could not download: " + (await res.text()).trim());
-    return;
-  }
+  const res = await downloadSoundfont(url, name);
+  if (!res) return;
   const d = await res.json();
   record.fonts = [d.font, ...record.fonts.filter((f) => f.path !== d.font.path)];
   record.font = d.font.path;
@@ -7817,6 +7992,12 @@ function ask({ title, label, value = "", note = "", options = null,
     // in groups; a list where nothing carries one is drawn flat, as it
     // always was.
     group: typeof o === "string" ? "" : (o.group || ""),
+    // An option that is a thing to do rather than a thing to choose.
+    // Picking it answers the question there and then: "Download
+    // another…" is not an answer to "play through which soundfont", it
+    // is the next window, and making somebody press OK to get to it is
+    // a press that decides nothing.
+    now: typeof o === "string" ? false : !!o.now,
   });
   const all = useList ? options.map(asOption) : [];
   let onFilter = null;
@@ -7874,9 +8055,33 @@ function ask({ title, label, value = "", note = "", options = null,
     $("#ask-label").setAttribute("for", "ask-input");
   }
 
+  // The options that act the moment they are picked, and the guard that
+  // keeps them from acting when nobody picked them.
+  //
+  // A closed dropdown on Windows and Linux moves its value with the arrow
+  // keys and fires the same event the mouse does, so somebody feeling
+  // their way down the list with the keyboard would open the download
+  // window on the way past. A mouse press on the list comes first where
+  // it was a real choice, and where it did not, the dialog waits for OK
+  // exactly as it always has.
+  const actNow = new Set(all.filter((o) => o.now).map((o) => o.value));
+  let pointedAt = 0;
+  const onPoint = () => { pointedAt = Date.now(); };
+  const onPick = () => {
+    if (!actNow.has(select.value)) return;
+    if (Date.now() - pointedAt > 1500) return;
+    dlg.close("ok");
+  };
+  if (actNow.size && !many) {
+    select.addEventListener("pointerdown", onPoint);
+    select.addEventListener("change", onPick);
+  }
+
   return new Promise((resolve) => {
     const done = () => {
       dlg.removeEventListener("close", done);
+      select.removeEventListener("pointerdown", onPoint);
+      select.removeEventListener("change", onPick);
       if (onFilter) filter.removeEventListener("input", onFilter);
       if (dlg.returnValue !== "ok") {
         resolve(null);
@@ -11075,6 +11280,21 @@ let setupChosen = [];
 let setupGroups = [];
 let setupNextId = 1;
 
+// setupApart holds the staves somebody has taken out of an entry above
+// them, by staff number.
+//
+// Two staves are listed as one entry either because the score braces them
+// or because the editor read a pair of them as one instrument's two hands.
+// Ungroup has to undo both, and undoing the second cannot be done to the
+// score — there is nothing in the file to take away. So it is remembered
+// here, and the reading consults it: a staff in this set begins its own
+// entry however much it looks like the one above.
+//
+// It is cleared when the dialog opens, because it is an answer about the
+// staves in front of somebody and staff numbers do not survive a score
+// being laid out again.
+let setupApart = new Set();
+
 async function scoreSetupDialog() {
   const dlg = $("#score-setup");
   if (!dlg) return;
@@ -11090,6 +11310,7 @@ async function scoreSetupDialog() {
   // a wind quintet in.
   const blank = !scoreHasMusic() &&
     (state.info?.parts || []).every((p) => !p.sound);
+  setupApart = new Set();
   setupChosen = blank ? [] : setupFromScore();
   setupGroups = [];
 
@@ -11102,6 +11323,7 @@ async function scoreSetupDialog() {
 
   drawSetupPick(options, "");
   drawSetupChosen();
+  void drawSetupSounds();
 
   const filter = $("#setup-filter");
   if (filter) {
@@ -11109,6 +11331,123 @@ async function scoreSetupDialog() {
     filter.oninput = () => drawSetupPick(options, filter.value);
   }
   if (!dlg.open) dlg.showModal();
+}
+
+// drawSetupSounds lists the instruments in this score and which recordings
+// each of them is played with.
+//
+// One row per instrument and not per staff: a score with four horns in it
+// is one answer about horns, and asking it four times is asking somebody to
+// keep four answers in step by hand. The staves follow the instrument they
+// are playing.
+//
+// Only where there is a choice to make. A machine with one soundfont on it
+// has nothing to say here, and a row of dropdowns all reading the same
+// thing is furniture.
+async function drawSetupSounds() {
+  const box = $("#setup-sounds");
+  if (!box) return;
+  const body = $("#setup-sounds-table").querySelector("tbody");
+  body.innerHTML = "";
+
+  // The instruments in this score, each once, in the order the staves are.
+  //
+  // By the catalogue name where the score has one, and by what the staff
+  // sounds as where it does not. A score read from a format that records
+  // the General MIDI program and not the catalogue — which is most of
+  // them — has staves that know they are flutes without knowing what
+  // gscore calls a flute, and asking only for the catalogue name left
+  // this list empty on exactly the scores that most want it.
+  const seen = new Map();
+  for (const p of state.info?.parts || []) {
+    const sound = p.sound || soundForInstrumentName(p.instrument);
+    if (!sound || seen.has(sound)) continue;
+    seen.set(sound, p.name || p.instrument || sound);
+  }
+  let fonts = [];
+  let chosen = {};
+  try {
+    const [sf, st] = await Promise.all([
+      fetch("/api/soundfonts").then((r) => r.ok ? r.json() : null),
+      fetch("/api/settings").then((r) => r.ok ? r.json() : null),
+    ]);
+    fonts = (sf && sf.installed) || [];
+    chosen = (st && st.instrumentFonts) || {};
+  } catch (_) { /* nothing installed, nothing to choose */ }
+
+  // Shown even when there is nothing in it to set, and told why.
+  //
+  // It used to take itself off the page whenever it had nothing to say,
+  // which is the worst thing a setting can do: somebody looking for it
+  // finds a dialog with no such section and no way to tell whether they
+  // are in the wrong window or whether it is not there yet. The only time
+  // it stays away is when there are no staves at all, and then the whole
+  // dialog is about making some.
+  const note = $("#setup-sounds-note");
+  if (!(state.info?.parts || []).length) {
+    box.hidden = true;
+    return;
+  }
+  box.hidden = false;
+  if (fonts.length < 2) {
+    note.textContent = fonts.length === 1
+      ? "There is one soundfont on this machine, so there is nothing to "
+        + "choose between yet. Download another under Play, Playback sound "
+        + "and the instruments will be listed here."
+      : "There are no soundfonts on this machine yet. Download one under "
+        + "Play, Playback sound and the instruments will be listed here.";
+    return;
+  }
+  note.textContent = "Said once about the instrument, and it holds in every "
+    + "score you write. Kept on this machine rather than in the score, "
+    + "because these are files on your own disk: a score you send somebody "
+    + "names instruments, not the recordings you happen to own.";
+
+  for (const [sound, name] of seen) {
+    const tr = document.createElement("tr");
+    const label = document.createElement("td");
+    label.textContent = name;
+    tr.append(label);
+
+    const cell = document.createElement("td");
+    const sel = document.createElement("select");
+    const def = document.createElement("option");
+    def.value = "";
+    def.textContent = "whichever is chosen at the time";
+    sel.append(def);
+    for (const f of fonts) {
+      const o = document.createElement("option");
+      o.value = f.path;
+      o.textContent = f.name;
+      o.selected = chosen[sound] === f.path;
+      sel.append(o);
+    }
+    sel.onchange = async (e) => {
+      await saveSetting("instrumentFont", sound + "=" + e.target.value);
+      status(e.target.value
+        ? name + " will play through " + (fonts.find(
+          (f) => f.path === e.target.value)?.name || "that soundfont")
+        : name + " follows whichever soundfont is chosen");
+    };
+    cell.append(sel);
+    tr.append(cell);
+    body.append(tr);
+  }
+}
+
+// soundForInstrumentName is the catalogue's name for what a staff sounds
+// as, found by the name the score reports it under.
+//
+// A part says "flute" because that is what its General MIDI program is
+// called, and the catalogue calls the same thing "wind.flutes.flute".
+// Matched by name against the catalogue the server already sent, so there
+// is one list of instruments and this is not a second opinion about it.
+function soundForInstrumentName(name) {
+  const want = (name || "").trim().toLowerCase();
+  if (!want) return "";
+  const hit = (instrumentCatalogue || []).find(
+    (c) => !c.percussion && (c.name || "").toLowerCase() === want);
+  return hit ? hit.sound : "";
 }
 
 // scoreHasMusic says there is something here worth not throwing away.
@@ -11160,12 +11499,26 @@ function setupFromScore() {
     const after = last && last.staves[last.staves.length - 1] === idx - 1;
     // Joined by a brace to the staff above: the same instrument, said so
     // by the score itself.
-    const sameBrace = after && braced.has(idx) &&
+    const sameBrace = after && !setupApart.has(idx) && braced.has(idx) &&
       braced.get(idx) === braced.get(last.staves[0]);
     // Or a pair that looks like one and says nothing to the contrary.
-    const looksGrand = after && !braced.has(idx) && !braced.has(last.staves[0]) &&
+    //
+    // A pair, and only a pair. Two staves of piano in a row are one
+    // pianist's hands; ten in a row are not, they are a score whose
+    // staves have not been told what they are, and pairing them off down
+    // the page turns twenty-three instruments into eleven two-handed
+    // pianists. An orchestral score read from a file that records no
+    // instruments arrives exactly that way, and then the only way to set
+    // one staff is to break a pair the score never had.
+    //
+    // So the run of staves playing the same thing has to be two long.
+    // A piano sonata is two and merges; a piano and a violin is two and
+    // merges; a page of unnamed staves is not and is left alone.
+    const run = sameSoundRun(parts, idx);
+    const looksGrand = after && !setupApart.has(idx) &&
+      !braced.has(idx) && !braced.has(last.staves[0]) &&
       p.sound && last.said && last.sound === p.sound &&
-      last.staves.length === 1 && grandSound(p.sound);
+      last.staves.length === 1 && grandSound(p.sound) && run === 2;
     if (sameBrace || looksGrand) {
       last.staves.push(idx);
       return;
@@ -11178,6 +11531,21 @@ function setupFromScore() {
     });
   });
   return out;
+}
+
+// sameSoundRun is how many staves in a row play what this one plays,
+// counting from wherever that run begins.
+//
+// The run and not the pair: asked of the second staff of ten pianos it
+// answers ten, which is what says they are not a grand staff.
+function sameSoundRun(parts, idx) {
+  const sound = parts[idx] && parts[idx].sound;
+  if (!sound) return 0;
+  let first = idx;
+  while (first > 0 && parts[first - 1].sound === sound) first--;
+  let last = idx;
+  while (last + 1 < parts.length && parts[last + 1].sound === sound) last++;
+  return last - first + 1;
 }
 
 // grandSound says an instrument is normally written on two staves joined by
@@ -11328,6 +11696,53 @@ async function setupChange() {
     options: await instrumentOptions(),
   });
   if (v === null) return;
+  // Two single staves, one under the other, of an instrument that is
+  // written on two: one player, and from here on one entry.
+  const livePair = picked.length === 2 && grandSound(v) &&
+    picked.every((it) => (it.staves || []).length === 1) &&
+    staves.length === 2 && staves[1] === staves[0] + 1;
+  // Over a score that already has staves, this goes to the score now.
+  //
+  // Everything else in this dialog does — adding a staff, taking one away,
+  // moving one, taking a pair apart — so an instrument that only changed
+  // the list was the one change somebody could make here, close the window
+  // on, and lose, with the name beside the file never starring to say
+  // there was anything to save. It is one press of undo to take back, the
+  // same as the rest.
+  if (setupLive() && staves.length) {
+    const sound = soundChosen(v).sound;
+    busy("Setting the instrument…");
+    try {
+      for (const n of staves) {
+        const p = new URLSearchParams({ part: String(n), sound });
+        const res = await fetch("/api/staff?" + p, { method: "POST" });
+        if (!res.ok) {
+          status("Could not set staff " + (n + 1) + ": " +
+            (await res.text()).trim());
+          return;
+        }
+      }
+      // Two staves made one instrument that is written on two get the
+      // brace that says so, with the barlines run through the gap.
+      if (livePair) {
+        const p = new URLSearchParams({
+          first: String(staves[0]), last: String(staves[1]),
+          symbol: "brace", barlines: "1",
+        });
+        await fetch("/api/group?" + p, { method: "POST" });
+        // And they are no longer apart: the score itself now says they
+        // are one player.
+        for (const n of staves) setupApart.delete(n);
+      }
+    } finally {
+      idle();
+    }
+    await setupReload();
+    status((staves.length === 1 ? "Staff " : "Staves ") +
+      staves.map((n) => n + 1).join(" and ") + " now play" +
+      (staves.length === 1 ? "s " : " ") + instrumentNamed(v));
+    return;
+  }
   for (const it of picked) {
     it.sound = v;
     it.said = true;
@@ -11683,10 +12098,22 @@ async function setupBracket() {
     : "Bracketed");
 }
 
-// setupUngroup takes the selected staves out of their brackets.
+// setupUngroup takes the selected staves apart: out of their brackets, and
+// out of each other.
+//
+// An entry reading "2+3" is two staves listed as one instrument, and
+// somebody who wants the third staff to be an oboe has to get it onto a
+// line of its own first. That is the same word for both, and it was only
+// doing the bracket — so on a pair it appeared to do nothing at all, and
+// on a braced pair it took the brace away and read the pair back exactly
+// as it was.
 async function setupUngroup() {
   const picked = setupPicked();
   if (!picked.length) return;
+  // Every staff but the first of each entry begins its own entry from
+  // here on, whatever the score braces or the reading would make of it.
+  const split = picked.filter((it) => (it.staves || []).length > 1);
+  for (const it of split) for (const n of it.staves.slice(1)) setupApart.add(n);
   if (setupLive()) {
     const of = picked.flatMap((it) => it.staves || []).sort((a, b) => a - b);
     if (!of.length) return;
@@ -11699,15 +12126,27 @@ async function setupUngroup() {
       return;
     }
     await setupReload();
-    status("Taken out of the bracket");
+    status(split.length ? "Taken apart, one entry a staff"
+                        : "Taken out of the bracket");
     return;
   }
   const want = new Set(picked.map((it) => it.id));
   setupGroups = setupGroups
     .map((g) => g.filter((id) => !want.has(id)))
     .filter((g) => g.length > 1);
+  // And a two-staff entry becomes one entry a staff, in its place in the
+  // list, each still playing what the entry played.
+  if (split.length) {
+    setupChosen = setupChosen.flatMap((it) =>
+      split.includes(it)
+        ? it.staves.map((n, i) => i === 0
+            ? { ...it, staves: [n] }
+            : { ...it, id: setupNextId++, staves: [n] })
+        : [it]);
+  }
   drawSetupChosen();
-  status("Taken out of the bracket");
+  status(split.length ? "Taken apart, one entry a staff"
+                      : "Taken out of the bracket");
 }
 
 async function applyScoreSetup() {
@@ -13815,7 +14254,16 @@ async function playNow(opts) {
   const where = from > 0
     ? ` from measure ${(cursorAt(pb.measures, from)?.measure ?? 0) + 1}`
     : "";
-  status(`Playing${where} — ${sounded} notes at ${pb.tempo} bpm`);
+  // What is making the sound, which until now the line did not say.
+  //
+  // There are two answers and they sound nothing alike: the recorded
+  // instruments of a soundfont, or the oscillators the editor falls back
+  // to when there is none — and a score played through the second sounds
+  // wrong in a way that is easy to blame on the score. Naming the
+  // soundfont also settles "which one is it using", which otherwise means
+  // opening a dialog to find out.
+  status(`Playing${where} with ${playingWith()} — `
+    + `${sounded} notes at ${pb.tempo} bpm`);
 
   // The cursor goes up before a note sounds, at the start of the music, so
   // pressing play is visibly answered even when the piece opens with rests —
@@ -13830,6 +14278,19 @@ async function playNow(opts) {
     followCursor(at0);
   }
   follow(pb);
+}
+
+// playingWith is what is making the sound, in words.
+//
+// The soundfont by name where one is playing — live.font is what the core
+// answered with when the performance began, so it is the bank actually
+// being rendered through rather than whatever the settings say should be.
+// Failing that, the editor's own voices, named as what they are: they are
+// built from oscillators and do not pretend to be recordings, and somebody
+// hearing a flute part as a sine wave is owed the reason.
+function playingWith() {
+  if (live && live.font) return live.font;
+  return "the built-in voices";
 }
 
 // measureBox gives a measure's horizontal extent, shared by every staff

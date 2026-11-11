@@ -34,6 +34,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/stricaud/gscore/internal/model"
 	"github.com/stricaud/gscore/internal/synth"
@@ -63,6 +64,18 @@ type source struct {
 // not that gscore becomes a directory of soundfonts: anything else can be
 // given by its link or picked off the disk, and both of those paths are the
 // same code as this one.
+//
+// It is also short because the field is. A soundfont offered here has to be
+// a complete General MIDI set, licensed so that anybody can use it for
+// anything, and published somewhere that will still answer next year —
+// which between them rule out nearly everything. The hundreds of others are
+// a click away in the collection, where their provenance is their own
+// business rather than gscore's recommendation.
+//
+// Lightest first, because that is the choice being made: all three are good
+// and the question is how long you are willing to wait. Only the first is
+// shipped with the application — see BUNDLE_FONTS in the Makefile — and it
+// is the one that is small enough to be worth carrying.
 var catalogue = []source{{
 	ID:   "generaluser-gs",
 	Name: "GeneralUser GS",
@@ -82,20 +95,28 @@ var catalogue = []source{{
 		"MIDI, bigger and fuller than GeneralUser GS and the reason a Linux " +
 		"machine playing a MIDI file sounds the way it does.",
 	License: "MIT.",
+}, {
+	ID:   "musescore-general",
+	Name: "MuseScore General",
+	URL: "https://ftp.osuosl.org/pub/musescore/soundfont/MuseScore_General/" +
+		"MuseScore_General.sf2",
+	Size: 215614036,
+	About: "The bank MuseScore plays through: FluidR3 rebuilt and extended " +
+		"by S. Christian Collins over twenty years, and the fullest of " +
+		"these three. All 128 programs have a sound of their own and none " +
+		"of them is a stand-in for another.",
+	// MIT, and the notice travels with the file. Nothing is redistributed
+	// here — this is a link to the mirror the MuseScore project publishes
+	// it on, where the licence sits in the folder beside it.
+	License: "MIT, by Frank Wen, Michael Cowgill and S. Christian Collins.",
+	// The mirror sends no header letting a page read it, so in a browser
+	// this is one to fetch yourself. Running on a machine, gscore fetches it.
 }}
 
-// soundfontDir is where downloaded soundfonts are kept.
-//
-// Beside the program's other settings, not in the score's folder: a
-// soundfont belongs to the person, not to the piece, and the next score they
-// write should find it already there.
-func soundfontDir() (string, error) {
-	base, err := os.UserConfigDir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(base, "Gscore", "soundfonts"), nil
-}
+// Where downloaded soundfonts are kept: soundfontDir, and the folder they
+// used to be kept in, which is still read. Both are in soundfontdisk.go,
+// because both look at a filesystem and the browser build has none — see
+// soundfontnodisk.go for what happens there instead.
 
 // bundledSoundfontDirs are the ones shipped with this copy of gscore.
 //
@@ -219,6 +240,9 @@ type voice struct {
 // meant as a clarinet has been a piano all along.
 func (a *App) voices(assign map[int]string, def string) []voice {
 	var out []voice
+	// What each staff really plays through, which is the dialog's own
+	// choices and then whatever has been said about the instruments.
+	chosen := a.partFonts(assign, def)
 	// Hidden staves included: hiding one is a decision about the page, and
 	// it still sounds.
 	for i, p := range a.score.Parts {
@@ -228,7 +252,7 @@ func (a *App) voices(assign map[int]string, def string) []voice {
 			Instrument: p.Instrument.String(),
 			Program:    int(p.Instrument),
 			Drum:       p.Clef == model.Percussion,
-			Font:       assign[i],
+			Font:       chosen[i],
 		}
 		if v.Drum {
 			v.Instrument = "percussion"
@@ -298,6 +322,41 @@ func (a *App) handleSoundfonts(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// partFonts says which soundfont each staff of the score plays through.
+//
+// Three answers, and the nearest one wins:
+//
+//   - what this recording was told about this staff, which is the dialog's
+//     own list and belongs to the export being made;
+//   - what has been said about the instrument the staff is playing, which
+//     is a standing answer kept in the settings — a real violin for every
+//     violin, in this score and the next one;
+//   - and failing both, whichever soundfont was chosen for the whole thing.
+//
+// The middle one is checked against the disk. A library chosen a year ago
+// and since moved would otherwise take a staff silent, and the staff would
+// be silent in a way nothing in the dialog explains: the fallback is the
+// chosen soundfont, which at least plays something.
+//
+// A part not in the answer plays through the chosen one, which is nearly
+// every part of nearly every score.
+func (a *App) partFonts(assign map[int]string, def string) map[int]string {
+	byInstrument := loadSettings().InstrumentFonts
+	out := map[int]string{}
+	for i, p := range a.score.Parts {
+		if path := assign[i]; path != "" {
+			out[i] = path
+			continue
+		}
+		if path := byInstrument[p.Sound]; path != "" && path != def {
+			if fileExists(path) {
+				out[i] = path
+			}
+		}
+	}
+	return out
+}
+
 // parseAssignment reads "0=/a.sf2,2=/b.sf2": which part plays through which
 // soundfont, for everything that is not on the default one.
 func parseAssignment(s string) map[int]string {
@@ -349,18 +408,26 @@ func (a *App) handleSoundfontFetch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	path, err := fetchSoundfont(url, name)
+	// Counted as it arrives, where the caller gave a job to count it under.
+	// The request still answers when the download is finished and with what
+	// it always answered with: this is a second way of asking, not a
+	// different shape of the same one.
+	prog := watchDownload(q.Get("job"))
+	path, err := fetchSoundfont(url, name, prog)
 	if err != nil {
+		prog.finish(err)
 		http.Error(w, err.Error(), http.StatusBadGateway)
 		return
 	}
 	f, err := loadFont(path)
 	if err != nil {
 		os.Remove(path)
-		http.Error(w, "what arrived is not a soundfont: "+err.Error(),
-			http.StatusBadGateway)
+		err = fmt.Errorf("what arrived is not a soundfont: %w", err)
+		prog.finish(err)
+		http.Error(w, err.Error(), http.StatusBadGateway)
 		return
 	}
+	prog.finish(nil)
 	size := int64(0)
 	if info, err := os.Stat(path); err == nil {
 		size = info.Size()
@@ -373,10 +440,155 @@ func (a *App) handleSoundfontFetch(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+/*
+ * Saying how far a download has got
+ */
+
+// download is one soundfont on its way in.
+//
+// A soundfont is thirty to two hundred megabytes, which on an ordinary line
+// is somewhere between ten seconds and five minutes. For all of that the
+// editor used to say "Downloading the soundfont…" and nothing else, and a
+// sentence that has not changed in four minutes is indistinguishable from a
+// program that has stopped. So the bytes are counted as they arrive and
+// anybody who asks is told.
+type download struct {
+	mu       sync.Mutex
+	received int64
+	total    int64 // 0 where the server would not say
+	done     bool
+	failed   string
+	started  time.Time
+	// ended is when it stopped, so that the rate is measured over the
+	// download and not over how long ago it happened: left running, the
+	// speed shown beside a finished download falls away towards nothing.
+	ended time.Time
+}
+
+func (d *download) add(n int) {
+	d.mu.Lock()
+	d.received += int64(n)
+	d.mu.Unlock()
+}
+
+func (d *download) finish(err error) {
+	d.mu.Lock()
+	d.done = true
+	d.ended = time.Now()
+	if err != nil {
+		d.failed = err.Error()
+	}
+	d.mu.Unlock()
+}
+
+// over says the download finished longer ago than this, which is what
+// makes it one to forget. Asked of the moment it ended rather than of how
+// long it took: a download that took half a second is not one to keep for
+// ever.
+func (d *download) over(age time.Duration) bool {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.done && !d.ended.IsZero() && time.Since(d.ended) > age
+}
+
+// state is a copy, so that a reader never holds the lock a writer wants.
+func (d *download) state() (received, total int64, done bool, failed string, since time.Duration) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	took := time.Since(d.started)
+	if !d.ended.IsZero() {
+		took = d.ended.Sub(d.started)
+	}
+	return d.received, d.total, d.done, d.failed, took
+}
+
+var downloads struct {
+	sync.Mutex
+	byJob map[string]*download
+}
+
+// downloadKept is how long a finished download is still answered for.
+//
+// The page asks a few times a second and stops when it is told the download
+// is done; this is for the one it was in the middle of asking when that
+// happened, and for anybody who looks a moment later.
+const downloadKept = 2 * time.Minute
+
+// watchDownload starts counting for a job, and forgets the old ones.
+func watchDownload(job string) *download {
+	if job == "" {
+		return &download{started: time.Now()}
+	}
+	downloads.Lock()
+	defer downloads.Unlock()
+	if downloads.byJob == nil {
+		downloads.byJob = map[string]*download{}
+	}
+	for id, d := range downloads.byJob {
+		if d.over(downloadKept) {
+			delete(downloads.byJob, id)
+		}
+	}
+	d := &download{started: time.Now()}
+	downloads.byJob[job] = d
+	return d
+}
+
+// handleSoundfontProgress says how far a download has got.
+//
+// A job nobody started answers as one that has not begun rather than as an
+// error: the page may well ask before the download has been registered, and
+// a refusal there would be a progress bar that flashes a failure on its way
+// up.
+func (a *App) handleSoundfontProgress(w http.ResponseWriter, r *http.Request) {
+	job := r.URL.Query().Get("job")
+	downloads.Lock()
+	d := downloads.byJob[job]
+	downloads.Unlock()
+	if d == nil {
+		writeJSON(w, map[string]any{"received": 0, "total": 0, "done": false})
+		return
+	}
+	received, total, done, failed, since := d.state()
+	out := map[string]any{
+		"received": received,
+		"total":    total,
+		"done":     done,
+		"seconds":  since.Seconds(),
+	}
+	if failed != "" {
+		out["error"] = failed
+	}
+	// Bytes a second, measured over the whole download rather than the last
+	// moment: an average that settles is more use than a number that jumps
+	// about, and the only thing anybody does with it is estimate the wait.
+	if s := since.Seconds(); s > 0.25 && received > 0 {
+		out["bytesPerSecond"] = float64(received) / s
+		if total > received {
+			out["secondsLeft"] = float64(total-received) / (float64(received) / s)
+		}
+	}
+	writeJSON(w, out)
+}
+
+// counter passes bytes through and counts them.
+type counter struct {
+	r io.Reader
+	d *download
+}
+
+func (c counter) Read(p []byte) (int, error) {
+	n, err := c.r.Read(p)
+	if n > 0 {
+		c.d.add(n)
+	}
+	return n, err
+}
+
 // fetchSoundfont downloads to a temporary name beside the destination and
 // moves it into place when it is whole, so that an interrupted download is
 // never mistaken for a soundfont.
-func fetchSoundfont(url, name string) (string, error) {
+func fetchSoundfont(url, name string, prog *download) (string, error) {
 	dir, err := soundfontDir()
 	if err != nil {
 		return "", err
@@ -397,12 +609,25 @@ func fetchSoundfont(url, name string) (string, error) {
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("the download answered %s", resp.Status)
 	}
+	// How big it is, where the other end says. A server that does not say
+	// leaves this at zero, and the bar then shows what has arrived rather
+	// than how much of it is left — which is all anybody can be told.
+	var body io.Reader = resp.Body
+	if prog != nil {
+		prog.mu.Lock()
+		prog.total = resp.ContentLength
+		if prog.total < 0 {
+			prog.total = 0
+		}
+		prog.mu.Unlock()
+		body = counter{r: resp.Body, d: prog}
+	}
 
 	tmp, err := os.CreateTemp(dir, "download-*.part")
 	if err != nil {
 		return "", err
 	}
-	_, err = io.Copy(tmp, resp.Body)
+	_, err = io.Copy(tmp, body)
 	tmp.Close()
 	if err != nil {
 		os.Remove(tmp.Name())
@@ -545,3 +770,29 @@ func (a *App) canSound() bool {
 
 var errNoSoundfont = errors.New(
 	"there is no soundfont to play this with: choose or download one first")
+
+// soundfontDisplayName is what to call a soundfont in front of somebody.
+//
+// The name the lists use, found by the path it was chosen by, so that
+// everything naming it names it the same: the dialog it was picked in, the
+// status line while it plays, and the sentence that says a recording was
+// made with it.
+//
+// A soundfont carries a name of its own inside the file and it is often not
+// the name anybody knows it by — the bank inside NAProGM.sf2 calls itself
+// "NAProPercussionFull". Where the path is not one of the installed ones —
+// a font loaded into this process from a page, say — the file's own name is
+// all there is, and it is used.
+func soundfontDisplayName(path, inside string) string {
+	if path != "" {
+		for _, f := range listSoundfonts() {
+			if f.Path == path {
+				return f.Name
+			}
+		}
+	}
+	if inside != "" {
+		return inside
+	}
+	return "the chosen soundfont"
+}

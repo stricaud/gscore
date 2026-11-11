@@ -22,6 +22,7 @@ package app
 // this pair is for.
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -48,6 +49,45 @@ func systemSoundfontDirs() []string {
 		"/usr/local/share/soundfonts",
 		"/opt/homebrew/share/sounds/sf2",
 	)
+}
+
+// soundfontDir is where downloaded soundfonts are kept.
+//
+// In the Gscore folder, beside the scores — soundfonts, under the folder the
+// open and save panels already start in.
+//
+// They used to go under the program's settings, which is where a program
+// puts the things it alone touches, and a soundfont is not one of those. It
+// is a file somebody downloads, swaps, borrows from another program, or is
+// sent by somebody they play with, and a folder they cannot find is a folder
+// they cannot put anything in. On a Mac the old one was inside the Library,
+// which the Finder hides.
+//
+// A soundfont still belongs to the person rather than to the piece: it sits
+// beside the scores and not inside any of them, so the next score they write
+// finds it already there.
+func soundfontDir() (string, error) {
+	dir := ScoresDir()
+	if dir == "" || dir == "." {
+		return "", errors.New("there is nowhere to keep a soundfont")
+	}
+	return filepath.Join(dir, "soundfonts"), nil
+}
+
+// oldSoundfontDir is where they were kept before, under the program's
+// settings. It is still read and never written.
+//
+// Nothing was moved. A download somebody already waited twenty minutes for
+// is not something to shuffle around behind their back — a hundred and fifty
+// megabytes going quietly missing from where they left it is worse than a
+// folder in two places — so the old one is simply still looked in, and
+// anything in it goes on working. New ones arrive in the new place.
+func oldSoundfontDir() (string, error) {
+	base, err := os.UserConfigDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(base, "Gscore", "soundfonts"), nil
 }
 
 // diskSoundfonts finds every soundfont on this machine gscore knows to look
@@ -84,6 +124,11 @@ func diskSoundfonts() []installed {
 	}
 
 	if dir, err := soundfontDir(); err == nil {
+		add(dir, "downloaded")
+	}
+	// And where they were kept before this folder moved into Documents.
+	// Nothing was moved with it, so anything downloaded then is still here.
+	if dir, err := oldSoundfontDir(); err == nil {
 		add(dir, "downloaded")
 	}
 	for _, dir := range bundledSoundfontDirs() {

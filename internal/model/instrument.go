@@ -255,12 +255,26 @@ func InstrumentNamed(name string) (Instrument, bool) {
 		{"soprano", VoiceOohs},
 
 		// Then the instruments.
-		{"flute", Flute},
+		//
+		// Italian and German names are here beside the French ones, and
+		// matched as stems rather than as whole words: a score names the
+		// players and a desk of them is plural — fagotto one, fagotti two,
+		// flauto and flauti, tromba and trombe. "Fagott" covers the German
+		// singular and both Italian endings at once, which is the shape
+		// most of these take.
 		{"piccolo", Piccolo},
+		{"ottavino", Piccolo},
+		{"flauto", Flute},
+		{"flauti", Flute},
+		{"flote", Flute}, // Flöte, once the accents are folded
+		{"flute", Flute},
 		{"hautbois", Oboe},
+		{"oboi", Oboe},
 		{"oboe", Oboe},
 		{"clarinette basse", Clarinet},
 		{"clarinette", Clarinet},
+		{"clarinett", Clarinet}, // clarinetti, clarinetto
+		{"klarinette", Clarinet},
 		{"clarinet", Clarinet},
 		// The big bassoons before the small ones, and both before anything
 		// that is merely a bass: "contrabassoon" has "contrabass" inside it.
@@ -270,12 +284,31 @@ func InstrumentNamed(name string) (Instrument, bool) {
 		{"contrafagotto", Bassoon},
 		{"basson", Bassoon},
 		{"bassoon", Bassoon},
-		{"fagotto", Bassoon},
+		{"fagott", Bassoon}, // fagotto, fagotti, and the German Fagott
+		// The trombones before the trumpets: "tromba" and "trombone" share
+		// five letters, and an Italian score has both on it.
+		{"trombon", Trombone}, // trombone, tromboni
+		{"posaune", Trombone},
 		{"trompette", Trumpet},
+		{"trompete", Trumpet},
+		{"tromba", Trumpet},
+		{"trombe", Trumpet},
 		{"trumpet", Trumpet},
+		// The english horn before the french one, in every language it is
+		// written in. It is neither english nor a horn — it is an alto
+		// oboe — and every name it has contains the word for horn: cor
+		// anglais, corno inglese, Englischhorn. Matched the other way
+		// round every one of them came out a french horn, which is a
+		// fifth away and a different family.
+		{"english horn", EnglishHorn},
+		{"cor anglais", EnglishHorn},
+		{"corno inglese", EnglishHorn},
+		{"corno ingles", EnglishHorn},
+		{"englischhorn", EnglishHorn},
+		{"englisch horn", EnglishHorn},
+		{"engelshoorn", EnglishHorn},
 		{"cor", FrenchHorn},
 		{"horn", FrenchHorn},
-		{"trombone", Trombone},
 		{"tuba", Tuba},
 
 		// The cellos and the double basses before the violins. Every one of
@@ -290,13 +323,16 @@ func InstrumentNamed(name string) (Instrument, bool) {
 		{"contrabass", Contrabass},
 		{"kontrabass", Contrabass},
 		{"double bass", Contrabass},
+		{"geige", Violin},
 		{"violon", Violin},
 		{"violin", Violin},
+		{"bratsche", Viola},
 		{"viola", Viola},
 		{"viole", Viola},
 		{"contrebasse", Contrabass},
 		{"timbales", Timpani},
 		{"timpani", Timpani},
+		{"pauken", Timpani},
 		{"orgue", ChurchOrgan},
 		{"piano", AcousticGrandPiano},
 	} {

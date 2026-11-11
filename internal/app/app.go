@@ -504,6 +504,7 @@ func (a *App) APIRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/record", a.handleRecord)
 	mux.HandleFunc("/api/soundfonts", a.handleSoundfonts)
 	mux.HandleFunc("/api/soundfont/fetch", a.handleSoundfontFetch)
+	mux.HandleFunc("/api/soundfont/progress", a.handleSoundfontProgress)
 	mux.HandleFunc("/api/soundfont/pick", a.handleSoundfontPick)
 	mux.HandleFunc("/api/soundfont/load", a.handleSoundfontLoad)
 	mux.HandleFunc("/api/soundfont/presets", a.handleSoundfontPresets)

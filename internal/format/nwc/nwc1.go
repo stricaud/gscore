@@ -659,7 +659,7 @@ func parseNWC1(raw []byte, version int) (*model.Score, error) {
 			// staff. Keeping the staves already read is far better than
 			// throwing the whole score away, as long as the caller is told.
 			if len(score.Parts) > 0 {
-				nameInstruments(score)
+				_ = nameInstruments(score)
 				return score, &PartialError{
 					Staves: len(score.Parts), Total: staffCount,
 					Cause:      fmt.Errorf("staff %d: %w", i+1, err),
@@ -682,7 +682,7 @@ func parseNWC1(raw []byte, version int) (*model.Score, error) {
 				lost = append(lost, fmt.Sprintf("staff %d: its name is not text, so the walk had lost its place", i+1))
 				continue
 			}
-			nameInstruments(score)
+			_ = nameInstruments(score)
 			if len(score.Parts) > 0 {
 				return score, &PartialError{
 					Staves: len(score.Parts), Total: staffCount,
@@ -745,8 +745,16 @@ func parseNWC1(raw []byte, version int) (*model.Score, error) {
 	}
 	score.Groups = staffGroups(score.Parts, groups, braces, sounds)
 	// Whatever the file did not say about what plays each staff, its own
-	// names usually do.
-	nameInstruments(score)
+	// names usually do — and where they do not, the staff is named so it
+	// can be set by hand instead of found by ear.
+	if unknown := nameInstruments(score); len(unknown) > 0 {
+		lost = append(lost, fmt.Sprintf(
+			"%d %s left as a piano, the file saying nothing about what plays "+
+				"%s and the name meaning nothing here: %s. Set them under "+
+				"Score setup.",
+			len(unknown), plural(len(unknown), "staff", "staves"),
+			plural(len(unknown), "it", "them"), strings.Join(unknown, ", ")))
+	}
 	fitBarRests(score)
 	if w.tempo > 0 {
 		score.Tempo = model.Tempo{BPM: w.tempo, Unit: model.Duration{Num: 1, Den: 4}}
@@ -1012,6 +1020,31 @@ func (w *walker) staff(version int) (*model.Part, error) {
 		Clef:   model.Treble,
 		Key:    model.KeySignature{Fifths: 0, Mode: model.Major},
 		Time:   model.TimeSignature{Beats: 4, BeatValue: 4, Symbol: model.TimeNumeric},
+	}
+	// What the file says the staff sounds as.
+	//
+	// From 2.0 the header carries it as a name, in English, whatever the
+	// staff itself is called: "Flute" behind "Flauto", "Bassoon" behind
+	// "Fagotti", "French Horn" behind "Corni in G". Guessing from the
+	// staff's own name instead — which is all this reader had — left
+	// every Italian name in the William Tell overture as a piano, so a
+	// score of twenty-three instruments arrived as two dozen pianos with
+	// a piccolo and a clarinet among them.
+	//
+	// Through the same table the names go through, so a word that means
+	// nothing here leaves the staff alone rather than guessing at it.
+	if len(names) >= 4 {
+		if inst, ok := instrumentFromName(names[3]); ok {
+			part.Instrument = inst
+		}
+	}
+	// And what the catalogue calls it, which is what everything built on
+	// the catalogue asks for: the score setup dialog, the soundfont
+	// chosen per instrument, the compass a staff is checked against. A
+	// part that has a General MIDI program and no catalogue name is read
+	// by all of them as a piano.
+	if sound, ok := model.SoundForInstrument(part.Instrument); ok {
+		part.Sound = sound
 	}
 	st := &staffState{part: part}
 	// The count is a floor here too.

@@ -525,3 +525,39 @@ func writtenSuffix(w Written) string {
 	}
 	return ""
 }
+
+// SoundForInstrument is the catalogue's name for a General MIDI program.
+//
+// Scores arrive knowing what plays them without knowing what gscore calls
+// it: a MIDI file, a NoteWorthy staff and an ABC tune all say "program 73"
+// or "Flute", and the catalogue says "wind.flutes.flute". Everything built
+// on the catalogue — the score setup dialog, the per-instrument soundfonts,
+// the range checks — is looking for the second of those, and a part that
+// has only the first is a part they all read as a piano.
+//
+// By name first and by program second. Several instruments share a program
+// because General MIDI has fewer sounds than the world has instruments, and
+// the one that shares its name with the program is the one that program is
+// for: program 58 is a tuba, and the euphonium filed under it as the
+// nearest thing is not what a file saying 58 means.
+//
+// Percussion is left out. A drum staff is not an instrument among the
+// others — the same patch number means a snare in one bank and a
+// harpsichord in the other — and what makes a staff percussion here is its
+// clef.
+func SoundForInstrument(i Instrument) (string, bool) {
+	name := i.String()
+	first := ""
+	for _, c := range Catalogue() {
+		if c.Percussion || c.Program != i {
+			continue
+		}
+		if c.Name == name {
+			return c.Sound, true
+		}
+		if first == "" {
+			first = c.Sound
+		}
+	}
+	return first, first != ""
+}

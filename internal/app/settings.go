@@ -35,6 +35,36 @@ type settings struct {
 	// Empty means whichever one looks best among those installed.
 	PlaybackFont string `json:"playbackFont,omitempty"`
 
+	// RecordFont is the soundfont a recording is rendered through, which
+	// is not always the one the editor plays through.
+	//
+	// They are different jobs. Playing is answered while you are typing,
+	// so a light bank is worth having there; a recording is rendered once
+	// and listened to by somebody else, so the two hundred megabyte one
+	// earns its download. Kept apart so that choosing the big one for an
+	// export does not make every keystroke load it.
+	//
+	// Empty means the one the editor plays through, which is the right
+	// answer for anybody who has never thought about it.
+	RecordFont string `json:"recordFont,omitempty"`
+
+	// InstrumentFonts is the soundfont to play a given instrument through,
+	// by the instrument's sound id — "wind.flutes.flute" and the rest.
+	//
+	// For the person who has a library for one instrument and a General
+	// MIDI bank for everything else: a good solo violin, a real piano, a
+	// drum kit somebody sampled. Said once about the instrument rather
+	// than every time about the staff, because it is the same answer in
+	// every score they will ever write.
+	//
+	// Kept here and not in the score, which is the part worth being sure
+	// about. These are paths on this machine. A score carrying
+	// "/Users/someone/Samples/Violin.sf2" and sent to anybody else names
+	// a file that is not there, and a score is a thing people send each
+	// other — so what the piece is scored for lives in the piece, and
+	// which recordings this machine plays it with lives here.
+	InstrumentFonts map[string]string `json:"instrumentFonts,omitempty"`
+
 	// Recent is the scores last opened or saved, newest first.
 	//
 	// Paths and not contents: the file on the disk is the score, and a
@@ -300,6 +330,24 @@ func (a *App) playbackFont() string {
 	return ""
 }
 
+// recordFont is the soundfont a recording is rendered through.
+//
+// Whatever was chosen for recording and is still there; failing that,
+// whatever the editor plays through. Somebody who has never opened the
+// question gets one answer for both, and somebody who has chosen the big
+// bank for exports keeps it without it slowing their typing down.
+func (a *App) recordFont() string {
+	if chosen := loadSettings().RecordFont; chosen != "" {
+		if f, err := loadFont(chosen); err == nil && f != nil {
+			return chosen
+		}
+		if fileExists(chosen) {
+			return chosen
+		}
+	}
+	return a.playbackFont()
+}
+
 // remember puts a file at the top of the recent list.
 //
 // Called where a score is opened or saved and nowhere else: a PDF or an
@@ -374,6 +422,30 @@ func (a *App) handleSettings(w http.ResponseWriter, r *http.Request) {
 		s := loadSettings()
 		if v, ok := r.URL.Query()["playbackFont"]; ok && len(v) > 0 {
 			s.PlaybackFont = v[0]
+		}
+		if v, ok := r.URL.Query()["recordFont"]; ok && len(v) > 0 {
+			s.RecordFont = v[0]
+		}
+		// "wind.flutes.flute=/Sounds/Flute.sf2", one instrument at a time,
+		// and the same with nothing after the = to take it off again. One
+		// at a time because that is how the dialog changes them, and a
+		// whole map sent on every change is a way to lose the others.
+		for _, v := range r.URL.Query()["instrumentFont"] {
+			sound, path, ok := strings.Cut(v, "=")
+			if !ok || strings.TrimSpace(sound) == "" {
+				http.Error(w, "an instrument's soundfont is written "+
+					"sound=path", http.StatusBadRequest)
+				return
+			}
+			sound = strings.TrimSpace(sound)
+			if strings.TrimSpace(path) == "" {
+				delete(s.InstrumentFonts, sound)
+				continue
+			}
+			if s.InstrumentFonts == nil {
+				s.InstrumentFonts = map[string]string{}
+			}
+			s.InstrumentFonts[sound] = path
 		}
 		if v, ok := r.URL.Query()["scorePDF"]; ok && len(v) > 0 {
 			s.NoScorePDF = v[0] == "0"
@@ -454,6 +526,14 @@ func (a *App) handleSettings(w http.ResponseWriter, r *http.Request) {
 		"playbackFont":     chosen,
 		"playbackFontName": name,
 		"stored":           loadSettings().PlaybackFont,
+		// What a recording is rendered through, worked out the same way:
+		// what was chosen for it, or what the editor plays through where
+		// nobody has chosen. The stored one is reported beside it so that
+		// "the same as playback" and "set to this, which happens to be
+		// the playback one" can be told apart.
+		"recordFont":       a.recordFont(),
+		"recordFontStored": loadSettings().RecordFont,
+		"instrumentFonts":  loadSettings().InstrumentFonts,
 		"scorePDF":         SaveScorePDF(),
 		"trackBarlines":    TrackBarlines(),
 		"keys":             loadSettings().Keys,

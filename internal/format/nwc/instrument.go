@@ -36,7 +36,29 @@ import (
 // does say is never overridden.
 
 // instrumentFromName guesses what plays a staff from what it is called.
+//
+// The shared table first. model.InstrumentNamed knows the French, Italian
+// and German names as well as the English ones, and has the traps in them
+// worked out — an english horn is not a french one, a soprano saxophone is
+// not a soprano, and "Violoncelli" is not a violin. This reader used to
+// carry an English-only copy of the same idea, and every Italian name in
+// the William Tell overture went through it to a piano.
+//
+// Then the list below, for what that one deliberately will not answer. A
+// NoteWorthy file is as likely to be a hymn as an overture, and the shared
+// table refuses a staff called "Alto" because in an orchestral score it is
+// a viola and in a vocal one a singer. Here the odds are different, and a
+// bare voice part is read as a voice.
 func instrumentFromName(name string) (model.Instrument, bool) {
+	if inst, ok := model.InstrumentNamed(name); ok {
+		return inst, true
+	}
+	return nwcNameHint(name)
+}
+
+// nwcNameHint is the reader's own guesses, for the names the shared table
+// leaves alone.
+func nwcNameHint(name string) (model.Instrument, bool) {
 	n := strings.ToLower(strings.TrimSpace(name))
 	if n == "" {
 		return 0, false
@@ -113,17 +135,50 @@ var nameHints = []struct {
 	{"satb", model.ChoirAahs},
 }
 
-// nameInstruments fills in whatever the file did not say.
-func nameInstruments(s *model.Score) {
+// nameInstruments fills in whatever the file did not say, and says which
+// staves it could not.
+//
+// A staff left as a piano is one of two things: a piano, or a name in a
+// language or a shorthand nothing here recognises. Only the person looking
+// can tell which, and nothing on the page says it happened — a score of
+// pianos looks exactly like a score somebody wrote for pianos. So the
+// names that were no help are listed, and the staves can be set in Score
+// setup in a moment rather than found by ear in an hour.
+//
+// Named rather than counted, because the name is the useful part: "Piatti"
+// in that list is a cymbal player, and seeing the word is what tells you
+// so.
+func nameInstruments(s *model.Score) []string {
 	if s == nil {
-		return
+		return nil
 	}
+	var unknown []string
 	for _, p := range s.Parts {
 		if p.Instrument != model.AcousticGrandPiano {
 			continue // the file said, and the file wins
 		}
 		if inst, ok := instrumentFromName(p.Name); ok {
 			p.Instrument = inst
+			if sound, ok := model.SoundForInstrument(inst); ok {
+				p.Sound = sound
+			}
+			continue
+		}
+		// A staff with no name at all is not a failed translation: there
+		// was nothing to translate, and a percussion staff is not a
+		// General MIDI program in the first place.
+		if n := strings.TrimSpace(p.Name); n != "" && p.Clef != model.Percussion {
+			unknown = append(unknown, n)
 		}
 	}
+	return unknown
+}
+
+// plural picks the word for a count, so that a report reads as a sentence
+// rather than as "1 staves".
+func plural(n int, one, many string) string {
+	if n == 1 {
+		return one
+	}
+	return many
 }

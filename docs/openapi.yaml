@@ -3953,10 +3953,18 @@ paths:
     post:
       tags: [play]
       summary: Download a soundfont
+      description: >
+        Answers when the file has arrived, which for two hundred megabytes
+        is minutes. Give a job and ask /api/soundfont/progress about it
+        meanwhile to find out how far it has got.
       parameters:
         - { name: url, in: query, schema: { type: string } }
         - { name: id, in: query, schema: { type: string } }
         - { name: name, in: query, schema: { type: string } }
+        - name: job
+          in: query
+          description: A name of your own to ask about the progress under.
+          schema: { type: string }
       responses:
         "200":
           description: The font that arrived.
@@ -3968,6 +3976,44 @@ paths:
                   status: { type: string }
                   font: { type: string }
         "400": { $ref: "#/components/responses/Error" }
+
+  /api/soundfont/progress:
+    get:
+      tags: [play]
+      summary: How far a soundfont download has got
+      description: >
+        A job nobody started answers as one that has not begun rather than
+        as an error, because the asking usually starts before the download
+        is registered. A finished one is answered for two minutes more.
+      parameters:
+        - name: job
+          in: query
+          required: true
+          description: The job the download was started under.
+          schema: { type: string }
+      responses:
+        "200":
+          description: What has arrived so far.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  received: { type: integer, description: Bytes so far. }
+                  total:
+                    type: integer
+                    description: >
+                      How big it is, or 0 where the server would not say.
+                  done: { type: boolean }
+                  seconds:
+                    type: number
+                    description: >
+                      How long it ran for, which stops growing when it ends.
+                  bytesPerSecond: { type: number }
+                  secondsLeft: { type: number }
+                  error:
+                    type: string
+                    description: Why it failed, where it did.
 
   /api/soundfont/pick:
     post:
@@ -4121,6 +4167,25 @@ paths:
         not in the file.
       parameters:
         - { name: playbackFont, in: query, schema: { type: string } }
+        - name: recordFont
+          in: query
+          description: >-
+            The soundfont a recording is rendered through, which need not be
+            the one the editor plays through: a light bank answers while you
+            type, and the big one is worth the wait once. Empty means
+            whichever the editor plays through.
+          schema: { type: string }
+        - name: instrumentFont
+          in: query
+          description: >-
+            Which soundfont to play one instrument through, written
+            sound=path — "strings.violin=/Sounds/Violin.sf2". Nothing after
+            the = takes it off again. May be given more than once; each is
+            one instrument, so that changing one does not lose the others.
+            Held against the instrument and not against any staff, and kept
+            on this machine rather than in the score, because the path names
+            a file on this disk.
+          schema: { type: string }
         - { name: scorePDF, in: query, schema: { type: string, enum: ["0", "1"] } }
         - { name: trackBarlines, in: query, schema: { type: string, enum: ["0", "1"] } }
         - { name: lang, in: query, schema: { type: string } }

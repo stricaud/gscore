@@ -732,9 +732,6 @@ type dialect struct {
 	// patchHasWords says the instrument patch carries a string in the
 	// middle of it, so its length is not fixed.
 	patchHasWords bool
-	// tempoHasWords says the speed is followed by the words it is written
-	// with.
-	tempoHasWords bool
 	// restChordHoldsTime says a rest kept as a chord holds its own length,
 	// which is checked from 2.0 and still unknown in 1.75.
 	restChordHoldsTime bool
@@ -759,7 +756,6 @@ func dialectOf(version int) dialect {
 		lyricOptionsAlways: version < 200,
 		pagedLyrics:        version >= 200,
 		patchHasWords:      version >= 205,
-		tempoHasWords:      version < 205,
 		restChordHoldsTime: version >= 200,
 		headerNames:        2,
 		keyPad:             7,

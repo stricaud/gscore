@@ -1156,8 +1156,15 @@ func TestAStaffCalledNothingIsNotAStaff(t *testing.T) {
 func TestAStaffNameIsNotTakenTwoBytesEarly(t *testing.T) {
 	var b []byte
 	b = append(b, '0', 0xF8)
-	b = append(b, []byte("Piano RH1 Display")...)
-	b = append(b, 0, 0, 0, 0)
+	// A whole 2.5 header: the name, the label and abbreviation it is
+	// printed with, what it sounds as, and the group it is filed under.
+	// All five, because a staff that says nothing but its name is how an
+	// object stream imitates one — see atStaffHeader.
+	for _, s := range []string{
+		"Piano RH1 Display", "Piano", "Pno.", "Acoustic Grand Piano", "Display"} {
+		b = append(b, []byte(s)...)
+		b = append(b, 0)
+	}
 	b = append(b, make([]byte, 160)...)
 
 	w := &walker{b: b, version: 205}

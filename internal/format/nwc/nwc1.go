@@ -477,34 +477,25 @@ func parseNWC1(raw []byte, version int) (*model.Score, error) {
 	if err := w.skip(1 + 3); err != nil { // marker, 2 pad, layering
 		return nil, err
 	}
-	// A second marker, in the versions that write one.
+	// Then whatever markers and padding this version puts before the count.
 	//
-	// 1.75 goes straight from the layering byte to the staff count; 2.0 puts
-	// another 0xFF in between. Taken for the low byte of the count it made a
-	// five-staff score claim to have one thousand five hundred and thirty-
-	// five staves, which is at least a complaint you can read.
+	// Every version writes a different amount of it and none of it is
+	// described. 1.75 goes straight from the layering byte to the staff
+	// count; 2.0 puts another 0xFF in between; 2.5 puts a zero byte there;
+	// and the William Tell overture, also 2.5, puts two 0xFF markers — so
+	// the second was read as the low byte of the count and the file claimed
+	// one thousand and twenty-three staves. Each version of this was found
+	// the same way, by a file that would not open.
 	//
-	// Safe to test for: the count is a staff count, and 0xFF as its low byte
-	// would be a score of at least 255 staves, which the check below refuses
-	// anyway.
-	if b, err := w.peek(); err == nil && b == 0xFF {
-		if err := w.skip(1); err != nil {
-			return nil, err
-		}
-	}
-	// And then whatever padding this version puts before the count.
-	//
-	// 2.5 writes a zero byte there, and read as the count's low byte it
-	// made a five-staff score claim to have one thousand two hundred and
-	// eighty: the same failure as the marker above, one version later.
-	//
-	// Found rather than counted, for the reason the fonts are. A count's
-	// low byte is never zero — a score has at least one staff — so a zero
-	// here is padding whatever version wrote it, and a version that puts
-	// none is unaffected.
+	// So it is skipped by what it cannot be rather than counted. The next
+	// thing is the low byte of a staff count, and a score has at least one
+	// staff and fewer than the sixty-four below: that byte is therefore
+	// neither 0x00 nor 0xFF, and anything that is, whatever it means, is
+	// not the count. Which makes this one rule instead of one per version,
+	// and the version after these is already handled.
 	for {
 		b, err := w.peek()
-		if err != nil || b != 0x00 {
+		if err != nil || (b != 0x00 && b != 0xFF) {
 			break
 		}
 		if err := w.skip(1); err != nil {
@@ -514,6 +505,28 @@ func parseNWC1(raw []byte, version int) (*model.Score, error) {
 	staffCount, err := w.u16()
 	if err != nil {
 		return nil, err
+	}
+	// And then the count the first staff itself vouches for.
+	//
+	// The walk above arrives in the right country and not always on the
+	// right two bytes: there is a block of unexplained words between the
+	// layering byte and the music, it is a different length in every file,
+	// and what it holds is anybody's guess. Danse Macabre reads five and
+	// has six staves; the William Tell overture reads three and has
+	// twenty-three.
+	//
+	// The two bytes in front of the first staff's name are the count in
+	// both of them — twenty-three in the Rossini, which is exactly the
+	// number of staves in it. So the staff is found first and the count
+	// read backwards from it, which is the same trick the fonts and the
+	// staff headers themselves are found by, and the only one that does
+	// not need the block to be described. Where there is no staff to find,
+	// or the bytes in front of it are not a count, what the walk read
+	// stands.
+	if at, ok := w.nextStaffHeader(); ok && at >= 2 {
+		if n := int(binary.LittleEndian.Uint16(w.b[at-2:])); n > 0 && n <= maxStaves {
+			staffCount = n
+		}
 	}
 	if staffCount <= 0 || staffCount > 64 {
 		return nil, fmt.Errorf("nwc: %d staves, which cannot be right", staffCount)
@@ -541,7 +554,6 @@ func parseNWC1(raw []byte, version int) (*model.Score, error) {
 	// delivered them says so; one that has more keeps going. The cap is
 	// what stops a file whose stream happens to keep making the header
 	// shape from being read for ever.
-	const maxStaves = 64
 	for i := 0; i < maxStaves; i++ {
 		if i >= staffCount && !w.atStaffHeader() && !w.looksLikeAnotherStaff() {
 			break
@@ -1704,18 +1716,17 @@ func (w *walker) objectBody(st *staffState) error {
 		if w.tempo == 0 && bpm >= 20 && bpm <= 400 {
 			w.tempo = bpm
 		}
-		if !w.dia().tempoHasWords {
-			// 2.5 writes no words with the speed: the object ends at the
-			// two bytes after the number.
-			//
-			// Read as a 2.0 tempo, the string it does not have was taken
-			// out of whatever followed — a dynamic, a rest — and the walk
-			// went on from the middle of it. Both tempos in the first
-			// staff of Danse Macabre are nine bytes, the second of them
-			// "a Tempo" at bar 79, where the words are a text object of
-			// their own standing beside it.
-			return w.skip(2)
-		}
+		// Every version writes the words after the speed, 2.5 included.
+		//
+		// It was read as two bytes of padding there instead, on the
+		// evidence of Danse Macabre, whose two tempos are nine bytes
+		// each. Nine bytes is what a tempo with no words comes to either
+		// way — an empty string is the one byte that the second pad byte
+		// was standing in for — so that file cannot tell the two apart
+		// and the simpler reading is the right one. The William Tell
+		// overture settles it: its piccolo is marked "Andante", and read
+		// as padding the A was eaten and the walk went on from the n.
+		//
 		// One byte between the speed and the words, not two.
 		//
 		// The byte is the note the speed is counted in. Taking two ate the
@@ -2109,11 +2120,30 @@ func (w *walker) objectBody(st *staffState) error {
 		return w.skip(4)
 
 	case 22:
-		// Another of 2.5's own, two bytes after the header. It stands just
-		// before the words "Mouvement modéré de Valse" on the staff that
-		// is printed, and like the type 20 beside it nothing gscore draws
-		// needs what it holds.
-		return w.skip(2)
+		// Another of 2.5's own, one byte after the header. It stands at
+		// the head of a staff, just before the clef, and like the type 20
+		// beside it nothing gscore draws needs what it holds.
+		//
+		// One byte and not two, which cost more than it looks. Read a byte
+		// long, the clef after it was read from one byte late — so a
+		// bassoon came out in the treble clef — and the key signature
+		// after that was read as two more clefs, so the staff had no key
+		// at all. The two mistakes then cancelled: fifteen bytes of key
+		// signature read as two seven-byte clefs is one byte short, which
+		// is exactly what this record was one byte long by, and the walk
+		// came back into step at the next record as though nothing had
+		// happened.
+		//
+		// That is why it stood: every staff with a key signature survived
+		// it. The staves without one — the horns in G, the clarinets in
+		// A, the trumpets in E, the three percussion staves, all written
+		// with no signature at all — had nothing to cancel it, and the
+		// walk was a byte out from the fourth record to the end of the
+		// staff. Nine staves of the William Tell overture were lost that
+		// way, and the Piatti staff is what settles the length: it opens
+		// with two of these records back to back, 16 00 00 02 16 00 00 02,
+		// which only reads as two records if each is four bytes long.
+		return w.skip(1)
 
 	case 254, 255:
 		// A 1.70 score writes one of these here and there inside a staff.
@@ -2311,6 +2341,10 @@ func (w *walker) lyrics2() error {
 // reach found nothing and the left hand of the piece was never read.
 const staffSearch = 1 << 20
 
+// maxStaves is the most staves a score is read as having: the cap on the
+// count a file declares, and on the walk that reads past it.
+const maxStaves = 64
+
 // looksLikeAnotherStaff says whether a staff header is still to come,
 // without moving the walk.
 func (w *walker) looksLikeAnotherStaff() bool {
@@ -2334,10 +2368,14 @@ func (w *walker) atStaffHeader() bool {
 	// "Standard" followed by a 0x04, and the walk went straight past the
 	// staff and spent the next ten thousand bytes looking for one.
 	probe := &walker{b: w.b, i: w.i}
+	said := 0
 	for n := 0; n < w.dia().headerNames; n++ {
 		s, err := probe.cstring()
 		if err != nil {
 			return false
+		}
+		if n > 0 && hasLetterOrDigit(s) {
+			said++
 		}
 		if n == 0 && (s == "" || !looksLikeText(s) || !hasLetterOrDigit(s)) {
 			// A staff is named for somebody to read, so its name starts
@@ -2356,6 +2394,27 @@ func (w *walker) atStaffHeader() bool {
 			return false
 		}
 	}
+	// A staff from 2.0 on says something about itself besides its name.
+	//
+	// Those versions write the label, the abbreviation, the sound and the
+	// group, and a staff leaves some of them blank but not all of them:
+	// NoteWorthy files a staff nobody has grouped under "Standard", and
+	// one named for a player carries the label it is printed with.
+	//
+	// Something a reader could read, which is the same test the name
+	// itself passes: the accidents in an object stream say nothing. In the
+	// William Tell overture twenty of them are a letter and then four
+	// empty strings — "K", "F", "l", "J", "T" — and seven more are a word
+	// written on the staff followed by a tab, which is what the horns'
+	// "Andante" is. Read as staves they stood between the real ones
+	// carrying their music, and a score of twenty-three came out as
+	// forty-four.
+	//
+	// 1.75 is left alone: it writes the name and the group and nothing
+	// else, and a staff whose group is empty is a staff all the same.
+	if w.dia().headerNames >= 4 && said == 0 {
+		return false
+	}
 	// A staff has a good deal more in it than its names.
 	return probe.remaining() > 32
 }
@@ -2363,18 +2422,29 @@ func (w *walker) atStaffHeader() bool {
 // findStaffHeader moves the walk to the next staff header, and says whether
 // it found one.
 func (w *walker) findStaffHeader() bool {
+	at, ok := w.nextStaffHeader()
+	if ok {
+		w.i = at
+	}
+	return ok
+}
+
+// nextStaffHeader is where the next staff begins, without moving the walk.
+//
+// Separated out because the header is worth finding before the walk is
+// committed to it: the staff count is read backwards from the first one.
+func (w *walker) nextStaffHeader() (int, bool) {
 	limit := w.i + staffSearch
 	if limit > len(w.b) {
 		limit = len(w.b)
 	}
 	for at := w.i; at < limit; at++ {
-		probe := &walker{b: w.b, i: at}
+		probe := &walker{b: w.b, i: at, version: w.version}
 		if probe.atStaffHeader() {
-			w.i = nameStart(w.b, at)
-			return true
+			return nameStart(w.b, at), true
 		}
 	}
-	return false
+	return 0, false
 }
 
 // nameStart trims the odd bytes a search can pick up in front of a staff's

@@ -131,6 +131,8 @@ type stave struct {
 	order      int    // where it comes in the score
 	clef       model.Clef
 	clefSet    bool
+	dynamics   []dynamic
+	swells     []swell
 	voices     []string // the voice streams that write on it
 }
 
@@ -367,7 +369,7 @@ func buildFlow(t *tree, flow int32, players, sounds map[string]string,
 	if len(bars) == 0 {
 		return nil
 	}
-	readClefs(t, streams, staves, skipped)
+	readClefs(t, streams, staves, elements, skipped)
 
 	s := model.NewScore()
 	s.Parts = nil
@@ -408,6 +410,7 @@ func buildFlow(t *tree, flow int32, players, sounds map[string]string,
 			voices = append(voices, music[v]...)
 		}
 		p.Measures = layOut(voices, bars)
+		attach(p, bars, st.dynamics, st.swells)
 		s.Parts = append(s.Parts, p)
 	}
 	return s
@@ -879,19 +882,25 @@ func keySignature(t *tree, def int32) (model.KeySignature, bool) {
 
 // readClefs gives each staff the clef its own stream opens with.
 func readClefs(t *tree, streams *streams, staves []*stave,
-	skipped map[string]int) {
+	elements map[string]int32, skipped map[string]int) {
 	for _, st := range staves {
 		first := rat{0, 1}
 		seen := false
 		for _, p := range streams.of("kInstrumentStaveStream", st.stream) {
+			// The dynamics are on this stream too, and belong to the
+			// staff rather than to any one voice on it: a crescendo is
+			// for the player.
+			marks, swells := readDynamics(t, p, elements, skipped)
+			st.dynamics = append(st.dynamics, marks...)
+			st.swells = append(st.swells, swells...)
 			events := t.child(p.node, "events")
 			for _, e := range t.children(events) {
+				if t.nameOf(e) == "DynamicGroupEventDefinition" {
+					continue // read above
+				}
 				if t.nameOf(e) != "ClefEventDefinition" {
-					// The dynamics are here, and the cues, and they are
-					// said rather than passed over: a staff stream read
-					// for its clefs alone loses three and a half thousand
-					// dynamics without a word, and somebody finds out by
-					// looking for a crescendo that is not there.
+					// Whatever else is on this stream — the cues, the bar
+					// repeats — is said rather than passed over.
 					note(skipped, t.nameOf(e))
 					continue
 				}
@@ -1258,4 +1267,259 @@ func element(g group, dur model.Duration, key model.KeySignature,
 	ch.TieStart, ch.TieStop = tiedOn, tiedBack
 	ch.Tuplet = g.tup
 	return ch
+}
+
+/* ---------- the dynamics ---------- */
+
+// Dorico keeps dynamics on the staff rather than in a voice, which is where
+// they belong: a crescendo is for the player, not for one of the lines they
+// happen to be reading. A group is one gesture — "p, growing, to f" is
+// three sub-elements of a single group — and each sub-element carries its
+// own position within it.
+//
+// The intensity is written as a pair: which side of the middle it is on,
+// and how many letters. {int: 0} … {int: 2} is ff, {int: 1} … {int: 2} is
+// pp, and nothing at all in the second place is the mezzo of that side.
+// Anchored on the opening of this symphony, which is ff and is the hardest
+// thing in music to be wrong about.
+type dynamic struct {
+	at rat
+	d  model.Dynamic
+}
+
+type swell struct {
+	at   rat
+	dur  rat
+	kind model.HairpinKind
+}
+
+// readDynamics gathers one staff's dynamics and hairpins.
+func readDynamics(t *tree, p placed, elements map[string]int32,
+	skipped map[string]int) ([]dynamic, []swell) {
+
+	var marks []dynamic
+	var swells []swell
+	events := t.child(p.node, "events")
+	for _, e := range t.children(events) {
+		if t.nameOf(e) != "DynamicGroupEventDefinition" {
+			continue
+		}
+		base, ok := parseRat(t.str(e, "position"))
+		if !ok {
+			continue
+		}
+		base = base.add(p.at)
+		group := elements["DynamicGroupElementDefinition:"+
+			t.str(e, "dynamicGroupID")]
+		if group < 0 {
+			skipped["dynamics"]++
+			continue
+		}
+		for _, sub := range t.children(t.child(group, "subElements")) {
+			at, _ := parseRat(t.str(sub, "position"))
+			at = at.add(base)
+			switch t.nameOf(sub) {
+			case "ImmediateChangeDynamicDefinition":
+				d, ok := intensity(t.str(sub, "intensity"),
+					t.str(sub, "intensityModifier"), skipped)
+				if !ok {
+					skipped["dynamics"]++
+					continue
+				}
+				marks = append(marks, dynamic{at: at, d: d})
+			case "ForceDynamicDefinition":
+				// The struck dynamics: sforzando and its relatives, which
+				// are a kind of their own here rather than a loudness.
+				marks = append(marks, dynamic{at: at,
+					d: forced(t.str(sub, "type"), skipped)})
+			case "CombinedDynamicDefinition":
+				// Two dynamics in one mark. The only one gscore writes is
+				// forte-piano, which is what "down" means: struck loud and
+				// dropped at once.
+				if t.str(sub, "direction") != "kDown" {
+					skipped["combined dynamics other than fp"]++
+					continue
+				}
+				marks = append(marks, dynamic{at: at, d: model.FortePiano})
+			case "GradualChangeDynamicDefinition":
+				dur, _ := parseRat(t.str(sub, "duration"))
+				if dur.zero() {
+					skipped["hairpins"]++
+					continue
+				}
+				kind := model.Crescendo
+				if t.str(sub, "direction") == "kGradualDynamicDown" {
+					kind = model.Diminuendo
+				}
+				swells = append(swells, swell{at: at, dur: dur, kind: kind})
+			default:
+				skipped["dynamics"]++
+			}
+		}
+	}
+	return marks, swells
+}
+
+// intensity reads how loud, out of Dorico's pair of numbers.
+func intensity(level, modifier string, skipped map[string]int) (model.Dynamic, bool) {
+	// A modifier is something written beside the letters, and what its
+	// numbers mean is not known here — the sforzandos, which would have
+	// been the guess, turn out to be a kind of their own. So the level is
+	// written and the modifier is reported rather than invented.
+	if len(variantInts(modifier)) > 0 {
+		skipped["marks written beside a dynamic, such as poco or molto"]++
+	}
+	n := variantInts(level)
+	if len(n) == 0 {
+		return model.DynamicNone, false
+	}
+	soft := n[0] == 1
+	letters := 0
+	if len(n) > 1 {
+		letters = n[len(n)-1]
+	}
+	switch {
+	case soft && letters >= 4:
+		return model.PPPP, true
+	case soft && letters == 3:
+		return model.PPP, true
+	case soft && letters == 2:
+		return model.PP, true
+	case soft && letters == 1:
+		return model.Piano, true
+	case soft:
+		return model.MP, true
+	case letters >= 4:
+		return model.FFFF, true
+	case letters == 3:
+		return model.FFF, true
+	case letters == 2:
+		return model.FF, true
+	case letters == 1:
+		return model.Forte, true
+	}
+	return model.MF, true
+}
+
+// forced reads one of the struck dynamics.
+//
+// Dorico names them, which is a mercy: this file holds nothing but
+// kForceDynamicSfz, and a reader that had to guess from a number would
+// have had to guess between sf, sfz, fz and rfz — four marks that look
+// alike on the page and are four different instructions.
+//
+// Tried longest first, so that Rfz is not read as fz and Sfz is not read
+// as Sf.
+func forced(kind string, skipped map[string]int) model.Dynamic {
+	switch {
+	case strings.Contains(kind, "Sfz"):
+		return model.SForzando
+	case strings.Contains(kind, "Rfz"), strings.Contains(kind, "Rinf"):
+		return model.Rinforzando
+	case strings.Contains(kind, "Sfp"), strings.Contains(kind, "Fp"):
+		return model.FortePiano
+	case strings.Contains(kind, "Sf"), strings.Contains(kind, "Fz"):
+		return model.SForzato
+	}
+	skipped["struck dynamics gscore does not know, called "+kind+" by Dorico"]++
+	return model.SForzato
+}
+
+// variantInts pulls the numbers out of one of Dorico's packed lists:
+//
+//	steamVariantList:list: {int: 0}, {}, {bool: false}, {int: 2}
+func variantInts(s string) []int {
+	var out []int
+	for rest := s; ; {
+		i := strings.Index(rest, "{int:")
+		if i < 0 {
+			return out
+		}
+		rest = rest[i+len("{int:"):]
+		j := strings.IndexByte(rest, '}')
+		if j < 0 {
+			return out
+		}
+		if n, err := strconv.Atoi(strings.TrimSpace(rest[:j])); err == nil {
+			out = append(out, n)
+		}
+		rest = rest[j+1:]
+	}
+}
+
+// spot is one place in a part a mark can be hung on: the element that
+// starts there, and where that is.
+type spot struct {
+	at    rat
+	marks *model.Marks
+}
+
+// attach hangs the dynamics and hairpins on the notes they stand over.
+//
+// Dorico says where they are, in crotchets from the start of the flow;
+// gscore holds them on the element they belong to. So the part is walked
+// once, every element's place noted, and each mark put on the last element
+// that begins at or before it — a dynamic written over the middle of a long
+// note belongs to that note.
+func attach(p *model.Part, bars []bar, marks []dynamic, swells []swell) {
+	var spots []spot
+	for i, m := range p.Measures {
+		if i >= len(bars) {
+			break
+		}
+		at := bars[i].at
+		if len(m.Voices) == 0 {
+			continue
+		}
+		for _, el := range m.Voices[0].Elements {
+			if mk := marksOf(el); mk != nil {
+				spots = append(spots, spot{at: at, marks: mk})
+			}
+			d := el.Duration()
+			at = at.add(rat{int64(d.Num) * 4, int64(d.Den)})
+		}
+	}
+	if len(spots) == 0 {
+		return
+	}
+	at := func(when rat) *model.Marks {
+		// The last element beginning at or before this moment.
+		put := -1
+		for i := range spots {
+			if spots[i].at.cmp(when) <= 0 {
+				put = i
+				continue
+			}
+			break
+		}
+		if put < 0 {
+			put = 0
+		}
+		return spots[put].marks
+	}
+	for _, m := range marks {
+		at(m.at).Dynamic = m.d
+	}
+	for _, s := range swells {
+		from, to := at(s.at), at(s.at.add(s.dur))
+		if from == to {
+			from.Hairpin = &model.Hairpin{Kind: s.kind, Alone: true}
+			continue
+		}
+		from.Hairpin = &model.Hairpin{Kind: s.kind, Start: true}
+		to.Hairpin = &model.Hairpin{Kind: s.kind, Stop: true}
+	}
+}
+
+// marksOf gets at an element's marks, whatever kind of element it is.
+func marksOf(el model.Element) *model.Marks {
+	switch e := el.(type) {
+	case *model.Note:
+		return &e.Marks
+	case *model.Chord:
+		return &e.Marks
+	case *model.Rest:
+		return &e.Marks
+	}
+	return nil
 }

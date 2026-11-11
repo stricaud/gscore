@@ -200,6 +200,34 @@ func tupletOver(at, dur string, actual, normal int) string {
 	return key
 }
 
+// dynSub is one piece of a dynamic gesture: a mark, a hairpin, or one of
+// the struck dynamics.
+type dynSub struct {
+	kind    string // "immediate", "gradual" or "force"
+	at      string // where in the group it sits
+	side    int    // 0 loud, 1 soft
+	letters int    // how many f's or p's
+	dur     string // a hairpin's length
+	down    bool   // and whether it falls
+	force   string // the name of a struck dynamic
+}
+
+var dynGroups = map[string]struct {
+	at   string
+	subs []dynSub
+}{}
+
+// dynamicAt asks for a dynamic gesture over the music, written the way
+// Dorico writes one: a group on the staff, holding marks of its own.
+func dynamicAt(at string, subs ...dynSub) string {
+	key := "dynamic " + at + " " + itoa(len(dynGroups))
+	dynGroups[key] = struct {
+		at   string
+		subs []dynSub
+	}{at, subs}
+	return key
+}
+
 // built makes a one-flow project: one player on one staff, in the time and
 // key given, playing these notes.
 func built(t *testing.T, time [2]string, key string, notes []played,
@@ -224,6 +252,9 @@ func built(t *testing.T, time [2]string, key string, notes []played,
 		events = append(events, e.node(kind, kids...))
 	}
 	for _, kind := range extra {
+		if _, ok := dynGroups[kind]; ok {
+			continue // built onto the staff below
+		}
 		if t, ok := tuplets[kind]; ok {
 			events = append(events, e.node("TupletEventDefinition",
 				e.leaf("position", t.at),
@@ -272,14 +303,61 @@ func built(t *testing.T, time [2]string, key string, notes []played,
 				e.leaf("duration", "0"),
 				e.leaf("tonalityDivisionElementID", "2"))))
 
+	staveEvents := []int32{
+		e.node("ClefEventDefinition",
+			e.leaf("position", "0"),
+			e.node("entityIDs",
+				e.leaf("idForTransposingLayouts", "clef.bass"))),
+	}
+	var dynDefs []int32
+	for _, kind := range extra {
+		g, ok := dynGroups[kind]
+		if !ok {
+			continue
+		}
+		id := itoa(500 + len(dynDefs))
+		staveEvents = append(staveEvents,
+			e.node("DynamicGroupEventDefinition",
+				e.leaf("position", g.at),
+				e.leaf("duration", "0"),
+				e.leaf("dynamicGroupID", id)))
+		var subs []int32
+		for _, sub := range g.subs {
+			switch sub.kind {
+			case "gradual":
+				dir := "kGradualDynamicUp"
+				if sub.down {
+					dir = "kGradualDynamicDown"
+				}
+				subs = append(subs, e.node("GradualChangeDynamicDefinition",
+					e.leaf("position", sub.at),
+					e.leaf("type", "kCrescOrDim"),
+					e.leaf("direction", dir),
+					e.leaf("duration", sub.dur)))
+			case "force":
+				subs = append(subs, e.node("ForceDynamicDefinition",
+					e.leaf("position", sub.at),
+					e.leaf("type", sub.force),
+					e.leaf("intensityLevel", "1")))
+			default:
+				subs = append(subs, e.node("ImmediateChangeDynamicDefinition",
+					e.leaf("position", sub.at),
+					e.leaf("intensity",
+						"steamVariantList:list: {int: "+itoa(sub.side)+
+							"}, {}, {bool: false}, {int: "+
+							itoa(sub.letters)+"}"),
+					e.leaf("intensityModifier",
+						"steamVariantList:list: {}, {}")))
+			}
+		}
+		dynDefs = append(dynDefs, e.node("DynamicGroupElementDefinition",
+			e.leaf("elementID", id),
+			e.node("subElements", subs...)))
+	}
 	staveBlock := e.node("block",
 		e.leaf("blockID", "30"),
 		e.leaf("parentEventStreamType", "kInstrumentStaveStream"),
-		e.node("events",
-			e.node("ClefEventDefinition",
-				e.leaf("position", "0"),
-				e.node("entityIDs",
-					e.leaf("idForTransposingLayouts", "clef.bass")))))
+		e.node("events", staveEvents...))
 
 	flow := e.node("flow",
 		e.leaf("flowID", "0"),
@@ -304,7 +382,9 @@ func built(t *testing.T, time [2]string, key string, notes []played,
 			e.node("BarDivisionElementTableDefinition",
 				e.node("array", timeSig)),
 			e.node("TonalityDivisionElementTableDefinition",
-				e.node("array", keySig))),
+				e.node("array", keySig)),
+			e.node("DynamicGroupElementTableDefinition",
+				e.node("array", dynDefs...))),
 		e.list("blocks", voiceBlock, globalBlock, staveBlock),
 		e.list("blockInstances",
 			e.node("blockInstance",
@@ -822,5 +902,130 @@ func TestTheStaffPlaysItsOwnInstrument(t *testing.T) {
 	}
 	if got, _ := model.SoundProgram("wind.flutes.flute"); p.Instrument != got {
 		t.Errorf("the staff is played with %v, want %v", p.Instrument, got)
+	}
+}
+
+/* ---------- the dynamics ---------- */
+
+func TestADynamicLandsOnTheNoteItStandsOver(t *testing.T) {
+	raw := built(t, [2]string{"2", "4"}, "C", []played{
+		{at: "0", dur: "1/2", pitch: 60},
+		{at: "1/2", dur: "1/2", pitch: 62},
+		{at: "1", dur: "1", pitch: 64},
+	}, dynamicAt("1/2", dynSub{kind: "immediate", at: "0", side: 0, letters: 2}))
+
+	p := read(t, raw)[0].Parts[0]
+	els := p.Measures[0].Voices[0].Elements
+	if got := marksOf(els[0]).Dynamic; got != model.DynamicNone {
+		t.Errorf("the first note carries %v, and the mark is over the second",
+			got)
+	}
+	if got := marksOf(els[1]).Dynamic; got != model.FF {
+		t.Errorf("the second note carries %v, want ff", got)
+	}
+}
+
+func TestTheLoudnessesAreReadRight(t *testing.T) {
+	// Which side of the middle, and how many letters. The opening of this
+	// symphony is ff and is the hardest thing in music to be wrong about,
+	// so it is what the reading was anchored on.
+	for _, c := range []struct {
+		side, letters int
+		want          model.Dynamic
+	}{
+		{0, 1, model.Forte}, {0, 2, model.FF}, {0, 3, model.FFF},
+		{1, 1, model.Piano}, {1, 2, model.PP}, {1, 3, model.PPP},
+		{0, 0, model.MF}, {1, 0, model.MP},
+	} {
+		raw := built(t, [2]string{"4", "4"}, "C", []played{
+			{at: "0", dur: "4", pitch: 60},
+		}, dynamicAt("0", dynSub{kind: "immediate", at: "0",
+			side: c.side, letters: c.letters}))
+		p := read(t, raw)[0].Parts[0]
+		got := marksOf(p.Measures[0].Voices[0].Elements[0]).Dynamic
+		if got != c.want {
+			t.Errorf("side %d with %d letters came out as %v, want %v",
+				c.side, c.letters, got, c.want)
+		}
+	}
+}
+
+func TestAHairpinOpensAndCloses(t *testing.T) {
+	// p, growing, to f — which Dorico keeps as one gesture of three parts,
+	// and gscore as a dynamic, a wedge opening, and a wedge closing.
+	raw := built(t, [2]string{"4", "4"}, "C", []played{
+		{at: "0", dur: "1", pitch: 60},
+		{at: "1", dur: "1", pitch: 62},
+		{at: "2", dur: "1", pitch: 64},
+		{at: "3", dur: "1", pitch: 65},
+	}, dynamicAt("0",
+		dynSub{kind: "immediate", at: "0", side: 1, letters: 1},
+		dynSub{kind: "gradual", at: "0", dur: "3"},
+		dynSub{kind: "immediate", at: "3", side: 0, letters: 1}))
+
+	els := read(t, raw)[0].Parts[0].Measures[0].Voices[0].Elements
+	if got := marksOf(els[0]).Dynamic; got != model.Piano {
+		t.Errorf("the gesture opens on %v, want p", got)
+	}
+	open := marksOf(els[0]).Hairpin
+	if open == nil || !open.Start || open.Kind != model.Crescendo {
+		t.Fatalf("the crescendo does not open on the first note: %+v", open)
+	}
+	shut := marksOf(els[3]).Hairpin
+	if shut == nil || !shut.Stop {
+		t.Fatalf("the crescendo does not close on the fourth note: %+v", shut)
+	}
+	if got := marksOf(els[3]).Dynamic; got != model.Forte {
+		t.Errorf("the gesture arrives at %v, want f", got)
+	}
+}
+
+func TestADiminuendoFalls(t *testing.T) {
+	raw := built(t, [2]string{"4", "4"}, "C", []played{
+		{at: "0", dur: "2", pitch: 60},
+		{at: "2", dur: "2", pitch: 62},
+	}, dynamicAt("0", dynSub{kind: "gradual", at: "0", dur: "2", down: true}))
+
+	els := read(t, raw)[0].Parts[0].Measures[0].Voices[0].Elements
+	h := marksOf(els[0]).Hairpin
+	if h == nil || h.Kind != model.Diminuendo {
+		t.Fatalf("the hairpin is %+v, want a diminuendo", h)
+	}
+}
+
+func TestASforzandoIsNotALoudness(t *testing.T) {
+	// The struck dynamics are a kind of their own in Dorico, named rather
+	// than numbered — which is a mercy, because sf, sfz, fz and rfz look
+	// alike on the page and are four different instructions.
+	for _, c := range []struct {
+		kind string
+		want model.Dynamic
+	}{
+		{"kForceDynamicSfz", model.SForzando},
+		{"kForceDynamicSf", model.SForzato},
+		{"kForceDynamicRfz", model.Rinforzando},
+		{"kForceDynamicFp", model.FortePiano},
+	} {
+		raw := built(t, [2]string{"4", "4"}, "C", []played{
+			{at: "0", dur: "4", pitch: 60},
+		}, dynamicAt("0", dynSub{kind: "force", at: "0", force: c.kind}))
+		got := marksOf(read(t, raw)[0].Parts[0].
+			Measures[0].Voices[0].Elements[0]).Dynamic
+		if got != c.want {
+			t.Errorf("%s came out as %v, want %v", c.kind, got, c.want)
+		}
+	}
+}
+
+func TestADynamicOverALongNoteBelongsToThatNote(t *testing.T) {
+	// Written where no note begins, which happens: the mark sits over the
+	// middle of a held note. It belongs to the note being held.
+	raw := built(t, [2]string{"4", "4"}, "C", []played{
+		{at: "0", dur: "4", pitch: 60},
+	}, dynamicAt("2", dynSub{kind: "immediate", at: "0", side: 1, letters: 2}))
+
+	els := read(t, raw)[0].Parts[0].Measures[0].Voices[0].Elements
+	if got := marksOf(els[0]).Dynamic; got != model.PP {
+		t.Errorf("the held note carries %v, want pp", got)
 	}
 }

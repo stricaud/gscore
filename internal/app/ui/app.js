@@ -1870,6 +1870,82 @@ function drawSprints() {
   placeSprints(rows, box, svg, wrap);
 }
 
+// What the name strip is showing now, so that scrolling moves the labels
+// rather than building them again.
+let staffNameKey = "";
+
+// drawStaffNames keeps each staff's name beside it once the names written
+// at the head of the score have scrolled away.
+//
+// A score of twenty-three staves is read across, and the only thing saying
+// which line belongs to which instrument is a column of words at the far
+// left. Four screens along, finding out what you are looking at means
+// going all the way back and all the way out again — on the William Tell
+// overture that is four hundred and seventy-seven bars of travel to read
+// one word.
+//
+// So the names follow. They are the other half of the sprint buttons above
+// and the mirror of them: those are a way of leaving the beginning and
+// appear only there, these are for everywhere else and appear as soon as
+// the real names are gone. Neither is ever on screen at the same time as
+// the thing it stands in for.
+function drawStaffNames() {
+  const box = $("#staff-names");
+  if (!box) return;
+  const wrap = $("#canvas-wrap");
+  const svg = currentSVG();
+  // Only where the names have actually gone. At the head of the score they
+  // are on the page already, and a second copy over the first is clutter.
+  const away = wrap && wrap.scrollLeft > 16;
+  // And only where the score is naming its staves at all.
+  //
+  // View, Staff names takes the words off the page, and somebody who has
+  // just taken them off does not want them back three bars later in a
+  // different shape. These stand in for the names at the head of the
+  // score; where there are none to stand in for, there is nothing to do.
+  const named = state.view?.names !== false;
+  if (!wrap || !svg || !away || !named || state.mode !== "strip") {
+    // Only where it is not already away: this runs on every frame of every
+    // scroll, and writing to the page to say what it already says is still
+    // writing to the page.
+    if (!box.hidden) {
+      box.hidden = true;
+      box.textContent = "";
+      staffNameKey = "";
+    }
+    return;
+  }
+  box.hidden = false;
+
+  // A staff that is not called anything is not labelled.
+  //
+  // sprintRows makes up "Staff 4" for one with no name, which is right for
+  // a button that has to say out loud what it points at and wrong here: a
+  // staff whose name somebody has cleared is a staff they want unnamed,
+  // and "Staff 4" beside it is the label coming back under another name.
+  const rows = sprintRows().filter((r) => nameOf(r.part) !== "");
+  const key = rows.map((r) => r.part + ":" + r.name + "@" + r.top.toFixed(2))
+    .join(",");
+  if (key !== staffNameKey) {
+    staffNameKey = key;
+    box.textContent = "";
+    for (const r of rows) {
+      const el = document.createElement("div");
+      el.className = "staff-name";
+      el.textContent = r.name;
+      el.title = r.name;
+      box.appendChild(el);
+    }
+  }
+  placeSprints(rows, box, svg, wrap);
+}
+
+// nameOf is what a staff is called, as the score itself has it — empty for
+// one nobody has named.
+function nameOf(part) {
+  return ((state.info?.parts || [])[part]?.name || "").trim();
+}
+
 // placeSprints puts each button beside its own staff, and takes away the
 // ones whose staff has scrolled off the panel.
 function placeSprints(rows, box, svg, wrap) {
@@ -1940,9 +2016,10 @@ function setupVirtualDraw() {
   const check = () => {
     frame = 0;
     ran = performance.now();
-    // The buttons are pinned to the panel and their staves are not, so they
-    // move whenever the view does.
+    // The buttons and the names are pinned to the panel and their staves
+    // are not, so they move whenever the view does.
     drawSprints();
+    drawStaffNames();
     if (!state.tiles) return; // the whole score is in the page
     void ensureTiles();
   };

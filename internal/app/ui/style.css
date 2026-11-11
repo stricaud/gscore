@@ -851,6 +851,36 @@ body.native #menubar { padding-left: 12px; }
   transition: max-width .12s ease, opacity .12s ease;
 }
 
+/* The staff names, which follow the view once the real ones at the head of
+   the score have scrolled away. See drawStaffNames. */
+#staff-names {
+  position: sticky;
+  top: 0;
+  left: 0;
+  width: 0;
+  height: 0;
+  z-index: 4;
+  pointer-events: none;
+}
+
+.staff-name {
+  position: absolute;
+  left: 4px;
+  max-width: 170px;
+  padding: 1px 6px;
+  border-radius: 9px;
+  /* Nearly opaque, because it is standing over the music rather than over
+     the empty head of the staff the sprint buttons sit in. */
+  background: color-mix(in srgb, var(--panel) 92%, transparent);
+  color: var(--muted);
+  font: inherit;
+  font-size: calc(11px * var(--ui-scale));
+  line-height: 1.5;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 /* Hovered or reached by the keyboard, it opens out and says which staff. */
 .staff-sprint:hover,
 .staff-sprint:focus-visible {

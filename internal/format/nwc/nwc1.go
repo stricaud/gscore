@@ -1164,6 +1164,18 @@ type staffState struct {
 	// accs holds the accidentals written so far in the bar now being read,
 	// by the note they were written on. They are cleared at the barline.
 	accs map[[2]int]int
+	// restChord marks the rests NoteWorthy kept as chords in the bar being
+	// read. Each is the rest a second line of music opens with, where the
+	// bar has one. See closeMeasure.
+	restChord map[model.Element]bool
+}
+
+// noteRestChord records that this rest is one NoteWorthy kept as a chord.
+func (s *staffState) noteRestChord(el model.Element) {
+	if s.restChord == nil {
+		s.restChord = map[model.Element]bool{}
+	}
+	s.restChord[el] = true
 }
 
 // nowClef and nowKey are the sign and the key in force, which is what a note
@@ -1402,11 +1414,13 @@ func (s *staffState) closeMeasure(style model.BarlineStyle) {
 		style != model.BarRepeatEnd && style != model.BarRepeatBoth {
 		e.Open = true
 	}
+	s.splitLines()
 	s.meas.RightBarline = style
 	s.part.Measures = append(s.part.Measures, s.meas)
 	s.meas = nil
 	// A written accidental lasts to the barline and no further.
 	s.accs = nil
+	s.restChord = nil
 	// So does a wedge, give or take. NoteWorthy draws one from where it is
 	// marked to the dynamic it arrives at — but a crescendo that is never
 	// answered then runs for ever: measured across this piece the spans
@@ -1416,6 +1430,82 @@ func (s *staffState) closeMeasure(style model.BarlineStyle) {
 	// marked in. NoteWorthy's own at bar 244 carries a little past the
 	// barline, so this is short rather than wrong.
 	s.closeHairpin()
+}
+
+// splitLines separates a bar that holds two lines of music into the two it
+// holds, where that is what it is.
+//
+// A staff can carry two lines at once — a note held under a trill and the
+// trill written out beneath it so that it plays, a melody over its own
+// accompaniment — and NoteWorthy writes both of them into the one stream,
+// in time order, one object at a time. Read straight through, the two come
+// out end to end: the bar is twice its meter, the second line's opening
+// rest is heard as a gap after the first line's note, and everything after
+// it arrives a bar late. Bar 184 of the William Tell overture is a flute
+// holding a dotted quarter while a run of sixty-fourths plays under it, and
+// it was heard as the long note, a silence, and then the run.
+//
+// Which line an object belongs to is not marked in any byte this reader has
+// found. What the file does say is where the second line begins: a rest
+// NoteWorthy keeps as a chord is a rest in one line written because the
+// other has notes at that moment, and it is the only thing in the stream
+// that says two lines are going at once. From there the rest follows from
+// the stream being in time order — each object belongs to whichever line is
+// furthest behind — and the two clocks separate them.
+//
+// Only where the bar cannot be one line. A rest kept as a chord turns up in
+// bars that are perfectly ordinary, and splitting those would make two
+// voices out of one: the left hand of Danse Macabre at bar 254 is one of
+// these and five quavers, and together they are exactly the bar. So the bar
+// is read as one line first, and taken apart only when one line cannot hold
+// it.
+func (s *staffState) splitLines() {
+	if s.meas == nil || len(s.meas.Voices) != 1 {
+		return
+	}
+	els := s.meas.Voices[0].Elements
+	if len(els) < 2 {
+		return
+	}
+	bar := model.Duration{Num: s.time.Beats, Den: s.time.BeatValue}
+	if bar.Num <= 0 || bar.Den <= 0 {
+		return
+	}
+	total := model.Duration{Num: 0, Den: 1}
+	for _, el := range els {
+		total = total.Add(el.Duration())
+	}
+	if total.Float() <= bar.Float()*1.001 {
+		return // one line holds it, which is nearly every bar
+	}
+
+	// Each object to the line that is furthest behind, with the rest that
+	// opens the second line put in it whatever the clocks say — at the
+	// head of the bar they are level, and that rest is the one thing that
+	// says the second line is there at all.
+	var lines [2][]model.Element
+	var clock [2]model.Duration
+	clock[0] = model.Duration{Num: 0, Den: 1}
+	clock[1] = model.Duration{Num: 0, Den: 1}
+	for _, el := range els {
+		at := 0
+		if s.restChord[el] || clock[1].Float() < clock[0].Float()-1e-9 {
+			at = 1
+		}
+		lines[at] = append(lines[at], el)
+		clock[at] = clock[at].Add(el.Duration())
+	}
+	// Both halves have to be a bar, or this is not what the bar is and
+	// guessing at it would be worse than leaving it long.
+	for _, c := range clock {
+		if c.Float() > bar.Float()*1.001 {
+			return
+		}
+	}
+	if len(lines[1]) == 0 {
+		return
+	}
+	s.meas.Voices = []*model.Voice{{Elements: lines[0]}, {Elements: lines[1]}}
 }
 
 // pitch turns a staff position into a sounding pitch, under the clef and key
@@ -2115,6 +2205,10 @@ func (w *walker) objectBody(st *staffState) error {
 		r := &model.Rest{Dur: nv.dur}
 		r.Tuplet = tupletMark(nv.triplet)
 		st.add(r)
+		// Remembered as the rest it is: where the bar turns out to hold
+		// two lines of music, this is the one the second of them opens
+		// with. See closeMeasure.
+		st.noteRestChord(r)
 		return w.skip(2)
 
 	case 20:

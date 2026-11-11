@@ -13,6 +13,7 @@ package dorico
 import (
 	"errors"
 	"fmt"
+	"math"
 	"sort"
 	"strconv"
 	"strings"
@@ -131,6 +132,7 @@ type stave struct {
 	order      int    // where it comes in the score
 	clef       model.Clef
 	clefSet    bool
+	changes    []clefChange
 	dynamics   []dynamic
 	swells     []swell
 	voices     []string // the voice streams that write on it
@@ -279,16 +281,36 @@ func playerNames(t *tree, root int32) map[string]string {
 // "wind.flutes.flute" there because that is what MusicXML would be written
 // with, which makes this the one place where the two programs already
 // agree about what an instrument is.
-func instrumentSounds(t *tree, root int32) map[string]string {
-	entity := map[string]string{} // entity id → sound id
+func instrumentSounds(t *tree, root int32) map[string]instrumentDef {
+	type entityDef struct {
+		sound string
+		clefs []model.Clef
+	}
+	entity := map[string]entityDef{}
 	for _, def := range t.every("InstrumentEntityDefinition") {
 		id := t.str(def, "entityID")
-		sound := t.str(def, "musicXMLSoundID")
-		if id != "" && sound != "" {
-			entity[id] = sound
+		if id == "" {
+			continue
 		}
+		d := entityDef{sound: t.str(def, "musicXMLSoundID")}
+		// The clef each of its staves is written in, in order: one for
+		// most instruments, two for a piano. It is the instrument that
+		// knows — a flow writes a clef event only where the clef changes,
+		// so a cello that stays in bass clef all movement has none at all,
+		// and a staff read from the events alone comes out in whatever
+		// the reader's default was. Which is how a double bass ended up
+		// in the treble clef, eight ledger lines under every note.
+		for _, each := range t.children(t.path(def, "clefs",
+			"clefIDsForEachStave")) {
+			c, ok := clefNamed(t.str(each, "idForTransposingLayouts"))
+			if !ok {
+				c = model.Treble
+			}
+			d.clefs = append(d.clefs, c)
+		}
+		entity[id] = d
 	}
-	out := map[string]string{}
+	out := map[string]instrumentDef{}
 	for _, p := range t.list(root, "scorePlayers") {
 		for _, inst := range t.list(p, "instruments") {
 			id := t.str(inst, "instrumentID")
@@ -299,12 +321,18 @@ func instrumentSounds(t *tree, root int32) map[string]string {
 			if name == "" {
 				name = t.str(inst, "baseInstrumentEntityID")
 			}
-			if sound := entity[name]; sound != "" {
-				out[id] = sound
-			}
+			d := entity[name]
+			out[id] = instrumentDef{sound: d.sound, clefs: d.clefs}
 		}
 	}
 	return out
+}
+
+// instrumentDef is what one of the score's instruments is: what it sounds
+// like, and what its staves are written in.
+type instrumentDef struct {
+	sound string
+	clefs []model.Clef
 }
 
 // report turns the tally of what was not read into lines somebody can read,
@@ -326,8 +354,9 @@ func report(skipped map[string]int) []string {
 }
 
 // buildFlow reads one movement.
-func buildFlow(t *tree, flow int32, players, sounds map[string]string,
-	info projectInfo, skipped map[string]int) *model.Score {
+func buildFlow(t *tree, flow int32, players map[string]string,
+	sounds map[string]instrumentDef, info projectInfo,
+	skipped map[string]int) *model.Score {
 
 	staves := flowStaves(t, flow, players, sounds)
 	if len(staves) == 0 {
@@ -369,12 +398,13 @@ func buildFlow(t *tree, flow int32, players, sounds map[string]string,
 	if len(bars) == 0 {
 		return nil
 	}
-	readClefs(t, streams, staves, elements, skipped)
+	readClefs(t, streams, staves, bars, elements, skipped)
 
 	s := model.NewScore()
 	s.Parts = nil
 	s.Identity.Title = t.str(flow, "flowName")
 
+	tempo := readTempo(t, streams, skipped)
 	for _, st := range staves {
 		p := &model.Part{
 			Name:  st.player,
@@ -411,8 +441,12 @@ func buildFlow(t *tree, flow int32, players, sounds map[string]string,
 		}
 		p.Measures = layOut(voices, bars)
 		attach(p, bars, st.dynamics, st.swells)
+		if moved := putClefs(p, bars, st.changes); moved > 0 {
+			skipped["clef changes written inside a bar, put at its start"] += moved
+		}
 		s.Parts = append(s.Parts, p)
 	}
+	setTempo(s, bars, tempo)
 	return s
 }
 
@@ -422,7 +456,8 @@ func buildFlow(t *tree, flow int32, players, sounds map[string]string,
 // player is holding, each of those with the staves it is written on and the
 // voices written on them. The nesting is the answer to "which staff does
 // this note belong to", which is asked of every note in the file.
-func flowStaves(t *tree, flow int32, players, sounds map[string]string) []*stave {
+func flowStaves(t *tree, flow int32, players map[string]string,
+	sounds map[string]instrumentDef) []*stave {
 	var out []*stave
 	for _, fp := range t.list(flow, "flowPlayers") {
 		player := t.str(fp, "playerID")
@@ -436,18 +471,27 @@ func flowStaves(t *tree, flow int32, players, sounds map[string]string) []*stave
 			for _, ss := range t.list(fpi, "staveStreamInfos") {
 				st := &stave{
 					instrument: t.str(ss, "instrumentID"),
-					sound:      sounds[t.str(ss, "instrumentID")],
 					stave:      t.str(ss, "staveID"),
 					stream:     t.str(ss, "staveStreamID"),
 					player:     name,
 					order:      len(out),
 					clef:       model.Treble,
 				}
+				// What this instrument is, and what its staves are
+				// written in. The nth stave of the instrument takes the
+				// nth clef: a piano's right hand is treble and its left
+				// is bass, and they are listed in that order.
+				was := sounds[st.instrument]
+				if was.sound == "" {
+					was = sounds[inst]
+				}
+				st.sound = was.sound
+				nth, _ := strconv.Atoi(t.str(ss, "nthStaveInInstrument"))
+				if nth >= 0 && nth < len(was.clefs) {
+					st.clef = was.clefs[nth]
+				}
 				if st.instrument == "" {
 					st.instrument = inst
-				}
-				if st.sound == "" {
-					st.sound = sounds[inst]
 				}
 				here[st.stave] = st
 				out = append(out, st)
@@ -681,8 +725,6 @@ func note(skipped map[string]int, kind string) {
 		skipped["rehearsal marks"]++
 	case "PauseEventDefinition":
 		skipped["pauses"]++
-	case "ImmediateTempoChangeEventDefinition":
-		skipped["tempo marks"]++
 	case "GenerativeBarRepeatEventDefinition":
 		skipped["bar repeats"]++
 	case "GradualTempoChangeEventDefinition":
@@ -702,6 +744,9 @@ func note(skipped map[string]int, kind string) {
 		// Here they are a key for one staff on its own — a horn left in C
 		// while the rest of the orchestra modulates.
 		skipped["key changes on a single staff"]++
+	case "ImmediateTempoChangeEventDefinition":
+		// Read from this same stream by readTempo, which wants the whole
+		// of the data rather than the fact that one went by.
 	case "BreakEventDefinition", "CondensationLabelEventDefinition",
 		"CondensingChangeEventDefinition":
 		// How the page is laid out and how staves are condensed, which
@@ -774,9 +819,17 @@ func barGrid(t *tree, streams *streams, elements map[string]int32,
 	for at.less(until) || len(out) == 0 {
 		b := bar{at: at}
 		for next < len(changes) && !at.less(changes[next].at) {
-			if changes[next].time != nil {
-				now = *changes[next].time
-				b.time = changes[next].time
+			if c := changes[next].time; c != nil {
+				// Only where it is actually a change. Dorico writes one of
+				// these at every point where the barline arrangement is
+				// settled — a repeat end, the join of two sections — and
+				// most of them restate the meter already in force. Printed
+				// as written, the finale carries ten four-fours, nine of
+				// them in the middle of music that never leaves four-four.
+				if *c != now {
+					b.time = c
+				}
+				now = *c
 			}
 			if changes[next].key != nil {
 				key = changes[next].key
@@ -880,12 +933,22 @@ func keySignature(t *tree, def int32) (model.KeySignature, bool) {
 	return model.KeySignature{Fifths: fifths, Mode: mode}, true
 }
 
-// readClefs gives each staff the clef its own stream opens with.
-func readClefs(t *tree, streams *streams, staves []*stave,
+// readClefs reads the clefs a staff is written in.
+//
+// The one it opens with is the instrument's own — see instrumentSounds —
+// because a flow writes a clef event only where something happens. What is
+// here is those events: an event at the very start settles the opening
+// clef, and one later in the movement is a change, which is kept against
+// the bar it falls in.
+//
+// A cello reads bass and goes up to tenor for a high passage and back. Read
+// as though the earliest event were the opening clef, that cello starts the
+// movement in tenor and every note of the first page sits two ledger lines
+// out.
+func readClefs(t *tree, streams *streams, staves []*stave, bars []bar,
 	elements map[string]int32, skipped map[string]int) {
+
 	for _, st := range staves {
-		first := rat{0, 1}
-		seen := false
 		for _, p := range streams.of("kInstrumentStaveStream", st.stream) {
 			// The dynamics are on this stream too, and belong to the
 			// staff rather than to any one voice on it: a crescendo is
@@ -913,18 +976,56 @@ func readClefs(t *tree, streams *streams, staves []*stave,
 					"idForTransposingLayouts")
 				c, ok := clefNamed(name)
 				if !ok {
+					skipped["clefs gscore does not know, called "+
+						name+" by Dorico"]++
 					continue
 				}
-				// The one it opens with, which is the part's clef; a
-				// change later in the movement is a change and is not
-				// read yet.
-				if !seen || pos.less(first) {
-					first, seen = pos, true
+				if pos.zero() {
 					st.clef, st.clefSet = c, true
+					continue
 				}
+				st.changes = append(st.changes, clefChange{at: pos, clef: c})
 			}
 		}
+		sort.SliceStable(st.changes, func(i, j int) bool {
+			return st.changes[i].at.less(st.changes[j].at)
+		})
 	}
+}
+
+// clefChange is a clef taken up partway through a movement.
+type clefChange struct {
+	at   rat
+	clef model.Clef
+}
+
+// putClefs writes the clef changes against the bars they fall in.
+//
+// Against the bar, because that is where gscore keeps one. A change written
+// in the middle of a bar — which happens, at the end of a run that climbs —
+// is put at the start of that bar instead, which moves it by a few notes
+// and never by more than a bar.
+func putClefs(p *model.Part, bars []bar, changes []clefChange) int {
+	moved := 0
+	for _, c := range changes {
+		at := -1
+		for i := range bars {
+			if bars[i].at.cmp(c.at) <= 0 {
+				at = i
+				continue
+			}
+			break
+		}
+		if at < 0 || at >= len(p.Measures) {
+			continue
+		}
+		if !bars[at].at.zero() && bars[at].at.cmp(c.at) != 0 {
+			moved++
+		}
+		clef := c.clef
+		p.Measures[at].Clef = &clef
+	}
+	return moved
 }
 
 func clefNamed(id string) (model.Clef, bool) {
@@ -1522,4 +1623,128 @@ func marksOf(el model.Element) *model.Marks {
 		return &e.Marks
 	}
 	return nil
+}
+
+/* ---------- the tempo ---------- */
+
+// Dorico keeps a tempo as microseconds to the beat, which is MIDI's way of
+// saying it: 555555 of them is 108 beats a minute. Which beat is a number
+// of its own, counting down from a whole note — 10 is a semibreve, 9 a
+// minim, 8 a crotchet — with the dots beside it.
+//
+// Read that way the four movements of this symphony come out at minim 108,
+// quaver 92, dotted minim 96 and minim 84, which is Beethoven's own list.
+type tempoMark struct {
+	at   rat
+	bpm  int
+	unit model.Duration
+	text string
+	// back says the mark names no speed of its own: "Tempo I", "a tempo".
+	// It carries the words and takes the speed the movement opened at.
+	back bool
+}
+
+// readTempo gathers a flow's tempo marks.
+func readTempo(t *tree, streams *streams, skipped map[string]int) []tempoMark {
+	var out []tempoMark
+	for _, p := range streams.ofKind("kGlobalTimebaseStream") {
+		for _, e := range t.children(t.child(p.node, "events")) {
+			if t.nameOf(e) != "ImmediateTempoChangeEventDefinition" {
+				continue
+			}
+			at, ok := parseRat(t.str(e, "position"))
+			if !ok {
+				continue
+			}
+			at = at.add(p.at)
+			data := t.child(e, "data")
+			m := tempoMark{at: at, text: t.str(data, "text")}
+
+			abs := t.child(data, "absoluteTempo")
+			value, err := strconv.Atoi(t.str(abs, "tempoValue"))
+			if abs < 0 || err != nil || value <= 0 {
+				// "Tempo I" and "a tempo" say no number: they send the
+				// player back to a speed already given.
+				m.back = true
+				out = append(out, m)
+				continue
+			}
+			m.bpm = int(math.Round(60000000 / float64(value)))
+			m.unit = beatUnit(t.str(abs, "beatUnits"))
+			out = append(out, m)
+		}
+	}
+	sort.SliceStable(out, func(i, j int) bool { return out[i].at.less(out[j].at) })
+	return out
+}
+
+// beatUnit reads which note the speed is counted in.
+//
+// A number counting down from a whole note, with the dots after it:
+// {list: {int: 9}, {int: 1}} is a dotted minim. A crotchet is the answer
+// for anything unrecognised, which is what nearly every metronome mark is
+// counted in anyway.
+func beatUnit(packed string) model.Duration {
+	n := variantInts(packed)
+	if len(n) == 0 {
+		return model.Duration{Num: 1, Den: 4}
+	}
+	shift := 10 - n[0]
+	if shift < 0 || shift > 7 {
+		return model.Duration{Num: 1, Den: 4}
+	}
+	d := model.Duration{Num: 1, Den: 1 << shift}
+	if len(n) > 1 {
+		for i := 0; i < n[1] && i < 3; i++ {
+			d = d.Scale(3, 2).Reduced()
+		}
+	}
+	return d
+}
+
+// setTempo puts a flow's tempo marks on the score.
+//
+// The first goes on the score itself, since that is the speed it starts at;
+// the rest go on the bar they fall in, which is where gscore keeps a change
+// of speed. A mark inside a bar is moved to the head of that bar, which
+// moves it by less than a bar and is how every other reader here does it.
+func setTempo(s *model.Score, bars []bar, marks []tempoMark) {
+	if len(marks) == 0 || len(s.Parts) == 0 {
+		return
+	}
+	opening := model.Tempo{BPM: 120, Unit: model.Duration{Num: 1, Den: 4}}
+	for _, m := range marks {
+		if !m.back {
+			opening = model.Tempo{BPM: m.bpm, Unit: m.unit, Text: m.text}
+			break
+		}
+	}
+	for _, m := range marks {
+		t := model.Tempo{BPM: m.bpm, Unit: m.unit, Text: m.text}
+		if m.back {
+			// The words are printed and no metronome mark with them,
+			// which is how "Tempo I" is written in every score.
+			t.BPM, t.Unit, t.Silent = opening.BPM, opening.Unit, true
+		}
+		if m.at.zero() {
+			s.Tempo = t
+			continue
+		}
+		at := -1
+		for i := range bars {
+			if bars[i].at.cmp(m.at) <= 0 {
+				at = i
+				continue
+			}
+			break
+		}
+		if at < 0 || at >= len(s.Parts[0].Measures) {
+			continue
+		}
+		mark := t
+		s.Parts[0].Measures[at].Tempo = &mark
+	}
+	if s.Tempo.BPM == 0 {
+		s.Tempo = opening
+	}
 }

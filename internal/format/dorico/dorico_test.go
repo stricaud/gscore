@@ -228,6 +228,55 @@ func dynamicAt(at string, subs ...dynSub) string {
 	return key
 }
 
+// tempos and clefChanges are what a test asked to be written onto the
+// global and staff streams, by the key their helpers gave back.
+var tempos = map[string]struct {
+	at, text  string
+	micros    string
+	unit, dot int
+}{}
+
+var clefChanges = map[string]struct{ at, clef string }{}
+
+// tempoAt asks for a tempo mark: so many microseconds to the beat, counted
+// in a note named the way Dorico names one.
+func tempoAt(at, text, micros string, unit, dot int) string {
+	key := "tempo " + at + " " + itoa(len(tempos))
+	tempos[key] = struct {
+		at, text  string
+		micros    string
+		unit, dot int
+	}{at, text, micros, unit, dot}
+	return key
+}
+
+// clefAt asks for a clef, at the start of the movement or partway through.
+func clefAt(at, clef string) string {
+	key := "clef " + at + " " + itoa(len(clefChanges))
+	clefChanges[key] = struct{ at, clef string }{at, clef}
+	return key
+}
+
+// noClefEvent asks for a staff whose stream says nothing about its clef,
+// which is the ordinary case: a flow writes one only where something
+// happens.
+const noClefEvent = "no clef event"
+
+// meters holds extra bar divisions a test asked for.
+var meters = map[string][]struct{ at, num, den string }{}
+
+// meterAt asks for bar divisions after the first: each one a barline, and
+// a time signature that may or may not be a change.
+func meterAt(sigs ...[3]string) string {
+	key := "meters " + itoa(len(meters))
+	var out []struct{ at, num, den string }
+	for _, sig := range sigs {
+		out = append(out, struct{ at, num, den string }{sig[0], sig[1], sig[2]})
+	}
+	meters[key] = out
+	return key
+}
+
 // built makes a one-flow project: one player on one staff, in the time and
 // key given, playing these notes.
 func built(t *testing.T, time [2]string, key string, notes []played,
@@ -254,6 +303,18 @@ func built(t *testing.T, time [2]string, key string, notes []played,
 	for _, kind := range extra {
 		if _, ok := dynGroups[kind]; ok {
 			continue // built onto the staff below
+		}
+		if _, ok := tempos[kind]; ok {
+			continue // built onto the global stream below
+		}
+		if _, ok := clefChanges[kind]; ok {
+			continue // built onto the staff below
+		}
+		if _, ok := meters[kind]; ok {
+			continue // built onto the global stream below
+		}
+		if kind == noClefEvent {
+			continue
 		}
 		if t, ok := tuplets[kind]; ok {
 			events = append(events, e.node("TupletEventDefinition",
@@ -290,24 +351,83 @@ func built(t *testing.T, time [2]string, key string, notes []played,
 						e.leaf("accidentalID",
 							"accidental.12et.western.natural"))))))
 
+	globalEvents := []int32{
+		e.node("BarDivisionEventDefinition",
+			e.leaf("position", "0"),
+			e.leaf("duration", "0"),
+			e.leaf("barDivisionElementID", "1")),
+		e.node("TonalityDivisionEventDefinition",
+			e.leaf("position", "0"),
+			e.leaf("duration", "0"),
+			e.leaf("tonalityDivisionElementID", "2")),
+	}
+	var moreSigs []int32
+	for _, kind := range extra {
+		for i, sig := range meters[kind] {
+			id := itoa(900 + i)
+			moreSigs = append(moreSigs,
+				e.node("BarDivisionElementDefinition",
+					e.leaf("elementID", id),
+					e.node("barDivisionData",
+						e.node("timeSignature",
+							e.node("timeSignaturesAndDivisions",
+								e.node("timeSignatureAndDivision",
+									e.node("timeSignature",
+										e.leaf("numerator", sig.num),
+										e.leaf("denominator", sig.den))))))))
+			globalEvents = append(globalEvents,
+				e.node("BarDivisionEventDefinition",
+					e.leaf("position", sig.at),
+					e.leaf("duration", "0"),
+					e.leaf("barDivisionElementID", id)))
+		}
+	}
+	for _, kind := range extra {
+		tp, ok := tempos[kind]
+		if !ok {
+			continue
+		}
+		data := []int32{e.leaf("text", tp.text)}
+		if tp.micros != "" {
+			data = append(data, e.node("absoluteTempo",
+				e.leaf("tempoValue", tp.micros),
+				e.leaf("beatUnits", "steamVariantList:list: {list: {int: "+
+					itoa(tp.unit)+"}, {int: "+itoa(tp.dot)+"}}")))
+		}
+		globalEvents = append(globalEvents,
+			e.node("ImmediateTempoChangeEventDefinition",
+				e.leaf("position", tp.at),
+				e.node("data", data...)))
+	}
 	globalBlock := e.node("block",
 		e.leaf("blockID", "20"),
 		e.leaf("parentEventStreamType", "kGlobalTimebaseStream"),
-		e.node("events",
-			e.node("BarDivisionEventDefinition",
-				e.leaf("position", "0"),
-				e.leaf("duration", "0"),
-				e.leaf("barDivisionElementID", "1")),
-			e.node("TonalityDivisionEventDefinition",
-				e.leaf("position", "0"),
-				e.leaf("duration", "0"),
-				e.leaf("tonalityDivisionElementID", "2"))))
+		e.node("events", globalEvents...))
 
-	staveEvents := []int32{
-		e.node("ClefEventDefinition",
-			e.leaf("position", "0"),
-			e.node("entityIDs",
-				e.leaf("idForTransposingLayouts", "clef.bass"))),
+	var staveEvents []int32
+	quiet := false
+	for _, kind := range extra {
+		if kind == noClefEvent {
+			quiet = true
+		}
+	}
+	if !quiet {
+		staveEvents = append(staveEvents,
+			e.node("ClefEventDefinition",
+				e.leaf("position", "0"),
+				e.node("entityIDs",
+					e.leaf("idForTransposingLayouts", "clef.bass"))))
+	}
+	for _, kind := range extra {
+		c, ok := clefChanges[kind]
+		if !ok {
+			continue
+		}
+		staveEvents = append(staveEvents,
+			e.node("ClefEventDefinition",
+				e.leaf("position", c.at),
+				e.node("entityIDs",
+					e.leaf("idForTransposingLayouts", c.clef))))
 	}
 	var dynDefs []int32
 	for _, kind := range extra {
@@ -380,7 +500,7 @@ func built(t *testing.T, time [2]string, key string, notes []played,
 								e.leaf("defaultLogicalStaveID", "0"))))))),
 		e.list("elementTables",
 			e.node("BarDivisionElementTableDefinition",
-				e.node("array", timeSig)),
+				e.node("array", append([]int32{timeSig}, moreSigs...)...)),
 			e.node("TonalityDivisionElementTableDefinition",
 				e.node("array", keySig)),
 			e.node("DynamicGroupElementTableDefinition",
@@ -423,7 +543,14 @@ func built(t *testing.T, time [2]string, key string, notes []played,
 				e.node("InstrumentEntityDefinition",
 					e.leaf("entityID", "instrument.wind.flute"),
 					e.leaf("name", "Flute"),
-					e.leaf("musicXMLSoundID", "wind.flutes.flute")))),
+					e.leaf("musicXMLSoundID", "wind.flutes.flute"),
+					// What its staves are written in, which is what a
+					// staff with no clef event of its own takes.
+					e.node("clefs",
+						e.node("clefIDsForEachStave",
+							e.node("staveClefIDs",
+								e.leaf("idForTransposingLayouts",
+									"clef.alto"))))))),
 		e.list("scorePlayers",
 			e.node("scorePlayer",
 				e.leaf("playerID", "0"),
@@ -1027,5 +1154,178 @@ func TestADynamicOverALongNoteBelongsToThatNote(t *testing.T) {
 	els := read(t, raw)[0].Parts[0].Measures[0].Voices[0].Elements
 	if got := marksOf(els[0]).Dynamic; got != model.PP {
 		t.Errorf("the held note carries %v, want pp", got)
+	}
+}
+
+/* ---------- the clefs, and the speed ---------- */
+
+// builtNoClef is a project whose staff stream says nothing about its clef.
+func builtNoClef(t *testing.T, notes []played) []byte {
+	t.Helper()
+	return built(t, [2]string{"4", "4"}, "C", notes, noClefEvent)
+}
+
+// builtTwoMeters restates the opening meter once and then really changes
+// it, which is what Dorico's bar divisions look like.
+func builtTwoMeters(t *testing.T) []byte {
+	t.Helper()
+	return built(t, [2]string{"4", "4"}, "C", []played{
+		{at: "0", dur: "4", pitch: 60},
+		{at: "4", dur: "4", pitch: 62},
+		{at: "8", dur: "3", pitch: 64},
+	}, meterAt([3]string{"4", "4", "4"}, [3]string{"8", "3", "4"}))
+}
+
+func TestAStaffWithNoClefEventTakesItsInstrumentsOwn(t *testing.T) {
+	// A flow writes a clef event only where something happens, so a double
+	// bass that reads bass clef all movement has none at all. Read from
+	// the events alone it comes out in whatever the reader's default was,
+	// which is how one ended up in the treble clef with every note eight
+	// ledger lines under the staff.
+	raw := builtNoClef(t, []played{{at: "0", dur: "4", pitch: 48}})
+	p := read(t, raw)[0].Parts[0]
+	if p.Clef != model.Alto {
+		t.Errorf("the staff is in the %v clef, want the alto its "+
+			"instrument is written in", p.Clef)
+	}
+}
+
+func TestAClefAtTheStartWinsOverTheInstruments(t *testing.T) {
+	// The instrument says alto; this flow's own stream says bass at the
+	// very first moment, and what the flow says goes.
+	raw := built(t, [2]string{"4", "4"}, "C", []played{
+		{at: "0", dur: "4", pitch: 48},
+	})
+	if got := read(t, raw)[0].Parts[0].Clef; got != model.Bass {
+		t.Errorf("the staff is in the %v clef, want bass", got)
+	}
+}
+
+func TestAClefChangeIsKeptAgainstItsBar(t *testing.T) {
+	// A cello reads bass and goes up to tenor for a high passage. Read as
+	// though the earliest event were the opening clef, it starts the
+	// movement in tenor and the whole first page sits wrong.
+	raw := built(t, [2]string{"4", "4"}, "C", []played{
+		{at: "0", dur: "4", pitch: 48},
+		{at: "4", dur: "4", pitch: 60},
+		{at: "8", dur: "4", pitch: 48},
+	}, clefAt("4", "clef.tenor"))
+
+	p := read(t, raw)[0].Parts[0]
+	if p.Clef != model.Bass {
+		t.Errorf("the staff opens in the %v clef, want bass", p.Clef)
+	}
+	if p.Measures[1].Clef == nil || *p.Measures[1].Clef != model.Tenor {
+		t.Errorf("the second bar does not change to tenor: %v",
+			p.Measures[1].Clef)
+	}
+	if p.Measures[0].Clef != nil {
+		t.Error("the first bar carries a clef change it should not")
+	}
+}
+
+func TestTheSpeedIsReadAndSoIsWhatItIsCountedIn(t *testing.T) {
+	// Microseconds to the beat, which is MIDI's way of saying it, counted
+	// in a note named by a number falling from a whole one. Beethoven's
+	// own mark for this symphony is minim 108, and 555555 microseconds is
+	// 108 to the minute.
+	for _, c := range []struct {
+		micros    string
+		unit, dot int
+		bpm       int
+		want      model.Duration
+	}{
+		{"555555", 9, 0, 108, model.Duration{Num: 1, Den: 2}},  // minim
+		{"652173", 7, 0, 92, model.Duration{Num: 1, Den: 8}},   // quaver
+		{"625000", 9, 1, 96, model.Duration{Num: 3, Den: 4}},   // dotted minim
+		{"535714", 10, 0, 112, model.Duration{Num: 1, Den: 1}}, // semibreve
+		{"500000", 8, 0, 120, model.Duration{Num: 1, Den: 4}},  // crotchet
+	} {
+		raw := built(t, [2]string{"4", "4"}, "C", []played{
+			{at: "0", dur: "4", pitch: 60},
+		}, tempoAt("0", "Allegro", c.micros, c.unit, c.dot))
+		s := read(t, raw)[0]
+		if s.Tempo.BPM != c.bpm {
+			t.Errorf("%s microseconds came out as %d a minute, want %d",
+				c.micros, s.Tempo.BPM, c.bpm)
+		}
+		if s.Tempo.Unit.Cmp(c.want) != 0 {
+			t.Errorf("unit %d with %d dots came out as %v, want %v",
+				c.unit, c.dot, s.Tempo.Unit, c.want)
+		}
+		if s.Tempo.Text != "Allegro" {
+			t.Errorf("the words came out as %q", s.Tempo.Text)
+		}
+	}
+}
+
+func TestAChangeOfSpeedIsKeptAgainstItsBar(t *testing.T) {
+	raw := built(t, [2]string{"4", "4"}, "C", []played{
+		{at: "0", dur: "4", pitch: 60},
+		{at: "4", dur: "4", pitch: 62},
+	},
+		tempoAt("0", "Allegro con brio", "555555", 9, 0),
+		tempoAt("4", "Adagio", "3000000", 8, 0))
+
+	s := read(t, raw)[0]
+	if s.Tempo.BPM != 108 {
+		t.Errorf("the movement opens at %d", s.Tempo.BPM)
+	}
+	m := s.Parts[0].Measures[1]
+	if m.Tempo == nil {
+		t.Fatal("the second bar carries no change of speed")
+	}
+	if m.Tempo.BPM != 20 || m.Tempo.Text != "Adagio" {
+		t.Errorf("the second bar is %d %q, want 20 Adagio",
+			m.Tempo.BPM, m.Tempo.Text)
+	}
+}
+
+func TestTempoIGoesBackToTheOpeningSpeed(t *testing.T) {
+	// "Tempo I" and "a tempo" name no number: they send the player back.
+	// The words are printed and no metronome mark with them, which is how
+	// every score writes it.
+	raw := built(t, [2]string{"4", "4"}, "C", []played{
+		{at: "0", dur: "4", pitch: 60},
+		{at: "4", dur: "4", pitch: 62},
+	},
+		tempoAt("0", "Allegro", "555555", 9, 0),
+		tempoAt("4", "Tempo I", "", 0, 0))
+
+	m := read(t, raw)[0].Parts[0].Measures[1]
+	if m.Tempo == nil {
+		t.Fatal("the second bar carries no tempo")
+	}
+	if m.Tempo.BPM != 108 {
+		t.Errorf("Tempo I came back at %d, want the opening 108", m.Tempo.BPM)
+	}
+	if !m.Tempo.Silent {
+		t.Error("Tempo I prints a metronome mark nobody wrote")
+	}
+	if m.Tempo.Text != "Tempo I" {
+		t.Errorf("the words came out as %q", m.Tempo.Text)
+	}
+}
+
+func TestAMeterRestatedIsNotAMeterChange(t *testing.T) {
+	// Dorico writes a bar division wherever the barline arrangement is
+	// settled — a repeat end, the join of two sections — and most of them
+	// restate the meter already in force. Printed as written, the finale
+	// of this symphony carries ten four-fours, nine of them in the middle
+	// of music that never leaves four-four.
+	raw := builtTwoMeters(t)
+	p := read(t, raw)[0].Parts[0]
+	sigs := 0
+	for _, m := range p.Measures {
+		if m.Time != nil {
+			sigs++
+		}
+	}
+	if sigs != 2 {
+		t.Errorf("%d time signatures were written, want 2: the opening "+
+			"one and the real change", sigs)
+	}
+	if p.Measures[0].Time == nil {
+		t.Error("the first bar carries no time signature")
 	}
 }

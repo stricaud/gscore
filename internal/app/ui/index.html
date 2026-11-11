@@ -517,6 +517,10 @@
       <!-- What the editor plays through. Only where there is a disk to keep
            a soundfont on. -->
       <button data-action="playback-sound" data-needs-instruments hidden><span>Playback sound…</span></button>
+      <!-- How far behind the picture the sound comes out, where the
+           browser will not say and the headphones are wireless. See
+           soundDelayDialog. -->
+      <button data-action="sound-delay"><span>Sound delay…</span></button>
     </div>
   </div>
 
@@ -1509,6 +1513,13 @@
        <code>.pdf</code> opens in anything that reads one — and anybody you send it
        to can read the score without gscore. With it off the file holds the music
        alone, and saving is quicker on a long piece.</p>
+    <hr>
+    <label class="setting"><input type="checkbox" id="setting-entry-sound">
+      <span>Sound each note as it is written</span></label>
+    <p class="small">A note is played the moment it is typed or clicked in, so a
+       wrong one is heard where it is made rather than three bars later. It uses
+       the editor’s own voices and not the soundfont, so that it answers at once;
+       turn it off to write in silence.</p>
     <div class="ask-buttons">
       <button value="ok" type="submit" class="primary">Done</button>
     </div>

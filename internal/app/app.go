@@ -1019,7 +1019,13 @@ type partInfo struct {
 	// sound id, where the file or the catalogue said. The instrument above
 	// is only the General MIDI program that plays it, and cannot tell a
 	// bass clarinet from a clarinet. Empty where nothing said.
-	Sound    string `json:"sound,omitempty"`
+	Sound string `json:"sound,omitempty"`
+	// Family is how this staff is sounded — bowed, reed, brass, plucked —
+	// which is what the editor picks a voice by when it plays a note back
+	// as it is written. The same word the playback events carry, worked
+	// out the same way, so a note heard while typing and the same note
+	// heard on Play are the same instrument.
+	Family   string `json:"family,omitempty"`
 	Clef     string `json:"clef"`
 	Key      string `json:"key"`
 	Time     string `json:"time"`
@@ -1147,8 +1153,14 @@ func (a *App) handleInfo(w http.ResponseWriter, r *http.Request) {
 		// that is what the unused field holds would be a lie the inspector
 		// tells every time it is opened.
 		instrument := p.Instrument.String()
+		family := p.Instrument.Family().String()
 		if p.Clef == model.Percussion {
 			instrument = drumKitName
+			// Which is not a family of instrument but is what the editor
+			// has to know: a drum staff's positions name drums, so a note
+			// written on one is not a pitch to play. Said the same way the
+			// playback events say it.
+			family = "percussion"
 		}
 		// The signature as the staff on screen is showing it.
 		//
@@ -1166,7 +1178,8 @@ func (a *App) handleInfo(w http.ResponseWriter, r *http.Request) {
 		}
 		out.Parts = append(out.Parts, partInfo{
 			Name: name, Instrument: instrument, Sound: p.Sound,
-			Clef: p.Clef.String(), Key: keyText(key),
+			Family: family,
+			Clef:   p.Clef.String(), Key: keyText(key),
 			Time: p.Time.String(), Measures: len(p.Measures), Notes: notes,
 			TransposeSemitones: p.Transpose.Semitones(),
 			Hidden:             p.Hidden,

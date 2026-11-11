@@ -337,10 +337,12 @@ func (a *App) handleInsert(w http.ResponseWriter, r *http.Request) {
 			spill(p, measIdx)
 		}
 		part, idx := findElement(p, measIdx, el)
-		writeJSON(w, map[string]any{
+		out := map[string]any{
 			"status": "ok", "measure": part, "at": idx, "index": idx,
 			"replaced": true,
-		})
+		}
+		addSounding(out, p, el)
+		writeJSON(w, out)
 		return
 	}
 
@@ -360,9 +362,39 @@ func (a *App) handleInsert(w http.ResponseWriter, r *http.Request) {
 	// The element may now be in a later measure than the one written to, so
 	// the answer says where it actually is and the cursor follows it there.
 	part, idx := findElement(p, measIdx, el)
-	writeJSON(w, map[string]any{
+	out := map[string]any{
 		"status": "ok", "measure": part, "at": idx, "index": idx,
-	})
+	}
+	addSounding(out, p, el)
+	writeJSON(w, out)
+}
+
+// addSounding says what the element just written sounds like, so that the
+// editor can play it as it is typed.
+//
+// Here and not worked out in the page, because the page is in no position
+// to: what a staff position sounds like is the clef, the key signature, any
+// accidental on the note, and the part's own transposition, and a drum
+// staff's positions are not pitches at all. All of that has just been
+// settled a few lines above. The alternative is a second implementation of
+// it in JavaScript, which would be wrong about a clarinet on the day it was
+// written.
+//
+// A rest adds nothing, and silence is the right sound for one.
+func addSounding(out map[string]any, p *model.Part, el model.Element) {
+	n, ok := el.(*model.Note)
+	if !ok {
+		return
+	}
+	if n.Percussion > 0 {
+		// What sounds is the drum the position names, not the pitch the
+		// notehead happens to sit on.
+		out["drum"] = n.Percussion
+		out["family"] = "percussion"
+		return
+	}
+	out["midi"] = p.Transpose.Apply(n.Pitch).MIDI()
+	out["family"] = p.Instrument.Family().String()
 }
 
 // locateForWriting finds a measure to write into, making it if the click
@@ -663,7 +695,12 @@ func (a *App) handleAddPitch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, map[string]any{"status": "ok"})
+	out := map[string]any{"status": "ok"}
+	// The notehead that was just added, so that it can be heard as it is
+	// written — the one that was added, and not the chord it joined: what
+	// somebody typing a chord has just done is add this note.
+	addSounding(out, p, add)
+	writeJSON(w, out)
 }
 
 // topNotehead is the highest notehead of a note or a chord, and says so only

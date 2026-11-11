@@ -144,6 +144,38 @@ type settings struct {
 	// of any score, so it is remembered for the person and not kept in a
 	// file. Zero means nobody has chosen, which is one.
 	UIScale float64 `json:"uiScale,omitempty"`
+
+	// PlayLag is how long after the audio clock the sound actually reaches
+	// the ears, in milliseconds, where the browser will not say.
+	//
+	// The cursor is meant to sit on the note being heard, so it is put back
+	// by however far behind the speakers are. A browser that implements
+	// outputLatency answers that, and nothing here is needed. WebKit — the
+	// Mac application, and every browser on a Mac — does not: it offers
+	// baseLatency, which counts the part of the journey inside the browser
+	// and knows nothing about the rest of it. Bluetooth headphones are a
+	// fifth of a second further on, which at a brisk tempo is a quaver, and
+	// the only thing that can measure that is the person listening.
+	//
+	// So it is a number they set once, for their own headphones, and it is
+	// kept for them rather than with any score: the same score on the same
+	// machine through the speakers needs a different one.
+	PlayLag int `json:"playLag,omitempty"`
+
+	// NoEntrySound stops gscore sounding a note as it is written.
+	//
+	// On by default, which is why this is the negative of it. Hearing what
+	// you just typed is how you catch a wrong note at the moment you make
+	// it rather than three bars later on playback, and it is what every
+	// instrument a person has ever learnt does: the note sounds when you
+	// put your finger down.
+	//
+	// It is not always wanted. Somebody copying a part out at speed does
+	// not want a note on every keystroke, somebody working next to other
+	// people may not want any sound at all, and somebody who has set up a
+	// soundfont for playback will find the editor's own voices a poor
+	// imitation of it. So it is a checkbox, and it is remembered.
+	NoEntrySound bool `json:"noEntrySound,omitempty"`
 }
 
 // noteLetters is the order the engraver indexes a palette in, which is
@@ -252,6 +284,28 @@ func UIScale() float64 {
 	v := loadSettings().UIScale
 	if v < uiScaleMin || v > uiScaleMax {
 		return 1
+	}
+	return v
+}
+
+// How far the sound may be said to lag the picture, in milliseconds.
+//
+// A fifth of a second is ordinary over Bluetooth and a third is a bad day;
+// a second is not a headphone, it is a mistake, and the dialog says so
+// rather than taking it. The other end is negative because the correction
+// can go the other way: a browser that over-reports its own latency leaves
+// the cursor behind the sound, and somebody has to be able to pull it back.
+const (
+	playLagMin = -250
+	playLagMax = 1000
+)
+
+// PlayLag is how long the sound takes to arrive after the audio clock says
+// it has, in milliseconds, as measured by the person listening.
+func PlayLag() int {
+	v := loadSettings().PlayLag
+	if v < playLagMin || v > playLagMax {
+		return 0
 	}
 	return v
 }
@@ -453,6 +507,9 @@ func (a *App) handleSettings(w http.ResponseWriter, r *http.Request) {
 		if v, ok := r.URL.Query()["trackBarlines"]; ok && len(v) > 0 {
 			s.LooseBarlines = v[0] == "0"
 		}
+		if v, ok := r.URL.Query()["entrySound"]; ok && len(v) > 0 {
+			s.NoEntrySound = v[0] == "0"
+		}
 		if v, ok := r.URL.Query()["uiScale"]; ok && len(v) > 0 {
 			n, err := strconv.ParseFloat(v[0], 64)
 			if err != nil || n < uiScaleMin || n > uiScaleMax {
@@ -462,6 +519,16 @@ func (a *App) handleSettings(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			s.UIScale = n
+		}
+		if v, ok := r.URL.Query()["playLag"]; ok && len(v) > 0 {
+			n, err := strconv.Atoi(v[0])
+			if err != nil || n < playLagMin || n > playLagMax {
+				http.Error(w, "the sound delay is a whole number of "+
+					"milliseconds between "+strconv.Itoa(playLagMin)+
+					" and "+strconv.Itoa(playLagMax), http.StatusBadRequest)
+				return
+			}
+			s.PlayLag = n
 		}
 		if v, ok := r.URL.Query()["lang"]; ok && len(v) > 0 {
 			// "auto" is not a language; it is the absence of a choice, and
@@ -536,11 +603,13 @@ func (a *App) handleSettings(w http.ResponseWriter, r *http.Request) {
 		"instrumentFonts":  loadSettings().InstrumentFonts,
 		"scorePDF":         SaveScorePDF(),
 		"trackBarlines":    TrackBarlines(),
+		"entrySound":       EntrySound(),
 		"keys":             loadSettings().Keys,
 		"lang":             loadSettings().Lang,
 		"colourNotes":      loadSettings().ColourNotes,
 		"noteColours":      NoteColourMap(),
 		"uiScale":          UIScale(),
+		"playLag":          PlayLag(),
 	})
 }
 
@@ -550,3 +619,6 @@ func SaveScorePDF() bool { return !loadSettings().NoScorePDF }
 // TrackBarlines says whether notes that overflow a bar are moved into the
 // next one.
 func TrackBarlines() bool { return !loadSettings().LooseBarlines }
+
+// EntrySound says whether to sound a note as it is written.
+func EntrySound() bool { return !loadSettings().NoEntrySound }

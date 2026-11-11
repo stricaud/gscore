@@ -36,6 +36,14 @@ const state = {
   // How big the interface is drawn, where one is the size it was designed
   // at. Read from the settings at boot; see applyUIScale.
   uiScale: 1,
+  // How far behind the audio clock the sound reaches the ears, in
+  // milliseconds, where the browser will not say and somebody has measured
+  // it for their own headphones. Read from the settings at boot; see
+  // outputLag.
+  playLag: 0,
+  // Whether a note is sounded as it is written. Read from the settings at
+  // boot; see soundAsWritten.
+  entrySound: true,
   // The continuous strip is gscore's own view and stays the default: the
   // program called itself non-page-oriented, and the strip is what makes it
   // good to edit in. Pagination is for printing.
@@ -1004,6 +1012,9 @@ async function action(name) {
       break;
     case "playback-sound":
       await playbackSound();
+      break;
+    case "sound-delay":
+      await soundDelayDialog();
       break;
     case "print":
       await printScore();
@@ -2692,7 +2703,7 @@ const livePumpIdle = 250;
 // Returns false if it cannot — no soundfont, or served from somewhere that
 // has no disk — and the oscillators take over, which is what gscore has
 // always done and still sounds like something.
-async function startLive(from, master, t0) {
+async function startLive(from, master) {
   if (!canSound()) return false;
   // In the page the instruments have to be in hand before anything can be
   // played with them. Loading them from the browser's own store takes a
@@ -2716,9 +2727,85 @@ async function startLive(from, master, t0) {
     return false;
   }
 
-  live = { id: d.id, rate: d.rate, at: t0, ended: false, timer: null, master, font: d.font };
-  pumpLive();
+  live = { id: d.id, rate: d.rate, at: 0, ended: false, timer: null, master,
+           font: d.font, first: null };
+
+  // The first stretch of music is rendered before the clock is started, not
+  // after it.
+  //
+  // It used to be the other way about: the moment the music was to begin at
+  // was fixed a tenth of a second ahead, and then the server was asked to
+  // open a performance and render the first seconds of it. On a quartet
+  // through the built-in voices that is quick enough to fit in the tenth of
+  // a second. On the Rossini — twenty-three staves through a soundfont of
+  // real recordings — it is not, and what came back was scheduled at the
+  // first moment still in the future rather than at the moment it was
+  // meant for. The sound started late; the cursor had started on time; and
+  // the gap between them was however long that first render took, which is
+  // why it grew with the size of the soundfont and vanished with the
+  // oscillators.
+  //
+  // Rendered first, the clock is started around music that is already in
+  // hand, and the cursor, the clicks and the notes lighting up are all one
+  // thing again.
+  const first = await liveChunk(live);
+  if (!first) {
+    endLive();
+    return false;
+  }
+  live.first = first;
   return true;
+}
+
+// beginLive starts the rendered performance, on the clock everything else
+// in this piece is on.
+function beginLive(t0) {
+  const mine = live;
+  if (!mine) return;
+  mine.at = t0;
+  if (mine.first) {
+    const src = audio.createBufferSource();
+    src.buffer = mine.first;
+    src.connect(mine.master);
+    src.start(mine.at);
+    mine.at += mine.first.duration;
+    voices.push(src);
+    mine.first = null;
+  }
+  pumpLive();
+}
+
+// liveChunk asks for the next stretch of rendered music, as something that
+// can be scheduled.
+//
+// null when there is no more to come: the end of the piece, or a
+// performance that has gone away from under us.
+async function liveChunk(mine) {
+  let res;
+  try {
+    res = await fetch("/api/play/chunk?id=" + encodeURIComponent(mine.id));
+  } catch (_) {
+    mine.ended = true; // stopped, or the server went away
+    return null;
+  }
+  if (mine !== live) return null; // something else started while we waited
+  if (!res.ok) {
+    mine.ended = true;
+    return null;
+  }
+  const pcm = new Int16Array(await res.arrayBuffer());
+  if (res.headers.get("X-Gscore-End")) mine.ended = true;
+  if (!pcm.length) return null;
+
+  const frames = pcm.length / 2;
+  const buf = audio.createBuffer(2, frames, mine.rate);
+  const L = buf.getChannelData(0);
+  const R = buf.getChannelData(1);
+  for (let i = 0; i < frames; i++) {
+    L[i] = pcm[2 * i] / 32768;
+    R[i] = pcm[2 * i + 1] / 32768;
+  }
+  return buf;
 }
 
 // pumpLive keeps the music rendered a few seconds ahead of where it is being
@@ -2734,29 +2821,10 @@ async function pumpLive() {
   while (mine === live && !mine.ended && made < liveBurst &&
          mine.at - audio.currentTime < liveAhead) {
     made++;
-    let res;
-    try {
-      res = await fetch("/api/play/chunk?id=" + encodeURIComponent(mine.id));
-    } catch (_) {
-      return; // stopped, or the server went away
-    }
+    const buf = await liveChunk(mine);
     if (mine !== live) return; // something else started while we waited
-    if (!res.ok) {
-      mine.ended = true;
-      return;
-    }
-    const pcm = new Int16Array(await res.arrayBuffer());
-    if (res.headers.get("X-Gscore-End")) mine.ended = true;
-    if (!pcm.length) break;
+    if (!buf) break;
 
-    const frames = pcm.length / 2;
-    const buf = audio.createBuffer(2, frames, mine.rate);
-    const L = buf.getChannelData(0);
-    const R = buf.getChannelData(1);
-    for (let i = 0; i < frames; i++) {
-      L[i] = pcm[2 * i] / 32768;
-      R[i] = pcm[2 * i + 1] / 32768;
-    }
     const src = audio.createBufferSource();
     src.buffer = buf;
     src.connect(mine.master);
@@ -2789,6 +2857,49 @@ function endLive() {
 }
 
 // playbackSound lets somebody choose what the editor plays through.
+// soundDelayDialog asks how far behind the picture the sound is.
+//
+// The cursor is put on the note being heard, which means knowing how long
+// the sound takes to get out of the machine. Where the browser says — and
+// Chrome and Firefox do — nothing here is needed and the answer is zero.
+// WebKit does not, which is the Mac application and every browser on a
+// Mac, and over Bluetooth headphones the gap is a fifth of a second: a
+// quaver at a brisk tempo, and plainly visible.
+//
+// Nothing can measure it but the person listening, so they are asked, and
+// told how to tell which way it is out: whether the notehead lights before
+// the note or after it.
+async function soundDelayDialog() {
+  const now = Number(state.playLag) || 0;
+  const answer = await ask({
+    title: "Sound delay",
+    label: "Milliseconds the sound is behind the picture",
+    value: String(now),
+    note: "Play something and watch the cursor. If a note lights up " +
+          "before you hear it, put the number up; if you hear it first, " +
+          "put it down. 0 is right where the browser reports its own " +
+          "latency; wireless headphones are usually 150 to 300.",
+  });
+  if (answer === null) return;
+  const n = Math.round(Number(String(answer).trim()));
+  if (!Number.isFinite(n) || n < -250 || n > 1000) {
+    status("The sound delay is a number of milliseconds between -250 and 1000");
+    return;
+  }
+  // Kept first, so that it holds for this performance whether or not there
+  // is a disk to write it to — the page has none at all.
+  state.playLag = n;
+  try {
+    await fetch("/api/settings?playLag=" + encodeURIComponent(String(n)),
+      { method: "POST" });
+  } catch (_) {
+    // Nothing to keep it on, which is not a reason to refuse the setting.
+  }
+  status(n === 0
+    ? "The cursor follows whatever the browser says the delay is"
+    : `The cursor is held back ${n} ms to meet the sound`);
+}
+
 async function playbackSound() {
   if (!canSound()) {
     status("Choosing the playback sound needs gscore running on your own machine");
@@ -5789,6 +5900,7 @@ async function writePlayedNote(note, at) {
       status((await res.text()).trim());
       return;
     }
+    soundAsWritten(await res.json().catch(() => null));
     await refreshScore();
     markSelection();
     return;
@@ -5806,6 +5918,7 @@ async function writePlayedNote(note, at) {
     return;
   }
   const where = await res.json().catch(() => null);
+  soundAsWritten(where);
   if (where && where.measure !== undefined) {
     sel.measure = where.measure;
     sel.at = where.at;
@@ -5919,6 +6032,10 @@ async function insertAtSelection(rest, keepSelection) {
   // up rather than where it was aimed. The cursor follows it there, which is
   // what makes writing bar after bar a matter of carrying on clicking.
   const where = await res.json().catch(() => null);
+  // Heard as it is written, before the score is drawn again: the drawing
+  // is the slow part and the point of this is that it answers the moment
+  // the key is pressed.
+  soundAsWritten(where);
   const moved = where && where.measure !== undefined && where.measure !== sel.measure;
   if (where && where.measure !== undefined) {
     // where.at is already the place after the element, whether it was
@@ -6004,6 +6121,7 @@ async function addPitch(hit, el, step) {
     status((await res.text()).trim());
     return;
   }
+  soundAsWritten(await res.json().catch(() => null));
   // The notehead carries it now, so the pen does not.
   useAccidental();
   state.multi = [];
@@ -7864,9 +7982,11 @@ async function noteColoursDialog() {
 async function settingsDialog() {
   const dlg = $("#settings");
   const pdf = $("#setting-score-pdf");
+  const hear = $("#setting-entry-sound");
   const langBox = $("#setting-lang");
   const now = await (await fetch("/api/settings")).json().catch(() => ({}));
   pdf.checked = now.scorePDF !== false;
+  if (hear) hear.checked = now.entrySound !== false;
 
   if (langBox) {
     langBox.innerHTML = "";
@@ -7898,6 +8018,13 @@ async function settingsDialog() {
 
   const want = langBox ? langBox.value : languageChoice();
   const p = new URLSearchParams({ scorePDF: pdf.checked ? "1" : "0", lang: want });
+  if (hear) {
+    p.set("entrySound", hear.checked ? "1" : "0");
+    // Held here as well as written away, because this one is read on every
+    // keystroke and reading it back off the server each time would be a
+    // request per note.
+    state.entrySound = hear.checked;
+  }
   await fetch("/api/settings?" + p.toString(), { method: "POST" });
   if (want !== languageChoice()) {
     await chooseLanguage(want);
@@ -13564,13 +13691,58 @@ function wakeAudio() {
 }
 let voices = [];
 let rafID = null;
-let playStart = 0;
+
+// playAt is where the score's own time zero sits on the audio clock, so
+// that the place being heard is audio.currentTime - outputLag() - playAt.
+//
+// The audio clock and not the wall clock. The sound is scheduled against
+// audio.currentTime, and the cursor used to be driven by performance.now():
+// two clocks, counted from one moment, which agree at the start and need
+// not agree later. They are different oscillators, and the audio one stops
+// when the system takes the context away and picks up where it left off —
+// so on a long piece the cursor drifts away from the music it is following,
+// which is the one thing it exists not to do.
+let playAt = 0;
+
+// playedSeconds is where in the score the sound coming out of the speakers
+// has got to.
+//
+// Coming out of the speakers, which is later than audio.currentTime by
+// whatever the machine takes to play what has been handed to it. A fifth of
+// a second over Bluetooth headphones is ordinary, and a fifth of a second
+// is a quaver at a brisk tempo: the notehead lights up, and the note is
+// heard while the next one is lit.
+function playedSeconds() {
+  if (!audio) return 0;
+  return audio.currentTime - outputLag() - playAt;
+}
+
+// outputLag is how far behind the audio clock the speakers are.
+//
+// outputLatency is the whole of it and is what to use where there is one.
+// WebKit has no such property — which is the Mac application and every
+// browser on a Mac — and baseLatency, which it does have, counts only the
+// part of the journey inside the browser. It is better than nothing and
+// wrong about Bluetooth; there is no third thing to ask.
+function outputLag() {
+  // What somebody has measured for their own ears, if they have, on top of
+  // whatever the browser owns up to. Both: the browser's figure is right
+  // about the part it can see, and the correction is for the part it
+  // cannot — the headphones, the amplifier, the room.
+  const mine = Number(state.playLag) || 0;
+  if (!audio) return mine / 1000;
+  const out = Number(audio.outputLatency);
+  const own = Number.isFinite(out) && out > 0 ? out : 0;
+  const base = Number(audio.baseLatency);
+  const said = own || (Number.isFinite(base) && base > 0 ? base : 0);
+  return said + mine / 1000;
+}
 
 // The performance being rendered on the other side, when the score is being
 // played through a soundfont rather than through the oscillators.
 //
 // null whenever it is not: everything else about playing — the clock, the
-// cursor, the notes lighting up — is driven by playStart and does not know
+// cursor, the notes lighting up — is driven by playAt and does not know
 // or care which of the two is making the noise.
 let live = null;
 // The refs lit up right now, which is a set because a chord is several
@@ -13955,6 +14127,78 @@ function click(when, strong, dest) {
   voices.push(osc);
 }
 
+// soundAsWritten plays the note that has just been written, where that is
+// wanted.
+//
+// What it plays is the server's answer about the note it just wrote: the
+// pitch it sounds at, through the part's transposition, or the drum the
+// staff position names. The page works none of that out — see addSounding
+// in edit.go.
+//
+// Through the editor's own oscillators rather than the soundfont, even
+// where there is one. A note typed should be heard as it is typed, and the
+// soundfont lives on the other side of a request that renders in blocks of
+// nearly a second: by the time it answered, the next note would be written.
+// The oscillators are in the page and start in a tenth of that.
+//
+// It is never part of the performance: a note sounded while writing is not
+// scheduled, not collected with the voices, and stopping the score does not
+// have to silence it, because it is over in under a second.
+function soundAsWritten(wrote) {
+  if (!wrote || !state.entrySound) return;
+  if (state.playing) return; // the score is already making a noise
+  const drum = Number(wrote.drum) || 0;
+  const midi = Number(wrote.midi);
+  if (!drum && !Number.isFinite(midi)) return;
+  try {
+    wakeAudio();
+    if (audio.state && audio.state !== "running") {
+      // A context the browser has not let start yet. Nothing to say about
+      // it: the score is still being written, and the first click on the
+      // page will start it.
+      void audio.resume();
+      return;
+    }
+    const master = audio.createGain();
+    // A touch under the level the oscillators play a score at, because
+    // this is one note on its own and not a texture to be heard through.
+    master.gain.value = 0.3;
+    master.connect(audio.destination);
+    // A second, whatever is being written.
+    //
+    // Not the note's own length. A semibreve at a slow tempo is four
+    // seconds, and four seconds of sound for one keystroke is somebody
+    // waiting for the program rather than hearing what they wrote. What
+    // this is for is the pitch, and a second is plenty of it.
+    const dur = entrySeconds;
+    const at = audio.currentTime + 0.005;
+    sound({
+      midi: drum || midi, dur, gate: 0.9, velocity: 96,
+      family: wrote.family || "", drum,
+    }, at, master);
+    // The gain is let go once the note is over, rather than left hanging
+    // off the destination for as long as the window is open.
+    setTimeout(() => {
+      try {
+        master.disconnect();
+      } catch (_) {
+        /* already gone */
+      }
+    }, (dur + 0.5) * 1000);
+  } catch (_) {
+    // No audio in this browser, or it refused. Writing music does not
+    // depend on hearing it.
+  }
+}
+
+// entrySeconds is how long a note sounds when it is written, in seconds.
+//
+// One, for everything from a semiquaver to a semibreve. The written
+// length is not used: it is the pitch somebody is listening for, and a
+// semibreve at a slow tempo would hold the keyboard up for four seconds
+// a note.
+const entrySeconds = 1;
+
 function sound(ev, start, master) {
   if (ev.drum) {
     hit(ev, start, master);
@@ -14217,12 +14461,17 @@ async function playNow(opts) {
   const master = audio.createGain();
   master.connect(audio.destination);
 
+  // The music first, the clock after: whatever rendering the first seconds
+  // takes happens before there is a moment for them to be late for. See
+  // startLive.
+  const rendered = await startLive(from, master);
+
   const lead = 0.1;
   const t0 = audio.currentTime + lead;
   // The clock is kept in the score's own time, not in time since the button
   // was pressed, so everything downstream — the cursor, the highlight, the
   // end of the piece — needs no telling that it started in the middle.
-  playStart = performance.now() + lead * 1000 - from * 1000;
+  playAt = t0 - from;
   voices = [];
 
   let sounded = 0;
@@ -14234,7 +14483,9 @@ async function playNow(opts) {
   // are not. Which one it is changes nothing else about playing: both end up
   // as sound scheduled against the same clock.
   master.gain.value = 1;
-  if (!(await startLive(from, master, t0))) {
+  if (rendered) {
+    beginLive(t0);
+  } else {
     master.gain.value = 0.22; // keep simultaneous notes from clipping
     scheduleOscillators(pb.events, from, t0, master);
   }
@@ -14569,7 +14820,7 @@ function follow(pb) {
   const byRef = refIndex();
 
   const tick = () => {
-    const now = (performance.now() - playStart) / 1000;
+    const now = playedSeconds();
     const shown = Math.max(0, Math.min(now, total));
     $("#clock").textContent = clock(shown);
 
@@ -15063,7 +15314,7 @@ function pause() {
   // The clock is kept in the score's own time, so this is a place in the
   // music and not a length of time since a button was pressed — which is
   // what makes it something playing can be handed back.
-  const at = (performance.now() - playStart) / 1000;
+  const at = playedSeconds();
   silence();
   state.pausedAt = Math.max(0, at);
   state.pausedSel = selectionKey();
@@ -17217,6 +17468,12 @@ async function main() {
     // the colours are remembered for the person, so a score opened today
     // comes up coloured if that is how it was left.
     state.colourNotes = !!kept.colourNotes;
+    // How far behind the sound is, where the browser will not say and
+    // somebody has measured it. See outputLag.
+    state.playLag = Number(kept.playLag) || 0;
+    // Whether a note is sounded as it is written. On unless it has been
+    // turned off: see soundAsWritten.
+    state.entrySound = kept.entrySound !== false;
     // Before anything is drawn, so the interface does not come up at one
     // size and jump to another.
     applyUIScale(rememberedUIScale(kept));
@@ -19045,6 +19302,10 @@ const MENU_DRAWINGS = {
   "stop": '<rect x="5.5" y="5.5" width="13" height="13" rx="1.5"/>',
   "playback-sound": '<path d="M3.5 9.5H7L11.5 5.5v13L7 14.5H3.5z"/>' +
     '<path d="M15.5 9.5a4 4 0 0 1 0 5"/><path d="M18.2 7a7.5 7.5 0 0 1 0 10"/>',
+  // A clock, because what is being set is a length of time, and a speaker
+  // here would be the entry above it with a decoration.
+  "sound-delay": '<circle cx="12" cy="12" r="8"/>' +
+    '<path d="M12 7.5V12l3 2"/>',
 
   /* Looking at what the music is made of. */
   "range": '<path d="M4 5.5h16M4 18.5h16" opacity=".7"/><path d="M12 7.5v9"/>' +

@@ -40,6 +40,7 @@ import (
 	// of file. Finale files were missing from it for exactly that long.
 	// formats_test.go holds the two lists to each other.
 	_ "github.com/stricaud/gscore/internal/format/abc"
+	_ "github.com/stricaud/gscore/internal/format/dorico"
 	_ "github.com/stricaud/gscore/internal/format/engraved"
 	_ "github.com/stricaud/gscore/internal/format/enigma"
 	_ "github.com/stricaud/gscore/internal/format/gscore"

@@ -283,17 +283,24 @@ func (w *walker) noteValue(rest bool) (noteValue, error) {
 	nv.slurTo = raw[5]&0x01 != 0
 	if w.dia().slurHasBothEnds {
 		nv.slurFrom = raw[5]&0x02 != 0
-		// And 0x20 of the same byte is a grace note, which takes no time
-		// in the bar it is written in.
-		//
-		// Three notes in Für Elise have it — the two the piece leans into
-		// bar 25 with and the one before the run in bar 28 — and those two
-		// bars were the only two left in the piece whose notes did not add
-		// up to their meter, each by exactly the grace notes in it. Read as
-		// notes of their own they were an eighth of music that is not
-		// there, played on the beat and pushing everything after them late.
-		nv.grace = raw[5]&0x20 != 0
 	}
+	// And 0x20 of the same byte is a grace note, which takes no time in
+	// the bar it is written in.
+	//
+	// Three notes in Für Elise have it — the two the piece leans into bar
+	// 25 with and the one before the run in bar 28 — and those two bars
+	// were the only two left in the piece whose notes did not add up to
+	// their meter, each by exactly the grace notes in it. Read as notes of
+	// their own they were an eighth of music that is not there, played on
+	// the beat and pushing everything after them late.
+	//
+	// In every version, not only the ones before 1.75. It was read inside
+	// the test for those, so from 1.75 on no grace note was ever read as
+	// one: the two the cellos lean into bar 37 of the William Tell
+	// overture are 0xA1 here — a slur and the grace bit — and came out as
+	// a pair of full thirty-seconds that put the bar a sixteenth over its
+	// meter and every bar after it that much late.
+	nv.grace = raw[5]&0x20 != 0
 
 	// One extra byte follows when the accidental byte says so — on a note.
 	//

@@ -11,6 +11,7 @@
 package dorico
 
 import (
+	"strconv"
 	"strings"
 
 	"github.com/stricaud/gscore/internal/model"
@@ -152,17 +153,14 @@ func readGlobal(t *tree, streams *streams, skipped map[string]int) global {
 			case "RehearsalMarkEventDefinition":
 				g.rehearsal = append(g.rehearsal, at)
 			case "GradualTempoChangeEventDefinition":
-				// The words are written over the music. The speed is not
-				// changed: gscore holds a tempo as a number at a bar and
-				// has no way to say "and slower from here to there", so
-				// the playback runs on at the tempo in force.
+				// The words over the staff. The slowing itself is read by
+				// readTempo, which has the speed to arrive at and the bars
+				// it takes — see setGradual.
 				words := t.str(t.child(e, "data"), "text")
 				if words == "" {
 					words = "rit."
 				}
 				g.texts = append(g.texts, pointMark{at: at, text: words})
-				skipped["gradual tempo changes, written as words and not "+
-					"played as a slowing"]++
 			case "RepeatEndingLineEventDefinition":
 				dur, _ := parseRat(t.str(e, "duration"))
 				g.endings = append(g.endings, ending{
@@ -380,6 +378,41 @@ type barRepeat struct {
 	at   rat
 	dur  rat
 	bars int
+}
+
+// comment is a note somebody working on the score left about it: where it
+// is written, how far it reaches, what it says and who said it.
+type comment struct {
+	at     rat
+	dur    rat
+	text   string
+	author string
+	when   string
+}
+
+// putComments keeps them against the bars they were written on.
+//
+// Not drawn: a comment is a conversation about the score and not a marking
+// in it. It is kept because the reasoning behind an edition — "the
+// clarinets change to C for this movement; I have kept them in B flat" — is
+// the one thing nobody can reconstruct from the notes.
+func putComments(s *model.Score, bars []bar, part int, got []comment) {
+	for _, c := range got {
+		at := barAt(bars, c.at)
+		if at < 0 {
+			continue
+		}
+		last := barAt(bars, c.at.add(c.dur))
+		over := last - at
+		if last < 0 || over < 1 {
+			over = 1
+		}
+		when, _ := strconv.ParseInt(c.when, 10, 64)
+		s.Comments = append(s.Comments, model.Comment{
+			Text: c.text, Author: c.author,
+			At: at, Bars: over, Part: part, When: when,
+		})
+	}
 }
 
 // lyric is one syllable of the words, and where it is sung.

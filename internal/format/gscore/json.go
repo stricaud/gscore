@@ -59,6 +59,8 @@ type scoreDoc struct {
 	// person who opens it, which is the mistake Word made and spent a
 	// decade undoing.
 	Scripts []scriptDoc `json:"scripts,omitempty"`
+	// Comments are what the people working on the score said about it.
+	Comments []commentDoc `json:"comments,omitempty"`
 
 	// Engraving is what this score wants done differently from the house
 	// style, by the engraver's own names for those measurements. Only what
@@ -162,6 +164,18 @@ type scriptDoc struct {
 	Body string `json:"body"`
 }
 
+// commentDoc is a note somebody working on the score left about it: not
+// music, never drawn, and the first thing lost when a score moves between
+// programs.
+type commentDoc struct {
+	Text   string `json:"text"`
+	Author string `json:"author,omitempty"`
+	At     int    `json:"at"`
+	Bars   int    `json:"bars,omitempty"`
+	Part   int    `json:"part,omitempty"`
+	When   int64  `json:"when,omitempty"`
+}
+
 // Where the writing cursor was left. Not music: it is where somebody was
 // working, kept so that opening a piece puts you back where you were.
 type cursorDoc struct {
@@ -183,6 +197,14 @@ type tempoDoc struct {
 	BPM  int    `json:"bpm"`
 	Unit string `json:"unit"`
 	Text string `json:"text,omitempty"`
+	// Silent keeps the number off the page while still playing at it:
+	// "Tempo I" prints its words and no metronome mark.
+	Silent bool `json:"silent,omitempty"`
+	// ToBPM and OverBars are a ritardando or an accelerando — the speed it
+	// arrives at and the bars it takes to get there. Without them a saved
+	// score plays the slowing once and never again.
+	ToBPM    int `json:"toBpm,omitempty"`
+	OverBars int `json:"overBars,omitempty"`
 }
 
 type partDoc struct {
@@ -542,6 +564,8 @@ func encodeScore(s *model.Score) *scoreDoc {
 		Cursor:       cursorToDoc(s.Cursor),
 		Tempo: tempoDoc{
 			BPM: s.Tempo.BPM, Unit: durString(s.Tempo.Unit), Text: s.Tempo.Text,
+			Silent: s.Tempo.Silent,
+			ToBPM:  s.Tempo.ToBPM, OverBars: s.Tempo.OverBars,
 		},
 	}
 	for _, g := range s.Groups {
@@ -627,6 +651,12 @@ func encodeScore(s *model.Score) *scoreDoc {
 	for _, sc := range s.Scripts {
 		doc.Scripts = append(doc.Scripts, scriptDoc{Name: sc.Name, Body: sc.Body})
 	}
+	for _, c := range s.Comments {
+		doc.Comments = append(doc.Comments, commentDoc{
+			Text: c.Text, Author: c.Author, At: c.At, Bars: c.Bars,
+			Part: c.Part, When: c.When,
+		})
+	}
 	for _, p := range s.Parts {
 		pd := partDoc{
 			ID: p.ID, Name: p.Name,
@@ -660,7 +690,8 @@ func encodeScore(s *model.Score) *scoreDoc {
 			if m.Tempo != nil {
 				md.Tempo = &tempoDoc{
 					BPM: m.Tempo.BPM, Unit: durString(m.Tempo.Unit),
-					Text: m.Tempo.Text,
+					Text: m.Tempo.Text, Silent: m.Tempo.Silent,
+					ToBPM: m.Tempo.ToBPM, OverBars: m.Tempo.OverBars,
 				}
 			}
 			if m.Ending != nil {
@@ -926,7 +957,11 @@ func decodeScore(doc *scoreDoc) (*model.Score, error) {
 	if bpm <= 0 {
 		bpm = 120
 	}
-	s.Tempo = model.Tempo{BPM: bpm, Unit: unit, Text: doc.Tempo.Text}
+	s.Tempo = model.Tempo{
+		BPM: bpm, Unit: unit, Text: doc.Tempo.Text,
+		Silent: doc.Tempo.Silent,
+		ToBPM:  doc.Tempo.ToBPM, OverBars: doc.Tempo.OverBars,
+	}
 	if c := doc.Cursor; c != nil {
 		s.Cursor = &model.Cursor{
 			Part: c.Part, Measure: c.Measure, At: c.At, Step: c.Step,
@@ -1007,6 +1042,12 @@ func decodeScore(doc *scoreDoc) (*model.Score, error) {
 			s.Engraving[k] = v
 		}
 	}
+	for _, cd := range doc.Comments {
+		s.Comments = append(s.Comments, model.Comment{
+			Text: cd.Text, Author: cd.Author, At: cd.At, Bars: cd.Bars,
+			Part: cd.Part, When: cd.When,
+		})
+	}
 	for _, sd := range doc.Scripts {
 		s.Scripts = append(s.Scripts, model.Script{Name: sd.Name, Body: sd.Body})
 	}
@@ -1049,7 +1090,11 @@ func decodeScore(doc *scoreDoc) (*model.Score, error) {
 						unit = d
 					}
 				}
-				m.Tempo = &model.Tempo{BPM: td.BPM, Unit: unit, Text: td.Text}
+				m.Tempo = &model.Tempo{
+					BPM: td.BPM, Unit: unit, Text: td.Text,
+					Silent: td.Silent,
+					ToBPM:  td.ToBPM, OverBars: td.OverBars,
+				}
 			}
 			if md.Ending != nil {
 				m.Ending = &model.Ending{

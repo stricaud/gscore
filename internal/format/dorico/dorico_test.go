@@ -251,6 +251,34 @@ func builtWithClef(t *testing.T, clef string, notes []played) []byte {
 	return built(t, [2]string{"4", "4"}, "C", notes, noClefEvent)
 }
 
+// slowings are the ritardandos and accelerandos a test asked for: where
+// they start, how long they take, and the speed they arrive at as a
+// percentage of the one in force — which is how Dorico keeps them.
+var slowings = map[string]struct {
+	at, dur, text string
+	pct           string
+}{}
+
+func gradualAt(at, dur, text, pct string) string {
+	key := "gradual " + at + " " + itoa(len(slowings))
+	slowings[key] = struct {
+		at, dur, text string
+		pct           string
+	}{at, dur, text, pct}
+	return key
+}
+
+// remarks are the comments a test asked for: what was said, who said it,
+// and the bar it was written against.
+var remarks = map[string]struct{ at, dur, text, author, when string }{}
+
+func commentAt(at, dur, text, author, when string) string {
+	key := "comment " + at + " " + itoa(len(remarks))
+	remarks[key] = struct{ at, dur, text, author, when string }{
+		at, dur, text, author, when}
+	return key
+}
+
 // sung are the syllables a test asked for: an event on the voice stream
 // pointing at an element that holds the syllable itself.
 var sung = map[string]struct {
@@ -479,6 +507,9 @@ func built(t *testing.T, time [2]string, key string, notes []played,
 		if _, ok := tempos[kind]; ok {
 			continue // built onto the global stream below
 		}
+		if _, ok := slowings[kind]; ok {
+			continue // built onto the global stream below
+		}
 		if _, ok := clefChanges[kind]; ok {
 			continue // built onto the staff below
 		}
@@ -523,6 +554,9 @@ func built(t *testing.T, time [2]string, key string, notes []played,
 					e.leaf("pitch", itoa(g.pitch))))
 			}
 			continue
+		}
+		if _, ok := remarks[kind]; ok {
+			continue // built onto the staff below
 		}
 		if w, ok := sung[kind]; ok {
 			events = append(events, e.node("LyricEventDefinition",
@@ -641,6 +675,22 @@ func built(t *testing.T, time [2]string, key string, notes []played,
 				e.leaf("position", tp.at),
 				e.node("data", data...)))
 	}
+
+	for _, kind := range extra {
+		g, ok := slowings[kind]
+		if !ok {
+			continue
+		}
+		globalEvents = append(globalEvents,
+			e.node("GradualTempoChangeEventDefinition",
+				e.leaf("position", g.at),
+				e.leaf("duration", g.dur),
+				e.node("data",
+					e.leaf("text", g.text),
+					e.leaf("finalTempoPercent", g.pct),
+					e.leaf("presetID", "tempopreset.ritardando"))))
+	}
+
 	globalBlock := e.node("block",
 		e.leaf("blockID", "20"),
 		e.leaf("parentEventStreamType", "kGlobalTimebaseStream"),
@@ -674,6 +724,17 @@ func built(t *testing.T, time [2]string, key string, notes []played,
 	var moreKeys []int32
 	var dynDefs []int32
 	for _, kind := range extra {
+		if c, ok := remarks[kind]; ok {
+			// A comment is written on the staff's own stream, beside the
+			// clefs and the keys.
+			staveEvents = append(staveEvents,
+				e.node("CommentEventDefinition",
+					e.leaf("position", c.at),
+					e.leaf("duration", c.dur),
+					e.leaf("author", c.author),
+					e.leaf("commentText", c.text),
+					e.leaf("timestamp", c.when)))
+		}
 		if r, ok := rawEvents[kind]; ok && r.stream == "stave" {
 			staveEvents = append(staveEvents, made(e, kind))
 		}
@@ -2242,16 +2303,15 @@ func TestARegionThatOnlyCountsItsBarsIsNotARepeatSign(t *testing.T) {
 	if _, ok := els[0].(*model.Note); !ok {
 		t.Errorf("the second bar holds a %T where the note was", els[0])
 	}
-	// Said rather than passed over in silence: somebody comparing the two
-	// pages finds the counting missing and has to be told why.
-	pe, ok := err.(*PartialError)
-	if !ok {
-		t.Fatalf("a counted passage reported %v", err)
-	}
-	pe.Partial()
-	if !strings.Contains(strings.Join(pe.Details(), " "), "counted bars") {
-		t.Errorf("the report says %v, and does not mention the counting",
-			pe.Details())
+	// And nothing is said about it, because nothing is lost. The bars are
+	// written out in full here and in Dorico's own engraving of the same
+	// project, where the region draws neither a repeat sign nor a count:
+	// a warning would be a warning about a difference that is not there.
+	if pe, ok := err.(*PartialError); ok {
+		if strings.Contains(strings.Join(pe.Details(), " "), "counted") {
+			t.Errorf("a counted passage was reported as not read: %v",
+				pe.Details())
+		}
 	}
 }
 
@@ -2701,16 +2761,15 @@ func TestAnInstrumentNobodyPicksUpIsNotAStaff(t *testing.T) {
 	if _, ok := els[0].(*model.Note); !ok {
 		t.Errorf("the staff that was kept holds a %T, not the note", els[0])
 	}
-	// Said rather than passed over: a staff that is in the file and not on
-	// the page is worth a line.
-	pe, ok := err.(*PartialError)
-	if !ok {
-		t.Fatalf("leaving a staff out reported %v", err)
-	}
-	pe.Partial()
-	if !strings.Contains(strings.Join(pe.Details(), " "), "doubles on") {
-		t.Errorf("the report says %v, and does not mention the doubling",
-			pe.Details())
+	// And nothing is said about it. The staff left out is empty from end
+	// to end and Dorico's own engraving leaves it out too — one horn staff
+	// a movement, not two — so a warning here would be a warning about
+	// agreeing with the source.
+	if pe, ok := err.(*PartialError); ok {
+		if strings.Contains(strings.Join(pe.Details(), " "), "doubles on") {
+			t.Errorf("leaving an empty staff out was reported as not read: %v",
+				pe.Details())
+		}
 	}
 }
 
@@ -3106,5 +3165,208 @@ func TestATenorStaffIsWrittenWhereItIsRead(t *testing.T) {
 	if p.Transpose.OctaveChange != -1 {
 		t.Errorf("the staff transposes by %d octaves, want -1",
 			p.Transpose.OctaveChange)
+	}
+}
+
+/* ---------- a speed on its way somewhere ---------- */
+
+func TestARitardandoIsReadAsASlowing(t *testing.T) {
+	// "rit." over a bar is an instruction to a player and a slowing to
+	// anything that plays the score. Read as words alone — which is what
+	// gscore did — the music runs on at the old speed straight through the
+	// end of the phrase.
+	//
+	// Dorico says where it starts, how long it takes and the speed it
+	// arrives at, as a percentage of the one in force: everything needed
+	// to play it.
+	raw := built(t, [2]string{"4", "4"}, "C", []played{
+		{at: "0", dur: "4", pitch: 60},
+		{at: "4", dur: "4", pitch: 62},
+		{at: "8", dur: "4", pitch: 64},
+		{at: "12", dur: "4", pitch: 65},
+	},
+		tempoAt("0", "Allegro", "500000", 5, 0), // a crotchet at 120
+		gradualAt("4", "8", "ritard.", "75.000000"))
+
+	s := read(t, raw)[0]
+	var ramp *model.Tempo
+	at := -1
+	for i, m := range s.Parts[0].Measures {
+		if m.Tempo != nil && m.Tempo.ToBPM > 0 {
+			ramp, at = m.Tempo, i
+		}
+	}
+	if ramp == nil {
+		t.Fatal("the ritardando was not read as a slowing")
+	}
+	if at != 1 {
+		t.Errorf("it starts at bar %d, want the second", at+1)
+	}
+	if ramp.BPM != 120 || ramp.ToBPM != 90 {
+		t.Errorf("it goes from %d to %d, want 120 to 90", ramp.BPM, ramp.ToBPM)
+	}
+	if ramp.OverBars != 2 {
+		t.Errorf("it takes %d bars, want the two it is written over",
+			ramp.OverBars)
+	}
+	// And it is not printed: the words are already over the staff, and a
+	// metronome mark nobody asked for would be beside them.
+	if !ramp.Silent {
+		t.Error("the slowing printed a metronome mark of its own")
+	}
+	// The music is played at it, which is the whole point.
+	tempos := s.Tempos()
+	if !(tempos[2].BPM < tempos[1].BPM) {
+		t.Errorf("the bars are played at %d then %d: no slowing",
+			tempos[1].BPM, tempos[2].BPM)
+	}
+}
+
+func TestTheWordsOfASlowingAreStillWritten(t *testing.T) {
+	raw := built(t, [2]string{"4", "4"}, "C", []played{
+		{at: "0", dur: "4", pitch: 60},
+		{at: "4", dur: "4", pitch: 62},
+	},
+		tempoAt("0", "Allegro", "500000", 5, 0),
+		gradualAt("4", "4", "ritard.", "75.000000"))
+
+	s := read(t, raw)[0]
+	found := false
+	for _, m := range s.Parts[0].Measures {
+		for _, v := range m.Voices {
+			for _, el := range v.Elements {
+				if mk := marksOf(el); mk != nil {
+					for _, tx := range mk.Texts {
+						if strings.Contains(tx.Text, "ritard") {
+							found = true
+						}
+					}
+				}
+			}
+		}
+	}
+	if !found {
+		t.Error("the word over the staff was lost when the slowing was read")
+	}
+}
+
+func TestAPrintedSpeedSaysWhereTheSlowingLands(t *testing.T) {
+	// "rit." with a tempo mark at the bar it reaches: the mark is the
+	// score speaking, and it wins over what a player would otherwise have
+	// done. Dorico's percentage here would say 90.
+	raw := built(t, [2]string{"4", "4"}, "C", []played{
+		{at: "0", dur: "4", pitch: 60}, {at: "4", dur: "4", pitch: 62},
+		{at: "8", dur: "4", pitch: 64}, {at: "12", dur: "4", pitch: 65},
+	},
+		tempoAt("0", "Allegro", "500000", 5, 0), // a crotchet at 120
+		gradualAt("4", "4", "ritard.", "75.000000"),
+		tempoAt("8", "Adagio", "1000000", 5, 0)) // a crotchet at 60
+
+	s := read(t, raw)[0]
+	for _, m := range s.Parts[0].Measures {
+		if m.Tempo != nil && m.Tempo.ToBPM > 0 {
+			if m.Tempo.ToBPM != 60 {
+				t.Errorf("the slowing arrives at %d, and the score prints 60",
+					m.Tempo.ToBPM)
+			}
+			return
+		}
+	}
+	t.Fatal("the slowing was not read")
+}
+
+func TestASpeedLaterOnIsNotWhereTheSlowingLands(t *testing.T) {
+	// A tempo written past the end of the slowing is a later tempo, not
+	// this one's destination: the percentage stands.
+	raw := built(t, [2]string{"4", "4"}, "C", []played{
+		{at: "0", dur: "4", pitch: 60}, {at: "4", dur: "4", pitch: 62},
+		{at: "8", dur: "4", pitch: 64}, {at: "12", dur: "4", pitch: 65},
+	},
+		tempoAt("0", "Allegro", "500000", 5, 0),
+		gradualAt("4", "4", "ritard.", "75.000000"),
+		tempoAt("12", "Presto", "300000", 5, 0))
+
+	s := read(t, raw)[0]
+	for _, m := range s.Parts[0].Measures {
+		if m.Tempo != nil && m.Tempo.ToBPM > 0 {
+			if m.Tempo.ToBPM != 90 {
+				t.Errorf("the slowing arrives at %d, want three quarters of "+
+					"120", m.Tempo.ToBPM)
+			}
+			return
+		}
+	}
+	t.Fatal("the slowing was not read")
+}
+
+/* ---------- what was said about the music ---------- */
+
+func TestACommentIsKeptWithTheScore(t *testing.T) {
+	// Not music and never drawn: "the clarinets change to C for this
+	// movement; I have kept them in B flat" is the editor talking to
+	// whoever opens the file next. It is also the one thing nobody can
+	// work out again from the notes, which is why it is kept.
+	raw := built(t, [2]string{"4", "4"}, "C", []played{
+		{at: "0", dur: "4", pitch: 60},
+		{at: "4", dur: "4", pitch: 62},
+	}, commentAt("4", "4", "Kept in B flat; easy enough to change.",
+		"Ben", "1764258281"))
+
+	s := read(t, raw)[0]
+	if len(s.Comments) != 1 {
+		t.Fatalf("%d comments came through", len(s.Comments))
+	}
+	c := s.Comments[0]
+	if c.Text != "Kept in B flat; easy enough to change." {
+		t.Errorf("it says %q", c.Text)
+	}
+	if c.Author != "Ben" {
+		t.Errorf("it was written by %q", c.Author)
+	}
+	if c.At != 1 {
+		t.Errorf("it is written against bar %d, want the second", c.At+1)
+	}
+	if c.When != 1764258281 {
+		t.Errorf("it was written at %d", c.When)
+	}
+	if c.Part != 0 {
+		t.Errorf("it is about staff %d", c.Part)
+	}
+}
+
+func TestACommentIsNotPrinted(t *testing.T) {
+	// A comment is a conversation about the score, not a marking in it:
+	// nothing of it reaches the page.
+	raw := built(t, [2]string{"4", "4"}, "C", []played{
+		{at: "0", dur: "4", pitch: 60},
+	}, commentAt("0", "4", "Check this against the autograph", "Ben", "0"))
+
+	s := read(t, raw)[0]
+	for _, m := range s.Parts[0].Measures {
+		for _, v := range m.Voices {
+			for _, el := range v.Elements {
+				if mk := marksOf(el); mk != nil {
+					for _, tx := range mk.Texts {
+						if strings.Contains(tx.Text, "autograph") {
+							t.Error("the comment was written onto the page")
+						}
+					}
+				}
+			}
+		}
+	}
+}
+
+func TestACommentIsNotReportedAsLost(t *testing.T) {
+	raw := built(t, [2]string{"4", "4"}, "C", []played{
+		{at: "0", dur: "4", pitch: 60},
+	}, commentAt("0", "4", "A note to self", "Ben", "0"))
+
+	_, err := Import(bytes.NewReader(raw))
+	if pe, ok := err.(*PartialError); ok {
+		if strings.Contains(strings.Join(pe.Details(), " "), "comment") {
+			t.Errorf("a comment that was read was reported as not read: %v",
+				pe.Details())
+		}
 	}
 }

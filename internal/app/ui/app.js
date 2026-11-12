@@ -2328,6 +2328,29 @@ async function loadInfo() {
     `<div><span>Tempo</span><button class="linklike" id="tempo-btn">${i.tempo} bpm</button></div>`;
   $("#tempo-btn")?.addEventListener("click", setTempoDialog);
 
+  // What the people working on the score said about it. Not music and not
+  // drawn on the page — a comment is a conversation about the score — but
+  // kept in front of whoever opens it, since an editor's reasoning is the
+  // one thing nobody can work out again from the notes.
+  const notes = i.comments || [];
+  const noteBox = $("#comment-group");
+  if (noteBox) {
+    noteBox.hidden = notes.length === 0;
+    $("#comment-list").innerHTML = notes.map((c) => {
+      const who = c.author ? escapeHTML(c.author) + ", " : "";
+      const where = "bar " + (c.bar + 1) +
+        (c.part >= 0 && i.parts[c.part]
+          ? ", " + escapeHTML(i.parts[c.part].name) : "");
+      return `<div class="comment"><button class="linklike"
+          data-comment-bar="${c.bar}">${who}${where}</button>
+        <div>${escapeHTML(c.text)}</div></div>`;
+    }).join("");
+    for (const b of $$("#comment-list [data-comment-bar]")) {
+      b.addEventListener("click", () =>
+        void goToMeasure(Number(b.dataset.commentBar)));
+    }
+  }
+
   $("#part-info").innerHTML = i.parts
     .map(
       (p, idx) => `<div class="part-card${p.hidden ? " hidden-staff" : ""}">

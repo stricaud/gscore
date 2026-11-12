@@ -42,6 +42,9 @@ func (s *Score) Clone() *Score {
 	// The scripts come too. Undo restores one of these, and a score that
 	// forgot its scripts every time somebody pressed Ctrl-Z would lose the
 	// thought that made it on the first mistake after writing it down.
+	if s.Comments != nil {
+		out.Comments = append([]Comment(nil), s.Comments...)
+	}
 	if s.Scripts != nil {
 		out.Scripts = append([]Script(nil), s.Scripts...)
 	}

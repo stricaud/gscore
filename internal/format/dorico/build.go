@@ -149,6 +149,7 @@ type stave struct {
 	words     []lyric
 	keys      []staffKey
 	cues      []cue
+	comments  []comment
 	voices    []string // the voice streams that write on it
 }
 
@@ -585,6 +586,7 @@ func buildFlow(t *tree, flow int32, players map[string]string,
 		putMarks(p, bars, st.points, st.spans, skipped)
 		putStaffMarks(p, bars, st.repeats, st.keys)
 		putLyrics(p, bars, st.words, skipped)
+		putComments(s, bars, len(s.Parts), st.comments)
 		writeAnOctaveUp(p, skipped)
 		if lost := putClefs(p, bars, st.changes); lost > 0 {
 			skipped["clef changes inside a bar with no note to put them "+
@@ -697,10 +699,11 @@ func dropSilentDoublings(staves []*stave, music map[string][][]group,
 		}
 		out = append(out, st)
 	}
-	if left > 0 {
-		skipped["staves for an instrument a player doubles on and does "+
-			"not play in this movement"] += left
-	}
+	// Not reported: the staves left out are empty from end to end, and
+	// Dorico's own engraving of the project leaves them out too — one horn
+	// staff a movement, not two. A warning here is a warning about
+	// agreeing with the source.
+	_ = left
 	return out
 }
 
@@ -1086,8 +1089,6 @@ func note(skipped map[string]int, kind string) {
 		skipped["bar repeats"]++
 	case "CueEventDefinition":
 		skipped["cues"]++
-	case "CommentEventDefinition":
-		skipped["comments"]++
 	case "TonalityDivisionEventDefinition":
 		// On the global stream these are the key signatures and are read.
 		// Here they are a key for one staff on its own — a horn left in C
@@ -1372,8 +1373,12 @@ func readClefs(t *tree, streams *streams, staves []*stave, bars []bar,
 					// play the silence again — and gscore played it, nine
 					// times, in place of the note the horn is holding.
 					if t.str(e, "numberBarsOnly") == "true" {
-						skipped["passages marked as counted bars, which "+
-							"gscore writes out in full"]++
+						// Nothing is lost by passing over it, which is why
+						// nothing is said: the bars are written out in
+						// full here and in Dorico's own engraving of the
+						// same project, where this region draws neither a
+						// repeat sign nor a count. Reported, it was a
+						// warning about a difference that does not exist.
 						continue
 					}
 					at, _ := parseRat(t.str(e, "position"))
@@ -1396,6 +1401,20 @@ func readClefs(t *tree, streams *streams, staves []*stave, bars []bar,
 					}
 					st.keys = append(st.keys,
 						staffKey{at: at.add(p.at), key: ks})
+					continue
+				case "CommentEventDefinition":
+					// What the people working on the score said about it.
+					// Not music and never drawn, and the first thing lost
+					// when a score moves between programs: the notes are
+					// on the page and why they are those notes is not.
+					at, _ := parseRat(t.str(e, "position"))
+					dur, _ := parseRat(t.str(e, "duration"))
+					st.comments = append(st.comments, comment{
+						at: at.add(p.at), dur: dur,
+						text:   t.str(e, "commentText"),
+						author: t.str(e, "author"),
+						when:   t.str(e, "timestamp"),
+					})
 					continue
 				case "CueEventDefinition":
 					at, _ := parseRat(t.str(e, "position"))
@@ -2594,6 +2613,12 @@ type tempoMark struct {
 	// back says the mark names no speed of its own: "Tempo I", "a tempo".
 	// It carries the words and takes the speed the movement opened at.
 	back bool
+	// gradual says the mark is a ritardando or an accelerando rather than
+	// a new speed: pct is where it arrives, as a percentage of the speed
+	// in force, and dur how long it takes to get there.
+	gradual bool
+	pct     float64
+	dur     rat
 }
 
 // readTempo gathers a flow's tempo marks.
@@ -2601,6 +2626,28 @@ func readTempo(t *tree, streams *streams, skipped map[string]int) []tempoMark {
 	var out []tempoMark
 	for _, p := range streams.ofKind("kGlobalTimebaseStream") {
 		for _, e := range t.children(t.child(p.node, "events")) {
+			// A ritardando or an accelerando: the words over the staff and
+			// a speed to arrive at, which Dorico keeps as a percentage of
+			// the one in force.
+			if t.nameOf(e) == "GradualTempoChangeEventDefinition" {
+				at, ok := parseRat(t.str(e, "position"))
+				if !ok {
+					continue
+				}
+				at = at.add(p.at)
+				data := t.child(e, "data")
+				pct, err := strconv.ParseFloat(
+					t.str(data, "finalTempoPercent"), 64)
+				if err != nil || pct <= 0 {
+					continue
+				}
+				dur, _ := parseRat(t.str(e, "duration"))
+				out = append(out, tempoMark{
+					at: at, text: t.str(data, "text"),
+					gradual: true, pct: pct, dur: dur,
+				})
+				continue
+			}
 			if t.nameOf(e) != "ImmediateTempoChangeEventDefinition" {
 				continue
 			}
@@ -2626,7 +2673,14 @@ func readTempo(t *tree, streams *streams, skipped map[string]int) []tempoMark {
 			out = append(out, m)
 		}
 	}
-	sort.SliceStable(out, func(i, j int) bool { return out[i].at.less(out[j].at) })
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].at.cmp(out[j].at) != 0 {
+			return out[i].at.less(out[j].at)
+		}
+		// A speed written at the same moment as a ritardando is the speed
+		// the ritardando starts from, so it is read first.
+		return !out[i].gradual && out[j].gradual
+	})
 	return out
 }
 
@@ -2671,13 +2725,21 @@ func setTempo(s *model.Score, bars []bar, marks []tempoMark) {
 			break
 		}
 	}
-	for _, m := range marks {
+	// The speed in force as the marks go by, which is what a gradual
+	// change is a percentage of.
+	now := opening
+	for mi, m := range marks {
+		if m.gradual {
+			setGradual(s, bars, m, now, arrivalOf(marks, mi, now))
+			continue
+		}
 		t := model.Tempo{BPM: m.bpm, Unit: m.unit, Text: m.text}
 		if m.back {
 			// The words are printed and no metronome mark with them,
 			// which is how "Tempo I" is written in every score.
 			t.BPM, t.Unit, t.Silent = opening.BPM, opening.Unit, true
 		}
+		now = t
 		if m.at.zero() {
 			s.Tempo = t
 			continue
@@ -2699,4 +2761,88 @@ func setTempo(s *model.Score, bars []bar, marks []tempoMark) {
 	if s.Tempo.BPM == 0 {
 		s.Tempo = opening
 	}
+}
+
+// setGradual writes a ritardando or an accelerando as what it is: the speed
+// it starts from, the speed it arrives at, and the bars it takes.
+//
+// The words are printed by putGlobal, as the score prints them, so what is
+// written here is silent: a number over the staff at the start of a rit.
+// would be a metronome mark nobody asked for, and one at every bar of it
+// would be four.
+// arrivalOf is the speed a gradual change is on its way to, where the score
+// says so itself.
+//
+// A ritardando is often printed with where it lands: "rit." and then a tempo
+// mark at the bar it reaches. That mark is the score speaking and it is the
+// one to believe — Dorico's percentage is what a player would have done
+// without it.
+//
+// A mark written at this stage and not one carried from before: only the
+// marks between the start of the slowing and its end are looked at, so the
+// speed the music happened to be going at beforehand never becomes the
+// speed it is going to, and a tempo written later in the piece is a later
+// tempo and not this one's destination.
+//
+// "a tempo" and "Tempo I" are not a destination either. They mean the
+// opposite — snap back to where we were — so the slowing goes where the
+// percentage says and the mark puts the speed back at its own bar, which
+// is what a player does with the pair.
+func arrivalOf(marks []tempoMark, i int, now model.Tempo) int {
+	m := marks[i]
+	end := m.at.add(m.dur)
+	for _, next := range marks[i+1:] {
+		if next.gradual || next.at.less(m.at) {
+			continue
+		}
+		if end.less(next.at) {
+			break // past the end of the slowing: a later speed, not this one
+		}
+		if next.back {
+			// "a tempo" and "Tempo I": back to the speed the movement
+			// opened at, which setTempo knows and this does not.
+			return 0
+		}
+		if next.bpm <= 0 {
+			continue
+		}
+		// In the unit the slowing started in, since that is what it is
+		// counted in: a half note at 60 is a crotchet at 120.
+		bpm := float64(next.bpm)
+		if next.unit.Float() > 0 && now.Unit.Float() > 0 {
+			bpm *= next.unit.Float() / now.Unit.Float()
+		}
+		return int(bpm + 0.5)
+	}
+	return 0
+}
+
+func setGradual(s *model.Score, bars []bar, m tempoMark, now model.Tempo,
+	arrival int) {
+	if len(s.Parts) == 0 || now.BPM <= 0 {
+		return
+	}
+	from, last := barAt(bars, m.at), barAt(bars, m.at.add(m.dur))
+	if from < 0 || from >= len(s.Parts[0].Measures) {
+		return
+	}
+	over := last - from
+	if last < 0 || over < 1 {
+		// Inside one bar. It is still a slowing, and a bar is the finest
+		// gscore plays a speed at, so it takes that bar.
+		over = 1
+	}
+	to := arrival
+	if to <= 0 {
+		to = int(float64(now.BPM)*m.pct/100 + 0.5)
+	}
+	t := model.Tempo{
+		BPM: now.BPM, Unit: now.Unit, Silent: true,
+		ToBPM:    to,
+		OverBars: over,
+	}
+	if t.ToBPM <= 0 || t.ToBPM == t.BPM {
+		return
+	}
+	s.Parts[0].Measures[from].Tempo = &t
 }

@@ -905,6 +905,10 @@ type info struct {
 	// sequence are called, and Sequenced lists the bars that are in it —
 	// which the editor needs to tell them from the marks written out as
 	// themselves, since those do not advance the count.
+	// Comments are what the people working on the score said about it,
+	// which is not music and is worth seeing: an editor's reasoning is the
+	// one thing nobody can reconstruct from the notes.
+	Comments    []commentInfo  `json:"comments,omitempty"`
 	Marks       map[int]string `json:"marks,omitempty"`
 	MarkerStyle string         `json:"markerStyle,omitempty"`
 	Sequenced   []int          `json:"sequenced,omitempty"`
@@ -1015,6 +1019,18 @@ type groupInfo struct {
 	Name     string `json:"name,omitempty"`
 }
 
+// commentInfo is one note somebody left about the score, for the editor to
+// show. Never drawn on the page: a comment is a conversation about the
+// music and not a marking in it.
+type commentInfo struct {
+	Text   string `json:"text"`
+	Author string `json:"author,omitempty"`
+	Bar    int    `json:"bar"`
+	Bars   int    `json:"bars,omitempty"`
+	Part   int    `json:"part"`
+	When   int64  `json:"when,omitempty"`
+}
+
 type partInfo struct {
 	Name       string `json:"name"`
 	Instrument string `json:"instrument"`
@@ -1100,6 +1116,12 @@ func (a *App) handleInfo(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	out.Markers = markerCount(a.score)
+	for _, c := range a.score.Comments {
+		out.Comments = append(out.Comments, commentInfo{
+			Text: c.Text, Author: c.Author, Bar: c.At, Bars: c.Bars,
+			Part: c.Part, When: c.When,
+		})
+	}
 	out.Marks = a.score.RehearsalMarks(engrave.BarNumbers(a.score))
 	out.MarkerStyle = a.score.Markers.String()
 	for i := 0; i < a.score.MeasureCount(); i++ {

@@ -892,3 +892,35 @@ func TestWhatIsWrittenInsideABarSurvivesTheFile(t *testing.T) {
 			got.Grace.Notes[0].Pitch)
 	}
 }
+
+// A comment survives being saved and opened again.
+//
+// It is not music, which is exactly why it is the kind of thing a file
+// format forgets: the notes are checked by everybody and the reasoning
+// behind them by nobody.
+func TestCommentsSurviveTheRoundTrip(t *testing.T) {
+	s := model.NewScore()
+	s.Comments = []model.Comment{
+		{Text: "Kept in B flat", Author: "Ben", At: 3, Bars: 2, Part: 1,
+			When: 1764258281},
+		{Text: "Check the autograph", At: 0, Bars: 1, Part: -1},
+	}
+	var b bytes.Buffer
+	if err := Write(&b, s, nil); err != nil {
+		t.Fatal(err)
+	}
+	back, _, err := Read(bytes.NewReader(b.Bytes()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(back.Comments) != 2 {
+		t.Fatalf("%d comments came back", len(back.Comments))
+	}
+	if back.Comments[0] != s.Comments[0] {
+		t.Errorf("the first came back as %+v", back.Comments[0])
+	}
+	if back.Comments[1].Text != "Check the autograph" ||
+		back.Comments[1].Part != -1 {
+		t.Errorf("the second came back as %+v", back.Comments[1])
+	}
+}

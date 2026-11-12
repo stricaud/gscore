@@ -232,6 +232,23 @@ type Tempo struct {
 	// prints "All° Moderato (♩ = 116)", and so did everybody else in 1888.
 	Parens bool
 
+	// ToBPM and OverBars are a speed on its way somewhere: a ritardando or
+	// an accelerando, which is not a new tempo but a journey to one.
+	//
+	// The words over the staff — "rit.", "accel.", "rall." — are an
+	// instruction to a player and a slowing to anything that plays the
+	// score, and a reader who is given only the words hears the music run
+	// on at the old speed straight through the end of a phrase. Beethoven's
+	// fifth has five of them.
+	//
+	// BPM is where the change starts and ToBPM where it arrives, over
+	// OverBars bars: the speed at the start of each bar in between is a
+	// step along the way, which is how a sequencer plays one and close
+	// enough to how a player does. ToBPM of nought is an ordinary tempo
+	// that stays where it is.
+	ToBPM    int `json:",omitempty"`
+	OverBars int `json:",omitempty"`
+
 	// Silent keeps the number off the page while still playing at it.
 	//
 	// "Allegro Moderato" over a bar is an instruction to a player and a
@@ -889,16 +906,32 @@ func (s *Score) Tempos() []Tempo {
 	}
 	out := make([]Tempo, n)
 	t := s.Tempo
+	// Where a gradual change is in force: the bar it started at, and what
+	// it is on its way to.
+	ramp, rampAt := Tempo{}, -1
 	for i := range out {
 		// A tempo written at this bar governs this bar, so it is taken
 		// before the answer is recorded rather than after.
 		for _, p := range s.Parts {
 			if i < len(p.Measures) && p.Measures[i].Tempo != nil {
 				t = t.changedBy(*p.Measures[i].Tempo)
+				if t.ToBPM > 0 && t.OverBars > 0 {
+					ramp, rampAt = t, i
+				} else {
+					rampAt = -1
+				}
 				break
 			}
 		}
 		out[i] = t
+		// A bar inside a ritardando is played at a step along the way.
+		if rampAt >= 0 && i >= rampAt {
+			out[i] = ramp.steppedTo(i - rampAt)
+			if i-rampAt >= ramp.OverBars {
+				t = out[i]
+				rampAt = -1
+			}
+		}
 	}
 	return out
 }
@@ -916,6 +949,30 @@ func (t Tempo) changedBy(c Tempo) Tempo {
 	if c.BPM > 0 {
 		t.BPM, t.Unit = c.BPM, c.Unit
 	}
+	// A gradual change belongs to the mark that opened it and not to the
+	// speed it started from, so it is taken from the new mark whatever it
+	// says — including the nought that says this one is not one.
+	t.ToBPM, t.OverBars = c.ToBPM, c.OverBars
+	return t
+}
+
+// steppedTo is this gradual change so many bars in.
+//
+// Straight-line between the two speeds, a step a bar: at the bar it starts
+// on it is still the old speed, and at the bar it arrives on it is the new
+// one. The arrival is a bar of its own — a ritardando over two bars is
+// slower in the second than in the first and has arrived by the third —
+// which is what a player does with it.
+func (t Tempo) steppedTo(bars int) Tempo {
+	if t.ToBPM <= 0 || t.OverBars <= 0 || bars <= 0 {
+		return t
+	}
+	if bars >= t.OverBars {
+		t.BPM, t.ToBPM, t.OverBars = t.ToBPM, 0, 0
+		return t
+	}
+	from, to := float64(t.BPM), float64(t.ToBPM)
+	t.BPM = int(from + (to-from)*float64(bars)/float64(t.OverBars) + 0.5)
 	return t
 }
 
@@ -1048,6 +1105,16 @@ type Score struct {
 	// kept is text: the console shows it, and a person reads it and
 	// decides.
 	Scripts []Script
+
+	// Comments are what the people working on the score said to each other
+	// about it.
+	//
+	// Not music and not meant for the page: "Clarinets change to C for this
+	// last movement, I've kept them as B flat", written against the bar it
+	// is about. An editor's reasoning is the first thing lost when a score
+	// moves between programs and the thing nobody can reconstruct — the
+	// notes are on the page, and why they are those notes is not.
+	Comments []Comment
 
 	// Engraving is what this score wants done differently from the house
 	// style: how wide a quarter note's slot is, how heavy a beam is, how
@@ -1363,6 +1430,27 @@ type MeasureNumbering struct {
 	// Boxed draws a rectangle round each number, the way a rehearsal mark
 	// is boxed.
 	Boxed bool
+}
+
+// Comment is a note about the music, written by somebody working on it.
+//
+// It belongs to a place rather than to a note: a bar, or a run of bars, and
+// a staff where it is about one player. It is never drawn on the page — a
+// comment is a conversation about the score and not a marking in it.
+type Comment struct {
+	// Text is what was said.
+	Text string
+	// Author is who said it, as the file gives the name.
+	Author string
+	// At is the bar it is written against, counted from nought, and Bars
+	// how many it covers. A comment about one bar covers one.
+	At   int
+	Bars int
+	// Part is the staff it is about, or -1 where it is about the score.
+	Part int
+	// When it was written, as a Unix time. Zero where the file does not
+	// say.
+	When int64
 }
 
 // Script is one saved program, with the name its author gave it.

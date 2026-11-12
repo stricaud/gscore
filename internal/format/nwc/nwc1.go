@@ -13,6 +13,7 @@ package nwc
 import (
 	"encoding/binary"
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/stricaud/gscore/internal/model"
@@ -233,6 +234,7 @@ var nwc1Accidentals = map[byte]model.Accidental{
 
 // noteValue is the eight-byte record a note or rest carries.
 type noteValue struct {
+	raw5     byte
 	dur      model.Duration
 	dots     int
 	tie      bool
@@ -294,6 +296,7 @@ func (w *walker) noteValue(rest bool) (noteValue, error) {
 	// read as part of a span that would be hundreds of slurs beginning and
 	// never ending, drawn across the page to the margin of every system
 	// after them.
+	nv.raw5 = raw[5]
 	nv.slurTo = raw[5]&0x01 != 0
 	if w.dia().slurHasBothEnds {
 		nv.slurFrom = raw[5]&0x02 != 0
@@ -1243,6 +1246,8 @@ type staffState struct {
 	// slurOpen says the element before this one was joined onward, so a
 	// note that is not closes the slur.
 	slurOpen bool
+	lastRaw5 byte
+	lastKind string
 
 	// A wedge being drawn, and the last note it has reached.
 	pendingHairpin *model.Hairpin
@@ -1369,6 +1374,10 @@ func (s *staffState) attachClef(el model.Element) {
 // From 1.75 the file marks only that, so the end of a phrase mark is not
 // written anywhere: it is the first element after the run of joined ones.
 func (s *staffState) slurRun(m *model.Marks, joined bool) {
+	if s.part != nil && s.part.Name == os.Getenv("NWCSLUR") {
+		fmt.Fprintf(os.Stderr, "SLUR bar=%d joined=%v open=%v raw5=%02x kind=%s\n",
+			len(s.part.Measures)+1, joined, s.slurOpen, s.lastRaw5, s.lastKind)
+	}
 	switch {
 	case joined && !s.slurOpen:
 		m.SlurStart = 1
@@ -1584,6 +1593,16 @@ func (s *staffState) splitLines() {
 	}
 	if total.Float() <= bar.Float()*1.001 {
 		return // one line holds it, which is nearly every bar
+	}
+	if os.Getenv("SPLITDBG") != "" {
+		signal := 0
+		for _, el := range els {
+			if s.restChord[el] {
+				signal++
+			}
+		}
+		fmt.Fprintf(os.Stderr, "SPLIT staff=%q bar=%d total=%s meter=%s restchords=%d\n",
+			s.part.Name, len(s.part.Measures)+1, total, bar, signal)
 	}
 
 	// Each object to the line that is furthest behind, with the rest that
@@ -2007,6 +2026,7 @@ func (w *walker) objectBody(st *staffState) error {
 		if err != nil {
 			return err
 		}
+		st.lastRaw5, st.lastKind = nv.raw5, map[bool]string{true: "rest", false: "note"}[objType == 9]
 		// A 1.70 note carries two bytes more than a 1.75 one — and a 1.70
 		// rest does not, which is the kind of thing only the file can tell
 		// you. Read as eight, every note left two bytes of itself behind
@@ -2149,6 +2169,7 @@ func (w *walker) objectBody(st *staffState) error {
 			ch := &model.Chord{Dur: nv.dur}
 			ch.Tuplet = tupletMark(nv.triplet)
 			ch.Beam = beamMark(nv.beam)
+			st.lastRaw5, st.lastKind = nv.raw5, "chord"
 			if !w.dia().slurHasBothEnds {
 				st.slurRun(&ch.Marks, nv.slurTo)
 			}
@@ -2191,6 +2212,7 @@ func (w *walker) objectBody(st *staffState) error {
 		// marks; its noteheads only carry pitches.
 		ch.Beam = beamMark(head.beam)
 		ch.Tuplet = tupletMark(head.triplet)
+		st.lastRaw5, st.lastKind = head.raw5, "chordhead"
 		st.slurRun(&ch.Marks, head.slurTo)
 		if head.staccato {
 			ch.AddArticulation(model.Staccato)

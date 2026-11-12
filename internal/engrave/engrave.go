@@ -2657,16 +2657,17 @@ func (e *engraver) prefixWidth(p *model.Part, at int) float64 {
 	switch {
 	case e.opt.HideClef:
 		// Nothing at the head but what the key and the meter add below.
-		w += e.keySignatureWidth(p.KeyAt(at))
+		w += e.keyWidth(p, at)
 	case p.Tab != nil:
 		// The word TAB, and no key signature to follow it.
 		w = tabClefWidth(p, sp)
 	default:
 		clef, _ := smufl.ClefGlyph(e.clefAt(p, at))
 		w = sp.ClefBefore + smufl.Advance(clef) + sp.ClefAfter
-		w += e.keySignatureWidth(p.KeyAt(at))
+		w += e.keyWidth(p, at)
 	}
-	if e.opt.HideTimeSignature || !meterAt(p, at) {
+	if e.opt.HideTimeSignature || !meterAt(p, at) ||
+		!meterShown(p.TimeAt(at)) {
 		return w
 	}
 	num, den, sym := smufl.TimeSignatureGlyphs(p.TimeAt(at))
@@ -2676,6 +2677,14 @@ func (e *engraver) prefixWidth(p *model.Part, at int) float64 {
 		w += math.Max(glyphRunWidth(num), glyphRunWidth(den))
 	}
 	return w + sp.AfterTimeSignature
+}
+
+// meterShown says whether a meter is drawn where it takes effect.
+//
+// A hidden one is not: it is in force, the bars are counted in it, and
+// nothing about it reaches the page. See model.TimeHidden.
+func meterShown(t model.TimeSignature) bool {
+	return t.Symbol != model.TimeHidden
 }
 
 // meterAt says whether a system beginning at this bar writes the meter at
@@ -2715,6 +2724,15 @@ func glyphRunWidth(names []string) float64 {
 		w += smufl.Advance(n)
 	}
 	return w
+}
+
+// keyWidth is the room this part's key signature needs where the system
+// begins, and none at all in a percussion clef: see keyAccidentalSteps.
+func (e *engraver) keyWidth(p *model.Part, at int) float64 {
+	if e.clefAt(p, at) == model.Percussion {
+		return 0
+	}
+	return e.keySignatureWidth(p.KeyAt(at))
 }
 
 func (e *engraver) keySignatureWidth(k model.KeySignature) float64 {
@@ -3071,7 +3089,8 @@ func (e *engraver) signatureAt(p *model.Part, index int) (signatureChange, float
 	}
 	// A change of meter partway through, and not on a tab for the reason
 	// meterAt gives.
-	if m.Time != nil && !e.opt.HideTimeSignature && p.Tab == nil {
+	if m.Time != nil && !e.opt.HideTimeSignature && p.Tab == nil &&
+		meterShown(*m.Time) {
 		ch.time, ch.hasTime = m.Time, true
 		num, den, sym := smufl.TimeSignatureGlyphs(*m.Time)
 		if sym != "" {
@@ -3993,6 +4012,14 @@ func (e *engraver) drawClef(p *model.Part, x float64) float64 {
 // and following the rule rather than hardcoding the treble pattern makes the
 // other clefs come out right too.
 func keyAccidentalSteps(c model.Clef, fifths int) []int {
+	// A staff in a percussion clef is in no key. Its lines stand for
+	// instruments rather than for pitches, so there is nothing for a
+	// signature to alter, and the books write none — where a file has one
+	// anyway, as a NoteWorthy score with its drums written on ordinary
+	// staves does, a flat over the bongos is what comes out.
+	if c == model.Percussion {
+		return nil
+	}
 	n := fifths
 	sharps := fifths > 0
 	if !sharps {
@@ -4069,7 +4096,7 @@ func (e *engraver) drawKeySignature(p *model.Part, k model.KeySignature, x float
 }
 
 func (e *engraver) drawTimeSignature(p *model.Part, t model.TimeSignature, x float64) float64 {
-	if e.opt.HideTimeSignature {
+	if e.opt.HideTimeSignature || !meterShown(t) {
 		return x
 	}
 	return e.placeTimeSignature(t, x)
@@ -4078,6 +4105,9 @@ func (e *engraver) drawTimeSignature(p *model.Part, t model.TimeSignature, x flo
 // placeTimeSignature draws one meter at x, wherever it is called for: at the
 // head of a system or in the middle of a line where the meter changes.
 func (e *engraver) placeTimeSignature(t model.TimeSignature, x float64) float64 {
+	if !meterShown(t) {
+		return x
+	}
 	sp := e.opt.Spacings
 	num, den, sym := smufl.TimeSignatureGlyphs(t)
 	if sym != "" {

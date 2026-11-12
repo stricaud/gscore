@@ -183,3 +183,55 @@ func TestEveryGuessIsSomethingTheCatalogueHas(t *testing.T) {
 		}
 	}
 }
+
+func TestTheNamesASpanishScoreWrites(t *testing.T) {
+	// A concerto for orchestra written in NoteWorthy, whose thirty staves
+	// arrived as pianos because its names are in Spanish and its sections
+	// are abbreviated: "Vns. I", "Vlas.", "C.B.", "Fagots", "Triángulo".
+	for _, c := range []struct{ name, sound string }{
+		{"Flautas", "wind.flutes.flute"},
+		{"Flautín", "wind.flutes.flute.piccolo"},
+		{"Oboes", "wind.reed.oboe"},
+		{"Clarinetes", "wind.reed.clarinet"},
+		{"Fagots", "wind.reed.bassoon"},
+		{"Trompas", "brass.french-horn"},
+		{"Trompetas", "brass.trumpet"},
+		{"Trombones", "brass.trombone"},
+		{"Triángulo", "metal.triangle"},
+		{"Platillos", "metal.cymbal.crash"},
+		{"Caja Militar", "drum.snare-drum"},
+		{"Gran Caja", "drum.bass-drum"},
+		{"Violines I", "strings.violin"},
+		{"Violas", "strings.viola"},
+		{"Violonchelos", "strings.cello"},
+		{"Contrabajo", "strings.contrabass"},
+	} {
+		if got, _ := GuessSound(c.name); got != c.sound {
+			t.Errorf("%q was read as %q, want %s", c.name, got, c.sound)
+		}
+	}
+}
+
+func TestASectionIsNamedByItsAbbreviation(t *testing.T) {
+	// A full score labels its staves in two or three letters and in the
+	// plural, because the staff is a section and not a player: "Vns. I",
+	// "Tbns.1y2", "Hns.F I". And an abbreviation written with stops
+	// between its letters — "C.B." for the double basses — is one word,
+	// not two of one letter.
+	for _, c := range []struct{ name, sound string }{
+		{"Vns. I", "strings.violin"},
+		{"Vlns. II", "strings.violin"},
+		{"Vlas.", "strings.viola"},
+		{"Celli", "strings.cello"},
+		{"C.B.", "strings.contrabass"},
+		{"Tpts. en C", "brass.trumpet"},
+		{"Tbns.1y2", "brass.trombone"},
+		{"Hns.F  I", "brass.french-horn"},
+		{"Cls. en Bb", "wind.reed.clarinet"},
+		{"Fls. 1.2", "wind.flutes.flute"},
+	} {
+		if got, _ := GuessSound(c.name); got != c.sound {
+			t.Errorf("%q was read as %q, want %s", c.name, got, c.sound)
+		}
+	}
+}

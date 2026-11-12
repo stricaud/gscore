@@ -1403,7 +1403,26 @@ func timeSignature(t *tree, def int32) (model.TimeSignature, bool) {
 	if err1 != nil || err2 != nil || beats <= 0 || unit <= 0 {
 		return model.TimeSignature{}, false
 	}
-	return model.TimeSignature{Beats: beats, BeatValue: unit}, true
+	out := model.TimeSignature{Beats: beats, BeatValue: unit}
+	// The C and the slashed C, which Dorico says beside the numbers
+	// rather than instead of them.
+	data := t.child(def, "barDivisionData")
+	if t.str(data, "timeSignatureCommon") == "true" {
+		out.Symbol = model.TimeCommon
+		if beats == 2 && unit == 2 {
+			out.Symbol = model.TimeCut
+		}
+	}
+	// A meter that is in force and not drawn. Dorico writes one to make
+	// the bars of a polymetric score line up — the 3/4 behind the 9/8 of
+	// Bach's Jesu, joy — and printed it reads as a change of meter at the
+	// second bar that nobody wrote.
+	for _, e := range t.children(t.path(def, "propertyTable", "entries")) {
+		if t.str(e, "propertyType") == "kTimeSignatureHide" {
+			out.Symbol = model.TimeHidden
+		}
+	}
+	return out, true
 }
 
 // keySignature reads a tonality division: which note the key is rooted on,
@@ -1740,6 +1759,11 @@ func clefNamed(id string) (model.Clef, bool) {
 		return model.Alto, true
 	case strings.HasSuffix(id, ".tenor"):
 		return model.Tenor, true
+	// The two thick strokes a drummer reads, where a line stands for an
+	// instrument and not for a pitch. The Planets has fourteen of them,
+	// and read as nothing at all its percussion is drawn in the treble.
+	case strings.HasSuffix(id, ".percussion"):
+		return model.Percussion, true
 	}
 	return model.Treble, false
 }

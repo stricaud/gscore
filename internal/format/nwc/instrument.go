@@ -164,6 +164,19 @@ func nameInstruments(s *model.Score) []string {
 			}
 			continue
 		}
+		// And the reading the rest of gscore does, which knows the names
+		// a score writes rather than the names General MIDI gives its
+		// programs: "Vns. I" and "Vlas.", "Fagots" and "Triángulo". It is
+		// the same guess the Score setup button makes, and a reader that
+		// did not ask it left five string sections of a concerto for
+		// orchestra sitting as pianos under names it could have read.
+		if sound, ok := model.GuessSound(p.Name); ok {
+			p.Sound = sound
+			if inst, ok := model.SoundProgram(sound); ok {
+				p.Instrument = inst
+			}
+			continue
+		}
 		// A staff with no name at all is not a failed translation: there
 		// was nothing to translate, and a percussion staff is not a
 		// General MIDI program in the first place.

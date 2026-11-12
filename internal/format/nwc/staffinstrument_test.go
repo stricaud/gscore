@@ -115,13 +115,15 @@ func TestAnEarlyStaffStillGoesByItsName(t *testing.T) {
 func TestTheStavesNothingCouldNameAreListed(t *testing.T) {
 	s := &model.Score{Parts: []*model.Part{
 		{Name: "Flauto"},                        // named, in Italian
-		{Name: "Piatti"},                        // a cymbal player, and no GM program
-		{Name: "Gran Cassa"},                    // nor this
+		{Name: "Piatti"},                        // a cymbal player: no GM
+		{Name: "Gran Cassa"},                    // program, and named all the same
+		{Name: "Staff 3"},                       // which staff, not which instrument
+		{Name: "???"},                           // nor this
 		{Name: ""},                              // nothing to translate
 		{Name: "Drums", Clef: model.Percussion}, // not a program in the first place
 	}}
 	unknown := nameInstruments(s)
-	want := []string{"Piatti", "Gran Cassa"}
+	want := []string{"Staff 3", "???"}
 	if len(unknown) != len(want) {
 		t.Fatalf("%d staves were listed: %v", len(unknown), unknown)
 	}
@@ -137,6 +139,16 @@ func TestTheStavesNothingCouldNameAreListed(t *testing.T) {
 	}
 	if s.Parts[0].Sound != "wind.flutes.flute" {
 		t.Errorf("Flauto came out as %q", s.Parts[0].Sound)
+	}
+	// And the two with no General MIDI program of their own are named
+	// from the catalogue instead, which is where a cymbal and a bass drum
+	// live: the shared guesser reads them, and a staff that has a sound
+	// is not a staff anybody has to set by hand.
+	if got := s.Parts[1].Sound; got != "metal.cymbal.crash" {
+		t.Errorf("Piatti came out as %q", got)
+	}
+	if got := s.Parts[2].Sound; got != "drum.bass-drum" {
+		t.Errorf("Gran Cassa came out as %q", got)
 	}
 }
 

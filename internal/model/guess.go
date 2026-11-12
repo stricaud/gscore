@@ -47,7 +47,9 @@ var guessAliases = []struct {
 	{"piccolo", "wind.flutes.flute.piccolo"},
 	{"flute alto", "wind.flutes.flute.alto"},
 	{"grande flute", "wind.flutes.flute"},
+	{"flautin", "wind.flutes.flute.piccolo"},
 	{"flauto", "wind.flutes.flute"},
+	{"flauta", "wind.flutes.flute"},
 	{"flote", "wind.flutes.flute"},
 	{"flute", "wind.flutes.flute"},
 
@@ -60,6 +62,7 @@ var guessAliases = []struct {
 	{"english horn", "wind.reed.english-horn"},
 	{"hautbois", "wind.reed.oboe"},
 	{"oboi", "wind.reed.oboe"},
+	{"oboa", "wind.reed.oboe"},
 	{"oboe", "wind.reed.oboe"},
 
 	{"clarinette basse", "wind.reed.clarinet.bass"},
@@ -67,7 +70,9 @@ var guessAliases = []struct {
 	{"bassklarinette", "wind.reed.clarinet.bass"},
 	{"bass clarinet", "wind.reed.clarinet.bass"},
 	{"petite clarinette", "wind.reed.clarinet.eflat"},
+	{"clarinete bajo", "wind.reed.clarinet.bass"},
 	{"clarinette", "wind.reed.clarinet"},
+	{"clarinete", "wind.reed.clarinet"},
 	{"klarinette", "wind.reed.clarinet"},
 	{"clarinetto", "wind.reed.clarinet"},
 	{"clarinet", "wind.reed.clarinet"},
@@ -77,8 +82,10 @@ var guessAliases = []struct {
 	{"contrafagotto", "wind.reed.contrabassoon"},
 	{"kontrafagott", "wind.reed.contrabassoon"},
 	{"contrabassoon", "wind.reed.contrabassoon"},
+	{"contrafagot", "wind.reed.contrabassoon"},
 	{"basson", "wind.reed.bassoon"},
 	{"fagott", "wind.reed.bassoon"},
+	{"fagot", "wind.reed.bassoon"},
 	{"bassoon", "wind.reed.bassoon"},
 
 	// The saxophones, which are read by the word after the family name as
@@ -99,6 +106,7 @@ var guessAliases = []struct {
 	{"petite trompette", "brass.trumpet.piccolo"},
 	{"piccolo trumpet", "brass.trumpet.piccolo"},
 	{"trompette", "brass.trumpet"},
+	{"trompeta", "brass.trumpet"},
 	{"trompete", "brass.trumpet"},
 	{"tromba", "brass.trumpet"},
 	{"trumpet", "brass.trumpet"},
@@ -106,8 +114,10 @@ var guessAliases = []struct {
 	{"corno", "brass.french-horn"},
 	{"cors", "brass.french-horn"},
 	{"waldhorn", "brass.french-horn"},
+	{"trompa", "brass.french-horn"},
 	{"french horn", "brass.french-horn"},
 	{"trombone", "brass.trombone"},
+	{"trombon", "brass.trombone"},
 	{"posaune", "brass.trombone"},
 	{"tuba", "brass.tuba"},
 
@@ -117,12 +127,19 @@ var guessAliases = []struct {
 	{"grosse caisse", "drum.bass-drum"},
 	{"gran cassa", "drum.bass-drum"},
 	{"bass drum", "drum.bass-drum"},
+	{"gran caja", "drum.bass-drum"},
+	{"bombo", "drum.bass-drum"},
 	{"caisse claire", "drum.snare-drum"},
 	{"tambour militaire", "drum.snare-drum"},
 	{"tamburo", "drum.snare-drum"},
 	{"snare drum", "drum.snare-drum"},
 	{"side drum", "drum.snare-drum"},
 	{"tambour", "drum.snare-drum"},
+	{"caja redoblante", "drum.snare-drum"},
+	{"caja militar", "drum.snare-drum"},
+	{"caja clara", "drum.snare-drum"},
+	{"tarola", "drum.snare-drum"},
+	{"militar", "drum.snare-drum"},
 	{"timbales", "drum.timpani"},
 	{"timpani", "drum.timpani"},
 	{"pauken", "drum.timpani"},
@@ -132,11 +149,17 @@ var guessAliases = []struct {
 	{"piatti", "metal.cymbal.crash"},
 	{"becken", "metal.cymbal.crash"},
 	{"cymbal", "metal.cymbal.crash"},
+	{"platillos", "metal.cymbal.crash"},
+	{"platos", "metal.cymbal.crash"},
 	{"triangle", "metal.triangle"},
+	{"triangulo", "metal.triangle"},
 	{"tambourin", "drum.tambourine"},
 	{"tambourine", "drum.tambourine"},
+	{"pandereta", "drum.tambourine"},
 	{"castagnettes", "wood.castanets"},
 	{"castanets", "wood.castanets"},
+	{"rototom", "drum.rototom"},
+	{"roto-tom", "drum.rototom"},
 	{"xylophone", "pitched-percussion.xylophone"},
 	{"glockenspiel", "pitched-percussion.glockenspiel"},
 	{"vibraphone", "pitched-percussion.vibraphone"},
@@ -162,12 +185,15 @@ var guessAliases = []struct {
 	{"violoncelle", "strings.cello"},
 	{"violoncello", "strings.cello"},
 	{"violoncelli", "strings.cello"},
+	{"violonchelo", "strings.cello"},
+	{"violoncelo", "strings.cello"},
 	{"cello", "strings.cello"},
 	{"contrebasse", "strings.contrabass"},
 	{"contrabbasso", "strings.contrabass"},
 	{"kontrabass", "strings.contrabass"},
 	{"double bass", "strings.contrabass"},
 	{"contrabass", "strings.contrabass"},
+	{"contrabajo", "strings.contrabass"},
 	{"violon", "strings.violin"},
 	{"violino", "strings.violin"},
 	{"violine", "strings.violin"},
@@ -188,6 +214,7 @@ var guessAliases = []struct {
 	{"bass", "voice.bass"},
 	{"choeur", "voice.vocals"},
 	{"choir", "voice.vocals"},
+	{"coro", "voice.vocals"},
 }
 
 // shortGuesses are the abbreviations a score writes down the left of every
@@ -198,19 +225,36 @@ var guessAliases = []struct {
 // "cbn" is not, and neither of them is hidden in the middle of some other
 // name.
 var shortGuesses = map[string]string{
-	"fl": "wind.flutes.flute", "picc": "wind.flutes.flute.piccolo",
-	"ob": "wind.reed.oboe", "ca": "wind.reed.english-horn",
-	"cl": "wind.reed.clarinet", "bcl": "wind.reed.clarinet.bass",
-	"bn": "wind.reed.bassoon", "fag": "wind.reed.bassoon",
+	"fl": "wind.flutes.flute", "fls": "wind.flutes.flute",
+	"fltr": "wind.flutes.flute", "picc": "wind.flutes.flute.piccolo",
+	"ob": "wind.reed.oboe", "obs": "wind.reed.oboe",
+	"ca": "wind.reed.english-horn",
+	"cl": "wind.reed.clarinet", "cls": "wind.reed.clarinet",
+	"bcl": "wind.reed.clarinet.bass",
+	"bn":  "wind.reed.bassoon", "bns": "wind.reed.bassoon",
+	"fag": "wind.reed.bassoon", "fags": "wind.reed.bassoon",
+	"bsn": "wind.reed.bassoon", "bsns": "wind.reed.bassoon",
 	"cbn": "wind.reed.contrabassoon", "cfg": "wind.reed.contrabassoon",
-	"hn": "brass.french-horn", "cor": "brass.french-horn",
-	"tpt": "brass.trumpet", "tbn": "brass.trombone", "tba": "brass.tuba",
-	"timp": "drum.timpani", "perc": "drum.snare-drum",
-	"hp": "pluck.harp", "pno": "keyboard.piano", "cel": "keyboard.celesta",
-	"vn": "strings.violin", "vln": "strings.violin", "vni": "strings.violin",
-	"va": "strings.viola", "vla": "strings.viola",
-	"vc": "strings.cello", "vlc": "strings.cello",
-	"cb": "strings.contrabass", "db": "strings.contrabass",
+	"hn": "brass.french-horn", "hns": "brass.french-horn",
+	"cor": "brass.french-horn", "cors": "brass.french-horn",
+	"tpt": "brass.trumpet", "tpts": "brass.trumpet",
+	"tbn": "brass.trombone", "tbns": "brass.trombone",
+	"trb": "brass.trombone", "trbn": "brass.trombone",
+	"trbns": "brass.trombone", "tba": "brass.tuba",
+	"timp": "drum.timpani", "timps": "drum.timpani",
+	"mrmba": "pitched-percussion.marimba",
+	"rt":    "drum.rototom",
+	"perc":  "drum.snare-drum",
+	"hp":    "pluck.harp", "pno": "keyboard.piano", "cel": "keyboard.celesta",
+	"vn": "strings.violin", "vns": "strings.violin",
+	"vln": "strings.violin", "vlns": "strings.violin",
+	"vni": "strings.violin",
+	"va":  "strings.viola", "vas": "strings.viola",
+	"vla": "strings.viola", "vlas": "strings.viola",
+	"vc": "strings.cello", "vcs": "strings.cello",
+	"vlc": "strings.cello", "celli": "strings.cello",
+	"cb": "strings.contrabass", "cbs": "strings.contrabass",
+	"db": "strings.contrabass", "kb": "strings.contrabass",
 }
 
 // ambiguous are the names that mean one instrument in one language and
@@ -354,6 +398,7 @@ func plainName(name string) string {
 	for from, to := range map[string]string{
 		"é": "e", "è": "e", "ê": "e", "ë": "e", "û": "u", "ù": "u",
 		"ô": "o", "î": "i", "ï": "i", "à": "a", "â": "a", "ç": "c",
+		"á": "a", "í": "i", "ó": "o", "ú": "u", "ñ": "n", "õ": "o",
 		"œ": "oe", "ü": "u", "ä": "a", "ö": "o", "ß": "ss", "♭": "b",
 		"♯": "#",
 	} {
@@ -386,7 +431,25 @@ func plainName(name string) string {
 			out = append(out, word)
 		}
 	}
-	return strings.Join(out, " ")
+	// A run of single letters is one abbreviation written with stops
+	// between: "C.B." is the double bass and "R.T." the roto-toms, and cut
+	// at the stops they are two words of one letter that mean nothing.
+	var joined []string
+	for i := 0; i < len(out); {
+		if len(out[i]) > 1 {
+			joined = append(joined, out[i])
+			i++
+			continue
+		}
+		j, run := i, ""
+		for j < len(out) && len(out[j]) == 1 {
+			run += out[j]
+			j++
+		}
+		joined = append(joined, run)
+		i = j
+	}
+	return strings.Join(joined, " ")
 }
 
 // isNumbering says a word is which player this is rather than what they

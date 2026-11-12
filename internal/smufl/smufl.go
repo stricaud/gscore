@@ -579,6 +579,10 @@ func TimeSignatureGlyphs(t model.TimeSignature) (num, den []string, symbol strin
 		return nil, nil, "timeSigCommon"
 	case model.TimeCut:
 		return nil, nil, "timeSigCutCommon"
+	case model.TimeHidden:
+		// In force and not drawn: no glyphs at all, and no room asked
+		// for either — see the engraver's meterShown.
+		return nil, nil, ""
 	}
 	return DigitGlyphs(t.Beats), DigitGlyphs(t.BeatValue), ""
 }

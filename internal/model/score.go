@@ -122,6 +122,16 @@ const (
 	TimeNumeric TimeSymbol = iota
 	TimeCommon             // the C glyph, for 4/4
 	TimeCut                // the slashed C, for 2/2
+	// TimeHidden is a meter that is in force and is not drawn.
+	//
+	// The bars are counted in it and nothing says so on the page. It is
+	// how a score with staves in different meters is written down — the
+	// bars have to be some length, and the length is not what any one
+	// staff is printed in — and it is what Dorico writes for the 3/4 that
+	// makes Bach's Jesu, joy align against the 9/8 of the first violin.
+	// Drawn, that 3/4 appears at the second bar of the piece and reads as
+	// a change of meter nobody wrote.
+	TimeHidden
 )
 
 // TimeSignature is the meter. Beats over BeatValue, as in 6 over 8.

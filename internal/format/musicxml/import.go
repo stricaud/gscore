@@ -584,6 +584,11 @@ func convertTime(t *time, lg *log) model.TimeSignature {
 	default:
 		out.Symbol = model.TimeNumeric
 	}
+	// A meter the file says is not printed is in force all the same: the
+	// bars are counted in it and nothing is drawn.
+	if strings.EqualFold(t.PrintObject, "no") {
+		out.Symbol = model.TimeHidden
+	}
 	return out
 }
 

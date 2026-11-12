@@ -149,3 +149,22 @@ func TestATabStaffIsStillRuledPerString(t *testing.T) {
 		t.Errorf("a six-string tab has %d lines", got)
 	}
 }
+
+func TestAPercussionStaffIsInNoKey(t *testing.T) {
+	// Its lines stand for instruments and not for pitches, so there is
+	// nothing a signature could alter and the books write none. A file
+	// can carry one anyway — a NoteWorthy score writes its drums on
+	// ordinary staves with the key of the piece on them — and a flat over
+	// the bongos is what comes out.
+	if got := keyAccidentalSteps(model.Percussion, -1); len(got) != 0 {
+		t.Errorf("a percussion staff was given %d accidentals", len(got))
+	}
+	if got := keyAccidentalSteps(model.Percussion, 4); len(got) != 0 {
+		t.Errorf("a percussion staff was given %d accidentals", len(got))
+	}
+	// And an ordinary staff still has its key.
+	if got := keyAccidentalSteps(model.Treble, -1); len(got) != 1 {
+		t.Errorf("a treble staff in one flat was given %d accidentals",
+			len(got))
+	}
+}

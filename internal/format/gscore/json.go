@@ -499,6 +499,7 @@ var barValues = invert(barNames)
 
 var timeSymNames = map[model.TimeSymbol]string{
 	model.TimeNumeric: "", model.TimeCommon: "common", model.TimeCut: "cut",
+	model.TimeHidden: "hidden",
 }
 var timeSymValues = invert(timeSymNames)
 

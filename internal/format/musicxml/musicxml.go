@@ -205,6 +205,11 @@ type time struct {
 	// meters. No number means the whole part.
 	Number int    `xml:"number,attr,omitempty"`
 	Symbol string `xml:"symbol,attr,omitempty"`
+	// PrintObject is "no" for a meter that is in force and not drawn: the
+	// bars are counted in it and nothing about it reaches the page. It is
+	// how a score whose staves are in different meters keeps its barlines
+	// where they belong.
+	PrintObject string `xml:"print-object,attr,omitempty"`
 	// A string, not a number, because the specification says so and because
 	// files use it: a composite meter is written "3+2", three beats and two
 	// in a bar of five. Read as an int it ended the import of the whole

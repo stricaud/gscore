@@ -727,6 +727,15 @@ type dialect struct {
 	// pagedLyrics says lyrics are stored as the 2.0 block rather than as
 	// the fixed pages 1.7x uses.
 	pagedLyrics bool
+	// endingPad is what a volta bracket carries past its number.
+	//
+	// The record is five bytes in 1.7x — type, two flags, the number, one
+	// more — and eight from 2.0, the three extra being the same trailing
+	// block the wide records carry. Read as five, the three that were left
+	// behind were taken for the start of another object: a pair of clef
+	// changes, which is what put nine staves of a concerto for orchestra
+	// an octave out and walked one of them off the end of its music.
+	endingPad int
 	// keyPad is the bytes a key signature carries past its accidentals.
 	keyPad int
 	// patchHasWords says the instrument patch carries a string in the
@@ -773,6 +782,7 @@ func dialectOf(version int) dialect {
 		d.layerByte, d.braceByte = 28, 21
 	}
 	if version >= 205 {
+		d.endingPad = 3
 		d.headerNames, d.keyPad = 5, 9
 	}
 	return d

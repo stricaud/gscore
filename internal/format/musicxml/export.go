@@ -156,12 +156,22 @@ func buildPart(s *model.Score, p *model.Part, id string, index, divisions int) x
 		switch {
 		case mi == 0:
 			c := clefSigns[p.Clef]
-			xm.add(measureItem{Attributes: &attributes{
+			a := &attributes{
 				Divisions: divisions,
 				Keys:      []key{{Fifths: p.Key.Fifths, Mode: modeNames[p.Key.Mode]}},
 				Times:     []time{*buildTime(p.Time)},
 				Clefs:     []clef{c},
-			}})
+			}
+			// How many lines the staff is ruled with, where it is not the
+			// ordinary five: one for a drum that has no pitch, three for
+			// a percussion desk. Read and never written, so a score of
+			// one-line staves saved back out came in again as a page of
+			// violins.
+			if n := p.StaffLines; n > 0 && n != 5 {
+				lines := n
+				a.Details = []staffDetails{{Lines: &lines}}
+			}
+			xm.add(measureItem{Attributes: a})
 			if index == 0 && s.Tempo.BPM > 0 {
 				d := buildTempo(s.Tempo)
 				xm.add(measureItem{Direction: &d})
@@ -224,6 +234,14 @@ func buildPart(s *model.Score, p *model.Part, id string, index, divisions int) x
 				if d := dynamicOf(el); d != model.DynamicNone {
 					dir := buildDynamic(d)
 					xm.add(measureItem{Direction: &dir})
+				}
+				// And the spans that begin or end here: the hairpin, the
+				// octave line, the pedal. Directions like the rest, so
+				// they stand before the note they are hung on, which is
+				// where a reader looks for them.
+				for _, dir := range buildSpans(marksOf(el)) {
+					d := dir
+					xm.add(measureItem{Direction: &d})
 				}
 				for _, n := range buildElement(el, divisions) {
 					note := n
@@ -311,6 +329,104 @@ func buildWords(t model.TextMark) (direction, bool) {
 	}, true
 }
 
+// marksOf is what is written on an element, or nil for one that carries
+// nothing.
+func marksOf(el model.Element) *model.Marks {
+	switch e := el.(type) {
+	case *model.Note:
+		return &e.Marks
+	case *model.Chord:
+		return &e.Marks
+	case *model.Rest:
+		return &e.Marks
+	}
+	return nil
+}
+
+// buildSpans writes the marks that reach over a stretch of music and are
+// written as directions: the hairpin, the octave line and the pedal.
+//
+// All three were read and never written. A piano score opened in gscore and
+// saved back out as MusicXML came out with no pedalling at all, every
+// crescendo gone, and the 8va passages written where they sound instead of
+// where they are read — which is a different piece on the page.
+//
+// An end before a beginning, where a note carries both: one hairpin closes
+// on the note the next one opens on, and written the other way round the
+// reader pairs them crosswise.
+func buildSpans(m *model.Marks) []direction {
+	if m == nil {
+		return nil
+	}
+	var out []direction
+	span := func(t directionType, below bool) {
+		place := "above"
+		if below {
+			place = "below"
+		}
+		out = append(out, direction{Placement: place, Types: []directionType{t}})
+	}
+	if h := m.Hairpin; h != nil {
+		if h.Stop || h.Alone {
+			span(directionType{Wedge: &wedgeElem{Type: "stop"}}, true)
+		}
+		if h.Start || h.Alone {
+			kind := "crescendo"
+			if h.Kind == model.Diminuendo {
+				kind = "diminuendo"
+			}
+			span(directionType{Wedge: &wedgeElem{Type: kind}}, true)
+		}
+	}
+	if o := m.Octave; o != nil {
+		if o.Stop {
+			span(directionType{OctaveShift: &octaveShiftElem{Type: "stop",
+				Size: octaveSize(o.Amount)}}, o.Amount < 0)
+		}
+		if o.Start {
+			// "down" is the sign written above the staff: the notes are
+			// written an octave lower than they sound. See convertOctave.
+			kind := "down"
+			if o.Amount < 0 {
+				kind = "up"
+			}
+			span(directionType{OctaveShift: &octaveShiftElem{Type: kind,
+				Size: octaveSize(o.Amount)}}, o.Amount < 0)
+		}
+	}
+	if p := m.Pedal; p != nil {
+		line := "yes"
+		if p.Text {
+			line = "no"
+		}
+		if p.Stop {
+			span(directionType{Pedal: &pedalElem{Type: "stop", Line: line}}, true)
+		}
+		if p.Change {
+			span(directionType{Pedal: &pedalElem{Type: "change", Line: line}}, true)
+		}
+		if p.Start {
+			span(directionType{Pedal: &pedalElem{Type: "start", Line: line}}, true)
+		}
+	}
+	return out
+}
+
+// octaveSize is the number of notes an octave shift is written as: 8 for
+// one octave, 15 for two, 22 for three.
+func octaveSize(amount int) int {
+	if amount < 0 {
+		amount = -amount
+	}
+	switch amount {
+	case 2:
+		return 15
+	case 3:
+		return 22
+	}
+	return 8
+}
+
 func buildDynamic(d model.Dynamic) direction {
 	dyn := &dynamics{}
 	dyn.set(d)
@@ -328,6 +444,8 @@ func buildTime(t model.TimeSignature) *time {
 		out.Symbol = "common"
 	case model.TimeCut:
 		out.Symbol = "cut"
+	case model.TimeHidden:
+		out.PrintObject = "no"
 	}
 	return out
 }
@@ -445,12 +563,18 @@ func applyMarks(out *xmlNote, m *model.Marks) {
 		notations.Tied = append(notations.Tied, tieElem{Type: "start"})
 		used = true
 	}
-	if m.SlurStop > 0 {
-		notations.Slurs = append(notations.Slurs, slurElem{Type: "stop", Number: 1})
+	// One for each, not one at all: two phrases can close on the same
+	// note — a long slur over a line and a short one over the figure that
+	// ends it — and written as a single curve the shorter of the two is
+	// gone.
+	for i := 0; i < m.SlurStop; i++ {
+		notations.Slurs = append(notations.Slurs,
+			slurElem{Type: "stop", Number: i + 1})
 		used = true
 	}
-	if m.SlurStart > 0 {
-		notations.Slurs = append(notations.Slurs, slurElem{Type: "start", Number: 1})
+	for i := 0; i < m.SlurStart; i++ {
+		notations.Slurs = append(notations.Slurs,
+			slurElem{Type: "start", Number: i + 1})
 		used = true
 	}
 
@@ -510,6 +634,70 @@ func applyMarks(out *xmlNote, m *model.Marks) {
 	if anyArt {
 		notations.Articulations = &arts
 		used = true
+	}
+	// The ornaments: the turn and the mordents, which gscore keeps among
+	// the articulations because that is where they are placed, and the
+	// trill, which can last and is a span of its own.
+	var orn ornaments
+	anyOrn := false
+	for _, a := range m.Articulations {
+		switch a {
+		case model.Turn:
+			orn.Turn = &empty{}
+			anyOrn = true
+		case model.TurnInverted:
+			orn.TurnInv = &empty{}
+			anyOrn = true
+		case model.Mordent:
+			orn.Mordent = &empty{}
+			anyOrn = true
+		case model.ShortTrill:
+			// The upper mordent, the pralltriller: the specification
+			// calls it the inverted mordent.
+			orn.MordInv = &empty{}
+			anyOrn = true
+		}
+	}
+	if t := m.Trill; t != nil {
+		if t.Start {
+			orn.Trill = &empty{}
+			anyOrn = true
+		}
+		// The wavy line that carries it on, where it lasts past the note
+		// it begins on.
+		if t.Start && !t.Stop {
+			orn.WavyLine = append(orn.WavyLine, spanElem{Type: "start"})
+			anyOrn = true
+		}
+		if t.Stop && !t.Start {
+			orn.WavyLine = append(orn.WavyLine, spanElem{Type: "stop"})
+			anyOrn = true
+		}
+	}
+	if anyOrn {
+		notations.Ornaments = &orn
+		used = true
+	}
+	// The wavy stroke up a chord that says to spread it.
+	if a := m.Arpeggio; a != nil {
+		dir := ""
+		if a.Down {
+			dir = "down"
+		}
+		notations.Arpeggiate = &arpeggiateElem{Direction: dir}
+		used = true
+	}
+	// And the slide from this note to the next.
+	if g := m.Glissando; g != nil {
+		if g.Start {
+			notations.Glissando = append(notations.Glissando,
+				glissElem{Type: "start", Number: 1, Text: g.Text})
+		}
+		if g.Stop {
+			notations.Glissando = append(notations.Glissando,
+				glissElem{Type: "stop", Number: 1})
+		}
+		used = used || g.Start || g.Stop
 	}
 	if used {
 		out.Notations = &notations

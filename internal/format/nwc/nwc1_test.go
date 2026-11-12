@@ -2332,7 +2332,8 @@ func TestTheFontTableNeedNotEndInTheMarker(t *testing.T) {
 // came out as six staves up the page, four of them the same music again.
 func TestAStaffThatIsOnlyPlayedIsNotDrawn(t *testing.T) {
 	read, play := &model.Part{Name: "Right Hand"}, &model.Part{Name: "RH Interpretation"}
-	hidePlayOnly([]*model.Part{read, play}, map[*model.Part]bool{read: true})
+	hidePlayOnly([]*model.Part{read, play},
+		map[*model.Part]bool{read: true}, false)
 	if read.Hidden {
 		t.Errorf("the printed staff was taken off the page")
 	}
@@ -2343,9 +2344,20 @@ func TestAStaffThatIsOnlyPlayedIsNotDrawn(t *testing.T) {
 	// Most files leave the byte alone on every staff, and a file that has
 	// never said which staves to print is not one with nothing on its page.
 	a, b := &model.Part{Name: "Right Hand"}, &model.Part{Name: "Left Hand"}
-	hidePlayOnly([]*model.Part{a, b}, map[*model.Part]bool{})
+	hidePlayOnly([]*model.Part{a, b}, map[*model.Part]bool{}, false)
 	if a.Hidden || b.Hidden {
 		t.Errorf("a file that claims nothing had its staves hidden")
+	}
+
+	// And where the file has named the staves it keeps off the page, that
+	// is the answer and the byte is not asked: it says the staff is muted,
+	// and a score whose triangle is muted because a hidden staff sounds
+	// for it is not a score with one staff on its page.
+	loud, quiet := &model.Part{Name: "Flutes"}, &model.Part{Name: "Triangle"}
+	hidePlayOnly([]*model.Part{loud, quiet},
+		map[*model.Part]bool{quiet: true}, true)
+	if loud.Hidden || quiet.Hidden {
+		t.Errorf("a muted staff took the rest of the orchestra off the page")
 	}
 
 	// 1.70 writes something in that byte too and what it means is not
@@ -2409,5 +2421,44 @@ func TestTheSameGroupNameTwiceIsOneGroup(t *testing.T) {
 		map[*model.Part]int{rh: 1, lh: 1})
 	if len(got) != 1 || got[0].Symbol != model.GroupBrace || !got[0].Barlines {
 		t.Errorf("a grand staff named on both its staves came out as %v", got)
+	}
+}
+
+// A volta bracket is longer in 2.5 than the versions before it.
+//
+// The record is five bytes in 1.7x — the type, two flags, the number and one
+// more — and eight from 2.5, the extra three being the trailing block the
+// wide records carry. Read as five, the three left behind were taken for the
+// start of another object, and what they made was a pair of clef changes:
+// nine staves of a concerto for orchestra came out an octave from where they
+// are written, and one of them walked off the end of its music halfway down.
+func TestAVoltaBracketIsLongerIn25(t *testing.T) {
+	if got := dialectOf(205).endingPad; got != 3 {
+		t.Errorf("2.5 reads %d bytes past the volta's number, want 3", got)
+	}
+	if got := dialectOf(175).endingPad; got != 0 {
+		t.Errorf("1.75 reads %d bytes past the volta's number, want none", got)
+	}
+	if got := dialectOf(200).endingPad; got != 0 {
+		t.Errorf("2.0 reads %d bytes past the volta's number, want none", got)
+	}
+}
+
+// The fifth clef in NoteWorthy's list is the percussion clef.
+//
+// Left out of the table it was read as no clef at all, so every drum staff
+// came out in the treble with a key signature over it.
+func TestThePercussionClefIsRead(t *testing.T) {
+	if got, ok := nwc1Clefs[4]; !ok || got != model.Percussion {
+		t.Errorf("clef 4 is %v (%v), want the percussion clef", got, ok)
+	}
+}
+
+// A staff ruled with fewer than five lines says so in its settings.
+func TestADrumStaffKeepsItsLineCount(t *testing.T) {
+	for n, want := range map[int]int{0: 0, 1: 1, 3: 3, 4: 4, 5: 0, 9: 0} {
+		if got := drumLines(n); got != want {
+			t.Errorf("a staff of %d lines was kept as %d, want %d", n, got, want)
+		}
 	}
 }

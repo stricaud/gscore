@@ -60,6 +60,11 @@ type walker struct {
 	octaveShifts int
 	// sounds is the instrument the staff just read plays through, or -1.
 	sounds int
+	// saidHidden is any staff in this file saying in words that it is one
+	// of the ones kept off the page: see hidePlayOnly.
+	saidHidden bool
+	// lines is how many lines the staff just read is ruled with.
+	lines int
 	// layerWithNext is the staff just read asking to be printed on the
 	// same staff as the one after it. It lives here rather than on the
 	// part because it is a thing about the file, not about the music: once
@@ -751,7 +756,7 @@ func parseNWC1(raw []byte, version int) (*model.Score, error) {
 			printed[part] = true
 		}
 	}
-	hidePlayOnly(score.Parts, printed)
+	hidePlayOnly(score.Parts, printed, w.saidHidden)
 	score.Parts, groups = mergeLayers(score.Parts, shares, groups)
 	// Again, now the layers are one staff. A spanner is held open per line
 	// while drawing, and merging moves lines about: one closed on its own
@@ -964,6 +969,25 @@ func (w *walker) staff(version int) (*model.Part, error) {
 	// throughout — everything in them is printed — and a file that never
 	// says which staves are printed is not saying that none of them are.
 	w.printed = d.printedFlag && settings+1 < len(w.b) && w.b[settings+1] == 1
+	if layer == "Hidden" || w.group == "Hidden" {
+		// The file has said which staves it keeps off the page, in words,
+		// and that settles it for the whole score: see hidePlayOnly.
+		w.saidHidden = true
+	}
+
+	// How many lines the staff is ruled with.
+	//
+	// The byte before the layering flag, which is where the measurements
+	// in dialect put it. A percussion staff is written on one line, or on
+	// three where a player has three things in front of them, and read as
+	// five every drum in the score came out on a stave of pitches: this
+	// one has a triangle, a pair of bongos and two percussion desks on
+	// one and three lines, all of them drawn as if they were violins.
+	if d.layerByte > 1 && settings+d.layerByte-1 < len(w.b) {
+		w.lines = int(w.b[settings+d.layerByte-1])
+	} else {
+		w.lines = 0
+	}
 
 	// And whether the staff is half of a grand staff, which is the one
 	// thing that says to brace it when the file files every staff under
@@ -1033,9 +1057,14 @@ func (w *walker) staff(version int) (*model.Part, error) {
 		// that are printed. 1.70 has no flag this reader trusts, so the
 		// name is all there is.
 		Hidden: layer == "Hidden" || w.group == "Hidden",
-		Clef:   model.Treble,
-		Key:    model.KeySignature{Fifths: 0, Mode: model.Major},
-		Time:   model.TimeSignature{Beats: 4, BeatValue: 4, Symbol: model.TimeNumeric},
+		// Five is the ordinary staff and is left unsaid; anything else is
+		// the file asking for a drum staff. A count this reader does not
+		// believe — a version whose settings have not been measured gives
+		// zero — is left alone as well.
+		StaffLines: drumLines(w.lines),
+		Clef:       model.Treble,
+		Key:        model.KeySignature{Fifths: 0, Mode: model.Major},
+		Time:       model.TimeSignature{Beats: 4, BeatValue: 4, Symbol: model.TimeNumeric},
 	}
 	// What the file says the staff sounds as.
 	//
@@ -1587,8 +1616,14 @@ func (s *staffState) pitch(step int, acc model.Accidental) model.Pitch {
 	return p
 }
 
+// nwc1Clefs is NoteWorthy's own list, in its own order. The fifth is the
+// percussion clef — the pair of thick strokes a drummer reads, where a line
+// stands for an instrument and not for a pitch — and left out of this table
+// it was read as no clef at all, so every drum staff in a score came out in
+// the treble, with a key signature over it.
 var nwc1Clefs = map[int]model.Clef{
 	0: model.Treble, 1: model.Bass, 2: model.Alto, 3: model.Tenor,
+	4: model.Percussion,
 }
 
 // nwc1Dynamics follows the ladder nwc1.posa enumerates for object type 7.
@@ -1798,7 +1833,7 @@ func (w *walker) objectBody(st *staffState) error {
 		if err != nil {
 			return err
 		}
-		if err := w.skip(1); err != nil {
+		if err := w.skip(1 + w.dia().endingPad); err != nil {
 			return err
 		}
 		if n >= 1 && n <= 8 {
@@ -2811,7 +2846,25 @@ func mergeLayers(parts []*model.Part, shares []bool, groups []string) ([]*model.
 // it: where no staff says it is printed, every staff is, because a file that
 // has never been told which staves to print is not a file with nothing on
 // its page.
-func hidePlayOnly(parts []*model.Part, printed map[*model.Part]bool) {
+func hidePlayOnly(parts []*model.Part, printed map[*model.Part]bool,
+	saidHidden bool) {
+
+	// Where the file has named the staves it keeps off the page — a layer
+	// or a group called "Hidden" — that is the answer, and this flag is
+	// not asked. It is not the same question: the byte says the staff is
+	// muted, which in a file written as a playing half and a printed half
+	// is true of exactly the printed staves, and in a score that simply
+	// has a few staves silenced is true of those few.
+	//
+	// A concerto for orchestra was the file that said so. Its triangle,
+	// its two percussion desks and its chord staff are muted, because what
+	// sounds for them is a set of hidden staves underneath; every other
+	// staff in the orchestra plays. Read as "only the muted ones are
+	// printed", twenty-six staves of a thirty-stave score came off the
+	// page and what was left was a triangle and two drums.
+	if saidHidden {
+		return
+	}
 	any := false
 	for _, p := range parts {
 		if printed[p] {
@@ -2830,6 +2883,15 @@ func hidePlayOnly(parts []*model.Part, printed map[*model.Part]bool) {
 			p.Hidden = true
 		}
 	}
+}
+
+// drumLines is the line count to keep for a staff, where it is not the
+// ordinary five.
+func drumLines(n int) int {
+	if n < 1 || n > 4 {
+		return 0
+	}
+	return n
 }
 
 // nwcDefaultGroup is the name NoteWorthy files carry when nobody has filed

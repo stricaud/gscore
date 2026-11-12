@@ -30,7 +30,7 @@ suite/03e-Rhythm-No-Divisions.musicxml d15f880bbc29f364 13
 suite/03e-Rhythm-SecondaryBeamBreaks.musicxml 50805d432f7765d9 85
 suite/03f-Rhythm-Forward.musicxml e178c5e40d312d30 21
 suite/11a-TimeSignatures.musicxml 4e0f6ba035cea878 71
-suite/11b-TimeSignatures-NoTime.musicxml ae900f74cab64286 43
+suite/11b-TimeSignatures-NoTime.musicxml 7f2c5a43cb856f97 37
 suite/11c-TimeSignatures-Complex.musicxml ba9fd8fcda584bb1 38
 suite/11c-TimeSignatures-CompoundSimple.musicxml ba9fd8fcda584bb1 38
 suite/11d-TimeSignatures-ComplexMultiple.musicxml 586743a2b3bfec43 40
@@ -101,7 +101,7 @@ suite/33i-Ties-NotEnded.musicxml 769ec2c063ffd4d6 27
 suite/33j-Beams-Tremolos.musicxml 884665f7d6f0a131 69
 suite/33k-Tie-Types.musicxml 5eb63e483886f5b0 63
 suite/34a-Print-Object-Spanners.musicxml e461b0d5f64c8180 164
-suite/34b-Colors.musicxml 554ecb649d5118fb 298
+suite/34b-Colors.musicxml b23c840ee486fdda 298
 suite/34c-Font-Size.musicxml 17d19143208f0f57 170
 suite/34d-Note-Attributes.musicxml bfd944a4f0e17b9c 91
 suite/41a-MultiParts-Partorder.musicxml 0a41d2450719365f 59

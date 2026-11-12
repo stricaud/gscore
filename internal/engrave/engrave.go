@@ -2679,6 +2679,20 @@ func (e *engraver) prefixWidth(p *model.Part, at int) float64 {
 	return w + sp.AfterTimeSignature
 }
 
+// meterWidth is how far drawing a meter advances: the figures or the symbol,
+// and the air after them. Nothing for one that is not drawn.
+func (e *engraver) meterWidth(t model.TimeSignature) float64 {
+	if !meterShown(t) {
+		return 0
+	}
+	sp := e.opt.Spacings
+	num, den, sym := smufl.TimeSignatureGlyphs(t)
+	if sym != "" {
+		return smufl.Advance(sym) + sp.AfterTimeSignature
+	}
+	return math.Max(glyphRunWidth(num), glyphRunWidth(den)) + sp.AfterTimeSignature
+}
+
 // meterShown says whether a meter is drawn where it takes effect.
 //
 // A hidden one is not: it is in force, the bars are counted in it, and
@@ -3698,15 +3712,29 @@ func (e *engraver) drawSystem(parts []*model.Part, boxes [][]measureBox,
 		// A new staff, so the outline kept for the last one is of no use.
 		e.staffSky, e.staffInk, e.staffMusic = nil, nil, nil
 		staffTops = append(staffTops, e.y)
-		// Each staff's clef starts far enough right that its own key and
-		// meter end where everybody else's do, so a staff in C major and one
-		// in five sharps begin their music in the same column.
+		// Every clef stands at the same left edge, its key after it, and
+		// the meter against the right edge of the column the music starts
+		// in. The widest head among the staves sets that column, and the
+		// room a staff in C major does not need for sharps is left between
+		// its key and its meter — not in front of its clef, which is where
+		// it was: each staff began far enough right for its own key and
+		// meter to end in the column, so beside a bassoon in three sharps
+		// the horn's clef floated a key signature's width in from the
+		// margin. A reader's eye goes down the clefs, and they are a
+		// column too.
 		//
 		// prefix already counts the names and the bracket. Adding lead here
 		// as well pushed every staff's clef, key and meter one name-width too
 		// far right — past the column the music starts in, so the first note
 		// was printed over them.
-		px := sp.Margin + prefix - carried - e.prefixWidth(p, start) + sp.ClefBefore
+		widest := 0.0
+		for _, q := range parts {
+			if w := e.prefixWidth(q, start); w > widest {
+				widest = w
+			}
+		}
+		column := sp.Margin + prefix - carried
+		px := column - widest + sp.ClefBefore
 		// Each of the three is recorded as it is drawn, so that clicking one
 		// changes the thing it is: the clef, the key or the meter.
 		header := func(kind string, x0, x1 float64) {
@@ -3736,6 +3764,13 @@ func (e *engraver) drawSystem(parts []*model.Part, boxes [][]measureBox,
 			header("key", was, px-sp.AfterKeySignature/2)
 		}
 		if meterAt(p, start) {
+			// Against the right edge of the column, whatever the clef and
+			// key in front of it took.
+			if !e.opt.HideTimeSignature {
+				if at := column - e.meterWidth(p.TimeAt(start)); at > px {
+					px = at
+				}
+			}
 			was = px
 			px = e.drawTimeSignature(p, p.TimeAt(start), px)
 			header("time", was, px-sp.AfterTimeSignature/2)

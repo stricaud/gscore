@@ -492,6 +492,7 @@ var modeValues = invert(modeNames)
 
 var barNames = map[model.BarlineStyle]string{
 	model.BarSingle: "single", model.BarDouble: "double", model.BarFinal: "final",
+	model.BarHeavyLight:  "heavy-light",
 	model.BarRepeatStart: "repeat-start", model.BarRepeatEnd: "repeat-end",
 	model.BarRepeatBoth: "repeat-both", model.BarNone: "none",
 }

@@ -726,6 +726,8 @@ func convertBarline(b *barline) model.BarlineStyle {
 		return model.BarDouble
 	case "light-heavy":
 		return model.BarFinal
+	case "heavy-light":
+		return model.BarHeavyLight
 	case "none":
 		return model.BarNone
 	}

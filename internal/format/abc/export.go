@@ -640,6 +640,8 @@ func barlineText(s model.BarlineStyle) string {
 		return "||"
 	case model.BarFinal:
 		return "|]"
+	case model.BarHeavyLight:
+		return "[|"
 	case model.BarRepeatStart:
 		return "|:"
 	case model.BarRepeatEnd:

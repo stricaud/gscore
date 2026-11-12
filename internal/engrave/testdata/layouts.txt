@@ -143,7 +143,7 @@ suite/45h-Repeats-Partial.musicxml cc373f5a8766a5e2 27
 suite/45i-Repeats-Nested.musicxml a0d8129e807f47e4 37
 suite/45j-SimpleRepeat-Start.musicxml d6492c2bf3032aaa 17
 suite/45k-Repeats-Chords-FiguredBass.musicxml 279dbba059ba4491 23
-suite/46a-Barlines.musicxml 761ed1fd700a88a3 36
+suite/46a-Barlines.musicxml 2f397e676dbdfc96 37
 suite/46b-MidmeasureBarline.musicxml 8e840b163857d84f 19
 suite/46c-Midmeasure-Clef.musicxml 376602c4fd3ff60c 34
 suite/46d-PickupMeasure-ImplicitMeasures.musicxml d53e5175ae427771 31

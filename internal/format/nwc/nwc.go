@@ -203,7 +203,7 @@ var barStyles = map[string]model.BarlineStyle{
 	"":                  model.BarSingle,
 	"Single":            model.BarSingle,
 	"Double":            model.BarDouble,
-	"SectionOpen":       model.BarDouble,
+	"SectionOpen":       model.BarHeavyLight,
 	"SectionClose":      model.BarFinal,
 	"MasterRepeatOpen":  model.BarRepeatStart,
 	"MasterRepeatClose": model.BarRepeatEnd,

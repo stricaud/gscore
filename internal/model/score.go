@@ -216,10 +216,19 @@ const (
 	BarRepeatEnd
 	BarRepeatBoth
 	BarNone
+	// BarHeavyLight is the final barline the other way round: a heavy
+	// stroke and then a thin one. It opens rather than closes — the first
+	// bar of a piece after its introduction, the head of a new section —
+	// and is the mirror of the sign at the end, which is why the books
+	// call the pair of them opening and closing double bars. MusicXML
+	// names it heavy-light, and NoteWorthy and ABC both have it: a score
+	// read from either had its openings drawn as ordinary double bars.
+	BarHeavyLight
 )
 
 var barlineNames = [...]string{
 	"single", "double", "final", "repeat-start", "repeat-end", "repeat-both", "none",
+	"heavy-light",
 }
 
 func (b BarlineStyle) String() string {

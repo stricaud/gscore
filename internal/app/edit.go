@@ -747,6 +747,7 @@ func pitchForStep(c model.Clef, step int) model.Pitch {
 
 var barlineByName = map[string]model.BarlineStyle{
 	"single": model.BarSingle, "double": model.BarDouble, "final": model.BarFinal,
+	"heavy-light": model.BarHeavyLight, "opening": model.BarHeavyLight,
 	"repeat-start": model.BarRepeatStart, "repeat-end": model.BarRepeatEnd,
 	"repeat-both": model.BarRepeatBoth, "none": model.BarNone,
 }

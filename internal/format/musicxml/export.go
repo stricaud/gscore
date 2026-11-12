@@ -728,6 +728,8 @@ func buildBarline(style model.BarlineStyle) *barline {
 	switch style {
 	case model.BarDouble:
 		return &barline{Location: "right", BarStyle: "light-light"}
+	case model.BarHeavyLight:
+		return &barline{Location: "right", BarStyle: "heavy-light"}
 	case model.BarFinal:
 		return &barline{Location: "right", BarStyle: "light-heavy"}
 	case model.BarNone:

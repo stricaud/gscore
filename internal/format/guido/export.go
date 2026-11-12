@@ -370,7 +370,8 @@ func (e *writer) attributes(m *model.Measure) {
 // and the dots where it stands.
 func (e *writer) barline(m *model.Measure, last bool) {
 	switch m.RightBarline {
-	case model.BarDouble:
+	case model.BarDouble, model.BarHeavyLight:
+		// GUIDO has no heavy-light bar; the double is the nearest thing.
 		e.p("\\doubleBar")
 	case model.BarFinal:
 		e.p("\\endBar")

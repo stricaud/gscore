@@ -4187,7 +4187,7 @@ func barlineStrokes(d smufl.EngravingDefaults, style model.BarlineStyle) []barSt
 		return []barStroke{{0, thin}, {d.BarlineSeparation, thin}}
 	case model.BarFinal, model.BarRepeatEnd:
 		return []barStroke{{0, thin}, {after, thick}}
-	case model.BarRepeatStart:
+	case model.BarRepeatStart, model.BarHeavyLight:
 		return []barStroke{{0, thick}, {after, thin}}
 	case model.BarRepeatBoth:
 		// One repeat closing where the next opens: the dots of the one
@@ -4217,7 +4217,7 @@ func (e *engraver) barlineRoom(style model.BarlineStyle) (left, right float64) {
 	switch style {
 	case model.BarDouble:
 		return 0, d.BarlineSeparation
-	case model.BarFinal:
+	case model.BarFinal, model.BarHeavyLight:
 		return 0, heavy
 	case model.BarRepeatEnd:
 		// The dots come before the line, so the room is on the left.

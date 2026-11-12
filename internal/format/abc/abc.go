@@ -2228,7 +2228,7 @@ var barlineTokens = []struct {
 	{":|", model.BarRepeatEnd},
 	{"|:", model.BarRepeatStart},
 	{"|]", model.BarFinal},
-	{"[|", model.BarFinal},
+	{"[|", model.BarHeavyLight},
 	{"||", model.BarDouble},
 	{"|", model.BarSingle},
 }

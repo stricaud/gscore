@@ -13,7 +13,6 @@ package nwc
 import (
 	"encoding/binary"
 	"fmt"
-	"os"
 	"strings"
 
 	"github.com/stricaud/gscore/internal/model"
@@ -1016,10 +1015,6 @@ func (w *walker) staff(version int) (*model.Part, error) {
 	// And whether the staff is half of a grand staff, which is the one
 	// thing that says to brace it when the file files every staff under
 	// NoteWorthy's default group and so names no group at all.
-	if os.Getenv("BRDBG") != "" {
-		fmt.Fprintf(os.Stderr, "BR v%d %q byte=%d\n", version, name,
-			int(w.b[settings+d.braceByte]))
-	}
 	w.brace = braceNone
 	if d.braceByte > 0 && settings+d.braceByte < len(w.b) {
 		w.brace = int(w.b[settings+d.braceByte])
@@ -1662,7 +1657,10 @@ var nwc1Dynamics = map[byte]model.Dynamic{
 
 var nwc1Barlines = map[byte]model.BarlineStyle{
 	0: model.BarSingle, 1: model.BarDouble,
-	4: model.BarDouble, 5: model.BarFinal,
+	// 4 is SectionOpen, the heavy stroke and then the thin one that opens
+	// a section; 5 is SectionClose, the same the other way round. The
+	// first was read as an ordinary double bar.
+	4: model.BarHeavyLight, 5: model.BarFinal,
 	6: model.BarRepeatStart, 7: model.BarRepeatEnd,
 	8: model.BarRepeatStart, 9: model.BarRepeatEnd,
 }
@@ -2952,6 +2950,7 @@ func staffGroups(parts []*model.Part, groups, sections []string,
 	if len(groups) != len(parts) {
 		return nil
 	}
+	_ = sections
 	var out []model.StaffGroup
 	name, first := "", -1
 	flush := func(last int) {
@@ -3002,57 +3001,126 @@ func staffGroups(parts []*model.Part, groups, sections []string,
 		}
 	}
 	flush(len(parts) - 1)
-	out = append(out, grandStaves(parts, braces, out)...)
-	return append(out, sectionBrackets(parts, sections)...)
+	// What the staves themselves say about being joined comes first: it is
+	// the file's own answer, drawn from the setting NoteWorthy's grouping
+	// box writes, and a name shared down a family is only a guess at the
+	// same question.
+	settings := settingGroups(parts, groups, braces)
+	out = append(settings, keepClear(out, settings)...)
+	return append(out, grandStaves(parts, braces, out)...)
 }
 
-// sectionBrackets draws the line down the side of a family.
+// The grouping a 2.5 staff carries in its own settings.
 //
-// From 2.5 a staff says which section of the score it belongs to — the
-// concerto for orchestra files its staves under "Maderas", "Metales",
-// "Percusión", "Teclas" and "Arcos" — and NoteWorthy brackets each of them
-// on the page. gscore read the name, used it to find the staves kept off
-// the page, and drew nothing: thirty staves in one undifferentiated stack
-// where the file says which four are the woodwind.
+// NoteWorthy asks each staff whether it is joined to the one after it and
+// how, and writes the answer as one byte: bit three says joined, and the two
+// under it say with what. The run ends at the first staff that does not
+// claim the next.
 //
-// Outside whatever is already there. A bracket round the family and a brace
-// round the two staves of the marimba inside it is what the page has, and
-// the engraver gives each group its own column, so the two do not collide.
+// It is the file's own answer and it beats every guess made from the names.
+// The concerto for orchestra files its horns under "Metales" with the
+// trumpets and trombones, and NoteWorthy draws them as a braced pair of
+// their own, outside the bracket round the rest of the brass — which is
+// what the horns are, and what no reading of the word "Metales" could say.
+// Its marimba and its piano are two braced pairs with nothing round them,
+// where the family name would have bracketed the four together.
+const (
+	// groupWithNext is the bit that says this staff and the next are drawn
+	// as one group.
+	groupWithNext = 4
+	// groupKind is what is drawn down the side of it.
+	groupKind = 3
+)
+
+// settingGroups turns those answers into the brackets and braces drawn down
+// the left of the staves.
 //
-// No name beside it, because NoteWorthy prints none: the bracket says the
-// staves belong together and the names of the players say the rest.
-func sectionBrackets(parts []*model.Part, sections []string) []model.StaffGroup {
-	if len(sections) != len(parts) {
-		return nil
-	}
+// labels name a group where the file writes the name on its first staff and
+// leaves the rest blank, which is how a grand staff is written. Where every
+// staff in the run carries its own name — the four woodwinds of an
+// orchestral score — the bracket is drawn without a word, because each staff
+// is already named beside it.
+func settingGroups(parts []*model.Part, labels []string,
+	braces map[*model.Part]int) []model.StaffGroup {
+
 	var out []model.StaffGroup
-	name, first := "", -1
-	flush := func(last int) {
-		if first >= 0 && last > first {
-			out = append(out, model.StaffGroup{
-				First: first, Last: last, Symbol: model.GroupBracket,
-			})
-		}
-		name, first = "", -1
-	}
-	for i, p := range parts {
-		sec := sections[i]
-		// A staff that is not drawn is not in the bracket, and does not
-		// hold one open across the staves that are. Nor is the default
-		// group, which is the name a staff carries when nobody has filed
-		// it anywhere, or the one the composer files the sounding staves
-		// under.
-		if p.Hidden || sec == "" || sec == nwcDefaultGroup || sec == "Hidden" {
-			flush(i - 1)
+	for i := 0; i < len(parts); i++ {
+		first := braces[parts[i]]
+		if first&groupWithNext == 0 {
 			continue
 		}
-		if sec == name && first >= 0 {
-			continue
+		last := i
+		for last+1 < len(parts) && braces[parts[last]]&groupWithNext != 0 {
+			last++
 		}
-		flush(i - 1)
-		name, first = sec, i
+		// Only the staves that are drawn. A sounding staff kept off the
+		// page is not in the bracket, and a pair whose other half is
+		// hidden is one staff, which nothing is drawn round.
+		shown := 0
+		for j := i; j <= last; j++ {
+			if !parts[j].Hidden {
+				shown++
+			}
+		}
+		if shown >= 2 {
+			g := model.StaffGroup{First: i, Last: last}
+			switch first & groupKind {
+			case 2:
+				g.Symbol, g.Barlines = model.GroupBrace, true
+			case 3:
+				// Joined and nothing drawn but the line: NoteWorthy's
+				// plain "group with the next staff".
+				g.Symbol, g.Barlines = model.GroupLine, true
+			default:
+				g.Symbol = model.GroupBracket
+			}
+			if len(labels) == len(parts) {
+				g.Name = groupName(labels, i, last)
+			}
+			out = append(out, g)
+		}
+		i = last
 	}
-	flush(len(parts) - 1)
+	return out
+}
+
+// groupName is the word printed beside a group, where the file writes one.
+//
+// The name on the first staff of the run, and only where the others have
+// none of their own: "Piano" on the right hand and nothing on the left is a
+// pair called Piano, while "Flautas", "Oboes", "Cls. en Bb" is four staves
+// that are each already named.
+func groupName(labels []string, first, last int) string {
+	if strings.TrimSpace(labels[first]) == "" {
+		return ""
+	}
+	for i := first + 1; i <= last && i < len(labels); i++ {
+		if strings.TrimSpace(labels[i]) != "" {
+			return ""
+		}
+	}
+	return labels[first]
+}
+
+// keepClear drops the groups that cover staves another group already has.
+//
+// Two brackets down one run of staves is a page nobody can read, and the
+// one to keep is the one the file was most sure about: what the staves
+// themselves say, rather than what their names suggest.
+func keepClear(want, have []model.StaffGroup) []model.StaffGroup {
+	var out []model.StaffGroup
+	for _, g := range want {
+		clash := false
+		for _, h := range have {
+			if g.First <= h.Last && h.First <= g.Last {
+				clash = true
+				break
+			}
+		}
+		if !clash {
+			out = append(out, g)
+		}
+	}
 	return out
 }
 

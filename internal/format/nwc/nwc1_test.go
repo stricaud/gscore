@@ -2510,3 +2510,116 @@ func TestStavesAreGroupedTheWayTheirSettingsSay(t *testing.T) {
 		t.Errorf("a bracket was drawn round a single visible staff: %v", got)
 	}
 }
+
+// A 1.75 note or rest as the file writes it: eleven bytes, with the slur
+// in the ninth and the staff position in the tenth.
+func note175(kind, dur, slur byte, pos int8) []byte {
+	return []byte{kind, 0, 0, dur, 0, 0x21, 0, 0, slur, byte(pos), 0x05}
+}
+
+// walk175 reads a stream of 1.75 objects onto one staff in the meter given.
+func walk175(t *testing.T, beats, unit int, objects ...[]byte) *model.Part {
+	t.Helper()
+	var b []byte
+	for _, o := range objects {
+		b = append(b, o...)
+	}
+	part := &model.Part{Clef: model.Treble,
+		Time: model.TimeSignature{Beats: beats, BeatValue: unit}}
+	st := &staffState{part: part,
+		time: model.TimeSignature{Beats: beats, BeatValue: unit}}
+	w := &walker{b: b, version: 175}
+	for i := 0; i < len(objects); i++ {
+		if err := w.object(st); err != nil {
+			t.Fatalf("object %d: %v", i+1, err)
+		}
+	}
+	return part
+}
+
+var bar175 = []byte{2, 0, 0, 0, 1}
+
+// A phrase that ends on a grace note ends on the note the grace leans
+// into.
+//
+// The slur bit says "joined to the next", so the element that closes a
+// phrase is the first one without it. Where that element is a grace note,
+// the closing was thrown away with the grace's other marks when it was
+// hung on its note: bar 184 of the concerto's cellos closes a phrase on a
+// flattened grace in front of a half note, and the phrase was drawn on
+// through four bars of rests to the next one.
+func TestAPhraseCanCloseOnAGraceNote(t *testing.T) {
+	p := walk175(t, 2, 4,
+		note175(8, 2, 0x01, 0), // a quarter, joined onward
+		note175(8, 2, 0x01, 1), // a quarter, joined onward
+		note175(8, 4, 0x20, 2), // a grace: joined no further
+		note175(8, 1, 0x00, 3), // the half note it leans into
+		bar175,
+	)
+	els := p.Measures[0].Voices[0].Elements
+	if len(els) != 3 {
+		t.Fatalf("%d things in the bar, want three", len(els))
+	}
+	if got := marksOf(els[0]).SlurStart; got != 1 {
+		t.Errorf("the phrase does not open on the first note: %d", got)
+	}
+	half := els[2].(*model.Note)
+	if half.Grace == nil || len(half.Grace.Notes) != 1 {
+		t.Fatalf("the half note carries %v, want its grace", half.Grace)
+	}
+	if half.SlurStop != 1 {
+		t.Errorf("the phrase does not close on the half note (stop=%d)", half.SlurStop)
+	}
+	if g := half.Grace.Notes[0]; g.SlurStop != 0 || g.SlurStart != 0 {
+		t.Errorf("the grace still carries the phrase's end: start %d stop %d",
+			g.SlurStart, g.SlurStop)
+	}
+}
+
+// A bar dealt into two voices keeps the two ends of a slur in one of them.
+//
+// The engraver pairs a slur's ends within a voice. The clocks had dealt a
+// note that opened a phrase into the second voice and the note that closed
+// it into the first, and each end, with nothing to pair with, was drawn on
+// to the next end the engraver found — bars 214 and 292 of the concerto's
+// trombones.
+func TestADividedBarKeepsASlursEndsTogether(t *testing.T) {
+	// The concerto's shape: a bar of 2/4 holding a rest, a quarter that
+	// opens a phrase and an eighth — more than one line holds, so it is
+	// divided — and the phrase closing in the bar after, which is one
+	// line. The clocks alone put the opening in the second voice of the
+	// first bar, and the closing can only be in the first voice of the
+	// second.
+	p := walk175(t, 2, 4,
+		note175(9, 2, 0x00, 0), // a rest
+		note175(8, 2, 0x01, 1), // opens
+		note175(8, 3, 0x01, 2), // joined onward, into the next bar
+		bar175,
+		note175(8, 2, 0x01, 3),
+		note175(8, 2, 0x00, 4), // closes
+		bar175,
+	)
+	if len(p.Measures) != 2 {
+		t.Fatalf("%d bars, want two", len(p.Measures))
+	}
+	open, stop := -1, -1
+	for _, m := range p.Measures {
+		for vi, v := range m.Voices {
+			for _, el := range v.Elements {
+				mk := marksOf(el)
+				if mk.SlurStart > 0 {
+					open = vi
+				}
+				if mk.SlurStop > 0 {
+					stop = vi
+				}
+			}
+		}
+	}
+	if open < 0 || stop < 0 {
+		t.Fatalf("the phrase's ends were lost: open in voice %d, close in voice %d", open, stop)
+	}
+	if open != stop {
+		t.Errorf("the phrase opens in voice %d and closes in voice %d", open+1, stop+1)
+	}
+}

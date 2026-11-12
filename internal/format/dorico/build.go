@@ -164,6 +164,10 @@ type bar struct {
 	// read against no key at all, the E flat the fifth symphony opens on
 	// comes out as a D sharp.
 	inKey model.KeySignature
+
+	// inTime is the meter in force, for the same reason: what the bar is
+	// counted in decides how a length inside it is written down.
+	inTime model.TimeSignature
 }
 
 // tuplet is a stretch of a voice played in less time than it is written:
@@ -531,6 +535,7 @@ func buildFlow(t *tree, flow int32, players map[string]string,
 		}
 		s.Parts = append(s.Parts, p)
 	}
+	braceStaves(s, staves)
 	setTempo(s, bars, tempo)
 	putGlobal(s, bars, readGlobal(t, streams, skipped), skipped)
 	putCues(s, bars, staves, skipped)
@@ -1116,6 +1121,7 @@ func barGrid(t *tree, streams *streams, elements map[string]int32,
 			}
 		}
 		b.inKey = inKey
+		b.inTime = now
 		b.length = reduce(rat{int64(now.Beats) * 4, int64(now.BeatValue)})
 		if b.length.zero() {
 			b.length = rat{4, 1}
@@ -1719,10 +1725,46 @@ func layOut(voices [][]group, bars []bar) []*model.Measure {
 			ks := *bars[i].key
 			m.Key = &ks
 		}
+		// Only the voices that say something in this bar.
+		//
+		// Dorico keeps a voice for the whole flow once it exists, and a bar
+		// where that voice is silent is silence written down: a line of
+		// rests, bar after bar, under music another voice is playing on the
+		// same staff. The left hand of Clair de lune has five such voices,
+		// four of them with one or two notes in seventy-two bars, and every
+		// bar of the piece came out with four bar rests stacked under the
+		// chords. Dorico's own engraving has none of them: a voice is on
+		// the page where it is playing and nowhere else.
+		var said [][]model.Element
 		for _, v := range voices {
-			m.Voices = append(m.Voices, &model.Voice{
-				Elements: fill(v, bars[i]),
-			})
+			els := fill(v, bars[i])
+			if sounds(els) {
+				said = append(said, els)
+			}
+		}
+		// A voice alone on the staff accounts for the whole bar, and one
+		// sharing it says only what it plays.
+		//
+		// Both of those are Dorico's own page. The piece opens on a rest —
+		// the right hand comes in a quarter late over a bar nobody else is
+		// playing, and Dorico draws the rest. Four bars later the same
+		// staff has three voices at once, and the silence around each of
+		// them is drawn nowhere: rests for all three would be a thicket,
+		// and in lengths nothing chose — the inner voice at bar 11 is
+		// silent for fifteen sixteenths of the bar, which is a rest with
+		// three dots on it.
+		//
+		// So the silence gscore works out is spacing, and it is printed
+		// only where it is also the whole of what the staff is doing.
+		if len(said) == 1 {
+			for _, el := range said[0] {
+				if r, quiet := el.(*model.Rest); quiet {
+					r.Hidden = false
+				}
+			}
+		}
+		for _, els := range said {
+			m.Voices = append(m.Voices, &model.Voice{Elements: els})
 		}
 		if len(m.Voices) == 0 {
 			m.Voices = []*model.Voice{{Elements: []model.Element{
@@ -1734,9 +1776,57 @@ func layOut(voices [][]group, bars []bar) []*model.Measure {
 	return out
 }
 
+// braceStaves joins the staves of one instrument with a brace.
+//
+// A piano is one instrument on two staves and has to read as one: the brace
+// says so, and the barlines drawn through the gap say the two hands keep
+// time together. Without it Clair de lune came out as two staves one above
+// the other, each labelled "Piano", with nothing on the page to say they
+// were the same pair of hands.
+//
+// By the instrument and not by the player, because the staves of one
+// instrument are the ones a brace is for: a player holding two instruments
+// has two staves that are not a grand staff, and bracketing the families of
+// an orchestra is a different question that the file answers elsewhere.
+func braceStaves(s *model.Score, staves []*stave) {
+	for i := 0; i < len(staves) && i < len(s.Parts); {
+		j := i
+		for j+1 < len(staves) && j+1 < len(s.Parts) &&
+			staves[j+1].instrument == staves[i].instrument &&
+			staves[j+1].playerID == staves[i].playerID {
+			j++
+		}
+		if j > i {
+			s.Groups = append(s.Groups, model.StaffGroup{
+				First: i, Last: j,
+				Symbol:   model.GroupBrace,
+				Barlines: true,
+				Name:     staves[i].player,
+			})
+		}
+		i = j + 1
+	}
+}
+
+// sounds reports whether any of this bar's worth of a voice is drawn: a note,
+// or a rest the file itself wrote. The silence gscore adds to make a voice
+// add up is hidden, and does not by itself put a voice on the staff.
+func sounds(els []model.Element) bool {
+	for _, el := range els {
+		r, quiet := el.(*model.Rest)
+		if !quiet || !r.Hidden {
+			return true
+		}
+	}
+	return false
+}
+
 // fill is one voice's worth of one bar.
 func fill(groups []group, b bar) []model.Element {
 	end := b.at.add(b.length)
+	// What this bar is counted in, which is what decides how a length
+	// inside it is written down: see spellAt.
+	beat := beatOf(b.inTime)
 	var out []model.Element
 	at := b.at
 
@@ -1757,7 +1847,8 @@ func fill(groups []group, b bar) []model.Element {
 			// notes are: in pieces a rest can be drawn as. A gap inside a
 			// tuplet is itself in the tuplet, or the bar does not add up
 			// on the page.
-			out = append(out, rests(from.sub(at), g.tup)...)
+			out = append(out, rests(from.sub(at), g.tup,
+				at.sub(b.at).dur(), beat, true)...)
 			at = from
 		}
 		to := stop
@@ -1766,15 +1857,18 @@ func fill(groups []group, b bar) []model.Element {
 			to, tiedOn = end, true
 		}
 		if d := to.sub(from); !d.zero() {
-			out = append(out, elements(g, d, b.inKey, tiedBack, tiedOn)...)
+			out = append(out, elements(g, d, b.inKey,
+				from.sub(b.at).dur(), beat, tiedBack, tiedOn)...)
 			at = to
 		}
 	}
 	if at.less(end) {
-		out = append(out, rests(end.sub(at), nil)...)
+		out = append(out, rests(end.sub(at), nil,
+			at.sub(b.at).dur(), beat, true)...)
 	}
 	if len(out) == 0 {
-		out = append(out, rests(b.length, nil)...)
+		out = append(out, rests(b.length, nil,
+			model.Duration{Num: 0, Den: 1}, beat, true)...)
 	}
 	return out
 }
@@ -1785,8 +1879,23 @@ func fill(groups []group, b bar) []model.Element {
 // against the written length for the same reason: a rest nobody can draw
 // is as wrong as a note nobody can draw, and it is the commoner of the two
 // — every gap between one note and the next is one of these.
-func rests(d rat, tup *model.Tuplet) []model.Element {
-	parts := spell(d.dur())
+//
+// quiet is for the silence gscore works out rather than reads. A voice in
+// Dorico is a thread through the whole flow and its events are only where it
+// plays: the time in between is not written down anywhere, because Dorico
+// draws the rests for it. gscore wants every voice to add up to its bar, so
+// that silence is put in here — and it is put in hidden, because it is
+// spacing and not notation. Printed, it is a line of rests under music
+// somebody else is playing, in lengths nothing chose: the inner voice of
+// Clair de lune came out with a rest of fifteen sixteenths in front of it,
+// drawn with three dots.
+//
+// The rests the file does write go through elements, like the notes, and
+// are printed: Debussy's own rest at the start of the piece is one of them.
+func rests(d rat, tup *model.Tuplet, at, beat model.Duration,
+	quiet bool) []model.Element {
+
+	parts := spellAt(d.dur(), at, beat)
 	if a, n, ok := tup.Ratio(); ok {
 		parts = nil
 		for _, p := range spell(d.dur().Scale(a, n)) {
@@ -1795,7 +1904,7 @@ func rests(d rat, tup *model.Tuplet) []model.Element {
 	}
 	var out []model.Element
 	for _, p := range parts {
-		r := &model.Rest{Dur: p}
+		r := &model.Rest{Dur: p, Hidden: quiet}
 		r.Tuplet = tup
 		out = append(out, r)
 	}
@@ -1811,13 +1920,13 @@ func rests(d rat, tup *model.Tuplet) []model.Element {
 // the engraver falls back to when a duration cannot be spelled. So it is
 // spelled here instead, into the longest pieces that can be written, tied
 // to each other.
-func elements(g group, d rat, key model.KeySignature,
+func elements(g group, d rat, key model.KeySignature, at, beat model.Duration,
 	tiedBack, tiedOn bool) []model.Element {
 	// Inside a tuplet it is the written value that has to be spellable,
 	// not the sounding one: what the engraver draws is the sounding
 	// length scaled back up by the ratio, so that is the length to break
 	// into noteheads before scaling each piece back down again.
-	parts := spell(d.dur())
+	parts := spellAt(d.dur(), at, beat)
 	if a, n, ok := g.tup.Ratio(); ok {
 		parts = nil
 		for _, p := range spell(d.dur().Scale(a, n)) {
@@ -1875,6 +1984,103 @@ func writable(d model.Duration) bool {
 		}
 	}
 	return true
+}
+
+// beatOf is how long a beat of this meter is, where the meter is counted in
+// beats that are not the written value.
+//
+// Compound time — 6/8, 9/8, 12/8 — is counted in dotted beats: three eighths
+// to the beat, three beats to a bar of 9/8. Everything else is counted in
+// the value underneath, and needs nothing said about it.
+func beatOf(t model.TimeSignature) model.Duration {
+	if t.BeatValue >= 8 && t.Beats > 3 && t.Beats%3 == 0 {
+		return model.Duration{Num: 3, Den: t.BeatValue}
+	}
+	return model.Duration{}
+}
+
+// beatOffset is how far into its beat a moment falls.
+func beatOffset(at, beat model.Duration) model.Duration {
+	zero := model.Duration{Num: 0, Den: 1}
+	if beat.Num <= 0 || beat.Den <= 0 || at.Num <= 0 {
+		return zero
+	}
+	num := int64(at.Num) * int64(beat.Den)
+	den := int64(at.Den) * int64(beat.Num)
+	if den <= 0 {
+		return zero
+	}
+	return at.Sub(beat.Scale(int(num/den), 1)).Reduced()
+}
+
+// wholeBeats is how many whole beats fit in a length.
+func wholeBeats(d, beat model.Duration) int64 {
+	if beat.Num <= 0 || beat.Den <= 0 || d.Num <= 0 {
+		return 0
+	}
+	num := int64(d.Num) * int64(beat.Den)
+	den := int64(d.Den) * int64(beat.Num)
+	if den <= 0 {
+		return 0
+	}
+	return num / den
+}
+
+// spellAt breaks a duration into pieces a notehead can write, knowing where
+// in the bar it starts and what the bar is counted in.
+//
+// Length alone is not enough to write a length down. The whole of a 9/8 bar
+// is nine eighths however it is counted, and spelled by size it comes out as
+// a semibreve tied to a quaver — the right number of beats and the wrong
+// notes, written across the beats instead of along them. Counted in threes
+// it is a dotted minim tied to a dotted crotchet: two beats and one, which
+// is what Dorico engraves and what anybody reading in three would expect.
+// The left hand of Clair de lune holds one chord for a bar at a time, and
+// every one of them was a whole note in a piece that has no whole notes.
+//
+// So: fill out the beat the note starts in, then take whole beats biggest
+// first, then whatever is left over. A length that is not in compound time,
+// or that cannot be written this way, goes back to being spelled by size.
+func spellAt(d, at, beat model.Duration) []model.Duration {
+	if beat.Num <= 0 || beat.Den <= 0 || d.Num <= 0 {
+		return spell(d)
+	}
+	var out []model.Duration
+	left := d
+	// What is left of the beat this starts in, where it starts partway
+	// through one. A note that ends inside that beat is spelled by size,
+	// because there are no beats in it to count.
+	if off := beatOffset(at, beat); off.Num > 0 {
+		to := beat.Sub(off).Reduced()
+		if to.Cmp(left) >= 0 {
+			return spell(d)
+		}
+		out = append(out, spell(to)...)
+		left = left.Sub(to).Reduced()
+	}
+	for {
+		n := wholeBeats(left, beat)
+		if n < 1 {
+			break
+		}
+		p := int64(1)
+		for p*2 <= n {
+			p *= 2
+		}
+		piece := beat.Scale(int(p), 1)
+		if _, _, ok := piece.Written(); !ok {
+			return spell(d)
+		}
+		out = append(out, piece)
+		left = left.Sub(piece).Reduced()
+	}
+	if left.Num > 0 {
+		out = append(out, spell(left)...)
+	}
+	if len(out) == 0 {
+		return spell(d)
+	}
+	return out
 }
 
 // spell breaks a duration into pieces a notehead can write.

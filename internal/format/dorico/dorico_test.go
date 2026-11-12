@@ -2215,6 +2215,148 @@ func TestAVoltaIsReadAsFirstAndSecondTimeBars(t *testing.T) {
 	}
 }
 
+/* ---------- the silence between the notes ---------- */
+
+func TestAVoiceIsOnlyOnTheStaffWhereItPlays(t *testing.T) {
+	// A voice in Dorico lasts the whole flow once it exists, and the bars
+	// where it says nothing are not written down anywhere — Dorico simply
+	// does not draw it there. gscore wants every voice to add up to its
+	// bar, so the silence has to be worked out, and printed it is a line of
+	// rests bar after bar under music somebody else is playing. The left
+	// hand of Clair de lune has five such voices and came out with four bar
+	// rests stacked under every chord.
+	//
+	// Two notes at once in the first bar and one in the second: two voices
+	// where there are two, and one where there is one.
+	raw := built(t, [2]string{"4", "4"}, "C", []played{
+		{at: "0", dur: "4", pitch: 60},
+		{at: "0", dur: "2", pitch: 64},
+		{at: "4", dur: "4", pitch: 67},
+	})
+	p := read(t, raw)[0].Parts[0]
+	if n := len(p.Measures[0].Voices); n != 2 {
+		t.Errorf("the first bar has %d voices, and two notes sound at once", n)
+	}
+	if n := len(p.Measures[1].Voices); n != 1 {
+		t.Errorf("the second bar has %d voices, and only one of them plays "+
+			"there", n)
+	}
+}
+
+func TestAVoiceAloneInTheBarKeepsItsRests(t *testing.T) {
+	// The other half of the rule, and Dorico's own page again: Clair de
+	// lune opens on a rest — the right hand comes in a quarter late over a
+	// bar nobody else is playing — and the rest is printed. A staff that is
+	// doing nothing else has to account for its whole bar.
+	raw := built(t, [2]string{"4", "4"}, "C", []played{
+		{at: "1", dur: "3", pitch: 60},
+	})
+	els := read(t, raw)[0].Parts[0].Measures[0].Voices[0].Elements
+	if len(els) == 0 {
+		t.Fatal("the bar came out empty")
+	}
+	r, ok := els[0].(*model.Rest)
+	if !ok {
+		t.Fatalf("the bar opens with a %T, and the note comes in a beat "+
+			"late", els[0])
+	}
+	if r.Hidden {
+		t.Error("the rest the bar opens with is not printed")
+	}
+}
+
+func TestTheSilenceAroundASharedVoiceIsNotPrinted(t *testing.T) {
+	// And where the staff is doing something else, that silence is
+	// spacing rather than notation: rests for every voice at once are a
+	// thicket, in lengths nothing chose.
+	raw := built(t, [2]string{"4", "4"}, "C", []played{
+		{at: "0", dur: "4", pitch: 60},
+		{at: "0", dur: "1", pitch: 64},
+	})
+	vs := read(t, raw)[0].Parts[0].Measures[0].Voices
+	if len(vs) != 2 {
+		t.Fatalf("%d voices, want the two", len(vs))
+	}
+	// The short one is padded out to the bar, and none of that is drawn.
+	var short *model.Voice
+	for _, v := range vs {
+		if len(v.Elements) > 1 {
+			short = v
+		}
+	}
+	if short == nil {
+		t.Fatal("neither voice was padded out to the bar")
+	}
+	for i, el := range short.Elements {
+		r, ok := el.(*model.Rest)
+		if !ok {
+			continue
+		}
+		if !r.Hidden {
+			t.Errorf("element %d is a printed rest beside another voice's "+
+				"notes", i+1)
+		}
+	}
+}
+
+func TestACompoundBarIsWrittenAlongItsBeats(t *testing.T) {
+	// Length alone is not enough to write a length down. Nine eighths is
+	// nine eighths however it is counted, and spelled by size it comes out
+	// as a semibreve tied to a quaver: the right number of beats and the
+	// wrong notes, written across the beats instead of along them. The left
+	// hand of Clair de lune holds one chord for a bar at a time, and every
+	// one of them was a whole note in a piece that has no whole notes in
+	// it.
+	beat := model.Duration{Num: 3, Den: 8}
+	whole := model.Duration{Num: 9, Den: 8}
+	got := spellAt(whole, model.Duration{Num: 0, Den: 1}, beat)
+	want := []model.Duration{{Num: 3, Den: 4}, {Num: 3, Den: 8}}
+	if len(got) != len(want) {
+		t.Fatalf("a bar of 9/8 came out in %d pieces: %v", len(got), got)
+	}
+	for i := range want {
+		if got[i].Reduced() != want[i].Reduced() {
+			t.Errorf("piece %d is %v, want %v", i+1, got[i], want[i])
+		}
+	}
+}
+
+func TestANoteOffTheBeatFillsOutItsBeatFirst(t *testing.T) {
+	// Starting an eighth into the bar and running to the end of it: the
+	// rest of that beat, and then whole beats. A crotchet tied to a dotted
+	// minim, rather than one semibreve laid across all three beats.
+	beat := model.Duration{Num: 3, Den: 8}
+	got := spellAt(model.Duration{Num: 1, Den: 1},
+		model.Duration{Num: 1, Den: 8}, beat)
+	want := []model.Duration{{Num: 1, Den: 4}, {Num: 3, Den: 4}}
+	if len(got) != len(want) {
+		t.Fatalf("it came out in %d pieces: %v", len(got), got)
+	}
+	for i := range want {
+		if got[i].Reduced() != want[i].Reduced() {
+			t.Errorf("piece %d is %v, want %v", i+1, got[i], want[i])
+		}
+	}
+}
+
+func TestSimpleTimeIsSpelledBySizeAsBefore(t *testing.T) {
+	// Four-four has no beat of its own to count in — the beat is the
+	// written value — so nothing changes there.
+	d := model.Duration{Num: 5, Den: 8}
+	got := spellAt(d, model.Duration{Num: 0, Den: 1}, beatOf(
+		model.TimeSignature{Beats: 4, BeatValue: 4}))
+	want := spell(d)
+	if len(got) != len(want) {
+		t.Fatalf("five eighths came out in %d pieces, want %d: %v", len(got),
+			len(want), got)
+	}
+	for i := range want {
+		if got[i].Reduced() != want[i].Reduced() {
+			t.Errorf("piece %d is %v, want %v", i+1, got[i], want[i])
+		}
+	}
+}
+
 /* ---------- a player who doubles ---------- */
 
 // builtWithDoubling is one player holding two instruments, the way somebody
@@ -2225,7 +2367,15 @@ func TestAVoltaIsReadAsFirstAndSecondTimeBars(t *testing.T) {
 // exactly like a flow that uses the second, apart from where the notes are.
 // So the second one here is given a bar's rest or a note, by the argument,
 // and nothing else about the two differs.
-func builtWithDoubling(t *testing.T, secondPlays bool) []byte {
+func builtWithDoubling(t *testing.T, plays string) []byte {
+	t.Helper()
+	return builtPlayer(t, plays, false)
+}
+
+// builtPlayer is that fixture, and the same one with both staves under a
+// single instrument instead — which is a piano and not a doubling. Which of
+// the two has notes is "first", "both" or "neither".
+func builtPlayer(t *testing.T, plays string, grand bool) []byte {
 	t.Helper()
 	e := newEnc()
 
@@ -2294,9 +2444,45 @@ func builtWithDoubling(t *testing.T, secondPlays bool) []byte {
 			e.leaf("blockID", block),
 			e.leaf("position", "0"))
 	}
-	second := silent("31")
-	if secondPlays {
+	first, second := note("30", "60"), silent("31")
+	switch plays {
+	case "both":
 		second = note("31", "67")
+	case "neither":
+		first = silent("30")
+	}
+
+	// One instrument on two staves is a grand staff; two instruments on one
+	// staff each is a player who doubles. The difference is the nesting,
+	// and it is the whole of what braceStaves goes by.
+	var insts []int32
+	if grand {
+		insts = []int32{e.node("flowPlayerInstrument",
+			e.leaf("instrumentID", "0"),
+			e.list("staveStreamInfos",
+				e.node("staveStreamInfo",
+					e.leaf("staveStreamID", "10"),
+					e.leaf("instrumentID", "0"),
+					e.leaf("staveID", "0")),
+				e.node("staveStreamInfo",
+					e.leaf("staveStreamID", "11"),
+					e.leaf("instrumentID", "0"),
+					e.leaf("staveID", "1"))),
+			e.list("voiceStreamInfos",
+				e.node("voiceStreamInfo",
+					e.leaf("voiceStreamID", "1"),
+					e.leaf("instrumentID", "0"),
+					e.leaf("defaultLogicalStaveID", "0")),
+				e.node("voiceStreamInfo",
+					e.leaf("voiceStreamID", "2"),
+					e.leaf("instrumentID", "0"),
+					e.leaf("defaultLogicalStaveID", "1"))))}
+	} else {
+		insts = []int32{held("0", "0", "10", "1"), held("1", "1", "11", "2")}
+	}
+	name := "Horn (E Flat) 1 & Horn (C) 1"
+	if grand {
+		name = "Piano"
 	}
 
 	flow := e.node("flow",
@@ -2305,13 +2491,11 @@ func builtWithDoubling(t *testing.T, secondPlays bool) []byte {
 		e.list("flowPlayers",
 			e.node("flowPlayer",
 				e.leaf("playerID", "0"),
-				e.list("flowPlayerInstruments",
-					held("0", "0", "10", "1"),
-					held("1", "1", "11", "2")))),
+				e.list("flowPlayerInstruments", insts...))),
 		e.list("elementTables",
 			e.node("BarDivisionElementTableDefinition",
 				e.node("array", timeSig))),
-		e.list("blocks", note("30", "60"), second, globalBlock),
+		e.list("blocks", first, second, globalBlock),
 		e.list("blockInstances",
 			instance("100", "30"), instance("101", "31"),
 			instance("200", "20")),
@@ -2325,10 +2509,56 @@ func builtWithDoubling(t *testing.T, secondPlays bool) []byte {
 		e.list("scorePlayers",
 			e.node("scorePlayer",
 				e.leaf("playerID", "0"),
-				e.leaf("baseName", "Horn (E Flat) 1 & Horn (C) 1"))),
+				e.leaf("baseName", name))),
 		e.list("flows", flow))
 
 	return project(e.bytes(root), "")
+}
+
+// builtGrandStaff is one instrument written on two staves, with music on
+// both: a piano.
+func builtGrandStaff(t *testing.T) []byte {
+	t.Helper()
+	return builtPlayer(t, "both", true)
+}
+
+func TestTheStavesOfOneInstrumentAreBraced(t *testing.T) {
+	// A piano is one instrument on two staves and has to read as one. Read
+	// without the brace, Clair de lune came out as two staves one above the
+	// other, each labelled "Piano", with nothing to say they were the same
+	// pair of hands.
+	s := read(t, builtGrandStaff(t))[0]
+	if len(s.Parts) != 2 {
+		t.Fatalf("%d staves, want the two the instrument is written on",
+			len(s.Parts))
+	}
+	if len(s.Groups) != 1 {
+		t.Fatalf("%d groups of staves, want the one: %+v", len(s.Groups), s.Groups)
+	}
+	g := s.Groups[0]
+	if g.First != 0 || g.Last != 1 {
+		t.Errorf("the group covers staves %d to %d", g.First, g.Last)
+	}
+	if g.Symbol != model.GroupBrace {
+		t.Errorf("the staves are joined with a %v, and one instrument on two "+
+			"staves takes a brace", g.Symbol)
+	}
+	if !g.Barlines {
+		t.Error("the barlines stop at each staff: the two hands keep time together")
+	}
+	if g.Name != "Piano" {
+		t.Errorf("the group is called %q", g.Name)
+	}
+}
+
+func TestTwoInstrumentsOnOneStaffEachAreNotBraced(t *testing.T) {
+	// The other nesting: a player holding two instruments is not a grand
+	// staff, whatever it looks like from the outside.
+	s := read(t, builtPlayer(t, "both", false))[0]
+	if len(s.Groups) != 0 {
+		t.Errorf("the two staves of a doubling player were braced: %+v",
+			s.Groups)
+	}
 }
 
 func TestAnInstrumentNobodyPicksUpIsNotAStaff(t *testing.T) {
@@ -2337,7 +2567,7 @@ func TestAnInstrumentNobodyPicksUpIsNotAStaff(t *testing.T) {
 	// both. Read as they stand, each movement has two horn staves with one
 	// name on both and nothing on one of them from end to end; Dorico's own
 	// engraving of that project has one.
-	scores, err := Import(bytes.NewReader(builtWithDoubling(t, false)))
+	scores, err := Import(bytes.NewReader(builtWithDoubling(t, "first")))
 	if len(scores) == 0 {
 		t.Fatal("the movement was thrown away over a doubling")
 	}
@@ -2375,7 +2605,7 @@ func TestAStaffIsNamedForTheInstrumentAndNotTheDoubling(t *testing.T) {
 	// The player is named for everything they are holding — "Horn (E Flat)
 	// 1 & Horn (C) 1" — and a staff is one of those, not the list. Put on
 	// the staff, the whole list reads as two players on one line.
-	s := read(t, builtWithDoubling(t, false))[0]
+	s := read(t, builtWithDoubling(t, "first"))[0]
 	if got := s.Parts[0].Name; got != "Horn (E Flat) 1" {
 		t.Errorf("the staff is called %q, want the instrument it is", got)
 	}
@@ -2386,7 +2616,7 @@ func TestAnInstrumentChangedToWithinTheMovementKeepsItsStaff(t *testing.T) {
 	// play 211 notes on the E flat crook and four on the C, changing for
 	// the run into the finale. Both staves have to stay, and each has to
 	// say which crook it is.
-	s := read(t, builtWithDoubling(t, true))[0]
+	s := read(t, builtWithDoubling(t, "both"))[0]
 	if len(s.Parts) != 2 {
 		t.Fatalf("%d staves, and the player plays both instruments here",
 			len(s.Parts))
@@ -2405,18 +2635,14 @@ func TestAPlayerSilentThroughoutKeepsOneStaff(t *testing.T) {
 	// nothing from end to end is still in the score — the trombones of
 	// this symphony say nothing until the finale — so they keep a staff,
 	// and a doubling player keeps one rather than one each.
-	raw := builtWithDoubling(t, false)
-	// Both silent: the first block is the one with the note in it, so the
-	// same fixture with its voice stream pointed at the silent block.
-	scores, _ := Import(bytes.NewReader(raw))
-	if len(scores) == 0 {
-		t.Fatal("nothing was read")
+	s := read(t, builtWithDoubling(t, "neither"))[0]
+	if len(s.Parts) != 1 {
+		t.Fatalf("a player who says nothing all movement came out as %d "+
+			"staves, want the one", len(s.Parts))
 	}
-	// The fixture above always gives the first instrument a note; what is
-	// checked here is the rule, which is that a player never comes out
-	// with no staff at all.
-	if len(scores[0].Parts) == 0 {
-		t.Error("the player was left out of the movement altogether")
+	// The first of the instruments they hold, since nothing says otherwise.
+	if got := s.Parts[0].Name; got != "Horn (E Flat) 1" {
+		t.Errorf("the staff that was kept is called %q", got)
 	}
 }
 

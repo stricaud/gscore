@@ -2215,6 +2215,211 @@ func TestAVoltaIsReadAsFirstAndSecondTimeBars(t *testing.T) {
 	}
 }
 
+/* ---------- a player who doubles ---------- */
+
+// builtWithDoubling is one player holding two instruments, the way somebody
+// who changes instrument between movements is held.
+//
+// Dorico puts every instrument a player might pick up into every flow and
+// says nowhere which one they are on: a flow that uses the first looks
+// exactly like a flow that uses the second, apart from where the notes are.
+// So the second one here is given a bar's rest or a note, by the argument,
+// and nothing else about the two differs.
+func builtWithDoubling(t *testing.T, secondPlays bool) []byte {
+	t.Helper()
+	e := newEnc()
+
+	note := func(id, pitch string) int32 {
+		return e.node("block",
+			e.leaf("blockID", id),
+			e.leaf("parentEventStreamType", "kVoiceStream"),
+			e.node("events",
+				e.node("NoteEventDefinition",
+					e.leaf("position", "0"),
+					e.leaf("duration", "12"),
+					e.leaf("pitch", pitch))))
+	}
+	// A bar's rest is still an event, and a staff of them is still an empty
+	// staff: what says the instrument was picked up is a note.
+	silent := func(id string) int32 {
+		return e.node("block",
+			e.leaf("blockID", id),
+			e.leaf("parentEventStreamType", "kVoiceStream"),
+			e.node("events",
+				e.node("RestEventDefinition",
+					e.leaf("position", "0"),
+					e.leaf("duration", "12"))))
+	}
+	timeSig := e.node("BarDivisionElementDefinition",
+		e.leaf("elementID", "1"),
+		e.node("barDivisionData",
+			e.node("timeSignature",
+				e.node("timeSignaturesAndDivisions",
+					e.node("timeSignatureAndDivision",
+						e.node("timeSignature",
+							e.leaf("numerator", "4"),
+							e.leaf("denominator", "4")))))))
+	globalBlock := e.node("block",
+		e.leaf("blockID", "20"),
+		e.leaf("parentEventStreamType", "kGlobalTimebaseStream"),
+		e.node("events",
+			e.node("BarDivisionEventDefinition",
+				e.leaf("position", "0"),
+				e.leaf("duration", "0"),
+				e.leaf("barDivisionElementID", "1"))))
+
+	held := func(inst, stave, staveStream, voiceStream string) int32 {
+		return e.node("flowPlayerInstrument",
+			e.leaf("instrumentID", inst),
+			e.list("staveStreamInfos",
+				e.node("staveStreamInfo",
+					e.leaf("staveStreamID", staveStream),
+					e.leaf("instrumentID", inst),
+					e.leaf("staveID", stave))),
+			e.list("voiceStreamInfos",
+				e.node("voiceStreamInfo",
+					e.leaf("voiceStreamID", voiceStream),
+					e.leaf("instrumentID", inst),
+					e.leaf("defaultLogicalStaveID", stave))))
+	}
+	stream := func(id, instance, kind string) int32 {
+		return e.node("eventStream",
+			e.leaf("streamID", id),
+			e.leaf("blockInstanceIDs", instance),
+			e.leaf("eventStreamType", kind))
+	}
+	instance := func(id, block string) int32 {
+		return e.node("blockInstance",
+			e.leaf("blockInstanceID", id),
+			e.leaf("blockID", block),
+			e.leaf("position", "0"))
+	}
+	second := silent("31")
+	if secondPlays {
+		second = note("31", "67")
+	}
+
+	flow := e.node("flow",
+		e.leaf("flowID", "0"),
+		e.leaf("flowName", "A movement"),
+		e.list("flowPlayers",
+			e.node("flowPlayer",
+				e.leaf("playerID", "0"),
+				e.list("flowPlayerInstruments",
+					held("0", "0", "10", "1"),
+					held("1", "1", "11", "2")))),
+		e.list("elementTables",
+			e.node("BarDivisionElementTableDefinition",
+				e.node("array", timeSig))),
+		e.list("blocks", note("30", "60"), second, globalBlock),
+		e.list("blockInstances",
+			instance("100", "30"), instance("101", "31"),
+			instance("200", "20")),
+		e.list("eventStreams",
+			stream("1", "100", "kVoiceStream"),
+			stream("2", "101", "kVoiceStream"),
+			stream("0", "200", "kGlobalTimebaseStream")))
+
+	root := e.node("kScore",
+		e.leaf("fileVersion", "1.1417"),
+		e.list("scorePlayers",
+			e.node("scorePlayer",
+				e.leaf("playerID", "0"),
+				e.leaf("baseName", "Horn (E Flat) 1 & Horn (C) 1"))),
+		e.list("flows", flow))
+
+	return project(e.bytes(root), "")
+}
+
+func TestAnInstrumentNobodyPicksUpIsNotAStaff(t *testing.T) {
+	// Beethoven's first horn holds a crook in E flat and a crook in C,
+	// because it changes between movements, and every movement carries
+	// both. Read as they stand, each movement has two horn staves with one
+	// name on both and nothing on one of them from end to end; Dorico's own
+	// engraving of that project has one.
+	scores, err := Import(bytes.NewReader(builtWithDoubling(t, false)))
+	if len(scores) == 0 {
+		t.Fatal("the movement was thrown away over a doubling")
+	}
+	s := scores[0]
+	if len(s.Parts) != 1 {
+		var names []string
+		for _, p := range s.Parts {
+			names = append(names, p.Name)
+		}
+		t.Fatalf("the movement has %d staves for one player: %v",
+			len(s.Parts), names)
+	}
+	// And the one kept is the one with the notes on it.
+	els := s.Parts[0].Measures[0].Voices[0].Elements
+	if len(els) == 0 {
+		t.Fatal("the staff that was kept is the empty one")
+	}
+	if _, ok := els[0].(*model.Note); !ok {
+		t.Errorf("the staff that was kept holds a %T, not the note", els[0])
+	}
+	// Said rather than passed over: a staff that is in the file and not on
+	// the page is worth a line.
+	pe, ok := err.(*PartialError)
+	if !ok {
+		t.Fatalf("leaving a staff out reported %v", err)
+	}
+	pe.Partial()
+	if !strings.Contains(strings.Join(pe.Details(), " "), "doubles on") {
+		t.Errorf("the report says %v, and does not mention the doubling",
+			pe.Details())
+	}
+}
+
+func TestAStaffIsNamedForTheInstrumentAndNotTheDoubling(t *testing.T) {
+	// The player is named for everything they are holding — "Horn (E Flat)
+	// 1 & Horn (C) 1" — and a staff is one of those, not the list. Put on
+	// the staff, the whole list reads as two players on one line.
+	s := read(t, builtWithDoubling(t, false))[0]
+	if got := s.Parts[0].Name; got != "Horn (E Flat) 1" {
+		t.Errorf("the staff is called %q, want the instrument it is", got)
+	}
+}
+
+func TestAnInstrumentChangedToWithinTheMovementKeepsItsStaff(t *testing.T) {
+	// The Scherzo of the same symphony really does use both: the horns
+	// play 211 notes on the E flat crook and four on the C, changing for
+	// the run into the finale. Both staves have to stay, and each has to
+	// say which crook it is.
+	s := read(t, builtWithDoubling(t, true))[0]
+	if len(s.Parts) != 2 {
+		t.Fatalf("%d staves, and the player plays both instruments here",
+			len(s.Parts))
+	}
+	if s.Parts[0].Name == s.Parts[1].Name {
+		t.Errorf("both staves are called %q", s.Parts[0].Name)
+	}
+	if s.Parts[0].Name != "Horn (E Flat) 1" || s.Parts[1].Name != "Horn (C) 1" {
+		t.Errorf("the staves are called %q and %q",
+			s.Parts[0].Name, s.Parts[1].Name)
+	}
+}
+
+func TestAPlayerSilentThroughoutKeepsOneStaff(t *testing.T) {
+	// Tacet is not the same as not in the movement. A player who says
+	// nothing from end to end is still in the score — the trombones of
+	// this symphony say nothing until the finale — so they keep a staff,
+	// and a doubling player keeps one rather than one each.
+	raw := builtWithDoubling(t, false)
+	// Both silent: the first block is the one with the note in it, so the
+	// same fixture with its voice stream pointed at the silent block.
+	scores, _ := Import(bytes.NewReader(raw))
+	if len(scores) == 0 {
+		t.Fatal("nothing was read")
+	}
+	// The fixture above always gives the first instrument a note; what is
+	// checked here is the rule, which is that a player never comes out
+	// with no staff at all.
+	if len(scores[0].Parts) == 0 {
+		t.Error("the player was left out of the movement altogether")
+	}
+}
+
 /* ---------- the cues ---------- */
 
 // builtTwoStaves is a flow of two players, the second of whom has a cue

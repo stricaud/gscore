@@ -126,7 +126,14 @@ func (a rat) dur() model.Duration {
 type stave struct {
 	instrument string // Dorico's instrument id, as text
 	stave      string // and which of that instrument's staves
-	player     string // the player it belongs to, for its name
+	player     string // what the staff is called
+	// playerID is who is holding it, and instNth which of the instruments
+	// that player holds this is, out of instCount. A player holding more
+	// than one doubles — a horn player with a crook in E flat and another
+	// in C — and only the ones they pick up in this movement belong to it.
+	playerID  string
+	instNth   int
+	instCount int
 	sound      string // what it plays, as a MusicXML standard sound id
 	stream     string // its own stave stream, where the clefs are
 	order      int    // where it comes in the score
@@ -447,6 +454,14 @@ func buildFlow(t *tree, flow int32, players map[string]string,
 		}
 	}
 
+	// Now that the notes are in, the instruments nobody picked up in this
+	// movement can go: it is where the notes are that says which crook a
+	// horn player is on, and nothing else in the flow does.
+	staves = dropSilentDoublings(staves, music, skipped)
+	if len(staves) == 0 {
+		return nil
+	}
+
 	bars := barGrid(t, streams, elements, last, skipped)
 	if len(bars) == 0 {
 		return nil
@@ -528,6 +543,105 @@ func buildFlow(t *tree, flow int32, players map[string]string,
 // player is holding, each of those with the staves it is written on and the
 // voices written on them. The nesting is the answer to "which staff does
 // this note belong to", which is asked of every note in the file.
+// doubledNames splits a doubling player's name into one name per instrument.
+//
+// Dorico names a player for what they are holding, and somebody holding more
+// than one instrument is named for all of them at once: Beethoven's first
+// horn is "Horn (E Flat) 1 & Horn (C) 1", because the crook changes between
+// the movements. A staff is one of those instruments and not the list, and
+// put on the staff the whole list reads as two players on one line.
+//
+// The halves are taken from the name Dorico wrote rather than built again
+// from the instruments, which is the one way of being sure they are the
+// words Dorico would have used — the instrument's own names in this project
+// say "Horn" for both the E flat and the C, and the crook is only in the
+// entity id. Nothing is split unless the pieces come out one to an
+// instrument, so a name with an ampersand in it for any other reason is
+// left alone.
+func doubledNames(name string, n int) []string {
+	if n < 2 {
+		return nil
+	}
+	parts := strings.Split(name, " & ")
+	if len(parts) != n {
+		return nil
+	}
+	for i := range parts {
+		parts[i] = strings.TrimSpace(parts[i])
+		if parts[i] == "" {
+			return nil
+		}
+	}
+	return parts
+}
+
+// dropSilentDoublings leaves out the instruments a doubling player does not
+// pick up in this movement.
+//
+// Every flow holds every instrument a player might play, whether or not they
+// play it there, and nothing in the flow says which one they do: the only
+// evidence is where the notes are. Read as it stands, Beethoven's first horn
+// is two staves in every movement — the crook in E flat and the crook in C —
+// with the same name on both and nothing on one of them from end to end.
+// Dorico's own engraving of the project has one horn staff a movement.
+//
+// Only where somebody doubles, and only where the instrument is silent. An
+// instrument that is tacet for a whole movement is a different thing: the
+// trombones are in this symphony and say nothing until the finale, and they
+// keep their place on the page, because a reader counting staves has to find
+// them where they were.
+func dropSilentDoublings(staves []*stave, music map[string][][]group,
+	skipped map[string]int) []*stave {
+
+	sounds := func(st *stave) bool {
+		for _, v := range st.voices {
+			for _, lane := range music[v] {
+				for _, g := range lane {
+					if !g.rest {
+						return true
+					}
+				}
+			}
+		}
+		return false
+	}
+	played := map[string]bool{} // player/instrument, where a note is
+	any := map[string]bool{}    // and whether the player plays at all here
+	first := map[string]int{}   // the instrument they are holding first
+	for _, st := range staves {
+		if st.instCount < 2 {
+			continue
+		}
+		if n, seen := first[st.playerID]; !seen || st.instNth < n {
+			first[st.playerID] = st.instNth
+		}
+		if sounds(st) {
+			played[st.playerID+"/"+st.instrument] = true
+			any[st.playerID] = true
+		}
+	}
+	out := make([]*stave, 0, len(staves))
+	left := 0
+	for _, st := range staves {
+		switch {
+		case st.instCount < 2:
+		case played[st.playerID+"/"+st.instrument]:
+		// Silent in a movement they are silent throughout: they keep one
+		// staff, so the player is still on the page with their rests.
+		case !any[st.playerID] && st.instNth == first[st.playerID]:
+		default:
+			left++
+			continue
+		}
+		out = append(out, st)
+	}
+	if left > 0 {
+		skipped["staves for an instrument a player doubles on and does "+
+			"not play in this movement"] += left
+	}
+	return out
+}
+
 func flowStaves(t *tree, flow int32, players map[string]string,
 	sounds map[string]instrumentDef) []*stave {
 	var out []*stave
@@ -537,15 +651,26 @@ func flowStaves(t *tree, flow int32, players map[string]string,
 		if name == "" {
 			name = "Player " + player
 		}
-		for _, fpi := range t.list(fp, "flowPlayerInstruments") {
+		insts := t.list(fp, "flowPlayerInstruments")
+		// A player who doubles is named for everything they double on, and
+		// a staff is only one of those: see doubledNames.
+		apiece := doubledNames(name, len(insts))
+		for nth, fpi := range insts {
 			inst := t.str(fpi, "instrumentID")
+			called := name
+			if apiece != nil {
+				called = apiece[nth]
+			}
 			here := map[string]*stave{}
 			for _, ss := range t.list(fpi, "staveStreamInfos") {
 				st := &stave{
 					instrument: t.str(ss, "instrumentID"),
 					stave:      t.str(ss, "staveID"),
 					stream:     t.str(ss, "staveStreamID"),
-					player:     name,
+					player:     called,
+					playerID:   player,
+					instNth:    nth,
+					instCount:  len(insts),
 					order:      len(out),
 					clef:       model.Treble,
 				}

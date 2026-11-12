@@ -2820,7 +2820,7 @@ paths:
           required: true
           schema:
             type: string
-            enum: [single, double, final, repeat-start, repeat-end, repeat-both, none]
+            enum: [single, double, final, heavy-light, repeat-start, repeat-end, repeat-both, none]
       responses:
         "200": { $ref: "#/components/responses/Status" }
         "400": { $ref: "#/components/responses/Error" }

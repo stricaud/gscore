@@ -227,3 +227,18 @@ func TestAClefInTheMiddleOfABarIsWritten(t *testing.T) {
 		t.Errorf("the second clef is not the bass clef:\n%s", out)
 	}
 }
+
+func TestAHeavyLightBarlineComesAndGoes(t *testing.T) {
+	// The final barline the other way round: it opens a section where
+	// the final closes one. MusicXML calls it heavy-light, and it used
+	// to come back as an ordinary single line.
+	s := markedNotes(func(n []*model.Note) {})
+	s.Parts[0].Measures[0].RightBarline = model.BarHeavyLight
+	out := exported(t, s)
+	if !strings.Contains(out, "<bar-style>heavy-light</bar-style>") {
+		t.Fatalf("the opening barline is not in the file:\n%s", out)
+	}
+	if got := reimported(t, out).Parts[0].Measures[0].RightBarline; got != model.BarHeavyLight {
+		t.Errorf("it came back as %v", got)
+	}
+}

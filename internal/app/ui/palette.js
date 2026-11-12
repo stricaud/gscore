@@ -205,6 +205,10 @@ const PALETTE = [
       { g: "", label: "Single", measure: "barline", value: "single" },
       { g: "", label: "Double", measure: "barline", value: "double" },
       { g: "", label: "Final", measure: "barline", value: "final" },
+      // The final the other way round: a heavy stroke and then a thin
+      // one, which opens a section rather than closing one.
+      { g: "\uE033", label: "Heavy–light — the start of a section",
+        measure: "barline", value: "heavy-light" },
       { g: "", label: "Open repeat", measure: "barline", value: "repeat-start" },
       { g: "", label: "Close repeat", measure: "barline", value: "repeat-end" },
     ],

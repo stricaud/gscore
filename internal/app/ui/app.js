@@ -1243,6 +1243,7 @@ async function action(name) {
     case "bar-single": await setBarline("single"); break;
     case "bar-double": await setBarline("double"); break;
     case "bar-final": await setBarline("final"); break;
+    case "bar-heavy-light": await setBarline("heavy-light"); break;
     case "bar-open": await setBarline("repeat-start"); break;
     case "bar-close": await setBarline("repeat-end"); break;
     case "stem-up": await setStem("up"); break;
@@ -16859,6 +16860,7 @@ const MENU_ICONS = {
   "bar-single": "\ue030",          // barlineSingle
   "bar-double": "\ue031",          // barlineDouble
   "bar-final": "\ue032",           // barlineFinal
+  "bar-heavy-light": "\ue033",     // barlineReverseFinal
   "bar-open": "\ue040",            // repeatLeft
   "bar-close": "\ue041",           // repeatRight
   "repeat-bar": "\ue500",          // repeat1Bar

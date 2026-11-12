@@ -201,6 +201,8 @@ const MESSAGES = {
   "Fill the screen": "Remplir l’écran",
   "Filled in from the name for the usual chords. One character a string, lowest first: a fret number, or x for a string that is not played. Type your own and it stays yours; clear it to be offered one again.": "Rempli d’après le nom pour les accords usuels. Un caractère par corde, la plus grave d’abord : un numéro de case, ou x pour une corde qui n’est pas jouée. Saisissez le vôtre et il reste le vôtre ; effacez-le pour qu’on vous en propose un à nouveau.",
   "Final": "Finale",
+  "Heavy–light": "Lourde–légère",
+  "Heavy–light — the start of a section": "Lourde–légère — le début d’une section",
   "Fine — where the piece ends on the way back": "Fine — où le morceau s’arrête au retour",
   "Fingering": "Doigté",
   "First and second time": "Première et deuxième fois",

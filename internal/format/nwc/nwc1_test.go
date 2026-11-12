@@ -2463,3 +2463,50 @@ func TestADrumStaffKeepsItsLineCount(t *testing.T) {
 		}
 	}
 }
+
+// A section opens with a heavy stroke and then a thin one, which is the
+// final barline the other way round. NoteWorthy calls it SectionOpen and
+// writes it as 4, and it was read as an ordinary double bar — so the first
+// bar of the concerto for orchestra, which is an introduction closed by one,
+// had the wrong sign after it.
+func TestASectionOpeningIsNotADoubleBar(t *testing.T) {
+	if got := nwc1Barlines[4]; got != model.BarHeavyLight {
+		t.Errorf("barline 4 is read as %v, want heavy-light", got)
+	}
+	if got := nwc1Barlines[5]; got != model.BarFinal {
+		t.Errorf("barline 5 is read as %v, want the final", got)
+	}
+}
+
+// What the staves say about being joined, read straight from the setting
+// NoteWorthy's grouping box writes.
+func TestStavesAreGroupedTheWayTheirSettingsSay(t *testing.T) {
+	fl, ob, cl, fg := &model.Part{Name: "Fl"}, &model.Part{Name: "Ob"},
+		&model.Part{Name: "Cl"}, &model.Part{Name: "Fg"}
+	hn1, hn2 := &model.Part{Name: "Hn I"}, &model.Part{Name: "Hn II"}
+	tp := &model.Part{Name: "Tpt"}
+	parts := []*model.Part{fl, ob, cl, fg, hn1, hn2, tp}
+	labels := []string{"Fl", "Ob", "Cl", "Fg", "Horns", "", "Tpt"}
+	// 5 is bracketed with the next, 6 braced with the next, 0 ends a run.
+	braces := map[*model.Part]int{fl: 5, ob: 5, cl: 5, fg: 0, hn1: 6, hn2: 0, tp: 0}
+
+	got := settingGroups(parts, labels, braces)
+	if len(got) != 2 {
+		t.Fatalf("%d groups, want the woodwind bracket and the horn brace: %v", len(got), got)
+	}
+	if g := got[0]; g.First != 0 || g.Last != 3 || g.Symbol != model.GroupBracket || g.Name != "" {
+		t.Errorf("the woodwind came out as %+v, want a nameless bracket over 0..3", g)
+	}
+	if g := got[1]; g.First != 4 || g.Last != 5 || g.Symbol != model.GroupBrace || g.Name != "Horns" {
+		t.Errorf("the horns came out as %+v, want a brace called Horns over 4..5", g)
+	}
+
+	// A pair whose other half is hidden is one staff, and nothing is drawn
+	// round one staff.
+	tri, hidden := &model.Part{Name: "Triángulo"}, &model.Part{Name: "Trnglo", Hidden: true}
+	got = settingGroups([]*model.Part{tri, hidden}, []string{"Triángulo", "Trnglo"},
+		map[*model.Part]int{tri: 5, hidden: 0})
+	if len(got) != 0 {
+		t.Errorf("a bracket was drawn round a single visible staff: %v", got)
+	}
+}

@@ -398,6 +398,17 @@ func voltaAt(at, dur string, segments ...string) string {
 	return key
 }
 
+// keyTurns holds the key changes a test asked for on a staff.
+var keyTurns = map[string]struct{ at, note string }{}
+
+// keyTurnAt asks for a key change on the staff at a moment, named the way
+// Dorico names one: the note it is rooted on, read as a minor key.
+func keyTurnAt(at, note string) string {
+	key := "keyturn " + at + " " + itoa(len(keyTurns))
+	keyTurns[key] = struct{ at, note string }{at, note}
+	return key
+}
+
 // built makes a one-flow project: one player on one staff, in the time and
 // key given, playing these notes.
 func built(t *testing.T, time [2]string, key string, notes []played,
@@ -436,6 +447,9 @@ func built(t *testing.T, time [2]string, key string, notes []played,
 		}
 		if _, ok := voltas[kind]; ok {
 			continue // built onto the global stream below
+		}
+		if _, ok := keyTurns[kind]; ok {
+			continue // built onto the staff below
 		}
 		if kind == noClefEvent {
 			continue
@@ -610,11 +624,32 @@ func built(t *testing.T, time [2]string, key string, notes []played,
 				e.node("entityIDs",
 					e.leaf("idForTransposingLayouts", c.clef))))
 	}
+	var moreKeys []int32
 	var dynDefs []int32
 	for _, kind := range extra {
 		if r, ok := rawEvents[kind]; ok && r.stream == "stave" {
 			staveEvents = append(staveEvents, made(e, kind))
 		}
+		kt, ok := keyTurns[kind]
+		if !ok {
+			continue
+		}
+		id := "77"
+		moreKeys = append(moreKeys, e.node("TonalityDivisionElementDefinition",
+			e.leaf("elementID", id),
+			e.node("tonalityDivisionData",
+				e.node("keySignature",
+					e.node("root",
+						e.leaf("tonalityType", "kKeySigMinor"),
+						e.node("root",
+							e.leaf("noteName", kt.note),
+							e.leaf("accidentalID",
+								"accidental.12et.western.natural")))))))
+		staveEvents = append(staveEvents,
+			e.node("TonalityDivisionEventDefinition",
+				e.leaf("position", kt.at),
+				e.leaf("duration", "0"),
+				e.leaf("tonalityDivisionElementID", id)))
 	}
 	for _, kind := range extra {
 		g, ok := dynGroups[kind]
@@ -688,7 +723,7 @@ func built(t *testing.T, time [2]string, key string, notes []played,
 			e.node("BarDivisionElementTableDefinition",
 				e.node("array", append([]int32{timeSig}, moreSigs...)...)),
 			e.node("TonalityDivisionElementTableDefinition",
-				e.node("array", keySig)),
+				e.node("array", append([]int32{keySig}, moreKeys...)...)),
 			e.node("DynamicGroupElementTableDefinition",
 				e.node("array", dynDefs...))),
 		e.list("blocks", voiceBlock, globalBlock, staveBlock),
@@ -1934,24 +1969,77 @@ func TestPizzAndArcoAreWrittenAsWords(t *testing.T) {
 	}
 }
 
-func TestAnOctaveLineIsDrawnAndNothingIsShiftedAgain(t *testing.T) {
-	// Dorico stores what sounds, so the notes under the line are already
-	// up there: the bracket is drawn and the pitches are left alone.
-	raw := built(t, [2]string{"4", "4"}, "C", fourNotes(),
-		eventOn("voice", "OttavaLineEventDefinition",
-			[2]string{"position", "0"}, [2]string{"duration", "3"},
-			[2]string{"entityID", "line.ottava.up.8"}))
+func TestAnOctaveLineIsWrittenWhereItIsPrinted(t *testing.T) {
+	// An 8va means "these are written an octave below what you play".
+	// Dorico keeps the pitch that sounds, so under the line its notes are
+	// already up there; gscore keeps the pitch that is written and raises
+	// it at playback, as a reader does.
+	//
+	// Written at sounding pitch with a bracket over it, the page would say
+	// to play it an octave higher still — right to the ear only because
+	// nothing read the bracket, and wrong to anybody holding the part.
+	raw := built(t, [2]string{"4", "4"}, "C", []played{
+		{at: "0", dur: "1", pitch: 84}, // C6, as Dorico stores it
+		{at: "1", dur: "1", pitch: 86},
+		{at: "2", dur: "1", pitch: 88},
+		{at: "3", dur: "1", pitch: 89},
+	}, eventOn("voice", "OttavaLineEventDefinition",
+		[2]string{"position", "0"}, [2]string{"duration", "3"},
+		[2]string{"entityID", "line.ottava.up.8"}))
 
 	els := read(t, raw)[0].Parts[0].Measures[0].Voices[0].Elements
+	first := els[0].(*model.Note)
+	if got := first.Pitch.MIDI(); got != 72 {
+		t.Errorf("the first note under the line is written %d, want 72 — "+
+			"an octave below the 84 that sounds", got)
+	}
 	o := marksOf(els[0]).Octave
 	if o == nil || !o.Start || o.Amount != 1 {
 		t.Fatalf("the line does not open on the first note: %v", o)
 	}
-	if !o.SoundsAsWritten {
-		t.Error("the notes under the line would be shifted a second time")
+	if o.SoundsAsWritten {
+		t.Error("the line says its notes are already at the sounding " +
+			"pitch, and they have just been written an octave down")
 	}
 	if end := marksOf(els[3]).Octave; end == nil || !end.Stop {
 		t.Errorf("the line does not close on the fourth note: %v", end)
+	}
+	// And a note outside the line is left alone.
+	raw2 := built(t, [2]string{"4", "4"}, "C", []played{
+		{at: "0", dur: "1", pitch: 84},
+		{at: "3", dur: "1", pitch: 84},
+	}, eventOn("voice", "OttavaLineEventDefinition",
+		[2]string{"position", "0"}, [2]string{"duration", "1"},
+		[2]string{"entityID", "line.ottava.up.8"}))
+	out := read(t, raw2)[0].Parts[0].Measures[0].Voices[0].Elements
+	under := out[0].(*model.Note)
+	clear := out[len(out)-1].(*model.Note)
+	if under.Pitch.MIDI() != 72 {
+		t.Errorf("the note under the line is %d, want 72", under.Pitch.MIDI())
+	}
+	if clear.Pitch.MIDI() != 84 {
+		t.Errorf("the note past the end of the line is %d, want the 84 it "+
+			"was written as", clear.Pitch.MIDI())
+	}
+}
+
+func TestAnOctaveLineDownRaisesWhatIsUnderIt(t *testing.T) {
+	// 8vb the other way: the notes are written an octave above what they
+	// sound.
+	raw := built(t, [2]string{"4", "4"}, "C", []played{
+		{at: "0", dur: "4", pitch: 36}, // C2
+	}, eventOn("voice", "OttavaLineEventDefinition",
+		[2]string{"position", "0"}, [2]string{"duration", "0"},
+		[2]string{"entityID", "line.ottava.down.8"}))
+
+	el := read(t, raw)[0].Parts[0].Measures[0].Voices[0].Elements[0]
+	n := el.(*model.Note)
+	if got := n.Pitch.MIDI(); got != 48 {
+		t.Errorf("the note under an 8vb is written %d, want 48 — an "+
+			"octave above the 36 that sounds", got)
+	}
+	if o := marksOf(el).Octave; o == nil || o.Amount != -1 {
+		t.Errorf("the line is %v, want an octave down", o)
 	}
 }
 
@@ -2208,5 +2296,66 @@ func TestACueFromAStaffThatIsNotThereIsReported(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("the report says %v", pe.Details())
+	}
+}
+
+// builtKeyTurn is two bars of four-four, opening in C minor — three flats,
+// which is what built writes for "C" — and turning to E minor at the moment
+// given, counted in crotchets from the start. Two different signatures, so
+// that the turn can be told from the key the piece opened in.
+func builtKeyTurn(t *testing.T, at string) []byte {
+	t.Helper()
+	return built(t, [2]string{"4", "4"}, "C", []played{
+		{at: "0", dur: "1", pitch: 60},
+		{at: "1", dur: "1", pitch: 62},
+		{at: "2", dur: "1", pitch: 64},
+		{at: "3", dur: "1", pitch: 65},
+		{at: "4", dur: "4", pitch: 67},
+	}, keyTurnAt(at, "E"))
+}
+
+func TestAKeyThatTurnsInsideABarStaysThere(t *testing.T) {
+	// A double bar in the middle of a measure is ordinary in opera and in
+	// anything written to a cue: the scene turns, the key turns with it,
+	// and the bar it lands in is left as long as it was. Hoisted to the
+	// head of the bar, every note before the turn is read in the new key.
+	raw := builtKeyTurn(t, "2") // two crotchets into a four-four bar
+	p := read(t, raw)[0].Parts[0]
+	// The first bar carries the key the piece opens in, as every first
+	// bar does. What it must not carry is the turn.
+	if k := p.Measures[0].Key; k != nil && k.Fifths == 1 {
+		t.Error("the turn was written at the head of the bar, where the " +
+			"notes before it are read against it")
+	}
+	els := p.Measures[0].Voices[0].Elements
+	var found *model.KeySignature
+	for _, el := range els {
+		if mk := marksOf(el); mk != nil && mk.Key != nil {
+			found = mk.Key
+		}
+	}
+	if found == nil {
+		t.Fatal("the key turn is nowhere in the bar")
+	}
+	if found.Fifths != 1 {
+		t.Errorf("the key turned to %d, want E minor's one sharp",
+			found.Fifths)
+	}
+	// And it holds past the barline.
+	if got := p.KeyAt(1); got.Fifths != 1 {
+		t.Errorf("the bar after the turn is in %d, want the one sharp it "+
+			"was turned to", got.Fifths)
+	}
+}
+
+func TestAKeyAtTheHeadOfABarIsTheBarsOwn(t *testing.T) {
+	raw := builtKeyTurn(t, "4") // exactly at the second bar's head
+	p := read(t, raw)[0].Parts[0]
+	if p.Measures[1].Key == nil {
+		t.Fatal("a key written at a barline is not the bar's own")
+	}
+	if p.Measures[1].Key.Fifths != 1 {
+		t.Errorf("the second bar is in %d, want E minor's one sharp",
+			p.Measures[1].Key.Fifths)
 	}
 }

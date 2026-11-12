@@ -357,19 +357,16 @@ func putMarks(p *model.Part, bars []bar, points []pointMark,
 			from.Trill = &model.Trill{Start: true}
 			to.Trill = &model.Trill{Stop: true}
 		case "octave":
-			// The notes under the line are written where they are drawn
-			// and sound where the line says. Dorico stores what sounds,
-			// so they are already at the sounding pitch: the bracket is
-			// drawn and nothing is shifted again.
+			// An ordinary ottava: the notes under it are written an
+			// octave from where they sound, which putOctaves has just
+			// made true of them, and playback puts the octave back.
 			if from == to {
 				from.Octave = &model.OctaveShift{Amount: sp.amount,
-					Start: true, Stop: true, SoundsAsWritten: true}
+					Start: true, Stop: true}
 				continue
 			}
-			from.Octave = &model.OctaveShift{Amount: sp.amount,
-				Start: true, SoundsAsWritten: true}
-			to.Octave = &model.OctaveShift{Amount: sp.amount,
-				Stop: true, SoundsAsWritten: true}
+			from.Octave = &model.OctaveShift{Amount: sp.amount, Start: true}
+			to.Octave = &model.OctaveShift{Amount: sp.amount, Stop: true}
 		}
 	}
 }
@@ -407,9 +404,21 @@ func putStaffMarks(p *model.Part, bars []bar, repeats []barRepeat,
 		}
 	}
 	for _, k := range keys {
-		if i := barAt(bars, k.at); i >= 0 && i < len(p.Measures) {
-			key := k.key
+		i := barAt(bars, k.at)
+		if i < 0 || i >= len(p.Measures) {
+			continue
+		}
+		key := k.key
+		if bars[i].at.cmp(k.at) == 0 {
 			p.Measures[i].Key = &key
+			continue
+		}
+		// Partway through the bar, which is where it is written and where
+		// it has to be read: a scene turning at a double bar inside the
+		// measure leaves the bar as long as it was. Hoisted to the head,
+		// every note before the turn is read in the new key.
+		if mk := markAt(p, bars, k.at); mk != nil {
+			mk.Key = &key
 		}
 	}
 }
@@ -497,5 +506,38 @@ func putCues(s *model.Score, bars []bar, staves []*stave,
 			Staves: []int{i},
 			Cues:   mine,
 		})
+	}
+}
+
+// putOctaves writes the notes under an octave line where they are printed.
+//
+// An 8va means "these are written an octave below what you play". Dorico
+// keeps the pitch that sounds, so under the line its notes are already up
+// there; gscore keeps the pitch that is written and raises it at playback,
+// as a reader does. So the octave comes off the notes here and goes back
+// on through the mark — which is what makes the printed page match the one
+// Dorico prints, instead of sitting an octave above it with a bracket
+// saying to go higher again.
+func putOctaves(voices [][]group, spans []spanMark) {
+	for _, sp := range spans {
+		if sp.kind != "octave" || sp.amount == 0 {
+			continue
+		}
+		stop := sp.at.add(sp.dur)
+		for vi := range voices {
+			for gi := range voices[vi] {
+				g := &voices[vi][gi]
+				if g.at.cmp(sp.at) < 0 || stop.less(g.at) {
+					continue
+				}
+				for i := range g.pitches {
+					g.pitches[i] -= 12 * sp.amount
+				}
+				for _, n := range g.graces {
+					n.Pitch = model.PitchInKey(
+						n.Pitch.MIDI()-12*sp.amount, model.KeySignature{})
+				}
+			}
+		}
 	}
 }

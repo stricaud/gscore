@@ -719,11 +719,44 @@ func (p *Part) Unpitched() bool {
 func (p *Part) KeyAt(index int) KeySignature {
 	k := p.Key
 	for i := 0; i <= index && i < len(p.Measures); i++ {
-		if p.Measures[i].Key != nil {
-			k = *p.Measures[i].Key
+		m := p.Measures[i]
+		if m.Key != nil {
+			k = *m.Key
+		}
+		// A change written inside this bar takes effect after it, so it
+		// belongs to the bars that follow rather than to this one — the
+		// same rule the clef follows, and for the same reason.
+		if i == index {
+			break
+		}
+		if last, ok := lastKeyIn(m); ok {
+			k = last
 		}
 	}
 	return k
+}
+
+// lastKeyIn is the final change of key written inside a bar, if any.
+//
+// By when it happens rather than by which voice holds it, as the clef's is:
+// two lines on one staff can each turn the key, and the one that counts at
+// the barline is whichever turned it last.
+func lastKeyIn(m *Measure) (KeySignature, bool) {
+	var out KeySignature
+	var at Duration
+	found := false
+	for _, v := range m.Voices {
+		where := Duration{0, 1}
+		for _, el := range v.Elements {
+			if mk := marksOf(el); mk != nil && mk.Key != nil {
+				if !found || where.Cmp(at) >= 0 {
+					out, at, found = *mk.Key, where, true
+				}
+			}
+			where = where.Add(el.Duration())
+		}
+	}
+	return out, found
 }
 
 // ClefAt is the clef in force at a bar, following any change written in an

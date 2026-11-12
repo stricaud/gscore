@@ -829,3 +829,66 @@ func TestAFileFromBeforeTheCountsStillOpens(t *testing.T) {
 		t.Errorf("false came back as %d", m.SlurStop)
 	}
 }
+
+// TestWhatIsWrittenInsideABarSurvivesTheFile.
+//
+// Three things hang off an element rather than off its bar, because that is
+// where they happen: a clef that changes partway through, a key that turns
+// at a double bar inside the measure, and the little notes crushed in
+// before a note. None of the three was written to the file at all — so a
+// score read from Dorico with two hundred grace notes in it, saved and
+// opened again, had none.
+func TestWhatIsWrittenInsideABarSurvivesTheFile(t *testing.T) {
+	s := model.NewScore()
+	m := s.Parts[0].Measures[0]
+	bass := model.Bass
+	key := model.KeySignature{Fifths: 2, Mode: model.Minor}
+	n := &model.Note{
+		Pitch: model.Pitch{Step: model.StepC, Octave: 4},
+		Dur:   model.Duration{Num: 1, Den: 4},
+	}
+	n.Clef = &bass
+	n.Key = &key
+	n.Grace = &model.GraceGroup{Slashed: true, Notes: []*model.Note{
+		{Pitch: model.Pitch{Step: model.StepD, Octave: 4},
+			Dur: model.Duration{Num: 1, Den: 16}},
+		{Pitch: model.Pitch{Step: model.StepE, Octave: 4},
+			Dur: model.Duration{Num: 1, Den: 16}},
+	}}
+	m.Voices[0].Elements = append(m.Voices[0].Elements, n)
+
+	var buf bytes.Buffer
+	if err := Write(&buf, s, nil); err != nil {
+		t.Fatal(err)
+	}
+	back, _, err := Read(bytes.NewReader(buf.Bytes()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := back.Parts[0].Measures[0].Voices[0].Elements[0].(*model.Note)
+
+	if got.Clef == nil || *got.Clef != model.Bass {
+		t.Errorf("the clef written inside the bar came back as %v", got.Clef)
+	}
+	if got.Key == nil {
+		t.Fatal("the key written inside the bar did not come back")
+	}
+	if got.Key.Fifths != 2 || got.Key.Mode != model.Minor {
+		t.Errorf("the key came back as %d %v, want two sharps minor",
+			got.Key.Fifths, got.Key.Mode)
+	}
+	if got.Grace == nil {
+		t.Fatal("the grace notes did not come back")
+	}
+	if len(got.Grace.Notes) != 2 {
+		t.Errorf("%d little notes came back, want 2", len(got.Grace.Notes))
+	}
+	if !got.Grace.Slashed {
+		t.Error("the group came back unslashed, so an acciaccatura became " +
+			"an appoggiatura")
+	}
+	if got.Grace.Notes[0].Pitch.Step != model.StepD {
+		t.Errorf("the first little note is %v, want D",
+			got.Grace.Notes[0].Pitch)
+	}
+}

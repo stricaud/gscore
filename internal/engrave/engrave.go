@@ -994,9 +994,21 @@ func (e *engraver) clefAt(p *model.Part, i int) model.Clef {
 	return run[i]
 }
 
+// keyAt is Part.KeyAt, which the engraver asks of every bar.
+//
+// Not cached the way the clefs are: KeyAt walks from the head of the part,
+// which is cheap beside what the clefs cost because a key change is rare
+// and a bar carries at most one.
+func (e *engraver) keyAt(p *model.Part, i int) model.KeySignature {
+	return p.KeyAt(i)
+}
+
 type engraver struct {
 	opt   Options
 	score *model.Score
+	// key is the signature in force as a bar is drawn, which a change
+	// written inside that bar moves on. See drawMeasure.
+	key model.KeySignature
 	// pickup says the piece opens with an anacrusis, so that the bar after
 	// it is bar one — see barNumber.
 	pickup bool
@@ -2682,6 +2694,34 @@ func (e *engraver) clefLead(c model.Clef) float64 {
 	return smufl.Advance(glyph)*clefChangeScale + e.opt.Spacings.ClefAfter
 }
 
+// keyLead is the room a change of key needs in front of the note it is
+// written before, naturals to cancel the old one included.
+func (e *engraver) keyLead(c model.Clef, from, to model.KeySignature) float64 {
+	if e.opt.HideKeySignature {
+		return 0
+	}
+	sp := e.opt.Spacings
+	naturals, accidentals := keyChangeSteps(c, from, to)
+	w := 0.0
+	for range naturals {
+		w += smufl.Advance("accidentalNatural") + sp.BetweenKeyAccidentals
+	}
+	if len(naturals) > 0 && len(accidentals) > 0 {
+		w += sp.AfterKeyCancel
+	}
+	glyph := "accidentalSharp"
+	if to.Fifths < 0 {
+		glyph = "accidentalFlat"
+	}
+	for range accidentals {
+		w += smufl.Advance(glyph) + sp.BetweenKeyAccidentals
+	}
+	if w > 0 {
+		w += sp.ClefAfter
+	}
+	return w
+}
+
 // voiceShift is the room a column needs for a notehead that has to step
 // aside, and zero where none does.
 //
@@ -2792,13 +2832,22 @@ func (e *engraver) measureBox(p *model.Part, m *model.Measure, index int) measur
 	// room. Booking it anyway left a clef's width of white space in front
 	// of the note it was written on.
 	clef := e.clefAt(p, index)
+	key := e.keyAt(p, index)
 	for k := range entries {
 		mk := marksOf(entries[k].v.el)
-		if mk == nil || mk.Clef == nil || e.opt.HideClef || *mk.Clef == clef {
+		if mk == nil {
 			continue
 		}
-		entries[k].lead += e.clefLead(*mk.Clef)
-		clef = *mk.Clef
+		if mk.Clef != nil && !e.opt.HideClef && *mk.Clef != clef {
+			entries[k].lead += e.clefLead(*mk.Clef)
+			clef = *mk.Clef
+		}
+		// And the same for a key turning partway through the bar, which
+		// needs room for its naturals as well as its own accidentals.
+		if mk.Key != nil && *mk.Key != key {
+			entries[k].lead += e.keyLead(clef, key, *mk.Key)
+			key = *mk.Key
+		}
 	}
 
 	for i := 0; i < len(entries); {

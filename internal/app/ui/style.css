@@ -860,12 +860,14 @@ body.native #menubar { padding-left: 12px; }
   width: 0;
   height: 0;
   z-index: 4;
-  pointer-events: none;
 }
 
 .staff-name {
   position: absolute;
   left: 4px;
+  /* A button, so it is one: no chrome of its own, the chip is the chrome. */
+  border: 1px solid transparent;
+  cursor: pointer;
   max-width: 170px;
   padding: 1px 6px;
   border-radius: 9px;
@@ -879,6 +881,13 @@ body.native #menubar { padding-left: 12px; }
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* It says what it will do when you point at it, as the sprints do. */
+.staff-name:hover,
+.staff-name:focus-visible {
+  color: var(--ink);
+  border-color: var(--accent);
 }
 
 /* Hovered or reached by the keyboard, it opens out and says which staff. */

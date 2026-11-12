@@ -4032,6 +4032,58 @@ paths:
                   cancelled: { type: boolean }
                   unavailable: { type: boolean }
 
+  /api/take:
+    post:
+      tags: [play]
+      summary: Read a note recorded through the microphone
+      description: >
+        The body is the recording itself: mono samples, 16-bit, little-endian,
+        at the rate the query gives. What comes back is what the take turns
+        out to be — which note it is, how far off that note, where the sound
+        starts and stops once the silence either end is taken off, and where
+        in it a loop can be hidden so that a short recording holds a long
+        note. A take with no findable pitch still comes back, trimmed, with
+        no loop: a cymbal is a sample too.
+      parameters:
+        - in: query
+          name: rate
+          required: true
+          schema: { type: integer, minimum: 8000, maximum: 192000 }
+          description: The samples a second the take was recorded at.
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema: { type: string, format: binary }
+      responses:
+        "200":
+          description: What the recording is.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  hz: { type: number }
+                  key: { type: integer }
+                  cents: { type: integer }
+                  name: { type: string }
+                  frames: { type: integer }
+                  seconds: { type: number }
+                  loopStart: { type: integer }
+                  loopEnd: { type: integer }
+                  peak: { type: number }
+                  quiet: { type: boolean }
+                  loud: { type: boolean }
+                  error:
+                    type: string
+                    description: >
+                      Why there was nothing to read — an empty take, or one
+                      with no sound in it. Words rather than a failure code:
+                      it is something that happens, and the words say what to
+                      do about it.
+        "400":
+          description: The take says no rate, or there is nothing in it.
+
   /api/soundfont/load:
     post:
       tags: [play]

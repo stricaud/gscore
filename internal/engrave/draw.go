@@ -220,6 +220,10 @@ func (e *engraver) drawMeasure(part *model.Part, b measureBox, x, end float64, s
 	if b.m.Clef != nil {
 		e.clef = *b.m.Clef
 	}
+	// And the key this bar is read against, for the same reason: a bar can
+	// turn the key partway through, and what is drawn then depends on what
+	// was in force before it.
+	e.key = e.keyAt(part, b.index)
 
 	// A clef, key or meter change is written at the head of the bar it takes
 	// effect in, before any of its music.
@@ -280,6 +284,48 @@ func (e *engraver) drawMeasure(part *model.Part, b measureBox, x, end float64, s
 				Y:    e.y + stepY(clefRefStep[e.clef]),
 				Size: clefChangeSize,
 			})
+			break
+		}
+
+		// And a key written in the middle of a bar: the double bar in the
+		// middle of a measure that opera and film music are full of. The
+		// naturals that cancel the old signature come first, as they do
+		// at the head of a bar, and then the new one's own accidentals.
+		// The room was booked by keyLead.
+		for _, v := range s.elems {
+			m := marksOf(v.el)
+			if m == nil || m.Key == nil || e.opt.HideKeySignature {
+				continue
+			}
+			if *m.Key == e.key {
+				break // a turn to the key already in force says nothing
+			}
+			from := e.key
+			naturals, accidentals := keyChangeSteps(e.clef, from, *m.Key)
+			lead := e.keyLead(e.clef, from, *m.Key)
+			e.key = *m.Key
+			sp := e.opt.Spacings
+			at := x - e.accidentalLead(v.el) - lead + sp.ClefAfter
+			for _, step := range naturals {
+				e.lay.Glyphs = append(e.lay.Glyphs, Glyph{
+					Name: "accidentalNatural", X: at,
+					Y: e.y + stepY(float64(step)),
+				})
+				at += smufl.Advance("accidentalNatural") + sp.BetweenKeyAccidentals
+			}
+			if len(naturals) > 0 && len(accidentals) > 0 {
+				at += sp.AfterKeyCancel
+			}
+			glyph := "accidentalSharp"
+			if m.Key.Fifths < 0 {
+				glyph = "accidentalFlat"
+			}
+			for _, step := range accidentals {
+				e.lay.Glyphs = append(e.lay.Glyphs, Glyph{
+					Name: glyph, X: at, Y: e.y + stepY(float64(step)),
+				})
+				at += smufl.Advance(glyph) + sp.BetweenKeyAccidentals
+			}
 			break
 		}
 

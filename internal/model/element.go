@@ -438,6 +438,17 @@ type Marks struct {
 	// Altes writes four of them in two bars that way.
 	Clef *Clef
 
+	// Key, when set, changes the key signature from this element on.
+	//
+	// On the element for the same reason the clef is: that is where a
+	// change of key sometimes happens. A double bar in the middle of a
+	// measure is ordinary in opera and in anything written to a cue — the
+	// scene turns, the key turns with it, and the bar it lands in is left
+	// as long as it was. Written at the head of the bar instead, every
+	// note before the turn is read in the new key: a passage in three
+	// flats, four beats of it printed with the flats cancelled.
+	Key *KeySignature
+
 	// Stem overrides the direction the engraver would otherwise choose.
 	Stem Stem
 

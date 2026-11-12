@@ -132,14 +132,24 @@ test("the page has him and the stylesheet puts him over it", () => {
  * opens to add to is a piece they want to carry on writing. That is true of
  * a twelve-bar tune and wrong about everything else: open a symphony and
  * the page is at bar two thousand six hundred, which is nowhere anybody
- * asked to be. A score opens at its beginning, like any other document, and
- * the sprints are how somebody asks for the end of a staff.
+ * asked to be. A score opens at its beginning, like any other document.
+ *
+ * The buttons beside the staff names used to go to the end for the same
+ * reason, and it was the same mistake one step further in: a label at the
+ * head of the score that throws you four hundred bars away. What somebody
+ * looking at a page of rests wants to know is when the instrument comes
+ * in, so that is where they go — and the end of a staff, which is a real
+ * thing to want, is asked for from the menu instead. A staff with no notes
+ * at all has no entry to go to, and then the end is the only answer there
+ * is.
  */
 test("there is one sprint per staff, and it says which staff", () => {
   const fn = src.match(/^function drawSprints\(\)[\s\S]*?^}/m)[0];
   assert.ok(fn.includes("sprintRows("), "the sprints are not built from the staves");
-  assert.ok(fn.includes("Continue editing "),
-    "a sprint does not say what it is for");
+  assert.ok(fn.includes("comes in at measure "),
+    "a sprint does not say when its staff comes in");
+  assert.ok(fn.includes("sprintToStaffEntry("),
+    "a sprint still runs to the end of the staff");
   assert.ok(/state\.mode !== "strip"/.test(fn),
     "sprints are offered on the paginated view, where there is no end to run to");
   assert.ok(/clientWidth \* 1\.5/.test(fn),
@@ -160,7 +170,37 @@ test("play says it is getting ready, and lets go before the first sound", () => 
     "the preparation is not wrapped, so an early return strands the mascot");
 });
 
-test("a sprint goes to the last bar of its own staff and leaves the cursor in it", () => {
+test("a sprint goes to the bar its own staff comes in at", () => {
+  const fn = src.match(/^async function sprintToStaffEntry\([\s\S]*?^}/m)[0];
+  assert.ok(fn.includes("staffEntry("), "it does not look for the first note");
+  assert.ok(fn.includes("sprintToStaffEnd("),
+    "a staff with no notes in it has nowhere to go");
+  assert.ok(fn.includes("glideTo("), "it jumps rather than travels");
+  assert.ok(fn.includes("flashMeasure("), "it arrives without saying where");
+});
+
+test("the first note is a note, and not a rest", () => {
+  // An orchestral staff begins with rests: on the Rossini the piccolo
+  // holds twenty-eight bars of them before it plays, and the bar somebody
+  // wants to be taken to is the one the instrument comes in at.
+  const fn = src.match(/^function staffEntry\([\s\S]*?^}/m)[0];
+  assert.match(fn, /kind === "note" \|\| el\.kind === "chord"/,
+    "a bar of rests counts as the staff coming in");
+  assert.ok(/h\.measure >= best\.measure/.test(fn),
+    "it does not keep the earliest bar");
+});
+
+test("going to the end of a staff is asked for from the menu", () => {
+  assert.match(html, /data-action="staff-end"/,
+    "the menu does not offer the end of a staff");
+  const fn = src.match(/^async function goToStaffEnd\([\s\S]*?^}/m)[0];
+  assert.ok(fn.includes("state.selection"),
+    "the menu entry does not use the staff the cursor is on");
+  assert.ok(fn.includes("sprintToStaffEnd("),
+    "the menu entry does not go to the end of the staff");
+});
+
+test("the end of a staff puts the cursor after the last thing written", () => {
   const fn = src.match(/^async function sprintToStaffEnd\([\s\S]*?^}/m)[0];
   assert.ok(/h\.part !== part/.test(fn), "it does not look at one staff in particular");
   assert.ok(/h\.measure > last\.measure/.test(fn), "it does not find the last bar");

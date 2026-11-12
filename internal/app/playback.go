@@ -410,6 +410,21 @@ func buildPlayback(s *model.Score) Playback {
 						slurring = true
 					}
 
+					// A cue is not yours to play.
+					//
+					// It is a few bars of somebody else's line, printed
+					// small in a part during a long rest so the player can
+					// hear their entry coming — and the other player is
+					// the one making that sound. Played here it is the
+					// passage twice over, once from the staff it belongs
+					// to and once from the part that is only looking at
+					// it. The time it takes is still counted, because the
+					// bar is the bar: what is skipped is the sounding.
+					if mk != nil && mk.Small {
+						vt += d
+						continue
+					}
+
 					first := len(out.Events)
 					switch n := el.(type) {
 					case *model.Note:

@@ -71,7 +71,8 @@ function run({ scrollLeft = 400, mode = "strip", names = true,
     document: {
       createElement: () => ({
         className: "", textContent: "", title: "", hidden: false,
-        style: {},
+        type: "", style: {}, clicks: [],
+        addEventListener(_, fn) { this.clicks.push(fn); },
       }),
     },
   };
@@ -79,12 +80,14 @@ function run({ scrollLeft = 400, mode = "strip", names = true,
   // copy needs one of its own.
   const body = 'let staffNameKey = "";\n'
     + grab("sprintRows") + "\n" + grab("nameOf") + "\n"
-    + grab("drawStaffNames");
+    + grab("staffEntry") + "\n" + grab("drawStaffNames");
   const make = new Function(
     "$", "currentSVG", "state", "staffHeightOf", "placeSprints", "document",
+    "barNumberOf", "sprintToStaffEntry",
     body + "\nreturn { drawStaffNames, sprintRows };");
   const api = make(scope.$, scope.currentSVG, scope.state, scope.staffHeightOf,
-    scope.placeSprints, scope.document);
+    scope.placeSprints, scope.document,
+    (m) => m + 1, () => {});
   api.drawStaffNames();
   return { box, placed };
 }
@@ -111,13 +114,30 @@ test("a page of music is not a strip, and has its names on every system", () => 
   assert.equal(box.hidden, true);
 });
 
-test("the strip is pinned to the panel and does not take the mouse", () => {
+test("the strip is pinned to the panel and the labels take the mouse", () => {
   const rule = css.match(/#staff-names\s*\{[^}]*\}/);
   assert.ok(rule, "style.css has no rule for the name strip");
   assert.match(rule[0], /position:\s*sticky/,
     "the names have to stay put while the music moves under them");
-  assert.match(rule[0], /pointer-events:\s*none/,
-    "they stand over the music, so a click has to reach the bar beneath");
+  // They used to let every click through, because they were labels and
+  // nothing else. Each one is now the way to the bar its instrument comes
+  // in at, which is wanted most in the middle of a page of rests — which
+  // is exactly where the buttons at the head of the score had gone.
+  assert.ok(!/pointer-events:\s*none/.test(rule[0]),
+    "the labels cannot be clicked, so there is no way to a staff's entry " +
+    "once the head of the score has scrolled away");
+  const chip = css.match(/\.staff-name\s*\{[^}]*\}/);
+  assert.ok(chip, "style.css has no rule for a name label");
+  assert.match(chip[0], /cursor:\s*pointer/,
+    "the label does not say it can be clicked");
+});
+
+test("a label goes to the bar its instrument comes in at", () => {
+  const body = grab("drawStaffNames");
+  assert.ok(body.includes("sprintToStaffEntry("),
+    "clicking a staff's name does not take you to where it plays");
+  assert.ok(body.includes("comes in at measure "),
+    "the label does not say when its instrument comes in");
 });
 
 test("the page has somewhere to put them", () => {

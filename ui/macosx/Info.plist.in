@@ -12,6 +12,11 @@
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>NSHighResolutionCapable</key><true/>
   <key>LSMinimumSystemVersion</key><string>@MIN@</string>
+  <!-- Why the microphone. The system shows this sentence to the person the
+       first time gscore asks, and refuses to ask at all without it. -->
+  <key>NSMicrophoneUsageDescription</key>
+  <string>gscore records your instrument, one note at a time, to build a soundfont it can play your scores with. Nothing is sent anywhere: the recordings stay in your Gscore folder.</string>
+
   <key>NSHumanReadableCopyright</key><string>© 2001-2026 Sébastien Tricaud. MIT licence.</string>
 
   <!-- The scores gscore owns. A .gscore is its own format and a .abc is the

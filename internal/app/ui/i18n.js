@@ -209,6 +209,7 @@ const MESSAGES = {
   "Full screen (F)": "Plein écran (F)",
   "Go to a bar": "Aller à une mesure",
   "Go to measure…": "Aller à la mesure…",
+  "Go to the end of this staff": "Aller à la fin de cette portée",
   "Go to the end of a staff": "Aller à la fin d’une portée",
   "Grid": "Grille",
   "Half": "Blanche",

@@ -315,19 +315,34 @@ type marksDoc struct {
 	Symbols           []symbolRef `json:"symbols,omitempty"`
 	TieStart          bool        `json:"tieStart,omitempty"`
 	TieStop           bool        `json:"tieStop,omitempty"`
-	SlurStart         slurEnds    `json:"slurStart,omitempty"`
-	SlurStop          slurEnds    `json:"slurStop,omitempty"`
-	Tuplet            *tupletDoc  `json:"tuplet,omitempty"`
-	Stem              string      `json:"stem,omitempty"`
-	Dynamic           string      `json:"dynamic,omitempty"`
-	Hairpin           *hairpinDoc `json:"hairpin,omitempty"`
-	Octave            *octaveDoc  `json:"octave,omitempty"`
-	Trill             *trillDoc   `json:"trill,omitempty"`
-	Tremolo           *tremoloDoc `json:"tremolo,omitempty"`
-	Lyrics            []lyricDoc  `json:"lyrics,omitempty"`
-	Beam              string      `json:"beam,omitempty"`
-	Chord             *chordDoc   `json:"chord,omitempty"`
-	Texts             []textDoc   `json:"texts,omitempty"`
+	// Clef and Key are a change written in the middle of a bar, which
+	// happens where a hand drops into the bass for a phrase or a scene
+	// turns at a double bar inside the measure. They belong to the
+	// element, so they are written with it: kept on the measure alone,
+	// both came back at the head of the bar and the notes in front of
+	// them were read against the wrong sign.
+	Clef      string `json:"clef,omitempty"`
+	KeyFifths *int   `json:"keyFifths,omitempty"`
+	KeyMode   string `json:"keyMode,omitempty"`
+	// Grace are the little notes crushed in before this one. They take no
+	// time out of the bar, so they are not elements of their own and have
+	// to be written here or not at all — and not at all is what happened
+	// to every one of them until now.
+	Grace        []elemDoc   `json:"grace,omitempty"`
+	GraceSlashed bool        `json:"graceSlashed,omitempty"`
+	SlurStart    slurEnds    `json:"slurStart,omitempty"`
+	SlurStop     slurEnds    `json:"slurStop,omitempty"`
+	Tuplet       *tupletDoc  `json:"tuplet,omitempty"`
+	Stem         string      `json:"stem,omitempty"`
+	Dynamic      string      `json:"dynamic,omitempty"`
+	Hairpin      *hairpinDoc `json:"hairpin,omitempty"`
+	Octave       *octaveDoc  `json:"octave,omitempty"`
+	Trill        *trillDoc   `json:"trill,omitempty"`
+	Tremolo      *tremoloDoc `json:"tremolo,omitempty"`
+	Lyrics       []lyricDoc  `json:"lyrics,omitempty"`
+	Beam         string      `json:"beam,omitempty"`
+	Chord        *chordDoc   `json:"chord,omitempty"`
+	Texts        []textDoc   `json:"texts,omitempty"`
 	// Arpeggio rolls the chord, Break is the breath or pause after the
 	// note, Fingering which fingers play it, Glissando the slide to the
 	// next, Pedal the sustaining pedal, and Small draws it at cue size.
@@ -737,6 +752,7 @@ func encodeMarks(m *model.Marks) *marksDoc {
 		m.Beam == model.BeamAuto && m.Chord == nil && len(m.Texts) == 0 &&
 		m.Arpeggio == nil && m.Break == model.NoBreath &&
 		len(m.Fingering) == 0 && m.Glissando == nil && m.Pedal == nil &&
+		m.Clef == nil && m.Key == nil && m.Grace == nil &&
 		!m.Small {
 		return nil
 	}
@@ -745,6 +761,19 @@ func encodeMarks(m *model.Marks) *marksDoc {
 		SlurStart: slurEnds(m.SlurStart), SlurStop: slurEnds(m.SlurStop),
 		Stem:    stemNames[m.Stem],
 		Dynamic: m.Dynamic.String(),
+	}
+	if m.Clef != nil {
+		out.Clef = clefNames[*m.Clef]
+	}
+	if m.Key != nil {
+		f := m.Key.Fifths
+		out.KeyFifths, out.KeyMode = &f, modeNames[m.Key.Mode]
+	}
+	if m.Grace != nil {
+		out.GraceSlashed = m.Grace.Slashed
+		for _, n := range m.Grace.Notes {
+			out.Grace = append(out.Grace, encodeElement(n))
+		}
 	}
 	for i, a := range m.Articulations {
 		out.Articulations = append(out.Articulations, articNames[a])
@@ -1136,6 +1165,31 @@ func decodeMarks(md *marksDoc, m *model.Marks) {
 	}
 	m.TieStart, m.TieStop = md.TieStart, md.TieStop
 	m.SlurStart, m.SlurStop = int(md.SlurStart), int(md.SlurStop)
+	if md.Clef != "" {
+		if c, ok := clefValues[md.Clef]; ok {
+			m.Clef = &c
+		}
+	}
+	if md.KeyFifths != nil {
+		m.Key = &model.KeySignature{
+			Fifths: *md.KeyFifths, Mode: modeValues[md.KeyMode],
+		}
+	}
+	if len(md.Grace) > 0 {
+		g := &model.GraceGroup{Slashed: md.GraceSlashed}
+		for _, ed := range md.Grace {
+			el, err := decodeElement(ed)
+			if err != nil {
+				continue
+			}
+			if n, ok := el.(*model.Note); ok {
+				g.Notes = append(g.Notes, n)
+			}
+		}
+		if len(g.Notes) > 0 {
+			m.Grace = g
+		}
+	}
 	m.Stem = stemValues[md.Stem]
 	if d, ok := model.DynamicFromName(md.Dynamic); ok {
 		m.Dynamic = d

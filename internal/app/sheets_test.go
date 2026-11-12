@@ -886,3 +886,66 @@ func TestACueWithNowhereToGoSaysSo(t *testing.T) {
 		t.Errorf("it was refused with %q, which does not say why", why)
 	}
 }
+
+// TestACueIsNotPlayed.
+//
+// A cue is the one thing on a part that is read and not played: the other
+// player is the one making that sound, and sounding it here is the passage
+// twice over. The bar it sits in still lasts as long as it lasts, so what
+// is skipped is the sounding and not the time.
+func TestACueIsNotPlayed(t *testing.T) {
+	h := newHarness(t)
+	s := h.app.score
+
+	// Two staves: one playing, one resting, and four bars of each.
+	s.Parts = append(s.Parts, s.Parts[0].Clone())
+	for _, p := range s.Parts {
+		p.Measures = nil
+		for i := 0; i < 2; i++ {
+			m := &model.Measure{Voices: []*model.Voice{{}}}
+			for j := 0; j < 4; j++ {
+				m.Voices[0].Elements = append(m.Voices[0].Elements,
+					&model.Note{
+						Pitch: model.Pitch{Step: model.StepG, Octave: 4},
+						Dur:   model.Duration{Num: 1, Den: 4},
+					})
+			}
+			p.Measures = append(p.Measures, m)
+		}
+	}
+
+	played := func() int {
+		pb := buildPlayback(s)
+		return len(pb.Events)
+	}
+	before := played()
+
+	// Mark the second staff's first bar as a cue, the way a part carries
+	// one.
+	for _, el := range s.Parts[1].Measures[0].Voices[0].Elements {
+		if mk := marksOn(el); mk != nil {
+			mk.Small = true
+		}
+	}
+	after := played()
+
+	if after != before-4 {
+		t.Errorf("a bar of four cue notes changed the performance by %d "+
+			"notes, want 4 fewer", before-after)
+	}
+	// And the bar after it still begins where it did: the cue took no time
+	// out of the music.
+	// And the bar after it still begins where it did: the cue took no
+	// time out of the music.
+	pb := buildPlayback(s)
+	var first float64 = -1
+	for _, e := range pb.Events {
+		if e.Part == 1 && (first < 0 || e.Start < first) {
+			first = e.Start
+		}
+	}
+	if first <= 0 {
+		t.Errorf("the staff with the cue comes in at %g, want the second "+
+			"bar rather than the first", first)
+	}
+}

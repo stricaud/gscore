@@ -20,7 +20,7 @@ import UniformTypeIdentifiers
 /// tested headlessly, and everything about being a Mac application stays
 /// here, where AppKit already knows the answers.
 final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate,
-                         WKScriptMessageHandler {
+                         WKUIDelegate, WKScriptMessageHandler {
     private var window: NSWindow!
     private var web: WKWebView!
     private var ready = false
@@ -71,6 +71,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate,
         config.userContentController.add(self, name: "gscore")
         web = WKWebView(frame: .zero, configuration: config)
         web.navigationDelegate = self
+        // The microphone has to be asked for by somebody.
+        //
+        // A web view denies capture unless its UI delegate says otherwise,
+        // and it denies it in silence: getUserMedia returns a refusal that
+        // looks exactly like a machine with no microphone in it. Recording
+        // an instrument into a soundfont is the one thing gscore does that
+        // needs one, so the decision is here, where it can be read.
+        web.uiDelegate = self
         web.allowsBackForwardNavigationGestures = false
         web.setValue(false, forKey: "drawsBackground")
 
@@ -225,6 +233,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate,
         default:
             break
         }
+    }
+
+    /// Whether the page may use the microphone or the camera.
+    ///
+    /// The page is gscore's own, served from this process on the loopback
+    /// address — there is nobody else it could be. So the microphone is
+    /// granted and the camera is not: nothing here has any use for one,
+    /// and a program that asks for a camera it never uses is a program
+    /// people stop trusting.
+    ///
+    /// macOS still asks the person the first time, through the system's
+    /// own panel, and will not ask at all unless the bundle carries an
+    /// NSMicrophoneUsageDescription saying what it is for. See Info.plist.
+    func webView(_ view: WKWebView,
+                 requestMediaCapturePermissionFor origin: WKSecurityOrigin,
+                 initiatedByFrame frame: WKFrameInfo,
+                 type: WKMediaCaptureType,
+                 decisionHandler: @escaping (WKPermissionDecision) -> Void) {
+        decisionHandler(type == .microphone ? .grant : .deny)
     }
 
     func webView(_ view: WKWebView, didFinish navigation: WKNavigation!) {

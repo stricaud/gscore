@@ -223,6 +223,15 @@ func (sp *speller) measure(p *Part, bar int) {
 	// matters here: two walks that have to agree are two walks that will
 	// stop agreeing.
 	for _, v := range m.Ordered() {
+		// A key change written inside the bar turns the page from here
+		// on: every letter means what the new signature says it means,
+		// and what the bar had done to them before the turn is behind
+		// the double bar with the old key. Kept going instead, the first
+		// four beats' accidentals would be announced again against a
+		// signature that already has them.
+		if mk := marksOf(v.El); mk != nil && mk.Key != nil {
+			sp.openBar(*mk.Key)
+		}
 		switch el := v.El.(type) {
 		case *Note:
 			sp.note(el)

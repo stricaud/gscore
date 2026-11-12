@@ -236,6 +236,12 @@ type grace struct {
 	slur    bool // slurred into the note it decorates
 }
 
+// arpeggio is the wavy line in front of a chord that says to roll it.
+type arpeggio struct {
+	at   rat
+	down bool
+}
+
 // event is one note or rest, placed.
 type event struct {
 	at    rat
@@ -411,9 +417,11 @@ func buildFlow(t *tree, flow int32, players map[string]string,
 			var tups []tuplet
 			var slurs []slur
 			var graces []grace
+			var arps []arpeggio
 			for _, p := range streams.of("kVoiceStream", v) {
 				got, gotTups, gotSlurs, gotGraces, gotPoints, gotSpans,
-					end := readEvents(t, p.node, p.at, skipped)
+					gotArps, end := readEvents(t, p.node, p.at, skipped)
+				arps = append(arps, gotArps...)
 				evs = append(evs, got...)
 				tups = append(tups, gotTups...)
 				slurs = append(slurs, gotSlurs...)
@@ -433,6 +441,7 @@ func buildFlow(t *tree, flow int32, players map[string]string,
 				markTuplets(lane, tups)
 			}
 			markSlurs(ls, slurs, skipped)
+			markArpeggios(ls, arps, skipped)
 			graceOf[v] = graces
 			music[v] = ls
 		}
@@ -488,6 +497,15 @@ func buildFlow(t *tree, flow int32, players map[string]string,
 		for _, v := range st.voices {
 			voices = append(voices, music[v]...)
 		}
+		// The octave lines, before the music is laid into bars.
+		//
+		// Dorico stores what sounds, so a passage under an 8va is already
+		// up there. gscore holds what is written and puts the octave back
+		// when it plays — which is the same thing a reader does, and the
+		// only arrangement where both the page and the sound come out
+		// right. Written at sounding pitch with the bracket over it, the
+		// page says to play it an octave higher still.
+		putOctaves(voices, st.spans)
 		p.Measures = layOut(voices, bars)
 		attach(p, bars, st.dynamics, st.swells)
 		putMarks(p, bars, st.points, st.spans, skipped)
@@ -690,11 +708,12 @@ func elementTables(t *tree, flow int32) map[string]int32 {
 
 // readEvents reads one voice stream's notes and rests.
 func readEvents(t *tree, block int32, offset rat, skipped map[string]int) (
-	[]event, []tuplet, []slur, []grace, []pointMark, []spanMark, rat) {
+	[]event, []tuplet, []slur, []grace, []pointMark, []spanMark,
+	[]arpeggio, rat) {
 
 	events := t.child(block, "events")
 	if events < 0 {
-		return nil, nil, nil, nil, nil, nil, rat{0, 1}
+		return nil, nil, nil, nil, nil, nil, nil, rat{0, 1}
 	}
 	var out []event
 	var tups []tuplet
@@ -703,6 +722,7 @@ func readEvents(t *tree, block int32, offset rat, skipped map[string]int) (
 	var graceSlurs []rat
 	var points []pointMark
 	var spans []spanMark
+	var arps []arpeggio
 	end := rat{0, 1}
 	for _, e := range t.children(events) {
 		kind := t.nameOf(e)
@@ -724,6 +744,21 @@ func readEvents(t *tree, block int32, offset rat, skipped map[string]int) (
 				continue
 			}
 			out = append(out, event{at: at, dur: d, rest: true})
+		case "ArpeggioEventDefinition":
+			// The wavy line in front of a chord that says to roll it.
+			// Dorico also has the bracket that says to do the opposite —
+			// play it together, however it looks — and gscore has no mark
+			// for that, so it is reported rather than turned into its
+			// opposite.
+			kind := t.str(e, "arpeggioType")
+			if strings.Contains(kind, "Non") {
+				skipped["brackets saying a chord is not to be rolled"]++
+				continue
+			}
+			arps = append(arps, arpeggio{
+				at: at, down: strings.Contains(kind, "Down"),
+			})
+			continue
 		case "TrillEventDefinition":
 			spans = append(spans, spanMark{at: at, dur: d, kind: "trill"})
 			continue
@@ -809,7 +844,7 @@ func readEvents(t *tree, block int32, offset rat, skipped map[string]int) (
 		}
 	}
 	sortEvents(out)
-	return out, tups, slurs, graces, points, spans, end
+	return out, tups, slurs, graces, points, spans, arps, end
 }
 
 // sortEvents puts a voice's events in the order they are played, and the
@@ -1234,6 +1269,9 @@ type group struct {
 	// slurStart and slurStop open and close a phrase here.
 	slurStart, slurStop bool
 
+	// arp rolls this chord.
+	arp *model.Arpeggio
+
 	// graces are the little notes crushed in before this one.
 	graces  []*model.Note
 	slashed bool
@@ -1486,6 +1524,26 @@ func keyAt(bars []bar, at rat) model.KeySignature {
 	return key
 }
 
+// markArpeggios puts the roll on the chords it belongs to.
+func markArpeggios(lanes [][]group, arps []arpeggio, skipped map[string]int) {
+	for _, a := range arps {
+		put := false
+		for i := range lanes {
+			for j := range lanes[i] {
+				g := &lanes[i][j]
+				if g.at.cmp(a.at) != 0 || g.rest || len(g.pitches) == 0 {
+					continue
+				}
+				g.arp = &model.Arpeggio{Down: a.down}
+				put = true
+			}
+		}
+		if !put {
+			skipped["rolls on chords that are not there"]++
+		}
+	}
+}
+
 // layOut puts a staff's voices into measures.
 //
 // Dorico has no bars, so this is where they are made: each voice is walked
@@ -1628,6 +1686,11 @@ func elements(g group, d rat, key model.KeySignature,
 			mk.SlurStop += model.SlurEnd(g.slurStop && i == len(parts)-1 && !tiedOn)
 			// The little notes stand before the note itself, so they go
 			// on the first of its pieces and nowhere else.
+			// The roll goes on the first of the tied pieces: a chord is
+			// rolled once, where it is struck.
+			if g.arp != nil && i == 0 && !tiedBack {
+				mk.Arpeggio = g.arp
+			}
 			if len(g.graces) > 0 && i == 0 && !tiedBack {
 				mk.Grace = &model.GraceGroup{
 					Notes: g.graces, Slashed: g.slashed,

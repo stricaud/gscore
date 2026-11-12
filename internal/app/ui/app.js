@@ -1144,6 +1144,9 @@ async function action(name) {
     case "octave-15mb": await setOctave("15mb", "15mb"); break;
     case "octave-none": await setOctave("none", "Octave line removed"); break;
 
+    case "staff-end":
+      await goToStaffEnd();
+      break;
     case "jump": await jumpToMeasure(); break;
 
     case "tuplet-3": await setTuplet(3); break;
@@ -1826,6 +1829,29 @@ function sprintRows() {
   return [...seen.values()].sort((a, b) => a.top - b.top);
 }
 
+// staffEntry is the bar a staff first has a note in.
+//
+// Not the first bar it has: an orchestral staff begins with rests, and on
+// the Rossini the piccolo holds twenty-eight of them before it plays. The
+// bar somebody wants to be taken to is the one the instrument comes in at.
+//
+// Null for a staff that never plays — a part somebody has added and not
+// written yet, and a staff of nothing but rests through a whole movement.
+function staffEntry(part, top) {
+  let best = null;
+  for (const h of state.hits || []) {
+    if (h.part !== part) continue;
+    if (top != null && Math.abs(h.staffTop - top) > 0.01) continue;
+    if (best && h.measure >= best.measure) continue;
+    // A note or a chord. A rest is the staff counting, not playing, and a
+    // symbol is something written over the music rather than in it.
+    const plays = (h.elements || []).some(
+      (el) => el.kind === "note" || el.kind === "chord");
+    if (plays) best = h;
+  }
+  return best;
+}
+
 // What is on the page now, so that scrolling only moves the buttons rather
 // than building them again.
 let sprintKey = "";
@@ -1865,16 +1891,25 @@ function drawSprints() {
     sprintKey = key;
     box.textContent = "";
     for (const r of rows) {
+      const entry = staffEntry(r.part, r.top);
       const b = document.createElement("button");
       b.type = "button";
       b.className = "staff-sprint";
       b.dataset.name = r.name;
-      const what = "Continue editing " + r.name;
+      // Which bar, in the tooltip, because that is the question somebody
+      // is asking when they look at a staff of rests: not "take me
+      // somewhere" but "when does this come in".
+      //
+      // A staff with no notes at all has no answer to that, so it gives
+      // the other one: the end, which is where writing it would start.
+      const what = entry
+        ? r.name + " comes in at measure " + barNumberOf(entry.measure)
+        : "Go to the end of " + r.name + ", which has no notes yet";
       b.title = what;
       b.setAttribute("aria-label", what);
-      // An arrow with a wall at the end of it: go as far as this goes.
-      b.textContent = "⇥";
-      b.addEventListener("click", () => void sprintToStaffEnd(r.part, r.top));
+      // A note: go to where this instrument plays.
+      b.textContent = "♪";
+      b.addEventListener("click", () => void sprintToStaffEntry(r.part, r.top));
       box.appendChild(b);
     }
   }
@@ -1941,10 +1976,26 @@ function drawStaffNames() {
     staffNameKey = key;
     box.textContent = "";
     for (const r of rows) {
-      const el = document.createElement("div");
+      // The label is the button.
+      //
+      // It began as a label and the sprint beside it as a button, each
+      // showing where the other did not: the buttons at the head of the
+      // score, the names once it had scrolled away. That was right while
+      // the button meant "run to the end of this staff", which is a thing
+      // you ask for from the beginning. It means "take me to where this
+      // instrument comes in" now, and that is wanted wherever you are —
+      // most of all in the middle of a page of rests, which is exactly
+      // where the buttons had gone and only the names were left.
+      const el = document.createElement("button");
+      el.type = "button";
       el.className = "staff-name";
       el.textContent = r.name;
-      el.title = r.name;
+      const entry = staffEntry(r.part, r.top);
+      el.title = entry
+        ? r.name + " comes in at measure " + barNumberOf(entry.measure) +
+          " — click to go there"
+        : "Go to the end of " + r.name + ", which has no notes yet";
+      el.addEventListener("click", () => void sprintToStaffEntry(r.part, r.top));
       box.appendChild(el);
     }
   }
@@ -1981,6 +2032,60 @@ function placeSprints(rows, box, svg, wrap) {
 // several times over; "as far as this goes" means as far as this band
 // goes. Without it the arrow beside the first movement of the Moonlight
 // sonata ran to the last bar of the third.
+// sprintToStaffEntry goes to the bar this staff first plays in.
+//
+// What the button beside a staff's name does. It used to go to the staff's
+// last bar — "carry on writing here" — which is a reasonable thing to want
+// and a strange thing to offer from a label at the head of the score: one
+// press and you are four hundred bars away, at the end of a piece you were
+// looking at the beginning of. Carrying on writing is now asked for from
+// the menu, where a thing that moves you that far belongs.
+// goToStaffEnd takes the cursor to the end of the staff it is on.
+//
+// The staff it is on, because from a menu there is nothing else to mean:
+// the buttons at the head of the score knew which staff they stood beside
+// and a menu entry does not. Somebody who wants another staff's end puts
+// the cursor on it first, which is one click and says plainly which one
+// they meant.
+async function goToStaffEnd() {
+  const sel = state.selection;
+  if (!sel) {
+    status("Click a staff first — this goes to the end of the one you are on");
+    return;
+  }
+  await sprintToStaffEnd(sel.part, null);
+}
+
+async function sprintToStaffEntry(part, top) {
+  const name = (state.info?.parts || [])[part]?.name || `Staff ${part + 1}`;
+  const entry = staffEntry(part, top);
+  if (!entry) {
+    // Nothing to come in at. The end of the staff is the other place
+    // worth being — it is where writing this part would start — so that
+    // is where it goes rather than refusing to move.
+    await sprintToStaffEnd(part, top);
+    return;
+  }
+  // On the first thing written in the bar rather than after it: this is a
+  // place to look at, where the end of the staff is a place to write from.
+  state.selection = {
+    part, measure: entry.measure, at: 0,
+    step: 4, ref: null, replace: false,
+  };
+  markSelection();
+
+  const box = {
+    x0: entry.x0, x1: entry.x1,
+    top: entry.staffTop, bottom: entry.staffTop + staffHeightOf(entry),
+  };
+  await glideTo(box);
+  await ensureTiles();
+  flashMeasure(box);
+  const where = movementAt(entry.measure);
+  const named = where && where.title ? ` of ${where.title}` : "";
+  status(`${name} comes in at measure ${barNumberOf(entry.measure)}${named}`);
+}
+
 async function sprintToStaffEnd(part, top) {
   let last = null;
   for (const h of state.hits || []) {
@@ -16243,6 +16348,9 @@ const MENU_ICONS = {
   // or down and this one moves you along the piece. Transposing is the
   // music moving up and along at once, which is what the diagonal says.
   "jump": "\ueb62",               // arrowBlackRight
+  // The end of a staff is further along the same arrow, with the barline
+  // it stops at: a thin and a thick line, which is how a piece ends.
+  "staff-end": "\ue032",          // barlineFinal
   "transpose": "\ueb61",          // arrowBlackUpRight
 
   // Moving a note up and down the staff.
@@ -22209,4 +22317,141 @@ function transposeName(pitch, steps) {
     oct -= 1;
   }
   return letters[letter] + (m[3] === undefined ? "" : String(oct));
+}
+
+/* ---------- listening ---------- */
+
+// Recording an instrument, one note at a time.
+//
+// The microphone is the page's because a browser hands a page the sound and
+// hands a program nothing. What the page does with it is as little as
+// possible: take the samples, send them to the core, and show what came
+// back. Which note it was, where the sound starts and stops, and where a
+// loop can be hidden in it are all worked out in Go — see package
+// recording — so that a note recorded in the browser and the same note
+// recorded in the application cannot disagree about what it is.
+let mic = null;
+
+// askForMicrophone opens the microphone, once, and keeps it.
+//
+// Kept because opening one is slow and asks the person a question the first
+// time: a dialog that records twelve notes should ask once and then be
+// ready. It is let go when the dialog closes — a program holding a
+// microphone it is not using is a program with a light on for no reason.
+async function askForMicrophone() {
+  if (mic && mic.stream && mic.stream.active) return mic;
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    throw new Error("this browser will not let a page listen");
+  }
+  const stream = await navigator.mediaDevices.getUserMedia({
+    audio: {
+      // None of the three. They are made for speech on a telephone and
+      // every one of them is wrong here: the gate cuts the end of a note,
+      // the echo canceller fights the room, and the automatic gain turns
+      // a diminuendo into a crescendo.
+      echoCancellation: false,
+      noiseSuppression: false,
+      autoGainControl: false,
+      channelCount: 1,
+    },
+  });
+  wakeAudio();
+  await audio.resume().catch(() => {});
+  mic = { stream, source: audio.createMediaStreamSource(stream) };
+  return mic;
+}
+
+// closeMicrophone lets it go.
+function closeMicrophone() {
+  if (!mic) return;
+  try {
+    for (const t of mic.stream.getTracks()) t.stop();
+    mic.source.disconnect();
+  } catch (_) {
+    /* already gone */
+  }
+  mic = null;
+}
+
+// recordTake listens until stop() is called, and hands back the samples.
+//
+// Through a ScriptProcessor rather than a MediaRecorder: what is wanted is
+// the samples themselves, and a MediaRecorder gives back an encoded file —
+// Opus, usually, which is lossy and would put the compression's own noise
+// into every sample of the soundfont.
+//
+// It is the deprecated way of getting at audio in a page. The replacement,
+// an AudioWorklet, has to be a separate file fetched from a URL, which the
+// browser build cannot do: gscore in the browser is one page with no server
+// behind it. A worklet is worth having when there is somewhere to put it.
+function recordTake(onLevel) {
+  if (!mic) throw new Error("the microphone is not open");
+  const size = 4096;
+  const node = audio.createScriptProcessor(size, 1, 1);
+  const chunks = [];
+  let frames = 0;
+  let peak = 0;
+
+  node.onaudioprocess = (ev) => {
+    const got = ev.inputBuffer.getChannelData(0);
+    const copy = new Float32Array(got.length);
+    copy.set(got);
+    chunks.push(copy);
+    frames += copy.length;
+    // The loudest thing so far, for the level meter — and for the warning
+    // afterwards, since a take that touched the top was already clipped
+    // by the time it arrived.
+    for (let i = 0; i < copy.length; i++) {
+      const a = Math.abs(copy[i]);
+      if (a > peak) peak = a;
+    }
+    if (onLevel) onLevel(peak, frames / audio.sampleRate);
+  };
+  mic.source.connect(node);
+  // Into a gain of nothing: a ScriptProcessor does not run unless it is
+  // connected to something, and what it must not do is put the microphone
+  // through the speakers, which is a howl.
+  const sink = audio.createGain();
+  sink.gain.value = 0;
+  node.connect(sink);
+  sink.connect(audio.destination);
+
+  return {
+    rate: audio.sampleRate,
+    stop() {
+      node.onaudioprocess = null;
+      try {
+        mic.source.disconnect(node);
+        node.disconnect();
+        sink.disconnect();
+      } catch (_) {
+        /* already gone */
+      }
+      // One run of samples, as 16-bit, which is what a soundfont holds and
+      // what the core is expecting.
+      const out = new Int16Array(frames);
+      let at = 0;
+      for (const c of chunks) {
+        for (let i = 0; i < c.length; i++) {
+          const v = Math.max(-1, Math.min(1, c[i]));
+          out[at++] = v < 0 ? v * 32768 : v * 32767;
+        }
+      }
+      return out;
+    },
+  };
+}
+
+// readTake sends a recording to the core and says what it turned out to be.
+async function readTake(samples, rate) {
+  const res = await fetch("/api/take?rate=" + encodeURIComponent(rate), {
+    method: "POST",
+    headers: { "Content-Type": "application/octet-stream" },
+    body: samples.buffer.slice(samples.byteOffset,
+      samples.byteOffset + samples.byteLength),
+  });
+  if (!res.ok) {
+    throw new Error((await res.text()).trim());
+  }
+  return res.json();
 }

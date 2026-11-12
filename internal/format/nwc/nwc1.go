@@ -52,6 +52,12 @@ type walker struct {
 	// printed is the staff just read saying it is one of the staves on the
 	// page, rather than one that is only played.
 	printed bool
+	// octaveShifts counts the clef changes in the staff just read that
+	// also changed the octave the staff is written at — the 8 under a
+	// treble clef appearing or going away partway through. The staff's
+	// own belongs to the part and is kept; a change of it cannot be, and
+	// is reported instead.
+	octaveShifts int
 	// sounds is the instrument the staff just read plays through, or -1.
 	sounds int
 	// layerWithNext is the staff just read asking to be printed on the
@@ -724,6 +730,16 @@ func parseNWC1(raw []byte, version int) (*model.Score, error) {
 				"staff %d: nothing readable where the next staff should be", i+1))
 			continue
 		}
+		if w.octaveShifts > 0 {
+			lost = append(lost, fmt.Sprintf(
+				"staff %d (%s): %d clef %s also changed the octave the "+
+					"staff is written at, which gscore keeps for a whole "+
+					"part and not for a stretch of one. The clefs are "+
+					"there; those notes sound an octave from where they "+
+					"are written.",
+				i+1, part.Name, w.octaveShifts,
+				plural(w.octaveShifts, "change", "changes")))
+		}
 		score.Parts = append(score.Parts, part)
 		shares = append(shares, w.layerWithNext)
 		groups = append(groups, w.group)
@@ -1101,6 +1117,7 @@ func (w *walker) staff(version int) (*model.Part, error) {
 	st.closeMeasure(model.BarFinal)
 	linkTies(part)
 	closeDanglingSpans(part)
+	w.octaveShifts = st.octaveChanges
 	return part, nil
 }
 
@@ -1144,7 +1161,12 @@ type staffState struct {
 	// the same for the meter.
 	clefSet bool
 	timeSet bool
-	keySet  bool
+	// shift is the octave the clef in force carries, as NoteWorthy writes
+	// it, and octaveChanges counts the ones that changed partway through —
+	// which is the one shape of this the model cannot hold.
+	shift         int
+	octaveChanges int
+	keySet        bool
 	// time is the meter in force and clef the sign in force, so that a
 	// change back to what the staff opened with is still written down.
 	time model.TimeSignature
@@ -1650,7 +1672,8 @@ func (w *walker) objectBody(st *staffState) error {
 		if err != nil {
 			return err
 		}
-		if _, err := w.u16(); err != nil { // octave shift
+		shift, err := w.u16()
+		if err != nil {
 			return err
 		}
 		if clef, ok := nwc1Clefs[c]; ok {
@@ -1667,6 +1690,21 @@ func (w *walker) objectBody(st *staffState) error {
 			if !st.clefSet {
 				st.part.Clef = clef
 				st.clefSet = true
+				// A clef can carry an octave with it: the treble clef
+				// with a little 8 under it that a guitar and a tenor
+				// voice are written in, and its opposite over a
+				// piccolo's. The notes on the staff are read where they
+				// are drawn and sound an octave away, which is what the
+				// 8 says and the only thing it says.
+				//
+				// So it is kept as the staff's transposition rather than
+				// moved into the pitches. gscore holds what the player
+				// reads and sounds it through the part's own interval,
+				// which is exactly this: the page stays the page — a
+				// guitar part still reads where it is written — and the
+				// playback drops an octave, which before this it did not.
+				st.part.Transpose.OctaveChange += octaveOf(shift)
+				st.shift = shift
 			} else if st.clef != clef {
 				st.ensure()
 				if len(st.meas.Voices[0].Elements) == 0 {
@@ -1685,6 +1723,15 @@ func (w *walker) objectBody(st *staffState) error {
 					// staff.
 					st.pendingClef = &clef
 				}
+			}
+			if shift != st.shift {
+				// A change of octave partway through a staff, which the
+				// transposition cannot say: it belongs to the whole part
+				// and this belongs to one stretch of it. The clef itself
+				// is taken; the octave is not, and is reported rather
+				// than quietly halving somebody's bass line.
+				st.octaveChanges++
+				st.shift = shift
 			}
 			st.clef = clef
 		}
@@ -3273,4 +3320,22 @@ func hideUnisons(m *model.Measure) {
 		mark(v, false)
 		mark(v, true)
 	}
+}
+
+// octaveOf reads a clef's octave shift.
+//
+// NoteWorthy's clef dialog offers None, Octave Up and Octave Down, in that
+// order, and this file numbers its enumerations the way the dialogs list
+// them — the clefs themselves are 0 to 3 in the order the clef list shows
+// them. Nothing else in the format says what these mean, and the files met
+// so far all carry 0, so anything beyond the three is left alone and
+// counted rather than guessed at.
+func octaveOf(shift int) int {
+	switch shift {
+	case 1:
+		return 1
+	case 2:
+		return -1
+	}
+	return 0
 }

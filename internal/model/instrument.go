@@ -136,6 +136,7 @@ var instrumentNames = map[Instrument]string{
 	Vibraphone: "vibraphone", Marimba: "marimba", ChurchOrgan: "organ",
 	Accordion: "accordion", Harmonica: "harmonica",
 	AcousticGuitar: "guitar", ElectricGuitar: "electric guitar",
+	SteelGuitar:  "steel-string guitar",
 	AcousticBass: "bass", Violin: "violin", Viola: "viola", Cello: "cello",
 	Contrabass: "contrabass", Harp: "harp", Timpani: "timpani",
 	StringEnsemble: "strings", ChoirAahs: "choir", VoiceOohs: "voice",

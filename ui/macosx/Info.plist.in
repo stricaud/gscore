@@ -52,7 +52,7 @@
       <array>
         <string>mscz</string><string>mscx</string>
         <string>musicxml</string><string>mxl</string>
-        <string>nwc</string><string>nwctxt</string>
+        <string>nwc</string><string>nwctxt</string><string>tab</string><string>btab</string><string>txt</string>
         <string>dorico</string>
       </array>
     </dict>

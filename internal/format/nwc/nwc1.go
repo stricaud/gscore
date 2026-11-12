@@ -13,7 +13,6 @@ package nwc
 import (
 	"encoding/binary"
 	"fmt"
-	"os"
 	"strings"
 
 	"github.com/stricaud/gscore/internal/model"
@@ -234,7 +233,6 @@ var nwc1Accidentals = map[byte]model.Accidental{
 
 // noteValue is the eight-byte record a note or rest carries.
 type noteValue struct {
-	raw5     byte
 	dur      model.Duration
 	dots     int
 	tie      bool
@@ -296,7 +294,6 @@ func (w *walker) noteValue(rest bool) (noteValue, error) {
 	// read as part of a span that would be hundreds of slurs beginning and
 	// never ending, drawn across the page to the margin of every system
 	// after them.
-	nv.raw5 = raw[5]
 	nv.slurTo = raw[5]&0x01 != 0
 	if w.dia().slurHasBothEnds {
 		nv.slurFrom = raw[5]&0x02 != 0
@@ -775,6 +772,24 @@ func parseNWC1(raw []byte, version int) (*model.Score, error) {
 		closeDanglingSpans(p)
 	}
 	score.Groups = staffGroups(score.Parts, groups, sections, braces, sounds)
+	// Slurs that reach further than a slur reaches. One can be what the
+	// composer wrote; nearly always it is a mark whose far end this reader
+	// lost, and the page is the only thing that would have said so.
+	if long := model.LongSlurs(score, longSlurBars); len(long) > 0 {
+		where := make([]string, 0, len(long))
+		for i, l := range long {
+			if i == 4 {
+				where = append(where, "…")
+				break
+			}
+			where = append(where, l.String())
+		}
+		lost = append(lost, fmt.Sprintf(
+			"%d %s further than %d bars, which is usually a reading "+
+				"mistake and worth a look: %s",
+			len(long), plural(len(long), "slur reaches", "slurs reach"),
+			longSlurBars, strings.Join(where, "; ")))
+	}
 	// Whatever the file did not say about what plays each staff, its own
 	// names usually do — and where they do not, the staff is named so it
 	// can be set by hand instead of found by ear.
@@ -1246,8 +1261,6 @@ type staffState struct {
 	// slurOpen says the element before this one was joined onward, so a
 	// note that is not closes the slur.
 	slurOpen bool
-	lastRaw5 byte
-	lastKind string
 
 	// A wedge being drawn, and the last note it has reached.
 	pendingHairpin *model.Hairpin
@@ -1374,10 +1387,6 @@ func (s *staffState) attachClef(el model.Element) {
 // From 1.75 the file marks only that, so the end of a phrase mark is not
 // written anywhere: it is the first element after the run of joined ones.
 func (s *staffState) slurRun(m *model.Marks, joined bool) {
-	if s.part != nil && s.part.Name == os.Getenv("NWCSLUR") {
-		fmt.Fprintf(os.Stderr, "SLUR bar=%d joined=%v open=%v raw5=%02x kind=%s\n",
-			len(s.part.Measures)+1, joined, s.slurOpen, s.lastRaw5, s.lastKind)
-	}
 	switch {
 	case joined && !s.slurOpen:
 		m.SlurStart = 1
@@ -1594,16 +1603,6 @@ func (s *staffState) splitLines() {
 	if total.Float() <= bar.Float()*1.001 {
 		return // one line holds it, which is nearly every bar
 	}
-	if os.Getenv("SPLITDBG") != "" {
-		signal := 0
-		for _, el := range els {
-			if s.restChord[el] {
-				signal++
-			}
-		}
-		fmt.Fprintf(os.Stderr, "SPLIT staff=%q bar=%d total=%s meter=%s restchords=%d\n",
-			s.part.Name, len(s.part.Measures)+1, total, bar, signal)
-	}
 
 	// Each object to the line that is furthest behind, with the rest that
 	// opens the second line put in it whatever the clocks say — at the
@@ -1613,13 +1612,45 @@ func (s *staffState) splitLines() {
 	var clock [2]model.Duration
 	clock[0] = model.Duration{Num: 0, Den: 1}
 	clock[1] = model.Duration{Num: 0, Den: 1}
+	// Where the beam being drawn went, so that the notes under it follow.
+	beamAt := -1
 	for _, el := range els {
 		at := 0
-		if s.restChord[el] || clock[1].Float() < clock[0].Float()-1e-9 {
+		mk := marksOf(el)
+		switch {
+		case s.restChord[el]:
+			at = 1
+		case mk != nil && (mk.SlurStart > 0 || mk.SlurStop > 0 ||
+			mk.TieStart || mk.TieStop):
+			// An element at either end of a curve stays in the first
+			// line, which is the one that runs on into the next bar. The
+			// engraver pairs the two ends of a slur or a tie within one
+			// voice, and the clocks had dealt a chord that opened a slur
+			// into the second line while the chord that closed it, a bar
+			// later, sat in the first: the opening had nothing to close
+			// it and was drawn on to the next end the engraver found,
+			// four bars away. Bars 214 and 292 of the concerto's
+			// trombones were both that.
+			at = 0
+		case mk != nil && beamAt >= 0 &&
+			(mk.Beam == model.BeamContinue || mk.Beam == model.BeamStop):
+			// A note under a beam goes where the beam began. A dotted
+			// eighth and its sixteenth are one figure, and dealt by the
+			// clocks they came apart.
+			at = beamAt
+		case clock[1].Float() < clock[0].Float()-1e-9:
 			at = 1
 		}
 		lines[at] = append(lines[at], el)
 		clock[at] = clock[at].Add(el.Duration())
+		if mk != nil {
+			switch mk.Beam {
+			case model.BeamStart, model.BeamContinue:
+				beamAt = at
+			default:
+				beamAt = -1
+			}
+		}
 	}
 	// Both halves have to be a bar, or this is not what the bar is and
 	// guessing at it would be worse than leaving it long.
@@ -2026,7 +2057,6 @@ func (w *walker) objectBody(st *staffState) error {
 		if err != nil {
 			return err
 		}
-		st.lastRaw5, st.lastKind = nv.raw5, map[bool]string{true: "rest", false: "note"}[objType == 9]
 		// A 1.70 note carries two bytes more than a 1.75 one — and a 1.70
 		// rest does not, which is the kind of thing only the file can tell
 		// you. Read as eight, every note left two bytes of itself behind
@@ -2086,14 +2116,23 @@ func (w *walker) objectBody(st *staffState) error {
 		}
 		if len(st.grace) > 0 {
 			n.Grace = &model.GraceGroup{Notes: st.grace}
-			// A slur that begins on a small note belongs to the phrase the
-			// note it ornaments is in. Left where it was it would be lost,
-			// since the engraver draws spans along the bar and the small
-			// notes are not in it — and the note that closed the slur
-			// would be closing one that never opened.
+			// A slur that begins or ends on a small note belongs to the
+			// phrase the note it ornaments is in. Left where it was it
+			// would be lost, since the engraver draws spans along the bar
+			// and the small notes are not in it — and the note that closed
+			// the slur would be closing one that never opened.
+			//
+			// Both ends, not one. The opening was carried across and the
+			// closing thrown away, so a phrase that ended on a grace note
+			// — bar 184 of the concerto's cellos, a flattened grace in
+			// front of a half note — never closed at all, and was drawn
+			// on through four bars of rests to the next phrase.
 			for _, g := range st.grace {
 				if g.SlurStart > 0 && n.SlurStop == 0 {
 					n.SlurStart = 1
+				}
+				if g.SlurStop > 0 {
+					n.SlurStop = 1
 				}
 				g.SlurStart, g.SlurStop = 0, 0
 			}
@@ -2169,7 +2208,6 @@ func (w *walker) objectBody(st *staffState) error {
 			ch := &model.Chord{Dur: nv.dur}
 			ch.Tuplet = tupletMark(nv.triplet)
 			ch.Beam = beamMark(nv.beam)
-			st.lastRaw5, st.lastKind = nv.raw5, "chord"
 			if !w.dia().slurHasBothEnds {
 				st.slurRun(&ch.Marks, nv.slurTo)
 			}
@@ -2212,7 +2250,6 @@ func (w *walker) objectBody(st *staffState) error {
 		// marks; its noteheads only carry pitches.
 		ch.Beam = beamMark(head.beam)
 		ch.Tuplet = tupletMark(head.triplet)
-		st.lastRaw5, st.lastKind = head.raw5, "chordhead"
 		st.slurRun(&ch.Marks, head.slurTo)
 		if head.staccato {
 			ch.AddArticulation(model.Staccato)
@@ -2949,6 +2986,10 @@ func drumLines(n int) int {
 	}
 	return n
 }
+
+// longSlurBars is how far a slur may reach before it is reported. Three
+// bars is a long phrase; past that it is nearly always a lost end.
+const longSlurBars = 3
 
 // nwcDefaultGroup is the name NoteWorthy files carry when nobody has filed
 // the staff under anything. It is not an instrument group and nothing is

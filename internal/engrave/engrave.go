@@ -1481,6 +1481,12 @@ func (e *engraver) run() {
 // sum below gives back exactly where the text already was.
 func (e *engraver) centreTitleBlock() {
 	sp := e.opt.Spacings
+	// Nothing to centre in a strip: the header was set against the left
+	// margin, which is a place that was known before the music was laid
+	// out and does not move when more of it arrives.
+	if e.opt.Mode == Strip {
+		return
+	}
 	for i := e.titleFrom; i < e.titleTo && i < len(e.lay.Texts); i++ {
 		switch e.lay.Texts[i].Anchor {
 		case "middle":
@@ -2317,6 +2323,23 @@ func topOf(c model.Clef, el model.Element) (step int, stemUp bool, ok bool) {
 func (e *engraver) titleBlock() {
 	sp := e.opt.Spacings
 	centre := sp.Margin + e.opt.LineWidth/2
+	// A continuous strip has no page to centre on.
+	//
+	// The music runs as far as it runs, so the middle of it is wherever the
+	// piece happens to end — half a mile to the right on a symphony — and
+	// the title was drawn there, under a centring pass that cannot run
+	// until the last bar is laid out. What that came to on the screen is a
+	// score whose name appears when the engraving finishes, in a place
+	// nobody is looking at.
+	//
+	// So in a strip everything in the header is set against the left
+	// margin, where the music starts and where the eye already is, and it
+	// is in its final place from the first line drawn.
+	left := e.opt.Mode == Strip
+	anchor, at := "middle", centre
+	if left {
+		anchor, at = "start", sp.Margin
+	}
 	e.titleFrom = len(e.lay.Texts)
 	defer func() { e.titleTo = len(e.lay.Texts) }()
 	id := e.score.Identity
@@ -2327,11 +2350,11 @@ func (e *engraver) titleBlock() {
 	// top of the line beneath it and the subtitle landed in the middle of
 	// the title.
 	e.creditLines(model.Spans(id.Title, id.TitleRuns), creditStyle{
-		X: centre, Anchor: "middle", Size: 2.6, Bold: true,
+		X: at, Anchor: anchor, Size: 2.6, Bold: true,
 		Before: 3, After: 1.6,
 	})
 	e.creditLines(model.Spans(id.Subtitle, id.SubtitleRuns), creditStyle{
-		X: centre, Anchor: "middle", Size: 1.5, Italic: true, After: 1.6,
+		X: at, Anchor: anchor, Size: 1.5, Italic: true, After: 1.6,
 	})
 	// A credit runs to several lines as often as not — words by one person,
 	// music by another, arranged by a third — and they stack at the right
@@ -2339,6 +2362,11 @@ func (e *engraver) titleBlock() {
 	right := creditStyle{
 		X: sp.Margin + e.opt.LineWidth, Anchor: "end",
 		Size: 1.5, Italic: true, After: 1.7,
+	}
+	if left {
+		// Under the title rather than away at the other end of the roll:
+		// the whole header reads as one block at the head of the strip.
+		right.X, right.Anchor = sp.Margin, "start"
 	}
 	had := e.y
 	e.creditLines(model.Spans(id.Composer, id.ComposerRuns), right)

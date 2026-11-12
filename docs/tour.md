@@ -20,7 +20,8 @@ The two entries that matter are the ones at the ends.
 **Open** reads rather more than you would expect. Gscore imports **ABC**,
 **MusicXML** (plain and compressed), **MuseScore** (`.mscz` and `.mscx`),
 **Finale** (`.musx`, and the older `.mus` it wrote until 2012),
-**NoteWorthy Composer** (`.nwctxt`, `.nwc`) and **GUIDO** — no exporter from
+**NoteWorthy Composer** (`.nwctxt`, `.nwc`), **Guitar Pro** (`.gp3`, `.gp4`,
+`.gp5`), **ASCII tablature** and **GUIDO** — no exporter from
 the other program required, no round trip through anything. Which matters
 most for the Finale files: the program that wrote them stopped being sold in
 2024, so "export it from Finale" is not advice anybody can take any more.

@@ -233,7 +233,8 @@ stylesheet and its own key bindings, and a frame keeps both to itself.
 ## What it reads
 
 Everything gscore reads: ABC, MuseScore (`.mscz`, `.mscx`), MusicXML
-(`.musicxml`, `.mxl`), NoteWorthy Composer (`.nwc`, `.nwctxt`), ASCII tablature (`.tab`, `.btab`, `.txt`) and gscore's own
+(`.musicxml`, `.mxl`), NoteWorthy Composer (`.nwc`, `.nwctxt`), Guitar Pro (`.gp3`, `.gp4`, `.gp5`), ASCII tablature
+(`.tab`, `.btab`, `.txt`) and gscore's own
 `.gscore`. A tune book — an ABC file with forty exercises in it — is one file
 and one frame, with `tune=N` choosing which to show.
 

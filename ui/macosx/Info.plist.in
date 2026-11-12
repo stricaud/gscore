@@ -53,6 +53,7 @@
         <string>mscz</string><string>mscx</string>
         <string>musicxml</string><string>mxl</string>
         <string>nwc</string><string>nwctxt</string><string>tab</string><string>btab</string><string>txt</string>
+        <string>gp3</string><string>gp4</string><string>gp5</string>
         <string>dorico</string>
       </array>
     </dict>

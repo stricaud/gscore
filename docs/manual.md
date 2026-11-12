@@ -415,7 +415,8 @@ These change what *you* see. None of them changes the music.
 
 Reads: ABC, Finale `.musx` and the older `.mus`, GUIDO, MuseScore
 `.mscz`/`.mscx`, MusicXML (`.musicxml`, `.xml`, `.mxl`), NoteWorthy
-`.nwctxt`/`.nwc`, ASCII tablature (`.tab`, `.btab`, `.txt`), and `.gscore`.
+`.nwctxt`/`.nwc`, Guitar Pro (`.gp3`, `.gp4`, `.gp5`), ASCII tablature (`.tab`,
+`.btab`, `.txt`), and `.gscore`.
 
 Writes: PDF, SVG, web page, MIDI, MusicXML (compressed or not), ABC,
 LilyPond, GUIDO, and audio as FLAC.

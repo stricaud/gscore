@@ -163,7 +163,7 @@ paths:
         - name: name
           in: query
           required: true
-          description: The filename, for its extension. `.abc`, `.gscore`, `.gmn` (GUIDO), `.mscz`, `.mscx`, `.musicxml`, `.xml`, `.mxl`, `.nwctxt`, `.nwc`, `.musx`, and ASCII tablature as `.tab`, `.btab` or `.txt`.
+          description: The filename, for its extension. `.abc`, `.gscore`, `.gmn` (GUIDO), `.mscz`, `.mscx`, `.musicxml`, `.xml`, `.mxl`, `.nwctxt`, `.nwc`, `.musx`, Guitar Pro as `.gp3`, `.gp4` or `.gp5`, and ASCII tablature as `.tab`, `.btab` or `.txt`.
           schema: { type: string }
       requestBody:
         required: true

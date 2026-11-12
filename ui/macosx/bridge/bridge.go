@@ -51,6 +51,7 @@ import (
 	_ "github.com/stricaud/gscore/internal/format/enigma"
 	_ "github.com/stricaud/gscore/internal/format/gscore"
 	_ "github.com/stricaud/gscore/internal/format/guido"
+	_ "github.com/stricaud/gscore/internal/format/guitarpro"
 	_ "github.com/stricaud/gscore/internal/format/lilypond"
 	_ "github.com/stricaud/gscore/internal/format/musescore"
 	_ "github.com/stricaud/gscore/internal/format/musicxml"

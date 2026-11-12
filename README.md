@@ -55,7 +55,7 @@ a view of a thing that already worked.
 | | |
 |---|---|
 | Model | pitches, durations, chords, voices, measures, parts, no geometry |
-| Import | ABC, MusicXML, MuseScore, Finale `.musx` and `.mus`, NoteWorthy, GUIDO, `.gscore`, engraved PDF |
+| Import | ABC, MusicXML, MuseScore, Finale `.musx` and `.mus`, NoteWorthy, Guitar Pro `.gp3`/`.gp4`/`.gp5`, ASCII tab, GUIDO, `.gscore`, engraved PDF |
 | Export | PDF, SVG, web page, MIDI, MusicXML, ABC, LilyPond, GUIDO, FLAC |
 | Engraving | the rules are in [`docs/engraving-layout.md`](docs/engraving-layout.md) |
 | Rendering | SVG and PDF from one layout, measured in staff spaces |

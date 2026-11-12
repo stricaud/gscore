@@ -122,6 +122,12 @@ var otherPrograms = map[string]string{
 	".mgu":    "Band-in-a-Box",
 	".ove":    "Overture",
 	".ly":     "LilyPond",
+	// Guitar Pro 3 to 5 are read — see internal/format/guitarpro. The two
+	// after them write a compressed container the reader does not open,
+	// and both export the older format as well as MusicXML.
+	".gpx": "Guitar Pro 6",
+	".gp":  "Guitar Pro 7",
+	".tg":  "TuxGuitar",
 }
 
 // Readable lists every extension that can be opened, in reading order.

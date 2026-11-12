@@ -65,6 +65,7 @@ Drop it on any host, or email it. It works where it lands.
 | MuseScore | `.mscz`, `.mscx` |
 | MusicXML | `.musicxml`, `.xml`, `.mxl` |
 | NoteWorthy Composer | `.nwctxt`, `.nwc` |
+| Guitar Pro | `.gp3`, `.gp4`, `.gp5` |
 | ASCII tablature | `.tab`, `.btab`, `.txt` |
 | Gscore | `.gscore` |
 

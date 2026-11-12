@@ -478,7 +478,7 @@ curl -s -G -X POST "$G/api/openpath" --data-urlencode "path=$PWD/tune.mscz"
 ```
 
 Any format Gscore reads — ABC, MusicXML, MuseScore, Finale, NoteWorthy,
-GUIDO, `.gscore`. Which makes the shortest useful thing in this chapter a
+Guitar Pro, ASCII tab, GUIDO, `.gscore`. Which makes the shortest useful thing in this chapter a
 format converter:
 
 ```sh

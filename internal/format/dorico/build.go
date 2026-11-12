@@ -268,7 +268,8 @@ func build(t *tree, info projectInfo) ([]*model.Score, error) {
 		return nil, errors.New("dorico: this project has no score in it")
 	}
 
-	players := playerNames(t, root)
+	skipped := map[string]int{}
+	players := playerNames(t, root, skipped)
 	sounds := instrumentSounds(t, root)
 	flows := t.list(root, "flows")
 	if len(flows) == 0 {
@@ -276,7 +277,6 @@ func build(t *tree, info projectInfo) ([]*model.Score, error) {
 			"so there is no music to read")
 	}
 
-	skipped := map[string]int{}
 	var out []*model.Score
 	for _, f := range flows {
 		s := buildFlow(t, f, players, sounds, info, skipped)
@@ -307,7 +307,7 @@ func build(t *tree, info projectInfo) ([]*model.Score, error) {
 }
 
 // playerNames reads what each player is called.
-func playerNames(t *tree, root int32) map[string]string {
+func playerNames(t *tree, root int32, skipped map[string]int) map[string]string {
 	out := map[string]string{}
 	for _, p := range t.list(root, "scorePlayers") {
 		id := t.str(p, "playerID")
@@ -316,10 +316,49 @@ func playerNames(t *tree, root int32) map[string]string {
 			name = t.str(p, "displayName")
 		}
 		if id != "" {
-			out[id] = name
+			out[id] = written(name, skipped)
 		}
 	}
 	return out
+}
+
+// nameSigns are the signs Dorico writes in a name as a tag, because a name
+// is typed and a flat is not on the keyboard.
+var nameSigns = map[string]string{
+	"{@flat@}":        "♭",
+	"{@sharp@}":       "♯",
+	"{@natural@}":     "♮",
+	"{@doubleflat@}":  "♭♭",
+	"{@doublesharp@}": "\U0001d12a",
+}
+
+// written puts the signs into a name in place of the tags that stand for
+// them.
+//
+// Dorico lets a name be typed with a tag where a sign belongs, and whoever
+// prepared the Magic Flute used both: the first clarinet is "Clarinetto in
+// Si{@flat@} /B" and the second, a line below it, is "Clarinetto in Si♭/B".
+// They are the same instrument, and on the page one of them said so with
+// a piece of markup in the middle of its name.
+//
+// Only the signs. The other tags in a project — the title, the page number,
+// the name of the layout — belong to a page template rather than to a staff,
+// and a staff name holding one is something to say rather than something to
+// guess at.
+func written(name string, skipped map[string]int) string {
+	if !strings.Contains(name, "{@") {
+		return name
+	}
+	for tag, sign := range nameSigns {
+		name = strings.ReplaceAll(name, tag, sign)
+	}
+	if i := strings.Index(name, "{@"); i >= 0 {
+		if j := strings.Index(name[i:], "@}"); j > 0 {
+			skipped["tags in a name that gscore cannot fill in, left as "+
+				"they are: "+name[i:i+j+2]]++
+		}
+	}
+	return name
 }
 
 // instrumentSounds works out what each of the score's instruments is, as a

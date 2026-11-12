@@ -2215,6 +2215,62 @@ func TestAVoltaIsReadAsFirstAndSecondTimeBars(t *testing.T) {
 	}
 }
 
+/* ---------- what the staves are called ---------- */
+
+func TestASignInANameIsWrittenAsTheSign(t *testing.T) {
+	// A name is typed, and a flat is not on the keyboard, so Dorico lets
+	// one be written as a tag. Whoever prepared the Magic Flute used both
+	// ways: the first clarinet is "Clarinetto in Si{@flat@} /B" and the
+	// second, on the line below it, is "Clarinetto in Si♭/B". They are the
+	// same instrument, and one of them said so on the page with a piece of
+	// markup in the middle of its name.
+	for _, c := range [][2]string{
+		{"Clarinetto in Si{@flat@}/B", "Clarinetto in Si♭/B"},
+		{"Corno in Mi{@flat@}", "Corno in Mi♭"},
+		{"Trumpet in B{@sharp@}", "Trumpet in B♯"},
+		{"Horn in C{@natural@}", "Horn in C♮"},
+		{"Clarinet in B♭", "Clarinet in B♭"},
+		{"Flute", "Flute"},
+	} {
+		if got := written(c[0], map[string]int{}); got != c[1] {
+			t.Errorf("%q came out as %q, want %q", c[0], got, c[1])
+		}
+	}
+}
+
+func TestATagNobodyKnowsIsLeftAloneAndSaid(t *testing.T) {
+	// The other tags in a project — the title, the page number, the name of
+	// a layout — belong to a page template rather than to a staff. One in a
+	// staff name is something to say rather than something to guess at.
+	skipped := map[string]int{}
+	got := written("Flute {@layoutName@}", skipped)
+	if got != "Flute {@layoutName@}" {
+		t.Errorf("the name came out as %q", got)
+	}
+	if len(skipped) == 0 {
+		t.Error("a tag gscore cannot fill in was passed over in silence")
+	}
+}
+
+func TestThePlayersNameIsReadWithItsSignsIn(t *testing.T) {
+	// And the whole way through: the name on the staff is the one with the
+	// sign in it.
+	e := newEnc()
+	root := e.node("kScore",
+		e.list("scorePlayers",
+			e.node("scorePlayer",
+				e.leaf("playerID", "0"),
+				e.leaf("baseName", "Clarinetto in Si{@flat@}/B"))))
+	tr, err := decodeDTN(e.bytes(root))
+	if err != nil {
+		t.Fatal(err)
+	}
+	names := playerNames(tr, 0, map[string]int{})
+	if got := names["0"]; got != "Clarinetto in Si♭/B" {
+		t.Errorf("the player is called %q", got)
+	}
+}
+
 /* ---------- the silence between the notes ---------- */
 
 func TestAVoiceIsOnlyOnTheStaffWhereItPlays(t *testing.T) {

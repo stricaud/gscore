@@ -54,14 +54,36 @@ func headScore() *model.Score {
 	return s
 }
 
-// glyphXs is the x of every glyph of a name, one per staff, by height.
-func glyphXs(lay *Layout, names ...string) map[float64]float64 {
+// clefXs is where each staff's clef stands, keyed by the clef's height,
+// which is what says which staff a glyph belongs to.
+func clefXs(lay *Layout) map[float64]float64 {
 	out := map[float64]float64{}
 	for _, g := range lay.Glyphs {
-		for _, n := range names {
-			if g.Name == n {
-				out[math.Round(g.Y)] = g.X
-			}
+		if g.Name == "gClef" || g.Name == "fClef" {
+			out[g.Y] = g.X
+		}
+	}
+	return out
+}
+
+// staffClefX is the x of the clef nearest in height to a glyph: the clef of
+// the staff it is drawn on.
+func staffClefX(clefs map[float64]float64, y float64) float64 {
+	best, at := math.Inf(1), 0.0
+	for cy, x := range clefs {
+		if d := math.Abs(cy - y); d < best {
+			best, at = d, x
+		}
+	}
+	return at
+}
+
+// headGlyphs is every glyph of a name.
+func headGlyphs(lay *Layout, name string) []Glyph {
+	var out []Glyph
+	for _, g := range lay.Glyphs {
+		if g.Name == name {
+			out = append(out, g)
 		}
 	}
 	return out
@@ -69,7 +91,7 @@ func glyphXs(lay *Layout, names ...string) map[float64]float64 {
 
 func TestTheClefsStandInOneColumn(t *testing.T) {
 	lay := Engrave(headScore(), DefaultOptions())
-	clefs := glyphXs(lay, "gClef", "fClef")
+	clefs := clefXs(lay)
 	if len(clefs) != 2 {
 		t.Fatalf("%d clefs drawn, want one per staff: %v", len(clefs), clefs)
 	}
@@ -86,23 +108,27 @@ func TestTheMetersStandInOneColumn(t *testing.T) {
 	// And the room the staff in C does not need for sharps is between its
 	// clef and its meter, so that the music begins in one column too.
 	lay := Engrave(headScore(), DefaultOptions())
-	meters := glyphXs(lay, "timeSig4")
-	if len(meters) != 2 {
-		t.Fatalf("%d meters drawn, want one per staff: %v", len(meters), meters)
+	// A 4/4 is two figures on each staff, four glyphs in all, and every
+	// one of them stands at the same x.
+	figures := headGlyphs(lay, "timeSig4")
+	if len(figures) != 4 {
+		t.Fatalf("%d meter figures drawn, want two per staff", len(figures))
 	}
-	var xs []float64
-	for _, x := range meters {
-		xs = append(xs, x)
-	}
-	if math.Abs(xs[0]-xs[1]) > 0.01 {
-		t.Errorf("the meters stand at x=%.2f and x=%.2f; they belong in one column", xs[0], xs[1])
+	for _, g := range figures[1:] {
+		if math.Abs(g.X-figures[0].X) > 0.01 {
+			t.Errorf("meter figures stand at x=%.2f and x=%.2f; they belong in one column",
+				figures[0].X, g.X)
+		}
 	}
 	// The sharps sit between the clef and the meter of the staff that has
-	// them, and nothing sits in front of a clef.
-	clefs := glyphXs(lay, "gClef", "fClef")
-	for y, x := range glyphXs(lay, "accidentalSharp") {
-		if cx, ok := clefs[y]; ok && x <= cx {
-			t.Errorf("a sharp at x=%.2f stands in front of its clef at x=%.2f", x, cx)
+	// them: after its clef, before the column.
+	clefs := clefXs(lay)
+	for _, sh := range headGlyphs(lay, "accidentalSharp") {
+		if cx := staffClefX(clefs, sh.Y); sh.X <= cx {
+			t.Errorf("a sharp at x=%.2f stands in front of its clef at x=%.2f", sh.X, cx)
+		}
+		if sh.X >= figures[0].X {
+			t.Errorf("a sharp at x=%.2f stands past the meter at x=%.2f", sh.X, figures[0].X)
 		}
 	}
 }

@@ -33,9 +33,18 @@ const (
 	Alto
 	Tenor
 	Percussion
+	// Treble8vb is the treble clef with an 8 under it: the same staff
+	// positions, sounding an octave lower. It is what tenors read in every
+	// choral score there is, and what a guitar is written in.
+	//
+	// The notes on the page are the notes of a treble staff — that is the
+	// whole point of the clef — so the octave is in the sound and not in
+	// the writing, which is where Transpose keeps it.
+	Treble8vb
 )
 
-var clefNames = [...]string{"treble", "bass", "alto", "tenor", "percussion"}
+var clefNames = [...]string{"treble", "bass", "alto", "tenor", "percussion",
+	"treble8vb"}
 
 func (c Clef) String() string {
 	if c < Treble || int(c) >= len(clefNames) {

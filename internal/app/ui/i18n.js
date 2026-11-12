@@ -612,6 +612,7 @@ const MESSAGES = {
   "To Coda — leave here on the way back": "To Coda — quitter ici au retour",
   "Tools": "Outils",
   "Treble": "Clé de sol",
+  "Treble 8 below": "Clé de sol octaviée",
   "Tremolo": "Trémolo",
   "Triplet": "Triolet",
   "Triplet — on a selection, those notes become the group": "Triolet — sur une sélection, ces notes forment le groupe",

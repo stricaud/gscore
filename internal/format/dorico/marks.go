@@ -382,6 +382,34 @@ type barRepeat struct {
 	bars int
 }
 
+// lyric is one syllable of the words, and where it is sung.
+//
+// Dorico writes them on the voice stream, beside the notes they belong to:
+// an event with a position and the number of an element, and the element
+// holds the syllable, which verse it is in and whether it is the beginning,
+// the middle or the end of a word. The hyphens between the pieces of a word
+// are drawn from that last part, so it is not decoration.
+type lyric struct {
+	at    rat
+	text  string
+	verse int
+	kind  model.Syllabic
+}
+
+// putLyrics writes the words under the notes they are sung on.
+func putLyrics(p *model.Part, bars []bar, words []lyric, skipped map[string]int) {
+	for _, w := range words {
+		mk := markAt(p, bars, w.at)
+		if mk == nil {
+			skipped["words with no note under them"]++
+			continue
+		}
+		mk.Lyrics = append(mk.Lyrics, model.Lyric{
+			Text: w.text, Verse: w.verse, Syllabic: w.kind,
+		})
+	}
+}
+
 // staffKey is a key signature for one staff alone — a horn left in C while
 // the orchestra modulates round it.
 type staffKey struct {

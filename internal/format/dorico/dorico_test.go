@@ -233,6 +233,41 @@ func dynamicAt(at string, subs ...dynSub) string {
 	return key
 }
 
+// instrumentClef is what the fixture's instrument is written in. The alto
+// clef by default, because a staff that takes its clef from the instrument
+// rather than from an event is the thing most of these tests are about;
+// builtWithClef sets another for the length of one test.
+var instrumentClef = "clef.alto"
+
+// builtWithClef is the one-staff fixture with the instrument written in a
+// given clef — the treble clef with an 8 under it, for a tenor.
+func builtWithClef(t *testing.T, clef string, notes []played) []byte {
+	t.Helper()
+	was := instrumentClef
+	instrumentClef = clef
+	defer func() { instrumentClef = was }()
+	// And no clef event of its own, so the instrument's clef is what the
+	// staff is read in — which is how a Dorico file states it.
+	return built(t, [2]string{"4", "4"}, "C", notes, noClefEvent)
+}
+
+// sung are the syllables a test asked for: an event on the voice stream
+// pointing at an element that holds the syllable itself.
+var sung = map[string]struct {
+	at, text, kind string
+	verse          int
+}{}
+
+// lyricAt asks for a syllable sung on the note at this moment.
+func lyricAt(at, text, kind string, verse int) string {
+	key := "lyric " + at + " " + itoa(len(sung))
+	sung[key] = struct {
+		at, text, kind string
+		verse          int
+	}{at, text, kind, verse}
+	return key
+}
+
 // tempos and clefChanges are what a test asked to be written onto the
 // global and staff streams, by the key their helpers gave back.
 var tempos = map[string]struct {
@@ -489,6 +524,13 @@ func built(t *testing.T, time [2]string, key string, notes []played,
 			}
 			continue
 		}
+		if w, ok := sung[kind]; ok {
+			events = append(events, e.node("LyricEventDefinition",
+				e.leaf("position", w.at),
+				e.leaf("duration", "0"),
+				e.leaf("lyricElementID", kind)))
+			continue
+		}
 		if sl, ok := slurSpans[kind]; ok {
 			events = append(events, e.node("SlurEventDefinition",
 				e.leaf("position", sl.at),
@@ -704,6 +746,19 @@ func built(t *testing.T, time [2]string, key string, notes []played,
 			e.leaf("elementID", id),
 			e.node("subElements", subs...)))
 	}
+	var lyricDefs []int32
+	for _, kind := range extra {
+		w, ok := sung[kind]
+		if !ok {
+			continue
+		}
+		lyricDefs = append(lyricDefs, e.node("LyricElementDefinition",
+			e.leaf("elementID", kind),
+			e.leaf("text", w.text),
+			e.leaf("syllableType", w.kind),
+			e.leaf("lineNumber", itoa(w.verse))))
+	}
+
 	staveBlock := e.node("block",
 		e.leaf("blockID", "30"),
 		e.leaf("parentEventStreamType", "kInstrumentStaveStream"),
@@ -734,7 +789,9 @@ func built(t *testing.T, time [2]string, key string, notes []played,
 			e.node("TonalityDivisionElementTableDefinition",
 				e.node("array", append([]int32{keySig}, moreKeys...)...)),
 			e.node("DynamicGroupElementTableDefinition",
-				e.node("array", dynDefs...))),
+				e.node("array", dynDefs...)),
+			e.node("LyricElementTableDefinition",
+				e.node("array", lyricDefs...))),
 		e.list("blocks", voiceBlock, globalBlock, staveBlock),
 		e.list("blockInstances",
 			e.node("blockInstance",
@@ -780,7 +837,7 @@ func built(t *testing.T, time [2]string, key string, notes []played,
 						e.node("clefIDsForEachStave",
 							e.node("staveClefIDs",
 								e.leaf("idForTransposingLayouts",
-									"clef.alto"))))))),
+									instrumentClef))))))),
 		e.list("scorePlayers",
 			e.node("scorePlayer",
 				e.leaf("playerID", "0"),
@@ -2967,5 +3024,87 @@ func TestAKeyAtTheHeadOfABarIsTheBarsOwn(t *testing.T) {
 	if p.Measures[1].Key.Fifths != 1 {
 		t.Errorf("the second bar is in %d, want E minor's one sharp",
 			p.Measures[1].Key.Fifths)
+	}
+}
+
+/* ---------- the words, and the clef a tenor reads ---------- */
+
+func TestTheWordsAreSungOnTheirNotes(t *testing.T) {
+	// A choral score is its words: the Requiem carries seven thousand
+	// syllables and came through with none of them, which is a score
+	// nobody can sing from.
+	raw := built(t, [2]string{"4", "4"}, "C", []played{
+		{at: "0", dur: "1", pitch: 69},
+		{at: "1", dur: "1", pitch: 69},
+		{at: "2", dur: "2", pitch: 67},
+	},
+		lyricAt("0", "Re", "kStart", 0),
+		lyricAt("1", "qui", "kMiddle", 0),
+		lyricAt("2", "em", "kEnd", 0))
+
+	els := read(t, raw)[0].Parts[0].Measures[0].Voices[0].Elements
+	var got []model.Lyric
+	for _, el := range els {
+		if mk := marksOf(el); mk != nil {
+			got = append(got, mk.Lyrics...)
+		}
+	}
+	if len(got) != 3 {
+		t.Fatalf("%d syllables arrived: %+v", len(got), got)
+	}
+	words := []string{got[0].Text, got[1].Text, got[2].Text}
+	if words[0] != "Re" || words[1] != "qui" || words[2] != "em" {
+		t.Errorf("the words came out as %v", words)
+	}
+	// Where a syllable falls in its word is what draws the hyphens.
+	if !got[0].NeedsHyphen() || !got[1].NeedsHyphen() {
+		t.Error("Re-qui-em came out without its hyphens")
+	}
+	if got[2].NeedsHyphen() {
+		t.Error("a hyphen was drawn after the last syllable of the word")
+	}
+}
+
+func TestEachVerseKeepsItsOwnLine(t *testing.T) {
+	// Dorico counts the verses from nought and gscore from one, which is a
+	// hymn with four verses printed one line too high.
+	raw := built(t, [2]string{"4", "4"}, "C", []played{
+		{at: "0", dur: "4", pitch: 69},
+	}, lyricAt("0", "Dies", "kSingle", 0), lyricAt("0", "irae", "kSingle", 1))
+
+	mk := marksOf(read(t, raw)[0].Parts[0].Measures[0].Voices[0].Elements[0])
+	if len(mk.Lyrics) != 2 {
+		t.Fatalf("%d syllables on the note", len(mk.Lyrics))
+	}
+	if mk.Lyrics[0].Verse != 1 || mk.Lyrics[1].Verse != 2 {
+		t.Errorf("the verses came out as %d and %d",
+			mk.Lyrics[0].Verse, mk.Lyrics[1].Verse)
+	}
+}
+
+func TestATenorStaffIsWrittenWhereItIsRead(t *testing.T) {
+	// The treble clef with an 8 under it. Dorico keeps what sounds and
+	// gscore keeps what is written, and under this clef the two are an
+	// octave apart: the tenors of the Requiem sing their first syllable on
+	// the A below middle C and read it as the A above.
+	raw := builtWithClef(t, "clef.treble8ba", []played{
+		{at: "0", dur: "4", pitch: 57}, // A3, as it sounds
+	})
+	p := read(t, raw)[0].Parts[0]
+	if p.Clef != model.Treble8vb {
+		t.Errorf("the staff is in the %v clef", p.Clef)
+	}
+	n, ok := p.Measures[0].Voices[0].Elements[0].(*model.Note)
+	if !ok {
+		t.Fatalf("the first element is a %T", p.Measures[0].Voices[0].Elements[0])
+	}
+	if n.Pitch.Octave != 4 || n.Pitch.Step != model.StepA {
+		t.Errorf("the note is written as %v%d, want A4",
+			n.Pitch.Step, n.Pitch.Octave)
+	}
+	// And the octave is not lost: what is played is what Dorico had.
+	if p.Transpose.OctaveChange != -1 {
+		t.Errorf("the staff transposes by %d octaves, want -1",
+			p.Transpose.OctaveChange)
 	}
 }

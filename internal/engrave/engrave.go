@@ -852,6 +852,9 @@ var clefPitchOffset = map[model.Clef]int{
 	model.Alto:       4,
 	model.Tenor:      6,
 	model.Percussion: 4,
+	// The same places as a treble clef: the 8 says where it sounds, not
+	// where it is written.
+	model.Treble8vb: -2,
 }
 
 // clefChangeScale is how large a clef written inside a line is drawn, against
@@ -880,6 +883,7 @@ var clefRefStep = map[model.Clef]float64{
 	model.Alto:       4,
 	model.Tenor:      6,
 	model.Percussion: 4,
+	model.Treble8vb:  2,
 }
 
 // StaffStep returns which line or space a pitch occupies: 0 is the bottom

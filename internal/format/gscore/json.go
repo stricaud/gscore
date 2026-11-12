@@ -457,6 +457,7 @@ type tupletDoc struct {
 var clefNames = map[model.Clef]string{
 	model.Treble: "treble", model.Bass: "bass", model.Alto: "alto",
 	model.Tenor: "tenor", model.Percussion: "percussion",
+	model.Treble8vb: "treble8vb",
 }
 var clefValues = invert(clefNames)
 

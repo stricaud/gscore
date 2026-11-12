@@ -622,6 +622,16 @@ func convertClef(c *clef, lg *log) model.Clef {
 			lg.say("a G clef on line %d is not one gscore draws; "+
 				"it was read as the treble clef", c.Line)
 		}
+		// The 8 under the sign: the clef a tenor part and a guitar part
+		// are written in. The notes on the page are a treble staff's
+		// notes, so only the sign and the sound differ.
+		if c.OctaveChange == -1 {
+			return model.Treble8vb
+		}
+		if c.OctaveChange != 0 {
+			lg.say("a G clef moved %d octaves is not one gscore draws; "+
+				"it was read as the treble clef", c.OctaveChange)
+		}
 	case "TAB", "JIANPU", "NONE", "":
 		lg.say("a %q clef is not one gscore draws; it was read as the "+
 			"treble clef", c.Sign)
@@ -629,10 +639,6 @@ func convertClef(c *clef, lg *log) model.Clef {
 		lg.say("a %q clef is not one gscore knows; it was read as the "+
 			"treble clef", c.Sign)
 	}
-	// The sign may also be moved an octave — the tenor's treble clef with
-	// an 8 under it. gscore has no such sign, and nothing is lost by
-	// drawing the plain one: MusicXML writes the pitches as they sound,
-	// so the music is right and only the clef is spelt differently.
 	return model.Treble
 }
 

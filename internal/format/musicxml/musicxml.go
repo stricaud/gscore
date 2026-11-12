@@ -186,7 +186,7 @@ type attributes struct {
 }
 
 type staffDetails struct {
-	Number int `xml:"number,attr,omitempty"`
+	Number int  `xml:"number,attr,omitempty"`
 	Lines  *int `xml:"staff-lines,omitempty"`
 }
 
@@ -217,6 +217,10 @@ type clef struct {
 	Number int    `xml:"number,attr,omitempty"`
 	Sign   string `xml:"sign"`
 	Line   int    `xml:"line"`
+	// OctaveChange is the little 8 over or under the sign: -1 is the
+	// treble clef every tenor and every guitarist reads, sounding an
+	// octave below what is written.
+	OctaveChange int `xml:"clef-octave-change,omitempty"`
 }
 
 // staffOf is which staff something belongs to, counted from one. Anything
@@ -908,6 +912,7 @@ var clefSigns = map[model.Clef]clef{
 	model.Alto:       {Sign: "C", Line: 3},
 	model.Tenor:      {Sign: "C", Line: 4},
 	model.Percussion: {Sign: "percussion", Line: 3},
+	model.Treble8vb:  {Sign: "G", Line: 2, OctaveChange: -1},
 }
 
 var modeNames = map[model.Mode]string{

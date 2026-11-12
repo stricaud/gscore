@@ -134,21 +134,22 @@ type stave struct {
 	playerID  string
 	instNth   int
 	instCount int
-	sound      string // what it plays, as a MusicXML standard sound id
-	stream     string // its own stave stream, where the clefs are
-	lines      int    // the lines it is ruled with, where it is not five
-	order      int    // where it comes in the score
-	clef       model.Clef
-	clefSet    bool
-	changes    []clefChange
-	dynamics   []dynamic
-	swells     []swell
-	points     []pointMark
-	spans      []spanMark
-	repeats    []barRepeat
-	keys       []staffKey
-	cues       []cue
-	voices     []string // the voice streams that write on it
+	sound     string // what it plays, as a MusicXML standard sound id
+	stream    string // its own stave stream, where the clefs are
+	lines     int    // the lines it is ruled with, where it is not five
+	order     int    // where it comes in the score
+	clef      model.Clef
+	clefSet   bool
+	changes   []clefChange
+	dynamics  []dynamic
+	swells    []swell
+	points    []pointMark
+	spans     []spanMark
+	repeats   []barRepeat
+	words     []lyric
+	keys      []staffKey
+	cues      []cue
+	voices    []string // the voice streams that write on it
 }
 
 // bar is one measure of the flow: where it starts, how long it is, and what
@@ -482,7 +483,9 @@ func buildFlow(t *tree, flow int32, players map[string]string,
 			var arps []arpeggio
 			for _, p := range streams.of("kVoiceStream", v) {
 				got, gotTups, gotSlurs, gotGraces, gotPoints, gotSpans,
-					gotArps, end := readEvents(t, p.node, p.at, skipped)
+					gotArps, gotWords, end := readEvents(t, p.node, p.at,
+					elements, skipped)
+				st.words = append(st.words, gotWords...)
 				arps = append(arps, gotArps...)
 				evs = append(evs, got...)
 				tups = append(tups, gotTups...)
@@ -539,8 +542,8 @@ func buildFlow(t *tree, flow int32, players map[string]string,
 			Sound:      st.sound,
 			Clef:       st.clef,
 			StaffLines: st.lines,
-			Key:   model.KeySignature{},
-			Time:  model.TimeSignature{Beats: 4, BeatValue: 4},
+			Key:        model.KeySignature{},
+			Time:       model.TimeSignature{Beats: 4, BeatValue: 4},
 		}
 		if bars[0].time != nil {
 			p.Time = *bars[0].time
@@ -581,6 +584,8 @@ func buildFlow(t *tree, flow int32, players map[string]string,
 		attach(p, bars, st.dynamics, st.swells)
 		putMarks(p, bars, st.points, st.spans, skipped)
 		putStaffMarks(p, bars, st.repeats, st.keys)
+		putLyrics(p, bars, st.words, skipped)
+		writeAnOctaveUp(p, skipped)
 		if lost := putClefs(p, bars, st.changes); lost > 0 {
 			skipped["clef changes inside a bar with no note to put them "+
 				"on, moved to the bar's head"] += lost
@@ -891,13 +896,14 @@ func elementTables(t *tree, flow int32) map[string]int32 {
 }
 
 // readEvents reads one voice stream's notes and rests.
-func readEvents(t *tree, block int32, offset rat, skipped map[string]int) (
+func readEvents(t *tree, block int32, offset rat, elements map[string]int32,
+	skipped map[string]int) (
 	[]event, []tuplet, []slur, []grace, []pointMark, []spanMark,
-	[]arpeggio, rat) {
+	[]arpeggio, []lyric, rat) {
 
 	events := t.child(block, "events")
 	if events < 0 {
-		return nil, nil, nil, nil, nil, nil, nil, rat{0, 1}
+		return nil, nil, nil, nil, nil, nil, nil, nil, rat{0, 1}
 	}
 	var out []event
 	var tups []tuplet
@@ -907,6 +913,7 @@ func readEvents(t *tree, block int32, offset rat, skipped map[string]int) (
 	var points []pointMark
 	var spans []spanMark
 	var arps []arpeggio
+	var words []lyric
 	end := rat{0, 1}
 	for _, e := range t.children(events) {
 		kind := t.nameOf(e)
@@ -928,6 +935,26 @@ func readEvents(t *tree, block int32, offset rat, skipped map[string]int) (
 				continue
 			}
 			out = append(out, event{at: at, dur: d, rest: true})
+		case "LyricEventDefinition":
+			// The syllable itself is in an element the event names, with
+			// the verse it belongs to and whether it opens, continues or
+			// closes a word — which is where the hyphens come from.
+			def := elements["LyricElementDefinition:"+
+				t.str(e, "lyricElementID")]
+			if def <= 0 {
+				skipped["words whose syllable gscore could not find"]++
+				continue
+			}
+			text := t.str(def, "text")
+			if text == "" {
+				continue
+			}
+			verse, _ := strconv.Atoi(t.str(def, "lineNumber"))
+			words = append(words, lyric{
+				at: at, text: text, verse: verse + 1,
+				kind: syllableNamed(t.str(def, "syllableType")),
+			})
+			continue
 		case "ArpeggioEventDefinition":
 			// The wavy line in front of a chord that says to roll it.
 			// Dorico also has the bracket that says to do the opposite —
@@ -1028,7 +1055,7 @@ func readEvents(t *tree, block int32, offset rat, skipped map[string]int) (
 		}
 	}
 	sortEvents(out)
-	return out, tups, slurs, graces, points, spans, arps, end
+	return out, tups, slurs, graces, points, spans, arps, words, end
 }
 
 // sortEvents puts a voice's events in the order they are played, and the
@@ -1452,10 +1479,30 @@ func putClefs(p *model.Part, bars []bar, changes []clefChange) int {
 	return lost
 }
 
+// syllableNamed is where a syllable falls in its word, which is what says
+// whether a hyphen is drawn after it.
+func syllableNamed(kind string) model.Syllabic {
+	switch {
+	case strings.HasSuffix(kind, "Start"):
+		return model.SyllableBegin
+	case strings.HasSuffix(kind, "Middle"):
+		return model.SyllableMiddle
+	case strings.HasSuffix(kind, "End"):
+		return model.SyllableEnd
+	}
+	return model.SyllableSingle
+}
+
 func clefNamed(id string) (model.Clef, bool) {
 	switch {
-	case strings.HasSuffix(id, ".treble"), strings.HasSuffix(id, ".treble8vb"):
+	case strings.HasSuffix(id, ".treble"):
 		return model.Treble, true
+	// The treble clef with an 8 under it, which Dorico calls both ways
+	// about. Every tenor line in a choral score is written in it — the
+	// Requiem has four movements of them — and read as a plain treble
+	// clef the part is sung an octave too high.
+	case strings.HasSuffix(id, ".treble8vb"), strings.HasSuffix(id, ".treble8ba"):
+		return model.Treble8vb, true
 	case strings.HasSuffix(id, ".bass"):
 		return model.Bass, true
 	case strings.HasSuffix(id, ".alto"):
@@ -2470,6 +2517,50 @@ func attach(p *model.Part, bars []bar, marks []dynamic, swells []swell) {
 		}
 		from.Hairpin = &model.Hairpin{Kind: s.kind, Start: true}
 		to.Hairpin = &model.Hairpin{Kind: s.kind, Stop: true}
+	}
+}
+
+// writeAnOctaveUp puts a staff written in the treble clef with an 8 under
+// it onto the page the way it is read.
+//
+// Dorico keeps what sounds; gscore keeps what is written, and under this
+// clef the two are an octave apart. The tenors of the Requiem sing their
+// first syllable on an A below middle C and read it as the A above — which
+// is the whole purpose of the sign. Left at sounding pitch the line is
+// drawn an octave low, hanging off the bottom of the staff on ledger lines,
+// and every note of it is wrong by the only amount that matters.
+//
+// The octave goes into Transpose rather than being lost, so what is played
+// is what Dorico had.
+func writeAnOctaveUp(p *model.Part, skipped map[string]int) {
+	if p.Clef != model.Treble8vb {
+		return
+	}
+	p.Transpose.OctaveChange = -1
+	for _, m := range p.Measures {
+		for _, v := range m.Voices {
+			for _, el := range v.Elements {
+				switch e := el.(type) {
+				case *model.Note:
+					e.Pitch.Octave++
+				case *model.Chord:
+					for _, n := range e.Notes {
+						n.Pitch.Octave++
+					}
+				}
+				if mk := marksOf(el); mk != nil && mk.Grace != nil {
+					for _, n := range mk.Grace.Notes {
+						n.Pitch.Octave++
+					}
+				}
+				if mk := marksOf(el); mk != nil && mk.Clef != nil &&
+					*mk.Clef != model.Treble8vb {
+					skipped["a staff that changes out of the treble clef "+
+						"with an 8 under it, where gscore moves the whole "+
+						"staff"]++
+				}
+			}
+		}
 	}
 }
 

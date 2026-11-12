@@ -876,6 +876,9 @@ func clefName(c model.Clef) string {
 		return "alto"
 	case model.Tenor:
 		return "tenor"
+	case model.Treble8vb:
+		// LilyPond's own name for it, which draws the 8 under the sign.
+		return "treble_8"
 	case model.Percussion:
 		return "percussion"
 	}

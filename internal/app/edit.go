@@ -116,6 +116,7 @@ var accidentalByName = map[string]model.Accidental{
 var clefByStringName = map[string]model.Clef{
 	"treble": model.Treble, "bass": model.Bass, "alto": model.Alto,
 	"tenor": model.Tenor, "percussion": model.Percussion,
+	"treble8vb": model.Treble8vb,
 }
 
 // handleInsert puts a note or a rest into a measure.

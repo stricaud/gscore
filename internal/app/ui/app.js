@@ -11151,6 +11151,9 @@ async function setClefDialog(part) {
       { value: "alto", label: "Alto" },
       { value: "tenor", label: "Tenor" },
       { value: "percussion", label: "Percussion" },
+      // The tenor's clef and the guitarist's: the same staff as a treble
+      // clef, sounding an octave below what is written.
+      { value: "treble8vb", label: "Treble 8 below" },
     ],
   });
   if (v === null || v === now) return;

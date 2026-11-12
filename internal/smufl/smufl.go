@@ -353,6 +353,8 @@ func ClefGlyph(c model.Clef) (name string, line float64) {
 		return "cClef", 6
 	case model.Percussion:
 		return "unpitchedPercussionClef1", 4
+	case model.Treble8vb:
+		return "gClef8vb", 2
 	}
 	return "gClef", 2
 }

@@ -41,7 +41,7 @@ suite/11f-TimeSignatures-SymbolMeaning.musicxml 7c055deed1ada239 22
 suite/11g-TimeSignatures-SingleNumber.musicxml 897ca16a444cd852 39
 suite/11h-TimeSignatures-SenzaMisura.musicxml f328e0455f0009ca 67
 suite/11i-TimeSignatures-Alternate.musicxml 30309e96e020c086 39
-suite/12a-Clefs.musicxml 22bdf86dd092b054 73
+suite/12a-Clefs.musicxml b71a48a1ce545eb4 73
 suite/12b-Clefs-NoKeyOrClef.musicxml a71518ffdaffa1ed 16
 suite/13a-KeySignatures.musicxml b8426c7626d8febf 459
 suite/13b-KeySignatures-ChurchModes.musicxml a6dfd5fc73ce0e29 48

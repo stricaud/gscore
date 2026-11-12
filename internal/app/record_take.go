@@ -1,5 +1,3 @@
-//go:build !js
-
 /*
  * record_take.go
  * gscore - a musical score editor

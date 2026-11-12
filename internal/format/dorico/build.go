@@ -1141,6 +1141,30 @@ func readClefs(t *tree, streams *streams, staves []*stave, bars []bar,
 						at: at.add(p.at), dur: d, kind: "octave", amount: n})
 					continue
 				case "GenerativeBarRepeatEventDefinition":
+					// A region that only counts its bars is not a sign to
+					// repeat them.
+					//
+					// Dorico marks a passage of bars that are alike with a
+					// region of this kind however it is to be printed, and
+					// numberBarsOnly is the way that prints no sign at
+					// all: the music stays written out bar by bar and the
+					// region is only there to count. Beethoven's horns
+					// hold one note from bar 62 to bar 74, which Dorico's
+					// own engraving of this project writes as thirteen
+					// tied half notes — and every region in that file is
+					// this kind.
+					//
+					// Read as a repeat it was wrong twice over. The % was
+					// drawn over notes that are there and are not a
+					// repeat of anything, and the passage at bar 83 begins
+					// after eight bars of silence, so the sign said to
+					// play the silence again — and gscore played it, nine
+					// times, in place of the note the horn is holding.
+					if t.str(e, "numberBarsOnly") == "true" {
+						skipped["passages marked as counted bars, which "+
+							"gscore writes out in full"]++
+						continue
+					}
 					at, _ := parseRat(t.str(e, "position"))
 					d, _ := parseRat(t.str(e, "duration"))
 					bars := 1
@@ -2041,7 +2065,18 @@ func attach(p *model.Part, bars []bar, marks []dynamic, swells []swell) {
 		return spots[put].marks
 	}
 	for _, m := range marks {
-		at(m.at).Dynamic = m.d
+		mk := at(m.at)
+		mk.Dynamic = m.d
+		// "più p" is a p with a word in front of it. gscore has no
+		// qualifier of its own, so the word goes beside the mark as an
+		// expression: italic and under the staff, on the side the dynamic
+		// is already on, which is where Dorico prints it too.
+		if m.word != "" {
+			mk.Texts = append(mk.Texts, model.TextMark{
+				Text:  m.word,
+				Style: model.TextExpression,
+			})
+		}
 	}
 	for _, s := range swells {
 		from, to := at(s.at), at(s.at.add(s.dur))

@@ -9694,6 +9694,54 @@ function tempoAtBar(bar) {
 // richBoxes is each field's box, by the name the server knows it as.
 const richBoxes = {};
 
+// scoreAside takes the engraved music out of the page while a window with a
+// formatted box in it is open, and puts it back when that window closes.
+//
+// A box you can type formatting into and a full score cannot be in one page
+// together. While a caret sits in such a box, WebKit works out the word
+// around it once for every frame it draws — it is for the system's own
+// correction candidates — and it finds the beginning of that word by walking
+// backwards from the caret through the page, out of the box and into
+// everything that comes before it. The music comes before the dialogs, so
+// that walk is over the whole score: 223,000 elements for a symphony, every
+// frame. The window stops dead. Nothing is drawn, so the dialog never
+// appears, and nothing answers afterwards either — which is exactly what
+// opening Title and composer on a symphony did.
+//
+// Hiding the music is not enough: the walk is over the nodes and not over
+// what is drawn, so nodes nobody can see are walked just the same. They have
+// to leave the page. They are kept here, in order, and go back untouched —
+// taking a symphony out costs 80ms and putting it back 260ms, against a
+// window that never came back at all.
+//
+// Nothing is lost by it. A modal window covers the music and there is
+// nothing to be done to the score while one is open.
+function scoreAside(dlg) {
+  const canvas = $("#canvas");
+  if (!dlg || !canvas || !canvas.firstChild) return;
+  const wrap = $("#canvas-wrap");
+  const kept = [...canvas.childNodes];
+  const x = wrap ? wrap.scrollLeft : 0;
+  const y = wrap ? wrap.scrollTop : 0;
+  canvas.replaceChildren();
+  const back = () => {
+    dlg.removeEventListener("close", back);
+    // Unless something has drawn in the meantime. Saving a new title lays
+    // the score out again, and the music held here is the music from before
+    // the change: putting it back over the new drawing would show the old
+    // title until the next time anything moved.
+    if (canvas.firstChild) return;
+    canvas.replaceChildren(...kept);
+    // The view was somewhere. An empty page has nothing to scroll, so the
+    // place it was at is gone by now and is put back by hand.
+    if (wrap) {
+      wrap.scrollLeft = x;
+      wrap.scrollTop = y;
+    }
+  };
+  dlg.addEventListener("close", back);
+}
+
 // richFields builds the boxes, once, out of the placeholders in the markup.
 function richFields() {
   for (const field of $$(".rich-field")) {
@@ -9936,6 +9984,7 @@ async function setHeaderDialog() {
       resolve(dlg.returnValue);
     };
     dlg.addEventListener("close", done);
+    scoreAside(dlg);
     dlg.showModal();
     richBoxes.title.focus();
   });
@@ -10685,6 +10734,7 @@ async function textDialog() {
       resolve(dlg.returnValue);
     };
     dlg.addEventListener("close", done);
+    scoreAside(dlg);
     dlg.showModal();
     richBoxes["tm-words"].focus();
   });

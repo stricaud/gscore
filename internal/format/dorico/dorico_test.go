@@ -210,6 +210,11 @@ type dynSub struct {
 	dur     string // a hairpin's length
 	down    bool   // and whether it falls
 	force   string // the name of a struck dynamic
+	// modifier is the qualifier printed in front of the letters, as the
+	// number the file holds it as and not as a word: 2 is "più". Nothing
+	// names them anywhere in the file, so the reader goes by the number
+	// and so does this.
+	modifier int
 }
 
 var dynGroups = map[string]struct {
@@ -681,14 +686,18 @@ func built(t *testing.T, time [2]string, key string, notes []played,
 					e.leaf("type", sub.force),
 					e.leaf("intensityLevel", "1")))
 			default:
+				mod := "steamVariantList:list: {}, {}"
+				if sub.modifier != 0 {
+					mod = "steamVariantList:list: {}, {int: " +
+						itoa(sub.modifier) + "}"
+				}
 				subs = append(subs, e.node("ImmediateChangeDynamicDefinition",
 					e.leaf("position", sub.at),
 					e.leaf("intensity",
 						"steamVariantList:list: {int: "+itoa(sub.side)+
 							"}, {}, {bool: false}, {int: "+
 							itoa(sub.letters)+"}"),
-					e.leaf("intensityModifier",
-						"steamVariantList:list: {}, {}")))
+					e.leaf("intensityModifier", mod)))
 			}
 		}
 		dynDefs = append(dynDefs, e.node("DynamicGroupElementDefinition",
@@ -1295,6 +1304,69 @@ func TestTheLoudnessesAreReadRight(t *testing.T) {
 			t.Errorf("side %d with %d letters came out as %v, want %v",
 				c.side, c.letters, got, c.want)
 		}
+	}
+}
+
+func TestAQualifiedDynamicKeepsItsWord(t *testing.T) {
+	// "più p" is a p with a word in front of it, and the word is the whole
+	// instruction: a p that is already p and is asked for again says
+	// nothing, while "più p" says softer than you are playing.
+	//
+	// gscore has no qualifier of its own, so the word is written beside the
+	// mark as an expression — italic and under the staff, the side the
+	// dynamic is on, which is where Dorico prints it.
+	raw := built(t, [2]string{"4", "4"}, "C", []played{
+		{at: "0", dur: "4", pitch: 60},
+	}, dynamicAt("0", dynSub{kind: "immediate", at: "0", side: 1,
+		letters: 1, modifier: 2}))
+
+	p := read(t, raw)[0].Parts[0]
+	mk := marksOf(p.Measures[0].Voices[0].Elements[0])
+	if mk.Dynamic != model.Piano {
+		t.Errorf("the note carries %v, want p", mk.Dynamic)
+	}
+	if len(mk.Texts) != 1 {
+		t.Fatalf("the note carries %d words beside the p, want the one: %+v",
+			len(mk.Texts), mk.Texts)
+	}
+	if mk.Texts[0].Text != "più" {
+		t.Errorf("the word beside the p is %q, want \"più\"", mk.Texts[0].Text)
+	}
+	if mk.Texts[0].Style != model.TextExpression {
+		t.Errorf("the word is set as %v, and belongs with the dynamics",
+			mk.Texts[0].Style)
+	}
+}
+
+func TestAnUnknownQualifierIsReportedAndTheDynamicKept(t *testing.T) {
+	// Only "più" was read off Dorico's own engraving of the project. The
+	// rest are numbers nothing names, so a dynamic that has one is still a
+	// dynamic and the word is said to be missing rather than guessed at.
+	raw := built(t, [2]string{"4", "4"}, "C", []played{
+		{at: "0", dur: "4", pitch: 60},
+	}, dynamicAt("0", dynSub{kind: "immediate", at: "0", side: 0,
+		letters: 1, modifier: 7}))
+
+	scores, err := Import(bytes.NewReader(raw))
+	if len(scores) == 0 {
+		t.Fatal("the music was thrown away over a word in front of a dynamic")
+	}
+	mk := marksOf(scores[0].Parts[0].Measures[0].Voices[0].Elements[0])
+	if mk.Dynamic != model.Forte {
+		t.Errorf("the note carries %v, want f: the qualifier is not the dynamic",
+			mk.Dynamic)
+	}
+	if len(mk.Texts) != 0 {
+		t.Errorf("a word nobody can name was written anyway: %+v", mk.Texts)
+	}
+	pe, ok := err.(*PartialError)
+	if !ok {
+		t.Fatalf("a qualifier gscore does not know reported %v", err)
+	}
+	pe.Partial()
+	if !strings.Contains(strings.Join(pe.Details(), " "), "in front of a dynamic") {
+		t.Errorf("the report says %v, and does not mention the word in front "+
+			"of the dynamic", pe.Details())
 	}
 }
 
@@ -2072,6 +2144,57 @@ func TestABarRepeatBelongsToOneStaff(t *testing.T) {
 	}
 	if p.Measures[0].Repeat != 0 {
 		t.Error("the first bar carries a repeat sign it should not")
+	}
+}
+
+func TestARegionThatOnlyCountsItsBarsIsNotARepeatSign(t *testing.T) {
+	// Dorico marks a passage of bars that are alike with a region of this
+	// kind whichever way it is to be printed, and numberBarsOnly is the way
+	// that prints no sign at all: the music stays written out, bar by bar.
+	//
+	// Beethoven's horns hold one note from bar 62 to bar 74 under a region
+	// like this one, written in Dorico's own engraving of that project as
+	// thirteen tied half notes. Read as a repeat, gscore drew a % over
+	// every one of them — and over a passage beginning after eight bars of
+	// silence, where the sign says to play the silence again, and where
+	// gscore duly played it.
+	raw := built(t, [2]string{"4", "4"}, "C", []played{
+		{at: "0", dur: "4", pitch: 60},
+		{at: "4", dur: "4", pitch: 62},
+	}, eventOn("stave", "GenerativeBarRepeatEventDefinition",
+		[2]string{"position", "4"}, [2]string{"duration", "4"},
+		[2]string{"numberOfBarsToRepeat", "k1"},
+		[2]string{"numberBarsOnly", "true"}))
+
+	scores, err := Import(bytes.NewReader(raw))
+	if len(scores) == 0 {
+		t.Fatal("the music was thrown away over a counted passage")
+	}
+	p := scores[0].Parts[0]
+	for i, m := range p.Measures {
+		if m.Repeat != 0 {
+			t.Errorf("bar %d carries a repeat sign for %d bars, and the "+
+				"region only counts them", i+1, m.Repeat)
+		}
+	}
+	// And the note that was under it is still there and still a note.
+	els := p.Measures[1].Voices[0].Elements
+	if len(els) != 1 {
+		t.Fatalf("the second bar holds %d things", len(els))
+	}
+	if _, ok := els[0].(*model.Note); !ok {
+		t.Errorf("the second bar holds a %T where the note was", els[0])
+	}
+	// Said rather than passed over in silence: somebody comparing the two
+	// pages finds the counting missing and has to be told why.
+	pe, ok := err.(*PartialError)
+	if !ok {
+		t.Fatalf("a counted passage reported %v", err)
+	}
+	pe.Partial()
+	if !strings.Contains(strings.Join(pe.Details(), " "), "counted bars") {
+		t.Errorf("the report says %v, and does not mention the counting",
+			pe.Details())
 	}
 }
 

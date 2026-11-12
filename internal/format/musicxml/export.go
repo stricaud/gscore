@@ -210,6 +210,15 @@ func buildPart(s *model.Score, p *model.Part, id string, index, divisions int) x
 
 		if len(m.Voices) > 0 {
 			for _, el := range m.Voices[0].Elements {
+				// The words written on a note go before it, and before its
+				// dynamic: "più p" is a word in front of the letters, and
+				// the order the directions are written in is the order a
+				// reader prints them in.
+				for _, t := range textsOf(el) {
+					if dir, ok := buildWords(t); ok {
+						xm.add(measureItem{Direction: &dir})
+					}
+				}
 				// A dynamic is a direction, written immediately before the
 				// note it applies to. The order is the meaning.
 				if d := dynamicOf(el); d != model.DynamicNone {
@@ -243,6 +252,63 @@ func dynamicOf(el model.Element) model.Dynamic {
 		return e.Dynamic
 	}
 	return model.DynamicNone
+}
+
+// textsOf reports the words written on an element, if any.
+func textsOf(el model.Element) []model.TextMark {
+	switch e := el.(type) {
+	case *model.Note:
+		return e.Texts
+	case *model.Chord:
+		return e.Texts
+	case *model.Rest:
+		return e.Texts
+	}
+	return nil
+}
+
+// buildWords writes a word over or under a note: "dolce", "pizz.", the
+// "più" in front of a p.
+//
+// These were read and never written. A file opened in gscore and saved back
+// out as MusicXML came out with every word on every note missing — which on
+// a Dorico score is most of what is printed over the staves — and nothing
+// said so.
+//
+// MusicXML has no names for the kinds of writing gscore keeps, so what goes
+// across is what the words look like: which side of the staff they sit on,
+// and whether they are slanted or heavy. That is also what comes back:
+// convertWords reads the side off the direction and the face off the font,
+// so a word keeps its place and its appearance through a round trip even
+// where the kind it was has no way to be said.
+func buildWords(t model.TextMark) (direction, bool) {
+	if strings.TrimSpace(t.Text) == "" {
+		return direction{}, false
+	}
+	look := t.Style.Look()
+	// Where the mark itself asks for, and otherwise where its kind puts it.
+	place := t.Placement
+	if place == model.PlacementAuto {
+		place = look.Place
+	}
+	side := "above"
+	if place == model.PlacementBelow {
+		side = "below"
+	}
+	w := wordsElem{Text: t.Text}
+	// Written down rather than left to the kind, because the kind is not
+	// going across: a word that was italic because it was an expression
+	// has to say it is italic or it comes back upright.
+	if t.Italic || look.Italic {
+		w.Style = "italic"
+	}
+	if t.Bold || look.Bold {
+		w.Weight = "bold"
+	}
+	return direction{
+		Placement: side,
+		Types:     []directionType{{Words: []wordsElem{w}}},
+	}, true
 }
 
 func buildDynamic(d model.Dynamic) direction {

@@ -1603,6 +1603,18 @@ func (a *App) handleArticulation(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]int{"changed": len(marks)})
 }
 
+// clefBefore is what this staff reads in at the bar before this one, which
+// is what a clef written here would be a change from.
+func (a *App) clefBefore(p *model.Part, at int) model.Clef {
+	c := p.Clef
+	for i := 0; i < at && i < len(p.Measures); i++ {
+		if m := p.Measures[i].Clef; m != nil {
+			c = *m
+		}
+	}
+	return c
+}
+
 // handleStaff changes a property of a staff itself: its clef, its meter, its
 // instrument. These belong to the staff rather than to any note on it, which
 // is why the palette applies them without needing a note selected.
@@ -1640,12 +1652,52 @@ func (a *App) handleStaff(w http.ResponseWriter, r *http.Request) {
 		changed = append(changed, "lines")
 	}
 	if v := q.Get("clef"); v != "" {
-		c, ok := clefByStringName[v]
-		if !ok {
-			http.Error(w, "unknown clef "+v, http.StatusBadRequest)
-			return
+		// A clef at a bar past the first changes clef there and leaves
+		// what came before alone, the way a key or a meter does: a
+		// cellist climbing into the tenor clef for a passage and dropping
+		// back, a pianist's left hand going up into the treble for a
+		// page. The model has carried these since the importers started
+		// reading them, and there was no way to write one by hand — a
+		// staff was one clef from end to end.
+		at, hasAt := strconv.Atoi(q.Get("at"))
+		switch {
+		case v == "none":
+			if hasAt != nil || at <= 0 {
+				http.Error(w,
+					"there is no clef change at the start to remove",
+					http.StatusBadRequest)
+				return
+			}
+			if at >= len(p.Measures) || p.Measures[at].Clef == nil {
+				http.Error(w, "there is no clef change at that measure",
+					http.StatusBadRequest)
+				return
+			}
+			p.Measures[at].Clef = nil
+		default:
+			c, ok := clefByStringName[v]
+			if !ok {
+				http.Error(w, "unknown clef "+v, http.StatusBadRequest)
+				return
+			}
+			if hasAt == nil && at > 0 {
+				if at >= len(p.Measures) {
+					http.Error(w, "no such measure", http.StatusBadRequest)
+					return
+				}
+				// Only where it is a change. A clef written again where
+				// the staff already reads in it is a sign that says
+				// nothing, and the page has one drawn on it all the same.
+				if a.clefBefore(p, at) == c {
+					p.Measures[at].Clef = nil
+				} else {
+					clef := c
+					p.Measures[at].Clef = &clef
+				}
+			} else {
+				p.Clef = c
+			}
 		}
-		p.Clef = c
 		changed = append(changed, "clef")
 	}
 	if v := q.Get("time"); v == "none" {

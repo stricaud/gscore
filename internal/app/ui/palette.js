@@ -148,6 +148,17 @@ const PALETTE = [
         needsRange: true },
       { text: "—", label: "No octave line", apply: "octave", value: "none" },
 
+      // A trill lasts, so a passage picked up gets the wavy line; the
+      // pedal goes down on the first note and comes up on the last; a
+      // glissando runs between the two notes it is drawn across.
+      { g: "\uE566", label: "Trill", apply: "trill", value: "on" },
+      { g: "\uE650", label: "Pedal", apply: "pedal", value: "on" },
+      { g: "\uE585", label: "Glissando", apply: "glissando", value: "on",
+        needsRange: true },
+      { g: "\uE634", label: "Roll the chord", apply: "arpeggio", value: "up" },
+      { g: "\uE635", label: "Roll it downwards", apply: "arpeggio", value: "down" },
+      { text: "—", label: "No roll", apply: "arpeggio", value: "none" },
+
       // An ending is a bracket over whole bars, so it acts on the measure
       // the cursor is in rather than on a note. Select a range of bars to
       // put one bracket over all of them.
@@ -199,17 +210,51 @@ const PALETTE = [
     ],
   },
   {
+    id: "keys",
+    // The fifteen signatures, as they are drawn, from seven flats to seven
+    // sharps. The palette had clefs and time signatures and no keys at
+    // all: changing key meant finding a menu entry in Score, and nothing
+    // on the way there says that is where it lives.
+    //
+    // Clicking one writes it at the bar the cursor is in — which is a
+    // modulation, and the thing a piece does — or sets the key of the
+    // whole piece where that bar is the first.
+    name: "Key signatures",
+    size: 15,
+    columns: 4,
+    items: [
+      { text: "7\u266D", label: "Seven flats — C♭ major", key: -7 },
+      { text: "6\u266D", label: "Six flats — G♭ major", key: -6 },
+      { text: "5\u266D", label: "Five flats — D♭ major", key: -5 },
+      { text: "4\u266D", label: "Four flats — A♭ major", key: -4 },
+      { text: "3\u266D", label: "Three flats — E♭ major", key: -3 },
+      { text: "2\u266D", label: "Two flats — B♭ major", key: -2 },
+      { text: "1\u266D", label: "One flat — F major", key: -1 },
+      { g: "\uE261", label: "No sharps or flats — C major", key: 0 },
+      { text: "1\u266F", label: "One sharp — G major", key: 1 },
+      { text: "2\u266F", label: "Two sharps — D major", key: 2 },
+      { text: "3\u266F", label: "Three sharps — A major", key: 3 },
+      { text: "4\u266F", label: "Four sharps — E major", key: 4 },
+      { text: "5\u266F", label: "Five sharps — B major", key: 5 },
+      { text: "6\u266F", label: "Six sharps — F♯ major", key: 6 },
+      { text: "7\u266F", label: "Seven sharps — C♯ major", key: 7 },
+      { text: "—", label: "No key change here", key: "none" },
+    ],
+  },
+  {
     id: "clefs",
     // A clef is drawn around the whole staff and is several times the height
     // of a notehead; set at the same size it simply does not fit the square.
     size: 13,
     name: "Clefs",
     items: [
-      { g: "", label: "Treble", staff: "clef", value: "treble" },
-      { g: "", label: "Bass", staff: "clef", value: "bass" },
-      { g: "", label: "Alto", staff: "clef", value: "alto" },
-      { g: "", label: "Tenor", staff: "clef", value: "tenor" },
-      { g: "", label: "Percussion", staff: "clef", value: "percussion" },
+      { g: "", label: "Treble", staff: "clef", value: "treble", atBar: true },
+      { g: "", label: "Bass", staff: "clef", value: "bass", atBar: true },
+      { g: "", label: "Alto", staff: "clef", value: "alto", atBar: true },
+      { g: "", label: "Tenor", staff: "clef", value: "tenor", atBar: true },
+      { g: "", label: "Percussion", staff: "clef", value: "percussion", atBar: true },
+      { text: "—", label: "No clef change here", staff: "clef",
+        value: "none", atBar: true },
     ],
   },
   {

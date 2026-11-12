@@ -887,6 +887,21 @@ func (w *walker) staff(version int) (*model.Part, error) {
 		names[i] = s
 	}
 	name := names[0]
+	// What NoteWorthy prints at the left of a staff is its label, which is
+	// beside its name and need not be the same word: "Roto-toms" on a
+	// staff called "R.T.", "Platillos" on one called "Pltlls", "Soprano"
+	// on one called "Staff-4". gscore keeps one name per staff and that is
+	// the one it draws, so the label is the one to keep — and where there
+	// is none, which is how the lower half of a braced pair is written,
+	// the staff's own name stays, so that it can still be told apart in a
+	// list of staves.
+	//
+	// From 2.0 only. The name beside the first is the group a staff is
+	// filed under in the versions before that, and a staff filed under
+	// "Hidden" is not a staff called Hidden.
+	if d.headerNames >= 4 && strings.TrimSpace(names[1]) != "" {
+		name = names[1]
+	}
 	// The group NoteWorthy prints down the left of the staves that share
 	// it, with a brace or a bracket round them.
 	w.group = names[1]

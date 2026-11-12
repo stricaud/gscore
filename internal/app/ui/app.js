@@ -298,9 +298,55 @@ async function paletteAction(item) {
     await setBarline(item.value);
     return;
   }
-  if (item.staff) {
-    await setStaffProperty(item.staff, item.value);
+  // A key signature, written at the bar the cursor is in: a modulation
+  // partway through, or the key of the piece where that bar is the first.
+  // The palette had clefs and meters and no keys, so the one signature a
+  // piece actually changes was the one with no button.
+  if (item.key !== undefined) {
+    await setKeyHere(item.key);
+    return;
   }
+  if (item.staff) {
+    // A clef is the one of these that can change partway down a staff, so
+    // its buttons say so and write at the bar the cursor is in; a meter
+    // and an instrument belong to the staff whatever bar is picked up.
+    if (item.atBar) {
+      await setStaffProperty(item.staff, item.value, true);
+      return;
+    }
+    await setStaffProperty(item.staff, item.value, false);
+  }
+}
+
+// setKeyHere writes a key signature at the selection's bar.
+async function setKeyHere(fifths) {
+  const sel = state.selection;
+  const part = sel ? sel.part : 0;
+  const at = sel ? sel.measure : 0;
+  const p = new URLSearchParams({ part: String(part), at: String(at) });
+  if (fifths === "none") {
+    if (at <= 0) {
+      status("The key of the piece cannot be taken away — choose another");
+      return;
+    }
+    p.set("remove", "1");
+    p.set("fifths", "0");
+  } else {
+    p.set("fifths", String(fifths));
+  }
+  const res = await fetch("/api/setkey?" + p.toString(), { method: "POST" });
+  if (!res.ok) {
+    status("Could not change the key: " + (await res.text()).trim());
+    return;
+  }
+  await refreshScore();
+  if (fifths === "none") {
+    status(`Key change at measure ${barNumberOf(at)} removed`);
+    return;
+  }
+  status(at > 0
+    ? `Key changed at measure ${barNumberOf(at)}`
+    : "Key of the piece changed");
 }
 
 // pickDuration chooses what the next note written is worth.
@@ -462,11 +508,15 @@ function useAccidental() {
 
 // setStaffProperty changes something about the staff itself, rather than
 // about a note on it.
-async function setStaffProperty(what, value) {
+async function setStaffProperty(what, value, atBar) {
   const sel = state.selection;
   const part = sel ? sel.part : 0;
-  const res = await fetch(`/api/staff?part=${part}&${what}=${encodeURIComponent(value)}`,
-                          { method: "POST" });
+  // A clef is the one of these that can change partway down a staff, and
+  // the bar the cursor is in is where it changes.
+  const at = atBar && sel && sel.measure > 0 ? `&at=${sel.measure}` : "";
+  const res = await fetch(
+    `/api/staff?part=${part}&${what}=${encodeURIComponent(value)}${at}`,
+    { method: "POST" });
   if (!res.ok) {
     status("Could not change the staff: " + (await res.text()).trim());
     return;
@@ -1287,6 +1337,27 @@ async function action(name) {
     case "set-time":
       await setTimeDialog();
       break;
+    // A clef written at a bar changes the staff from there on; the one in
+    // the Staff menu is the staff's own, from the first bar.
+    case "insert-clef":
+      await setClefDialog(state.selection?.part ?? 0,
+                          state.selection?.measure ?? 0);
+      break;
+    case "set-clef":
+      await setClefDialog(state.selection?.part ?? 0, 0);
+      break;
+
+    case "trill": await setTrill("on"); break;
+    case "trill-none": await setTrill("none"); break;
+    case "pedal": await setPedal("on", "line"); break;
+    case "pedal-text": await setPedal("on", "text"); break;
+    case "pedal-change": await setPedal("change", "line"); break;
+    case "pedal-none": await setPedal("none", "line"); break;
+    case "arpeggio-up": await setArpeggio("up"); break;
+    case "arpeggio-down": await setArpeggio("down"); break;
+    case "arpeggio-none": await setArpeggio("none"); break;
+    case "gliss": await setGlissando("on"); break;
+    case "gliss-none": await setGlissando("none"); break;
     case "staff-lines":
       await setStaffLinesDialog(state.selection?.part ?? 0);
       break;
@@ -7227,6 +7298,38 @@ async function setEnding(numbers) {
                                           : `measures ${first + 1}–${last + 1}`));
 }
 
+// The marks gscore could read and not write: a trill, the pedal, the stroke
+// up a chord, the slide from one note to the next.
+//
+// All four go through the same machinery as a hairpin: what is picked up is
+// what they are hung on, and a mark that reaches over a passage opens on the
+// first note and closes on the last.
+async function setTrill(what) {
+  await mark("trill", { trill: what },
+             what === "none" ? "Trill removed" : "Trill");
+}
+
+async function setPedal(what, style) {
+  const said = { none: "Pedal removed", change: "Pedal change" }[what] ||
+    (style === "text" ? "Ped." : "Pedal");
+  await mark("pedal", { pedal: what, style }, said);
+}
+
+async function setArpeggio(what) {
+  await mark("arpeggio", { arpeggio: what },
+             what === "none" ? "Roll removed" : "Rolled");
+}
+
+async function setGlissando(what) {
+  if (what !== "none" && state.multi.length < 2) {
+    status("A glissando runs between two notes — click one, " +
+           "then shift-click the next");
+    return;
+  }
+  await mark("glissando", { glissando: what },
+             what === "none" ? "Glissando removed" : "Glissando");
+}
+
 // setJump writes a sign or a direction at the bar the cursor is in.
 //
 // These act on a bar and not on a note: a D.S. belongs at the end of a bar,
@@ -11164,10 +11267,24 @@ async function setStaffLinesDialog(part) {
 
 // setClefDialog changes one staff's clef, which unlike the key and the meter
 // really does belong to the staff alone.
-async function setClefDialog(part) {
+async function setClefDialog(part, at) {
   const now = state.info?.parts?.[part]?.clef || "treble";
+  // Where it takes effect. At the first bar it is the staff's own clef; at
+  // any other it is a change written there — a cellist going up into the
+  // tenor clef for a passage and dropping back — which is a thing gscore
+  // has drawn since the importers learned to read one and had no way to
+  // write.
+  const measure = at !== undefined ? at : (state.selection?.measure ?? 0);
+  const here = measure > 0;
   const v = await ask({
-    title: "Clef", label: "Draw this staff in", value: now,
+    title: "Clef",
+    label: here ? `From measure ${barNumberOf(measure)}, read this staff in`
+                : "Draw this staff in",
+    value: now,
+    note: here
+      ? "The sign is drawn at that bar and the staff is read in it from "
+        + "there on."
+      : "",
     options: [
       { value: "treble", label: "Treble" },
       { value: "bass", label: "Bass" },
@@ -11177,11 +11294,14 @@ async function setClefDialog(part) {
       // The tenor's clef and the guitarist's: the same staff as a treble
       // clef, sounding an octave below what is written.
       { value: "treble8vb", label: "Treble 8 below" },
+      ...(here ? [{ value: "none", label: "No change here" }] : []),
     ],
   });
-  if (v === null || v === now) return;
-  const res = await fetch(`/api/staff?part=${part}&clef=${encodeURIComponent(v)}`,
-                          { method: "POST" });
+  if (v === null || (!here && v === now)) return;
+  const res = await fetch(
+    `/api/staff?part=${part}&clef=${encodeURIComponent(v)}` +
+      (here ? `&at=${measure}` : ""),
+    { method: "POST" });
   if (!res.ok) {
     status("Could not change the clef: " + (await res.text()).trim());
     return;
@@ -16678,6 +16798,20 @@ const MENU_ICONS = {
   "insert-rest": "\ue4e5",         // restQuarter
   "set-key": "\ue262",             // accidentalSharp
   "set-time": "\ue08a",            // timeSigCommon
+  // A clef written at a bar, and the staff's own: the same sign either way.
+  "insert-clef": "\ue050",         // gClef
+  "set-clef": "\ue050",            // gClef
+
+  // The marks that had no way in. Each is its own sign and nothing else
+  // looks like it, which is the whole reason a palette is drawn in the
+  // music font.
+  "trill": "\ue566",               // ornamentTrill
+  "pedal": "\ue650",               // keyboardPedalPed
+  "pedal-text": "\ue650\ue655",    // keyboardPedalPed keyboardPedalUp
+  "pedal-change": "\ue659",        // keyboardPedalSost
+  "arpeggio-up": "\ue634",         // arpeggiatoUp
+  "arpeggio-down": "\ue635",       // arpeggiatoDown
+  "gliss": "\ue585",               // glissandoUp
   "group-brace": "\ue000",         // brace
   "group-bracket": "\ue002",       // bracket
 
@@ -19390,6 +19524,10 @@ const MENU_DRAWINGS = {
     '<line x1="11.5" y1="12" x2="11.5" y2="5"/>',
   "artic-none": REMOVE_MARK,
   "breath-none": REMOVE_MARK,
+  "trill-none": REMOVE_MARK,
+  "pedal-none": REMOVE_MARK,
+  "arpeggio-none": REMOVE_MARK,
+  "gliss-none": REMOVE_MARK,
   "slur-none": REMOVE_MARK,
   "tie-none": REMOVE_MARK,
   "dyn-none": REMOVE_MARK,

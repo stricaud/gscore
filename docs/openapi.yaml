@@ -1977,6 +1977,82 @@ paths:
         "200": { $ref: "#/components/responses/Changed" }
         "400": { $ref: "#/components/responses/Error" }
 
+  /api/trill:
+    post:
+      tags: [marks]
+      summary: A trill on a note or over a passage
+      parameters:
+        - $ref: "#/components/parameters/part"
+        - $ref: "#/components/parameters/measure"
+        - $ref: "#/components/parameters/at"
+        - $ref: "#/components/parameters/sel"
+        - name: trill
+          in: query
+          schema: { type: string, enum: [on, none] }
+      responses:
+        "200": { $ref: "#/components/responses/Changed" }
+        "400": { $ref: "#/components/responses/Error" }
+
+  /api/pedal:
+    post:
+      tags: [marks]
+      summary: The sustaining pedal, down and up over a passage
+      parameters:
+        - $ref: "#/components/parameters/part"
+        - $ref: "#/components/parameters/measure"
+        - $ref: "#/components/parameters/at"
+        - $ref: "#/components/parameters/sel"
+        - name: pedal
+          in: query
+          schema: { type: string, enum: [on, down, change, none] }
+        - name: style
+          in: query
+          description: text for "Ped." and a star, the line otherwise
+          schema: { type: string, enum: [line, text] }
+      responses:
+        "200": { $ref: "#/components/responses/Changed" }
+        "400": { $ref: "#/components/responses/Error" }
+
+  /api/arpeggio:
+    post:
+      tags: [marks]
+      summary: The stroke that says to spread a chord
+      parameters:
+        - $ref: "#/components/parameters/part"
+        - $ref: "#/components/parameters/measure"
+        - $ref: "#/components/parameters/at"
+        - $ref: "#/components/parameters/sel"
+        - name: arpeggio
+          in: query
+          schema: { type: string, enum: [on, up, down, none] }
+      responses:
+        "200": { $ref: "#/components/responses/Changed" }
+        "400": { $ref: "#/components/responses/Error" }
+
+  /api/glissando:
+    post:
+      tags: [marks]
+      summary: A slide from one note to the next
+      parameters:
+        - $ref: "#/components/parameters/part"
+        - $ref: "#/components/parameters/measure"
+        - $ref: "#/components/parameters/at"
+        - $ref: "#/components/parameters/sel"
+        - name: glissando
+          in: query
+          schema: { type: string, enum: [on, none] }
+        - name: line
+          in: query
+          description: wavy for a portamento, straight otherwise
+          schema: { type: string, enum: [straight, wavy] }
+        - name: text
+          in: query
+          description: the word written along it, "gliss." by default
+          schema: { type: string }
+      responses:
+        "200": { $ref: "#/components/responses/Changed" }
+        "400": { $ref: "#/components/responses/Error" }
+
   /api/text:
     post:
       tags: [marks]
@@ -2976,9 +3052,16 @@ paths:
             and back is the staff it was. Notes already on it are given a
             place on the neck.
           schema: { type: string }
-        - { name: clef, in: query, schema: { type: string, enum: [treble, bass, alto, tenor, percussion] } }
+        - name: clef
+          in: query
+          description: >
+            The staff's clef, or — with `at` past the first bar — a change
+            of clef written at that bar, which is how a cello part goes up
+            into the tenor clef for a passage. `none` with `at` takes a
+            change away again.
+          schema: { type: string, enum: [treble, bass, alto, tenor, percussion, treble8vb, none] }
         - { name: time, in: query, description: "A meter, as `4/4` or `6/8`.", schema: { type: string } }
-        - { name: at, in: query, description: "The bar a meter change begins at.", schema: { type: integer } }
+        - { name: at, in: query, description: "The bar a meter or clef change begins at.", schema: { type: integer } }
         - { name: transpose, in: query, description: "Semitones below what is written.", schema: { type: integer } }
         - { name: hidden, in: query, description: "Out of the drawing, still in the score.", schema: { type: string, enum: ["0", "1"] } }
       responses:

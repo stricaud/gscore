@@ -238,6 +238,17 @@
       <button data-action="insert-text"><span>Text…</span><kbd>T</kbd></button>
       <button data-action="insert-marker"><span>Rehearsal mark…</span></button>
       <hr>
+      <!-- What is written at a bar rather than on a note. All three change
+           the music from that bar to the end and leave what came before
+           alone, which is what a piece modulating or changing meter is.
+           They are in the Score menu as well, because they are as much a
+           decision about the piece as something you insert — and this is
+           where somebody looks for them. -->
+      <button data-action="set-key"><span>Key signature…</span></button>
+      <button data-action="set-time"><span>Time signature…</span></button>
+      <button data-action="insert-clef"><span>Clef…</span></button>
+      <button data-action="set-tempo"><span>Tempo…</span></button>
+      <hr>
 
       <div class="submenu">
         <button class="submenu-title"><span>Barline</span><kbd>▸</kbd></button>
@@ -280,6 +291,35 @@
           <button data-action="octave-15ma"><span>15ma — two octaves up</span></button>
           <button data-action="octave-15mb"><span>15mb — two octaves down</span></button>
           <button data-action="octave-none"><span>No octave line</span></button>
+          <hr>
+          <button data-action="gliss"><span>Glissando</span></button>
+          <button data-action="gliss-none"><span>No glissando</span></button>
+        </div>
+      </div>
+
+      <!-- A trill and a roll are written on a note; the pedal is written
+           under a passage. gscore has read, drawn and played all three
+           since the importers learned them, and there was no way to put
+           one into a score by hand. -->
+      <div class="submenu">
+        <button class="submenu-title"><span>Ornament</span><kbd>▸</kbd></button>
+        <div class="menu-items">
+          <button data-action="trill"><span>Trill</span></button>
+          <button data-action="trill-none"><span>No trill</span></button>
+          <hr>
+          <button data-action="arpeggio-up"><span>Roll the chord</span></button>
+          <button data-action="arpeggio-down"><span>Roll it downwards</span></button>
+          <button data-action="arpeggio-none"><span>No roll</span></button>
+        </div>
+      </div>
+
+      <div class="submenu">
+        <button class="submenu-title"><span>Pedal</span><kbd>▸</kbd></button>
+        <div class="menu-items">
+          <button data-action="pedal"><span>Pedal under the passage</span></button>
+          <button data-action="pedal-change"><span>Change the pedal here</span></button>
+          <button data-action="pedal-text"><span>Ped. and a star</span></button>
+          <button data-action="pedal-none"><span>No pedal</span></button>
         </div>
       </div>
 
@@ -423,6 +463,7 @@
       <button data-action="staff-up"><span>Move staff up</span></button>
       <button data-action="staff-down"><span>Move staff down</span></button>
       <hr>
+      <button data-action="set-clef"><span>Clef…</span></button>
       <button data-action="staff-lines"><span>Staff lines…</span></button>
       <button data-action="set-instrument"><span>Set instrument…</span></button>
       <button data-action="set-lyrics"><span>Lyrics…</span><kbd>L</kbd></button>

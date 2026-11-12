@@ -204,7 +204,10 @@ type partDoc struct {
 	// Transpose is how far below what is printed this staff sounds, written
 	// the way MusicXML writes it so the two agree.
 	Transpose *transposeDoc `json:"transpose,omitempty"`
-	Measures  []measureDoc  `json:"measures"`
+	// StaffLines is how many lines the staff is ruled with where it is not
+	// the usual five: one, for a drum with no pitch.
+	StaffLines int          `json:"staffLines,omitempty"`
+	Measures   []measureDoc `json:"measures"`
 }
 
 type transposeDoc struct {
@@ -635,6 +638,7 @@ func encodeScore(s *model.Score) *scoreDoc {
 			Beats:      p.Time.Beats,
 			Beat:       p.Time.BeatValue,
 			TimeSym:    timeSymNames[p.Time.Symbol],
+			StaffLines: p.StaffLines,
 		}
 		if !p.Transpose.IsZero() {
 			pd.Transpose = &transposeDoc{
@@ -1015,6 +1019,7 @@ func decodeScore(doc *scoreDoc) (*model.Score, error) {
 			Time: model.TimeSignature{
 				Beats: pd.Beats, BeatValue: pd.Beat, Symbol: timeSymValues[pd.TimeSym],
 			},
+			StaffLines: pd.StaffLines,
 		}
 		if p.Time.BeatValue == 0 {
 			p.Time = model.TimeSignature{Beats: 4, BeatValue: 4}

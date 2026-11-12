@@ -910,10 +910,14 @@ func stepY(step float64) float64 { return staffHeight - step/2 }
 const tabLineGap = 1
 
 // partLines is how many lines a part's staff has: five, or one per string
-// where the part is written as tablature.
+// where the part is written as tablature, or whatever the staff itself asks
+// for — one line for a drum that has no pitch.
 func partLines(p *model.Part) int {
 	if n := p.Tab.Lines(); n > 1 {
 		return n
+	}
+	if p.StaffLines > 0 && p.StaffLines < staffLines {
+		return p.StaffLines
 	}
 	return staffLines
 }
@@ -933,12 +937,23 @@ func partGap(p *model.Part) float64 {
 // property of the part and not a constant. Everything that places one staff
 // under another, or measures how far a mark is outside one, asks for it.
 func partH(p *model.Part) float64 {
+	// A staff of fewer than five lines keeps the room a five-line staff
+	// takes: the notes of a one-line drum staff sit around their line the
+	// way any others do, and a staff given no height would have the next
+	// one drawn through it.
+	if n := partLines(p); n < staffLines && p.Tab.Lines() < 2 {
+		return staffHeight
+	}
 	return float64(partLines(p)-1) * partGap(p)
 }
 
 // staffH is the height of the staff being drawn now.
+//
+// A staff ruled with fewer than five lines still takes the room of five —
+// see partH — so what is measured from the staff is measured from the same
+// place however many lines are drawn on it.
 func (e *engraver) staffH() float64 {
-	if e.lines < 2 {
+	if e.lines < staffLines && e.lineGap == 1 {
 		return staffHeight
 	}
 	return float64(e.lines-1) * e.lineGap
@@ -3882,11 +3897,19 @@ func (e *engraver) drawSystem(parts []*model.Part, boxes [][]measureBox,
 func (e *engraver) staffLines(x, width float64) {
 	t := e.opt.Defaults.StaffLineThickness
 	n, gap := e.lines, e.lineGap
-	if n < 2 {
+	// Where the staff is ruled with fewer lines than five, the lines are
+	// the middle of the usual five rather than the top of them: a drum on
+	// one line has that line where the middle line would be, which is
+	// where its notes already sit. A part that says nothing is five.
+	first := 0.0
+	switch {
+	case n < 1:
 		n, gap = staffLines, 1
+	case n < staffLines && gap == 1:
+		first = (staffHeight - float64(n-1)*gap) / 2
 	}
 	for i := 0; i < n; i++ {
-		y := e.y + float64(i)*gap
+		y := e.y + first + float64(i)*gap
 		// A line with fret numbers on it is ruled in pieces, around them: a
 		// line through a figure is a line through it, and tab is read as
 		// numbers before it is read as lines.

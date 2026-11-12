@@ -562,6 +562,8 @@ const MESSAGES = {
   "Spacing": "Espacement",
   "Spacing…": "Espacement…",
   "Staccatissimo": "Staccatissimo",
+  "Staff lines": "Lignes de la portée",
+  "Staff lines…": "Lignes de la portée…",
   "Staccato": "Staccato",
   "Staff": "Portée",
   "Staff names": "Noms des portées",

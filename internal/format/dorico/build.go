@@ -136,6 +136,7 @@ type stave struct {
 	instCount int
 	sound      string // what it plays, as a MusicXML standard sound id
 	stream     string // its own stave stream, where the clefs are
+	lines      int    // the lines it is ruled with, where it is not five
 	order      int    // where it comes in the score
 	clef       model.Clef
 	clefSet    bool
@@ -375,6 +376,7 @@ func instrumentSounds(t *tree, root int32) map[string]instrumentDef {
 	type entityDef struct {
 		sound string
 		clefs []model.Clef
+		lines int
 	}
 	entity := map[string]entityDef{}
 	for _, def := range t.every("InstrumentEntityDefinition") {
@@ -398,6 +400,13 @@ func instrumentSounds(t *tree, root int32) map[string]instrumentDef {
 			}
 			d.clefs = append(d.clefs, c)
 		}
+		// How the staff is ruled. Dorico says it on the instrument, which
+		// is where it belongs: a tam-tam is a one-line staff wherever it
+		// is written.
+		if n, err := strconv.Atoi(t.str(t.child(def, "staveDefinition"),
+			"numStaveLines")); err == nil && n > 0 && n < 5 {
+			d.lines = n
+		}
 		entity[id] = d
 	}
 	out := map[string]instrumentDef{}
@@ -412,7 +421,7 @@ func instrumentSounds(t *tree, root int32) map[string]instrumentDef {
 				name = t.str(inst, "baseInstrumentEntityID")
 			}
 			d := entity[name]
-			out[id] = instrumentDef{sound: d.sound, clefs: d.clefs}
+			out[id] = instrumentDef{sound: d.sound, clefs: d.clefs, lines: d.lines}
 		}
 	}
 	return out
@@ -423,6 +432,9 @@ func instrumentSounds(t *tree, root int32) map[string]instrumentDef {
 type instrumentDef struct {
 	sound string
 	clefs []model.Clef
+	// lines is how many lines the staff is ruled with where it is not the
+	// usual five: a snare drum is written on one.
+	lines int
 }
 
 // report turns the tally of what was not read into lines somebody can read,
@@ -523,9 +535,10 @@ func buildFlow(t *tree, flow int32, players map[string]string,
 	tempo := readTempo(t, streams, skipped)
 	for _, st := range staves {
 		p := &model.Part{
-			Name:  st.player,
-			Sound: st.sound,
-			Clef:  st.clef,
+			Name:       st.player,
+			Sound:      st.sound,
+			Clef:       st.clef,
+			StaffLines: st.lines,
 			Key:   model.KeySignature{},
 			Time:  model.TimeSignature{Beats: 4, BeatValue: 4},
 		}
@@ -727,6 +740,7 @@ func flowStaves(t *tree, flow int32, players map[string]string,
 					was = sounds[inst]
 				}
 				st.sound = was.sound
+				st.lines = was.lines
 				nth, _ := strconv.Atoi(t.str(ss, "nthStaveInInstrument"))
 				if nth >= 0 && nth < len(was.clefs) {
 					st.clef = was.clefs[nth]

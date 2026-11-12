@@ -1287,6 +1287,9 @@ async function action(name) {
     case "set-time":
       await setTimeDialog();
       break;
+    case "staff-lines":
+      await setStaffLinesDialog(state.selection?.part ?? 0);
+      break;
     case "set-instrument":
       await setInstrumentDialog();
       break;
@@ -11103,6 +11106,39 @@ async function openHeaderPicker(head) {
   }
 }
 
+// setStaffLinesDialog changes how many lines a staff is ruled with.
+//
+// One line is the ordinary way to write a drum that has no pitch, and the
+// reason this is here rather than hidden in the importers: a percussion
+// staff typed into gscore should be able to look like one.
+//
+// What is drawn changes and where the notes go does not — the staff keeps
+// the height and the positions of a five-line staff — so this can be
+// changed back and forth without touching the music.
+async function setStaffLinesDialog(part) {
+  const now = String(state.info?.parts?.[part]?.staffLines || 5);
+  const v = await ask({
+    title: "Staff lines", label: "Rule this staff with", value: now,
+    note: "One line is how a drum with no pitch is written.",
+    options: [
+      { value: "5", label: "Five — the usual staff" },
+      { value: "1", label: "One — a drum with no pitch" },
+      { value: "2", label: "Two" },
+      { value: "3", label: "Three" },
+      { value: "4", label: "Four" },
+    ],
+  });
+  if (v === null || v === now) return;
+  const res = await fetch(`/api/staff?part=${part}&lines=${encodeURIComponent(v)}`,
+                          { method: "POST" });
+  if (!res.ok) {
+    status("Could not change the staff: " + (await res.text()).trim());
+    return;
+  }
+  await refreshScore();
+  status(v === "1" ? "One line" : v + " lines");
+}
+
 // setClefDialog changes one staff's clef, which unlike the key and the meter
 // really does belong to the staff alone.
 async function setClefDialog(part) {
@@ -19245,6 +19281,10 @@ const MENU_DRAWINGS = {
    * drawing of a staccato with something done to it, and twelve of those
    * side by side would be twelve near-identical dots. The words say which
    * mark; this says the entry takes one away. */
+  // One long line with a notehead on it: the staff this entry makes.
+  "staff-lines": '<line x1="2" y1="12" x2="22" y2="12"/>' +
+    '<circle cx="9" cy="12" r="2.6"/>' +
+    '<line x1="11.5" y1="12" x2="11.5" y2="5"/>',
   "artic-none": REMOVE_MARK,
   "breath-none": REMOVE_MARK,
   "slur-none": REMOVE_MARK,

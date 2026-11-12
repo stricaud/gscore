@@ -2861,6 +2861,13 @@ paths:
             against, and it is what gets written into the file. Takes
             precedence over `instrument`.
           schema: { type: string }
+        - name: lines
+          in: query
+          description: >-
+            How many lines the staff is ruled with. One is how a drum with
+            no pitch is written; five is every other staff. What is drawn
+            changes and where the notes go does not.
+          schema: { type: integer, minimum: 1, maximum: 5 }
         - name: clef
           in: query
           schema: { type: string, enum: [treble, bass, alto, tenor, percussion] }

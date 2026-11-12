@@ -257,9 +257,10 @@ func convert(doc *scorePartwise, lg *log) (*model.Score, error) {
 			// What this bar changes, by staff, gathered before the bar is
 			// built so it can be written onto it.
 			type change struct {
-				key  *model.KeySignature
-				time *model.TimeSignature
-				clef *model.Clef
+				key   *model.KeySignature
+				time  *model.TimeSignature
+				clef  *model.Clef
+				lines int
 			}
 			chg := make([]change, staves)
 			for _, it := range xm.Content {
@@ -300,6 +301,19 @@ func convert(doc *scorePartwise, lg *log) (*model.Score, error) {
 						}
 						c := convertClef(&a.Clefs[ci], lg)
 						chg[i].clef = &c
+					}
+					// How the staff is ruled, which is a property of the
+					// staff rather than of the bar: a drum with no pitch
+					// is written on one line, and a file that says so is
+					// not describing a five-line staff with something
+					// odd about it.
+					for di := range a.Details {
+						if staffOf(a.Details[di].Number) != staff {
+							continue
+						}
+						if n := a.Details[di].Lines; n != nil && *n > 0 && *n < 5 {
+							chg[i].lines = *n
+						}
 					}
 				}
 			}
@@ -430,6 +444,12 @@ func convert(doc *scorePartwise, lg *log) (*model.Score, error) {
 						ms[i].Clef = &v
 					}
 					st.clef = *c
+				}
+				// How many lines the staff is ruled with belongs to the
+				// staff and not to a bar of it, so the first one that
+				// says settles it.
+				if n := chg[i].lines; n > 0 && p.StaffLines == 0 {
+					p.StaffLines = n
 				}
 				p.Measures = append(p.Measures, ms[i])
 			}

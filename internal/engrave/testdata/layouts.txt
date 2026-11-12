@@ -50,7 +50,7 @@ suite/13d-KeySignatures-Microtones.musicxml f8f7c941e596cdd7 15
 suite/13e-KeySignatures-Cancel.musicxml 9dff62301be5006c 56
 suite/13e-KeySignatures-MidMeasure-Change.musicxml 9a841dfeef69cbb4 29
 suite/13f-KeySignatures-Visible.musicxml 1422561d4546f211 33
-suite/14a-StaffDetails-LineChanges.musicxml 7199f41507198ecf 40
+suite/14a-StaffDetails-LineChanges.musicxml 4cd5f0664760b17f 35
 suite/21a-Chord-Basic.musicxml 69f09a2084a87019 15
 suite/21b-Chords-TwoNotes.musicxml 85706e47f0031210 58
 suite/21c-Chords-ThreeNotesDuration.musicxml 7848a873ebedfa75 44
@@ -101,7 +101,7 @@ suite/33i-Ties-NotEnded.musicxml 769ec2c063ffd4d6 27
 suite/33j-Beams-Tremolos.musicxml 884665f7d6f0a131 69
 suite/33k-Tie-Types.musicxml 5eb63e483886f5b0 63
 suite/34a-Print-Object-Spanners.musicxml e461b0d5f64c8180 164
-suite/34b-Colors.musicxml 2d2b9d9bd56385f2 304
+suite/34b-Colors.musicxml 554ecb649d5118fb 298
 suite/34c-Font-Size.musicxml 17d19143208f0f57 170
 suite/34d-Note-Attributes.musicxml bfd944a4f0e17b9c 91
 suite/41a-MultiParts-Partorder.musicxml 0a41d2450719365f 59
@@ -175,14 +175,14 @@ suite/71a-Chordnames.musicxml e1cd18149762e887 44
 suite/71b-Chordnames-Kinds.musicxml 7989d0d7f2399ef2 210
 suite/71c-ChordsFrets.musicxml 23dcc639308645a4 43
 suite/71d-ChordsFrets-Multistaff.musicxml 1e7cf01d189838da 64
-suite/71e-TabStaves.musicxml acc97ab48bf1d259 416
+suite/71e-TabStaves.musicxml 88f63001bc3d7895 414
 suite/71f-AllChordTypes.musicxml 23bf5cbd823c3f82 267
 suite/71g-MultipleChordnames.musicxml 46a96846b1d85a08 18
 suite/72a-TransposingInstruments.musicxml fbb9d15afc936270 87
 suite/72b-TransposingInstruments-Full.musicxml a60069a7c7bda842 141
 suite/72c-TransposingInstruments-Change.musicxml adeac46227ce9d05 21
 suite/72d-TransposingInstruments-scorePitch.musicxml ee61ddd873e7abdd 147
-suite/73a-Percussion.musicxml c8eac23d3e0ead34 58
+suite/73a-Percussion.musicxml 2ecfa584870a503a 54
 suite/74a-FiguredBass.musicxml 6abf53f42d83c45a 25
 suite/74b-FiguredBass.invalid.musicxml 4a8bbccb5bd4dfa8 27
 suite/75a-AccordionRegistrations.musicxml 59d39dd645605562 78

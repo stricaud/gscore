@@ -552,6 +552,23 @@ type Part struct {
 	// nothing about the music is changed by looking away from it.
 	Hidden bool
 
+	// StaffLines is how many lines the staff is ruled with, where it is not
+	// the usual five. Zero means five.
+	//
+	// One line is the ordinary way to write a drum that has no pitch — a
+	// snare, a bass drum, a tam-tam — and there is nothing unusual about
+	// it: Ravel's Boléro gives each of its percussion a line of its own,
+	// which is five one-line staves down every page of the score. Two,
+	// three and four lines are written for a small kit, where the lines
+	// stand for the instruments rather than for pitches.
+	//
+	// What is drawn changes; where the notes go does not. The staff keeps
+	// the height and the step arithmetic of a five-line staff and only the
+	// middle line is ruled, so a note, a stem, a beam and a rest all land
+	// where they always did and everything that measures from the staff
+	// goes on working.
+	StaffLines int `json:",omitempty"`
+
 	// Tab writes this part as tablature instead of on a staff of pitches:
 	// a line for each string, and the fret to stop it at.
 	//

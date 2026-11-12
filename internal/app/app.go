@@ -1039,6 +1039,9 @@ type partInfo struct {
 	TransposeSemitones int `json:"transposeSemitones"`
 	// Hidden says the staff is out of the drawing but still in the score.
 	Hidden bool `json:"hidden,omitempty"`
+	// StaffLines is how many lines the staff is ruled with where it is not
+	// the usual five: one, for a drum that has no pitch.
+	StaffLines int `json:"staffLines,omitempty"`
 	// Tab is the tuning this staff is written in, where it is written as
 	// tablature rather than on a staff of pitches. Absent otherwise, which
 	// is what the editor reads to know whether a typed digit is a fret.
@@ -1185,6 +1188,7 @@ func (a *App) handleInfo(w http.ResponseWriter, r *http.Request) {
 			Time: p.Time.String(), Measures: len(p.Measures), Notes: notes,
 			TransposeSemitones: p.Transpose.Semitones(),
 			Hidden:             p.Hidden,
+			StaffLines:         p.StaffLines,
 			Tab:                tabOf(p),
 			MirrorOf:           p.MirrorOf,
 		})

@@ -179,6 +179,15 @@ type attributes struct {
 	// One per staff, each numbered. A part on a single staff writes one
 	// clef with no number at all, which reads as staff one.
 	Clefs []clef `xml:"clef,omitempty"`
+	// How the staff itself is ruled. The only part of it gscore has
+	// anything to do with is the line count: a drum with no pitch is
+	// written on one line, and five would be a different instrument.
+	Details []staffDetails `xml:"staff-details,omitempty"`
+}
+
+type staffDetails struct {
+	Number int `xml:"number,attr,omitempty"`
+	Lines  *int `xml:"staff-lines,omitempty"`
 }
 
 type key struct {

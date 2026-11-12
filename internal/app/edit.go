@@ -1622,6 +1622,22 @@ func (a *App) handleStaff(w http.ResponseWriter, r *http.Request) {
 	p := a.score.Parts[partIdx]
 
 	changed := []string{}
+	// How many lines the staff is ruled with. One is the ordinary way to
+	// write a drum that has no pitch; five is every other staff, and is
+	// what "5" or "0" asks for.
+	if v := q.Get("lines"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 1 || n > 5 {
+			http.Error(w, "a staff has one to five lines, not "+v,
+				http.StatusBadRequest)
+			return
+		}
+		if n == 5 {
+			n = 0
+		}
+		p.StaffLines = n
+		changed = append(changed, "lines")
+	}
 	if v := q.Get("clef"); v != "" {
 		c, ok := clefByStringName[v]
 		if !ok {

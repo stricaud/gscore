@@ -510,8 +510,9 @@ func buildFlow(t *tree, flow int32, players map[string]string,
 		attach(p, bars, st.dynamics, st.swells)
 		putMarks(p, bars, st.points, st.spans, skipped)
 		putStaffMarks(p, bars, st.repeats, st.keys)
-		if moved := putClefs(p, bars, st.changes); moved > 0 {
-			skipped["clef changes written inside a bar, put at its start"] += moved
+		if lost := putClefs(p, bars, st.changes); lost > 0 {
+			skipped["clef changes inside a bar with no note to put them "+
+				"on, moved to the bar's head"] += lost
 		}
 		s.Parts = append(s.Parts, p)
 	}
@@ -1214,26 +1215,33 @@ type clefChange struct {
 // is put at the start of that bar instead, which moves it by a few notes
 // and never by more than a bar.
 func putClefs(p *model.Part, bars []bar, changes []clefChange) int {
-	moved := 0
+	lost := 0
 	for _, c := range changes {
-		at := -1
-		for i := range bars {
-			if bars[i].at.cmp(c.at) <= 0 {
-				at = i
-				continue
-			}
-			break
-		}
+		at := barAt(bars, c.at)
 		if at < 0 || at >= len(p.Measures) {
 			continue
 		}
-		if !bars[at].at.zero() && bars[at].at.cmp(c.at) != 0 {
-			moved++
-		}
 		clef := c.clef
+		if bars[at].at.cmp(c.at) == 0 {
+			p.Measures[at].Clef = &clef
+			continue
+		}
+		// Partway through the bar, which is where it is written and where
+		// it has to be read: a pianist's right hand drops into the bass
+		// for a phrase and comes back, all inside one bar, and the sign is
+		// printed in the middle of the bar where the hand moves. Moved to
+		// the head, the notes in front of it are placed against a clef
+		// they were never written under.
+		if mk := markAt(p, bars, c.at); mk != nil {
+			mk.Clef = &clef
+			continue
+		}
+		// Nowhere to hang it — a stretch of this staff with nothing in it
+		// at all. The head of the bar is then the only place left.
 		p.Measures[at].Clef = &clef
+		lost++
 	}
-	return moved
+	return lost
 }
 
 func clefNamed(id string) (model.Clef, bool) {
@@ -1804,6 +1812,10 @@ func element(g group, dur model.Duration, key model.KeySignature,
 type dynamic struct {
 	at rat
 	d  model.Dynamic
+	// word is the qualifier printed in front of it — "più p" — which
+	// gscore keeps as words beside the mark, having no louder-than-this
+	// of its own.
+	word string
 }
 
 type swell struct {
@@ -1839,13 +1851,13 @@ func readDynamics(t *tree, p placed, elements map[string]int32,
 			at = at.add(base)
 			switch t.nameOf(sub) {
 			case "ImmediateChangeDynamicDefinition":
-				d, ok := intensity(t.str(sub, "intensity"),
+				d, word, ok := intensity(t.str(sub, "intensity"),
 					t.str(sub, "intensityModifier"), skipped)
 				if !ok {
 					skipped["dynamics"]++
 					continue
 				}
-				marks = append(marks, dynamic{at: at, d: d})
+				marks = append(marks, dynamic{at: at, d: d, word: word})
 			case "ForceDynamicDefinition":
 				// The struck dynamics: sforzando and its relatives, which
 				// are a kind of their own here rather than a loudness.
@@ -1879,18 +1891,30 @@ func readDynamics(t *tree, p placed, elements map[string]int32,
 	return marks, swells
 }
 
-// intensity reads how loud, out of Dorico's pair of numbers.
-func intensity(level, modifier string, skipped map[string]int) (model.Dynamic, bool) {
-	// A modifier is something written beside the letters, and what its
-	// numbers mean is not known here — the sforzandos, which would have
-	// been the guess, turn out to be a kind of their own. So the level is
-	// written and the modifier is reported rather than invented.
-	if len(variantInts(modifier)) > 0 {
-		skipped["marks written beside a dynamic, such as poco or molto"]++
+// intensity reads how loud, out of Dorico's pair of numbers, and the word
+// printed in front of it where there is one.
+func intensity(level, modifier string, skipped map[string]int) (model.Dynamic, string, bool) {
+	// A qualifier printed in front of the letters: "più p".
+	//
+	// The file numbers them and names none of them, and the numbers are
+	// not in the string pool either. This one was read off the page: the
+	// project carries Dorico's own engraving as a preview, and at bar 217
+	// of the first movement, where the file has this modifier on a p, the
+	// page says "più p". Only that one is known, so only that one is
+	// written and the rest are reported.
+	word := ""
+	if mods := variantInts(modifier); len(mods) > 0 {
+		switch mods[len(mods)-1] {
+		case 2:
+			word = "più"
+		default:
+			skipped["words printed in front of a dynamic that gscore "+
+				"does not know"]++
+		}
 	}
 	n := variantInts(level)
 	if len(n) == 0 {
-		return model.DynamicNone, false
+		return model.DynamicNone, "", false
 	}
 	soft := n[0] == 1
 	letters := 0
@@ -1899,25 +1923,25 @@ func intensity(level, modifier string, skipped map[string]int) (model.Dynamic, b
 	}
 	switch {
 	case soft && letters >= 4:
-		return model.PPPP, true
+		return model.PPPP, word, true
 	case soft && letters == 3:
-		return model.PPP, true
+		return model.PPP, word, true
 	case soft && letters == 2:
-		return model.PP, true
+		return model.PP, word, true
 	case soft && letters == 1:
-		return model.Piano, true
+		return model.Piano, word, true
 	case soft:
-		return model.MP, true
+		return model.MP, word, true
 	case letters >= 4:
-		return model.FFFF, true
+		return model.FFFF, word, true
 	case letters == 3:
-		return model.FFF, true
+		return model.FFF, word, true
 	case letters == 2:
-		return model.FF, true
+		return model.FF, word, true
 	case letters == 1:
-		return model.Forte, true
+		return model.Forte, word, true
 	}
-	return model.MF, true
+	return model.MF, word, true
 }
 
 // forced reads one of the struck dynamics.

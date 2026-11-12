@@ -140,6 +140,22 @@
         </div>
       </div>
 
+      <!-- Where the player breathes. Its own submenu and not one more
+           articulation, because it is not one: an articulation says how to
+           play the note and a breath mark says what happens after it, which
+           is why it is drawn past the notehead rather than over it. -->
+      <div class="submenu">
+        <button class="submenu-title"><span>Breath</span><kbd>▸</kbd></button>
+        <div class="menu-items">
+          <button data-action="breath-comma"><span>Breath mark</span><kbd></kbd></button>
+          <button data-action="breath-tick"><span>Tick</span></button>
+          <button data-action="breath-caesura"><span>Caesura</span></button>
+          <button data-action="breath-caesura-curved"><span>Curved caesura</span></button>
+          <hr>
+          <button data-action="breath-none"><span>None</span></button>
+        </div>
+      </div>
+
       <div class="submenu">
         <button class="submenu-title"><span>Accidental</span><kbd>▸</kbd></button>
         <div class="menu-items">

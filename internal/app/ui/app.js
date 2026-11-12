@@ -1217,6 +1217,11 @@ async function action(name) {
     case "artic-accent": await setArticulation("accent"); break;
     case "artic-marcato-up": await setArticulation("marcato"); break;
     case "artic-marcato-down": await setArticulation("marcato down"); break;
+    case "breath-none": await setBreath("none"); break;
+    case "breath-comma": await setBreath("comma"); break;
+    case "breath-tick": await setBreath("tick"); break;
+    case "breath-caesura": await setBreath("caesura"); break;
+    case "breath-caesura-curved": await setBreath("curved caesura"); break;
 
     // Piano writing: the note is drawn on the staff next door and
     // nothing about the music changes.
@@ -7423,6 +7428,19 @@ const setDynamic = (d) =>
 const setArticulation = (a) =>
   mark("articulation", { articulation: a },
        a === "" ? "Articulations cleared" : a);
+
+// Where the player breathes. Said back in the words a player uses — a breath
+// mark is the comma, and the others are named for the sign they draw.
+const BREATH_MARKS = {
+  "comma": "Breath mark",
+  "tick": "Breath mark, tick",
+  "caesura": "Caesura",
+  "curved caesura": "Curved caesura",
+};
+
+const setBreath = (b) =>
+  mark("breath", { breath: b },
+       b === "none" ? "Breath mark removed" : (BREATH_MARKS[b] || b));
 
 // How a fretted instrument plays the note. Named for what a guitarist
 // calls it rather than for the endpoint's word, since that is what the
@@ -16434,6 +16452,14 @@ const MENU_ICONS = {
   "artic-marcato-up": "\ue1d5\ue4ac",    // noteQuarterUp articMarcatoAbove
   "artic-marcato-down": "\ue1d5\ue4ad",  // noteQuarterUp articMarcatoBelow
 
+  // Where the player breathes: the sign itself, since each of these is a
+  // different sign rather than a different way of writing one. They go
+  // after the note, so the note comes first here too.
+  "breath-comma": "\ue1d5\ue4ce",        // noteQuarterUp breathMarkComma
+  "breath-tick": "\ue1d5\ue4cf",         // noteQuarterUp breathMarkTick
+  "breath-caesura": "\ue1d5\ue4d1",      // noteQuarterUp caesura
+  "breath-caesura-curved": "\ue1d5\ue4d4", // noteQuarterUp caesuraCurved
+
   // Ties and slurs.
   "slur": "\ue1fd",                // textTie
   "tie": "\ue1fd",                 // textTie
@@ -19220,6 +19246,7 @@ const MENU_DRAWINGS = {
    * side by side would be twelve near-identical dots. The words say which
    * mark; this says the entry takes one away. */
   "artic-none": REMOVE_MARK,
+  "breath-none": REMOVE_MARK,
   "slur-none": REMOVE_MARK,
   "tie-none": REMOVE_MARK,
   "dyn-none": REMOVE_MARK,

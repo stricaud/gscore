@@ -75,6 +75,47 @@ func firstTexts(t *testing.T, s *model.Score) []model.TextMark {
 	return n.Texts
 }
 
+func TestABreathMarkIsWrittenAndComesBack(t *testing.T) {
+	// Read and never written, like the words: a wind part opened in gscore
+	// and saved back out as MusicXML came out with nowhere to breathe,
+	// which on a page of one long phrase is the difference between music
+	// somebody can play and music they cannot.
+	for _, c := range []struct {
+		mark model.Breath
+		tag  string
+		back model.Breath
+	}{
+		{model.BreathComma, "<breath-mark></breath-mark>", model.BreathComma},
+		{model.BreathTick, "<breath-mark>tick</breath-mark>", model.BreathTick},
+		// The format has one caesura and gscore has two. Both go across as
+		// the one the format knows, and the curved one comes back straight:
+		// the sign is the instruction, and the shape of it is not.
+		{model.Caesura, "<caesura>", model.Caesura},
+		{model.CaesuraCurved, "<caesura>", model.Caesura},
+	} {
+		s := worded(nil, model.DynamicNone)
+		n := s.Parts[0].Measures[0].Voices[0].Elements[0].(*model.Note)
+		n.Break = c.mark
+		out := exported(t, s)
+		if !strings.Contains(out, c.tag) {
+			t.Errorf("%v is not in the file as %s:\n%s", c.mark, c.tag, out)
+			continue
+		}
+		back := reimported(t, out).Parts[0].Measures[0].Voices[0].
+			Elements[0].(*model.Note)
+		if back.Break != c.back {
+			t.Errorf("%v came back as %v", c.mark, back.Break)
+		}
+	}
+}
+
+func TestANoteWithNoBreathMarkWritesNone(t *testing.T) {
+	out := exported(t, worded(nil, model.DynamicNone))
+	if strings.Contains(out, "breath-mark") || strings.Contains(out, "caesura") {
+		t.Errorf("a breath mark nobody asked for was written:\n%s", out)
+	}
+}
+
 func TestAWordOnANoteIsWritten(t *testing.T) {
 	out := exported(t, worded([]model.TextMark{
 		{Text: "dolce", Style: model.TextExpression},

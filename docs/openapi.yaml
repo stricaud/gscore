@@ -1633,6 +1633,27 @@ paths:
         "200": { $ref: "#/components/responses/Changed" }
         "400": { $ref: "#/components/responses/Error" }
 
+  /api/breath:
+    post:
+      tags: [marks]
+      summary: Where the player breathes — a comma, a tick, a caesura
+      description: >-
+        The mark goes after the note and over the staff, which is where all
+        of them go whichever way the stems point. "none" takes it off.
+      parameters:
+        - $ref: "#/components/parameters/part"
+        - $ref: "#/components/parameters/measure"
+        - $ref: "#/components/parameters/at"
+        - $ref: "#/components/parameters/sel"
+        - name: breath
+          in: query
+          schema:
+            type: string
+            enum: [none, comma, tick, caesura, curved caesura]
+      responses:
+        "200": { $ref: "#/components/responses/Changed" }
+        "400": { $ref: "#/components/responses/Error" }
+
   /api/technique:
     post:
       tags: [marks]

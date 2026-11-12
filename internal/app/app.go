@@ -608,6 +608,7 @@ func (a *App) APIRoutes(mux *http.ServeMux) {
 		"/api/tremolo":         a.handleTremolo,
 		"/api/accidental":      a.handleAccidental,
 		"/api/articulation":    a.handleArticulation,
+		"/api/breath":          a.handleBreath,
 		"/api/technique":       a.handleTechnique,
 		"/api/notehead":        a.handleNotehead,
 		"/api/retune":          a.handleRetune,

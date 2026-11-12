@@ -484,6 +484,29 @@ func applyMarks(out *xmlNote, m *model.Marks) {
 			used = true
 		}
 	}
+	// Where the player breathes, which the specification keeps among the
+	// articulations although it is not one: a breath mark is about the gap
+	// after the note rather than about the note.
+	//
+	// These were read and never written. A wind part opened in gscore and
+	// saved back out as MusicXML came out with nowhere to breathe, which on
+	// a page of one long phrase is the difference between music somebody
+	// can play and music they cannot.
+	switch m.Break {
+	case model.BreathComma:
+		arts.Breath = &breathElem{}
+		anyArt = true
+	case model.BreathTick:
+		arts.Breath = &breathElem{Value: "tick"}
+		anyArt = true
+	case model.Caesura, model.CaesuraCurved:
+		// The specification has one caesura and gscore has two, the
+		// straight pair of strokes and the curved. Both go across as the
+		// caesura the format knows: the sign is the instruction, and the
+		// shape of it is not.
+		arts.Caesura = &empty{}
+		anyArt = true
+	}
 	if anyArt {
 		notations.Articulations = &arts
 		used = true

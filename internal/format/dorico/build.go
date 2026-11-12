@@ -115,6 +115,11 @@ func parseRat(s string) (rat, bool) {
 
 // dur turns a length in crotchets into gscore's own, which counts in whole
 // notes: a crotchet is a quarter of one.
+// ratOf is the other way: a written length, as crotchets.
+func ratOf(d model.Duration) rat {
+	return reduce(rat{int64(d.Num) * 4, int64(d.Den)})
+}
+
 func (a rat) dur() model.Duration {
 	r := reduce(rat{a.n, a.d * 4})
 	return model.Duration{Num: int(r.n), Den: int(r.d)}
@@ -262,6 +267,10 @@ type event struct {
 	dur   rat
 	pitch int // MIDI, or -1 for a rest
 	rest  bool
+
+	// arts are the articulations written on this note: the staccato dot,
+	// the accent, and the ornaments that are placed with them.
+	arts []model.Articulation
 }
 
 // build turns a decoded project into one score per flow.
@@ -483,6 +492,13 @@ func buildFlow(t *tree, flow int32, players map[string]string,
 			var graces []grace
 			var arps []arpeggio
 			for _, p := range streams.of("kVoiceStream", v) {
+				// A dynamic belongs to the player and is usually written
+				// on the staff, but it can be written against one voice
+				// of it: the two hands of a piano marked differently, or
+				// a divided string section. Same reading either way.
+				gotDyn, gotSwells := readDynamics(t, p, elements, skipped)
+				st.dynamics = append(st.dynamics, gotDyn...)
+				st.swells = append(st.swells, gotSwells...)
 				got, gotTups, gotSlurs, gotGraces, gotPoints, gotSpans,
 					gotArps, gotWords, end := readEvents(t, p.node, p.at,
 					elements, skipped)
@@ -917,6 +933,7 @@ func readEvents(t *tree, block int32, offset rat, elements map[string]int32,
 	var spans []spanMark
 	var arps []arpeggio
 	var words []lyric
+	var orns []ornament
 	end := rat{0, 1}
 	for _, e := range t.children(events) {
 		kind := t.nameOf(e)
@@ -932,8 +949,20 @@ func readEvents(t *tree, block int32, offset rat, elements map[string]int32,
 			if err != nil || d.zero() {
 				continue
 			}
-			out = append(out, event{at: at, dur: d, pitch: pitch})
+			out = append(out, event{at: at, dur: d, pitch: pitch,
+				arts: articulationsOf(t, e, skipped)})
 		case "RestEventDefinition":
+			if d.zero() {
+				continue
+			}
+			out = append(out, event{at: at, dur: d, rest: true})
+		case "BarRestEventDefinition":
+			// A whole bar's rest, which is a rest somebody wrote and not
+			// the silence gscore fills a voice's gaps with: Dorico keeps
+			// it as an event of its own because it is drawn in the middle
+			// of the bar whatever the bar is counted in. Read as a rest,
+			// it comes out as the bar's worth of silence it is — and
+			// printed, where gscore's own filler is not.
 			if d.zero() {
 				continue
 			}
@@ -986,9 +1015,10 @@ func readEvents(t *tree, block int32, offset rat, elements map[string]int32,
 				kind: "octave", amount: n})
 			continue
 		case "TextEventDefinition":
-			if words := readTextMark(t, e); words != "" {
+			words, written := readTextMark(t, e)
+			if words != "" {
 				points = append(points, pointMark{at: at, text: words})
-			} else {
+			} else if written {
 				skipped["text"]++
 			}
 			continue
@@ -1007,6 +1037,17 @@ func readEvents(t *tree, block int32, offset rat, elements map[string]int32,
 				continue
 			}
 			tups = append(tups, tuplet{at: at, dur: d, actual: a, normal: n})
+			continue
+		case "OrnamentEventDefinition":
+			// A turn or a mordent: a direction to play notes that are
+			// not written. It stands against the note it decorates and
+			// is hung on it below, once the notes are all in.
+			a, ok := ornamentNamed(t.str(e, "entityID"))
+			if !ok {
+				skipped["ornaments gscore does not know"]++
+				continue
+			}
+			orns = append(orns, ornament{at: at, art: a})
 			continue
 		case "SlurEventDefinition":
 			if d.zero() {
@@ -1057,6 +1098,22 @@ func readEvents(t *tree, block int32, offset rat, elements map[string]int32,
 			skipped["slurs from grace notes that are not there"]++
 		}
 	}
+	// The ornaments, onto the notes they stand over. A chord carries one
+	// on every note of it, which is how a group of notes written together
+	// comes to have one mark.
+	for _, orn := range orns {
+		found := false
+		for i := range out {
+			if out[i].rest || out[i].at.cmp(orn.at) != 0 {
+				continue
+			}
+			out[i].arts = append(out[i].arts, orn.art)
+			found = true
+		}
+		if !found {
+			skipped["ornaments on notes that are not there"]++
+		}
+	}
 	sortEvents(out)
 	return out, tups, slurs, graces, points, spans, arps, words, end
 }
@@ -1075,6 +1132,108 @@ func sortEvents(evs []event) {
 	})
 }
 
+// ornament is a turn or a mordent, which stands against a note.
+type ornament struct {
+	at  rat
+	art model.Articulation
+}
+
+// ornamentNamed is which ornament one of Dorico's ids is.
+//
+// They are written where an articulation is written and gscore keeps them
+// among the articulations, so that is what they come back as.
+func ornamentNamed(id string) (model.Articulation, bool) {
+	switch {
+	case strings.Contains(id, "turn.inverted"),
+		strings.Contains(id, "invertedTurn"):
+		return model.TurnInverted, true
+	case strings.Contains(id, "turn"):
+		return model.Turn, true
+	case strings.Contains(id, "mordent.upper"),
+		strings.Contains(id, "upperMordent"),
+		strings.Contains(id, "pralltriller"),
+		strings.Contains(id, "shortTrill"):
+		return model.ShortTrill, true
+	case strings.Contains(id, "mordent"):
+		return model.Mordent, true
+	}
+	return 0, false
+}
+
+// articulationsOf reads the articulations written on a note.
+//
+// Dorico keeps them in the note's own property table rather than as events:
+// one entry saying how long it is held — the staccato dot, the staccatissimo
+// wedge, the tenuto line — and another saying how hard it is struck, which
+// is the accent and the marcato. They were going by unread, and there are
+// thirteen thousand of them in the scores this reader was tried on: the
+// staccato dots of the first movement of the Fifth are not decoration, they
+// are how the line is played.
+func articulationsOf(t *tree, e int32,
+	skipped map[string]int) []model.Articulation {
+
+	entries := t.path(e, "propertyTable", "entries")
+	if entries < 0 {
+		return nil
+	}
+	var out []model.Articulation
+	for _, en := range t.children(entries) {
+		switch t.str(en, "propertyType") {
+		case "kArticulationDuration", "kArticulationForce":
+		default:
+			// Everything else a note carries: how it is spelled, which
+			// side of it a mark sits on, how its length is written down.
+			// Not articulations, and not lost.
+			continue
+		}
+		a, ok := articulationNamed(quoted(t.str(en, "value")))
+		if !ok {
+			skipped["articulations gscore does not know"]++
+			continue
+		}
+		out = append(out, a)
+	}
+	return out
+}
+
+// quoted is the string out of one of Dorico's property values, which are
+// written as their type and then their value: `string: "kStaccato"`.
+func quoted(v string) string {
+	i := strings.Index(v, "\"")
+	j := strings.LastIndex(v, "\"")
+	if i < 0 || j <= i {
+		return strings.TrimSpace(v)
+	}
+	return v[i+1 : j]
+}
+
+// articulationNamed is which articulation one of Dorico's names is.
+func articulationNamed(name string) (model.Articulation, bool) {
+	switch name {
+	case "kStaccato":
+		return model.Staccato, true
+	case "kStaccatissimo":
+		return model.Staccatissimo, true
+	case "kTenuto":
+		return model.Tenuto, true
+	case "kAccent":
+		return model.Accent, true
+	case "kMarcato":
+		return model.Marcato, true
+	}
+	return 0, false
+}
+
+// hasArticulation is whether this mark is written there already.
+func hasArticulation(in []model.Articulation, a model.Articulation) bool {
+	for _, b := range in {
+		if a == b {
+			return true
+		}
+	}
+	return false
+}
+
 // note records a kind of thing this reader passes over, in words rather
 // than in the file's own vocabulary: somebody opening a project wants to
 // know that the slurs did not come through, not that
@@ -1082,7 +1241,8 @@ func sortEvents(evs []event) {
 func note(skipped map[string]int, kind string) {
 	switch kind {
 	case "DynamicGroupEventDefinition":
-		skipped["dynamics"]++
+		// Read by readDynamics, from this stream as well as the staff's:
+		// a dynamic can be written against one voice of a piano staff.
 	case "TupletEventDefinition":
 		skipped["tuplets"]++
 	case "GenerativeBarRepeatEventDefinition":
@@ -1096,12 +1256,26 @@ func note(skipped map[string]int, kind string) {
 		skipped["key changes on a single staff"]++
 	case "ImmediateTempoChangeEventDefinition", "PauseEventDefinition",
 		"RehearsalMarkEventDefinition", "GradualTempoChangeEventDefinition",
-		"RepeatEndingLineEventDefinition", "RepeatMarkerEventDefinition":
+		"RepeatEndingLineEventDefinition", "RepeatMarkerEventDefinition",
+		"TextEventDefinition":
 		// Read from the global stream by readTempo and readGlobal, which
 		// want the whole of the data rather than the fact that one went
 		// by.
+	case "FiguredBassEventDefinition":
+		// The figures under a continuo line. gscore has no way to write
+		// them, and they are not a marking that can be approximated:
+		// either the figures are there or the bass is unfigured.
+		skipped["figured bass"]++
+	case "DivisiEventDefinition":
+		// Where a section splits, and onto how many staves. gscore has
+		// one staff per part and no way to say that it divides.
+		skipped["divisi"]++
+	case "BracketAndBarlineChangeEventDefinition":
+		// A change of bracketing partway through: the families regrouped
+		// for a passage. gscore brackets a score one way throughout.
+		skipped["changes of bracketing in the middle of a flow"]++
 	case "BreakEventDefinition", "CondensationLabelEventDefinition",
-		"CondensingChangeEventDefinition":
+		"CondensingChangeEventDefinition", "NoteSpacingChangeEventDefinition":
 		// How the page is laid out and how staves are condensed, which
 		// gscore works out for itself. Not something that was lost.
 	default:
@@ -1323,10 +1497,11 @@ func readClefs(t *tree, streams *streams, staves []*stave, bars []bar,
 				case "ClefEventDefinition":
 				case "TextEventDefinition":
 					at, _ := parseRat(t.str(e, "position"))
-					if words := readTextMark(t, e); words != "" {
+					words, written := readTextMark(t, e)
+					if words != "" {
 						st.points = append(st.points,
 							pointMark{at: at.add(p.at), text: words})
-					} else {
+					} else if written {
 						skipped["text"]++
 					}
 					continue
@@ -1340,6 +1515,43 @@ func readClefs(t *tree, streams *streams, staves []*stave, bars []bar,
 					}
 					st.points = append(st.points,
 						pointMark{at: at.add(p.at), text: word})
+					continue
+				case "PedalLineEventDefinition":
+					// The sustaining pedal, held from here to there.
+					// gscore draws the line and the hook at its end, and
+					// has nothing for the other two pedals: a sostenuto
+					// or una corda line is said rather than drawn as a
+					// sustain, which would tell the player to do the
+					// wrong thing with their feet.
+					at, _ := parseRat(t.str(e, "position"))
+					d, _ := parseRat(t.str(e, "duration"))
+					if k := t.str(e, "pedalLineType"); k != "kSustainPedal" {
+						skipped["pedal lines gscore does not know"]++
+						continue
+					}
+					st.spans = append(st.spans, spanMark{
+						at: at.add(p.at), dur: d, kind: "pedal"})
+					continue
+				case "BarDivisionEventDefinition":
+					// What this staff is counted in. Dorico writes one of
+					// these on every staff at the start, saying the same
+					// thing the global stream says, and gscore takes the
+					// bars from the global stream: a restatement of the
+					// meter in force is nothing lost. A staff in a meter
+					// of its own is another matter, and is said, because
+					// gscore's bars are the score's.
+					at, _ := parseRat(t.str(e, "position"))
+					def := elements["BarDivisionElementDefinition:"+
+						t.str(e, "barDivisionElementID")]
+					ts, ok := timeSignature(t, def)
+					if !ok {
+						continue
+					}
+					if i := barAt(bars, at.add(p.at)); i >= 0 &&
+						bars[i].inTime == ts {
+						continue
+					}
+					skipped["time signatures on a single staff"]++
 					continue
 				case "OttavaLineEventDefinition":
 					at, _ := parseRat(t.str(e, "position"))
@@ -1548,11 +1760,24 @@ type group struct {
 	// over the right notes.
 	tup *model.Tuplet
 
-	// slurStart and slurStop open and close a phrase here.
-	slurStart, slurStop bool
+	// slurStart and slurStop are how many phrases open and close here.
+	//
+	// Counted rather than set, because more than one can: a long slur
+	// over a phrase and a short one over the figure at the end of it
+	// finish on the same note, and writing one curve where the music has
+	// two loses the shape of the phrase.
+	slurStart, slurStop int
+	// slurFrom and slurTo are the moments the curve is drawn from and to
+	// when they are not this note's own beginning and end. A note held
+	// over a barline is written as several noteheads tied together, and a
+	// phrase can begin or end on any of them: see markSlurs.
+	slurFrom, slurTo rat
 
 	// arp rolls this chord.
 	arp *model.Arpeggio
+
+	// arts are the articulations and ornaments written on it.
+	arts []model.Articulation
 
 	// graces are the little notes crushed in before this one.
 	graces  []*model.Note
@@ -1635,6 +1860,13 @@ func lanes(evs []event) [][]group {
 			if !evs[j].rest {
 				g.pitches = append(g.pitches, evs[j].pitch)
 			}
+			// A chord is marked once, however many of its notes carry
+			// the mark in the file.
+			for _, a := range evs[j].arts {
+				if !hasArticulation(g.arts, a) {
+					g.arts = append(g.arts, a)
+				}
+			}
 			j++
 		}
 		groups = append(groups, g)
@@ -1668,6 +1900,26 @@ func lanes(evs []event) [][]group {
 // become several of gscore's — see lanes — so each slur goes to the lane
 // that actually holds the phrase: the one with a note at the moment it
 // begins, or failing that the one with most of it.
+// under reports whether a note is one of the notes a slur is drawn over.
+//
+// Dorico writes a slur as a moment and a length, from the notehead it
+// leaves to the notehead it arrives at, and gscore has to find those notes
+// again. A note counts if it is still sounding when the curve begins — not
+// only if it begins there — because the notehead a slur leaves can be the
+// second of a note written as tied pieces: a minim held over the barline
+// and the phrase starting from the half of it in the new bar. Dorico says
+// so by putting the slur at the barline, where the voice has no note of its
+// own beginning.
+func under(g group, from, to rat) bool {
+	if g.rest || len(g.pitches) == 0 {
+		return false
+	}
+	if to.less(g.at) {
+		return false
+	}
+	return from.less(g.at.add(g.dur))
+}
+
 func markSlurs(lanes [][]group, slurs []slur, skipped map[string]int) {
 	for _, sl := range slurs {
 		stop := sl.at.add(sl.dur)
@@ -1675,10 +1927,7 @@ func markSlurs(lanes [][]group, slurs []slur, skipped map[string]int) {
 		for i, lane := range lanes {
 			count, here := 0, false
 			for _, g := range lane {
-				if g.at.cmp(sl.at) < 0 || stop.less(g.at) {
-					continue
-				}
-				if g.rest || len(g.pitches) == 0 {
+				if !under(g, sl.at, stop) {
 					continue
 				}
 				count++
@@ -1700,15 +1949,12 @@ func markSlurs(lanes [][]group, slurs []slur, skipped map[string]int) {
 		lane := lanes[best]
 		first, last := -1, -1
 		for i := range lane {
-			if lane[i].at.cmp(sl.at) < 0 || stop.less(lane[i].at) {
-				continue
-			}
 			// Notes only. A slur is drawn from notehead to notehead, and
 			// a span that happens to reach over a rest at one end — which
 			// Dorico's do, since the span is a length of time and not a
 			// list of notes — would otherwise be hung on the rest, where
 			// nothing draws it and nothing closes it.
-			if lane[i].rest || len(lane[i].pitches) == 0 {
+			if !under(lane[i], sl.at, stop) {
 				continue
 			}
 			if first < 0 {
@@ -1728,11 +1974,20 @@ func markSlurs(lanes [][]group, slurs []slur, skipped map[string]int) {
 			skipped["slurs with only one note under them"]++
 			continue
 		}
-		if lane[first].slurStart || lane[last].slurStop {
-			skipped["slurs that overlap another in the same voice"]++
+		lane[first].slurStart++
+		lane[last].slurStop++
+		// And from and to the noteheads it is hung on, which are the ends
+		// of those notes unless the curve starts or finishes partway
+		// through one that is written as tied pieces. Where two phrases
+		// begin on the same note the first of them says where, which is
+		// the note's own beginning in every case this reader has met.
+		if lane[first].at.less(sl.at) && lane[first].slurFrom.zero() {
+			lane[first].slurFrom = sl.at
 		}
-		lane[first].slurStart = true
-		lane[last].slurStop = true
+		if lane[last].at.less(stop) && lane[last].slurTo.zero() &&
+			stop.less(lane[last].at.add(lane[last].dur)) {
+			lane[last].slurTo = stop
+		}
 	}
 }
 
@@ -1976,7 +2231,7 @@ func fill(groups []group, b bar) []model.Element {
 			to, tiedOn = end, true
 		}
 		if d := to.sub(from); !d.zero() {
-			out = append(out, elements(g, d, b.inKey,
+			out = append(out, elements(g, from, d, b.inKey,
 				from.sub(b.at).dur(), beat, tiedBack, tiedOn)...)
 			at = to
 		}
@@ -2039,8 +2294,8 @@ func rests(d rat, tup *model.Tuplet, at, beat model.Duration,
 // the engraver falls back to when a duration cannot be spelled. So it is
 // spelled here instead, into the longest pieces that can be written, tied
 // to each other.
-func elements(g group, d rat, key model.KeySignature, at, beat model.Duration,
-	tiedBack, tiedOn bool) []model.Element {
+func elements(g group, from, d rat, key model.KeySignature,
+	at, beat model.Duration, tiedBack, tiedOn bool) []model.Element {
 	// Inside a tuplet it is the written value that has to be spellable,
 	// not the sounding one: what the engraver draws is the sounding
 	// length scaled back up by the ratio, so that is the length to break
@@ -2052,8 +2307,19 @@ func elements(g group, d rat, key model.KeySignature, at, beat model.Duration,
 			parts = append(parts, p.Scale(n, a))
 		}
 	}
+	// The noteheads the phrase is drawn from and to: this note's own ends,
+	// unless the slur was hung on one of the tied pieces in between.
+	opens, closes := g.at, g.at.add(g.dur)
+	if !g.slurFrom.zero() {
+		opens = g.slurFrom
+	}
+	if !g.slurTo.zero() {
+		closes = g.slurTo
+	}
 	out := make([]model.Element, 0, len(parts))
+	pos := from
 	for i, p := range parts {
+		next := pos.add(ratOf(p))
 		back := tiedBack || i > 0
 		on := tiedOn || i < len(parts)-1
 		el := element(g, p, key, back, on)
@@ -2067,12 +2333,22 @@ func elements(g group, d rat, key model.KeySignature, at, beat model.Duration,
 		// tied back into it, and the close only a close where nothing is
 		// tied on.
 		if mk := marksOf(el); mk != nil {
-			mk.SlurStart += model.SlurEnd(g.slurStart && i == 0 && !tiedBack)
-			mk.SlurStop += model.SlurEnd(g.slurStop && i == len(parts)-1 && !tiedOn)
+			if !opens.less(pos) && opens.less(next) {
+				mk.SlurStart += g.slurStart
+			}
+			if pos.less(closes) && !next.less(closes) {
+				mk.SlurStop += g.slurStop
+			}
 			// The little notes stand before the note itself, so they go
 			// on the first of its pieces and nowhere else.
 			// The roll goes on the first of the tied pieces: a chord is
 			// rolled once, where it is struck.
+			// An articulation goes on the note and not on each of the
+			// noteheads it took to write the note down: on the first of
+			// them, where the player meets it.
+			if i == 0 && !tiedBack {
+				mk.Articulations = append(mk.Articulations, g.arts...)
+			}
 			if g.arp != nil && i == 0 && !tiedBack {
 				mk.Arpeggio = g.arp
 			}
@@ -2090,6 +2366,7 @@ func elements(g group, d rat, key model.KeySignature, at, beat model.Duration,
 			}
 		}
 		out = append(out, el)
+		pos = next
 	}
 	return out
 }

@@ -41,7 +41,7 @@ type pointMark struct {
 type spanMark struct {
 	at   rat
 	dur  rat
-	kind string // "trill" or "octave"
+	kind string // "trill", "octave" or "pedal"
 	// amount is how many octaves an octave line shifts, up or down.
 	amount int
 }
@@ -51,16 +51,18 @@ type spanMark struct {
 // A Dorico text is a document — paragraphs of fragments, each with its own
 // styling — because somebody may have written a sentence in three fonts.
 // What gscore keeps is the words, so the fragments are run together.
-func readTextMark(t *tree, e int32) string {
+func readTextMark(t *tree, e int32) (string, bool) {
 	var out []string
+	wrote := false
 	for _, para := range t.children(t.path(e, "content", "paragraphs")) {
 		for _, frag := range t.children(t.child(para, "fragments")) {
+			wrote = true
 			if s := t.str(frag, "content"); s != "" {
 				out = append(out, s)
 			}
 		}
 	}
-	return strings.TrimSpace(strings.Join(out, " "))
+	return strings.TrimSpace(strings.Join(out, " ")), wrote
 }
 
 // techniqueNamed is what one of Dorico's playing techniques is called.
@@ -115,6 +117,7 @@ type global struct {
 	texts     []pointMark
 	endings   []ending
 	signs     []signAt
+	jumps     []jumpAt
 }
 
 type ending struct {
@@ -128,6 +131,13 @@ type ending struct {
 type signAt struct {
 	at   rat
 	sign model.Sign
+}
+
+// jumpAt is a direction that sends the player back — a da capo, a dal segno
+// — written at the end of the bar it falls on.
+type jumpAt struct {
+	at   rat
+	jump model.Jump
 }
 
 // readGlobal gathers what belongs to the whole system.
@@ -152,6 +162,16 @@ func readGlobal(t *tree, streams *streams, skipped map[string]int) global {
 				g.fermatas = append(g.fermatas, at)
 			case "RehearsalMarkEventDefinition":
 				g.rehearsal = append(g.rehearsal, at)
+			case "TextEventDefinition":
+				// A word written over the system rather than on a staff:
+				// "attacca", a note to the conductor. It goes over the
+				// top staff, which is where it is printed.
+				words, written := readTextMark(t, e)
+				if words != "" {
+					g.texts = append(g.texts, pointMark{at: at, text: words})
+				} else if written {
+					skipped["text"]++
+				}
 			case "GradualTempoChangeEventDefinition":
 				// The words over the staff. The slowing itself is read by
 				// readTempo, which has the speed to arrive at and the bars
@@ -167,6 +187,13 @@ func readGlobal(t *tree, streams *streams, skipped map[string]int) global {
 					at: at, dur: dur, segments: endingSegments(t, e),
 				})
 			case "RepeatMarkerEventDefinition":
+				// Two things wear this name: the signs a jump refers to —
+				// the segno, the coda, Fine — and the jumps themselves,
+				// which say where to go back to and how far to play.
+				if j, ok := readJump(t, e); ok {
+					g.jumps = append(g.jumps, jumpAt{at: at, jump: j})
+					continue
+				}
 				sign := model.NoSign
 				switch t.str(e, "sectionType") {
 				case "kFine":
@@ -185,6 +212,36 @@ func readGlobal(t *tree, streams *streams, skipped map[string]int) global {
 		}
 	}
 	return g
+}
+
+// readJump reads a da capo or a dal segno, and how far it is played.
+//
+// Dorico writes the two halves of the direction separately: where it sends
+// the player, and where they stop when they get there — the end of the
+// movement, the bar marked Fine, or the coda. "Menuetto da Capo" at the end
+// of a trio is one of these, and without it a minuet is played once through
+// and the dance is half a dance.
+func readJump(t *tree, e int32) (model.Jump, bool) {
+	kind := t.child(e, "jumpTypeAndQualification")
+	if kind < 0 {
+		return model.Jump{}, false
+	}
+	var j model.Jump
+	switch t.str(kind, "jumpType") {
+	case "kDaCapo":
+		j.From = model.FromStart
+	case "kDalSegno":
+		j.From = model.FromSegno
+	default:
+		return model.Jump{}, false
+	}
+	switch t.str(kind, "jumpQualification") {
+	case "kFine":
+		j.Until = model.UntilFine
+	case "kCoda", "kToCoda":
+		j.Until = model.UntilCoda
+	}
+	return j, true
 }
 
 // endingSegments reads how long each time through a volta lasts.
@@ -244,6 +301,19 @@ func putGlobal(s *model.Score, bars []bar, g global, skipped map[string]int) {
 		if i := barAt(bars, sg.at); i >= 0 && i < len(s.Parts[0].Measures) {
 			s.Parts[0].Measures[i].Sign = sg.sign
 		}
+	}
+	for _, jp := range g.jumps {
+		// Dorico writes the direction at the barline it is printed over,
+		// which is where the bar it belongs to ends: "Menuetto da Capo"
+		// at the end of a trio stands at the trio's last barline. So the
+		// bar is the one that finishes there, not the one that starts.
+		i := barAt(bars, jp.at.sub(rat{1, 1000}))
+		if i < 0 || i >= len(s.Parts[0].Measures) {
+			skipped["directions written where there is no bar"]++
+			continue
+		}
+		j := jp.jump
+		s.Parts[0].Measures[i].Jump = &j
 	}
 	for _, e := range g.endings {
 		putEnding(s, bars, e, skipped)
@@ -354,6 +424,17 @@ func putMarks(p *model.Part, bars []bar, points []pointMark,
 			}
 			from.Trill = &model.Trill{Start: true}
 			to.Trill = &model.Trill{Stop: true}
+		case "pedal":
+			// The pedal goes down under this note and comes up under
+			// that one. Both under one note where it is pressed and
+			// released on the same note, which is written as the line
+			// and its hook over a single notehead.
+			if from == to {
+				from.Pedal = &model.PedalMark{Start: true, Stop: true}
+				continue
+			}
+			from.Pedal = &model.PedalMark{Start: true}
+			to.Pedal = &model.PedalMark{Stop: true}
 		case "octave":
 			// An ordinary ottava: the notes under it are written an
 			// octave from where they sound, which putOctaves has just

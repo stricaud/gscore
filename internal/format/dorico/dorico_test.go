@@ -184,6 +184,10 @@ type played struct {
 	at, dur string
 	pitch   int
 	rest    bool
+	// arts are the articulations written on it, by Dorico's own names:
+	// it keeps them in the note's property table rather than as events
+	// of their own.
+	arts []string
 }
 
 // tuplets holds the tuplets a test asked for, by the key tupletOver gave
@@ -218,8 +222,9 @@ type dynSub struct {
 }
 
 var dynGroups = map[string]struct {
-	at   string
-	subs []dynSub
+	at    string
+	subs  []dynSub
+	voice bool
 }{}
 
 // dynamicAt asks for a dynamic gesture over the music, written the way
@@ -227,9 +232,29 @@ var dynGroups = map[string]struct {
 func dynamicAt(at string, subs ...dynSub) string {
 	key := "dynamic " + at + " " + itoa(len(dynGroups))
 	dynGroups[key] = struct {
-		at   string
-		subs []dynSub
-	}{at, subs}
+		at    string
+		subs  []dynSub
+		voice bool
+	}{at, subs, false}
+	return key
+}
+
+// dynamicID is the element id of a dynamic the test asked for. Taken from
+// the key, so that the event and the definition agree on it wherever each
+// of them is built.
+func dynamicID(key string) string {
+	i := strings.LastIndexByte(key, ' ')
+	return "5" + key[i+1:]
+}
+
+// dynamicOnVoiceAt is the same mark written against one voice of the staff
+// rather than against the staff: the two hands of a piano marked
+// differently, a divided section. Dorico puts it on the voice's own stream.
+func dynamicOnVoiceAt(at string, subs ...dynSub) string {
+	key := dynamicAt(at, subs...)
+	g := dynGroups[key]
+	g.voice = true
+	dynGroups[key] = g
 	return key
 }
 
@@ -495,14 +520,38 @@ func built(t *testing.T, time [2]string, key string, notes []played,
 			e.leaf("position", n.at),
 			e.leaf("duration", n.dur),
 		}
+		if len(n.arts) > 0 {
+			var entries []int32
+			for _, a := range n.arts {
+				kind := "kArticulationDuration"
+				if a == "kAccent" || a == "kMarcato" {
+					kind = "kArticulationForce"
+				}
+				entries = append(entries, e.node("entry",
+					e.leaf("propertyType", kind),
+					e.leaf("value", `string: "`+a+`"`)))
+			}
+			kids = append(kids, e.node("propertyTable",
+				e.node("entries", entries...)))
+		}
 		if !n.rest {
 			kids = append(kids, pitch)
 		}
 		events = append(events, e.node(kind, kids...))
 	}
 	for _, kind := range extra {
-		if _, ok := dynGroups[kind]; ok {
-			continue // built onto the staff below
+		if g, ok := dynGroups[kind]; ok {
+			// Onto the staff below, unless the test asked for it on the
+			// voice — and then it has to go in here, before the voice's
+			// block is made up.
+			if g.voice {
+				events = append(events,
+					e.node("DynamicGroupEventDefinition",
+						e.leaf("position", g.at),
+						e.leaf("duration", "0"),
+						e.leaf("dynamicGroupID", dynamicID(kind))))
+			}
+			continue
 		}
 		if _, ok := tempos[kind]; ok {
 			continue // built onto the global stream below
@@ -764,12 +813,14 @@ func built(t *testing.T, time [2]string, key string, notes []played,
 		if !ok {
 			continue
 		}
-		id := itoa(500 + len(dynDefs))
-		staveEvents = append(staveEvents,
-			e.node("DynamicGroupEventDefinition",
-				e.leaf("position", g.at),
-				e.leaf("duration", "0"),
-				e.leaf("dynamicGroupID", id)))
+		id := dynamicID(kind)
+		if !g.voice {
+			staveEvents = append(staveEvents,
+				e.node("DynamicGroupEventDefinition",
+					e.leaf("position", g.at),
+					e.leaf("duration", "0"),
+					e.leaf("dynamicGroupID", id)))
+		}
 		var subs []int32
 		for _, sub := range g.subs {
 			switch sub.kind {
@@ -1843,6 +1894,33 @@ func TestASlurIsDrawnBetweenNotesAndNotRests(t *testing.T) {
 
 	if got := phrase(read(t, raw)[0].Parts[0], 0); got != "C4( D4) r r" {
 		t.Errorf("the bar reads %q", got)
+	}
+}
+
+func TestAPhraseCanBeginOnTheSecondHalfOfATiedNote(t *testing.T) {
+	// The commonest slur in this corpus that gscore was losing, and by a
+	// long way: ninety-nine of them in Schumann's Nachtlied alone, and a
+	// hundred and three in the Requiem.
+	//
+	// A note held over a barline is one event in Dorico and two noteheads
+	// on the page, and a phrase can begin on the second of them — a bass
+	// note tied into the new bar, from which the line moves on. Dorico
+	// writes that slur at the barline, where the voice has no note
+	// beginning: nothing starts there, so the reader found only the note
+	// at the far end, called it a phrase of one note, and dropped it.
+	raw := built(t, [2]string{"2", "4"}, "C", []played{
+		{at: "0", dur: "3", pitch: 60}, // held over the barline
+		{at: "3", dur: "1", pitch: 62},
+	}, slurOver("2", "1")) // from the half of it in the second bar
+
+	p := read(t, raw)[0].Parts[0]
+	// Not in the first bar, where the note begins and the phrase does
+	// not: a slur opened there would be drawn over the tie.
+	if got := phrase(p, 0); got != "C4" {
+		t.Errorf("the first bar reads %q", got)
+	}
+	if got := phrase(p, 1); got != "C4( D4)" {
+		t.Errorf("the second bar reads %q", got)
 	}
 }
 
@@ -3366,6 +3444,212 @@ func TestACommentIsNotReportedAsLost(t *testing.T) {
 	if pe, ok := err.(*PartialError); ok {
 		if strings.Contains(strings.Join(pe.Details(), " "), "comment") {
 			t.Errorf("a comment that was read was reported as not read: %v",
+				pe.Details())
+		}
+	}
+}
+
+/* ---------- what is written on the note ---------- */
+
+// articulationsAt lists the marks on one element of the first bar.
+func articulationsAt(p *model.Part, bar, i int) []model.Articulation {
+	mk := marksOf(p.Measures[bar].Voices[0].Elements[i])
+	if mk == nil {
+		return nil
+	}
+	return mk.Articulations
+}
+
+func TestTheStaccatoDotsAreRead(t *testing.T) {
+	// Dorico keeps the articulations in the note's property table and not
+	// as events, so a reader that goes through the events alone does not
+	// meet them and does not miss them either: they went by in silence.
+	// There are two thousand nine hundred staccatissimo wedges in the
+	// first movement of the Fifth, and they are how it is played.
+	raw := built(t, [2]string{"4", "4"}, "C", []played{
+		{at: "0", dur: "1", pitch: 60, arts: []string{"kStaccato"}},
+		{at: "1", dur: "1", pitch: 62, arts: []string{"kStaccatissimo"}},
+		{at: "2", dur: "1", pitch: 64, arts: []string{"kAccent"}},
+		{at: "3", dur: "1", pitch: 65, arts: []string{"kTenuto", "kMarcato"}},
+	})
+
+	p := read(t, raw)[0].Parts[0]
+	for i, want := range [][]model.Articulation{
+		{model.Staccato},
+		{model.Staccatissimo},
+		{model.Accent},
+		{model.Tenuto, model.Marcato},
+	} {
+		got := articulationsAt(p, 0, i)
+		if len(got) != len(want) {
+			t.Errorf("note %d carries %v, want %v", i, got, want)
+			continue
+		}
+		for j := range want {
+			if got[j] != want[j] {
+				t.Errorf("note %d carries %v, want %v", i, got, want)
+				break
+			}
+		}
+	}
+}
+
+func TestAChordIsMarkedOnceHoweverManyNotesSaySo(t *testing.T) {
+	// The file writes the staccato on every note of the chord, because
+	// that is where a property lives. It is one dot on the page.
+	raw := built(t, [2]string{"4", "4"}, "C", []played{
+		{at: "0", dur: "4", pitch: 60, arts: []string{"kStaccato"}},
+		{at: "0", dur: "4", pitch: 64, arts: []string{"kStaccato"}},
+		{at: "0", dur: "4", pitch: 67, arts: []string{"kStaccato"}},
+	})
+
+	got := articulationsAt(read(t, raw)[0].Parts[0], 0, 0)
+	if len(got) != 1 || got[0] != model.Staccato {
+		t.Errorf("the chord carries %v", got)
+	}
+}
+
+func TestAnArticulationGoesOnTheNoteAndNotOnEachOfItsNoteheads(t *testing.T) {
+	// A note held over a barline is written as tied pieces, and the mark
+	// belongs to the note: on the first of them, where the player meets
+	// it, and nowhere else.
+	raw := built(t, [2]string{"2", "4"}, "C", []played{
+		{at: "0", dur: "3", pitch: 60, arts: []string{"kAccent"}},
+	})
+
+	p := read(t, raw)[0].Parts[0]
+	if got := articulationsAt(p, 0, 0); len(got) != 1 {
+		t.Errorf("the first notehead carries %v", got)
+	}
+	if got := articulationsAt(p, 1, 0); len(got) != 0 {
+		t.Errorf("the tied notehead carries %v as well", got)
+	}
+}
+
+func TestATurnStandsOnTheNoteItDecorates(t *testing.T) {
+	raw := built(t, [2]string{"4", "4"}, "C", []played{
+		{at: "0", dur: "2", pitch: 60},
+		{at: "2", dur: "2", pitch: 62},
+	}, eventOn("voice", "OrnamentEventDefinition",
+		[2]string{"position", "2"},
+		[2]string{"duration", "0"},
+		[2]string{"entityID", "ornament.turn"}))
+
+	p := read(t, raw)[0].Parts[0]
+	if got := articulationsAt(p, 0, 1); len(got) != 1 || got[0] != model.Turn {
+		t.Errorf("the second note carries %v", got)
+	}
+	if got := articulationsAt(p, 0, 0); len(got) != 0 {
+		t.Errorf("the first note carries %v", got)
+	}
+}
+
+func TestABarsRestIsDrawnWhereTheWriterWroteOne(t *testing.T) {
+	// gscore fills the gaps in a voice with silence of its own, which is
+	// spacing and is not printed. A bar rest is not that: it is a rest
+	// somebody wrote, and a bar of music with nothing drawn in it is a
+	// bar the player cannot count.
+	raw := built(t, [2]string{"4", "4"}, "C", []played{
+		{at: "0", dur: "4", pitch: 60},
+	}, eventOn("voice", "BarRestEventDefinition",
+		[2]string{"position", "4"},
+		[2]string{"duration", "4"}))
+
+	p := read(t, raw)[0].Parts[0]
+	if len(p.Measures) < 2 {
+		t.Fatalf("the second bar is not there")
+	}
+	els := p.Measures[1].Voices[0].Elements
+	if len(els) != 1 {
+		t.Fatalf("the bar holds %d things, want the one rest", len(els))
+	}
+	r, ok := els[0].(*model.Rest)
+	if !ok {
+		t.Fatalf("the bar holds a %T", els[0])
+	}
+	if r.Hidden {
+		t.Error("the rest the writer wrote is not drawn")
+	}
+	if r.Dur != (model.Duration{Num: 1, Den: 1}) {
+		t.Errorf("the rest is %v long, want the whole bar", r.Dur)
+	}
+}
+
+func TestThePedalGoesDownAndComesUp(t *testing.T) {
+	raw := built(t, [2]string{"4", "4"}, "C", []played{
+		{at: "0", dur: "1", pitch: 60},
+		{at: "1", dur: "1", pitch: 62},
+		{at: "2", dur: "1", pitch: 64},
+		{at: "3", dur: "1", pitch: 65},
+	}, eventOn("stave", "PedalLineEventDefinition",
+		[2]string{"position", "0"},
+		[2]string{"duration", "3"},
+		[2]string{"pedalLineType", "kSustainPedal"}))
+
+	p := read(t, raw)[0].Parts[0]
+	down := marksOf(p.Measures[0].Voices[0].Elements[0]).Pedal
+	up := marksOf(p.Measures[0].Voices[0].Elements[3]).Pedal
+	if down == nil || !down.Start {
+		t.Errorf("the pedal does not go down on the first note: %+v", down)
+	}
+	if up == nil || !up.Stop {
+		t.Errorf("the pedal does not come up on the last: %+v", up)
+	}
+}
+
+func TestADaCapoIsAJumpAndNotASign(t *testing.T) {
+	// "Menuetto da Capo" at the end of a trio. Dorico writes it as a
+	// repeat marker like the segno and the coda, with the direction in a
+	// node of its own, and a reader that looks only at the marker's kind
+	// sees a sign it does not know and drops the dance.
+	raw := built(t, [2]string{"3", "4"}, "C", []played{
+		{at: "0", dur: "3", pitch: 60},
+		{at: "3", dur: "3", pitch: 62},
+	}, eventWith("global", "RepeatMarkerEventDefinition",
+		[][2]string{{"position", "6"}, {"duration", "0"}},
+		"jumpTypeAndQualification",
+		[2]string{"jumpType", "kDaCapo"},
+		[2]string{"jumpQualification", "kFine"}))
+
+	p := read(t, raw)[0].Parts[0]
+	last := p.Measures[len(p.Measures)-1]
+	if last.Jump == nil {
+		t.Fatal("the last bar carries no direction")
+	}
+	if got := last.Jump.Label(); got != "D.C. al Fine" {
+		t.Errorf("the direction reads %q", got)
+	}
+}
+
+func TestADynamicWrittenAgainstAVoiceIsRead(t *testing.T) {
+	// A dynamic belongs to the player and is usually written on the
+	// staff. It need not be: the two hands of a piano are marked
+	// differently often enough, and Dorico then keeps the mark on the
+	// voice's own stream, where this reader was walking past it — ten of
+	// them in Schumann's Nachtlied.
+	raw := built(t, [2]string{"2", "4"}, "C", []played{
+		{at: "0", dur: "1", pitch: 60},
+		{at: "1", dur: "1", pitch: 62},
+	}, dynamicOnVoiceAt("0", dynSub{kind: "immediate", at: "0",
+		side: 0, letters: 2}))
+
+	p := read(t, raw)[0].Parts[0]
+	if got := marksOf(p.Measures[0].Voices[0].Elements[0]).Dynamic; got != model.FF {
+		t.Errorf("the note carries %v, want ff", got)
+	}
+}
+
+func TestADynamicOnAVoiceIsNotReportedAsLost(t *testing.T) {
+	raw := built(t, [2]string{"2", "4"}, "C", []played{
+		{at: "0", dur: "1", pitch: 60},
+		{at: "1", dur: "1", pitch: 62},
+	}, dynamicOnVoiceAt("0", dynSub{kind: "immediate", at: "0",
+		side: 0, letters: 2}))
+
+	_, err := Import(bytes.NewReader(raw))
+	if pe, ok := err.(*PartialError); ok {
+		if strings.Contains(strings.Join(pe.Details(), " "), "dynamic") {
+			t.Errorf("a dynamic that was read was reported as not read: %v",
 				pe.Details())
 		}
 	}

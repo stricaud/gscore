@@ -1654,6 +1654,33 @@ paths:
         "200": { $ref: "#/components/responses/Changed" }
         "400": { $ref: "#/components/responses/Error" }
 
+  /api/guessinstruments:
+    post:
+      tags: [score]
+      summary: What each staff looks like, read off its name
+      description: >-
+        A score often arrives without its instruments — a PDF says how many
+        staves there are and nothing about who is reading them — but the
+        names are there. This says what they come to, as catalogue sound
+        ids, and changes nothing: the answer is a suggestion for somebody to
+        look over. A staff whose name says nothing gscore knows comes back
+        with no sound rather than the nearest thing.
+      responses:
+        "200":
+          description: One entry per staff, in order.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    part: { type: integer }
+                    name: { type: string }
+                    sound: { type: string }
+                    called: { type: string }
+                    said: { type: boolean }
+
   /api/technique:
     post:
       tags: [marks]

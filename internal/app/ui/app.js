@@ -12016,6 +12016,82 @@ function drawSetupBar() {
 // written on two staves, become one entry and are braced when it is applied.
 // Two staves given a flute stay two flutes, because two flutes are two
 // players however close together they are printed.
+// setupGuess fills the list in from the names the staves already have.
+//
+// A score arrives without its instruments more often than not — a PDF says
+// how many staves there are and nothing about who is reading them, and a
+// file written by a program that never asked gives every staff the piano it
+// opened with, so Boléro comes in as forty-four pianos. The names down the
+// left are still right, and they are what a reader goes by.
+//
+// Only the staves the score itself says nothing about. A file that names an
+// instrument has been believed everywhere else in gscore and is believed
+// here: the guess is for the ones nobody has answered for.
+async function setupGuess() {
+  let guesses;
+  try {
+    const res = await fetch("/api/guessinstruments", { method: "POST" });
+    if (!res.ok) {
+      status("Could not read the names: " + (await res.text()).trim());
+      return;
+    }
+    guesses = await res.json();
+  } catch (_) {
+    status("Could not read the names");
+    return;
+  }
+
+  // What each entry would become, by the first staff it stands for.
+  const changes = [];
+  for (const it of setupChosen) {
+    const first = (it.staves || [])[0];
+    if (first === undefined) continue;
+    const g = guesses[first];
+    if (!g || !g.sound || g.said) continue;
+    if (soundChosen(it.sound).sound === g.sound) continue;
+    changes.push({ entry: it, sound: g.sound, staves: it.staves || [] });
+  }
+  if (!changes.length) {
+    status(guesses.some((g) => g.said)
+      ? "Every staff already says what it is"
+      : "Nothing in the staff names to go on");
+    return;
+  }
+
+  // Live over a score with staves on it, the same as changing one by hand:
+  // one press of undo takes the lot back.
+  if (setupLive()) {
+    busy("Reading the staff names…");
+    try {
+      for (const c of changes) {
+        for (const n of c.staves) {
+          const p = new URLSearchParams({ part: String(n), sound: c.sound });
+          const res = await fetch("/api/staff?" + p, { method: "POST" });
+          if (!res.ok) {
+            status("Could not set staff " + (n + 1) + ": " +
+              (await res.text()).trim());
+            return;
+          }
+        }
+      }
+    } finally {
+      idle();
+    }
+    await setupReload();
+  } else {
+    for (const c of changes) {
+      c.entry.sound = c.sound;
+      c.entry.said = true;
+    }
+    drawSetupChosen();
+  }
+  const left = guesses.filter((g) => !g.sound && !g.said).length;
+  status("Guessed " + changes.length +
+    (changes.length === 1 ? " staff" : " staves") +
+    (left ? ", and " + left + " could not be read from the name" : "") +
+    " — look them over");
+}
+
 async function setupChange() {
   const picked = setupPicked();
   if (!picked.length) {
@@ -12535,6 +12611,7 @@ function setupScoreSetupDialog() {
   $("#setup-up")?.addEventListener("click", () => void setupMove(-1));
   $("#setup-bracket")?.addEventListener("click", () => void setupBracket());
   $("#setup-ungroup")?.addEventListener("click", () => void setupUngroup());
+  $("#setup-guess")?.addEventListener("click", () => void setupGuess());
   $("#setup-down")?.addEventListener("click", () => void setupMove(1));
   $("#setup-order")?.addEventListener("change", drawSetupChosen);
   $("#setup-apply")?.addEventListener("click", () => void applyScoreSetup());

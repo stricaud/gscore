@@ -1620,6 +1620,18 @@
         <button type="button" id="setup-bracket">Bracket these</button>
         <button type="button" id="setup-ungroup">Ungroup</button>
       </div>
+      <!-- A score that arrives without its instruments still has its staff
+           names, which is what a reader goes by. This fills the list in
+           from them, as a guess to look over rather than an answer: the
+           staves are not touched until Set the instruments. -->
+      <div class="tempo-bar">
+        <button type="button" id="setup-guess">Guess from the staff names</button>
+      </div>
+      <p class="small" id="setup-guess-note">A score read from a PDF or
+        written by a program that never asked arrives as so many pianos.
+        The names down the left say what they really are — Hautbois,
+        Violoncelle, Grosse caisse — and this reads them. Look the list
+        over before setting it: a name is a hint, not a declaration.</p>
       <p class="small">Pick two staves or more. A bracket is a line down
         the side of a run of staves, so it covers everything between its
         ends — staves picked apart from each other are brought together

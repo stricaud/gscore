@@ -398,7 +398,7 @@ func (e *exporter) element(el model.Element) string {
 			}
 			b.WriteString(quote(where + t.Text))
 		}
-		if m.SlurStart {
+		if m.SlurStart > 0 {
 			b.WriteByte('(')
 		}
 	}
@@ -436,7 +436,7 @@ func (e *exporter) element(el model.Element) string {
 		b.WriteString(lengthText(written(el)))
 	}
 
-	if m != nil && m.SlurStop {
+	if m != nil && m.SlurStop > 0 {
 		b.WriteByte(')')
 	}
 	return b.String()

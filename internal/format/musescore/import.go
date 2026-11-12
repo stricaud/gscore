@@ -146,7 +146,7 @@ func balanceSlurs(p *model.Part) {
 				// start comes before that note's own marks.
 				if mk.Grace != nil {
 					for _, g := range mk.Grace.Notes {
-						if !g.Marks.SlurStart {
+						if g.Marks.SlurStart == 0 {
 							continue
 						}
 						if open == nil && openGrace == nil {
@@ -154,32 +154,32 @@ func balanceSlurs(p *model.Part) {
 						} else {
 							// Nothing is drawn from it: there is already a
 							// slur open on this line.
-							g.Marks.SlurStart = false
+							g.Marks.SlurStart = 0
 						}
 					}
 				}
-				if mk.SlurStop {
+				if mk.SlurStop > 0 {
 					if open == nil && openGrace == nil {
-						mk.SlurStop = false // nothing to end
+						mk.SlurStop = 0 // nothing to end
 					} else {
 						open, openGrace = nil, nil
 					}
 				}
-				if mk.SlurStart {
+				if mk.SlurStart > 0 {
 					if open == nil && openGrace == nil {
 						open = mk
 					} else {
-						mk.SlurStart = false
+						mk.SlurStart = 0
 					}
 				}
 			}
 		}
 		// Whatever is still open was never ended.
 		if open != nil {
-			open.SlurStart = false
+			open.SlurStart = 0
 		}
 		if openGrace != nil {
-			openGrace.Marks.SlurStart = false
+			openGrace.Marks.SlurStart = 0
 		}
 	}
 }
@@ -1899,10 +1899,10 @@ func (r *reader) spanner(st *msStaff, vs *voiceState, kind string) error {
 	switch kind {
 	case "Slur":
 		if start {
-			vs.markNext(func(m *model.Marks) { m.SlurStart = true })
+			vs.markNext(func(m *model.Marks) { m.SlurStart = 1 })
 		}
 		if stop {
-			vs.markNext(func(m *model.Marks) { m.SlurStop = true })
+			vs.markNext(func(m *model.Marks) { m.SlurStop = 1 })
 		}
 	case "HairPin":
 		vs.hairpin = &model.Hairpin{Kind: hairpinKind(sub), Start: start, Stop: stop}
@@ -2322,9 +2322,9 @@ func (r *reader) chord(st *msStaff, vs *voiceState) error {
 			if c.Name.Local == "Slur" {
 				switch kind {
 				case "start":
-					ch.marks.SlurStart = true
+					ch.marks.SlurStart = 1
 				case "stop":
-					ch.marks.SlurStop = true
+					ch.marks.SlurStop = 1
 				}
 			}
 			return nil
@@ -2390,10 +2390,10 @@ func (r *reader) chord(st *msStaff, vs *voiceState) error {
 		// the note it decorates — is the commonest slur in this music, and
 		// the marks on a grace chord were going out with the chord itself.
 		// They move to the grace note, which is where the curve starts.
-		if ch.marks.SlurStart || ch.marks.SlurStop {
+		if ch.marks.SlurStart > 0 || ch.marks.SlurStop > 0 {
 			n := vs.grace.Notes[first]
-			n.Marks.SlurStart = n.Marks.SlurStart || ch.marks.SlurStart
-			n.Marks.SlurStop = n.Marks.SlurStop || ch.marks.SlurStop
+			n.Marks.SlurStart = model.MoreSlurs(n.Marks.SlurStart, ch.marks.SlurStart)
+			n.Marks.SlurStop = model.MoreSlurs(n.Marks.SlurStop, ch.marks.SlurStop)
 		}
 		return nil
 	}
@@ -2723,8 +2723,8 @@ func (r *reader) chordSpanner(ch *chordData, kind string) error {
 	if err != nil || kind != "Slur" {
 		return err
 	}
-	ch.marks.SlurStart = ch.marks.SlurStart || start
-	ch.marks.SlurStop = ch.marks.SlurStop || stop
+	ch.marks.SlurStart = model.MoreSlurs(ch.marks.SlurStart, model.SlurEnd(start))
+	ch.marks.SlurStop = model.MoreSlurs(ch.marks.SlurStop, model.SlurEnd(stop))
 	return nil
 }
 

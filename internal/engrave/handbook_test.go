@@ -51,8 +51,8 @@ func TestTheSlurShoulderActuallyLifts(t *testing.T) {
 			Pitch: model.Pitch{Step: model.Step(st % 7), Octave: 4 + st/7},
 			Dur:   model.Duration{Num: 1, Den: 8},
 		}
-		n.Marks.SlurStart = i == 0
-		n.Marks.SlurStop = i == len(steps)-1
+		n.Marks.SlurStart = model.SlurEnd(i == 0)
+		n.Marks.SlurStop = model.SlurEnd(i == len(steps)-1)
 		m.Voices[0].Elements = append(m.Voices[0].Elements, n)
 	}
 	p.Measures = []*model.Measure{m}

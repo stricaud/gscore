@@ -11,7 +11,9 @@
 package gscore
 
 import (
+	"encoding/json"
 	"fmt"
+	"strconv"
 
 	"github.com/stricaud/gscore/internal/model"
 )
@@ -313,8 +315,8 @@ type marksDoc struct {
 	Symbols           []symbolRef `json:"symbols,omitempty"`
 	TieStart          bool        `json:"tieStart,omitempty"`
 	TieStop           bool        `json:"tieStop,omitempty"`
-	SlurStart         bool        `json:"slurStart,omitempty"`
-	SlurStop          bool        `json:"slurStop,omitempty"`
+	SlurStart         slurEnds    `json:"slurStart,omitempty"`
+	SlurStop          slurEnds    `json:"slurStop,omitempty"`
 	Tuplet            *tupletDoc  `json:"tuplet,omitempty"`
 	Stem              string      `json:"stem,omitempty"`
 	Dynamic           string      `json:"dynamic,omitempty"`
@@ -728,7 +730,7 @@ func encodeMarks(m *model.Marks) *marksDoc {
 	if len(m.Articulations) == 0 && len(m.Techniques) == 0 &&
 		m.Cross == model.OnOwnStaff &&
 		len(m.Symbols) == 0 && m.Tuplet == nil &&
-		!m.TieStart && !m.TieStop && !m.SlurStart && !m.SlurStop &&
+		!m.TieStart && !m.TieStop && m.SlurStart == 0 && m.SlurStop == 0 &&
 		m.Stem == model.StemAuto && m.Dynamic == model.DynamicNone &&
 		m.Hairpin == nil && m.Octave == nil && len(m.Lyrics) == 0 &&
 		m.Tremolo == nil && m.Trill == nil &&
@@ -740,7 +742,7 @@ func encodeMarks(m *model.Marks) *marksDoc {
 	}
 	out := &marksDoc{
 		TieStart: m.TieStart, TieStop: m.TieStop,
-		SlurStart: m.SlurStart, SlurStop: m.SlurStop,
+		SlurStart: slurEnds(m.SlurStart), SlurStop: slurEnds(m.SlurStop),
 		Stem:    stemNames[m.Stem],
 		Dynamic: m.Dynamic.String(),
 	}
@@ -1133,7 +1135,7 @@ func decodeMarks(md *marksDoc, m *model.Marks) {
 		return
 	}
 	m.TieStart, m.TieStop = md.TieStart, md.TieStop
-	m.SlurStart, m.SlurStop = md.SlurStart, md.SlurStop
+	m.SlurStart, m.SlurStop = int(md.SlurStart), int(md.SlurStop)
 	m.Stem = stemValues[md.Stem]
 	if d, ok := model.DynamicFromName(md.Dynamic); ok {
 		m.Dynamic = d
@@ -1298,4 +1300,46 @@ func spansFromDoc(runs []spanDoc) []model.Span {
 		})
 	}
 	return out
+}
+
+// slurEnds is how many curves open or close on a note, written so that a
+// file gscore saves can still be opened by a gscore that has not heard of
+// more than one.
+//
+// One curve is written as true, which is what the field has always held and
+// what every file in existence holds. Two or more — a phrase with another
+// inside it, a grace note slurred into the note a phrase ends on — are
+// written as the number, which an older reader will refuse rather than
+// silently misread. Reading goes the other way: true is one, false is none,
+// and a number is itself.
+type slurEnds int
+
+func (s slurEnds) MarshalJSON() ([]byte, error) {
+	switch {
+	case s <= 0:
+		return []byte("false"), nil
+	case s == 1:
+		return []byte("true"), nil
+	}
+	return []byte(strconv.Itoa(int(s))), nil
+}
+
+func (s *slurEnds) UnmarshalJSON(b []byte) error {
+	switch string(b) {
+	case "true":
+		*s = 1
+		return nil
+	case "false", "null":
+		*s = 0
+		return nil
+	}
+	var n int
+	if err := json.Unmarshal(b, &n); err != nil {
+		return err
+	}
+	if n < 0 {
+		n = 0
+	}
+	*s = slurEnds(n)
+	return nil
 }

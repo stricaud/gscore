@@ -131,10 +131,10 @@ func describeElement(el model.Element, afterTie bool) string {
 	if mk.TieStop && afterTie {
 		b.WriteString(" tie-stop")
 	}
-	if mk.SlurStart {
+	if mk.SlurStart > 0 {
 		b.WriteString(" slur-start")
 	}
-	if mk.SlurStop {
+	if mk.SlurStop > 0 {
 		b.WriteString(" slur-stop")
 	}
 	if mk.Dynamic != model.DynamicNone {

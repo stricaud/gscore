@@ -479,7 +479,7 @@ func (e *writer) before(mk *model.Marks) {
 	if o := mk.Octave; o != nil && o.Start {
 		e.p("\\oct<%d> ", o.Amount)
 	}
-	if mk.SlurStart {
+	if mk.SlurStart > 0 {
 		e.p("%s", e.openSpan("slur", "slur"))
 	}
 	if mk.TieStart {
@@ -526,7 +526,7 @@ func (e *writer) after(mk *model.Marks) {
 	if mk.TieStop {
 		e.p("%s", e.closeSpan("tie"))
 	}
-	if mk.SlurStop {
+	if mk.SlurStop > 0 {
 		e.p("%s", e.closeSpan("slur"))
 	}
 	if o := mk.Octave; o != nil && o.Stop {

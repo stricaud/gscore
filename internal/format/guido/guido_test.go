@@ -353,13 +353,13 @@ func TestASlurCoversTheNotesItIsWrittenRound(t *testing.T) {
 	if len(got) != 4 {
 		t.Fatalf("read %d notes, want 4", len(got))
 	}
-	if !got[0].SlurStart || got[0].SlurStop {
+	if got[0].SlurStart == 0 || got[0].SlurStop > 0 {
 		t.Error("the slur does not open on the first note")
 	}
-	if !got[2].SlurStop {
+	if got[2].SlurStop == 0 {
 		t.Error("the slur does not close on the third note")
 	}
-	if got[3].SlurStart || got[3].SlurStop {
+	if got[3].SlurStart > 0 || got[3].SlurStop > 0 {
 		t.Error("the note after the slur is inside it")
 	}
 }
@@ -390,10 +390,10 @@ func TestASlurCanOpenInOneBarAndCloseInTheNext(t *testing.T) {
 	if len(first) != 2 || len(second) != 2 {
 		t.Fatalf("read %d and %d notes, want 2 and 2", len(first), len(second))
 	}
-	if !first[1].SlurStart {
+	if first[1].SlurStart == 0 {
 		t.Error("the slur does not open on the last note of bar 1")
 	}
-	if !second[0].SlurStop {
+	if second[0].SlurStop == 0 {
 		t.Error("the slur does not close on the first note of bar 2")
 	}
 }

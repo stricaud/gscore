@@ -1212,8 +1212,16 @@ type openSpans struct {
 	lastHairpinRow int
 	hadHairpin     bool
 	octave         *openSpan
-	slur           *openSpan
-	trill          *openSpan
+	// slurs are the phrases open here, innermost last.
+	//
+	// A stack and not one curve, because more than one can be open at a
+	// time: a long phrase with shorter ones inside it, which is how a wind
+	// line is marked under a string legato, and a grace note slurred into
+	// the note a phrase ends on. Held as a stack because slurs nest and do
+	// not cross — a close takes the one opened most recently, which is the
+	// innermost, and that is what a reader's eye does too.
+	slurs []*openSpan
+	trill *openSpan
 	// gliss is the slide in progress, and pedal the sustaining pedal held
 	// down. The pedal keeps the places it was changed at along the way, so
 	// that the notch is drawn where the player is told to change it.

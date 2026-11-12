@@ -277,6 +277,127 @@ func meterAt(sigs ...[3]string) string {
 	return key
 }
 
+// slurs holds the phrase marks a test asked for.
+var slurSpans = map[string]struct{ at, dur string }{}
+
+// slurOver asks for a slur from a moment, reaching so far. Dorico measures
+// it to the start of the last note under it, so a slur "for one crotchet"
+// joins two crotchets.
+func slurOver(at, dur string) string {
+	key := "slur " + at + " " + dur + " " + itoa(len(slurSpans))
+	slurSpans[key] = struct{ at, dur string }{at, dur}
+	return key
+}
+
+// graces holds the little notes a test asked for.
+var graceNotes = map[string][]struct {
+	at, order, dur string
+	pitch          int
+	slashed        bool
+}{}
+
+// graceBefore asks for grace notes leaning into the note at `at`. Dorico
+// counts them backwards from it, so the earlier of a pair is the more
+// negative.
+func graceBefore(at string, each ...[3]string) string {
+	key := "grace " + at + " " + itoa(len(graceNotes))
+	var out []struct {
+		at, order, dur string
+		pitch          int
+		slashed        bool
+	}
+	for _, g := range each {
+		pitch := 0
+		for _, c := range g[1] {
+			pitch = pitch*10 + int(c-'0')
+		}
+		out = append(out, struct {
+			at, order, dur string
+			pitch          int
+			slashed        bool
+		}{at, g[0], g[2], pitch, false})
+	}
+	graceNotes[key] = out
+	return key
+}
+
+// rawEvents holds events a test asked to be put on a stream as they are,
+// which is the general way to ask for one: the registries above are for
+// the kinds that need something built around them.
+var rawEvents = map[string]struct {
+	stream string // "voice", "global" or "stave"
+	name   string
+	fields [][2]string
+	// child is one nested node, for the events that carry their data in
+	// one: a pause's pauseData, a tempo's data.
+	child     string
+	childKids [][2]string
+}{}
+
+// eventOn asks for one event on one of a flow's streams.
+func eventOn(stream, name string, fields ...[2]string) string {
+	key := "event " + name + " " + itoa(len(rawEvents))
+	rawEvents[key] = struct {
+		stream    string
+		name      string
+		fields    [][2]string
+		child     string
+		childKids [][2]string
+	}{stream: stream, name: name, fields: fields}
+	return key
+}
+
+// eventWith is the same, with a nested node of its own.
+func eventWith(stream, name string, fields [][2]string, child string,
+	kids ...[2]string) string {
+	key := eventOn(stream, name, fields...)
+	e := rawEvents[key]
+	e.child, e.childKids = child, kids
+	rawEvents[key] = e
+	return key
+}
+
+// made builds one of those with an encoder.
+func made(e *enc, key string) int32 {
+	r := rawEvents[key]
+	var kids []int32
+	for _, f := range r.fields {
+		kids = append(kids, e.leaf(f[0], f[1]))
+	}
+	if r.child != "" {
+		var inner []int32
+		for _, f := range r.childKids {
+			inner = append(inner, e.leaf(f[0], f[1]))
+		}
+		kids = append(kids, e.node(r.child, inner...))
+	}
+	return e.node(r.name, kids...)
+}
+
+// textEvents and voltas are the two that carry their data deeper than a
+// field or two: a text is a document of paragraphs and fragments, and a
+// volta keeps the length of each time through in its property table.
+var textEvents = map[string]struct{ at, words string }{}
+var voltas = map[string]struct {
+	at, dur  string
+	segments []string
+}{}
+
+func textAt(at, words string) string {
+	key := "text " + at + " " + itoa(len(textEvents))
+	textEvents[key] = struct{ at, words string }{at, words}
+	return key
+}
+
+func voltaAt(at, dur string, segments ...string) string {
+	key := "volta " + at + " " + itoa(len(voltas))
+	voltas[key] = struct {
+		at, dur  string
+		segments []string
+	}{at, dur, segments}
+	return key
+}
+
 // built makes a one-flow project: one player on one staff, in the time and
 // key given, playing these notes.
 func built(t *testing.T, time [2]string, key string, notes []played,
@@ -313,7 +434,46 @@ func built(t *testing.T, time [2]string, key string, notes []played,
 		if _, ok := meters[kind]; ok {
 			continue // built onto the global stream below
 		}
+		if _, ok := voltas[kind]; ok {
+			continue // built onto the global stream below
+		}
 		if kind == noClefEvent {
+			continue
+		}
+		if r, ok := rawEvents[kind]; ok {
+			if r.stream == "voice" {
+				events = append(events, made(e, kind))
+			}
+			continue
+		}
+		if tx, ok := textEvents[kind]; ok {
+			events = append(events, e.node("TextEventDefinition",
+				e.leaf("position", tx.at),
+				e.leaf("duration", "0"),
+				e.node("content",
+					e.node("paragraphs",
+						e.node("paragraph",
+							e.node("fragments",
+								e.node("fragment",
+									e.leaf("content", tx.words))))))))
+			continue
+		}
+		if run, ok := graceNotes[kind]; ok {
+			for _, g := range run {
+				events = append(events, e.node("GraceNoteEventDefinition",
+					e.leaf("position", g.at),
+					e.leaf("secondaryPosition", g.order),
+					e.leaf("duration", "0"),
+					e.leaf("notatedDuration", g.dur),
+					e.leaf("slashed", "false"),
+					e.leaf("pitch", itoa(g.pitch))))
+			}
+			continue
+		}
+		if sl, ok := slurSpans[kind]; ok {
+			events = append(events, e.node("SlurEventDefinition",
+				e.leaf("position", sl.at),
+				e.leaf("duration", sl.dur)))
 			continue
 		}
 		if t, ok := tuplets[kind]; ok {
@@ -360,6 +520,27 @@ func built(t *testing.T, time [2]string, key string, notes []played,
 			e.leaf("position", "0"),
 			e.leaf("duration", "0"),
 			e.leaf("tonalityDivisionElementID", "2")),
+	}
+	for _, kind := range extra {
+		if r, ok := rawEvents[kind]; ok && r.stream == "global" {
+			globalEvents = append(globalEvents, made(e, kind))
+		}
+		if v, ok := voltas[kind]; ok {
+			entries := []int32{e.node("entry",
+				e.leaf("propertyType", "kRepeatEndingLineNumSegments"),
+				e.leaf("value", "int: "+itoa(len(v.segments))))}
+			for _, seg := range v.segments {
+				entries = append(entries, e.node("entry",
+					e.leaf("propertyType",
+						"kRepeatEndingLineSegmentDuration"),
+					e.leaf("value", `string: "`+seg+`"`)))
+			}
+			globalEvents = append(globalEvents,
+				e.node("RepeatEndingLineEventDefinition",
+					e.leaf("position", v.at),
+					e.leaf("duration", v.dur),
+					e.node("propertyTable", e.node("entries", entries...))))
+		}
 	}
 	var moreSigs []int32
 	for _, kind := range extra {
@@ -430,6 +611,11 @@ func built(t *testing.T, time [2]string, key string, notes []played,
 					e.leaf("idForTransposingLayouts", c.clef))))
 	}
 	var dynDefs []int32
+	for _, kind := range extra {
+		if r, ok := rawEvents[kind]; ok && r.stream == "stave" {
+			staveEvents = append(staveEvents, made(e, kind))
+		}
+	}
 	for _, kind := range extra {
 		g, ok := dynGroups[kind]
 		if !ok {
@@ -1327,5 +1513,700 @@ func TestAMeterRestatedIsNotAMeterChange(t *testing.T) {
 	}
 	if p.Measures[0].Time == nil {
 		t.Error("the first bar carries no time signature")
+	}
+}
+
+/* ---------- the slurs ---------- */
+
+// phrase lists a part's slur marks bar by bar, as "C4( D4 E4)".
+func phrase(p *model.Part, bar int) string {
+	var out []string
+	for _, el := range p.Measures[bar].Voices[0].Elements {
+		mk := marksOf(el)
+		name := ""
+		switch e := el.(type) {
+		case *model.Note:
+			name = e.Pitch.String()
+		case *model.Chord:
+			name = "chord"
+		case *model.Rest:
+			name = "r"
+		}
+		if mk != nil && mk.SlurStart > 0 {
+			name += "("
+		}
+		if mk != nil && mk.SlurStop > 0 {
+			name += ")"
+		}
+		out = append(out, name)
+	}
+	return strings.Join(out, " ")
+}
+
+func TestASlurOpensAndClosesOnTheRightNotes(t *testing.T) {
+	raw := built(t, [2]string{"4", "4"}, "C", []played{
+		{at: "0", dur: "1", pitch: 60},
+		{at: "1", dur: "1", pitch: 62},
+		{at: "2", dur: "1", pitch: 64},
+		{at: "3", dur: "1", pitch: 65},
+	}, slurOver("0", "2"))
+
+	// The span reaches to the start of the third note, so the phrase is
+	// the first three and not the first two.
+	if got := phrase(read(t, raw)[0].Parts[0], 0); got != "C4( D4 E4) F4" {
+		t.Errorf("the bar reads %q", got)
+	}
+}
+
+func TestTheSmallestSlurJoinsTwoNotes(t *testing.T) {
+	// "For one crotchet" is two crotchets under one slur. Measured to the
+	// end of the last note instead, every phrase in the score would take
+	// in the note after it.
+	raw := built(t, [2]string{"4", "4"}, "C", []played{
+		{at: "0", dur: "1", pitch: 60},
+		{at: "1", dur: "1", pitch: 62},
+		{at: "2", dur: "1", pitch: 64},
+	}, slurOver("0", "1"))
+
+	// The fourth beat of the bar is silence, which the reader fills in.
+	if got := phrase(read(t, raw)[0].Parts[0], 0); got != "C4( D4) E4 r" {
+		t.Errorf("the bar reads %q", got)
+	}
+}
+
+func TestASlurOverABarlineOpensOnceAndClosesOnce(t *testing.T) {
+	// A note held across a barline is written as two tied noteheads, and
+	// each bar is laid out on its own — so the opening of a phrase was
+	// being written again at the start of every bar the first note
+	// reached into, leaving the score with more slurs opened than closed.
+	raw := built(t, [2]string{"2", "4"}, "C", []played{
+		{at: "0", dur: "3", pitch: 60}, // over the barline
+		{at: "3", dur: "1", pitch: 62},
+	}, slurOver("0", "3"))
+
+	p := read(t, raw)[0].Parts[0]
+	starts, stops := 0, 0
+	for _, m := range p.Measures {
+		for _, el := range m.Voices[0].Elements {
+			mk := marksOf(el)
+			if mk == nil {
+				continue
+			}
+			if mk.SlurStart > 0 {
+				starts++
+			}
+			if mk.SlurStop > 0 {
+				stops++
+			}
+		}
+	}
+	if starts != 1 || stops != 1 {
+		t.Errorf("the phrase opens %d times and closes %d, want once each",
+			starts, stops)
+	}
+}
+
+func TestASlurIsDrawnBetweenNotesAndNotRests(t *testing.T) {
+	// Dorico's span is a length of time, so it can reach over a rest at
+	// either end. Hung on the rest, nothing draws it and nothing closes
+	// it.
+	raw := built(t, [2]string{"4", "4"}, "C", []played{
+		{at: "0", dur: "1", pitch: 60},
+		{at: "1", dur: "1", pitch: 62},
+		{at: "2", dur: "1", rest: true},
+	}, slurOver("0", "2"))
+
+	if got := phrase(read(t, raw)[0].Parts[0], 0); got != "C4( D4) r r" {
+		t.Errorf("the bar reads %q", got)
+	}
+}
+
+func TestAGraceNotesOwnSlurIsReportedRatherThanHungOnNothing(t *testing.T) {
+	// Every slur of no length in this corpus is a grace note's, leaning it
+	// into the note it decorates. Until the grace notes are read there is
+	// nothing to hang it on.
+	raw := built(t, [2]string{"4", "4"}, "C", []played{
+		{at: "0", dur: "4", pitch: 60},
+	}, slurOver("0", "0"))
+
+	scores, err := Import(bytes.NewReader(raw))
+	if len(scores) == 0 {
+		t.Fatal("the music was thrown away")
+	}
+	pe, ok := err.(*PartialError)
+	if !ok {
+		t.Fatalf("nothing was reported: %v", err)
+	}
+	found := false
+	for _, line := range pe.Details() {
+		if strings.Contains(line, "grace") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("the report says %v", pe.Details())
+	}
+	if marksOf(scores[0].Parts[0].Measures[0].Voices[0].Elements[0]).SlurStart > 0 {
+		t.Error("a slur with one note under it was drawn anyway")
+	}
+}
+
+/* ---------- the grace notes ---------- */
+
+func TestGraceNotesLeanOnTheNoteAndTakeNoTimeFromTheBar(t *testing.T) {
+	// A bar of four quarters with a grace note before the third beat is
+	// still a bar of four quarters: the little notes hang off the note
+	// they decorate rather than standing in the voice beside it.
+	raw := built(t, [2]string{"4", "4"}, "C", []played{
+		{at: "0", dur: "2", pitch: 60},
+		{at: "2", dur: "2", pitch: 67},
+	}, graceBefore("2", [3]string{"-1/4", "65", "1/4"}))
+
+	p := read(t, raw)[0].Parts[0]
+	m := p.Measures[0]
+	if got := m.Voices[0].Duration(); got.Cmp(model.Duration{Num: 1, Den: 1}) != 0 {
+		t.Errorf("the bar holds %v, want a whole note's worth", got)
+	}
+	if len(m.Voices[0].Elements) != 2 {
+		t.Fatalf("the bar holds %d elements, want 2",
+			len(m.Voices[0].Elements))
+	}
+	lean, ok := m.Voices[0].Elements[1].(*model.Note)
+	if !ok {
+		t.Fatalf("the second element is %T", m.Voices[0].Elements[1])
+	}
+	if lean.Grace == nil || len(lean.Grace.Notes) != 1 {
+		t.Fatalf("the note it leans into carries %v", lean.Grace)
+	}
+	if got := lean.Grace.Notes[0].Pitch.MIDI(); got != 65 {
+		t.Errorf("the little note is %d, want 65", got)
+	}
+	// Written as a semiquaver: a quarter of a crotchet.
+	if got := lean.Grace.Notes[0].Dur; got.Cmp(
+		model.Duration{Num: 1, Den: 16}) != 0 {
+		t.Errorf("the little note is written as %v, want a sixteenth", got)
+	}
+}
+
+func TestAPairOfGraceNotesIsInPlayingOrder(t *testing.T) {
+	// Dorico counts them backwards from the beat, so the one at -1/2 is
+	// heard before the one at -1/4. Written in the order they are found,
+	// a pair comes out backwards.
+	raw := built(t, [2]string{"4", "4"}, "C", []played{
+		{at: "0", dur: "4", pitch: 72},
+	}, graceBefore("0",
+		[3]string{"-1/4", "69", "1/4"},
+		[3]string{"-1/2", "67", "1/4"}))
+
+	lean := read(t, raw)[0].Parts[0].
+		Measures[0].Voices[0].Elements[0].(*model.Note)
+	if lean.Grace == nil || len(lean.Grace.Notes) != 2 {
+		t.Fatalf("the note carries %v", lean.Grace)
+	}
+	if a, b := lean.Grace.Notes[0].Pitch.MIDI(),
+		lean.Grace.Notes[1].Pitch.MIDI(); a != 67 || b != 69 {
+		t.Errorf("the pair reads %d %d, want 67 then 69", a, b)
+	}
+}
+
+func TestAGraceNoteIsSlurredIntoItsNote(t *testing.T) {
+	// A slur of no length at the same moment is the grace note's own: the
+	// curve leaves the little note and closes on the one it decorates.
+	raw := built(t, [2]string{"4", "4"}, "C", []played{
+		{at: "0", dur: "4", pitch: 72},
+	},
+		graceBefore("0", [3]string{"-1/4", "71", "1/4"}),
+		slurOver("0", "0"))
+
+	lean := read(t, raw)[0].Parts[0].
+		Measures[0].Voices[0].Elements[0].(*model.Note)
+	if lean.Grace == nil || len(lean.Grace.Notes) != 1 {
+		t.Fatalf("the note carries %v", lean.Grace)
+	}
+	if lean.Grace.Notes[0].SlurStart == 0 {
+		t.Error("the curve does not leave the little note")
+	}
+	if lean.SlurStop == 0 {
+		t.Error("the curve does not close on the note it leans into")
+	}
+}
+
+func TestGraceNotesDoNotCrowdOutAPhrase(t *testing.T) {
+	// gscore writes one slur to a note. Where a phrase already closes on
+	// the note the grace notes lean into, the phrase is the longer
+	// statement and keeps the mark.
+	raw := built(t, [2]string{"4", "4"}, "C", []played{
+		{at: "0", dur: "2", pitch: 60},
+		{at: "2", dur: "2", pitch: 67},
+	},
+		graceBefore("2", [3]string{"-1/4", "65", "1/4"}),
+		slurOver("2", "0"),
+		slurOver("0", "2"))
+
+	els := read(t, raw)[0].Parts[0].Measures[0].Voices[0].Elements
+	first := els[0].(*model.Note)
+	lean := els[1].(*model.Note)
+	if first.SlurStart == 0 {
+		t.Error("the phrase does not open on the first note")
+	}
+	if lean.SlurStop == 0 {
+		t.Error("the phrase does not close on the second")
+	}
+	if lean.Grace == nil {
+		t.Error("the grace note was lost to the phrase")
+	}
+}
+
+func TestTwoCurvesCanEndOnOneNote(t *testing.T) {
+	// A phrase closing on the note an appoggiatura leans into is a
+	// cadence, and the commonest one in keyboard music of the period. Both
+	// curves are drawn: the little note's opened last and so closes first,
+	// which is what the nesting rule says and what the eye reads.
+	//
+	// It used to be one or the other. gscore held a slur as two flags on
+	// an element, so a note could be the end of one curve and no more, and
+	// the grace note's was the one dropped.
+	raw := built(t, [2]string{"4", "4"}, "C", []played{
+		{at: "0", dur: "2", pitch: 60},
+		{at: "2", dur: "2", pitch: 67},
+	},
+		graceBefore("2", [3]string{"-1/4", "65", "1/4"}),
+		slurOver("2", "0"), // the grace note's own
+		slurOver("0", "2")) // and a phrase ending on the same note
+
+	scores, err := Import(bytes.NewReader(raw))
+	if len(scores) == 0 {
+		t.Fatal("the music was thrown away")
+	}
+	if pe, ok := err.(*PartialError); ok {
+		for _, line := range pe.Details() {
+			if strings.Contains(line, "phrase already ends") {
+				t.Errorf("a curve was still dropped: %s", line)
+			}
+		}
+	}
+	els := scores[0].Parts[0].Measures[0].Voices[0].Elements
+	first := els[0].(*model.Note)
+	lean := els[1].(*model.Note)
+	if first.SlurStart != 1 {
+		t.Errorf("the phrase opens %d times on the first note, want once",
+			first.SlurStart)
+	}
+	if lean.Grace == nil || len(lean.Grace.Notes) != 1 {
+		t.Fatalf("the grace note was lost: %v", lean.Grace)
+	}
+	if lean.Grace.Notes[0].SlurStart == 0 {
+		t.Error("the little note opens no curve")
+	}
+	// Two curves end here: the phrase and the grace note's.
+	if lean.SlurStop != 2 {
+		t.Errorf("%d curves close on the note, want 2 — the phrase and "+
+			"the appoggiatura", lean.SlurStop)
+	}
+}
+
+/* ---------- everything written over the notes ---------- */
+
+// fourNotes is a bar of four crotchets to hang marks on.
+func fourNotes() []played {
+	return []played{
+		{at: "0", dur: "1", pitch: 60},
+		{at: "1", dur: "1", pitch: 62},
+		{at: "2", dur: "1", pitch: 64},
+		{at: "3", dur: "1", pitch: 65},
+	}
+}
+
+// builtWithText is a bar with a word written over its first note.
+func builtWithText(t *testing.T, words string) []byte {
+	t.Helper()
+	return built(t, [2]string{"4", "4"}, "C", fourNotes(), textAt("0", words))
+}
+
+// builtWithVolta is three bars, the last two of them a first and second
+// time bar.
+func builtWithVolta(t *testing.T) []byte {
+	t.Helper()
+	return built(t, [2]string{"4", "4"}, "C", []played{
+		{at: "0", dur: "4", pitch: 60},
+		{at: "4", dur: "4", pitch: 62},
+		{at: "8", dur: "4", pitch: 64},
+	}, voltaAt("4", "8", "4", "4"))
+}
+
+func TestATrillIsHeldOverTheNotesItCovers(t *testing.T) {
+	raw := built(t, [2]string{"4", "4"}, "C", fourNotes(),
+		eventOn("voice", "TrillEventDefinition",
+			[2]string{"position", "1"}, [2]string{"duration", "2"}))
+
+	els := read(t, raw)[0].Parts[0].Measures[0].Voices[0].Elements
+	if tr := marksOf(els[1]).Trill; tr == nil || !tr.Start {
+		t.Errorf("the trill does not open on the second note: %v", tr)
+	}
+	if tr := marksOf(els[3]).Trill; tr == nil || !tr.Stop {
+		t.Errorf("the trill does not close on the fourth: %v", tr)
+	}
+	if marksOf(els[0]).Trill != nil {
+		t.Error("the trill reaches a note before it begins")
+	}
+}
+
+func TestATrillOnOneNoteCarriesBothEnds(t *testing.T) {
+	// "tr" over a single note is a trill on that note, and the difference
+	// from one held four bars is the whole instruction.
+	raw := built(t, [2]string{"4", "4"}, "C", fourNotes(),
+		eventOn("voice", "TrillEventDefinition",
+			[2]string{"position", "0"}, [2]string{"duration", "0"}))
+
+	tr := marksOf(read(t, raw)[0].Parts[0].
+		Measures[0].Voices[0].Elements[0]).Trill
+	if tr == nil || !tr.Start || !tr.Stop {
+		t.Errorf("a trill on one note came out as %v", tr)
+	}
+}
+
+func TestAFermataIsHeldByEverybody(t *testing.T) {
+	// It is on the stream the whole system shares, because the orchestra
+	// holds together.
+	raw := built(t, [2]string{"4", "4"}, "C", fourNotes(),
+		eventWith("global", "PauseEventDefinition",
+			[][2]string{{"position", "2"}, {"duration", "0"}},
+			"pauseData", [2]string{"pauseType", "kFermata"}))
+
+	p := read(t, raw)[0].Parts[0]
+	held := false
+	for _, a := range marksOf(p.Measures[0].Voices[0].Elements[2]).Articulations {
+		if a == model.Fermata {
+			held = true
+		}
+	}
+	if !held {
+		t.Error("the third note carries no fermata")
+	}
+}
+
+func TestARehearsalMarkCountsAlongWithTheOthers(t *testing.T) {
+	// Stored as a place in the sequence rather than as the letter, so
+	// that putting one in before it renumbers the rest instead of leaving
+	// the page reading A, B, D, C.
+	raw := built(t, [2]string{"4", "4"}, "C", []played{
+		{at: "0", dur: "4", pitch: 60},
+		{at: "4", dur: "4", pitch: 62},
+	}, eventOn("global", "RehearsalMarkEventDefinition",
+		[2]string{"position", "4"}, [2]string{"duration", "0"}))
+
+	p := read(t, raw)[0].Parts[0]
+	if !p.Measures[1].MarkerAuto {
+		t.Error("the second bar carries no rehearsal mark")
+	}
+	if p.Measures[0].MarkerAuto {
+		t.Error("the first bar carries one it should not")
+	}
+}
+
+func TestTheWordsOverTheMusicAreKept(t *testing.T) {
+	// A Dorico text is a document — paragraphs of fragments, each with
+	// its own styling — because somebody may have written a sentence in
+	// three fonts. What gscore keeps is the words.
+	raw := builtWithText(t, "dolce")
+	got := marksOf(read(t, raw)[0].Parts[0].
+		Measures[0].Voices[0].Elements[0]).Texts
+	if len(got) != 1 || got[0].Text != "dolce" {
+		t.Errorf("the note carries %v, want dolce", got)
+	}
+}
+
+func TestPizzAndArcoAreWrittenAsWords(t *testing.T) {
+	raw := built(t, [2]string{"4", "4"}, "C", fourNotes(),
+		eventOn("voice", "PlayingTechniqueEventDefinition",
+			[2]string{"position", "0"}, [2]string{"duration", "0"},
+			[2]string{"appearanceEntityID", "pta.pizzText"}),
+		eventOn("voice", "PlayingTechniqueEventDefinition",
+			[2]string{"position", "2"}, [2]string{"duration", "0"},
+			[2]string{"appearanceEntityID", "pta.arcoText"}))
+
+	els := read(t, raw)[0].Parts[0].Measures[0].Voices[0].Elements
+	if got := marksOf(els[0]).Texts; len(got) != 1 || got[0].Text != "pizz." {
+		t.Errorf("the first note carries %v, want pizz.", got)
+	}
+	if got := marksOf(els[2]).Texts; len(got) != 1 || got[0].Text != "arco" {
+		t.Errorf("the third note carries %v, want arco", got)
+	}
+}
+
+func TestAnOctaveLineIsDrawnAndNothingIsShiftedAgain(t *testing.T) {
+	// Dorico stores what sounds, so the notes under the line are already
+	// up there: the bracket is drawn and the pitches are left alone.
+	raw := built(t, [2]string{"4", "4"}, "C", fourNotes(),
+		eventOn("voice", "OttavaLineEventDefinition",
+			[2]string{"position", "0"}, [2]string{"duration", "3"},
+			[2]string{"entityID", "line.ottava.up.8"}))
+
+	els := read(t, raw)[0].Parts[0].Measures[0].Voices[0].Elements
+	o := marksOf(els[0]).Octave
+	if o == nil || !o.Start || o.Amount != 1 {
+		t.Fatalf("the line does not open on the first note: %v", o)
+	}
+	if !o.SoundsAsWritten {
+		t.Error("the notes under the line would be shifted a second time")
+	}
+	if end := marksOf(els[3]).Octave; end == nil || !end.Stop {
+		t.Errorf("the line does not close on the fourth note: %v", end)
+	}
+}
+
+func TestFineIsASignAndNotAWord(t *testing.T) {
+	raw := built(t, [2]string{"4", "4"}, "C", []played{
+		{at: "0", dur: "4", pitch: 60},
+		{at: "4", dur: "4", pitch: 62},
+	}, eventOn("global", "RepeatMarkerEventDefinition",
+		[2]string{"position", "4"}, [2]string{"duration", "0"},
+		[2]string{"sectionType", "kFine"}))
+
+	if got := read(t, raw)[0].Parts[0].Measures[1].Sign; got != model.Fine {
+		t.Errorf("the second bar carries %v, want Fine", got)
+	}
+}
+
+func TestABarRepeatBelongsToOneStaff(t *testing.T) {
+	// A drummer repeating a bar while the horns play something new is the
+	// ordinary case, and in fact most of what the sign is for.
+	raw := built(t, [2]string{"4", "4"}, "C", []played{
+		{at: "0", dur: "4", pitch: 60},
+		{at: "4", dur: "4", pitch: 62},
+	}, eventOn("stave", "GenerativeBarRepeatEventDefinition",
+		[2]string{"position", "4"}, [2]string{"duration", "4"},
+		[2]string{"numberOfBarsToRepeat", "k1"}))
+
+	p := read(t, raw)[0].Parts[0]
+	if p.Measures[1].Repeat != 1 {
+		t.Errorf("the second bar repeats %d bars, want 1", p.Measures[1].Repeat)
+	}
+	if p.Measures[0].Repeat != 0 {
+		t.Error("the first bar carries a repeat sign it should not")
+	}
+}
+
+func TestAVoltaIsReadAsFirstAndSecondTimeBars(t *testing.T) {
+	// Dorico keeps the lengths of each time through in the event's
+	// property table, one entry a segment.
+	raw := builtWithVolta(t)
+	p := read(t, raw)[0].Parts[0]
+	first, second := p.Measures[1].Ending, p.Measures[2].Ending
+	if first == nil || len(first.Numbers) == 0 || first.Numbers[0] != 1 {
+		t.Fatalf("the second bar is not the first time bar: %v", first)
+	}
+	if second == nil || len(second.Numbers) == 0 || second.Numbers[0] != 2 {
+		t.Fatalf("the third bar is not the second time bar: %v", second)
+	}
+	if !second.Open {
+		t.Error("the last time through still has a hook to go back for")
+	}
+}
+
+/* ---------- the cues ---------- */
+
+// builtTwoStaves is a flow of two players, the second of whom has a cue
+// taken from the first.
+//
+// Written out rather than built on top of the one-staff fixture, because
+// what is being tested is the join between two staves: which one the cue
+// is written in and which one it takes from.
+func builtTwoStaves(t *testing.T, at, dur, from string) []byte {
+	t.Helper()
+	e := newEnc()
+
+	// A bar of music for each of them.
+	voice := func(id, pitch string) int32 {
+		return e.node("block",
+			e.leaf("blockID", id),
+			e.leaf("parentEventStreamType", "kVoiceStream"),
+			e.node("events",
+				e.node("NoteEventDefinition",
+					e.leaf("position", "0"),
+					e.leaf("duration", "12"),
+					e.leaf("pitch", pitch))))
+	}
+	timeSig := e.node("BarDivisionElementDefinition",
+		e.leaf("elementID", "1"),
+		e.node("barDivisionData",
+			e.node("timeSignature",
+				e.node("timeSignaturesAndDivisions",
+					e.node("timeSignatureAndDivision",
+						e.node("timeSignature",
+							e.leaf("numerator", "4"),
+							e.leaf("denominator", "4")))))))
+	globalBlock := e.node("block",
+		e.leaf("blockID", "20"),
+		e.leaf("parentEventStreamType", "kGlobalTimebaseStream"),
+		e.node("events",
+			e.node("BarDivisionEventDefinition",
+				e.leaf("position", "0"),
+				e.leaf("duration", "0"),
+				e.leaf("barDivisionElementID", "1"))))
+
+	// The cue, on the second staff's own stream.
+	staveBlock := func(id string, cue bool) int32 {
+		var events []int32
+		if cue {
+			events = append(events, e.node("CueEventDefinition",
+				e.leaf("position", at),
+				e.leaf("duration", dur),
+				e.node("propertyTable",
+					e.node("entries",
+						e.node("entry",
+							e.leaf("propertyType", "kCuedStave"),
+							e.leaf("value", "int: "+from))))))
+		}
+		return e.node("block",
+			e.leaf("blockID", id),
+			e.leaf("parentEventStreamType", "kInstrumentStaveStream"),
+			e.node("events", events...))
+	}
+
+	player := func(pid, inst, stave, staveStream, voiceStream string) int32 {
+		return e.node("flowPlayer",
+			e.leaf("playerID", pid),
+			e.list("flowPlayerInstruments",
+				e.node("flowPlayerInstrument",
+					e.leaf("instrumentID", inst),
+					e.list("staveStreamInfos",
+						e.node("staveStreamInfo",
+							e.leaf("staveStreamID", staveStream),
+							e.leaf("instrumentID", inst),
+							e.leaf("staveID", stave))),
+					e.list("voiceStreamInfos",
+						e.node("voiceStreamInfo",
+							e.leaf("voiceStreamID", voiceStream),
+							e.leaf("instrumentID", inst),
+							e.leaf("defaultLogicalStaveID", stave))))))
+	}
+
+	stream := func(id, instance, kind string) int32 {
+		return e.node("eventStream",
+			e.leaf("streamID", id),
+			e.leaf("blockInstanceIDs", instance),
+			e.leaf("eventStreamType", kind))
+	}
+	instance := func(id, block string) int32 {
+		return e.node("blockInstance",
+			e.leaf("blockInstanceID", id),
+			e.leaf("blockID", block),
+			e.leaf("position", "0"))
+	}
+
+	flow := e.node("flow",
+		e.leaf("flowID", "0"),
+		e.leaf("flowName", "A movement"),
+		e.list("flowPlayers",
+			player("0", "0", "0", "10", "1"),
+			player("1", "1", "1", "11", "2")),
+		e.list("elementTables",
+			e.node("BarDivisionElementTableDefinition",
+				e.node("array", timeSig))),
+		e.list("blocks",
+			voice("30", "60"), voice("31", "67"),
+			globalBlock, staveBlock("40", false), staveBlock("41", true)),
+		e.list("blockInstances",
+			instance("100", "30"), instance("101", "31"),
+			instance("200", "20"),
+			instance("300", "40"), instance("301", "41")),
+		e.list("eventStreams",
+			stream("1", "100", "kVoiceStream"),
+			stream("2", "101", "kVoiceStream"),
+			stream("0", "200", "kGlobalTimebaseStream"),
+			stream("10", "300", "kInstrumentStaveStream"),
+			stream("11", "301", "kInstrumentStaveStream")))
+
+	root := e.node("kScore",
+		e.leaf("fileVersion", "1.1417"),
+		e.list("scorePlayers",
+			e.node("scorePlayer",
+				e.leaf("playerID", "0"),
+				e.leaf("baseName", "Violin I")),
+			e.node("scorePlayer",
+				e.leaf("playerID", "1"),
+				e.leaf("baseName", "Flute 1"))),
+		e.list("flows", flow))
+
+	return project(e.bytes(root), "")
+}
+
+// builtWithCue is two staves, the second cueing the first for two bars.
+//
+// A cue names a staff to take from and a stretch to take, and holds no
+// music of its own — which is also how gscore keeps one, so nothing is
+// copied in the reading.
+func builtWithCue(t *testing.T, at, dur, from string) []byte {
+	t.Helper()
+	return builtTwoStaves(t, at, dur, from)
+}
+
+func TestACueSaysWhichBarsOfWhoseLine(t *testing.T) {
+	raw := builtWithCue(t, "4", "8", "0")
+	s := read(t, raw)[0]
+	if len(s.Sheets) != 1 {
+		t.Fatalf("%d parts carry cues, want 1", len(s.Sheets))
+	}
+	sh := s.Sheets[0]
+	if len(sh.Cues) != 1 {
+		t.Fatalf("the part carries %d cues, want 1", len(sh.Cues))
+	}
+	c := sh.Cues[0]
+	if c.At != 1 || c.Bars != 2 {
+		t.Errorf("the cue covers bars %d to %d, want the second and third",
+			c.At+1, c.At+c.Bars)
+	}
+	if c.From != 0 {
+		t.Errorf("the cue is taken from staff %d, want the first", c.From)
+	}
+	// And the part it belongs to is the staff that was cued, not the one
+	// the notes came from.
+	if len(sh.Staves) != 1 || sh.Staves[0] != 1 {
+		t.Errorf("the cue was put in the part for staff %v", sh.Staves)
+	}
+}
+
+func TestACueHoldsNoMusicOfItsOwn(t *testing.T) {
+	// The other player's line already stands on its own staff. A cue that
+	// copied it would be a copy to keep in step, and printed in the score
+	// it would be the same music twice.
+	raw := builtWithCue(t, "4", "8", "0")
+	s := read(t, raw)[0]
+	for _, p := range s.Parts {
+		for i, m := range p.Measures {
+			for _, v := range m.Voices {
+				for _, el := range v.Elements {
+					if mk := marksOf(el); mk != nil && mk.Small {
+						t.Fatalf("%s bar %d holds cue-sized music in the "+
+							"score itself", p.Name, i+1)
+					}
+				}
+			}
+		}
+	}
+}
+
+func TestACueFromAStaffThatIsNotThereIsReported(t *testing.T) {
+	raw := builtWithCue(t, "4", "8", "77")
+	scores, err := Import(bytes.NewReader(raw))
+	if len(scores) == 0 {
+		t.Fatal("the music was thrown away over a cue")
+	}
+	if len(scores[0].Sheets) != 0 {
+		t.Error("a cue was written from a staff that is not in the flow")
+	}
+	pe, ok := err.(*PartialError)
+	if !ok {
+		t.Fatalf("nothing was reported: %v", err)
+	}
+	found := false
+	for _, line := range pe.Details() {
+		if strings.Contains(line, "cue") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("the report says %v", pe.Details())
 	}
 }

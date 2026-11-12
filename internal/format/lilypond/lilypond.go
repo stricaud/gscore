@@ -521,11 +521,11 @@ func (e *writer) after(st *state, el model.Element, m *model.Marks) string {
 	// came from, a passage copied out of the middle of one. LilyPond stops
 	// and complains at a stray close; gscore knows there is nothing open
 	// and simply does not write it.
-	if m.SlurStop && st.slurs > 0 {
+	if m.SlurStop > 0 && st.slurs > 0 {
 		b.WriteString(")")
 		st.slurs--
 	}
-	if m.SlurStart {
+	if m.SlurStart > 0 {
 		b.WriteString("(")
 		st.slurs++
 	}

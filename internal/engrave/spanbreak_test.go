@@ -74,8 +74,8 @@ func TestASlurBrokenOverASystemStaysOnItsOwnSystem(t *testing.T) {
 	for i, m := range ms {
 		n := m.Voices[0].Elements[0].(*model.Note)
 		n.TieStart, n.TieStop = false, false
-		n.SlurStart = i == 0
-		n.SlurStop = i == len(ms)-1
+		n.SlurStart = model.SlurEnd(i == 0)
+		n.SlurStop = model.SlurEnd(i == len(ms)-1)
 	}
 
 	opt := DefaultOptions()
@@ -129,7 +129,7 @@ func stemmedPhrase(bars int) *model.Score {
 	}
 	first := p.Measures[0].Voices[0].Elements[0].(*model.Note)
 	last := p.Measures[bars-1].Voices[0].Elements[3].(*model.Note)
-	first.SlurStart, last.SlurStop = true, true
+	first.SlurStart, last.SlurStop = 1, 1
 	return &model.Score{
 		Tempo: model.Tempo{BPM: 120, Unit: model.Duration{Num: 1, Den: 4}},
 		Parts: []*model.Part{p},

@@ -57,9 +57,9 @@ func TestATieAndASlurSayWhereTheyAre(t *testing.T) {
 			n.TieStart = true
 		case 1:
 			n.TieStop = true
-			n.SlurStart = true
+			n.SlurStart = 1
 		case 3:
-			n.SlurStop = true
+			n.SlurStop = 1
 		}
 	}, 4)
 
@@ -167,10 +167,10 @@ func TestBothHalvesOfABrokenCurveKnowWhereItRuns(t *testing.T) {
 	for i := 0; i < 24; i++ {
 		n := &model.Note{Pitch: model.Pitch{Step: model.StepG, Octave: 4}, Dur: whole}
 		if i == 2 {
-			n.SlurStart = true
+			n.SlurStart = 1
 		}
 		if i == 14 {
-			n.SlurStop = true
+			n.SlurStop = 1
 		}
 		p.Measures = append(p.Measures, &model.Measure{
 			Voices: []*model.Voice{{Elements: []model.Element{n}}}})

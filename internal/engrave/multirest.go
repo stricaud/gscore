@@ -231,7 +231,7 @@ func bareRest(el model.Element) bool {
 		m.Trill == nil && m.Hairpin == nil && m.Octave == nil &&
 		m.Chord == nil && m.Grace == nil &&
 		m.Dynamic == model.DynamicNone &&
-		!m.TieStart && !m.TieStop && !m.SlurStart && !m.SlurStop
+		!m.TieStart && !m.TieStop && m.SlurStart == 0 && m.SlurStop == 0
 }
 
 // drawMultiRest draws the sign that stands for a run of silent bars: the

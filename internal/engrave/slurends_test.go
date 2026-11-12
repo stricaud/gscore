@@ -43,8 +43,8 @@ func phrase(t *testing.T, steps []model.Step, octaves []int) (*Layout, []*model.
 		notes = append(notes, n)
 		m.Voices[0].Elements = append(m.Voices[0].Elements, n)
 	}
-	notes[0].Marks.SlurStart = true
-	notes[len(notes)-1].Marks.SlurStop = true
+	notes[0].Marks.SlurStart = 1
+	notes[len(notes)-1].Marks.SlurStop = 1
 	return Engrave(s, DefaultOptions()), notes
 }
 
@@ -175,8 +175,8 @@ func TestASlurGoesRoundTheMarksOnItsOwnNotes(t *testing.T) {
 			m.Voices[0].Elements = append(m.Voices[0].Elements, n)
 		}
 		els := m.Voices[0].Elements
-		els[0].(*model.Note).Marks.SlurStart = true
-		els[2].(*model.Note).Marks.SlurStop = true
+		els[0].(*model.Note).Marks.SlurStart = 1
+		els[2].(*model.Note).Marks.SlurStop = 1
 		return Engrave(s, DefaultOptions())
 	}
 

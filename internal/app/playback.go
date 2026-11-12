@@ -406,7 +406,7 @@ func buildPlayback(s *model.Score) Playback {
 					}
 					// The note a slur begins on is inside it, so this is read
 					// before the note is sounded and closed after.
-					if mk != nil && mk.SlurStart {
+					if mk != nil && mk.SlurStart > 0 {
 						slurring = true
 					}
 
@@ -436,7 +436,7 @@ func buildPlayback(s *model.Score) Playback {
 							// nothing at all.
 							addNote(&out, open, &n.Marks, sounding(p, n.Pitch, shift),
 								vt+gd, d-gd, pi, ref, p.Instrument, loud, n.Percussion,
-								slurring && !n.SlurStop)
+								slurring && n.SlurStop == 0)
 						} else if n.Tremolo != nil {
 							addTremolo(&out, n.Tremolo,
 								[]model.Pitch{sounding(p, n.Pitch, shift)},
@@ -451,7 +451,7 @@ func buildPlayback(s *model.Score) Playback {
 						} else {
 							addNote(&out, open, &n.Marks, sounding(p, n.Pitch, shift),
 								vt+gd, d-gd, pi, ref, p.Instrument, loud, n.Percussion,
-								slurring && !n.SlurStop)
+								slurring && n.SlurStop == 0)
 						}
 					case *model.Chord:
 						if n.Dynamic != model.DynamicNone {
@@ -492,7 +492,7 @@ func buildPlayback(s *model.Score) Playback {
 						for _, cn := range n.Notes {
 							addNote(&out, open, &n.Marks, sounding(p, cn.Pitch, shift),
 								vt+gd, d-gd, pi, ref, p.Instrument, loud, cn.Percussion,
-								slurring && !n.SlurStop)
+								slurring && n.SlurStop == 0)
 						}
 					}
 					if mk != nil {
@@ -512,7 +512,7 @@ func buildPlayback(s *model.Score) Playback {
 						if mk.Trill != nil && mk.Trill.Stop {
 							trilling = false
 						}
-						if mk.SlurStop {
+						if mk.SlurStop > 0 {
 							slurring = false
 						}
 					}

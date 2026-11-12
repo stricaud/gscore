@@ -169,15 +169,15 @@ func TestTheVelocityLadder(t *testing.T) {
 func TestASlurJoinsTheEntriesItNames(t *testing.T) {
 	score := read1(t, fixture(t, enigmaMarks))
 
-	if !marksAt(t, score, 0).SlurStart {
+	if marksAt(t, score, 0).SlurStart == 0 {
 		t.Error("the slur does not begin on the first note")
 	}
-	if !marksAt(t, score, 2).SlurStop {
+	if marksAt(t, score, 2).SlurStop == 0 {
 		t.Error("the slur does not end on the third note")
 	}
 	// And not on the note in between, which is under it rather than at
 	// either end of it.
-	if mk := marksAt(t, score, 1); mk.SlurStart || mk.SlurStop {
+	if mk := marksAt(t, score, 1); mk.SlurStart > 0 || mk.SlurStop > 0 {
 		t.Error("the note under the slur was given an end of it")
 	}
 }

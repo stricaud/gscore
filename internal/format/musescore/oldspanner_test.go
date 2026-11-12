@@ -150,7 +150,7 @@ func TestTheBarsSlurElementIsNotComplainedAbout(t *testing.T) {
 		`<Note><pitch>62</pitch><tpc>16</tpc></Note></Chord></Measure>`))
 
 	got := marksOfBar(s, 0, 0)
-	if !got[0].SlurStart || !got[1].SlurStop {
+	if got[0].SlurStart == 0 || got[1].SlurStop == 0 {
 		t.Errorf("the slur came out %v..%v, want it held across the pair",
 			got[0].SlurStart, got[1].SlurStop)
 	}

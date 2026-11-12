@@ -3931,14 +3931,14 @@ func (a *App) handleSlur(w http.ResponseWriter, r *http.Request) {
 		ends := r.URL.Query().Get("ends") != ""
 		for i, m := range marks {
 			if !ends {
-				m.SlurStart, m.SlurStop = false, false
+				m.SlurStart, m.SlurStop = 0, 0
 				continue
 			}
 			if i == 0 {
-				m.SlurStart = false
+				m.SlurStart = 0
 			}
 			if i == len(marks)-1 {
-				m.SlurStop = false
+				m.SlurStop = 0
 			}
 		}
 		writeJSON(w, map[string]int{"changed": len(marks)})
@@ -3950,8 +3950,8 @@ func (a *App) handleSlur(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	for i, m := range marks {
-		m.SlurStart = i == 0
-		m.SlurStop = i == len(marks)-1
+		m.SlurStart = model.SlurEnd(i == 0)
+		m.SlurStop = model.SlurEnd(i == len(marks)-1)
 	}
 	writeJSON(w, map[string]int{"changed": len(marks)})
 }
@@ -6331,7 +6331,7 @@ func readMarks(n *noteContents, m *model.Marks) {
 		n.ChordSymbol = m.Chord.String()
 	}
 	n.TieStart, n.TieStop = m.TieStart, m.TieStop
-	n.SlurStart, n.SlurStop = m.SlurStart, m.SlurStop
+	n.SlurStart, n.SlurStop = m.SlurStart > 0, m.SlurStop > 0
 	if m.Hairpin != nil {
 		n.Hairpin = hairpinWord(m.Hairpin)
 	}

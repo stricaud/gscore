@@ -312,7 +312,7 @@ func (e *engraver) graceSlurAnchor(part *model.Part, p *placed) (x float64, step
 	// be, and the file is the authority.
 	i := -1
 	for k, n := range m.Grace.Notes {
-		if n.Marks.SlurStart {
+		if n.Marks.SlurStart > 0 {
 			i = k
 			break
 		}

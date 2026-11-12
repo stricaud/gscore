@@ -60,12 +60,12 @@ func appoggiatura(t *testing.T, grace []at, main, next at) *Layout {
 	for _, p := range grace {
 		small = append(small, note(p))
 	}
-	small[0].SlurStart = true
+	small[0].SlurStart = 1
 
 	lean := note(main)
 	lean.Grace = &model.GraceGroup{Notes: small}
 	end := note(next)
-	end.SlurStop = true
+	end.SlurStop = 1
 
 	v := &model.Voice{Elements: []model.Element{lean, end}}
 	score := &model.Score{Parts: []*model.Part{{
@@ -165,11 +165,11 @@ func TestAGraceSlurDoesNotPushTheStavesApart(t *testing.T) {
 		lean := note(model.StepE, 4)
 		if withGrace {
 			small := note(model.StepG, 4)
-			small.SlurStart = true
+			small.SlurStart = 1
 			lean.Grace = &model.GraceGroup{Notes: []*model.Note{small}}
 		}
 		end := note(model.StepD, 4)
-		end.SlurStop = withGrace
+		end.SlurStop = model.SlurEnd(withGrace)
 		v := &model.Voice{Elements: []model.Element{lean, end}}
 		return &model.Part{
 			Clef:     model.Treble,

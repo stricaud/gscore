@@ -77,8 +77,10 @@ const resumeRoom = 1.6
 // again, which is what the room at the head of a system is reserved for.
 func (e *engraver) carriedCurves() bool {
 	for _, open := range e.spans {
-		if open.slur != nil && open.slur.x < 0 {
-			return true
+		for _, sl := range open.slurs {
+			if sl.x < 0 {
+				return true
+			}
 		}
 		for _, t := range open.ties {
 			if t.x < 0 {
@@ -311,9 +313,9 @@ func (e *engraver) breakSpansOf(open *openSpans, right float64) {
 	}
 	// A slur that runs over a line break is drawn to the margin and picked
 	// up again on the next line, which is how it is written on paper.
-	if open.slur != nil {
-		e.drawTieOrSlur(open.slur, right, open.slur.y, slurLift, true, false)
-		open.slur.x = -1
+	for _, sl := range open.slurs {
+		e.drawTieOrSlur(sl, right, sl.y, slurLift, true, false)
+		sl.x = -1
 	}
 	// Up the staff, for the same reason: a chord held over a line break
 	// leaves one stub per note, and which was drawn first decided the order
@@ -360,9 +362,11 @@ func (e *engraver) resumeSpansOf(open *openSpans, left float64) {
 	if open.trill != nil && open.trill.x < 0 {
 		open.trill.x = left
 	}
-	if open.slur != nil && open.slur.x < 0 {
-		open.slur.x = left
-		open.slur.y = e.y + open.slur.rel
+	for _, sl := range open.slurs {
+		if sl.x < 0 {
+			sl.x = left
+			sl.y = e.y + sl.rel
+		}
 	}
 	for _, t := range open.ties {
 		if t.x < 0 {
@@ -775,11 +779,13 @@ func (e *engraver) slurAt(part *model.Part, m *model.Marks, p *placed, measure i
 	// Which way this note's stem points, counted into whatever slur is open
 	// so that the side can be settled from the phrase rather than from the
 	// note it happened to begin on.
-	if open.slur != nil {
+	// Into every phrase that is open, since each of them is deciding its
+	// own side from the stems of the notes it covers.
+	for _, sl := range open.slurs {
 		if e.stemUp(p) {
-			open.slur.up++
+			sl.up++
 		} else {
-			open.slur.down++
+			sl.down++
 		}
 	}
 
@@ -797,10 +803,10 @@ func (e *engraver) slurAt(part *model.Part, m *model.Marks, p *placed, measure i
 	// An appoggiatura's slur starts on the small note and stops on this
 	// one, so it has to be opened before the closing below or the stop
 	// finds nothing open and the curve is never drawn.
-	if open.slur == nil {
+	if len(open.slurs) == 0 {
 		if gx, gstep, gstem, ok := e.graceSlurAnchor(part, p); ok {
 			gy := e.y + stepY(float64(gstep))
-			open.slur = &openSpan{
+			open.slurs = append(open.slurs, &openSpan{
 				x: gx, y: gy, rel: gy - e.y, above: true,
 				fromHi: gstep, fromLo: gstep,
 				// A grace note's stem always points up, whatever the note
@@ -811,12 +817,13 @@ func (e *engraver) slurAt(part *model.Part, m *model.Marks, p *placed, measure i
 				// down and ending at y zero — the top of the drawing.
 				fromStemUp: true, fromStemY: gstem,
 				ref: p.index, part: e.partIndex, measure: measure,
-			}
+			})
 		}
 	}
 
-	if m.SlurStop && open.slur != nil {
-		sl := open.slur
+	for n := m.SlurStop; n > 0 && len(open.slurs) > 0; n-- {
+		// The innermost: the one opened most recently and still open.
+		sl := open.slurs[len(open.slurs)-1]
 		// A slur that came over a line break has no note at its left end.
 		//
 		// That end is the margin this system started at, put there by
@@ -875,9 +882,9 @@ func (e *engraver) slurAt(part *model.Part, m *model.Marks, p *placed, measure i
 		sl.toRef = p.index
 		toY := e.slurEndClear(x, toBase, sl.above)
 		e.drawTieOrSlur(sl, x, toY, slurLift, true, true)
-		open.slur = nil
+		open.slurs = open.slurs[:len(open.slurs)-1]
 	}
-	if m.SlurStart && open.slur == nil {
+	for n := m.SlurStart; n > 0; n-- {
 		edge := p.hi
 		if !above {
 			edge = p.lo
@@ -888,16 +895,17 @@ func (e *engraver) slurAt(part *model.Part, m *model.Marks, p *placed, measure i
 		if !up {
 			base = e.y + stepY(float64(p.lo))
 		}
-		open.slur = &openSpan{
+		sl := &openSpan{
 			x: x, y: y, rel: y - e.y, above: above,
 			fromHi: p.hi, fromLo: p.lo,
 			fromStemUp: up, fromStemY: e.stemEnd(base, up),
 			ref: p.index, part: e.partIndex, measure: measure,
 		}
+		open.slurs = append(open.slurs, sl)
 		if e.stemUp(p) {
-			open.slur.up++
+			sl.up++
 		} else {
-			open.slur.down++
+			sl.down++
 		}
 	}
 

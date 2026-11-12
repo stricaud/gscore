@@ -379,11 +379,11 @@ func applyMarks(out *xmlNote, m *model.Marks) {
 		notations.Tied = append(notations.Tied, tieElem{Type: "start"})
 		used = true
 	}
-	if m.SlurStop {
+	if m.SlurStop > 0 {
 		notations.Slurs = append(notations.Slurs, slurElem{Type: "stop", Number: 1})
 		used = true
 	}
-	if m.SlurStart {
+	if m.SlurStart > 0 {
 		notations.Slurs = append(notations.Slurs, slurElem{Type: "start", Number: 1})
 		used = true
 	}

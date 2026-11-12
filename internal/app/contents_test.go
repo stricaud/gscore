@@ -103,7 +103,7 @@ func TestWhatIsWrittenOnANoteIsRead(t *testing.T) {
 	m.Lyrics = []model.Lyric{{Text: "glo", Verse: 1}}
 	m.Texts = []model.TextMark{{Text: "dolce"}}
 	m.Chord = &model.ChordSymbol{Root: "C", Quality: "m7"}
-	m.SlurStart = true
+	m.SlurStart = 1
 	m.TieStart = true
 
 	n := contentsOf(t, h)[0].Measures[0].Notes[0]

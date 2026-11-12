@@ -37,10 +37,10 @@ func runScore(steps []model.Step, octaves []int) *model.Score {
 			Dur:   model.Duration{Num: 1, Den: 16},
 		}
 		if i == 0 {
-			n.SlurStart = true
+			n.SlurStart = 1
 		}
 		if i == len(steps)-1 {
-			n.SlurStop = true
+			n.SlurStop = 1
 		}
 		v.Elements = append(v.Elements, n)
 	}
@@ -129,7 +129,7 @@ func TestATieArcsAwayFromTheBeam(t *testing.T) {
 	// The same question for a tie, which takes the same path.
 	s := risingRun()
 	notes := notesOfScore(s)
-	notes[0].SlurStart, notes[len(notes)-1].SlurStop = false, false
+	notes[0].SlurStart, notes[len(notes)-1].SlurStop = 0, 0
 	notes[6].Pitch = notes[7].Pitch
 	notes[6].TieStart, notes[7].TieStop = true, true
 
@@ -188,7 +188,7 @@ func TestArticulationsFollowTheGroupsStem(t *testing.T) {
 	// side away from the stem, and it asked the note rather than the beam.
 	s := risingRun()
 	notes := notesOfScore(s)
-	notes[0].SlurStart, notes[len(notes)-1].SlurStop = false, false
+	notes[0].SlurStart, notes[len(notes)-1].SlurStop = 0, 0
 	for _, n := range notes {
 		n.AddArticulation(model.Staccato)
 	}

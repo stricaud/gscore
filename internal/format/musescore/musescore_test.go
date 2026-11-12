@@ -286,7 +286,7 @@ func TestNotesRestsAndTheirMarks(t *testing.T) {
 	if n0.Dynamic != model.MF {
 		t.Errorf("the dynamic is %v", n0.Dynamic)
 	}
-	if !n0.SlurStart {
+	if n0.SlurStart == 0 {
 		t.Error("the slur does not start on the first note")
 	}
 	if len(n0.Lyrics) != 1 || n0.Lyrics[0].Text != "Hel" ||
@@ -356,7 +356,7 @@ func TestTupletsChordsAndGraceNotes(t *testing.T) {
 	if len(c.Notes) != 2 {
 		t.Errorf("the chord has %d notes", len(c.Notes))
 	}
-	if !c.SlurStop {
+	if c.SlurStop == 0 {
 		t.Error("the slur does not close on the chord")
 	}
 	// A grace note takes no time out of the bar, so it hangs off the note it

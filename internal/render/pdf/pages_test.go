@@ -67,12 +67,12 @@ func aSong(bars int) *model.Score {
 			}
 			switch k {
 			case 0:
-				n.SlurStart = true
+				n.SlurStart = 1
 				if i%16 == 0 {
 					n.Dynamic = model.Forte
 				}
 			case 3:
-				n.SlurStop = true
+				n.SlurStop = 1
 			}
 			els = append(els, n)
 		}

@@ -446,8 +446,8 @@ func (w *walker) span(name string, t *tag, first, last int) {
 	switch name {
 	case "slur", "sl":
 		w.over(first, last, func(mk *model.Marks, isFirst, isLast bool) {
-			mk.SlurStart = mk.SlurStart || isFirst
-			mk.SlurStop = mk.SlurStop || isLast
+			mk.SlurStart = model.MoreSlurs(mk.SlurStart, model.SlurEnd(isFirst))
+			mk.SlurStop = model.MoreSlurs(mk.SlurStop, model.SlurEnd(isLast))
 		})
 	case "tie":
 		// A tie joins each note to the next, so every note of the group but

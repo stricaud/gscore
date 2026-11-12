@@ -1848,8 +1848,8 @@ func (r *reader) shapes() {
 				// both ends on one note would be a curve over no music.
 				continue
 			}
-			from.SlurStart = true
-			to.SlurStop = true
+			from.SlurStart = 1
+			to.SlurStop = 1
 		case sh.ShapeType == "cresc", sh.ShapeType == "decresc":
 			kind := model.Crescendo
 			if sh.ShapeType == "decresc" {

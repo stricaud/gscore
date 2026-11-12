@@ -77,7 +77,7 @@ func crowded() *model.Score {
 	a.Dynamic = model.Forte
 	a.Octave = &model.OctaveShift{Amount: 1, Start: true}
 	a.Hairpin = &model.Hairpin{Kind: model.Crescendo, Start: true}
-	a.SlurStart = true
+	a.SlurStart = 1
 
 	b := note(model.StepA, 6)
 	c := note(model.StepB, 6)
@@ -85,7 +85,7 @@ func crowded() *model.Score {
 	d := note(model.StepG, 6)
 	d.Octave = &model.OctaveShift{Amount: 1, Stop: true}
 	d.Hairpin = &model.Hairpin{Kind: model.Crescendo, Stop: true}
-	d.SlurStop = true
+	d.SlurStop = 1
 	d.Dynamic = model.FF
 
 	return &model.Score{
@@ -227,8 +227,8 @@ func archedPhrase() *model.Score {
 	v := &model.Voice{}
 	for i, st := range steps {
 		n := &model.Note{Pitch: model.Pitch{Step: st.s, Octave: st.o}, Dur: q}
-		n.SlurStart = i == 0
-		n.SlurStop = i == len(steps)-1
+		n.SlurStart = model.SlurEnd(i == 0)
+		n.SlurStop = model.SlurEnd(i == len(steps)-1)
 		v.Elements = append(v.Elements, n)
 	}
 	return &model.Score{

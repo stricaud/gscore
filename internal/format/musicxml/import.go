@@ -959,8 +959,8 @@ func joinChordMarks(dst, src *model.Marks) {
 	}
 	// A slur drawn from inside a chord is a slur from the chord: there is
 	// one curve, however many noteheads it was written against.
-	dst.SlurStart = dst.SlurStart || src.SlurStart
-	dst.SlurStop = dst.SlurStop || src.SlurStop
+	dst.SlurStart = model.MoreSlurs(dst.SlurStart, src.SlurStart)
+	dst.SlurStop = model.MoreSlurs(dst.SlurStop, src.SlurStop)
 	dst.Lyrics = append(dst.Lyrics, src.Lyrics...)
 	dst.Fingering = append(dst.Fingering, src.Fingering...)
 	dst.Texts = append(dst.Texts, src.Texts...)
@@ -1741,12 +1741,17 @@ func applyNotations(n *model.Marks, xn *xmlNote) {
 				n.TieStop = true
 			}
 		}
+		// Counted, not set. A note may begin or end more than one curve
+		// — MusicXML numbers them for exactly that reason, and the
+		// specification's own 33c sample opens slur 1, opens slur 2 inside
+		// it, and closes them in the other order. Set rather than counted,
+		// the inner phrase was read as the outer one again and drawn once.
 		for _, sl := range nt.Slurs {
 			switch sl.Type {
 			case "start":
-				n.SlurStart = true
+				n.SlurStart++
 			case "stop":
-				n.SlurStop = true
+				n.SlurStop++
 			}
 		}
 		if nt.Fermata != nil {

@@ -344,6 +344,28 @@ func (d Dynamic) Velocity() int {
 	return 0
 }
 
+// SlurEnd counts one curve end, for a format that says only whether there
+// is one.
+//
+// Nearly every file says exactly that — a bit, a tag, a bracket — and a
+// reader that has one of those wants a count of one or of none. Readers
+// that can say more, such as Dorico's, count for themselves.
+func SlurEnd(yes bool) int {
+	if yes {
+		return 1
+	}
+	return 0
+}
+
+// MoreSlurs is the greater of two counts, for merging what two readings of
+// the same note said about it.
+func MoreSlurs(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
+}
+
 // Marks are the attachments a note or a chord can carry. They are shared
 // because an articulation or a slur applies to a chord as a whole, not to one
 // of its noteheads.
@@ -381,9 +403,25 @@ type Marks struct {
 	// a measure.
 	TieStart, TieStop bool
 
-	// SlurStart and SlurStop bracket a phrase, which unlike a tie may span any
-	// pitches.
-	SlurStart, SlurStop bool
+	// SlurStart and SlurStop bracket a phrase, which unlike a tie may span
+	// any pitches. They count the curves that open and close here rather
+	// than merely saying that one does.
+	//
+	// Counted, because more than one can end on a note and the difference
+	// is a curve somebody drew and the page does not show. Two cases, and
+	// both are ordinary: a long phrase with shorter ones inside it, which
+	// is how a wind line is marked under a string legato; and a grace note
+	// slurred into the note a phrase ends on, which is an appoggiatura at
+	// a cadence — the commonest thing in keyboard music of the period.
+	//
+	// Paired by nesting, innermost first: a close takes the curve opened
+	// most recently and still open. That is the right rule because slurs
+	// nest and do not cross — a phrase inside a phrase is ordinary, and
+	// two phrases overlapping halfway is not notation but a mistake. It
+	// also settles the grace note's curve without anything being said
+	// about it: the little note opens its slur after the phrase opened
+	// its own, so the little one closes first.
+	SlurStart, SlurStop int
 
 	// Tuplet is set when the element belongs to a tuplet group.
 	Tuplet *Tuplet

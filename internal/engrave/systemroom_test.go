@@ -43,11 +43,11 @@ func underlined(bars int) *model.Score {
 			}
 			if k == 0 {
 				n.Dynamic = model.Forte
-				n.SlurStart = true
+				n.SlurStart = 1
 				n.Hairpin = &model.Hairpin{Kind: model.Crescendo, Start: true}
 			}
 			if k == 3 {
-				n.SlurStop = true
+				n.SlurStop = 1
 				n.Hairpin = &model.Hairpin{Kind: model.Crescendo, Stop: true}
 			}
 			els = append(els, n)

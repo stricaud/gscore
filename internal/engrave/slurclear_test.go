@@ -69,7 +69,7 @@ func runUp(climb, fall int, from model.Pitch, dur model.Duration) *model.Score {
 	var els []model.Element
 	for i, st := range steps {
 		n := &model.Note{Pitch: model.PitchFromDiatonicIndex(st), Dur: dur}
-		n.SlurStart, n.SlurStop = i == 0, i == len(steps)-1
+		n.SlurStart, n.SlurStop = model.SlurEnd(i == 0), model.SlurEnd(i == len(steps)-1)
 		els = append(els, n)
 	}
 	p.Measures = append(p.Measures, &model.Measure{
@@ -171,7 +171,7 @@ func TestASlurClearsAFallingRun(t *testing.T) {
 	// put back on the ends after the turn.
 	for i, el := range els {
 		n := el.(*model.Note)
-		n.SlurStart, n.SlurStop = i == 0, i == len(els)-1
+		n.SlurStart, n.SlurStop = model.SlurEnd(i == 0), model.SlurEnd(i == len(els)-1)
 	}
 
 	o := DefaultOptions()
@@ -195,7 +195,7 @@ func TestAFlatPhraseKeepsItsModestArch(t *testing.T) {
 			Pitch: model.Pitch{Step: model.StepB, Octave: 4},
 			Dur:   model.Duration{Num: 1, Den: 8},
 		}
-		n.SlurStart, n.SlurStop = i == 0, i == 7
+		n.SlurStart, n.SlurStop = model.SlurEnd(i == 0), model.SlurEnd(i == 7)
 		els = append(els, n)
 	}
 	p.Measures = append(p.Measures, &model.Measure{
@@ -467,8 +467,8 @@ func TestASlurClearsTheBeamBesideItsLastNote(t *testing.T) {
 		&model.Rest{Dur: model.Duration{Num: 1, Den: 8}},
 		&model.Rest{Dur: model.Duration{Num: 1, Den: 4}})
 	els := m.Voices[0].Elements
-	els[0].(*model.Note).Marks.SlurStart = true
-	els[4].(*model.Note).Marks.SlurStop = true
+	els[0].(*model.Note).Marks.SlurStart = 1
+	els[4].(*model.Note).Marks.SlurStop = 1
 
 	lay := Engrave(s, DefaultOptions())
 	if len(lay.Quads) == 0 {
@@ -564,8 +564,8 @@ func TestASlurClearsTheOtherVoicesStems(t *testing.T) {
 		n.Marks.Stem = model.StemDown
 		down.Elements = append(down.Elements, n)
 	}
-	down.Elements[0].(*model.Note).Marks.SlurStart = true
-	down.Elements[1].(*model.Note).Marks.SlurStop = true
+	down.Elements[0].(*model.Note).Marks.SlurStart = 1
+	down.Elements[1].(*model.Note).Marks.SlurStop = 1
 	m.Voices = []*model.Voice{up, down}
 
 	lay := Engrave(s, DefaultOptions())
@@ -634,8 +634,8 @@ func TestSlursDoNotQueueUnderEachOther(t *testing.T) {
 					Dur:   model.Duration{Num: 1, Den: 4},
 				}
 				if slurAll || v == len(steps)-1 {
-					n.Marks.SlurStart = i == 0
-					n.Marks.SlurStop = i == 1
+					n.Marks.SlurStart = model.SlurEnd(i == 0)
+					n.Marks.SlurStop = model.SlurEnd(i == 1)
 				}
 				m.Voices[v].Elements = append(m.Voices[v].Elements, n)
 			}

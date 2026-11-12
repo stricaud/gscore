@@ -2,6 +2,8 @@ package gscore
 
 import (
 	"bytes"
+	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/stricaud/gscore/internal/model"
@@ -748,5 +750,82 @@ func TestRoundTripKeepsWhereAMarkIsWritten(t *testing.T) {
 	}
 	if got := back.ArticulationPlacement(1); got != model.PlacementBelow {
 		t.Errorf("the fermata came back %v, want below", got)
+	}
+}
+
+// TestNestedSlursSurviveTheFile.
+//
+// A phrase with another inside it, and a note two curves end on. They are
+// written as numbers where the file has always held true or false, so the
+// old shape has to keep working both ways: one curve is still written as
+// true, which a gscore that has not heard of more than one can still open.
+func TestNestedSlursSurviveTheFile(t *testing.T) {
+	s := model.NewScore()
+	m := s.Parts[0].Measures[0]
+	var notes []*model.Note
+	for i := 0; i < 4; i++ {
+		n := &model.Note{
+			Pitch: model.Pitch{Step: model.Step(i), Octave: 4},
+			Dur:   model.Duration{Num: 1, Den: 4},
+		}
+		notes = append(notes, n)
+		m.Voices[0].Elements = append(m.Voices[0].Elements, n)
+	}
+	notes[0].SlurStart = 1
+	notes[1].SlurStart = 1
+	notes[2].SlurStop = 1
+	notes[3].SlurStop = 2
+
+	raw, err := json.Marshal(encodeScore(s))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// One curve is still written the way it always was.
+	if !strings.Contains(string(raw), `"slurStart":true`) {
+		t.Error("a single curve is no longer written as true: an older " +
+			"gscore would not read this file")
+	}
+	if !strings.Contains(string(raw), `"slurStop":2`) {
+		t.Error("two curves ending on one note are not written as a number")
+	}
+
+	var doc scoreDoc
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatal(err)
+	}
+	back, err := decodeScore(&doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := back.Parts[0].Measures[0].Voices[0].Elements
+	for i, want := range []struct{ start, stop int }{
+		{1, 0}, {1, 0}, {0, 1}, {0, 2},
+	} {
+		n := got[i].(*model.Note)
+		if n.SlurStart != want.start || n.SlurStop != want.stop {
+			t.Errorf("note %d came back %d/%d, want %d/%d",
+				i+1, n.SlurStart, n.SlurStop, want.start, want.stop)
+		}
+	}
+}
+
+// TestAFileFromBeforeTheCountsStillOpens.
+//
+// Every .gscore in existence writes these as true and false. Read as
+// numbers without a word, they would come back as nothing at all — every
+// slur in every saved score gone.
+func TestAFileFromBeforeTheCountsStillOpens(t *testing.T) {
+	var md marksDoc
+	if err := json.Unmarshal([]byte(`{"slurStart":true,"slurStop":false}`),
+		&md); err != nil {
+		t.Fatal(err)
+	}
+	var m model.Marks
+	decodeMarks(&md, &m)
+	if m.SlurStart != 1 {
+		t.Errorf("a curve written as true came back as %d", m.SlurStart)
+	}
+	if m.SlurStop != 0 {
+		t.Errorf("false came back as %d", m.SlurStop)
 	}
 }

@@ -1297,9 +1297,9 @@ func (s *staffState) attachClef(el model.Element) {
 func (s *staffState) slurRun(m *model.Marks, joined bool) {
 	switch {
 	case joined && !s.slurOpen:
-		m.SlurStart = true
+		m.SlurStart = 1
 	case !joined && s.slurOpen:
-		m.SlurStop = true
+		m.SlurStop = 1
 	}
 	s.slurOpen = joined
 }
@@ -1937,8 +1937,8 @@ func (w *walker) objectBody(st *staffState) error {
 		// it, so the ends are the note that is joined onward without being
 		// joined back, and the note that is joined back without going on.
 		if w.dia().slurHasBothEnds {
-			n.SlurStart = nv.slurTo && !nv.slurFrom
-			n.SlurStop = nv.slurFrom && !nv.slurTo
+			n.SlurStart = model.SlurEnd(nv.slurTo && !nv.slurFrom)
+			n.SlurStop = model.SlurEnd(nv.slurFrom && !nv.slurTo)
 		} else {
 			st.slurRun(&n.Marks, nv.slurTo)
 		}
@@ -1964,10 +1964,10 @@ func (w *walker) objectBody(st *staffState) error {
 			// notes are not in it — and the note that closed the slur
 			// would be closing one that never opened.
 			for _, g := range st.grace {
-				if g.SlurStart && !n.SlurStop {
-					n.SlurStart = true
+				if g.SlurStart > 0 && n.SlurStop == 0 {
+					n.SlurStart = 1
 				}
-				g.SlurStart, g.SlurStop = false, false
+				g.SlurStart, g.SlurStop = 0, 0
 			}
 			st.grace = nil
 		}
@@ -3068,16 +3068,16 @@ func closeDanglingSpans(p *model.Part) {
 				if mk == nil {
 					continue
 				}
-				if mk.SlurStop {
+				if mk.SlurStop > 0 {
 					slurAt = nil
 				}
-				if mk.SlurStart {
+				if mk.SlurStart > 0 {
 					// A second slur where the first never ended: they meet
 					// on this note, which ends the one before it and begins
 					// the one after — which is how a run of slurs over one
 					// phrase is written, and what the engraver expects.
 					if slurAt != nil && mk != slurAt {
-						mk.SlurStop = true
+						mk.SlurStop = 1
 					}
 					slurAt = mk
 				}
@@ -3097,7 +3097,7 @@ func closeDanglingSpans(p *model.Part) {
 		}
 		if slurAt != nil && last != nil {
 			// Likewise a slur: over the one note if that is all it reached.
-			last.SlurStop = true
+			last.SlurStop = 1
 		}
 		closeWedge(last)
 	}
@@ -3110,7 +3110,7 @@ func holdsASpan(el model.Element) bool {
 	if m == nil {
 		return false
 	}
-	return m.SlurStart || m.SlurStop || m.TieStart ||
+	return m.SlurStart > 0 || m.SlurStop > 0 || m.TieStart ||
 		m.Hairpin != nil || m.Octave != nil || m.Trill != nil
 }
 
@@ -3144,7 +3144,7 @@ func holdsAMark(el model.Element) bool {
 	if m == nil {
 		return false
 	}
-	return m.SlurStart || m.SlurStop || m.TieStart || m.Hairpin != nil ||
+	return m.SlurStart > 0 || m.SlurStop > 0 || m.TieStart || m.Hairpin != nil ||
 		m.Octave != nil || m.Trill != nil || m.Clef != nil ||
 		m.Dynamic != model.DynamicNone || len(m.Texts) > 0
 }

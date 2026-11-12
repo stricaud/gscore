@@ -6,7 +6,7 @@ abc/boite-musique.abc ce670b05b3bd5c03 514
 abc/decoration.abc c8f4673a8e66ca93 31
 abc/pitch.abc 376aa6d8311eb1d1 227
 abc/sunshine.abc caeb256053161827 136
-samples/altes-10e-solo.abc a1f3a52d91703826 9775
+samples/altes-10e-solo.abc 7c5b549a8d5d65e8 9777
 samples/boite-musique.abc ce670b05b3bd5c03 514
 suite/01a-Pitches-Pitches.musicxml 5177aba21f65c2bd 548
 suite/01b-Pitches-Intervals.musicxml 6f4787733f66de48 405
@@ -91,11 +91,11 @@ suite/32e-Arpeggios-Cross.musicxml bcbfd1d0aa7d3e24 104
 suite/32e-Fermatas.musicxml 15cd5cd78b6f3854 38
 suite/33a-Spanners.musicxml 6e927c09ad1b11d6 232
 suite/33b-Spanners-Tie.musicxml 482dad1390a4953c 15
-suite/33c-Spanners-Slurs.musicxml f1109c30cb10e8b0 44
+suite/33c-Spanners-Slurs.musicxml fe8a60f69ee494a6 45
 suite/33d-Spanners-OctaveShifts.musicxml 88b47d65189b57d6 53
 suite/33e-Spanners-OctaveShifts-InvalidSize.musicxml 13386c36279433e7 32
 suite/33f-Trill-EndingOnGraceNote.musicxml 9aef1f4cbadf080a 50
-suite/33g-Slur-ChordedNotes.musicxml a3323e1ce00deb6a 24
+suite/33g-Slur-ChordedNotes.musicxml 6a9d3361df421e8f 25
 suite/33h-Spanners-Glissando.musicxml 57ccd8c8d442afb5 135
 suite/33i-Ties-NotEnded.musicxml 769ec2c063ffd4d6 27
 suite/33j-Beams-Tremolos.musicxml 884665f7d6f0a131 69

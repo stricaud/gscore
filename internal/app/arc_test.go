@@ -24,10 +24,10 @@ func marksAt(t *testing.T, h *harness) []string {
 		if m.TieStart {
 			s += "t>"
 		}
-		if m.SlurStop {
+		if m.SlurStop > 0 {
 			s += "<s"
 		}
-		if m.SlurStart {
+		if m.SlurStart > 0 {
 			s += "s>"
 		}
 		if s == "" {
@@ -92,10 +92,10 @@ func TestTakingOneSlurAwayLeavesTheNoteItMeetsStillSlurred(t *testing.T) {
 	// Written by hand, because asking twice through the API cannot say it:
 	// see the note on handleSlur.
 	els := h.app.score.Parts[0].Measures[0].Voices[0].Elements
-	marksOfElement(els[0]).SlurStart = true
-	marksOfElement(els[1]).SlurStop = true
-	marksOfElement(els[1]).SlurStart = true
-	marksOfElement(els[2]).SlurStop = true
+	marksOfElement(els[0]).SlurStart = 1
+	marksOfElement(els[1]).SlurStop = 1
+	marksOfElement(els[1]).SlurStart = 1
+	marksOfElement(els[2]).SlurStop = 1
 
 	h.post("/api/slur?slur=none&ends=1&sel=0:0:0,0:0:1")
 	sameMarks(t, marksAt(t, h), ".", "s>", "<s")

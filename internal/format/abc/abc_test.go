@@ -228,10 +228,10 @@ func TestBoiteMusiqueTwoVoices(t *testing.T) {
 	// "(e g)" opens and closes a slur, and "." marks staccato.
 	var slurStarts, slurStops, staccatos int
 	for _, n := range notesOf(s) {
-		if n.SlurStart {
+		if n.SlurStart > 0 {
 			slurStarts++
 		}
-		if n.SlurStop {
+		if n.SlurStop > 0 {
 			slurStops++
 		}
 		if n.HasArticulation(model.Staccato) {

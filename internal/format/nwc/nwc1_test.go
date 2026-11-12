@@ -568,13 +568,13 @@ func TestASlurIsASpan(t *testing.T) {
 	if len(notes) != 3 {
 		t.Fatalf("%d notes read", len(notes))
 	}
-	if !notes[0].SlurStart || notes[0].SlurStop {
+	if notes[0].SlurStart == 0 || notes[0].SlurStop > 0 {
 		t.Error("the first note does not begin the slur")
 	}
-	if notes[1].SlurStart || notes[1].SlurStop {
+	if notes[1].SlurStart > 0 || notes[1].SlurStop > 0 {
 		t.Error("the note in the middle was taken for an end of it")
 	}
-	if !notes[2].SlurStop || notes[2].SlurStart {
+	if notes[2].SlurStop == 0 || notes[2].SlurStart > 0 {
 		t.Error("the last note does not end the slur")
 	}
 }
@@ -596,7 +596,7 @@ func TestOnlyBitOneOfThatByteIsASlur(t *testing.T) {
 		}
 		st.closeMeasure(model.BarSingle)
 		n := st.part.Measures[0].Voices[0].Elements[0].(*model.Note)
-		return n.SlurStart
+		return n.SlurStart > 0
 	}
 	for _, version := range []int{175, 200, 205} {
 		if !opens(slurred, version) {
@@ -1946,9 +1946,9 @@ func TestASlurEndsOnTheNoteAfterTheLastJoinedOne(t *testing.T) {
 	for _, e := range els {
 		mk := marksOf(e)
 		switch {
-		case mk.SlurStart:
+		case mk.SlurStart > 0:
 			got += "("
-		case mk.SlurStop:
+		case mk.SlurStop > 0:
 			got += ")"
 		default:
 			got += "."
@@ -1985,8 +1985,8 @@ func TestASilencedNoteLeavesItsMarksBehind(t *testing.T) {
 		Elements: []model.Element{note(g4), note(g4)},
 	}}}}}
 	a, b := note(g4), note(g4)
-	a.SlurStart = true
-	b.SlurStop = true
+	a.SlurStart = 1
+	b.SlurStop = 1
 	lower := &model.Part{Measures: []*model.Measure{{Voices: []*model.Voice{{
 		Elements: []model.Element{a, b},
 	}}}}}
@@ -2000,10 +2000,10 @@ func TestASilencedNoteLeavesItsMarksBehind(t *testing.T) {
 	for _, v := range out[0].Measures[0].Voices {
 		for _, e := range v.Elements {
 			m := marksOf(e)
-			if m.SlurStart {
+			if m.SlurStart > 0 {
 				starts++
 			}
-			if m.SlurStop {
+			if m.SlurStop > 0 {
 				stops++
 			}
 		}
@@ -2015,7 +2015,7 @@ func TestASilencedNoteLeavesItsMarksBehind(t *testing.T) {
 	// And the line holding them is not thrown away for being silent.
 	for _, v := range out[0].Measures[0].Voices {
 		for _, e := range v.Elements {
-			if marksOf(e).SlurStop {
+			if marksOf(e).SlurStop > 0 {
 				return
 			}
 		}
@@ -2044,9 +2044,9 @@ func TestASpannerTheFileNeverEndsIsEndedAnyway(t *testing.T) {
 	// A slur and a wedge that open and are never closed, and a second slur
 	// that opens while the first is still going.
 	a, b, c, d := note(), note(), note(), note()
-	a.SlurStart = true
+	a.SlurStart = 1
 	a.Hairpin = &model.Hairpin{Kind: model.Crescendo, Start: true}
-	c.SlurStart = true
+	c.SlurStart = 1
 	p := &model.Part{Measures: []*model.Measure{{Voices: []*model.Voice{{
 		Elements: []model.Element{a, b, c, d},
 	}}}}}
@@ -2056,11 +2056,11 @@ func TestASpannerTheFileNeverEndsIsEndedAnyway(t *testing.T) {
 	els := p.Measures[0].Voices[0].Elements
 	// The two slurs meet on one note, which ends the first and begins the
 	// second — how a run of slurs over one phrase is written.
-	if !marksOf(els[2]).SlurStop || !marksOf(els[2]).SlurStart {
+	if marksOf(els[2]).SlurStop == 0 || marksOf(els[2]).SlurStart == 0 {
 		t.Error("the first slur was left open when the second began")
 	}
 	// The second ends on the last note there is.
-	if !marksOf(els[3]).SlurStop {
+	if marksOf(els[3]).SlurStop == 0 {
 		t.Error("the last slur runs off the end of the staff")
 	}
 	// And so does the wedge.

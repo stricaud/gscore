@@ -105,7 +105,7 @@ func TestTheLengthsAreSpelledTheWayLilyPondSpellsThem(t *testing.T) {
 func TestWhatIsWrittenOnANote(t *testing.T) {
 	n := note(model.StepC, 4, quarter)
 	n.TieStart = true
-	n.SlurStart = true
+	n.SlurStart = 1
 	n.AddArticulation(model.Staccato)
 	n.AddArticulation(model.Mordent)
 	n.Dynamic = model.Forte
@@ -125,11 +125,11 @@ func TestWhatIsWrittenOnANote(t *testing.T) {
 // is a slur with nothing in it and will not compile.
 func TestASlurClosesBeforeTheNextOpens(t *testing.T) {
 	a := note(model.StepC, 4, quarter)
-	a.SlurStart = true
+	a.SlurStart = 1
 	b := note(model.StepD, 4, quarter)
-	b.SlurStop, b.SlurStart = true, true
+	b.SlurStop, b.SlurStart = 1, 1
 	c := note(model.StepE, 4, half)
-	c.SlurStop = true
+	c.SlurStop = 1
 
 	out := render(t, tune(fourFour, []model.Element{a, b, c}))
 	if strings.Contains(out, "()") {
@@ -144,7 +144,7 @@ func TestASlurClosesBeforeTheNextOpens(t *testing.T) {
 // valid whatever the model holds.
 func TestAnUnclosedSlurIsClosed(t *testing.T) {
 	a := note(model.StepC, 4, whole)
-	a.SlurStart = true
+	a.SlurStart = 1
 	out := render(t, tune(fourFour, []model.Element{a}))
 	if !strings.Contains(out, "left open") {
 		t.Errorf("nothing was said about the open slur:\n%s", out)
@@ -157,7 +157,7 @@ func TestAnUnclosedSlurIsClosed(t *testing.T) {
 // A stray close is dropped rather than written, for the same reason.
 func TestAStraySlurCloseIsDropped(t *testing.T) {
 	a := note(model.StepC, 4, whole)
-	a.SlurStop = true
+	a.SlurStop = 1
 	out := render(t, tune(fourFour, []model.Element{a}))
 	if strings.Contains(out, "c'1)") {
 		t.Errorf("a slur was closed that was never opened:\n%s", out)
@@ -324,7 +324,7 @@ func everything() *model.Score {
 
 	// Ties, slurs, articulations, ornaments, a dynamic and a hairpin.
 	a := note(model.StepC, 4, quarter)
-	a.TieStart, a.SlurStart, a.Dynamic = true, true, model.Piano
+	a.TieStart, a.SlurStart, a.Dynamic = true, 1, model.Piano
 	a.Hairpin = &model.Hairpin{Kind: model.Crescendo, Start: true}
 	a.AddArticulation(model.Staccato)
 	b := note(model.StepC, 4, quarter)
@@ -334,7 +334,7 @@ func everything() *model.Score {
 	c.AddArticulation(model.Accent)
 	c.Trill = &model.Trill{Start: true, Stop: true}
 	d := note(model.StepG, 4, quarter)
-	d.SlurStop = true
+	d.SlurStop = 1
 	d.Hairpin = &model.Hairpin{Stop: true}
 	d.Chord = &model.ChordSymbol{Root: "G", Quality: "7"}
 	d.Lyrics = []model.Lyric{{Text: "sing", Verse: 1}}

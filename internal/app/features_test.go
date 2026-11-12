@@ -1507,15 +1507,15 @@ func TestSlurOverASelection(t *testing.T) {
 	h.post("/api/slur?sel=0:0:0,0:0:1,0:0:2,0:0:3")
 
 	els := h.app.score.Parts[0].Measures[0].Voices[0].Elements
-	if !els[0].(*model.Note).SlurStart {
+	if els[0].(*model.Note).SlurStart == 0 {
 		t.Error("the slur does not begin on the first note")
 	}
-	if !els[3].(*model.Note).SlurStop {
+	if els[3].(*model.Note).SlurStop == 0 {
 		t.Error("the slur does not end on the last note")
 	}
 	for i := 1; i < 3; i++ {
 		n := els[i].(*model.Note)
-		if n.SlurStart || n.SlurStop {
+		if n.SlurStart > 0 || n.SlurStop > 0 {
 			t.Errorf("note %d is marked as an end of the slur", i)
 		}
 	}

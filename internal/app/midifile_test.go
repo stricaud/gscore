@@ -165,8 +165,8 @@ func phrase(mark func(i int, n *model.Note)) *model.Score {
 func TestASlurredNoteRunsIntoTheNext(t *testing.T) {
 	plain := midiOf(t, phrase(nil))
 	slurred := midiOf(t, phrase(func(i int, n *model.Note) {
-		n.SlurStart = i == 0
-		n.SlurStop = i == 3
+		n.SlurStart = model.SlurEnd(i == 0)
+		n.SlurStop = model.SlurEnd(i == 3)
 	}))
 
 	if len(plain.notes) != 4 || len(slurred.notes) != 4 {

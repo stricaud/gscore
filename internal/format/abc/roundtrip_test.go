@@ -152,10 +152,10 @@ func describeElement(el model.Element) string {
 	if m.Tuplet != nil {
 		fmt.Fprintf(&b, " tuplet(%d:%d)", m.Tuplet.Actual, m.Tuplet.Normal)
 	}
-	if m.SlurStart {
+	if m.SlurStart > 0 {
 		b.WriteString(" slur(")
 	}
-	if m.SlurStop {
+	if m.SlurStop > 0 {
 		b.WriteString(" slur)")
 	}
 	if m.Beam != model.BeamAuto {

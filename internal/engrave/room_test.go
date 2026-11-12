@@ -176,11 +176,11 @@ func stacked(bars int) *model.Score {
 			hi.Articulations = []model.Articulation{model.Marcato}
 			if k == 0 {
 				hi.Dynamic = model.Forte
-				hi.SlurStart = true
+				hi.SlurStart = 1
 				hi.Hairpin = &model.Hairpin{Kind: model.Diminuendo, Start: true}
 			}
 			if k == 3 {
-				hi.SlurStop = true
+				hi.SlurStop = 1
 				hi.Hairpin = &model.Hairpin{Kind: model.Diminuendo, Stop: true}
 			}
 			up = append(up, hi)
@@ -193,10 +193,10 @@ func stacked(bars int) *model.Score {
 			}
 			lo.Articulations = []model.Articulation{model.Marcato}
 			if k == 0 {
-				lo.SlurStart = true
+				lo.SlurStart = 1
 			}
 			if k == 3 {
-				lo.SlurStop = true
+				lo.SlurStop = 1
 			}
 			down = append(down, lo)
 		}

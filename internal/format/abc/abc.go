@@ -1341,11 +1341,11 @@ func (p *parser) applyPending(m *model.Marks) {
 	if p.pending.Tremolo != nil {
 		m.Tremolo = p.pending.Tremolo
 	}
-	if p.pending.SlurStop {
-		m.SlurStop = true
+	if p.pending.SlurStop > 0 {
+		m.SlurStop = 1
 	}
-	if p.pending.SlurStart {
-		m.SlurStart = true
+	if p.pending.SlurStart > 0 {
+		m.SlurStart = 1
 	}
 	// A stem direction in force applies to everything after it until changed.
 	if m.Stem == model.StemAuto && p.stemDir != model.StemAuto {
@@ -1468,11 +1468,11 @@ func (p *parser) music(line string) error {
 				continue
 			}
 			sc.next()
-			p.pending.SlurStart = true
+			p.pending.SlurStart = 1
 		case c == ')':
 			sc.next()
 			if p.last != nil {
-				p.last.SlurStop = true
+				p.last.SlurStop = 1
 			}
 		case c == '-':
 			sc.next()

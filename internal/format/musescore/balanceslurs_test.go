@@ -48,11 +48,11 @@ func staff(n int) (*model.Part, []*model.Note) {
 
 func TestASlurWithNoEndIsNotDrawn(t *testing.T) {
 	p, n := staff(4)
-	n[1].Marks.SlurStart = true // and nothing ever stops it
+	n[1].Marks.SlurStart = 1 // and nothing ever stops it
 
 	balanceSlurs(p)
 
-	if n[1].Marks.SlurStart {
+	if n[1].Marks.SlurStart > 0 {
 		t.Error("a slur with no end was kept, and it is drawn to the margin of " +
 			"this system and of every system after it")
 	}
@@ -60,34 +60,34 @@ func TestASlurWithNoEndIsNotDrawn(t *testing.T) {
 
 func TestASlurWithNoBeginningIsNotDrawn(t *testing.T) {
 	p, n := staff(4)
-	n[2].Marks.SlurStop = true // with nothing open
+	n[2].Marks.SlurStop = 1 // with nothing open
 
 	balanceSlurs(p)
 
-	if n[2].Marks.SlurStop {
+	if n[2].Marks.SlurStop > 0 {
 		t.Error("an end with no beginning was kept")
 	}
 }
 
 func TestASlurWithBothEndsIsLeftAlone(t *testing.T) {
 	p, n := staff(5)
-	n[1].Marks.SlurStart = true
-	n[3].Marks.SlurStop = true
+	n[1].Marks.SlurStart = 1
+	n[3].Marks.SlurStop = 1
 
 	balanceSlurs(p)
 
-	if !n[1].Marks.SlurStart || !n[3].Marks.SlurStop {
+	if n[1].Marks.SlurStart == 0 || n[3].Marks.SlurStop == 0 {
 		t.Error("a slur with both ends was thrown away")
 	}
 	// And nothing else grew one.
 	for i, x := range n {
-		if i == 1 && x.Marks.SlurStart {
+		if i == 1 && x.Marks.SlurStart > 0 {
 			continue
 		}
-		if i == 3 && x.Marks.SlurStop {
+		if i == 3 && x.Marks.SlurStop > 0 {
 			continue
 		}
-		if x.Marks.SlurStart || x.Marks.SlurStop {
+		if x.Marks.SlurStart > 0 || x.Marks.SlurStop > 0 {
 			t.Errorf("note %d gained a slur mark", i)
 		}
 	}
@@ -98,23 +98,23 @@ func TestOneSlurEndsBeforeTheNextBegins(t *testing.T) {
 	// beginning while one is open is no new slur. What is left has to be
 	// what will be drawn, or this has not answered the question.
 	p, n := staff(6)
-	n[0].Marks.SlurStart = true
-	n[1].Marks.SlurStart = true // ignored by the engraver
-	n[3].Marks.SlurStop = true  // ends the first
-	n[4].Marks.SlurStart = true
-	n[5].Marks.SlurStop = true
+	n[0].Marks.SlurStart = 1
+	n[1].Marks.SlurStart = 1 // ignored by the engraver
+	n[3].Marks.SlurStop = 1  // ends the first
+	n[4].Marks.SlurStart = 1
+	n[5].Marks.SlurStop = 1
 
 	balanceSlurs(p)
 
-	if !n[0].Marks.SlurStart || !n[3].Marks.SlurStop {
+	if n[0].Marks.SlurStart == 0 || n[3].Marks.SlurStop == 0 {
 		t.Error("the first slur was lost")
 	}
-	if n[1].Marks.SlurStart {
+	if n[1].Marks.SlurStart > 0 {
 		t.Error("a second beginning was kept while one was already open; the " +
 			"engraver ignores it, so keeping it says the score holds a slur " +
 			"that is never drawn")
 	}
-	if !n[4].Marks.SlurStart || !n[5].Marks.SlurStop {
+	if n[4].Marks.SlurStart == 0 || n[5].Marks.SlurStop == 0 {
 		t.Error("the slur after it was lost")
 	}
 }
@@ -127,16 +127,16 @@ func TestAGraceNoteSlursIntoTheNoteItLeansOn(t *testing.T) {
 	// beginning, and is thrown away.
 	p, n := staff(3)
 	g := &model.Note{Pitch: model.Pitch{Step: model.StepA, Octave: 4}, Dur: quarter()}
-	g.Marks.SlurStart = true
+	g.Marks.SlurStart = 1
 	n[1].Marks.Grace = &model.GraceGroup{Notes: []*model.Note{g}}
-	n[2].Marks.SlurStop = true
+	n[2].Marks.SlurStop = 1
 
 	balanceSlurs(p)
 
-	if !g.Marks.SlurStart {
+	if g.Marks.SlurStart == 0 {
 		t.Error("the grace note's slur was thrown away")
 	}
-	if !n[2].Marks.SlurStop {
+	if n[2].Marks.SlurStop == 0 {
 		t.Error("the end of the grace note's slur was thrown away as an " +
 			"end with no beginning")
 	}
@@ -145,12 +145,12 @@ func TestAGraceNoteSlursIntoTheNoteItLeansOn(t *testing.T) {
 func TestAGraceNoteSlurWithNoEndIsNotDrawnEither(t *testing.T) {
 	p, n := staff(3)
 	g := &model.Note{Pitch: model.Pitch{Step: model.StepA, Octave: 4}, Dur: quarter()}
-	g.Marks.SlurStart = true
+	g.Marks.SlurStart = 1
 	n[1].Marks.Grace = &model.GraceGroup{Notes: []*model.Note{g}}
 
 	balanceSlurs(p)
 
-	if g.Marks.SlurStart {
+	if g.Marks.SlurStart > 0 {
 		t.Error("a grace note's slur with no end was kept")
 	}
 }
@@ -160,8 +160,8 @@ func TestEachLineOfMusicIsBalancedOnItsOwn(t *testing.T) {
 	// upper line is never closed by the lower one.
 	a := &model.Note{Pitch: model.Pitch{Step: model.StepG, Octave: 4}, Dur: quarter()}
 	b := &model.Note{Pitch: model.Pitch{Step: model.StepE, Octave: 4}, Dur: quarter()}
-	a.Marks.SlurStart = true
-	b.Marks.SlurStop = true
+	a.Marks.SlurStart = 1
+	b.Marks.SlurStop = 1
 	p := &model.Part{Measures: []*model.Measure{{Voices: []*model.Voice{
 		{Elements: []model.Element{a}},
 		{Elements: []model.Element{b}},
@@ -169,10 +169,10 @@ func TestEachLineOfMusicIsBalancedOnItsOwn(t *testing.T) {
 
 	balanceSlurs(p)
 
-	if a.Marks.SlurStart {
+	if a.Marks.SlurStart > 0 {
 		t.Error("a slur in the upper line was closed by the lower one")
 	}
-	if b.Marks.SlurStop {
+	if b.Marks.SlurStop > 0 {
 		t.Error("an end in the lower line was kept for a beginning in the upper")
 	}
 }

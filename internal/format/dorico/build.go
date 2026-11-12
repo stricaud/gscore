@@ -135,6 +135,11 @@ type stave struct {
 	changes    []clefChange
 	dynamics   []dynamic
 	swells     []swell
+	points     []pointMark
+	spans      []spanMark
+	repeats    []barRepeat
+	keys       []staffKey
+	cues       []cue
 	voices     []string // the voice streams that write on it
 }
 
@@ -200,6 +205,35 @@ func parseTuplet(s string) (actual, normal int, ok bool) {
 		return 0, 0, false
 	}
 	return got[0], got[1], true
+}
+
+// slur is a phrase mark: where it begins, and how far it reaches.
+//
+// Its length runs from the first note of the phrase to the start of the
+// last, not to the end of it — a slur written "for one crotchet" joins two
+// crotchets, which is the smallest slur there is. Read as reaching to the
+// end of the last note it would take in the note after as well, and every
+// phrase in the score would be a note too long.
+type slur struct {
+	at  rat
+	dur rat
+}
+
+// grace is one of the little notes crushed in before a main note.
+//
+// It takes no time out of the bar — a bar of four quarters with a grace
+// note before the third beat is still a bar of four quarters — so it is
+// not an event in the voice but a mark on the note it leans into. Dorico
+// says which note that is with position, and where in the run of them this
+// one falls with a secondary position: a negative offset, so the two notes
+// of a pair are at -1/2 and -1/4 before the beat.
+type grace struct {
+	at      rat // the note it leans into
+	order   rat // and where before it this one stands
+	pitch   int
+	dur     rat  // as written, which is not how long it sounds
+	slashed bool // an acciaccatura, struck and let go
+	slur    bool // slurred into the note it decorates
 }
 
 // event is one note or rest, placed.
@@ -369,15 +403,23 @@ func buildFlow(t *tree, flow int32, players map[string]string,
 	// there are to make.
 	// Each of Dorico's voices becomes one or more of gscore's: see lanes.
 	music := map[string][][]group{} // by voice stream id
+	graceOf := map[string][]grace{} // and the little notes leaning on them
 	last := rat{0, 1}
 	for _, st := range staves {
 		for _, v := range st.voices {
 			var evs []event
 			var tups []tuplet
+			var slurs []slur
+			var graces []grace
 			for _, p := range streams.of("kVoiceStream", v) {
-				got, gotTups, end := readEvents(t, p.node, p.at, skipped)
+				got, gotTups, gotSlurs, gotGraces, gotPoints, gotSpans,
+					end := readEvents(t, p.node, p.at, skipped)
 				evs = append(evs, got...)
 				tups = append(tups, gotTups...)
+				slurs = append(slurs, gotSlurs...)
+				graces = append(graces, gotGraces...)
+				st.points = append(st.points, gotPoints...)
+				st.spans = append(st.spans, gotSpans...)
 				if last.less(end) {
 					last = end
 				}
@@ -390,6 +432,8 @@ func buildFlow(t *tree, flow int32, players map[string]string,
 			for _, lane := range ls {
 				markTuplets(lane, tups)
 			}
+			markSlurs(ls, slurs, skipped)
+			graceOf[v] = graces
 			music[v] = ls
 		}
 	}
@@ -397,6 +441,11 @@ func buildFlow(t *tree, flow int32, players map[string]string,
 	bars := barGrid(t, streams, elements, last, skipped)
 	if len(bars) == 0 {
 		return nil
+	}
+	// The grace notes once the bars are known, because a pitch is spelled
+	// against the key in force where it stands.
+	for v, ls := range music {
+		markGraces(ls, graceOf[v], bars, skipped)
 	}
 	readClefs(t, streams, staves, bars, elements, skipped)
 
@@ -441,12 +490,16 @@ func buildFlow(t *tree, flow int32, players map[string]string,
 		}
 		p.Measures = layOut(voices, bars)
 		attach(p, bars, st.dynamics, st.swells)
+		putMarks(p, bars, st.points, st.spans, skipped)
+		putStaffMarks(p, bars, st.repeats, st.keys)
 		if moved := putClefs(p, bars, st.changes); moved > 0 {
 			skipped["clef changes written inside a bar, put at its start"] += moved
 		}
 		s.Parts = append(s.Parts, p)
 	}
 	setTempo(s, bars, tempo)
+	putGlobal(s, bars, readGlobal(t, streams, skipped), skipped)
+	putCues(s, bars, staves, skipped)
 	return s
 }
 
@@ -636,15 +689,20 @@ func elementTables(t *tree, flow int32) map[string]int32 {
 }
 
 // readEvents reads one voice stream's notes and rests.
-func readEvents(t *tree, block int32, offset rat,
-	skipped map[string]int) ([]event, []tuplet, rat) {
+func readEvents(t *tree, block int32, offset rat, skipped map[string]int) (
+	[]event, []tuplet, []slur, []grace, []pointMark, []spanMark, rat) {
 
 	events := t.child(block, "events")
 	if events < 0 {
-		return nil, nil, rat{0, 1}
+		return nil, nil, nil, nil, nil, nil, rat{0, 1}
 	}
 	var out []event
 	var tups []tuplet
+	var slurs []slur
+	var graces []grace
+	var graceSlurs []rat
+	var points []pointMark
+	var spans []spanMark
 	end := rat{0, 1}
 	for _, e := range t.children(events) {
 		kind := t.nameOf(e)
@@ -666,6 +724,33 @@ func readEvents(t *tree, block int32, offset rat,
 				continue
 			}
 			out = append(out, event{at: at, dur: d, rest: true})
+		case "TrillEventDefinition":
+			spans = append(spans, spanMark{at: at, dur: d, kind: "trill"})
+			continue
+		case "OttavaLineEventDefinition":
+			n, ok := octaveAmount(t.str(e, "entityID"))
+			if !ok {
+				skipped["octave lines gscore does not know"]++
+				continue
+			}
+			spans = append(spans, spanMark{at: at, dur: d,
+				kind: "octave", amount: n})
+			continue
+		case "TextEventDefinition":
+			if words := readTextMark(t, e); words != "" {
+				points = append(points, pointMark{at: at, text: words})
+			} else {
+				skipped["text"]++
+			}
+			continue
+		case "PlayingTechniqueEventDefinition":
+			word, ok := techniqueNamed(t.str(e, "appearanceEntityID"))
+			if !ok {
+				skipped["playing techniques gscore does not know"]++
+				continue
+			}
+			points = append(points, pointMark{at: at, text: word})
+			continue
 		case "TupletEventDefinition":
 			a, n, ok := parseTuplet(t.str(e, "tupletDefinition"))
 			if !ok || d.zero() {
@@ -674,8 +759,32 @@ func readEvents(t *tree, block int32, offset rat,
 			}
 			tups = append(tups, tuplet{at: at, dur: d, actual: a, normal: n})
 			continue
+		case "SlurEventDefinition":
+			if d.zero() {
+				// A slur of no length is a grace note's own, leaning it
+				// into the note it decorates. It is kept against the
+				// moment it was written at and matched to the grace notes
+				// there once they are all in.
+				graceSlurs = append(graceSlurs, at)
+				continue
+			}
+			slurs = append(slurs, slur{at: at, dur: d})
+			continue
 		case "GraceNoteEventDefinition":
-			skipped["grace notes"]++
+			pitch, err := strconv.Atoi(t.str(e, "pitch"))
+			if err != nil {
+				skipped["grace notes"]++
+				continue
+			}
+			written, ok := parseRat(t.str(e, "notatedDuration"))
+			if !ok || written.zero() {
+				written = rat{1, 4} // a semiquaver, the usual one
+			}
+			before, _ := parseRat(t.str(e, "secondaryPosition"))
+			graces = append(graces, grace{
+				at: at, order: before, pitch: pitch, dur: written,
+				slashed: t.str(e, "slashed") == "true",
+			})
 			continue
 		default:
 			note(skipped, kind)
@@ -685,8 +794,22 @@ func readEvents(t *tree, block int32, offset rat,
 			end = fin
 		}
 	}
+	// The slurs that belong to grace notes, matched to them by the moment
+	// they were written at.
+	for _, at := range graceSlurs {
+		found := false
+		for i := range graces {
+			if graces[i].at.cmp(at) == 0 {
+				graces[i].slur = true
+				found = true
+			}
+		}
+		if !found {
+			skipped["slurs from grace notes that are not there"]++
+		}
+	}
 	sortEvents(out)
-	return out, tups, end
+	return out, tups, slurs, graces, points, spans, end
 }
 
 // sortEvents puts a voice's events in the order they are played, and the
@@ -709,44 +832,27 @@ func sortEvents(evs []event) {
 // SlurEventDefinition did not.
 func note(skipped map[string]int, kind string) {
 	switch kind {
-	case "SlurEventDefinition":
-		skipped["slurs"]++
 	case "DynamicGroupEventDefinition":
 		skipped["dynamics"]++
 	case "TupletEventDefinition":
 		skipped["tuplets"]++
-	case "TrillEventDefinition":
-		skipped["trills"]++
-	case "PlayingTechniqueEventDefinition":
-		skipped["playing techniques"]++
-	case "TextEventDefinition":
-		skipped["text"]++
-	case "RehearsalMarkEventDefinition":
-		skipped["rehearsal marks"]++
-	case "PauseEventDefinition":
-		skipped["pauses"]++
 	case "GenerativeBarRepeatEventDefinition":
 		skipped["bar repeats"]++
-	case "GradualTempoChangeEventDefinition":
-		skipped["gradual tempo changes, such as rit. and accel."]++
-	case "RepeatEndingLineEventDefinition":
-		skipped["repeat endings, the first and second time bars"]++
-	case "RepeatMarkerEventDefinition":
-		skipped["repeat marks"]++
 	case "CueEventDefinition":
 		skipped["cues"]++
 	case "CommentEventDefinition":
 		skipped["comments"]++
-	case "OttavaLineEventDefinition":
-		skipped["octave lines, the 8va brackets"]++
 	case "TonalityDivisionEventDefinition":
 		// On the global stream these are the key signatures and are read.
 		// Here they are a key for one staff on its own — a horn left in C
 		// while the rest of the orchestra modulates.
 		skipped["key changes on a single staff"]++
-	case "ImmediateTempoChangeEventDefinition":
-		// Read from this same stream by readTempo, which wants the whole
-		// of the data rather than the fact that one went by.
+	case "ImmediateTempoChangeEventDefinition", "PauseEventDefinition",
+		"RehearsalMarkEventDefinition", "GradualTempoChangeEventDefinition",
+		"RepeatEndingLineEventDefinition", "RepeatMarkerEventDefinition":
+		// Read from the global stream by readTempo and readGlobal, which
+		// want the whole of the data rather than the fact that one went
+		// by.
 	case "BreakEventDefinition", "CondensationLabelEventDefinition",
 		"CondensingChangeEventDefinition":
 		// How the page is laid out and how staves are condensed, which
@@ -961,9 +1067,76 @@ func readClefs(t *tree, streams *streams, staves []*stave, bars []bar,
 				if t.nameOf(e) == "DynamicGroupEventDefinition" {
 					continue // read above
 				}
-				if t.nameOf(e) != "ClefEventDefinition" {
-					// Whatever else is on this stream — the cues, the bar
-					// repeats — is said rather than passed over.
+				// The rest of what a staff carries: its own words, its
+				// octave lines, the bars it repeats, and the key it
+				// alone is in — a horn left in C while the orchestra
+				// modulates.
+				switch t.nameOf(e) {
+				case "ClefEventDefinition":
+				case "TextEventDefinition":
+					at, _ := parseRat(t.str(e, "position"))
+					if words := readTextMark(t, e); words != "" {
+						st.points = append(st.points,
+							pointMark{at: at.add(p.at), text: words})
+					} else {
+						skipped["text"]++
+					}
+					continue
+				case "PlayingTechniqueEventDefinition":
+					at, _ := parseRat(t.str(e, "position"))
+					word, ok := techniqueNamed(
+						t.str(e, "appearanceEntityID"))
+					if !ok {
+						skipped["playing techniques gscore does not know"]++
+						continue
+					}
+					st.points = append(st.points,
+						pointMark{at: at.add(p.at), text: word})
+					continue
+				case "OttavaLineEventDefinition":
+					at, _ := parseRat(t.str(e, "position"))
+					d, _ := parseRat(t.str(e, "duration"))
+					n, ok := octaveAmount(t.str(e, "entityID"))
+					if !ok {
+						skipped["octave lines gscore does not know"]++
+						continue
+					}
+					st.spans = append(st.spans, spanMark{
+						at: at.add(p.at), dur: d, kind: "octave", amount: n})
+					continue
+				case "GenerativeBarRepeatEventDefinition":
+					at, _ := parseRat(t.str(e, "position"))
+					d, _ := parseRat(t.str(e, "duration"))
+					bars := 1
+					if t.str(e, "numberOfBarsToRepeat") == "k2" {
+						bars = 2
+					}
+					st.repeats = append(st.repeats,
+						barRepeat{at: at.add(p.at), dur: d, bars: bars})
+					continue
+				case "TonalityDivisionEventDefinition":
+					at, _ := parseRat(t.str(e, "position"))
+					def := elements["TonalityDivisionElementDefinition:"+
+						t.str(e, "tonalityDivisionElementID")]
+					ks, ok := keySignature(t, def)
+					if !ok {
+						skipped["key changes on a single staff"]++
+						continue
+					}
+					st.keys = append(st.keys,
+						staffKey{at: at.add(p.at), key: ks})
+					continue
+				case "CueEventDefinition":
+					at, _ := parseRat(t.str(e, "position"))
+					c, ok := readCue(t, e, at.add(p.at))
+					if !ok {
+						skipped["cues that name no staff to take"]++
+						continue
+					}
+					st.cues = append(st.cues, c)
+					continue
+				default:
+					// Anything else: said rather than passed over.
 					note(skipped, t.nameOf(e))
 					continue
 				}
@@ -1057,6 +1230,16 @@ type group struct {
 	// on the ends of the group so the bracket and its figure are drawn
 	// over the right notes.
 	tup *model.Tuplet
+
+	// slurStart and slurStop open and close a phrase here.
+	slurStart, slurStop bool
+
+	// graces are the little notes crushed in before this one.
+	graces  []*model.Note
+	slashed bool
+	// graceSlur closes here, where the little notes are slurred into the
+	// note they decorate.
+	graceSlur bool
 }
 
 // markTuplets says which groups are played in less time than they are
@@ -1157,6 +1340,150 @@ func lanes(evs []event) [][]group {
 		ends[put] = g.at.add(g.dur)
 	}
 	return out
+}
+
+// markSlurs hangs a voice's phrase marks on its notes.
+//
+// A slur belongs to one line of music, and one of Dorico's voices may have
+// become several of gscore's — see lanes — so each slur goes to the lane
+// that actually holds the phrase: the one with a note at the moment it
+// begins, or failing that the one with most of it.
+func markSlurs(lanes [][]group, slurs []slur, skipped map[string]int) {
+	for _, sl := range slurs {
+		stop := sl.at.add(sl.dur)
+		best, bestCount, exact := -1, 0, false
+		for i, lane := range lanes {
+			count, here := 0, false
+			for _, g := range lane {
+				if g.at.cmp(sl.at) < 0 || stop.less(g.at) {
+					continue
+				}
+				if g.rest || len(g.pitches) == 0 {
+					continue
+				}
+				count++
+				if g.at.cmp(sl.at) == 0 {
+					here = true
+				}
+			}
+			if count == 0 {
+				continue
+			}
+			if (here && !exact) || (here == exact && count > bestCount) {
+				best, bestCount, exact = i, count, here
+			}
+		}
+		if best < 0 {
+			skipped["slurs over notes that are not there"]++
+			continue
+		}
+		lane := lanes[best]
+		first, last := -1, -1
+		for i := range lane {
+			if lane[i].at.cmp(sl.at) < 0 || stop.less(lane[i].at) {
+				continue
+			}
+			// Notes only. A slur is drawn from notehead to notehead, and
+			// a span that happens to reach over a rest at one end — which
+			// Dorico's do, since the span is a length of time and not a
+			// list of notes — would otherwise be hung on the rest, where
+			// nothing draws it and nothing closes it.
+			if lane[i].rest || len(lane[i].pitches) == 0 {
+				continue
+			}
+			if first < 0 {
+				first = i
+			}
+			last = i
+		}
+		if first < 0 {
+			skipped["slurs over nothing but rests"]++
+			continue
+		}
+		if first == last {
+			// A phrase of one note is not a phrase. It happens where the
+			// other end of the slur is something not read — a grace note
+			// most often — and a slur drawn from a note to itself is a
+			// blot rather than a mark.
+			skipped["slurs with only one note under them"]++
+			continue
+		}
+		if lane[first].slurStart || lane[last].slurStop {
+			skipped["slurs that overlap another in the same voice"]++
+		}
+		lane[first].slurStart = true
+		lane[last].slurStop = true
+	}
+}
+
+// markGraces hangs the grace notes on the notes they lean into.
+//
+// They are gathered by the note they belong to and put in the order they
+// are played: Dorico counts them backwards from the beat, so a pair stands
+// at -1/2 and -1/4 and the first of those is the first heard.
+func markGraces(lanes [][]group, graces []grace, bars []bar,
+	skipped map[string]int) {
+
+	byNote := map[string][]grace{}
+	for _, g := range graces {
+		k := strconv.FormatInt(g.at.n, 10) + "/" + strconv.FormatInt(g.at.d, 10)
+		byNote[k] = append(byNote[k], g)
+	}
+	for _, run := range byNote {
+		sort.SliceStable(run, func(i, j int) bool {
+			return run[i].order.less(run[j].order)
+		})
+		// The note they lean into: the one beginning at that moment, in
+		// whichever lane has it.
+		var put *group
+		for i := range lanes {
+			for j := range lanes[i] {
+				g := &lanes[i][j]
+				if g.at.cmp(run[0].at) != 0 || g.rest || len(g.pitches) == 0 {
+					continue
+				}
+				put = g
+				break
+			}
+			if put != nil {
+				break
+			}
+		}
+		if put == nil {
+			skipped["grace notes leaning into a note that is not there"] +=
+				len(run)
+			continue
+		}
+		key := keyAt(bars, run[0].at)
+		for _, g := range run {
+			n := &model.Note{
+				Pitch: model.PitchInKey(g.pitch, key),
+				Dur:   g.dur.dur(),
+			}
+			if g.slur {
+				// The curve leaves the first of them, which is where
+				// every engraver draws it from.
+				if len(put.graces) == 0 {
+					n.SlurStart = 1
+				}
+				put.graceSlur = true
+			}
+			put.slashed = put.slashed || g.slashed
+			put.graces = append(put.graces, n)
+		}
+	}
+}
+
+// keyAt is the signature in force at a moment.
+func keyAt(bars []bar, at rat) model.KeySignature {
+	var key model.KeySignature
+	for i := range bars {
+		if bars[i].at.cmp(at) > 0 {
+			break
+		}
+		key = bars[i].inKey
+	}
+	return key
 }
 
 // layOut puts a staff's voices into measures.
@@ -1286,7 +1613,35 @@ func elements(g group, d rat, key model.KeySignature,
 	for i, p := range parts {
 		back := tiedBack || i > 0
 		on := tiedOn || i < len(parts)-1
-		out = append(out, element(g, p, key, back, on))
+		el := element(g, p, key, back, on)
+		// A phrase opens on the first of the tied pieces and closes on
+		// the last: a slur is drawn over the note, not over each of the
+		// noteheads it took to write the note down.
+		//
+		// And over the note, not over each bar's worth of it. A note held
+		// across a barline comes through here once for each bar it
+		// touches, so the opening is only an opening where nothing is
+		// tied back into it, and the close only a close where nothing is
+		// tied on.
+		if mk := marksOf(el); mk != nil {
+			mk.SlurStart += model.SlurEnd(g.slurStart && i == 0 && !tiedBack)
+			mk.SlurStop += model.SlurEnd(g.slurStop && i == len(parts)-1 && !tiedOn)
+			// The little notes stand before the note itself, so they go
+			// on the first of its pieces and nowhere else.
+			if len(g.graces) > 0 && i == 0 && !tiedBack {
+				mk.Grace = &model.GraceGroup{
+					Notes: g.graces, Slashed: g.slashed,
+				}
+				// And the curve from them closes on the note they lean
+				// into, unless a phrase already ends there — gscore
+				// writes one slur to a note, and the phrase is the
+				// longer statement of the two.
+				if g.graceSlur {
+					mk.SlurStop++
+				}
+			}
+		}
+		out = append(out, el)
 	}
 	return out
 }

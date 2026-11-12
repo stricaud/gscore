@@ -1808,6 +1808,48 @@ body.player.bare { grid-template-rows: 1fr; }
    seven and three naturals. */
 #keysig-art svg { display: block; height: 78px; width: auto; max-width: 100%; }
 #keysig-slider { width: 100%; margin: 14px 0 2px; }
+
+/* The clefs, drawn and picked by eye.
+ *
+ * A row of staves rather than a list of words: a musician knows the signs
+ * and would have to translate the words back into them. Each one is a
+ * button, the chosen one is ringed, and they wrap where the window is
+ * narrow rather than running off the edge. */
+#clefpick-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: center;
+  margin-bottom: 4px;
+}
+.clefpick-one {
+  background: var(--paper);
+  border: 2px solid var(--line);
+  border-radius: 6px;
+  padding: 4px 8px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: calc(54px * var(--ui-scale));
+  min-height: calc(74px * var(--ui-scale));
+  overflow: hidden;
+}
+.clefpick-one svg {
+  display: block;
+  height: calc(66px * var(--ui-scale));
+  width: auto;
+}
+.clefpick-one:hover { border-color: var(--accent, #6aa0ff); }
+.clefpick-one.chosen {
+  border-color: var(--accent, #6aa0ff);
+  box-shadow: 0 0 0 2px rgba(106, 160, 255, .35);
+}
+#clefpick-name {
+  text-align: center;
+  font-size: calc(15px * var(--ui-scale));
+  margin: 4px 0 10px;
+}
 #keysig-scale {
   display: flex;
   justify-content: space-between;

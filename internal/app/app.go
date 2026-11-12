@@ -619,6 +619,7 @@ func (a *App) APIRoutes(mux *http.ServeMux) {
 		"/api/dynamic":          a.handleDynamic,
 		"/api/hairpin":          a.handleHairpin,
 		"/api/octave":           a.handleOctave,
+		"/api/clef":             a.handleClef,
 		"/api/trill":            a.handleTrill,
 		"/api/pedal":            a.handlePedal,
 		"/api/arpeggio":         a.handleArpeggio,

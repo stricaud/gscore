@@ -61,6 +61,10 @@ func (a *App) handleKeySignatures(w http.ResponseWriter, r *http.Request) {
 var clefByName = map[string]model.Clef{
 	"treble": model.Treble, "bass": model.Bass,
 	"alto": model.Alto, "tenor": model.Tenor,
+	// The two the picker draws and a key signature never asked for: the
+	// drummer's pair of strokes, which is in no key at all, and the
+	// tenor's treble clef with an 8 under it.
+	"percussion": model.Percussion, "treble8vb": model.Treble8vb,
 }
 
 // handleKeySigSVG draws one key signature on a short staff: the modern

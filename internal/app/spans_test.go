@@ -161,3 +161,47 @@ func TestAClefCanChangePartwayDownAStaff(t *testing.T) {
 		t.Errorf("the staff's clef is %v", p.Clef)
 	}
 }
+
+func TestAClefIsWrittenWhereTheCursorIs(t *testing.T) {
+	// Partway through a bar, which is where a part that changes clef
+	// changes it: a cello climbing into the tenor clef for a phrase does
+	// not wait for the barline. The model has carried this on the note
+	// since the importers learned to read one; nothing could write it.
+	h := fourNotes(t)
+	h.post("/api/clef?part=0&measure=0&at=3&sel=0:0:2&clef=tenor")
+	if c := markedAt(h, 0, 2).Clef; c == nil || *c != model.Tenor {
+		t.Fatalf("the third note carries %v", c)
+	}
+	if c := h.app.score.Parts[0].Measures[0].Clef; c != nil {
+		t.Errorf("the bar carries a clef as well: %v", c)
+	}
+	if h.app.score.Parts[0].Clef != model.Treble {
+		t.Errorf("the staff's own clef became %v", h.app.score.Parts[0].Clef)
+	}
+
+	// At the head of a bar it belongs to the bar, so that the sign is
+	// drawn at the barline.
+	h.post("/api/addmeasure")
+	h.post("/api/insert?part=0&measure=1&at=-1&step=2&dur=quarter&kind=note")
+	h.post("/api/clef?part=0&measure=1&at=1&sel=0:1:0&clef=bass")
+	if c := h.app.score.Parts[0].Measures[1].Clef; c == nil || *c != model.Bass {
+		t.Errorf("bar 2 carries %v", c)
+	}
+
+	// And taking it away again clears whatever that bar carries, wherever
+	// in the bar it was written.
+	h.post("/api/clef?part=0&measure=0&at=3&sel=0:0:2&clef=none")
+	if c := markedAt(h, 0, 2).Clef; c != nil {
+		t.Errorf("the change inside the bar is still there: %v", c)
+	}
+}
+
+func TestAClefThatChangesNothingIsNotWritten(t *testing.T) {
+	// A sign that says what the player is already reading is a sign
+	// nobody can act on, and it takes room on the page.
+	h := fourNotes(t)
+	h.post("/api/clef?part=0&measure=0&at=3&sel=0:0:2&clef=treble")
+	if c := markedAt(h, 0, 2).Clef; c != nil {
+		t.Errorf("a treble clef was written on a treble staff: %v", c)
+	}
+}

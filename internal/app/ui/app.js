@@ -1337,14 +1337,10 @@ async function action(name) {
     case "set-time":
       await setTimeDialog();
       break;
-    // A clef written at a bar changes the staff from there on; the one in
-    // the Staff menu is the staff's own, from the first bar.
+    // Written where the cursor is: the sign a player meets partway
+    // through. The staff's own clef is in Score setup.
     case "insert-clef":
-      await setClefDialog(state.selection?.part ?? 0,
-                          state.selection?.measure ?? 0);
-      break;
-    case "set-clef":
-      await setClefDialog(state.selection?.part ?? 0, 0);
+      await setClefDialog(state.selection?.part ?? 0);
       break;
 
     case "trill": await setTrill("on"); break;
@@ -11275,39 +11271,125 @@ async function setClefDialog(part, at) {
   // has drawn since the importers learned to read one and had no way to
   // write.
   const measure = at !== undefined ? at : (state.selection?.measure ?? 0);
-  const here = measure > 0;
-  const v = await ask({
-    title: "Clef",
-    label: here ? `From measure ${barNumberOf(measure)}, read this staff in`
-                : "Draw this staff in",
-    value: now,
-    note: here
-      ? "The sign is drawn at that bar and the staff is read in it from "
-        + "there on."
-      : "",
-    options: [
-      { value: "treble", label: "Treble" },
-      { value: "bass", label: "Bass" },
-      { value: "alto", label: "Alto" },
-      { value: "tenor", label: "Tenor" },
-      { value: "percussion", label: "Percussion" },
-      // The tenor's clef and the guitarist's: the same staff as a treble
-      // clef, sounding an octave below what is written.
-      { value: "treble8vb", label: "Treble 8 below" },
-      ...(here ? [{ value: "none", label: "No change here" }] : []),
-    ],
+  // Where the cursor is inside the bar. A clef written on the third note of
+  // a bar is drawn in front of that note, which is what a part that changes
+  // clef partway through a bar asks for — waiting for the barline would put
+  // the sign somewhere the player does not change.
+  const spot = state.selection?.at ?? 0;
+  const here = measure > 0 || spot > 1;
+
+  $("#clefpick-where").textContent = !here
+    ? "For this staff, from its first bar."
+    : spot > 1
+      ? `In measure ${barNumberOf(measure)}, in front of the note the ` +
+        "cursor is on."
+      : `From measure ${barNumberOf(measure)}, where the sign is drawn at ` +
+        "the barline.";
+
+  // Drawn rather than listed. A musician knows the signs and would have to
+  // turn six words back into them to choose; the picture is the choice.
+  //
+  // Through the same drawing the key picker uses — a staff with nothing on
+  // it but the clef — so the two windows show the music the same way.
+  const choices = [
+    { value: "treble", label: "Treble" },
+    { value: "bass", label: "Bass" },
+    { value: "alto", label: "Alto" },
+    { value: "tenor", label: "Tenor" },
+    { value: "percussion", label: "Percussion" },
+    // The tenor's clef and the guitarist's: the same staff as a treble
+    // clef, sounding an octave below what is written.
+    { value: "treble8vb", label: "Treble 8 below" },
+  ];
+  const drawings = await Promise.all(choices.map((c) =>
+    fetch("/keysig.svg?" + new URLSearchParams({
+      fifths: "0", clef: c.value, space: "11",
+    }).toString()).then((r) => r.text()).catch(() => "")));
+
+  let picked = here ? "" : now;
+  const row = $("#clefpick-row");
+  row.innerHTML = "";
+  const name = $("#clefpick-name");
+  const show = () => {
+    const c = choices.find((x) => x.value === picked);
+    name.textContent = c ? t(c.label) : t("Pick a clef");
+    for (const b of row.children) {
+      b.classList.toggle("chosen", b.dataset.clef === picked);
+    }
+  };
+  choices.forEach((c, i) => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "clefpick-one";
+    b.dataset.clef = c.value;
+    b.title = t(c.label);
+    b.setAttribute("aria-label", t(c.label));
+    // The drawing comes from the server as an SVG document and goes
+    // straight into the page: in an <img> it would be a document of its
+    // own, unable to reach the music font, and every clef would be an
+    // empty box.
+    b.innerHTML = drawings[i] ||
+      `<span class="small">${escapeHTML(t(c.label))}</span>`;
+    b.addEventListener("click", () => {
+      picked = c.value;
+      show();
+    });
+    b.addEventListener("dblclick", () => {
+      picked = c.value;
+      $("#clefpick").close("ok");
+    });
+    row.appendChild(b);
   });
-  if (v === null || (!here && v === now)) return;
-  const res = await fetch(
-    `/api/staff?part=${part}&clef=${encodeURIComponent(v)}` +
-      (here ? `&at=${measure}` : ""),
-    { method: "POST" });
+  show();
+
+  // Offer to take a change away only where there is one to take.
+  const hit = state.hits.find(
+    (h) => h.part === part && h.measure === measure);
+  const remove = $("#clefpick-remove");
+  if (remove) remove.hidden = !(here && hit?.clefChange);
+
+  const dlg = $("#clefpick");
+  const answer = await new Promise((resolve) => {
+    const done = () => {
+      dlg.removeEventListener("close", done);
+      resolve(dlg.returnValue);
+    };
+    dlg.addEventListener("close", done);
+    dlg.returnValue = "";
+    dlg.showModal();
+  });
+  if (answer === "cancel" || answer === "") return;
+
+  let v = picked;
+  if (answer === "remove") {
+    v = "none";
+  } else if (!v || (!here && v === now)) {
+    return;
+  }
+  // Written into the music, at the cursor. /api/staff sets the clef of the
+  // whole staff and is what Score setup uses; this one writes the sign.
+  const p = new URLSearchParams({
+    part: String(part), measure: String(measure),
+    at: String(spot), clef: v,
+  });
+  const sel = state.selection;
+  if (sel && sel.ref !== null && sel.ref !== undefined) {
+    const target = refTarget(sel.ref);
+    if (target) p.set("sel", target);
+  }
+  const res = await fetch("/api/clef?" + p.toString(), { method: "POST" });
   if (!res.ok) {
     status("Could not change the clef: " + (await res.text()).trim());
     return;
   }
   await refreshScore();
-  status("Clef changed");
+  if (v === "none") {
+    status(`Clef change in measure ${barNumberOf(measure)} removed`);
+    return;
+  }
+  const said = choices.find((c) => c.value === v)?.label || v;
+  status(here ? `${said} from measure ${barNumberOf(measure)}`
+              : `${said} clef`);
 }
 
 // stepHistory takes an edit back, or puts it on again.
@@ -12114,6 +12196,7 @@ function drawSetupChosen() {
 // whose instruments are being named, and making the staves again would
 // throw away what they came here to keep.
 function drawSetupBar() {
+  setupClefRow();
   const inst = $("#setup-instruments");
   const apply = $("#setup-apply");
   if (!inst || !apply) return;
@@ -12748,6 +12831,51 @@ async function applyScoreSetup() {
   status(d.staves === 1 ? "Made 1 staff" : "Made " + d.staves + " staves");
 }
 
+// setupClefRow shows the clef of the staff picked in Score setup, and
+// changes it.
+//
+// The staff's own clef, from its first bar: what the whole part is read in.
+// A change partway through is a different thing — the sign a player meets
+// in the middle of a piece — and is written into the music under Insert.
+//
+// Only with one staff picked. Two staves read in different clefs have no
+// one answer to show, and setting both from a box that was showing one of
+// them is a change nobody asked for.
+function setupClefRow() {
+  const row = $("#setup-clef-row");
+  const box = $("#setup-clef");
+  if (!row || !box) return;
+  const picked = setupPicked();
+  const live = setupLive();
+  const one = live && picked.length === 1 ? picked[0] : null;
+  row.hidden = !live;
+  box.disabled = !one;
+  if (!one) return;
+  const part = state.info?.parts?.[one.part ?? setupIndexOf(one)];
+  box.value = part?.clef || "treble";
+}
+
+// setupIndexOf is where a chosen entry sits in the score.
+function setupIndexOf(entry) {
+  return setupOrdered().indexOf(entry);
+}
+
+async function setupClefChanged() {
+  const picked = setupPicked();
+  if (picked.length !== 1 || !setupLive()) return;
+  const at = picked[0].part ?? setupIndexOf(picked[0]);
+  const v = $("#setup-clef").value;
+  const res = await fetch(`/api/staff?part=${at}&clef=${encodeURIComponent(v)}`,
+                          { method: "POST" });
+  if (!res.ok) {
+    status("Could not change the clef: " + (await res.text()).trim());
+    return;
+  }
+  await setupReload();
+  setupClefRow();
+  status("Clef changed");
+}
+
 function setupScoreSetupDialog() {
   $("#setup-add")?.addEventListener("click", () => void setupAdd());
   $("#setup-remove")?.addEventListener("click", () => void setupRemove());
@@ -12770,6 +12898,9 @@ function setupScoreSetupDialog() {
   $("#setup-pick")?.addEventListener("dblclick", () => void setupAdd());
   // And double-clicking a staff is how everybody expects to change it.
   $("#setup-chosen")?.addEventListener("dblclick", () => void setupChange());
+  // The clef of whichever staff is picked, shown and changed.
+  $("#setup-chosen")?.addEventListener("change", setupClefRow);
+  $("#setup-clef")?.addEventListener("change", () => void setupClefChanged());
 }
 
 /* ---------- tablature ---------- */
@@ -16798,9 +16929,7 @@ const MENU_ICONS = {
   "insert-rest": "\ue4e5",         // restQuarter
   "set-key": "\ue262",             // accidentalSharp
   "set-time": "\ue08a",            // timeSigCommon
-  // A clef written at a bar, and the staff's own: the same sign either way.
   "insert-clef": "\ue050",         // gClef
-  "set-clef": "\ue050",            // gClef
 
   // The marks that had no way in. Each is its own sign and nothing else
   // looks like it, which is the whole reason a palette is drawn in the

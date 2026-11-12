@@ -246,6 +246,10 @@
            where somebody looks for them. -->
       <button data-action="set-key"><span>Key signature…</span></button>
       <button data-action="set-time"><span>Time signature…</span></button>
+      <!-- Written where the cursor is, which can be partway through a bar:
+           a cello climbing into the tenor clef for a phrase does not wait
+           for the barline. The staff's own clef — what the whole part is
+           read in — is in Score setup. -->
       <button data-action="insert-clef"><span>Clef…</span></button>
       <button data-action="set-tempo"><span>Tempo…</span></button>
       <hr>
@@ -463,7 +467,6 @@
       <button data-action="staff-up"><span>Move staff up</span></button>
       <button data-action="staff-down"><span>Move staff down</span></button>
       <hr>
-      <button data-action="set-clef"><span>Clef…</span></button>
       <button data-action="staff-lines"><span>Staff lines…</span></button>
       <button data-action="set-instrument"><span>Set instrument…</span></button>
       <button data-action="set-lyrics"><span>Lyrics…</span><kbd>L</kbd></button>
@@ -789,6 +792,23 @@
   <form method="dialog" class="ask-buttons">
     <button value="ok" type="submit" class="primary">OK</button>
     <button value="remove" type="submit" formnovalidate id="keysig-remove" hidden>Remove this change</button>
+    <button value="cancel" type="submit" formnovalidate>Cancel</button>
+  </form>
+</dialog>
+
+<!-- Which clef a staff is read in, picked by seeing it.
+     A list of six words is a list somebody has to translate into signs in
+     their head; the signs themselves are what a musician already knows, so
+     the picker draws each one on a staff and the choice is made by looking.
+     The same thing the key signature picker does, for the same reason. -->
+<dialog id="clefpick">
+  <h2>Clef</h2>
+  <p class="small" id="clefpick-where">Pick the clef this staff is read in.</p>
+  <div id="clefpick-row"></div>
+  <p id="clefpick-name">Treble</p>
+  <form method="dialog" class="ask-buttons">
+    <button value="ok" type="submit" class="primary">OK</button>
+    <button value="remove" type="submit" formnovalidate id="clefpick-remove" hidden>Remove this change</button>
     <button value="cancel" type="submit" formnovalidate>Cancel</button>
   </form>
 </dialog>
@@ -1667,6 +1687,20 @@
       <div class="tempo-bar">
         <button type="button" id="setup-bracket">Bracket these</button>
         <button type="button" id="setup-ungroup">Ungroup</button>
+      </div>
+      <!-- What the staff picked is read in from its first bar. A change
+           partway through is a different thing and is written into the
+           music, under Insert. -->
+      <div class="tempo-bar" id="setup-clef-row">
+        <label class="small" for="setup-clef">Clef</label>
+        <select id="setup-clef" aria-label="The clef this staff is read in">
+          <option value="treble">Treble</option>
+          <option value="bass">Bass</option>
+          <option value="alto">Alto</option>
+          <option value="tenor">Tenor</option>
+          <option value="percussion">Percussion</option>
+          <option value="treble8vb">Treble 8 below</option>
+        </select>
       </div>
       <!-- A score that arrives without its instruments still has its staff
            names, which is what a reader goes by. This fills the list in

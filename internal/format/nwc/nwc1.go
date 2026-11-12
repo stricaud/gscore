@@ -13,6 +13,7 @@ package nwc
 import (
 	"encoding/binary"
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/stricaud/gscore/internal/model"
@@ -60,6 +61,9 @@ type walker struct {
 	octaveShifts int
 	// sounds is the instrument the staff just read plays through, or -1.
 	sounds int
+	// section is the group the staff just read is filed under — "Maderas",
+	// "Metales", "Arcos" — which is what NoteWorthy draws a bracket round.
+	section string
 	// saidHidden is any staff in this file saying in words that it is one
 	// of the ones kept off the page: see hidePlayOnly.
 	saidHidden bool
@@ -556,6 +560,7 @@ func parseNWC1(raw []byte, version int) (*model.Score, error) {
 	// same staff as the one after it, and which group it is filed under.
 	var shares []bool
 	var groups []string
+	var sections []string
 	braces := map[*model.Part]int{}
 	printed := map[*model.Part]bool{}
 	sounds := map[*model.Part]int{}
@@ -657,6 +662,7 @@ func parseNWC1(raw []byte, version int) (*model.Score, error) {
 					// be a printed staff and was taken off the page.
 					braces[part] = w.brace
 					sounds[part] = w.sounds
+					sections = append(sections, w.section)
 					if w.printed {
 						printed[part] = true
 					}
@@ -748,6 +754,7 @@ func parseNWC1(raw []byte, version int) (*model.Score, error) {
 		score.Parts = append(score.Parts, part)
 		shares = append(shares, w.layerWithNext)
 		groups = append(groups, w.group)
+		sections = append(sections, w.section)
 		// Held against the part rather than its index, because merging the
 		// layers below drops staves and moves the rest up.
 		braces[part] = w.brace
@@ -757,14 +764,15 @@ func parseNWC1(raw []byte, version int) (*model.Score, error) {
 		}
 	}
 	hidePlayOnly(score.Parts, printed, w.saidHidden)
-	score.Parts, groups = mergeLayers(score.Parts, shares, groups)
+	score.Parts, groups, sections = mergeLayers(score.Parts, shares, groups,
+		sections)
 	// Again, now the layers are one staff. A spanner is held open per line
 	// while drawing, and merging moves lines about: one closed on its own
 	// staff can come back open on the staff it is merged into.
 	for _, p := range score.Parts {
 		closeDanglingSpans(p)
 	}
-	score.Groups = staffGroups(score.Parts, groups, braces, sounds)
+	score.Groups = staffGroups(score.Parts, groups, sections, braces, sounds)
 	// Whatever the file did not say about what plays each staff, its own
 	// names usually do — and where they do not, the staff is named so it
 	// can be set by hand instead of found by ear.
@@ -984,6 +992,7 @@ func (w *walker) staff(version int) (*model.Part, error) {
 	// throughout — everything in them is printed — and a file that never
 	// says which staves are printed is not saying that none of them are.
 	w.printed = d.printedFlag && settings+1 < len(w.b) && w.b[settings+1] == 1
+	w.section = layer
 	if layer == "Hidden" || w.group == "Hidden" {
 		// The file has said which staves it keeps off the page, in words,
 		// and that settles it for the whole score: see hidePlayOnly.
@@ -1007,6 +1016,10 @@ func (w *walker) staff(version int) (*model.Part, error) {
 	// And whether the staff is half of a grand staff, which is the one
 	// thing that says to brace it when the file files every staff under
 	// NoteWorthy's default group and so names no group at all.
+	if os.Getenv("BRDBG") != "" {
+		fmt.Fprintf(os.Stderr, "BR v%d %q byte=%d\n", version, name,
+			int(w.b[settings+d.braceByte]))
+	}
 	w.brace = braceNone
 	if d.braceByte > 0 && settings+d.braceByte < len(w.b) {
 		w.brace = int(w.b[settings+d.braceByte])
@@ -2834,25 +2847,33 @@ func fitBarRests(score *model.Score) {
 // the barline that closes it, a change of meter or key or clef — belongs to
 // the bar rather than to the line, so the first staff of the pair keeps its
 // own and the rest only add their voices.
-func mergeLayers(parts []*model.Part, shares []bool, groups []string) ([]*model.Part, []string) {
-	if len(shares) != len(parts) || len(groups) != len(parts) {
-		return parts, groups
+func mergeLayers(parts []*model.Part, shares []bool, groups, sections []string) (
+	[]*model.Part, []string, []string) {
+
+	if len(shares) != len(parts) || len(groups) != len(parts) ||
+		len(sections) != len(parts) {
+		return parts, groups, sections
 	}
 	out := make([]*model.Part, 0, len(parts))
 	kept := make([]string, 0, len(parts))
+	keptSections := make([]string, 0, len(parts))
 	for i := 0; i < len(parts); i++ {
-		p, g := parts[i], groups[i]
+		p, g, sec := parts[i], groups[i], sections[i]
 		for i+1 < len(parts) && shares[i] && parts[i+1].Hidden == p.Hidden {
 			layerOnto(p, parts[i+1])
 			i++
 			if g == "" {
 				g = groups[i]
 			}
+			if sec == "" {
+				sec = sections[i]
+			}
 		}
 		out = append(out, p)
 		kept = append(kept, g)
+		keptSections = append(keptSections, sec)
 	}
-	return out, kept
+	return out, kept, keptSections
 }
 
 // hidePlayOnly takes the staves that are only played off the page.
@@ -2925,7 +2946,9 @@ const nwcDefaultGroup = "Standard"
 //
 // A brace for two staves and a bracket for more: two staves under one name
 // are one player's hands, and more than two are a section.
-func staffGroups(parts []*model.Part, groups []string, braces, sounds map[*model.Part]int) []model.StaffGroup {
+func staffGroups(parts []*model.Part, groups, sections []string,
+	braces, sounds map[*model.Part]int) []model.StaffGroup {
+
 	if len(groups) != len(parts) {
 		return nil
 	}
@@ -2979,7 +3002,58 @@ func staffGroups(parts []*model.Part, groups []string, braces, sounds map[*model
 		}
 	}
 	flush(len(parts) - 1)
-	return append(out, grandStaves(parts, braces, out)...)
+	out = append(out, grandStaves(parts, braces, out)...)
+	return append(out, sectionBrackets(parts, sections)...)
+}
+
+// sectionBrackets draws the line down the side of a family.
+//
+// From 2.5 a staff says which section of the score it belongs to — the
+// concerto for orchestra files its staves under "Maderas", "Metales",
+// "Percusión", "Teclas" and "Arcos" — and NoteWorthy brackets each of them
+// on the page. gscore read the name, used it to find the staves kept off
+// the page, and drew nothing: thirty staves in one undifferentiated stack
+// where the file says which four are the woodwind.
+//
+// Outside whatever is already there. A bracket round the family and a brace
+// round the two staves of the marimba inside it is what the page has, and
+// the engraver gives each group its own column, so the two do not collide.
+//
+// No name beside it, because NoteWorthy prints none: the bracket says the
+// staves belong together and the names of the players say the rest.
+func sectionBrackets(parts []*model.Part, sections []string) []model.StaffGroup {
+	if len(sections) != len(parts) {
+		return nil
+	}
+	var out []model.StaffGroup
+	name, first := "", -1
+	flush := func(last int) {
+		if first >= 0 && last > first {
+			out = append(out, model.StaffGroup{
+				First: first, Last: last, Symbol: model.GroupBracket,
+			})
+		}
+		name, first = "", -1
+	}
+	for i, p := range parts {
+		sec := sections[i]
+		// A staff that is not drawn is not in the bracket, and does not
+		// hold one open across the staves that are. Nor is the default
+		// group, which is the name a staff carries when nobody has filed
+		// it anywhere, or the one the composer files the sounding staves
+		// under.
+		if p.Hidden || sec == "" || sec == nwcDefaultGroup || sec == "Hidden" {
+			flush(i - 1)
+			continue
+		}
+		if sec == name && first >= 0 {
+			continue
+		}
+		flush(i - 1)
+		name, first = sec, i
+	}
+	flush(len(parts) - 1)
+	return out
 }
 
 // grandStaves braces the pairs that said so in their own settings and that no

@@ -413,6 +413,12 @@ function paletteButton(item, onAction, size) {
   return b;
 }
 
+// MENU_ICON_BOX is the room a menu picture has, in pixels, and it is the
+// same box the stylesheet gives .menu-icon. The two are kept in step by a
+// test, because a drawing that does not know how big its box is is a
+// drawing that hangs over the entry below it.
+const MENU_ICON_BOX = { w: 24, h: 23 };
+
 // palGlyphSize is what a palette glyph is drawn at when its section does not
 // say otherwise, in pixels of staff height.
 const palGlyphSize = 19;
@@ -511,16 +517,23 @@ function markOn(note, mark) {
 // glyphSVG draws a glyph, or a note with a mark on it, in a box that is
 // exactly their ink.
 //
-// size is what it would be drawn at as text, and cap how much of its button
-// it may fill. Both are needed: the first keeps a dot a dot, and the second
-// keeps a clef inside its square.
+// size is what it would be drawn at as text, cap how much of its button it
+// may fill, and fit the box in pixels it has to stay inside. The first keeps
+// a dot a dot and the last keeps a clef inside its square.
+//
+// fit is needed as well as cap because a percentage does not always have
+// anything to be a percentage of: the menu's icon is a grid whose row is
+// sized by what is in it, so "max-height: 100%" resolved against the
+// drawing's own height and constrained nothing at all. A clef is nearly
+// twice as tall as the staff it is drawn on, and the one the Insert menu
+// grew came down over the entry underneath it.
 //
 // The mark is drawn in the colour reserved for it, and the note it sits on
 // in the colour of the text around it. gscore 0.0.9 drew its menu pictures
 // that way and it is the whole reason they work: the black is the note the
 // entry is about and the red is what the entry does to it, so the eye finds
 // the entry it wants without reading a word.
-function glyphSVG(ch, ink, size, cap, mark, markInk) {
+function glyphSVG(ch, ink, size, cap, mark, markInk, fit) {
   const parts = [{ ch, x: 0, y: 0, fill: "currentColor" }];
   let box = { x: ink.x, y: ink.y, w: ink.w, h: ink.h };
   if (mark && markInk) {
@@ -540,8 +553,17 @@ function glyphSVG(ch, ink, size, cap, mark, markInk) {
   svg.setAttribute("preserveAspectRatio", "xMidYMid meet");
   svg.setAttribute("focusable", "false");
   svg.setAttribute("aria-hidden", "true");
-  svg.style.width = (box.w * size).toFixed(2) + "px";
-  svg.style.height = (box.h * size).toFixed(2) + "px";
+  let w = box.w * size;
+  let h = box.h * size;
+  if (fit) {
+    // Down, never up: a dot keeps its size and a clef is brought back to
+    // the box. The shape is kept, so the two measurements shrink together.
+    const k = Math.min(1, fit.w / w, fit.h / h);
+    w *= k;
+    h *= k;
+  }
+  svg.style.width = w.toFixed(2) + "px";
+  svg.style.height = h.toFixed(2) + "px";
   if (cap) {
     svg.style.maxWidth = cap;
     svg.style.maxHeight = cap;
@@ -564,7 +586,7 @@ function glyphSVG(ch, ink, size, cap, mark, markInk) {
 // It leaves the character alone where the ink cannot be measured, so a
 // browser that does not answer the question still shows the palette it
 // always showed.
-function fitGlyph(el, cap) {
+function fitGlyph(el, cap, fit) {
   const ch = el.dataset.glyph || el.textContent;
   if (!ch || el.firstElementChild) return;
   const mark = el.dataset.mark || "";
@@ -579,7 +601,7 @@ function fitGlyph(el, cap) {
   el.dataset.glyph = ch;
   el.textContent = "";
   el.appendChild(glyphSVG(ch, ink, Number(el.dataset.size) || palGlyphSize,
-                          cap, mark, markInk));
+                          cap, mark, markInk, fit));
 }
 
 // fitGlyphs waits for the music font and then fits every glyph on the page.
@@ -593,7 +615,7 @@ function fitGlyphs(root) {
       fitGlyph(el, "84%");
     }
     for (const el of (root || document).querySelectorAll(".menu-icon")) {
-      fitGlyph(el, "100%");
+      fitGlyph(el, "100%", MENU_ICON_BOX);
     }
   };
   // Asked for by name, not waited for in general. document.fonts.ready

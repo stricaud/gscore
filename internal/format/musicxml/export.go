@@ -235,6 +235,18 @@ func buildPart(s *model.Score, p *model.Part, id string, index, divisions int) x
 					dir := buildDynamic(d)
 					xm.add(measureItem{Direction: &dir})
 				}
+				// A clef written in the middle of a bar: the sign goes
+				// in front of the note it changes at, which is what the
+				// specification means by attributes between notes. gscore
+				// has drawn these since the importers learned to read one
+				// and the writer put none of them in the file, so a part
+				// that changes clef partway through a bar came out of
+				// gscore in one clef from end to end.
+				if mk := marksOf(el); mk != nil && mk.Clef != nil {
+					xm.add(measureItem{Attributes: &attributes{
+						Clefs: []clef{clefSigns[*mk.Clef]},
+					}})
+				}
 				// And the spans that begin or end here: the hairpin, the
 				// octave line, the pedal. Directions like the rest, so
 				// they stand before the note they are hung on, which is

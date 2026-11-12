@@ -203,3 +203,27 @@ func TestAMeterThatIsNotDrawnStaysThatWay(t *testing.T) {
 		t.Errorf("the meter came back as symbol %v", got)
 	}
 }
+
+func TestAClefInTheMiddleOfABarIsWritten(t *testing.T) {
+	// The sign goes in front of the note it changes at. A part that
+	// changes clef partway through a bar came out of gscore in one clef
+	// from end to end, with nothing saying so.
+	s := markedNotes(func(n []*model.Note) {
+		c := model.Bass
+		n[2].Clef = &c
+	})
+	out := exported(t, s)
+	before := strings.Index(out, "<clef")
+	second := strings.Index(out[before+5:], "<clef")
+	if second < 0 {
+		t.Fatalf("only one clef is in the file:\n%s", out)
+	}
+	// Two notes before it: the clef stands in front of the third.
+	head := out[:before+5+second]
+	if n := strings.Count(head, "<note"); n != 2 {
+		t.Errorf("the second clef comes after %d notes, want 2", n)
+	}
+	if !strings.Contains(out[before+5+second:], "<sign>F</sign>") {
+		t.Errorf("the second clef is not the bass clef:\n%s", out)
+	}
+}

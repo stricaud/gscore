@@ -1977,6 +1977,30 @@ paths:
         "200": { $ref: "#/components/responses/Changed" }
         "400": { $ref: "#/components/responses/Error" }
 
+  /api/clef:
+    post:
+      tags: [marks]
+      summary: A change of clef written into the music
+      description: |
+        The sign a player meets partway through, as against the staff's own
+        clef — which `/api/staff` sets. At the head of a bar it is drawn at
+        the barline; on any later element it is drawn in front of that note,
+        which is where a part that changes clef mid-bar wants it. `none`
+        takes away whatever change that bar carries. A clef that would
+        change nothing is not written.
+      parameters:
+        - $ref: "#/components/parameters/part"
+        - $ref: "#/components/parameters/measure"
+        - $ref: "#/components/parameters/at"
+        - $ref: "#/components/parameters/sel"
+        - name: clef
+          in: query
+          required: true
+          schema: { type: string, enum: [treble, bass, alto, tenor, percussion, treble8vb, none] }
+      responses:
+        "200": { $ref: "#/components/responses/Changed" }
+        "400": { $ref: "#/components/responses/Error" }
+
   /api/trill:
     post:
       tags: [marks]

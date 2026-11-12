@@ -1354,8 +1354,9 @@ func TestLayeredStavesBecomeOneStaff(t *testing.T) {
 	}}
 	alone := &model.Part{Name: "LH", Measures: []*model.Measure{bar(), bar()}}
 
-	out, names := mergeLayers([]*model.Part{upper, lower, alone},
-		[]bool{true, false, false}, []string{"Piano", "", ""})
+	out, names, _ := mergeLayers([]*model.Part{upper, lower, alone},
+		[]bool{true, false, false}, []string{"Piano", "", ""},
+		[]string{"", "", ""})
 	if len(out) != 2 {
 		t.Fatalf("%d staves came back, want 2", len(out))
 	}
@@ -1378,7 +1379,7 @@ func TestLayeredStavesBecomeOneStaff(t *testing.T) {
 		t.Errorf("the merged staves are filed under %v, want the Piano the first carried", names)
 	}
 
-	out, _ = mergeLayers([]*model.Part{hidden, alone}, []bool{true, false}, []string{"", ""})
+	out, _, _ = mergeLayers([]*model.Part{hidden, alone}, []bool{true, false}, []string{"", ""}, []string{"", ""})
 	if len(out) != 2 {
 		t.Errorf("a hidden staff was merged with a printed one")
 	}
@@ -1469,7 +1470,7 @@ func TestAnAccidentalLastsToTheBarline(t *testing.T) {
 // page as though they were two instruments.
 func TestAGrandStaffIsBracedAndNamed(t *testing.T) {
 	parts := []*model.Part{{Name: "RH"}, {Name: "LH"}}
-	got := staffGroups(parts, []string{"Piano", ""}, nil, nil)
+	got := staffGroups(parts, []string{"Piano", ""}, nil, nil, nil)
 	if len(got) != 1 {
 		t.Fatalf("%d groups, want 1: %v", len(got), got)
 	}
@@ -1485,21 +1486,21 @@ func TestAGrandStaffIsBracedAndNamed(t *testing.T) {
 	}
 
 	// Three or more under one name are a section, so a bracket.
-	got = staffGroups([]*model.Part{{}, {}, {}}, []string{"Strings", "", ""}, nil, nil)
+	got = staffGroups([]*model.Part{{}, {}, {}}, []string{"Strings", "", ""}, nil, nil, nil)
 	if len(got) != 1 || got[0].Symbol != model.GroupBracket {
 		t.Errorf("three staves are drawn with %v, want a bracket", got)
 	}
 
 	// The name every NoteWorthy file carries when nobody has filed the
 	// staff under anything is not a group, and nothing is drawn round it.
-	if got := staffGroups([]*model.Part{{}, {}}, []string{"Standard", ""}, nil, nil); len(got) != 0 {
+	if got := staffGroups([]*model.Part{{}, {}}, []string{"Standard", ""}, nil, nil, nil); len(got) != 0 {
 		t.Errorf("the default group was drawn: %v", got)
 	}
 
 	// A staff that is not on the page does not hold a group open across
 	// the ones that are.
 	got = staffGroups([]*model.Part{{Name: "a"}, {Hidden: true}, {Name: "b"}},
-		[]string{"Piano", "", ""}, nil, nil)
+		[]string{"Piano", "", ""}, nil, nil, nil)
 	if len(got) != 0 {
 		t.Errorf("a group reached across a hidden staff: %v", got)
 	}
@@ -1696,7 +1697,7 @@ func TestARestUnderAnotherLineIsNotPrinted(t *testing.T) {
 			&model.Rest{Dur: half},
 		},
 	}}}}}
-	out, _ := mergeLayers([]*model.Part{upper, lower}, []bool{true, false}, []string{"", ""})
+	out, _, _ := mergeLayers([]*model.Part{upper, lower}, []bool{true, false}, []string{"", ""}, []string{"", ""})
 	if len(out) != 1 {
 		t.Fatalf("%d staves came back", len(out))
 	}
@@ -1722,7 +1723,7 @@ func TestARestUnderAnotherLineIsNotPrinted(t *testing.T) {
 	b := &model.Part{Measures: []*model.Measure{{Voices: []*model.Voice{{
 		Elements: []model.Element{&model.Rest{Dur: quarter}},
 	}}}}}
-	out, _ = mergeLayers([]*model.Part{a, b}, []bool{true, false}, []string{"", ""})
+	out, _, _ = mergeLayers([]*model.Part{a, b}, []bool{true, false}, []string{"", ""}, []string{"", ""})
 	for _, v := range out[0].Measures[0].Voices {
 		for _, e := range v.Elements {
 			if r, ok := e.(*model.Rest); ok && r.Hidden {
@@ -1991,7 +1992,7 @@ func TestASilencedNoteLeavesItsMarksBehind(t *testing.T) {
 		Elements: []model.Element{a, b},
 	}}}}}
 
-	out, _ := mergeLayers([]*model.Part{upper, lower}, []bool{true, false}, []string{"", ""})
+	out, _, _ := mergeLayers([]*model.Part{upper, lower}, []bool{true, false}, []string{"", ""}, []string{"", ""})
 	if len(out) != 1 {
 		t.Fatalf("%d staves came back", len(out))
 	}
@@ -2276,7 +2277,7 @@ func TestAGrandStaffIsBracedWhenNoGroupNamesIt(t *testing.T) {
 	rh, lh := &model.Part{Name: "Right Hand"}, &model.Part{Name: "Left Hand"}
 	braces := map[*model.Part]int{rh: braceUpper, lh: braceLower}
 	got := staffGroups([]*model.Part{rh, lh},
-		[]string{nwcDefaultGroup, nwcDefaultGroup}, braces, nil)
+		[]string{nwcDefaultGroup, nwcDefaultGroup}, nil, braces, nil)
 	if len(got) != 1 {
 		t.Fatalf("%d groups, want the one brace: %v", len(got), got)
 	}
@@ -2288,7 +2289,7 @@ func TestAGrandStaffIsBracedWhenNoGroupNamesIt(t *testing.T) {
 	}
 
 	// A name beats the settings: the group is drawn once, with the word.
-	got = staffGroups([]*model.Part{rh, lh}, []string{"Piano", ""}, braces, nil)
+	got = staffGroups([]*model.Part{rh, lh}, []string{"Piano", ""}, nil, braces, nil)
 	if len(got) != 1 || got[0].Name != "Piano" {
 		t.Errorf("a named grand staff came out as %v, want one group called Piano", got)
 	}
@@ -2296,7 +2297,7 @@ func TestAGrandStaffIsBracedWhenNoGroupNamesIt(t *testing.T) {
 	// Anything the settings do not say is a grand staff is left alone. The
 	// Appassionata and a Mozart score both write 3 there.
 	got = staffGroups([]*model.Part{rh, lh}, []string{nwcDefaultGroup, nwcDefaultGroup},
-		map[*model.Part]int{rh: 3, lh: 3}, nil)
+		nil, map[*model.Part]int{rh: 3, lh: 3}, nil)
 	if len(got) != 0 {
 		t.Errorf("staves that claim no grand staff were braced: %v", got)
 	}
@@ -2396,7 +2397,7 @@ func TestTheSameGroupNameTwiceIsOneGroup(t *testing.T) {
 	// bracketed rather than braced: two staves under one heading was enough
 	// to brace them together as though a drummer were playing the horns.
 	sounds := map[*model.Part]int{parts[5]: 0x40, parts[6]: 0x30}
-	got := staffGroups(parts, names, nil, sounds)
+	got := staffGroups(parts, names, nil, nil, sounds)
 
 	want := []struct {
 		first, last int
@@ -2417,7 +2418,7 @@ func TestTheSameGroupNameTwiceIsOneGroup(t *testing.T) {
 
 	// A pianist's two hands are one instrument, and those are braced.
 	rh, lh := &model.Part{Name: "RH"}, &model.Part{Name: "LH"}
-	got = staffGroups([]*model.Part{rh, lh}, []string{"Piano", "Piano"}, nil,
+	got = staffGroups([]*model.Part{rh, lh}, []string{"Piano", "Piano"}, nil, nil,
 		map[*model.Part]int{rh: 1, lh: 1})
 	if len(got) != 1 || got[0].Symbol != model.GroupBrace || !got[0].Barlines {
 		t.Errorf("a grand staff named on both its staves came out as %v", got)

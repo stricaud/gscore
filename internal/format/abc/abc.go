@@ -370,6 +370,24 @@ type parser struct {
 	tupletNum, tupletDen int
 	tupletFirst          bool
 
+	// sung are the note events of the music line just read, in the order
+	// they were written, waiting for the words to be laid under them, and
+	// sungBars the places in that list where a barline fell. A w: field
+	// says which note each syllable belongs to by counting notes, so the
+	// count has to be kept as the notes go by; and it says "|" for "move
+	// on to the next bar", which is why the barlines are kept too.
+	//
+	// Cleared when a new music line starts, because a w: line belongs to
+	// the line of music above it. Several w: lines in a row are the verses
+	// of that same line, which is what sungVerse counts.
+	sung      []*model.Marks
+	sungBars  []int
+	sungVerse int
+	// continued is set when a music line ended with "\", so the next one
+	// carries on the same line of music and the words written under the
+	// pair belong to all of it.
+	continued bool
+
 	lineNo int
 	// lineOffset keeps error messages pointing at the line in the whole file
 	// rather than the line within one tune of a book.
@@ -483,12 +501,14 @@ func (p *parser) run(src string) error {
 				}
 			}
 			if trailing != "" {
+				p.startMusicLine()
 				if err := p.music(trailing); err != nil {
 					p.skip(trailing, err)
 				}
 			}
 			continue
 		}
+		p.startMusicLine()
 		if err := p.music(line); err != nil {
 			p.skip(line, err)
 		}
@@ -667,8 +687,16 @@ func (p *parser) field(name byte, value string) error {
 				p.stemDir = model.StemAuto
 			}
 		}
-	case 'A', 'B', 'D', 'F', 'G', 'H', 'N', 'O', 'P', 'R', 'S', 'U', 'W', 'Z', 'w':
+	case 'w':
+		// The words, sung under the line of music above them.
+		p.lyricLine(value)
+	case 'A', 'B', 'D', 'F', 'G', 'H', 'N', 'O', 'P', 'R', 'S', 'U', 'W', 'Z':
 		// Informational and layout fields that do not bear on the notes.
+		//
+		// W: is not w:. The capital is the words printed as a block of
+		// verse at the end of the tune, which is a thing to typeset and
+		// not a thing to sing from; the small letter is the words under
+		// the notes, and it is read above.
 	default:
 		return p.errf("unknown field %q", string(name)+":")
 	}
@@ -1141,6 +1169,9 @@ func (p *parser) closeMeasure(style model.BarlineStyle) {
 		p.endingOpen = nil
 	}
 	p.cur.Measures = append(p.cur.Measures, p.meas)
+	// Where the barline fell among the notes of this line, so that a "|"
+	// in a w: field can move the words on to the next bar.
+	p.sungBars = append(p.sungBars, len(p.sung))
 	p.meas, p.voice = nil, nil
 	p.accidentals = map[accKey]int{}
 	// Broken rhythm pairs two adjacent notes and does not reach across a
@@ -1148,6 +1179,220 @@ func (p *parser) closeMeasure(style model.BarlineStyle) {
 	// Nor does an octave mark waiting for a note that never came.
 	p.pendingBroken = 0
 	p.pendingOctave = 0
+}
+
+/*
+ * The words, laid under the notes
+ *
+ * A w: field is the line sung to the music written above it, and ABC says
+ * which syllable goes on which note by counting: the syllables run along the
+ * notes in order, and a handful of signs adjust the count where the two do
+ * not march in step.
+ *
+ *   -    the word carries on: "Twin-kle" is two syllables of one word, and
+ *        the hyphen between them is drawn
+ *   _    the syllable before is held over this note as well, with the long
+ *        line that says so drawn under the notes it covers
+ *   *    this note gets no syllable
+ *   |    move on to the first note of the next bar
+ *   ~    one syllable made of two words, printed with the space between them
+ *   \-   a hyphen that is part of the word and does not divide it
+ *
+ * Several w: lines after one line of music are its verses, numbered from
+ * one in the order they are written.
+ *
+ * None of this was read. The field was listed among those that "do not bear
+ * on the notes" and dropped, which is a strange thing to say about the
+ * words: the model has carried Lyric since it was written, the engraver
+ * draws them and even spaces the bar by the width of the syllables under it,
+ * and every other reader fills them in. In the ABC on this machine alone
+ * that silently discarded eight hundred and eleven lines of words.
+ */
+
+// startMusicLine begins counting the notes a w: field will be laid against.
+//
+// Per line of music, because that is the scope the language gives the field:
+// the words under a line belong to the line above them, and the next line
+// starts again at its first note. A line continued with "\" is one line, so
+// the count carries on through it.
+func (p *parser) startMusicLine() {
+	if p.continued {
+		p.continued = false
+		return
+	}
+	p.sung, p.sungBars, p.sungVerse = nil, nil, 0
+}
+
+// lyricLine lays the words of a w: field under the notes of the line above.
+func (p *parser) lyricLine(text string) {
+	if len(p.sung) == 0 {
+		// Words with no music above them: a w: in the header, or after a
+		// line the reader could make nothing of. There is nothing to sing
+		// them on.
+		return
+	}
+	p.sungVerse++
+	at, prevHyphen := 0, false
+	var held *model.Marks
+	for _, t := range lyricSyllables(text) {
+		switch {
+		case t.bar:
+			at = p.nextSungBar(at)
+			continue
+		case t.skip:
+			at++
+			continue
+		case t.hold:
+			// The syllable before is sung on this note too. The line that
+			// carries it is drawn from the syllable, so the flag goes on
+			// the syllable and not on the note it reaches.
+			if held != nil && len(held.Lyrics) > 0 {
+				held.Lyrics[len(held.Lyrics)-1].Extend = true
+			}
+			at++
+			continue
+		}
+		if at >= len(p.sung) {
+			// More words than notes. The spare ones are dropped rather
+			// than piled on the last note, which is what the reader of
+			// the page would see either way.
+			break
+		}
+		syl := model.Lyric{Text: t.text, Verse: p.sungVerse}
+		switch {
+		case prevHyphen && t.hyphen:
+			syl.Syllabic = model.SyllableMiddle
+		case prevHyphen:
+			syl.Syllabic = model.SyllableEnd
+		case t.hyphen:
+			syl.Syllabic = model.SyllableBegin
+		default:
+			syl.Syllabic = model.SyllableSingle
+		}
+		m := p.sung[at]
+		m.Lyrics = append(m.Lyrics, syl)
+		held, prevHyphen = m, t.hyphen
+		at++
+	}
+}
+
+// nextSungBar is where the words go when a w: field says "|": the first note
+// of the next bar.
+//
+// The first boundary at or after the position reached, so that a "|" written
+// when the words are already at the head of a bar confirms that rather than
+// skipping a bar of it — which is what the sign is for. A tune whose words
+// have slipped a note is a tune where every verse after the slip is wrong,
+// and the "|" is how the writer says where they should be.
+func (p *parser) nextSungBar(at int) int {
+	for _, b := range p.sungBars {
+		if b >= at {
+			return b
+		}
+	}
+	return len(p.sung)
+}
+
+// lyricToken is one step along the notes: a syllable, or one of the signs
+// that moves the words without singing anything.
+type lyricToken struct {
+	text   string
+	hyphen bool // the word carries on to the next syllable
+	hold   bool // '_'
+	skip   bool // '*'
+	bar    bool // '|'
+}
+
+// lyricSyllables cuts a w: field into one token per step.
+func lyricSyllables(s string) []lyricToken {
+	var out []lyricToken
+	var b strings.Builder
+	flush := func(hyphen bool) {
+		t := strings.TrimSpace(b.String())
+		b.Reset()
+		if t == "" {
+			return
+		}
+		// A tilde is a space that does not divide: "a~new" is one syllable
+		// sung on one note, printed as two words.
+		out = append(out, lyricToken{
+			text: strings.ReplaceAll(t, "~", " "), hyphen: hyphen,
+		})
+	}
+	for i := 0; i < len(s); i++ {
+		switch c := s[i]; c {
+		case '\\':
+			// An escaped sign is part of the word: "\-" is a hyphen in the
+			// text, as in a name, and does not cut the word in two.
+			if i+1 < len(s) && strings.IndexByte("-_*|~\\", s[i+1]) >= 0 {
+				b.WriteByte(s[i+1])
+				i++
+				continue
+			}
+			b.WriteByte(c)
+		case '-':
+			flush(true)
+		case ' ', '\t':
+			flush(false)
+		case '_':
+			flush(false)
+			out = append(out, lyricToken{hold: true})
+		case '*':
+			flush(false)
+			out = append(out, lyricToken{skip: true})
+		case '|':
+			flush(false)
+			out = append(out, lyricToken{bar: true})
+		default:
+			b.WriteByte(c)
+		}
+	}
+	flush(false)
+	return out
+}
+
+// multiRest reads ABC's "Z" — a whole bar's rest — and the count after it.
+//
+// "Z4" is four bars of silence, which is one letter standing for four bars
+// and not for one long note. The model has no element for a run of them and
+// does not need one: a run of silent bars is a run of silent bars, and the
+// engraver finds them itself and draws the counted sign over them. See
+// engrave/multirest.go, which is careful about where a run may be collapsed
+// in a way a reader of the ABC could not be.
+//
+// It used to be stepped over as a letter nobody knew. A tune that opened
+// with a rest therefore had no elements at all by the time the file ended,
+// and "no music found in any tune" threw the whole thing away — the one
+// failure here that loses a piece rather than a mark. Parts and orchestral
+// scores are full of Z; tune books are not, which is why the corpus never
+// showed it.
+//
+// The last bar of the run is left open so that the barline written after it
+// closes it with its own style: "Z4|]" ends on a final barline, and emitting
+// a plain one here would both take that away and leave an empty bar behind
+// it.
+func (p *parser) multiRest(sc *scanner) {
+	bars := 1
+	if n, ok := sc.digits(); ok && n > 0 {
+		bars = n
+	}
+	dur := p.time.BarDuration()
+	if dur.IsZero() {
+		dur = model.Duration{Num: 1, Den: 1}
+	}
+	for i := 0; i < bars; i++ {
+		r := &model.Rest{Dur: dur}
+		// Only the first bar of the run can carry what was written before
+		// the Z — a fermata over the rest, a dynamic at it. Repeating it on
+		// every bar of the run would print it four times.
+		if i == 0 {
+			p.applyPending(&r.Marks)
+		}
+		p.add(r)
+		if i < bars-1 {
+			p.closeMeasure(model.BarSingle)
+		}
+	}
 }
 
 // openOverlay starts another voice over the bar being written.
@@ -1245,6 +1490,17 @@ func (p *parser) add(e model.Element) {
 	p.applyBroken(e)
 	p.voice.Elements = append(p.voice.Elements, e)
 	p.lastElem = e
+	// The words sung on this line are laid under its notes by counting
+	// them, so the count is kept here, where every note passes. Notes and
+	// chords only: a syllable goes to a note, and a rest is a silence
+	// nobody sings. The small notes of a grace group never reach this
+	// function, which is right — they are not sung either.
+	switch el := e.(type) {
+	case *model.Note:
+		p.sung = append(p.sung, &el.Marks)
+	case *model.Chord:
+		p.sung = append(p.sung, &el.Marks)
+	}
 }
 
 // elementDuration and setElementDuration reach the Dur field that Note, Rest
@@ -1427,7 +1683,10 @@ func (p *parser) music(line string) error {
 			return nil
 		case c == '\\':
 			// Line continuation; the following newline is already implicit.
+			// The words under the pair of lines belong to both, so the
+			// count of notes they are laid against is not started again.
 			sc.next()
+			p.continued = true
 		case c == '|' || c == ':':
 			if err := p.barline(sc); err != nil {
 				// Not a barline after all, and not worth losing the bar over.
@@ -1502,6 +1761,9 @@ func (p *parser) music(line string) error {
 			if err := p.quoted(sc); err != nil {
 				return err
 			}
+		case c == 'Z':
+			sc.next()
+			p.multiRest(sc)
 		case c == 'z' || c == 'x':
 			hidden := c == 'x'
 			sc.next()
@@ -1537,7 +1799,7 @@ func (p *parser) music(line string) error {
 			if err := p.graceGroup(sc); err != nil {
 				return err
 			}
-		case c == '!':
+		case c == '!' || opensPlusDecoration(sc):
 			if err := p.decoration(sc); err != nil {
 				return err
 			}
@@ -1724,25 +1986,52 @@ var decorationSymbols = map[string]string{
 	"trem1":           "tremolo1", "trem2": "tremolo2", "trem3": "tremolo3",
 }
 
-// decoration reads a !...! decoration and attaches it to the next element.
+// opensPlusDecoration reports whether the + under the scanner opens a
+// +name+ decoration rather than being a stray.
+//
+// A closing + has to be there on the same line. Without the test a lone +
+// — and tune books have them, typed by hand — would run to the end of the
+// line looking for its partner and take the bar with it. Unterminated, the
+// old reader stepped over one character and carried on, and that is still
+// the better answer for a + that closes nothing.
+func opensPlusDecoration(sc *scanner) bool {
+	rest := sc.rest()
+	return len(rest) > 1 && rest[0] == '+' &&
+		strings.IndexByte(rest[1:], '+') >= 0
+}
+
+// decoration reads a !...! or +...+ decoration and attaches it to the next
+// element.
+//
+// Both spellings, because ABC has had both. The +name+ form is the one ABC
+// 2.0 standardised; 2.1 moved to !name! and left the old one legal, and
+// abcm2ps and abc2svg have read both ever since, so files in the wild are
+// written either way.
+//
+// Reading only one of them was not a feature missing, it was music invented.
+// The parser stepped over the + as a character it did not know and then read
+// the letters of the name as pitches: "+fermata+C D E F" came out with eight
+// notes instead of four, the f, e, a and the rest of the word among them. A
+// decoration dropped is a mark lost, which is bad; a decoration read as notes
+// is a bar nobody wrote, which is worse, and nothing on the page says so.
 //
 // A name that is neither a known articulation nor a known SMuFL glyph becomes
 // a symbol named after itself rather than an error. That keeps the mark in the
 // score instead of discarding it, and the user can draw it: see docs/symbols.md.
 func (p *parser) decoration(sc *scanner) error {
-	sc.next() // '!'
+	delim := sc.next() // '!' or '+'
 	var b strings.Builder
-	for !sc.eof() && sc.peek() != '!' {
+	for !sc.eof() && sc.peek() != delim {
 		b.WriteByte(sc.next())
 	}
 	if sc.eof() {
-		return p.errf("unterminated !...! decoration")
+		return p.errf("unterminated %c...%c decoration", delim, delim)
 	}
-	sc.next() // '!'
+	sc.next() // the closing delimiter
 
 	name := strings.TrimSpace(b.String())
 	if name == "" {
-		return p.errf("empty !! decoration")
+		return p.errf("empty %c%c decoration", delim, delim)
 	}
 	// One place decides what a decoration means, for both the !name! form
 	// and the one-letter shorthand. Two chains of lookups is how !segno!

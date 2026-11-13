@@ -69,14 +69,14 @@ func main() {
 		describe    = flag.Bool("describe", false, "print what the score contains and exit")
 		notation    = flag.Bool("notation", false,
 			"put a staff of pitches above every tab staff, joined to it")
-		port        = flag.Int("port", 0, "serve the editor on this port (0 picks a free one)")
-		serve       = flag.String("serve", "", "run as a web server on this address, such as :8080 or 0.0.0.0:8080")
-		browser     = flag.Bool("browser", false, "show the editor in a web browser instead of a native window")
-		headless    = flag.Bool("headless", false, "serve the editor but open nothing")
-		strip       = flag.Bool("strip", false, "engrave as one continuous strip, as gscore 0.0.9 did")
-		space       = flag.Float64("space", 8, "staff space size in pixels, for -o")
-		landscape   = flag.Bool("landscape", false, "turn the paper on its side, for -o to a PDF")
-		fontURL     = flag.String("font", "",
+		port      = flag.Int("port", 0, "serve the editor on this port (0 picks a free one)")
+		serve     = flag.String("serve", "", "run as a web server on this address, such as :8080 or 0.0.0.0:8080")
+		browser   = flag.Bool("browser", false, "show the editor in a web browser instead of a native window")
+		headless  = flag.Bool("headless", false, "serve the editor but open nothing")
+		strip     = flag.Bool("strip", false, "engrave as one continuous strip, as gscore 0.0.9 did")
+		space     = flag.Float64("space", 8, "staff space size in pixels, for -o")
+		landscape = flag.Bool("landscape", false, "turn the paper on its side, for -o to a PDF")
+		fontURL   = flag.String("font", "",
 			"for -o to .html: fetch the music font from this address instead of "+
 				"writing it into the page")
 		scriptURL = flag.String("script", "",

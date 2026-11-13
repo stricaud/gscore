@@ -489,9 +489,13 @@ func TestUnsupportedConstructsAreReportedNotIgnored(t *testing.T) {
 	// A construction the reader cannot represent is skipped and reported, not
 	// skipped in silence. The distinction is the whole point: a score that is
 	// quietly missing a voice is worse than one that says so.
+	//
+	// The multi-measure rest used to be one of these. It is read now — see
+	// multirest_test.go — so it has gone from the list rather than the list
+	// being relaxed: the right answer to "reported, not ignored" is usually
+	// to stop needing the report.
 	cases := []string{
 		"K:C\n!unterminated\n", // decoration with no closing !
-		"K:C\nabZc\n",          // multi-measure rest
 	}
 	for _, src := range cases {
 		if _, err := Import(stringReader(src)); err == nil {

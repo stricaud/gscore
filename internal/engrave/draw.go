@@ -36,6 +36,9 @@ type placed struct {
 	// the only one, which is nearly always. It decides which way the stem
 	// goes and what may be beamed to what.
 	voice int
+	// order is where it stands in its own voice, which together with
+	// voice is how an edit names it. See ElementPos.Index.
+	order int
 
 	note  *model.Note
 	chord *model.Chord
@@ -335,7 +338,7 @@ func (e *engraver) drawMeasure(part *model.Part, b measureBox, x, end float64, s
 		for _, v := range s.elems {
 			p := e.placedOf(e.clef, v.el, s.at)
 			p.x, p.index, p.width = x, v.index, s.width*stretch
-			p.voice = v.voice
+			p.voice, p.order = v.voice, v.order
 			items = append(items, p)
 			col = append(col, p)
 		}
@@ -474,7 +477,7 @@ func (e *engraver) drawMeasure(part *model.Part, b measureBox, x, end float64, s
 		Full:        barIsFull(part, b),
 		Ahead:       b.ahead,
 	}
-	for i, p := range items {
+	for _, p := range items {
 		kind := "rest"
 		y := e.y + stepY(middleStep)
 		y2 := y
@@ -528,7 +531,8 @@ func (e *engraver) drawMeasure(part *model.Part, b measureBox, x, end float64, s
 			alters = nil
 		}
 		hit.Elements = append(hit.Elements, ElementPos{
-			Ref: p.index, Index: i, X: p.x, Y: y, Y2: y2, At: at,
+			Ref: p.index, Voice: p.voice, Index: p.order,
+			X: p.x, Y: y, Y2: y2, At: at,
 			Width: noteheadWidth(p.value), Kind: kind,
 			Steps: steps, Alters: alters,
 			Chord: chord, ChordFrets: frets,
@@ -1460,10 +1464,23 @@ func (e *engraver) setStemDirections(items []*placed, t model.TimeSignature) {
 	// the top of the chord it is written under, where the original prints
 	// it below the notes, as anyone would.
 	//
-	// Only where the inversion is plain: every note of the one voice below
-	// every note of the other. Voices that cross or share a pitch are not a
-	// case of the numbering being the wrong way round, and the numbering is
-	// what tells the reader which line is which.
+	// Only where the inversion is plain: the first voice never rises above
+	// the second. Voices that cross are not a case of the numbering being
+	// the wrong way round, and the numbering is what tells the reader which
+	// line is which.
+	//
+	// Touching is not crossing. This asked for every note of the one voice
+	// strictly below every note of the other, so the two lines sharing a
+	// single pitch — at different moments, in different bars of the same
+	// phrase — read as a crossing and turned every stem in the bar round.
+	// Writing a B into the upper line of a right hand whose lower line had
+	// already touched that B flipped the whole bar: the upper voice's stems
+	// turned down into the chord beneath them and the lower voice's turned
+	// up through it. One note typed, and the bar it was typed into was
+	// engraved inside out.
+	//
+	// Two voices that are the same one note are not an inversion either,
+	// which is what the second half of the test says.
 	inverted := false
 	if multi {
 		lo := map[int][2]int{} // voice -> lowest, highest step
@@ -1485,7 +1502,7 @@ func (e *engraver) setStemDirections(items []*placed, t model.TimeSignature) {
 			lo[p.voice] = r
 		}
 		if a, ok := lo[0]; ok {
-			if b, ok := lo[1]; ok && a[1] < b[0] {
+			if b, ok := lo[1]; ok && a[1] <= b[0] && a[0] < b[1] {
 				inverted = true
 			}
 		}
@@ -1601,16 +1618,28 @@ func (e *engraver) drawStemsAndBeams(items []*placed, t model.TimeSignature) {
 	}
 }
 
-// stemEnd is where a stem finishes, given the notehead it grows out of.
+// stemEnd is where a stem finishes, given the notehead at the far end of it
+// — the top of a chord for a stem up, the bottom for a stem down.
 //
-// A stem is stemLength long, except that it always reaches the middle line
-// of the staff. A note out on ledger lines with a stem of the standard
-// length has a stem that stops in mid air — for anything from the third
-// ledger line out it never arrives at the staff at all, and the note reads
-// as something floating above the music rather than as a high note on it.
-// Reaching back to the middle line ties it to the staff, which is why every
-// engraver does it; it is Gould's rule in Behind Bars and LilyPond's in
-// stem.cc.
+// A stem is stemLength past that head, so a chord's stem is the chord's own
+// spread plus a full stem. That is deliberate, and it is what the engraved
+// editions do: the left hand of this Ellington holds octaves under the tune
+// and the stems stand a good two spaces clear of the staff above them.
+//
+// Measuring from the head the stem grows out of instead gives an octave a
+// stem that stops dead at its own top notehead, which reads as a line ruled
+// between two notes rather than as a chord. It was tried, on the theory
+// that the long stems were what made a bar of two voices unreadable; they
+// were not — that was the stems of the two voices pointing into each other,
+// which is setStemDirections' business and is fixed there.
+//
+// Except that it always reaches the middle line of the staff. A note out on
+// ledger lines with a stem of the standard length has a stem that stops in
+// mid air — for anything from the third ledger line out it never arrives at
+// the staff at all, and the note reads as something floating above the
+// music rather than as a high note on it. Reaching back to the middle line
+// ties it to the staff, which is why every engraver does it; it is Gould's
+// rule in Behind Bars and LilyPond's in stem.cc.
 //
 // This only ever lengthens a stem. A note inside the staff is already past
 // the middle line at the standard length, so nothing it does is undone.
@@ -1620,6 +1649,20 @@ func (e *engraver) stemEnd(base float64, up bool) float64 {
 		return math.Min(base-e.stemLen(), mid)
 	}
 	return math.Max(base+e.stemLen(), mid)
+}
+
+// stemTip is where one note's stem finishes, whichever way it points.
+//
+// The three places that need it — the stem itself, the beam drawn through
+// the stem ends, and the slur hung off them — have to agree about where a
+// stem stops, or the beam is drawn where no stem reaches and the slur is
+// anchored in the air beside one.
+func (e *engraver) stemTip(p *placed, up bool) float64 {
+	base := e.y + stepY(float64(p.hi))
+	if !up {
+		base = e.y + stepY(float64(p.lo))
+	}
+	return e.stemEnd(base, up)
 }
 
 func (e *engraver) drawSingleStem(p *placed) {
@@ -1637,10 +1680,10 @@ func (e *engraver) drawSingleStem(p *placed) {
 	hiY := e.y + stepY(float64(p.hi))
 
 	sx := p.x + head - th/2
-	y1, y2 := loY, e.stemEnd(hiY, up)
+	y1, y2 := loY, e.stemTip(p, up)
 	if !up {
 		sx = p.x + th/2
-		y1, y2 = hiY, e.stemEnd(loY, up)
+		y1 = hiY
 	}
 	// Which notehead the slashes have to clear: the far one.
 	//
@@ -1909,15 +1952,13 @@ func (e *engraver) drawBeamGroup(g []*placed) {
 			continue
 		}
 		sx := p.x + head - e.stemTh()/2
-		base := e.y + stepY(float64(p.hi))
 		if !up {
 			sx = p.x + e.stemTh()/2
-			base = e.y + stepY(float64(p.lo))
 		}
 		// Past the middle line the stem already reaches, rather than
 		// instead of it: stemEnd lengthens a stem to touch that line and
 		// this lengthens it again for the beams beyond the second.
-		y := e.stemEnd(base, up)
+		y := e.stemTip(p, up)
 		if up {
 			y -= extra
 		} else {

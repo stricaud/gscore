@@ -214,21 +214,32 @@ func (a *App) handleFretChord(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	v := m.Voices[0]
+	vi := voiceParam(q)
+	v, err := voiceForWriting(m, vi)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 	if at < 0 || at > len(v.Elements) {
 		at = len(v.Elements)
 	}
 	// Into the bar rather than after its rest, and on into the next bar
 	// when this one is full — the same two rules a single fret follows.
-	at = openEmptyBar(p, m, measIdx, at)
-	m, measIdx, at = carryOn(p, m, measIdx, at)
-	v = m.Voices[0]
+	at = openEmptyBar(p, m, measIdx, at, vi)
+	m, measIdx, at = carryOn(p, m, measIdx, at, vi)
+	if v, err = voiceForWriting(m, vi); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if at > len(v.Elements) {
+		at = len(v.Elements)
+	}
 	v.Elements = append(v.Elements, nil)
 	copy(v.Elements[at+1:], v.Elements[at:])
 	v.Elements[at] = chord
 	spill(p, measIdx)
 
-	landed, idx := findElement(p, measIdx, chord)
+	landed, idx := findElement(p, measIdx, vi, chord)
 	answer["measure"] = landed
 	answer["at"] = idx - 1
 	writeJSON(w, answer)

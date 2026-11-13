@@ -84,6 +84,18 @@ const state = {
   size: null,
   tiles: null,
   tool: { duration: "quarter", dots: 0, accidental: "none", rest: false, drum: null },
+  // Which line of the staff is being written, counted from zero.
+  //
+  // A staff can carry more than one independent line, and the two are
+  // written across each other rather than after each other — so a click on
+  // the staff cannot say which of them it means and the line has to be
+  // chosen beforehand. Zero is the only line most music has.
+  //
+  // It is reset to the first line whenever a note already written is picked
+  // up, so that the pen follows the music rather than staying where it was
+  // last put: clicking a note of the upper voice and typing writes in the
+  // upper voice, which is the only thing that could be meant.
+  voice: 0,
   // The kit, once fetched. A score without a drum staff never asks for it.
   kit: null,
   // A file may hold many scores; showAll puts the whole book on screen at
@@ -181,6 +193,13 @@ async function paletteAction(item) {
     }
   }
 
+  // Which line of the staff the pen writes on. Nothing is written now:
+  // it is a choice about what happens next, like a note value.
+  if (item.voice !== undefined) {
+    setVoice(item.voice);
+    return;
+  }
+
   if (item.tool) {
     switch (item.tool) {
       case "rest":
@@ -197,7 +216,15 @@ async function paletteAction(item) {
         // one note and changing one note is all of it. Arming the pen as
         // well wrote a natural on every note that followed, and the button
         // that said so was never lit.
-        if (hasSelection()) {
+        //
+        // With a rest picked up it is neither. A rest has no notehead to
+        // put a sign on, so writing it there fails — "there is no note in
+        // the selection" — and because the click was spent on failing, the
+        // pen was not armed either. Clicking a bar of rest and reaching for
+        // a sharp is somebody about to write a sharpened note into that
+        // bar, and the answer they got was that they could not write
+        // anything at all.
+        if (hasSelection() && pickedUpIsPitched()) {
           await setAccidental(item.acc, item.label);
           markTools();
           return;
@@ -443,6 +470,7 @@ async function dotSelection() {
   const p = new URLSearchParams({
     part: String(sel.part), measure: String(sel.measure), at: String(sel.at),
   });
+  withVoice(p, sel.voice);
   const res = await fetch("/api/dot?" + p.toString(), { method: "POST" });
   if (!res.ok) {
     status("Could not dot that: " + (await res.text()).trim());
@@ -490,7 +518,96 @@ function currentAccidentalLabel() {
 // accidental was a mode with nothing on the screen to say it was on.
 function markTools() {
   const acc = currentAccidentalLabel();
-  markPaletteTool((label) => label === currentToolLabel() || label === acc);
+  const voice = `Voice ${state.voice + 1}`;
+  markPaletteTool((label) =>
+    label === currentToolLabel() || label === acc || label === voice);
+}
+
+// setVoice chooses the line of the staff the pen writes on.
+//
+// Said out loud, because it is a mode and a mode nobody can see is a mode
+// that writes in the wrong place. The lit button says which line is held;
+// the status line says so at the moment it changes, which is when somebody
+// is looking for the answer.
+function setVoice(n) {
+  n = Math.max(0, Math.min(3, n | 0));
+  if (state.voice === n) return;
+  state.voice = n;
+  markTools();
+  status(n === 0
+    ? "Writing in voice 1 — the only line most music has"
+    : `Writing in voice ${n + 1} — stems ${n % 2 ? "down" : "up"}`);
+}
+
+// drawnAt is the element drawn at one position, or null.
+function drawnAt(part, measure, index, voice) {
+  const h = state.hits.find((x) => x.part === part && x.measure === measure);
+  if (!h) return null;
+  return (h.elements || []).find(
+    (e) => e.index === index && (e.voice || 0) === (voice || 0)) || null;
+}
+
+// pickedUpIsPitched says what is selected has a notehead to write a sign on:
+// a note or a chord, rather than a rest or a sign standing in the bar.
+function pickedUpIsPitched() {
+  const pitched = (e) => !!e && (e.kind === "note" || e.kind === "chord");
+  if (state.multi.length) {
+    return state.multi.some(
+      (m) => pitched(drawnAt(m.part, m.measure, m.index, m.voice)));
+  }
+  const sel = state.selection;
+  if (!sel) return false;
+  return pitched(drawnAt(sel.part, sel.measure, sel.at - 1, sel.voice));
+}
+
+// withVoice puts the line being written into a request, where it is not
+// the first. Left out it means the first, which is what every request
+// written before voices existed already means.
+function withVoice(p, voice) {
+  const v = voice === undefined || voice === null ? state.voice : voice;
+  if (v) p.set("voice", String(v));
+  return p;
+}
+
+// selOf writes one position the way the server's selection grammar reads
+// it: staff:measure:index, with the index written "voice/index" where the
+// music is on a line of the staff other than the first.
+//
+// One place, because there were ten of these templates and a voice left
+// out of any one of them is a command aimed at the wrong line. A bare
+// index goes on meaning the first voice, which is what every one of those
+// ten already meant.
+// readSel takes one apart again: the inverse of selOf, so that the one
+// grammar is written and read in the same place.
+//
+// The index may carry its voice in front of it — "1/2" is the third
+// element of the second line — and five places used to pull the third
+// field out with split(":") and hand it straight to Number. With a voice
+// in it that is NaN, and a command aimed at NaN reaches nothing.
+function readSel(sel) {
+  const f = String(sel).split(":");
+  let voice = 0, pos = f[2] ?? "";
+  const slash = pos.indexOf("/");
+  if (slash >= 0) {
+    voice = Number(pos.slice(0, slash));
+    pos = pos.slice(slash + 1);
+  }
+  return {
+    part: Number(f[0]), measure: Number(f[1]),
+    voice, index: Number(pos),
+    grace: f[3] === undefined ? null : Number(f[3]),
+  };
+}
+
+function selOf(part, measure, index, voice, grace) {
+  // A position carrying no voice of its own is the cursor rather than a
+  // note that was clicked, and the cursor stands on whichever line the pen
+  // is writing. A note always brings its voice with it, from the drawing.
+  const v = voice === undefined || voice === null ? state.voice : voice;
+  const pos = v ? `${v}/${index}` : String(index);
+  const s = `${part}:${measure}:${pos}`;
+  return grace === undefined || grace === null || grace === ""
+    ? s : `${s}:${grace}`;
 }
 
 // useAccidental takes the held accidental off, the note it was for having
@@ -5307,7 +5424,7 @@ function setupCanvasClicks() {
       // there to here": the usual way of selecting a passage, and what makes
       // it possible to put one crescendo over eight bars.
       if (e.shiftKey && state.anchor) {
-        selectRange(state.anchor, { part: hit.part, measure: hit.measure, index: el.index });
+        selectRange(state.anchor, { part: hit.part, measure: hit.measure, index: el.index, voice: el.voice });
         return;
       }
       // On the notehead, or above it.
@@ -5400,7 +5517,8 @@ function extendSelection(dir) {
   // moving is the one to keep typing from.
   const hit = state.hits.find(
     (h) => h.part === next.part && h.measure === next.measure);
-  const el = hit && (hit.elements || []).find((e) => e.index === next.index);
+  const el = hit && (hit.elements || []).find(
+    (e) => e.index === next.index && (e.voice || 0) === (next.voice || 0));
   if (el) {
     state.selection = {
       part: next.part, measure: next.measure, at: next.index + 1,
@@ -5432,9 +5550,11 @@ function slideSelection(dir) {
     }
     const hit = state.hits.find(
       (h) => h.part === next.part && h.measure === next.measure);
-    const el = hit && (hit.elements || []).find((e) => e.index === next.index);
+    const el = hit && (hit.elements || []).find(
+      (e) => e.index === next.index && (e.voice || 0) === (next.voice || 0));
     if (!el) return;
-    moved.push({ part: next.part, measure: next.measure, index: next.index, ref: el.ref });
+    moved.push({ part: next.part, measure: next.measure, index: next.index,
+                  voice: next.voice, ref: el.ref });
   }
 
   state.multi = moved;
@@ -5497,7 +5617,11 @@ function selectRange(from, to) {
     for (const el of h.elements || []) {
       if (h.measure === a.measure && el.index < a.index) continue;
       if (h.measure === b.measure && el.index > b.index) continue;
-      state.multi.push({ part, measure: h.measure, index: el.index, ref: el.ref });
+      // A range runs along one line of the staff. Taking in every
+      // voice would pick up the held note under a run of quarters
+      // because its index happens to fall between the two ends.
+      if ((el.voice || 0) !== (a.voice || 0)) continue;
+      state.multi.push({ part, measure: h.measure, index: el.index, voice: el.voice, ref: el.ref });
     }
   }
   state.multi = orderedSelection();
@@ -5545,7 +5669,7 @@ function selectSpan(part, firstBar, lastBar, what) {
   for (const h of bars) {
     if (h.measure < firstBar || h.measure > lastBar) continue;
     for (const el of h.elements || []) {
-      picked.push({ part, measure: h.measure, index: el.index, ref: el.ref });
+      picked.push({ part, measure: h.measure, index: el.index, voice: el.voice, ref: el.ref });
     }
   }
   if (!picked.length) {
@@ -5659,7 +5783,7 @@ function selectChordSymbol(c) {
   // the second must not rewrite the first.
   let at = 1;
   const target = refTarget(c.ref);
-  if (target) at = Number(target.split(":")[2]) + 1;
+  if (target) at = readSel(target).index + 1;
 
   state.selection = {
     part: c.part, measure: c.measure, ref: c.ref,
@@ -5680,7 +5804,7 @@ function selectArticulation(a) {
   state.anchor = state.focus = null;
   let at = 1;
   const target = refTarget(a.ref);
-  if (target) at = Number(target.split(":")[2]) + 1;
+  if (target) at = readSel(target).index + 1;
 
   state.selection = {
     part: a.part, measure: a.measure, ref: a.ref, at, step: 0, articulation: a,
@@ -5727,7 +5851,7 @@ function selectTextMark(t) {
   state.anchor = state.focus = null;
   let at = 1;
   const target = refTarget(t.ref);
-  if (target) at = Number(target.split(":")[2]) + 1;
+  if (target) at = readSel(target).index + 1;
 
   state.selection = {
     part: t.part, measure: t.measure, ref: t.ref,
@@ -5849,7 +5973,7 @@ function selectMeasure(part, measure) {
 function select(hit, el, step) {
   // This note is both ends of the selection until an arrow or a shift-click
   // moves one of them.
-  state.anchor = { part: hit.part, measure: hit.measure, index: el.index };
+  state.anchor = { part: hit.part, measure: hit.measure, index: el.index, voice: el.voice };
   state.focus = null;
   state.multi = [];
   // Which notehead of a chord was clicked, so a tie or an accidental can be
@@ -5874,6 +5998,7 @@ function select(hit, el, step) {
     // The marking commands act on the element before the cursor, so the
     // cursor sits just after what is selected.
     at: el.index + 1,
+    voice: el.voice,
     step: (el.steps && el.steps.length) ? el.steps[0] : 0,
     head,
     ref: el.ref,
@@ -5881,6 +6006,12 @@ function select(hit, el, step) {
     // the cursor still writes; this is only ever set by picking something up.
     replace: true,
   };
+  // The pen follows the music. Picking up a note of the second voice and
+  // typing means writing in the second voice — there is nothing else it
+  // could mean — and leaving the pen on whichever line it was last put
+  // would write the next note into a different line from the one being
+  // looked at.
+  if ((el.voice || 0) !== state.voice) setVoice(el.voice || 0);
   markSelection();
   updateFingering();
   // Naming the notehead, because what the next accidental changes is one
@@ -6162,6 +6293,8 @@ async function writePlayedNote(note, at) {
       part: String(midiIn.chord.part), measure: String(midiIn.chord.measure),
       index: String(midiIn.chord.index), midi: String(note),
     });
+    // The line the note under it was written in.
+    withVoice(p, midiIn.chord.voice);
     const res = await fetch("/api/addpitch?" + p, { method: "POST" });
     if (!res.ok) {
       status((await res.text()).trim());
@@ -6179,6 +6312,7 @@ async function writePlayedNote(note, at) {
     kind: "note",
   });
   if (state.tool.dots > 0) p.set("dots", String(state.tool.dots));
+  withVoice(p);
   const res = await fetch("/api/insert?" + p, { method: "POST" });
   if (!res.ok) {
     status("Could not write it: " + (await res.text()).trim());
@@ -6186,6 +6320,8 @@ async function writePlayedNote(note, at) {
   }
   const where = await res.json().catch(() => null);
   soundAsWritten(where);
+  // The line the pen is on is the line it went into: see insertAtSelection.
+  sel.voice = state.voice;
   if (where && where.measure !== undefined) {
     sel.measure = where.measure;
     sel.at = where.at;
@@ -6194,6 +6330,7 @@ async function writePlayedNote(note, at) {
   }
   sel.replace = false;
   sel.ref = null;
+  sel.head = null;
   sel.wrote = true;
   state.multi = [];
   state.anchor = null;
@@ -6203,6 +6340,7 @@ async function writePlayedNote(note, at) {
   // note itself is the one before.
   midiIn.chord = {
     at, part: sel.part, measure: sel.measure, index: sel.at - 1,
+    voice: sel.voice,
   };
   await refreshScore();
   carryCaretOn(sel);
@@ -6286,6 +6424,7 @@ async function insertAtSelection(rest, keepSelection) {
   if (!rest && state.tool.drum !== null && isDrumStaff(sel.part)) {
     p.set("drum", String(state.tool.drum));
   }
+  withVoice(p);
   const res = await fetch("/api/insert?" + p.toString(), { method: "POST" });
   if (!res.ok) {
     status("Could not insert: " + (await res.text()).trim());
@@ -6304,6 +6443,13 @@ async function insertAtSelection(rest, keepSelection) {
   // the key is pressed.
   soundAsWritten(where);
   const moved = where && where.measure !== undefined && where.measure !== sel.measure;
+  // The pen says which line of the staff it went into, so that is the line
+  // the cursor is in now. It matters because at counts the elements of one
+  // voice and not of the bar: with the cursor still claiming the first
+  // voice, everything that looks up "the note just written" by counting
+  // along the bar found somebody else's note — a dynamic, a tie or a sign
+  // typed straight afterwards landed in the voice above.
+  sel.voice = state.voice;
   if (where && where.measure !== undefined) {
     // where.at is already the place after the element, whether it was
     // written in or written over.
@@ -6331,11 +6477,13 @@ async function insertAtSelection(rest, keepSelection) {
   state.focus = null;
   await refreshScore();
   // Select what was just written, so a dynamic or a stem change lands on it.
-  const hit = state.hits.find(
-    (h) => h.part === sel.part && h.measure === sel.measure
-  );
-  const el = hit && (hit.elements || [])[sel.at - 1];
+  // By voice and index rather than by counting along the drawn bar: the
+  // drawing lists every voice, so in a bar of two the note written second
+  // in the lower line sits nowhere near that place in the list.
+  const el = drawnAt(sel.part, sel.measure, sel.at - 1, sel.voice);
   if (el) sel.ref = el.ref;
+  // A notehead of a chord picked up earlier is not a notehead of this.
+  sel.head = null;
   // Selected, but not picked up: see heldForMoving. What was just written
   // is what a dynamic or a stem change should land on, and it is not what
   // an arrow key should move — the gesture after writing a note is to go
@@ -6373,7 +6521,15 @@ async function insertAtSelection(rest, keepSelection) {
 }
 
 // addPitch stacks another notehead on a note or chord already written.
+//
+// What is left behind is the same state writing a note leaves behind, and for
+// the same reason: adding a notehead is writing. A chord is built from the
+// bottom up — write the lowest, move the cursor, add the next — so the arrow
+// that comes after has to move the cursor, and leaving the chord picked up
+// meant the arrow moved the chord instead. The note just added went back
+// where it came from and took the rest of the chord with it.
 async function addPitch(hit, el, step) {
+  const voice = el.voice || 0;
   const p = new URLSearchParams({
     part: String(hit.part),
     measure: String(hit.measure),
@@ -6383,6 +6539,10 @@ async function addPitch(hit, el, step) {
   if (state.tool.accidental !== "none") {
     p.set("accidental", state.tool.accidental);
   }
+  // The line of the staff the note is written in. Without it the notehead
+  // was stacked on the first voice's element at the same index, which in a
+  // bar of two voices is a different note.
+  withVoice(p, voice);
   const res = await fetch("/api/addpitch?" + p.toString(), { method: "POST" });
   if (!res.ok) {
     status((await res.text()).trim());
@@ -6392,12 +6552,25 @@ async function addPitch(hit, el, step) {
   // The notehead carries it now, so the pen does not.
   useAccidental();
   state.multi = [];
+  // This chord is both ends of a selection now, the way a clicked note is:
+  // an anchor left pointing at whatever was picked up before would make the
+  // next shift-click select a passage starting somewhere else entirely.
+  state.anchor = { part: hit.part, measure: hit.measure, index: el.index, voice };
+  state.focus = null;
   state.selection = {
-    part: hit.part, measure: hit.measure, at: el.index + 1, step: step, ref: null,
+    part: hit.part, measure: hit.measure, at: el.index + 1, voice,
+    step: step,
+    // Which notehead this is, so a sign or a Backspace straight afterwards
+    // is about the note just added and not about the whole chord.
+    head: step,
+    ref: null,
+    replace: false,
+    // Selected, so a dynamic or a tie lands on the chord; not picked up, so
+    // the arrows aim the next note. See heldForMoving.
+    wrote: true,
   };
   await refreshScore();
-  const h = state.hits.find((x) => x.part === hit.part && x.measure === hit.measure);
-  const now = h && (h.elements || [])[el.index];
+  const now = drawnAt(hit.part, hit.measure, el.index, voice);
   if (now) state.selection.ref = now.ref;
   markSelection();
   status("Added to the chord");
@@ -6510,10 +6683,12 @@ async function deleteSelected() {
       status("Could not find that tuplet any more");
       return;
     }
-    const [part, measure, index] = where.split(":");
+    const { part, measure, voice, index } = readSel(where);
     const p = new URLSearchParams({
-      free: "1", part, measure, at: String(Number(index) + 1),
+      free: "1", part: String(part), measure: String(measure),
+      at: String(index + 1),
     });
+    withVoice(p, voice);
     const res = await fetch("/api/tuplet?" + p.toString(), { method: "POST" });
     if (!res.ok) {
       status("Could not take it off: " + (await res.text()).trim());
@@ -6608,7 +6783,7 @@ async function deleteSelected() {
     return;
   }
   if (state.multi.length) {
-    const sel = state.multi.map((m) => `${m.part}:${m.measure}:${m.index}`).join(",");
+    const sel = state.multi.map((m) => selOf(m.part, m.measure, m.index, m.voice)).join(",");
     const res = await fetch("/api/deleteselection?sel=" + encodeURIComponent(sel),
                             { method: "POST" });
     if (!res.ok) {
@@ -6659,6 +6834,7 @@ async function deleteSelected() {
     ...(sel.grace !== null && sel.grace !== undefined
       ? { grace: String(sel.grace) } : {}),
   });
+  withVoice(p, sel.voice);
   const res = await fetch("/api/delete?" + p.toString(), { method: "POST" });
   if (!res.ok) {
     status("Could not delete: " + (await res.text()).trim());
@@ -7015,7 +7191,8 @@ const CURSOR_H = 6 / 8;
 function drawInsertCursor(svg, hit, sel, z) {
   const els = hit.elements || [];
   let x;
-  const next = els.find((e) => e.index === sel.at);
+  const next = els.find(
+    (e) => e.index === sel.at && (e.voice || 0) === (sel.voice || 0));
   if (next) {
     x = next.x - 0.9;
   } else if (els.length) {
@@ -7129,11 +7306,11 @@ async function mark(endpoint, params, said) {
   if (state.multi.length) {
     // In order. A hairpin opens on the first and closes on the last, so a
     // selection handed over shuffled would draw a crescendo backwards.
-    p.set("sel", orderedSelection().map((m) => `${m.part}:${m.measure}:${m.index}`).join(","));
+    p.set("sel", orderedSelection().map((m) => selOf(m.part, m.measure, m.index, m.voice)).join(","));
   } else if (sel.grace !== null && sel.grace !== undefined) {
     // The fourth number names the small note: the element it leans on
     // cannot name it, because it is not an element of the voice at all.
-    p.set("sel", `${sel.part}:${sel.measure}:${sel.at - 1}:${sel.grace}`);
+    p.set("sel", selOf(sel.part, sel.measure, sel.at - 1, sel.voice, sel.grace));
   } else if (sel.ref !== null && sel.ref !== undefined) {
     // One note picked up: the mark goes on that note, wherever the caret
     // has moved on to. The caret and the selection part company as soon as
@@ -7171,7 +7348,7 @@ function carryCaretOn(sel) {
 function refTarget(ref) {
   for (const h of state.hits) {
     const el = (h.elements || []).find((e) => e.ref === ref);
-    if (el) return `${h.part}:${h.measure}:${el.index}`;
+    if (el) return selOf(h.part, h.measure, el.index, el.voice);
   }
   return null;
 }
@@ -7569,7 +7746,7 @@ async function shiftPassage(dir) {
 
   const p = new URLSearchParams({
     dir: String(dir),
-    sel: run.map((m) => `${m.part}:${m.measure}:${m.index}`).join(","),
+    sel: run.map((m) => selOf(m.part, m.measure, m.index, m.voice)).join(","),
   });
   const res = await fetch("/api/shift?" + p.toString(), { method: "POST" });
   if (!res.ok) {
@@ -7582,10 +7759,11 @@ async function shiftPassage(dir) {
   if (Array.isArray(d.now) && d.now.length) {
     const was = state.multi.length;
     state.multi = d.now.map((at) => {
-      const [part, measure, index] = at.split(":").map(Number);
+      const { part, measure, voice, index } = readSel(at);
       const hit = state.hits.find((h) => h.part === part && h.measure === measure);
-      const el = hit && (hit.elements || []).find((e) => e.index === index);
-      return { part, measure, index, ref: el ? el.ref : null };
+      const el = hit && (hit.elements || []).find(
+        (e) => e.index === index && (e.voice || 0) === voice);
+      return { part, measure, voice, index, ref: el ? el.ref : null };
     }).filter((m) => m.ref !== null);
     const f = state.multi[0];
     const l = state.multi[state.multi.length - 1];
@@ -7634,7 +7812,7 @@ async function setTuplet(n) {
   if (state.multi.length > 1) {
     // In order, because the group opens on the first and closes on the last.
     p.set("sel", orderedSelection()
-      .map((m) => `${m.part}:${m.measure}:${m.index}`).join(","));
+      .map((m) => selOf(m.part, m.measure, m.index, m.voice)).join(","));
   }
   const res = await fetch("/api/tuplet?" + p.toString(), { method: "POST" });
   if (!res.ok) {
@@ -7681,10 +7859,11 @@ async function setSelectionDuration(value, label) {
   if (!d || !Array.isArray(d.now) || !d.now.length) return;
 
   state.multi = d.now.map((at) => {
-    const [part, measure, index] = at.split(":").map(Number);
+    const { part, measure, voice, index } = readSel(at);
     const hit = state.hits.find((h) => h.part === part && h.measure === measure);
-    const el = hit && (hit.elements || []).find((e) => e.index === index);
-    return { part, measure, index, ref: el ? el.ref : null };
+    const el = hit && (hit.elements || []).find(
+      (e) => e.index === index && (e.voice || 0) === voice);
+    return { part, measure, voice, index, ref: el ? el.ref : null };
   }).filter((m) => m.ref !== null);
 
   const first = state.multi[0];
@@ -9812,12 +9991,12 @@ function transposeSelection() {
 // pickedRefs is every note picked up, as the server names them.
 function pickedRefs() {
   const out = [];
-  for (const m of state.multi) out.push(`${m.part}:${m.measure}:${m.index}`);
+  for (const m of state.multi) out.push(selOf(m.part, m.measure, m.index, m.voice));
   if (out.length) return out;
   const sel = state.selection;
   if (sel && sel.ref !== null && sel.ref !== undefined && !sel.bar &&
       sel.at > 0 && pickedNotes()) {
-    out.push(`${sel.part}:${sel.measure}:${sel.at - 1}`);
+    out.push(selOf(sel.part, sel.measure, sel.at - 1, sel.voice));
   }
   return out;
 }
@@ -16627,7 +16806,7 @@ function setupMarquee() {
       if (h.part !== startHit.part || h.staffTop !== startHit.staffTop) continue;
       for (const el of h.elements || []) {
         if (el.x >= lo && el.x <= hi) {
-          state.multi.push({ part: h.part, measure: h.measure, index: el.index, ref: el.ref });
+          state.multi.push({ part: h.part, measure: h.measure, index: el.index, voice: el.voice, ref: el.ref });
         }
       }
     }
@@ -16978,7 +17157,7 @@ function elementByRef(ref) {
   for (const h of state.hits) {
     for (const el of h.elements || []) {
       if (el.ref === ref) {
-        return { part: h.part, measure: h.measure, index: el.index };
+        return { part: h.part, measure: h.measure, index: el.index, voice: el.voice };
       }
     }
   }
@@ -17217,6 +17396,19 @@ const KEY_BINDINGS = [
     label: "Tie — the same as T", run: () => action("tie") },
   { id: "slur-semicolon", keys: ";", group: "Marks",
     label: "Slur — the same as S", run: () => action("slur") },
+
+  // The line of the staff being written. Alt and a number, which is where
+  // Sibelius puts it and so where a hand that has written music before
+  // already goes; Mod and a number is the tuplets, which were here first.
+  { id: "voice-1", keys: "Alt+1", group: "Voices",
+    label: "Write in voice 1", run: () => setVoice(0) },
+  { id: "voice-2", keys: "Alt+2", group: "Voices",
+    label: "Write in voice 2 — a second line on the same staff",
+    run: () => setVoice(1) },
+  { id: "voice-3", keys: "Alt+3", group: "Voices",
+    label: "Write in voice 3", run: () => setVoice(2) },
+  { id: "voice-4", keys: "Alt+4", group: "Voices",
+    label: "Write in voice 4", run: () => setVoice(3) },
 
   // Tuplets, where every other notation program puts them. Written out one
   // by one rather than worked out from a list, because this table is read as
@@ -18081,7 +18273,8 @@ async function chordAtCursor() {
   }
   // The element before the cursor is the one just written, because that is
   // where the cursor is left.
-  const el = (hit.elements || []).find((x) => x.index === sel.at - 1);
+  const el = (hit.elements || []).find(
+    (x) => x.index === sel.at - 1 && (x.voice || 0) === (sel.voice || 0));
   if (!el || el.kind === "rest") {
     status("There is no note to add to");
     return;
@@ -18133,12 +18326,12 @@ function moveCursorBy(delta) {
       // the note before, and a grace note could never be reached at all.
       for (const g of gracesOn(h.part, h.measure, el.index)) {
         line.push({
-          measure: h.measure, index: el.index, ref: el.ref,
+          measure: h.measure, index: el.index, voice: el.voice, ref: el.ref,
           grace: g.ord, step: g.step,
         });
       }
       line.push({
-        measure: h.measure, index: el.index, ref: el.ref,
+        measure: h.measure, index: el.index, voice: el.voice, ref: el.ref,
         step: el.steps && el.steps.length ? el.steps[0] : undefined,
       });
     }
@@ -18509,7 +18702,7 @@ function measureTargets() {
     (h) => h.part === sel.part && h.measure === sel.measure);
   const els = hit?.elements || [];
   if (!els.length) return null;
-  return els.map((el) => `${sel.part}:${sel.measure}:${el.index}`).join(",");
+  return els.map((el) => selOf(sel.part, sel.measure, el.index, el.voice)).join(",");
 }
 
 async function cutSelection() {
@@ -18541,6 +18734,7 @@ async function pasteClipboard() {
   // the front of it: pasting four bars of a part into another should give
   // four bars of it, not eight bars of everything shoved along.
   if (sel.bar) p.set("at", "0");
+  withVoice(p);
   const res = await fetch("/api/paste?" + p.toString(), { method: "POST" });
   if (!res.ok) {
     status("Could not paste: " + (await res.text()).trim());
@@ -18562,7 +18756,7 @@ async function pasteClipboard() {
 // returns null when nothing is.
 function selectionTargets() {
   if (state.multi.length) {
-    return orderedSelection().map((m) => `${m.part}:${m.measure}:${m.index}`).join(",");
+    return orderedSelection().map((m) => selOf(m.part, m.measure, m.index, m.voice)).join(",");
   }
   const sel = state.selection;
   if (!sel) return null;
@@ -18572,10 +18766,10 @@ function selectionTargets() {
       (h) => h.part === sel.part && h.measure === sel.measure);
     const els = hit?.elements || [];
     if (!els.length) return null;
-    return els.map((el) => `${sel.part}:${sel.measure}:${el.index}`).join(",");
+    return els.map((el) => selOf(sel.part, sel.measure, el.index, el.voice)).join(",");
   }
   if (sel.ref === null || sel.ref === undefined) return null;
-  return `${sel.part}:${sel.measure}:${sel.at - 1}`;
+  return selOf(sel.part, sel.measure, sel.at - 1, sel.voice);
 }
 
 /* ---------- player mode ---------- */
@@ -20961,6 +21155,7 @@ async function runABC(text) {
     measure: String(sel.measure),
     at: String(sel.at),
   });
+  withVoice(p, sel.voice);
   // One thing to undo, like any other typed line: a phrase somebody typed
   // is one thought.
   await fetch("/api/script/begin", { method: "POST" });
@@ -21133,6 +21328,7 @@ async function typeOne(step) {
     p.set("step", String(sel.step ?? 0));
   }
 
+  withVoice(p);
   const res = await fetch("/api/insert?" + p.toString(), { method: "POST" });
   if (!res.ok) return { error: (await res.text()).trim() };
   const d = await res.json().catch(() => null);
@@ -21144,22 +21340,27 @@ async function typeOne(step) {
   // a nearly full bar has to carry on in the next one rather than keep
   // trying to write into this one. The answer already gives the place after
   // the element, so it is taken as it is.
+  // The pen says which line of the staff it went into, so that is the line
+  // the cursor is in now and the line the rest of a chord is stacked on.
+  // at counts the elements of one voice, so a cursor still claiming the
+  // first voice names a different note in a bar that has two.
+  const voice = state.voice;
   if (d && d.measure !== undefined) {
     state.selection = {
-      ...sel, measure: d.measure, at: d.at, ref: null, replace: false,
+      ...sel, measure: d.measure, at: d.at, voice, ref: null, replace: false,
     };
     // Where the thing itself is, which is one before where the cursor now
     // stands: the answer gives the place after it.
-    const at = `${sel.part}:${d.measure}:${d.at - 1}`;
+    const at = selOf(sel.part, d.measure, d.at - 1, voice);
     if (step.kind === "chord") {
       const why = await typeNoteheads(sel.part, d.measure, d.at - 1,
-                                      step.pitches.slice(1));
+                                      step.pitches.slice(1), voice);
       if (why) return { error: why };
     }
     return { at };
   }
-  state.selection = { ...sel, at: sel.at + 1, ref: null, replace: false };
-  return { at: `${sel.part}:${sel.measure}:${sel.at - 1}` };
+  state.selection = { ...sel, at: sel.at + 1, voice, ref: null, replace: false };
+  return { at: selOf(sel.part, sel.measure, sel.at - 1, voice) };
 }
 
 // typeNoteheads adds the rest of a chord's noteheads to the note just
@@ -21169,7 +21370,7 @@ async function typeOne(step) {
 // and written from the bottom up: "[ca]" is a sixth, and the nearest A to a
 // C is the one below it. An octave written out is taken as it is written,
 // so a chord wider than an octave is "[c4g4e5]".
-async function typeNoteheads(part, measure, index, pitches) {
+async function typeNoteheads(part, measure, index, pitches, voice) {
   for (const pitch of pitches) {
     const p = new URLSearchParams({
       part: String(part),
@@ -21178,6 +21379,9 @@ async function typeNoteheads(part, measure, index, pitches) {
       pitch,
       above: "1",
     });
+    // The line the bottom notehead was written in, or the chord is built
+    // on whatever shares that index in the voice above.
+    withVoice(p, voice);
     const res = await fetch("/api/addpitch?" + p.toString(), { method: "POST" });
     if (!res.ok) return (await res.text()).trim();
   }
@@ -22363,6 +22567,9 @@ async function doConsoleStep(step) {
           part: String(sel.part), measure: String(sel.measure),
           index: String(sel.at - 1), pitch: p,
         });
+        // The line the first note went into, which is the line the chord
+        // is built in.
+        withVoice(q, sel.voice);
         const res = await fetch("/api/addpitch?" + q, { method: "POST" });
         if (!res.ok) return (await res.text()).trim();
       }

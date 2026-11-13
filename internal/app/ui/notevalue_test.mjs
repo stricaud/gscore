@@ -81,9 +81,13 @@ test("a note value retimes only what was picked up", () => {
 
 // An accidental is the opposite case and must not change: hitting space
 // and then clicking a flat is the thing that already works.
+//
+// Guarded by pickedUpIsPitched as well, because a rest has no notehead to
+// put the sign on — see restaccidental_test.mjs. A note still gets it.
 test("an accidental still lands on the note just written", () => {
   const body = grab("paletteAction");
-  assert.match(body, /if \(hasSelection\(\)\) \{\s*await setAccidental/);
+  assert.match(body,
+    /if \(hasSelection\(\) && pickedUpIsPitched\(\)\) \{\s*await setAccidental/);
 });
 
 test("the value is still taken up as the pen either way", () => {

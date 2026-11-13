@@ -184,7 +184,8 @@ func (a *App) handleFret(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	v := m.Voices[0]
+	vi := voiceParam(q)
+	v := lineOf(m, vi)
 
 	// A second digit correcting the first. Frets run past nine and are
 	// typed a digit at a time, so "1" then "2" is the twelfth fret and
@@ -219,13 +220,16 @@ func (a *App) handleFret(w http.ResponseWriter, r *http.Request) {
 	// a bar of rest, and a bar of rest is full, so a fret written into an
 	// untouched bar went in behind the rest, did not fit, and was carried
 	// into the bar after — every fret a bar late.
-	at = openEmptyBar(p, m, measIdx, at)
+	at = openEmptyBar(p, m, measIdx, at, vi)
 
 	// Typing at the end of a bar that is already full means the next bar,
 	// as it does on a staff of pitches — and stays put when the barlines
 	// are being left alone, also as it does there. See carryOn.
-	m, measIdx, at = carryOn(p, m, measIdx, at)
-	v = m.Voices[0]
+	m, measIdx, at = carryOn(p, m, measIdx, at, vi)
+	v = lineOf(m, vi)
+	if at > len(v.Elements) {
+		at = len(v.Elements)
+	}
 
 	v.Elements = append(v.Elements, nil)
 	copy(v.Elements[at+1:], v.Elements[at:])
@@ -237,7 +241,7 @@ func (a *App) handleFret(w http.ResponseWriter, r *http.Request) {
 
 	// It may now be in a later bar than the one written to, so the answer
 	// says where it actually is and the caret follows it there.
-	landed, idx := findElement(p, measIdx, note)
+	landed, idx := findElement(p, measIdx, vi, note)
 	writeJSON(w, map[string]any{
 		"status": "ok", "measure": landed, "at": idx - 1,
 		"pitch": pitch.String(), "string": str, "fret": fret,
@@ -290,7 +294,7 @@ func (a *App) handleRestring(w http.ResponseWriter, r *http.Request) {
 			http.StatusBadRequest)
 		return
 	}
-	v := m.Voices[0]
+	v := lineOf(m, voiceParam(q))
 	if at < 0 || at >= len(v.Elements) {
 		http.Error(w, "there is nothing there to move", http.StatusBadRequest)
 		return

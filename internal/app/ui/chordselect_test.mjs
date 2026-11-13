@@ -46,13 +46,14 @@ const HITS = [{
 
 function load() {
   const said = [];
-  const state = { chordMarks: CHORDS, hits: HITS, multi: [], selection: null };
+  const state = { chordMarks: CHORDS, hits: HITS, multi: [], selection: null, voice: 0 };
   const scope = {
     state,
     status: (s) => said.push(s),
     markSelection() {},
   };
-  const body = grab("chordSymbolAt") + "\n" + grab("refTarget") + "\n" +
+  const body = grab("selOf") + "\n" + grab("readSel") + "\n" +
+    grab("chordSymbolAt") + "\n" + grab("refTarget") + "\n" +
     grab("selectChordSymbol") + "\nreturn { chordSymbolAt, selectChordSymbol };";
   const api = new Function(...Object.keys(scope), body)(...Object.values(scope));
   return { ...api, state, said };

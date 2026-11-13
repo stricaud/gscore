@@ -18,6 +18,7 @@ import (
 	"io/fs"
 	"math"
 	"net/http"
+	"sort"
 
 	"github.com/stricaud/gscore/internal/engrave"
 	"github.com/stricaud/gscore/internal/midi"
@@ -329,12 +330,27 @@ func buildPlayback(s *model.Score) Playback {
 			if len(m.Voices) == 0 {
 				continue
 			}
+			// Every dynamic written anywhere in this bar, from every voice
+			// of it, read before any of them is walked. A dynamic belongs
+			// to the staff rather than to the line it happens to be
+			// written on — see staffDynamics — and the voices are walked
+			// one after another, so a mark on the second could not reach
+			// the first without being gathered first.
+			marks := staffDynamics(m)
+			var leaving model.Dynamic
+			if len(marks) > 0 {
+				leaving = marks[len(marks)-1].loud
+			}
+
 			// Every voice of the staff. Two lines of music written on one
 			// staff sound together, so each begins where the bar begins —
 			// and a second voice that is drawn and not heard is half an
 			// editor. Most music has one, and then this runs once.
 			for vi := range m.Voices {
 				v := m.Voices[vi]
+				// Each voice of the bar begins at the volume the bar
+				// began at, not at whatever the voice before it ended on.
+				loud := loud
 
 				// A bar marked as a repeat sounds as the bar it stands for. The
 				// sign is an instruction to the player, so it has to be one to
@@ -386,10 +402,18 @@ func buildPlayback(s *model.Score) Playback {
 					}
 				}
 
+				// Which dynamic becomes current at each of this voice's
+				// elements, read from the whole staff's marks.
+				along := dynamicsAlong(marks, v)
+
 				paired := map[int]bool{}
 				for ei, el := range v.Elements {
 					if ei < len(voiceRefs) {
 						ref = voiceRefs[ei]
+					}
+					if ei < len(along) && along[ei] != model.DynamicNone {
+						loud = along[ei]
+						swell = nil // a written dynamic settles the question
 					}
 					d := el.Duration().Float() * secondsPerWhole
 					mk := marksOf(el)
@@ -428,10 +452,6 @@ func buildPlayback(s *model.Score) Playback {
 					first := len(out.Events)
 					switch n := el.(type) {
 					case *model.Note:
-						if n.Dynamic != model.DynamicNone {
-							loud = n.Dynamic
-							swell = nil // a written dynamic settles the question
-						}
 						gd := addGrace(&out, n.Grace, p, shift, vt, d, secondsPerWhole, pi, loud)
 						if paired[ei] {
 							break // sounded with the note it is paired to
@@ -469,10 +489,6 @@ func buildPlayback(s *model.Score) Playback {
 								slurring && n.SlurStop == 0)
 						}
 					case *model.Chord:
-						if n.Dynamic != model.DynamicNone {
-							loud = n.Dynamic
-							swell = nil
-						}
 						gd := addGrace(&out, n.Grace, p, shift, vt, d, secondsPerWhole, pi, loud)
 						if paired[ei] {
 							break // sounded with the chord it is paired to
@@ -538,6 +554,13 @@ func buildPlayback(s *model.Score) Playback {
 				if vt > out.Duration {
 					out.Duration = vt
 				}
+			}
+			// What the bar leaves behind, for the bar after it. Each voice
+			// began at the volume the bar began at, so the carry cannot be
+			// whatever the last voice walked happened to end on: it is the
+			// last mark written anywhere in the bar.
+			if leaving != model.DynamicNone {
+				loud = leaving
 			}
 		}
 	}
@@ -1155,4 +1178,87 @@ func Song(s *model.Score) midi.Song {
 		})
 	}
 	return song
+}
+
+/*
+ * A dynamic belongs to the staff, not to one line of it.
+ *
+ * "f" under a piano's right hand is an instruction to the hand: everything
+ * it plays from there is forte, both the line that moves and the note it
+ * holds underneath. It is written once, on one note, because writing it on
+ * every voice would print it twice on the page.
+ *
+ * The playback read it off whichever element it happened to be walking, and
+ * walked the voices one after another — so a dynamic written on the second
+ * voice reached the second voice and left the first at whatever it had been.
+ * On a bar of four quarters over a held semibreve, marking the held note
+ * forte gave 96 to the held note and 80 to the four above it, sounding at
+ * the same instant. Reported as "setting forte on one note in one voice must
+ * apply to both without having me type f to both".
+ */
+
+// dynamicMark is a change of volume written somewhere in a bar, with how far
+// into the bar it is written.
+type dynamicMark struct {
+	at   model.Duration
+	loud model.Dynamic
+}
+
+// staffDynamics is every dynamic written in a bar, from all its voices, in
+// the order they take effect.
+func staffDynamics(m *model.Measure) []dynamicMark {
+	var out []dynamicMark
+	for _, v := range m.Voices {
+		if v == nil {
+			continue
+		}
+		at := model.Duration{Num: 0, Den: 1}
+		for _, el := range v.Elements {
+			if d := loudnessOf(el); d != model.DynamicNone {
+				out = append(out, dynamicMark{at: at, loud: d})
+			}
+			at = at.Add(el.Duration())
+		}
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		return out[i].at.Cmp(out[j].at) < 0
+	})
+	return out
+}
+
+// dynamicsAlong says, for each element of one voice, which dynamic becomes
+// current there — reading the whole staff's marks rather than that voice's.
+//
+// From where it is written and no earlier: a note already sounding when the
+// mark arrives keeps the volume it began at, which is what a player does.
+// So each element takes every mark at or before its own moment that no
+// earlier element of this voice has taken.
+func dynamicsAlong(marks []dynamicMark, v *model.Voice) []model.Dynamic {
+	if len(marks) == 0 || v == nil {
+		return nil
+	}
+	out := make([]model.Dynamic, len(v.Elements))
+	at := model.Duration{Num: 0, Den: 1}
+	next := 0
+	for i, el := range v.Elements {
+		for next < len(marks) && marks[next].at.Cmp(at) <= 0 {
+			out[i] = marks[next].loud
+			next++
+		}
+		at = at.Add(el.Duration())
+	}
+	return out
+}
+
+// loudnessOf is the dynamic written on an element, if any.
+func loudnessOf(el model.Element) model.Dynamic {
+	switch e := el.(type) {
+	case *model.Note:
+		return e.Dynamic
+	case *model.Chord:
+		return e.Dynamic
+	case *model.Rest:
+		return e.Dynamic
+	}
+	return model.DynamicNone
 }

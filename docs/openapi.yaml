@@ -744,6 +744,7 @@ paths:
         what is written next into the bar after it, making one if there is
         none, and the answer says where the note actually landed.
       parameters:
+        - $ref: "#/components/parameters/voice"
         - $ref: "#/components/parameters/part"
         - $ref: "#/components/parameters/measure"
         - name: at
@@ -802,6 +803,7 @@ paths:
       tags: [write]
       summary: Add a notehead to a note, making a chord
       parameters:
+        - $ref: "#/components/parameters/voice"
         - $ref: "#/components/parameters/part"
         - $ref: "#/components/parameters/measure"
         - name: index
@@ -846,6 +848,7 @@ paths:
       tags: [write]
       summary: Take out one element, or one notehead of a chord
       parameters:
+        - $ref: "#/components/parameters/voice"
         - $ref: "#/components/parameters/part"
         - $ref: "#/components/parameters/measure"
         - $ref: "#/components/parameters/at"
@@ -911,6 +914,7 @@ paths:
         it along. The bar after the last one can be pasted into: it is made
         on the way, as writing a note there makes it.
       parameters:
+        - $ref: "#/components/parameters/voice"
         - $ref: "#/components/parameters/part"
         - $ref: "#/components/parameters/measure"
         - $ref: "#/components/parameters/at"
@@ -954,6 +958,7 @@ paths:
             schema: { type: string }
             example: "cdef|gabc'|"
       parameters:
+        - $ref: "#/components/parameters/voice"
         - $ref: "#/components/parameters/part"
         - $ref: "#/components/parameters/measure"
         - $ref: "#/components/parameters/at"
@@ -1428,6 +1433,7 @@ paths:
         On a chord, every note in it: a dot is part of how long the note is,
         and the notes of a chord are all the same length.
       parameters:
+        - $ref: "#/components/parameters/voice"
         - $ref: "#/components/parameters/part"
         - $ref: "#/components/parameters/measure"
         - $ref: "#/components/parameters/at"
@@ -1939,6 +1945,7 @@ paths:
         nine. x is a string that is not played. preview=1 says what the
         shape is called and writes nothing.
       parameters:
+        - $ref: "#/components/parameters/voice"
         - $ref: "#/components/parameters/part"
         - $ref: "#/components/parameters/measure"
         - $ref: "#/components/parameters/at"
@@ -4758,7 +4765,30 @@ components:
         brackets round them, moving a notehead, transposing) take it;
         routes that write a mark on a note refuse it, rather than quietly
         putting the mark on the note it leans on.
+
+
+        The index may be written `voice/index` to reach a line of the staff
+        other than the first — `0:3:1/2` is the third element of the second
+        voice of bar 3, and `0:3:1/2:1` its second grace note. A bare index
+        is the first voice, so every selection written before voices could
+        be reached means what it always meant. An index counts within its
+        own voice, which is the only index the model has.
       schema: { type: string }
+    voice:
+      name: voice
+      in: query
+      description: |
+        Which line of the staff to write on, counted from zero. Absent is
+        the first, which is the only line most music has.
+
+
+        A staff may carry up to four independent lines, written across each
+        other rather than after each other — a held note under a moving
+        part, two singers on one stave. The line is made by writing the
+        first note into it and goes away again when its last note is taken
+        out. See the guide to
+        [two voices on one staff](voices.md).
+      schema: { type: integer, minimum: 0, maximum: 3, default: 0 }
     step:
       name: step
       in: query

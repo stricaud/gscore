@@ -6,7 +6,7 @@ abc/boite-musique.abc ce670b05b3bd5c03 514
 abc/decoration.abc c8f4673a8e66ca93 31
 abc/pitch.abc 376aa6d8311eb1d1 227
 abc/sunshine.abc caeb256053161827 136
-samples/altes-10e-solo.abc 9e3ffd5e0d6c4fe7 9777
+samples/altes-10e-solo.abc 4b4fbfb29b58b3d1 9777
 samples/boite-musique.abc ce670b05b3bd5c03 514
 suite/01a-Pitches-Pitches.musicxml 5177aba21f65c2bd 548
 suite/01b-Pitches-Intervals.musicxml 6f4787733f66de48 405
@@ -118,11 +118,11 @@ suite/41j-PartNameDisplay-Multiple-DisplayText-Children.musicxml d15f880bbc29f36
 suite/41k-PartName-Print.musicxml a71518ffdaffa1ed 16
 suite/41l-GroupNameDisplay-Override.musicxml 54a3d4d4630780e5 58
 suite/42a-MultiVoice-TwoVoicesOnStaff-Lyrics.musicxml 5f4127b231d7cb17 66
-suite/42b-MultiVoice-MidMeasureClefChange.musicxml 033aada1c12bf998 110
+suite/42b-MultiVoice-MidMeasureClefChange.musicxml 34f32b203421d12f 110
 suite/43a-PianoStaff.musicxml b265204262c59e9b 25
 suite/43b-MultiStaff-DifferentKeys.musicxml 82a9936fef99b726 27
 suite/43c-MultiStaff-DifferentKeysAfterBackup.musicxml 82a9936fef99b726 27
-suite/43d-MultiStaff-StaffChange.musicxml fabc351943ec1732 85
+suite/43d-MultiStaff-StaffChange.musicxml e82bee781164e8ab 85
 suite/43e-Multistaff-ClefDynamics.musicxml e6a65de70c86195c 97
 suite/43f-MultiStaff-Lyrics.musicxml 34b64c3576451a26 79
 suite/43g-MultiStaff-PartSymbol.musicxml d6f510fd5a1de77e 61

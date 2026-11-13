@@ -113,6 +113,31 @@ const PALETTE = [
     ],
   },
   {
+    // Which line of the staff is being written.
+    //
+    // A staff can carry more than one independent line — a held note under
+    // a moving part, two singers on one stave — and the two are written
+    // across each other rather than after each other. The line has to be
+    // picked before writing and there is no way round it: both lines are
+    // in the same bar at the same moment, so a click on the staff cannot
+    // say which of them it means. Every notation program asks the same
+    // question for the same reason.
+    //
+    // Numbered, because that is what the numbering is: voice one takes its
+    // stems up and voice two down, whichever is the higher note, and that
+    // is how a reader tells the lines apart on the page.
+    id: "voices",
+    name: "Voices",
+    size: 16,
+    columns: 4,
+    items: [
+      { text: "1", label: "Voice 1", voice: 0 },
+      { text: "2", label: "Voice 2", voice: 1 },
+      { text: "3", label: "Voice 3", voice: 2 },
+      { text: "4", label: "Voice 4", voice: 3 },
+    ],
+  },
+  {
     id: "stems",
     name: "Stems",
     size: 18,

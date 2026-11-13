@@ -30,7 +30,9 @@ that the top space is a hi-hat.
 **A score has parts; a part has measures; a measure has voices; a voice has
 elements.** An element is a note, a chord or a rest. Two independent lines
 written on one staff are two *voices*, and they are written across each other
-rather than after each other.
+rather than after each other. The **Voices** section of the toolbox, or
+<kbd>Alt</kbd>+<kbd>1</kbd> to <kbd>Alt</kbd>+<kbd>4</kbd>, picks which line
+you are writing — see [two voices on one staff](voices.md).
 
 **A pitch is a step, an octave and an alteration** — not a position on a
 staff. That is why transposing keeps your spelling, and why what *sounds* can

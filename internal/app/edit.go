@@ -151,7 +151,16 @@ func (a *App) handleInsert(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	v := m.Voices[0]
+	// Which line of the staff is being written. Writing the first note
+	// of a second voice is how a second voice begins — there is no other
+	// moment it could, and making somebody create one first would be
+	// asking them to say twice what they said by choosing it.
+	vi := voiceParam(q)
+	v, err := voiceForWriting(m, vi)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 
 	var el model.Element
 	switch {
@@ -320,7 +329,7 @@ func (a *App) handleInsert(w http.ResponseWriter, r *http.Request) {
 		at = len(v.Elements)
 	}
 
-	at = openEmptyBar(p, m, measIdx, at)
+	at = openEmptyBar(p, m, measIdx, at, vi)
 
 	// Writing over what is picked up rather than in front of it.
 	//
@@ -338,7 +347,7 @@ func (a *App) handleInsert(w http.ResponseWriter, r *http.Request) {
 		if el.Duration().Cmp(old.Duration()) > 0 {
 			spill(p, measIdx)
 		}
-		part, idx := findElement(p, measIdx, el)
+		part, idx := findElement(p, measIdx, vi, el)
 		out := map[string]any{
 			"status": "ok", "measure": part, "at": idx, "index": idx,
 			"replaced": true,
@@ -350,8 +359,16 @@ func (a *App) handleInsert(w http.ResponseWriter, r *http.Request) {
 
 	// Writing at the end of a bar that is already full means the next bar,
 	// unless the barlines are being left alone. See carryOn.
-	m, measIdx, at = carryOn(p, m, measIdx, at)
-	v = m.Voices[0]
+	m, measIdx, at = carryOn(p, m, measIdx, at, vi)
+	if v, err = voiceForWriting(m, vi); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	// The bar may have changed under us, and a line that is new in it is
+	// empty however far along the old one the cursor stood.
+	if at > len(v.Elements) {
+		at = len(v.Elements)
+	}
 
 	v.Elements = append(v.Elements, nil)
 	copy(v.Elements[at+1:], v.Elements[at:])
@@ -363,9 +380,10 @@ func (a *App) handleInsert(w http.ResponseWriter, r *http.Request) {
 
 	// The element may now be in a later measure than the one written to, so
 	// the answer says where it actually is and the cursor follows it there.
-	part, idx := findElement(p, measIdx, el)
+	part, idx := findElement(p, measIdx, vi, el)
 	out := map[string]any{
 		"status": "ok", "measure": part, "at": idx, "index": idx,
+		"voice": vi,
 	}
 	addSounding(out, p, el)
 	writeJSON(w, out)
@@ -563,8 +581,8 @@ func spill(p *model.Part, from int) {
 // it is what the switch is for.
 //
 // The caller's voice is stale afterwards, since the bar may have changed.
-func carryOn(p *model.Part, m *model.Measure, index, at int) (*model.Measure, int, int) {
-	v := m.Voices[0]
+func carryOn(p *model.Part, m *model.Measure, index, at, voice int) (*model.Measure, int, int) {
+	v := lineOf(m, voice)
 	if at != len(v.Elements) || !TrackBarlines() {
 		return m, index, at
 	}
@@ -572,7 +590,14 @@ func carryOn(p *model.Part, m *model.Measure, index, at int) (*model.Measure, in
 		return m, index, at
 	}
 	index++
-	return measureAt(p, index), index, 0
+	next := measureAt(p, index)
+	// The line being written has to exist in the bar it carries into,
+	// or the note arrives in a bar that has no such voice and the write
+	// lands on the first line instead.
+	if _, err := voiceForWriting(next, voice); err != nil {
+		return m, index - 1, at
+	}
+	return next, index, 0
 }
 
 // openEmptyBar takes a bar's rest out when something is being written into
@@ -590,8 +615,8 @@ func carryOn(p *model.Part, m *model.Measure, index, at int) (*model.Measure, in
 // is carried into the bar after. Copying a bar of the right hand and
 // pasting it into the empty left hand put it one bar late — which is what
 // this is for as much as the tidiness.
-func openEmptyBar(p *model.Part, m *model.Measure, index, at int) int {
-	v := m.Voices[0]
+func openEmptyBar(p *model.Part, m *model.Measure, index, at, voice int) int {
+	v := lineOf(m, voice)
 	if len(v.Elements) != 1 {
 		return at
 	}
@@ -605,9 +630,9 @@ func openEmptyBar(p *model.Part, m *model.Measure, index, at int) int {
 
 // findElement says where an element ended up after a spill: which measure
 // holds it, and the cursor position just after it.
-func findElement(p *model.Part, from int, el model.Element) (measure, at int) {
+func findElement(p *model.Part, from, voice int, el model.Element) (measure, at int) {
 	for i := from; i < len(p.Measures); i++ {
-		for j, e := range p.Measures[i].Voices[0].Elements {
+		for j, e := range lineOf(p.Measures[i], voice).Elements {
 			if e == el {
 				return i, j + 1
 			}
@@ -642,7 +667,23 @@ func (a *App) handleAddPitch(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	v := m.Voices[0]
+	// The line of the staff the note being built on is written in. A chord
+	// in the second voice is built out of the second voice, and reading the
+	// first instead stacked the notehead on whatever happened to share that
+	// index in the line above — somebody writing a second voice pressed the
+	// key for another chord note and watched a notehead appear in the other
+	// voice, a second away from a note already there and unreadable.
+	//
+	// Neither voiceForWriting nor lineOf: this adds to a note that is
+	// already written, so a line that is not there means the selection is
+	// stale. Making one would leave a notehead alone in an empty voice, and
+	// falling back to the first would put it in somebody else's chord
+	// without saying so — which is the louder half of the same bug.
+	v, err := voiceAt(m, voiceParam(q))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 	if index < 0 || index >= len(v.Elements) {
 		http.Error(w, "there is no note there", http.StatusBadRequest)
 		return
@@ -838,7 +879,8 @@ func (a *App) handleDelete(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	v := m.Voices[0]
+	vi := voiceParam(q)
+	v := lineOf(m, vi)
 	if at < 0 || at >= len(v.Elements) {
 		http.Error(w, "nothing there to delete", http.StatusBadRequest)
 		return
@@ -877,7 +919,7 @@ func (a *App) handleDelete(w http.ResponseWriter, r *http.Request) {
 				http.StatusBadRequest)
 			return
 		}
-		if gone, left := removeNotehead(p, m, measIdx, at, head); gone {
+		if gone, left := removeNotehead(p, m, measIdx, at, head, vi); gone {
 			writeJSON(w, map[string]any{"status": "ok", "left": left})
 			return
 		}
@@ -887,7 +929,10 @@ func (a *App) handleDelete(w http.ResponseWriter, r *http.Request) {
 	freeTupletAt(v, at)
 
 	v.Elements = append(v.Elements[:at], v.Elements[at+1:]...)
-	writeJSON(w, map[string]string{"status": "ok"})
+	// Taking the last note out of a second voice leaves a bar of one
+	// voice, not a bar of one voice and an empty line nobody can see.
+	tidyVoices(m)
+	writeJSON(w, map[string]any{"status": "ok", "voices": len(m.Voices)})
 }
 
 // removeNotehead takes one notehead out of a chord, and says whether it
@@ -902,8 +947,8 @@ func (a *App) handleDelete(w http.ResponseWriter, r *http.Request) {
 // Anything that is not a chord is left alone and the caller deletes it
 // whole: a note has one notehead, and taking that away is taking the note
 // away.
-func removeNotehead(p *model.Part, m *model.Measure, index, at, head int) (bool, int) {
-	v := m.Voices[0]
+func removeNotehead(p *model.Part, m *model.Measure, index, at, head, voice int) (bool, int) {
+	v := lineOf(m, voice)
 	ch, ok := v.Elements[at].(*model.Chord)
 	if !ok {
 		return false, 0
@@ -953,9 +998,14 @@ func (a *App) handleDeleteSelection(w http.ResponseWriter, r *http.Request) {
 
 	// Group by measure and remove from the back, so that deleting one element
 	// does not shift the index of the next one still to go.
-	byMeasure := map[[2]int][]int{}
+	//
+	// By voice as well as by bar: an index is a place in one line of the
+	// staff, and every line has an element 0. Keyed by the bar alone, a
+	// selection across two voices deleted twice from the first and left
+	// the second standing.
+	byMeasure := map[[3]int][]int{}
 	for _, t := range targets {
-		k := [2]int{t.part, t.measure}
+		k := [3]int{t.part, t.measure, t.voice}
 		byMeasure[k] = append(byMeasure[k], t.index)
 	}
 
@@ -969,7 +1019,7 @@ func (a *App) handleDeleteSelection(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		sort.Sort(sort.Reverse(sort.IntSlice(idx)))
-		v := m.Voices[0]
+		v := lineOf(m, k[2])
 		for _, i := range idx {
 			if i < 0 || i >= len(v.Elements) {
 				continue
@@ -982,6 +1032,7 @@ func (a *App) handleDeleteSelection(w http.ResponseWriter, r *http.Request) {
 			v.Elements = append(v.Elements[:i], v.Elements[i+1:]...)
 			removed++
 		}
+		tidyVoices(m)
 	}
 	writeJSON(w, map[string]int{"removed": removed})
 }
@@ -1365,7 +1416,7 @@ func (a *App) notesOf(q url.Values) ([]keyedNote, error) {
 			if err != nil {
 				continue // a stale selection is not worth failing over
 			}
-			v := m.Voices[0]
+			v := lineOf(m, t.voice)
 			if t.index < 0 || t.index >= len(v.Elements) {
 				continue
 			}
@@ -1479,6 +1530,13 @@ func (a *App) handleDynamic(w http.ResponseWriter, r *http.Request) {
 // target names one element: a staff, a measure and a position within it.
 type target struct {
 	part, measure, index int
+	// voice is which line of music on that staff, counted from zero.
+	//
+	// Zero is the only line there is in nearly every bar, and is what a
+	// selection written without one means — so every selection made
+	// before voices could be reached goes on meaning exactly what it
+	// meant. See voice.go.
+	voice int
 	// graceAt names one of the small notes leaning on that element: zero
 	// for the element itself, and otherwise one more than the grace note's
 	// place in the group.
@@ -1510,6 +1568,12 @@ func (t target) graceOrd() int { return t.graceAt - 1 }
 // second small note leaning on the third element of bar 3. Three numbers go
 // on meaning what they always meant, so nothing written before this knows
 // the difference.
+//
+// The index may be written "voice/index" to reach a line of the staff other
+// than the first: "0:3:1/2" is the third element of the second voice of bar
+// 3. A bare index is voice one, which is what a selection written before
+// voices could be reached already means — the whole grammar stays
+// backwards compatible, and a score with one voice never sees the slash.
 func parseTargets(sel string) ([]target, error) {
 	var out []target
 	for _, piece := range strings.Split(sel, ",") {
@@ -1529,7 +1593,15 @@ func parseTargets(sel string) ([]target, error) {
 		if t.measure, err = strconv.Atoi(f[1]); err != nil {
 			return nil, editError("bad measure in the selection")
 		}
-		if t.index, err = strconv.Atoi(f[2]); err != nil {
+		pos := f[2]
+		if slash := strings.IndexByte(pos, '/'); slash >= 0 {
+			if t.voice, err = strconv.Atoi(pos[:slash]); err != nil ||
+				t.voice < 0 || t.voice >= maxVoices {
+				return nil, editError("bad voice in the selection")
+			}
+			pos = pos[slash+1:]
+		}
+		if t.index, err = strconv.Atoi(pos); err != nil {
 			return nil, editError("bad position in the selection")
 		}
 		if len(f) == 4 {
@@ -1553,7 +1625,7 @@ func (a *App) graceNoteAt(t target) (*model.GraceGroup, *model.Note, error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	v := m.Voices[0]
+	v := lineOf(m, t.voice)
 	if t.index < 0 || t.index >= len(v.Elements) {
 		return nil, nil, editError("there is no note there")
 	}
@@ -1584,7 +1656,7 @@ func (a *App) marksOf(q url.Values) ([]*model.Marks, error) {
 			if err != nil {
 				continue // a stale selection is not worth failing over
 			}
-			v := m.Voices[0]
+			v := lineOf(m, t.voice)
 			if t.index < 0 || t.index >= len(v.Elements) {
 				continue
 			}
@@ -2744,7 +2816,7 @@ func (a *App) handleShift(w http.ResponseWriter, r *http.Request) {
 				http.StatusBadRequest)
 			return
 		}
-		v := voiceOf(p, t.measure)
+		v := voiceOf(p, t.measure, t.voice)
 		if t.index < 0 || t.index >= len(v.Elements) {
 			http.Error(w, "the selection is not in the music any more",
 				http.StatusBadRequest)
@@ -2767,7 +2839,7 @@ func (a *App) handleShift(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	fv := voiceOf(p, from.measure)
+	fv := voiceOf(p, from.measure, from.voice)
 	el := fv.Elements[from.index]
 	// A tuplet is a group and moving one member out of it would leave the
 	// figure printed over a note that is somewhere else.
@@ -2783,7 +2855,7 @@ func (a *App) handleShift(w http.ResponseWriter, r *http.Request) {
 		to.index--
 	}
 
-	tv := voiceOf(p, to.measure)
+	tv := voiceOf(p, to.measure, to.voice)
 	if to.index > len(tv.Elements) {
 		to.index = len(tv.Elements)
 	}
@@ -2802,7 +2874,7 @@ func (a *App) handleShift(w http.ResponseWriter, r *http.Request) {
 	// Where the notes ended up, so that what was selected still is.
 	now := make([]string, 0, len(moving))
 	for _, m := range moving {
-		measure, at := findElement(p, start, m)
+		measure, at := findElement(p, start, first.voice, m)
 		if at <= 0 {
 			continue
 		}
@@ -2832,10 +2904,28 @@ func refill(p *model.Part, from int) {
 	if bar.IsZero() {
 		return
 	}
+	// Each line of the staff drawn on by its own neighbour, and only by
+	// its own. A bar runs short one voice at a time, and pulling the
+	// second voice's next note over the barline because the first voice
+	// was short would put the two lines out of step with each other —
+	// which is the one thing a bar of two voices has to get right.
+	for vi := 0; vi < maxVoices; vi++ {
+		refillVoice(p, from, bar, vi)
+	}
+}
+
+// refillVoice is refill, for one line of the staff.
+func refillVoice(p *model.Part, from int, bar model.Duration, vi int) {
+	has := func(i int) bool {
+		return vi < len(p.Measures[i].Voices) && p.Measures[i].Voices[vi] != nil
+	}
 	for i := from; i+1 < len(p.Measures); i++ {
-		v := voiceOf(p, i)
+		if !has(i) || !has(i+1) {
+			return // this line is not written in those bars
+		}
+		v := voiceOf(p, i, vi)
 		for {
-			next := voiceOf(p, i+1)
+			next := voiceOf(p, i+1, vi)
 			if len(next.Elements) == 0 {
 				break
 			}
@@ -2862,12 +2952,13 @@ func refill(p *model.Part, from int) {
 
 // nextAlong is the element after t in the music, which may be in the bar after.
 func nextAlong(p *model.Part, t target) (target, error) {
-	if v := voiceOf(p, t.measure); t.index+1 < len(v.Elements) {
-		return target{part: t.part, measure: t.measure, index: t.index + 1}, nil
+	if v := voiceOf(p, t.measure, t.voice); t.index+1 < len(v.Elements) {
+		return target{part: t.part, measure: t.measure, voice: t.voice,
+			index: t.index + 1}, nil
 	}
 	for i := t.measure + 1; i < len(p.Measures); i++ {
-		if len(voiceOf(p, i).Elements) > 0 {
-			return target{part: t.part, measure: i, index: 0}, nil
+		if len(voiceOf(p, i, t.voice).Elements) > 0 {
+			return target{part: t.part, measure: i, voice: t.voice, index: 0}, nil
 		}
 	}
 	return target{}, editError("that is the end of the music")
@@ -2876,11 +2967,12 @@ func nextAlong(p *model.Part, t target) (target, error) {
 // prevAlong is the element before t, which may be in the bar before.
 func prevAlong(p *model.Part, t target) (target, error) {
 	if t.index > 0 {
-		return target{part: t.part, measure: t.measure, index: t.index - 1}, nil
+		return target{part: t.part, measure: t.measure, voice: t.voice,
+			index: t.index - 1}, nil
 	}
 	for i := t.measure - 1; i >= 0; i-- {
-		if n := len(voiceOf(p, i).Elements); n > 0 {
-			return target{part: t.part, measure: i, index: n - 1}, nil
+		if n := len(voiceOf(p, i, t.voice).Elements); n > 0 {
+			return target{part: t.part, measure: i, voice: t.voice, index: n - 1}, nil
 		}
 	}
 	return target{}, editError("that is the beginning of the music")
@@ -2888,12 +2980,15 @@ func prevAlong(p *model.Part, t target) (target, error) {
 
 // voiceOf is a bar's first voice, made if the bar has none: an empty bar has
 // no voice at all until something is written into it.
-func voiceOf(p *model.Part, measure int) *model.Voice {
+func voiceOf(p *model.Part, measure, n int) *model.Voice {
 	m := p.Measures[measure]
 	if len(m.Voices) == 0 {
 		m.Voices = []*model.Voice{{}}
 	}
-	return m.Voices[0]
+	if n <= 0 || n >= len(m.Voices) || m.Voices[n] == nil {
+		return m.Voices[0]
+	}
+	return m.Voices[n]
 }
 
 // clipboard is what was last copied: whole elements, lifted out of the score.
@@ -2926,7 +3021,7 @@ func (a *App) handleCopy(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			continue
 		}
-		v := m.Voices[0]
+		v := lineOf(m, t.voice)
 		if t.index < 0 || t.index >= len(v.Elements) {
 			continue
 		}
@@ -2949,6 +3044,7 @@ func (a *App) handlePaste(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	partIdx, _ := strconv.Atoi(q.Get("part"))
 	measIdx, _ := strconv.Atoi(q.Get("measure"))
+	vi := voiceParam(q)
 	at, err := strconv.Atoi(q.Get("at"))
 	if err != nil {
 		at = -1
@@ -2976,14 +3072,18 @@ func (a *App) handlePaste(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	v := m.Voices[0]
+	v, err := voiceForWriting(m, vi)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 	if at < 0 || at > len(v.Elements) {
 		at = len(v.Elements)
 	}
 	// Into the bar, not after its rest. See openEmptyBar: a bar holding
 	// nothing but its own bar of rest is an empty bar, and it is full, so
 	// pasting after the rest carried the music into the bar after it.
-	at = openEmptyBar(p, m, measIdx, at)
+	at = openEmptyBar(p, m, measIdx, at, vi)
 
 	// A fresh copy each time, so pasting twice does not give two references
 	// to the same notes — changing one would silently change the other.
@@ -3012,7 +3112,7 @@ func (a *App) handlePaste(w http.ResponseWriter, r *http.Request) {
 
 	// What no longer fits the bar moves into the next one, as when writing.
 	spill(p, measIdx)
-	measure, idx := findElement(p, measIdx, add[len(add)-1])
+	measure, idx := findElement(p, measIdx, vi, add[len(add)-1])
 	writeJSON(w, map[string]any{
 		"pasted": len(add), "measure": measure, "at": idx,
 	})
@@ -4252,7 +4352,7 @@ func (a *App) tieTargets(q url.Values) ([]tieTarget, error) {
 			if err != nil {
 				continue
 			}
-			v := m.Voices[0]
+			v := lineOf(m, t.voice)
 			if t.index < 0 || t.index >= len(v.Elements) {
 				continue
 			}
@@ -5398,6 +5498,7 @@ func (a *App) handleDot(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	partIdx, _ := strconv.Atoi(q.Get("part"))
 	measIdx, _ := strconv.Atoi(q.Get("measure"))
+	vi := voiceParam(q)
 	at, err := strconv.Atoi(q.Get("at"))
 	if err != nil {
 		at = -1
@@ -5411,7 +5512,7 @@ func (a *App) handleDot(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	v := m.Voices[0]
+	v := lineOf(m, vi)
 	if len(v.Elements) == 0 {
 		http.Error(w, "there is nothing there to dot", http.StatusBadRequest)
 		return
@@ -5468,7 +5569,7 @@ func (a *App) handleDot(w http.ResponseWriter, r *http.Request) {
 
 	// What no longer fits the bar moves into the next one, as when writing.
 	spill(p, measIdx)
-	measure, idx := findElement(p, measIdx, el)
+	measure, idx := findElement(p, measIdx, vi, el)
 	writeJSON(w, map[string]any{
 		// The written length, not the played one: it is the note on the
 		// page that has just gained a dot, and inside a tuplet the two are
@@ -5535,9 +5636,10 @@ func (a *App) handleDuration(w http.ResponseWriter, r *http.Request) {
 	// longer where the selection said they were — and a second change asked
 	// for on the same selection reached only the ones that had not moved.
 	type moved struct {
-		part int
-		from int
-		el   model.Element
+		part  int
+		from  int
+		voice int
+		el    model.Element
 	}
 	var done []moved
 	touched := map[[2]int]bool{}
@@ -5559,7 +5661,14 @@ func (a *App) handleDuration(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			continue // a stale selection is not worth failing over
 		}
-		for _, v := range m.Voices {
+		// The line the selection named, and only that one. It used to
+		// take the first voice holding anything at that index and stop
+		// there — so on a staff of two voices, picking up the second
+		// voice's note and asking for a shorter one changed the first
+		// voice's note instead, and left the one that was selected as
+		// it was.
+		{
+			v := lineOf(m, t.voice)
 			if v == nil || t.index < 0 || t.index >= len(v.Elements) {
 				continue
 			}
@@ -5592,9 +5701,9 @@ func (a *App) handleDuration(w http.ResponseWriter, r *http.Request) {
 			} else {
 				setDuration(el, want)
 			}
-			done = append(done, moved{part: t.part, from: t.measure, el: el})
+			done = append(done, moved{
+				part: t.part, from: t.measure, voice: t.voice, el: el})
 			touched[[2]int{t.part, t.measure}] = true
-			break // the first voice that has an element at this index
 		}
 	}
 
@@ -5652,7 +5761,7 @@ func (a *App) handleDuration(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			continue
 		}
-		measure, after := findElement(p, d.from, d.el)
+		measure, after := findElement(p, d.from, d.voice, d.el)
 		if after <= 0 {
 			continue
 		}
@@ -6480,6 +6589,7 @@ func (a *App) handleABC(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	partIdx, _ := strconv.Atoi(q.Get("part"))
 	measIdx, _ := strconv.Atoi(q.Get("measure"))
+	vi := voiceParam(q)
 	at, err := strconv.Atoi(q.Get("at"))
 	if err != nil {
 		at = -1
@@ -6544,12 +6654,12 @@ func (a *App) handleABC(w http.ResponseWriter, r *http.Request) {
 	// in. A line on the last note of the fragment closes the bar it ended
 	// in, which is where somebody writing "|:" meant it to go.
 	for _, c := range closers {
-		if i, _ := findElement(p, measIdx, c.after); i >= 0 {
+		if i, _ := findElement(p, measIdx, vi, c.after); i >= 0 {
 			p.Measures[i].RightBarline = c.style
 		}
 	}
 
-	measure, idx := findElement(p, measIdx, add[len(add)-1])
+	measure, idx := findElement(p, measIdx, vi, add[len(add)-1])
 	writeJSON(w, map[string]any{
 		"wrote": len(add), "measure": measure, "at": idx,
 		// What the reader could not read, if anything. An ABC line with one

@@ -35,7 +35,7 @@ function targets(selection, multi = []) {
       elements: [{ index: 0, ref: 7 }, { index: 1, ref: 8 }, { index: 2, ref: 9 }],
     }],
   };
-  const body = grab("orderedSelection") + "\n" + grab("selectionTargets") + "\n" +
+  const body = grab("selOf") + "\n" + grab("orderedSelection") + "\n" + grab("selectionTargets") + "\n" +
     grab("measureTargets") + "\nreturn () => selectionTargets() || measureTargets();";
   return new Function("state", body)(state)();
 }
@@ -67,7 +67,7 @@ test("a bar picked up copies the bar", () => {
 // to the server.
 test("a cursor in an empty bar copies nothing", () => {
   const state = { selection: place, multi: [], hits: [{ part: 0, measure: 13, elements: [] }] };
-  const body = grab("measureTargets") + "\nreturn measureTargets;";
+  const body = grab("selOf") + "\n" + grab("measureTargets") + "\nreturn measureTargets;";
   assert.equal(new Function("state", body)(state)(), null);
 });
 

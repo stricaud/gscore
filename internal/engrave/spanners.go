@@ -864,10 +864,7 @@ func (e *engraver) slurAt(part *model.Part, m *model.Marks, p *placed, measure i
 		}
 		toUp := e.stemUp(p)
 		toBase := e.y + stepY(float64(toEdge))
-		toStemY := e.stemEnd(e.y+stepY(float64(p.hi)), toUp)
-		if !toUp {
-			toStemY = e.stemEnd(e.y+stepY(float64(p.lo)), toUp)
-		}
+		toStemY := e.stemTip(p, toUp)
 		toOnStem := sl.above == toUp
 		if toOnStem {
 			toBase = toStemY + stemSlurInset(sl.above)
@@ -891,14 +888,10 @@ func (e *engraver) slurAt(part *model.Part, m *model.Marks, p *placed, measure i
 		}
 		y := e.y + stepY(float64(edge))
 		up := e.stemUp(p)
-		base := e.y + stepY(float64(p.hi))
-		if !up {
-			base = e.y + stepY(float64(p.lo))
-		}
 		sl := &openSpan{
 			x: x, y: y, rel: y - e.y, above: above,
 			fromHi: p.hi, fromLo: p.lo,
-			fromStemUp: up, fromStemY: e.stemEnd(base, up),
+			fromStemUp: up, fromStemY: e.stemTip(p, up),
 			ref: p.index, part: e.partIndex, measure: measure,
 		}
 		open.slurs = append(open.slurs, sl)

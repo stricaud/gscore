@@ -88,7 +88,7 @@ function load(names, extra = {}) {
       return { ok: true, text: async () => "", json: async () => ({}) };
     },
   };
-  const body = [konst("arcReach"), ...names.map(grab)].join("\n") +
+  const body = [konst("arcReach"), grab("selOf"), ...names.map(grab)].join("\n") +
     "\nreturn { " + names.join(", ") + " };";
   const api = new Function(...Object.keys(scope), body)(...Object.values(scope));
   return { ...api, state, said, asked };

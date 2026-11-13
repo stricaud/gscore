@@ -673,7 +673,20 @@ type ElementPos struct {
 	// Ref is the element's number, shared with the drawn glyph and with
 	// playback, so selecting, highlighting and sounding all agree.
 	Ref int `json:"ref"`
-	// Index is the element's position within its measure's first voice.
+	// Voice is which line of music on this staff it belongs to, counted
+	// from zero. Zero for the only one, which is nearly always.
+	Voice int `json:"voice"`
+	// Index is the element's position within its own voice.
+	//
+	// Within its own voice, because that is the only index the model has
+	// and so the only one an edit can be addressed by. It used to be the
+	// position in the bar's drawing order — every voice flattened into one
+	// list, column by column — and with a single voice the two are the
+	// same number, which is why nothing ever showed it. With two they come
+	// apart at the first note: a bar of four quarters over a held
+	// semibreve draws as five, so the editor called the second quarter
+	// "2", the server wrote at Voices[0][2], and that is the third. Every
+	// click in a two-voice bar edited a different note, in silence.
 	Index int     `json:"index"`
 	X     float64 `json:"x"`
 	// Y is the topmost notehead and Y2 the lowest; they differ only for a
@@ -1413,6 +1426,15 @@ type voiced struct {
 	el    model.Element
 	voice int
 	index int // the element's Ref
+	// order is where it stands in its own voice.
+	//
+	// Not where it stands in the bar's drawing order, which is every
+	// voice flattened into one column-by-column list and is what the
+	// layout used to report. An edit names an element by the voice it is
+	// in and its place in that voice, because that is how the model holds
+	// it; the drawing order is an arrangement of the page and addresses
+	// nothing. See ElementPos.Index.
+	order int
 }
 
 // slot is one column of a measure: everything that starts at the same moment.
@@ -2989,24 +3011,27 @@ func (e *engraver) measureBox(p *model.Part, m *model.Measure, index int) measur
 	}
 	var entries []entry
 	empty := true
+	// Once for the bar, because which way a stem points — and so whether a
+	// flag hangs over what comes next — is settled by every line on the
+	// staff together.
+	flags := e.flagRoom(p, m, index)
 	for vi, voice := range m.Voices {
 		if voice == nil || len(voice.Elements) == 0 {
 			continue
 		}
 		empty = false
-		flags := e.flagRoom(p, voice.Elements, index)
 		at := model.Duration{Num: 0, Den: 1}
 		for i, el := range voice.Elements {
 			entries = append(entries, entry{
 				at: at,
-				v:  voiced{el: el, voice: vi},
+				v:  voiced{el: el, voice: vi, order: i},
 				// chordStepOut on this side too: a notehead that steps
 				// left needs the room, and so does the accidental column,
 				// which is drawn clear of the whole chord and moves left
 				// with it.
 				lead: graceLead(el) + chordStepOut(el) + arpeggioLead(el),
 				tuck: e.accidentalLead(el),
-				room: flags[i],
+				room: flags[flagAt{voice: vi, order: i}],
 			})
 			at = at.Add(el.Duration())
 		}
@@ -3376,9 +3401,12 @@ func (e *engraver) accidentalLead(el model.Element) float64 {
 // clear the next note, not to stand apart from it.
 const afterFlag = 0.2
 
-// flagRoom is how wide each element of a measure has to be for its flag,
-// indexed as the elements are. Zero for anything that carries no flag, which
-// is most of a bar.
+// flagAt names one element of a measure: which line of the staff it is
+// written in, and where it stands in that line.
+type flagAt struct{ voice, order int }
+
+// flagRoom is how wide each element of a measure has to be for its flag.
+// Zero for anything that carries no flag, which is most of a bar.
 //
 // A flag hangs off the right of the stem, and on an up-stem note the stem
 // stands at the right edge of the head — so the note's ink reaches further
@@ -3388,15 +3416,33 @@ const afterFlag = 0.2
 // flag at all, and a low one in a group of high ones has its stem turned
 // down, where the flag hangs over the head it belongs to and asks for
 // nothing. So the question is asked of the bar, the way the drawing asks it.
-func (e *engraver) flagRoom(p *model.Part, elems []model.Element, index int) map[int]float64 {
-	if len(elems) == 0 {
-		return nil
+//
+// The whole bar, every voice at once. It used to be asked one voice at a
+// time, and which way a stem points is not a question one voice can answer:
+// a staff carrying two lines stems the upper one up and the lower one down
+// whatever either line would have done alone. A melody written as the
+// second voice of a piano right hand, read by itself, is a run of high
+// notes and stems down — so no room was booked — and then drawn as the
+// upper line of the staff, stemming up, with its flag over the note after
+// it. Reported as "there is a collision between the 8th and the quarter".
+func (e *engraver) flagRoom(p *model.Part, m *model.Measure, index int) map[flagAt]float64 {
+	var items []*placed
+	var where []flagAt
+	for vi, voice := range m.Voices {
+		if voice == nil {
+			continue
+		}
+		at := model.Duration{Num: 0, Den: 1}
+		for i, el := range voice.Elements {
+			pl := e.placedOf(p.Clef, el, at)
+			pl.voice = vi
+			items = append(items, pl)
+			where = append(where, flagAt{voice: vi, order: i})
+			at = at.Add(el.Duration())
+		}
 	}
-	items := make([]*placed, 0, len(elems))
-	at := model.Duration{Num: 0, Den: 1}
-	for _, el := range elems {
-		items = append(items, e.placedOf(p.Clef, el, at))
-		at = at.Add(el.Duration())
+	if len(items) == 0 {
+		return nil
 	}
 	time := p.TimeAt(index)
 	beamed := make(map[*placed]bool, len(items))
@@ -3407,7 +3453,7 @@ func (e *engraver) flagRoom(p *model.Part, elems []model.Element, index int) map
 	}
 	e.setStemDirections(items, time)
 
-	var out map[int]float64
+	var out map[flagAt]float64
 	for i, it := range items {
 		if beamed[it] || it.stemDir < 0 {
 			continue
@@ -3417,11 +3463,11 @@ func (e *engraver) flagRoom(p *model.Part, elems []model.Element, index int) map
 			continue
 		}
 		if out == nil {
-			out = make(map[int]float64, 4)
+			out = make(map[flagAt]float64, 4)
 		}
 		// Measured from where drawSingleStem puts the flag, so that the
 		// room reserved and the ink drawn are the same measurement.
-		out[i] = noteheadWidth(it.value) - e.opt.Defaults.StemThickness/2 +
+		out[where[i]] = noteheadWidth(it.value) - e.opt.Defaults.StemThickness/2 +
 			smufl.Advance(g) + afterFlag
 	}
 	return out

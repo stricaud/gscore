@@ -40,15 +40,16 @@ const HITS = [{ part: 0, measure: 0, staffTop: 6, elements: [CHORD, LONE] }];
 function load(names, extra = {}) {
   const said = [];
   const state = { hits: HITS, multi: [], selection: null, anchor: null,
-                  focus: null, zoom: 8, ...(extra.state || {}) };
+                  focus: null, zoom: 8, voice: 0, ...(extra.state || {}) };
   const scope = {
     state,
     status: (s) => said.push(s),
     markSelection() {},
+    setVoice(n) { state.voice = n; },
     updateFingering() {},
     barNumberOf: (m) => m + 1,
   };
-  const body = names.map(grab).join("\n") +
+  const body = [grab("selOf"), ...names.map(grab)].join("\n") +
     "\nreturn { " + names.join(", ") + " };";
   const api = new Function(...Object.keys(scope), body)(...Object.values(scope));
   return { ...api, state, said };

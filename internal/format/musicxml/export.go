@@ -231,8 +231,36 @@ func buildPart(s *model.Score, p *model.Part, id string, index, divisions int) x
 			xm.add(measureItem{Direction: &d})
 		}
 
-		if len(m.Voices) > 0 {
-			for _, el := range m.Voices[0].Elements {
+		// Every voice of the bar, not only the first.
+		//
+		// A bar is written through once for each voice, with <backup>
+		// winding the position back to the start of the bar between them.
+		// That is the only way MusicXML has of saying two lines share a
+		// staff, and writing voice one and stopping meant a piano part
+		// whose right hand held a note under a moving line came out of
+		// gscore with the held note simply gone — no warning, no sign in
+		// the file that anything had been there. The music still looked
+		// right in gscore, which is the worst way for an export to be
+		// wrong.
+		written := 0 // divisions already written, for the backup
+		for vi, voice := range m.Voices {
+			if voice == nil || len(voice.Elements) == 0 {
+				continue
+			}
+			// Back to the start of the bar before each voice after the
+			// first. By what was actually written rather than by the
+			// bar's nominal length: a bar that does not add up — a
+			// pickup, or one somebody is halfway through — still has to
+			// wind back to where it began and no further.
+			if written > 0 {
+				xm.add(measureItem{Shift: &shift{Duration: written, Back: true}})
+			}
+			written = 0
+			for _, el := range voice.Elements {
+				// What the bar's position advances by. A chord advances
+				// once however many noteheads it has, and a grace note
+				// not at all, which is exactly what Duration says.
+				written += durationIn(el.Duration(), divisions)
 				// The words written on a note go before it, and before its
 				// dynamic: "più p" is a word in front of the letters, and
 				// the order the directions are written in is the order a
@@ -270,6 +298,12 @@ func buildPart(s *model.Score, p *model.Part, id string, index, divisions int) x
 				}
 				for _, n := range buildElement(el, divisions) {
 					note := n
+					// Which line of the staff this is. Written on every
+					// note, including the first voice's: a file that
+					// numbers some of its notes and not others leaves
+					// the reader to guess which voice the unnumbered
+					// ones belong to.
+					note.Voice = strconv.Itoa(vi + 1)
 					xm.add(measureItem{Note: &note})
 				}
 			}

@@ -2116,10 +2116,13 @@ func (a *App) handleHeader(w http.ResponseWriter, r *http.Request) {
 	if q.Has("arranger") {
 		a.score.Identity.Arranger = q.Get("arranger")
 	}
+	if q.Has("lyricist") {
+		a.score.Identity.Lyricist = q.Get("lyricist")
+	}
 	if q.Has("copyright") {
 		a.score.Identity.Copyright = q.Get("copyright")
 	}
-	// And how those four are set, where the window that sent them knows.
+	// And how those are set, where the window that sent them knows.
 	// The words and their formatting arrive together or not at all: a
 	// caller that sends a field and no runs for it is saying the field is
 	// plain, which is what clearing them says.
@@ -2131,6 +2134,7 @@ func (a *App) handleHeader(w http.ResponseWriter, r *http.Request) {
 		{"subtitle", &a.score.Identity.SubtitleRuns},
 		{"composer", &a.score.Identity.ComposerRuns},
 		{"arranger", &a.score.Identity.ArrangerRuns},
+		{"lyricist", &a.score.Identity.LyricistRuns},
 	} {
 		if !q.Has(f.name) {
 			continue

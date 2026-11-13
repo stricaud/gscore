@@ -122,23 +122,49 @@ func (b *builder) report() []string {
 			out = append(out, fmt.Sprintf("%d %s were not read", n, many))
 		}
 	}
+	// Two different things were being said with one sentence, and only one
+	// of them was true. A key inside General MIDI's percussion range is a
+	// real instrument that gscore had no line for — which is a gap in the
+	// kit and something to go and fix, as keys 48 and 59 were. A key
+	// outside that range is not a drum at all; no kit will ever have a line
+	// for it, and reporting it as a missing staff position sent somebody
+	// looking for an instrument that does not exist.
 	if len(b.drums) > 0 {
-		var keys []int
-		total := 0
+		var unplaced, notDrums []int
+		placedTotal, otherTotal := 0, 0
 		for k, n := range b.drums {
-			keys = append(keys, k)
-			total += n
+			if k >= model.PercussionLowKey && k <= model.PercussionHighKey {
+				unplaced = append(unplaced, k)
+				placedTotal += n
+				continue
+			}
+			notDrums = append(notDrums, k)
+			otherTotal += n
 		}
-		sort.Ints(keys)
-		var names []string
-		for _, k := range keys {
-			names = append(names, fmt.Sprint(k))
+		sort.Ints(unplaced)
+		sort.Ints(notDrums)
+		if len(unplaced) > 0 {
+			out = append(out, fmt.Sprintf(
+				"%d drum strokes are on instruments the standard kit has no staff position for (keys %s); they are written on the middle line",
+				placedTotal, joinKeys(unplaced)))
 		}
-		out = append(out, fmt.Sprintf(
-			"%d drum strokes are on instruments the standard kit has no staff position for (keys %s); they are written on the middle line",
-			total, strings.Join(names, ", ")))
+		if len(notDrums) > 0 {
+			out = append(out, fmt.Sprintf(
+				"%d strokes on the drum staff name no percussion instrument (keys %s, outside General MIDI's %d-%d); they are written on the middle line",
+				otherTotal, joinKeys(notDrums),
+				model.PercussionLowKey, model.PercussionHighKey))
+		}
 	}
 	return out
+}
+
+// joinKeys lists MIDI keys for a report.
+func joinKeys(keys []int) string {
+	names := make([]string, len(keys))
+	for i, k := range keys {
+		names[i] = fmt.Sprint(k)
+	}
+	return strings.Join(names, ", ")
 }
 
 func (b *builder) build() *model.Score {

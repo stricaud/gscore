@@ -11,6 +11,7 @@
 package gscore
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"strconv"
@@ -31,6 +32,7 @@ type scoreDoc struct {
 	Subtitle  string     `json:"subtitle,omitempty"`
 	Composer  string     `json:"composer,omitempty"`
 	Arranger  string     `json:"arranger,omitempty"`
+	Lyricist  string     `json:"lyricist,omitempty"`
 	Copyright string     `json:"copyright,omitempty"`
 	// How the words above are set, where somebody has set them in
 	// anything. The words themselves stay where they are, so a file
@@ -40,6 +42,7 @@ type scoreDoc struct {
 	SubtitleRuns []spanDoc  `json:"subtitleRuns,omitempty"`
 	ComposerRuns []spanDoc  `json:"composerRuns,omitempty"`
 	ArrangerRuns []spanDoc  `json:"arrangerRuns,omitempty"`
+	LyricistRuns []spanDoc  `json:"lyricistRuns,omitempty"`
 	Tempo        tempoDoc   `json:"tempo"`
 	Parts        []partDoc  `json:"parts"`
 	Cursor       *cursorDoc `json:"cursor,omitempty"`
@@ -82,6 +85,13 @@ type scoreDoc struct {
 	// setup and every new one since: those print on whatever the program
 	// would do, and that is not a decision to freeze into a file.
 	Page *pageDoc `json:"page,omitempty"`
+
+	// Cover is the picture printed as the first page of a PDF, and Stamp
+	// the one printed at the foot of the last page. The file itself, in
+	// base64, rather than a path to it: a score that is copied or sent to
+	// somebody takes its pictures with it, and a path does not.
+	Cover *artDoc `json:"cover,omitempty"`
+	Stamp *artDoc `json:"stamp,omitempty"`
 
 	// Numbering is how often the bar numbers are printed and whether they
 	// are boxed. Omitted where the score has not said, which is the
@@ -558,11 +568,13 @@ func encodeScore(s *model.Score) *scoreDoc {
 		Subtitle:     s.Identity.Subtitle,
 		Composer:     s.Identity.Composer,
 		Arranger:     s.Identity.Arranger,
+		Lyricist:     s.Identity.Lyricist,
 		Copyright:    s.Identity.Copyright,
 		TitleRuns:    spansToDoc(s.Identity.TitleRuns),
 		SubtitleRuns: spansToDoc(s.Identity.SubtitleRuns),
 		ComposerRuns: spansToDoc(s.Identity.ComposerRuns),
 		ArrangerRuns: spansToDoc(s.Identity.ArrangerRuns),
+		LyricistRuns: spansToDoc(s.Identity.LyricistRuns),
 		Cursor:       cursorToDoc(s.Cursor),
 		Tempo: tempoDoc{
 			BPM: s.Tempo.BPM, Unit: durString(s.Tempo.Unit), Text: s.Tempo.Text,
@@ -641,6 +653,7 @@ func encodeScore(s *model.Score) *scoreDoc {
 			doc.Engraving[k] = v
 		}
 	}
+	doc.Cover, doc.Stamp = artToDoc(s.Cover), artToDoc(s.Stamp)
 	if !s.Page.IsZero() {
 		doc.Page = &pageDoc{
 			Paper: s.Page.Paper, Landscape: s.Page.Landscape,
@@ -943,10 +956,12 @@ func decodeScore(doc *scoreDoc) (*model.Score, error) {
 	s.Identity = model.Identity{
 		Title: doc.Title, Subtitle: doc.Subtitle,
 		Composer: doc.Composer, Arranger: doc.Arranger,
+		Lyricist:     doc.Lyricist,
 		Copyright:    doc.Copyright,
 		TitleRuns:    spansFromDoc(doc.TitleRuns),
 		SubtitleRuns: spansFromDoc(doc.SubtitleRuns),
 		ComposerRuns: spansFromDoc(doc.ComposerRuns),
+		LyricistRuns: spansFromDoc(doc.LyricistRuns),
 		ArrangerRuns: spansFromDoc(doc.ArrangerRuns),
 	}
 	unit := model.Duration{Num: 1, Den: 4}
@@ -969,6 +984,7 @@ func decodeScore(doc *scoreDoc) (*model.Score, error) {
 			Part: c.Part, Measure: c.Measure, At: c.At, Step: c.Step,
 		}
 	}
+	s.Cover, s.Stamp = artFromDoc(doc.Cover), artFromDoc(doc.Stamp)
 
 	// An unknown name is read as letters rather than refused: a file is
 	// worth opening even where one word in it came from a later gscore.
@@ -1360,6 +1376,43 @@ func decodeMarks(md *marksDoc, m *model.Marks) {
 			Syllabic: syllabicValues[ly.Syllabic], Extend: ly.Extend,
 		})
 	}
+}
+
+// artDoc is a picture as it is written to a file: the bytes in base64, what
+// kind of file they are, and where on the page it goes.
+//
+// base64 because the file is JSON and the picture is not text. It costs a
+// third more than the bytes themselves, which for a cover scan is tens of
+// kilobytes on a file already holding a score — and it keeps a score one
+// file, which is the property that matters when somebody emails it.
+type artDoc struct {
+	Data   string `json:"data"`
+	Format string `json:"format,omitempty"`
+	Align  string `json:"align,omitempty"`
+}
+
+func artToDoc(a *model.Artwork) *artDoc {
+	if a == nil || len(a.Data) == 0 {
+		return nil
+	}
+	return &artDoc{
+		Data:   base64.StdEncoding.EncodeToString(a.Data),
+		Format: a.Format, Align: a.Align,
+	}
+}
+
+// artFromDoc reads one back. A picture that will not decode is dropped
+// rather than failing the score: the music is what the file is for, and a
+// cover nobody can read is not worth refusing to open it over.
+func artFromDoc(d *artDoc) *model.Artwork {
+	if d == nil || d.Data == "" {
+		return nil
+	}
+	raw, err := base64.StdEncoding.DecodeString(d.Data)
+	if err != nil || len(raw) == 0 {
+		return nil
+	}
+	return &model.Artwork{Data: raw, Format: d.Format, Align: d.Align}
 }
 
 func cursorToDoc(c *model.Cursor) *cursorDoc {

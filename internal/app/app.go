@@ -624,6 +624,7 @@ func (a *App) APIRoutes(mux *http.ServeMux) {
 		"/api/pedal":            a.handlePedal,
 		"/api/arpeggio":         a.handleArpeggio,
 		"/api/grace":            a.handleGrace,
+		"/api/pairnotation":     a.handlePairNotation,
 		"/api/glissando":        a.handleGlissando,
 		"/api/ending":           a.handleEnding,
 		"/api/jump":             a.handleJump,
@@ -937,6 +938,8 @@ type info struct {
 	// Arranger is its own field and not a second line of the composer:
 	// two people, credited in two places and on two lines of the page.
 	Arranger string `json:"arranger"`
+	// Lyricist is who wrote the words, printed opposite the composer.
+	Lyricist string `json:"lyricist"`
 	// How those four are set, where somebody has set them in anything.
 	// The words are the fields above either way, so a window that knows
 	// nothing about formatting still shows the piece's name.
@@ -944,6 +947,7 @@ type info struct {
 	SubtitleRuns []model.Span `json:"subtitleRuns,omitempty"`
 	ComposerRuns []model.Span `json:"composerRuns,omitempty"`
 	ArrangerRuns []model.Span `json:"arrangerRuns,omitempty"`
+	LyricistRuns []model.Span `json:"lyricistRuns,omitempty"`
 	// Sent so the window that edits it can open on what is there. Left
 	// out, the box came up empty and saving wrote that emptiness back.
 	Copyright string `json:"copyright"`
@@ -1101,10 +1105,12 @@ func (a *App) handleInfo(w http.ResponseWriter, r *http.Request) {
 		Subtitle:     a.score.Identity.Subtitle,
 		Composer:     a.score.Identity.Composer,
 		Arranger:     a.score.Identity.Arranger,
+		Lyricist:     a.score.Identity.Lyricist,
 		TitleRuns:    a.score.Identity.TitleRuns,
 		SubtitleRuns: a.score.Identity.SubtitleRuns,
 		ComposerRuns: a.score.Identity.ComposerRuns,
 		ArrangerRuns: a.score.Identity.ArrangerRuns,
+		LyricistRuns: a.score.Identity.LyricistRuns,
 		Copyright:    a.score.Identity.Copyright,
 		Tags:         append([]string{}, a.score.Tags...),
 		Description:  a.score.Description,

@@ -65,6 +65,13 @@ func build(s *model.Score) *scorePartwise {
 		doc.Ident.Creators = append(doc.Ident.Creators,
 			creator{Type: "arranger", Name: s.Identity.Arranger})
 	}
+	// And the lyricist, for the same reason: "lyricist" is one of the
+	// kinds of creator the specification lists, and a song whose words
+	// are by somebody else says so there.
+	if s.Identity.Lyricist != "" {
+		doc.Ident.Creators = append(doc.Ident.Creators,
+			creator{Type: "lyricist", Name: s.Identity.Lyricist})
+	}
 	// The subtitle, where the format has somewhere for it.
 	//
 	// Not as a creator: a subtitle is not a person, "subtitle" is not one
@@ -94,6 +101,12 @@ func build(s *model.Score) *scorePartwise {
 		doc.Credits = append(doc.Credits, creditElem{
 			Type:  []string{"arranger"},
 			Words: strings.Split(s.Identity.Arranger, "\n"),
+		})
+	}
+	if s.Identity.Lyricist != "" {
+		doc.Credits = append(doc.Credits, creditElem{
+			Type:  []string{"lyricist"},
+			Words: strings.Split(s.Identity.Lyricist, "\n"),
 		})
 	}
 	doc.Ident.Rights = s.Identity.Copyright

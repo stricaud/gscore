@@ -417,3 +417,32 @@ func TestAGraceNoteCanBeNudgedLikeAnyNote(t *testing.T) {
 		t.Errorf("the note it leans on moved to step %d", got)
 	}
 }
+
+func TestNotationCanBeAddedOverTheTabFromTheEditor(t *testing.T) {
+	// The same thing -notation does at the door, offered from inside: a
+	// Guitar Pro file is tablature and nothing else, and finding that out
+	// after opening it should not mean quitting and starting again with a
+	// flag.
+	h := newHarness(t)
+	p := h.app.score.Parts[0]
+	p.Tab, _ = model.TuningNamed("guitar")
+	h.note(0, 0, 2, "quarter")
+
+	h.post("/api/pairnotation")
+	if n := len(h.app.score.Parts); n != 2 {
+		t.Fatalf("%d staves, want the tab and a staff of pitches", n)
+	}
+	above, below := h.app.score.Parts[0], h.app.score.Parts[1]
+	if above.Tab != nil || below.Tab == nil {
+		t.Error("the pair is the wrong way up")
+	}
+	if len(above.Measures) == 0 || len(below.Measures) != 0 {
+		t.Error("the music is not on the staff above, or is on both")
+	}
+
+	// Asking twice says so rather than stacking another one on top.
+	msg := h.fails("/api/pairnotation")
+	if !strings.Contains(msg, "already") {
+		t.Errorf("refused with %q", msg)
+	}
+}

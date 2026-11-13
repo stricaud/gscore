@@ -2434,11 +2434,42 @@ func (e *engraver) titleBlock() {
 		// the whole header reads as one block at the head of the strip.
 		right.X, right.Anchor = sp.Margin, "start"
 	}
+	// The words on the left and the music on the right, level with each
+	// other, which is how a song has been credited since songs were
+	// printed: "Words by OTTO HARBACH and OSCAR HAMMERSTEIN IInd" against
+	// "Music by RUDOLF FRIML". Two columns and not two lines — set one
+	// under the other they read as a list of people rather than as the
+	// two halves of a song.
+	lyric := creditStyle{
+		X: sp.Margin, Anchor: "start",
+		Size: right.Size, Italic: right.Italic, After: right.After,
+	}
 	had := e.y
-	e.creditLines(model.Spans(id.Composer, id.ComposerRuns), right)
-	// The arranger goes under the composer, which is where a score prints
-	// them: two people, two lines, the music before what was done to it.
-	e.creditLines(model.Spans(id.Arranger, id.ArrangerRuns), right)
+	if left {
+		// A strip has one column and everything in it is set against the
+		// left margin, so the three stack: the words, then the music, then
+		// what was done to it.
+		e.creditLines(model.Spans(id.Lyricist, id.LyricistRuns), right)
+		e.creditLines(model.Spans(id.Composer, id.ComposerRuns), right)
+		e.creditLines(model.Spans(id.Arranger, id.ArrangerRuns), right)
+	} else {
+		// The lyricist's column first, then back up to where it began so
+		// that the composer starts level with it rather than under it.
+		e.creditLines(model.Spans(id.Lyricist, id.LyricistRuns), lyric)
+		words := e.y
+		e.y = had
+		e.creditLines(model.Spans(id.Composer, id.ComposerRuns), right)
+		// The arranger goes under the composer, which is where a score
+		// prints them: two people, two lines, the music before what was
+		// done to it.
+		e.creditLines(model.Spans(id.Arranger, id.ArrangerRuns), right)
+		// Whichever column ran deeper decides where the music begins: a
+		// lyricist named on three lines must not be written through by
+		// the first system.
+		if words > e.y {
+			e.y = words
+		}
+	}
 	if e.y != had {
 		e.y += 0.3
 	}

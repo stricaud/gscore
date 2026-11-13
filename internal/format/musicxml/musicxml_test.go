@@ -44,3 +44,31 @@ func TestTheArrangerSurvivesMusicXML(t *testing.T) {
 			got.Identity.Composer)
 	}
 }
+
+// And so is the lyricist. The words and the music are by two people, a song
+// prints them at opposite ends of the page, and joined into one field they
+// come back as one person with a very long name.
+func TestTheLyricistSurvivesMusicXML(t *testing.T) {
+	s := model.NewScore()
+	s.Identity.Composer = "Rudolf Friml"
+	s.Identity.Lyricist = "Otto Harbach and Oscar Hammerstein II"
+
+	var buf bytes.Buffer
+	if err := Export(&buf, s); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(buf.String(), `type="lyricist"`) {
+		t.Error("the file does not say who wrote the words")
+	}
+	got, err := Import(bytes.NewReader(buf.Bytes()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Identity.Lyricist != "Otto Harbach and Oscar Hammerstein II" {
+		t.Errorf("the lyricist came back as %q", got.Identity.Lyricist)
+	}
+	if got.Identity.Composer != "Rudolf Friml" {
+		t.Errorf("the composer came back as %q — the lyricist should not be in it",
+			got.Identity.Composer)
+	}
+}

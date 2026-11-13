@@ -293,7 +293,20 @@ type Identity struct {
 	// <creator type="arranger">, Finale and MuseScore both keep their own
 	// field for it. Folded into the composer it comes back as part of
 	// somebody's name, and a search for the arranger's work finds nothing.
-	Arranger  string
+	Arranger string
+	// Lyricist is who wrote the words, and is its own field for the reason
+	// the arranger is: they are a different person and a score credits
+	// them in a different place.
+	//
+	// A song prints the two of them level with each other, the words on
+	// the left and the music on the right — "Words by OTTO HARBACH and
+	// OSCAR HAMMERSTEIN IInd" against "Music by RUDOLF FRIML" — which is a
+	// layout and not a sentence, and cannot be had by writing both names
+	// into one field. Every format that matters keeps them apart as well:
+	// MusicXML has <creator type="lyricist">, and so a lyricist folded
+	// into the composer comes back from a round trip as part of the
+	// composer's name.
+	Lyricist  string
 	Copyright string
 
 	// Runs is the formatting of the words above, where somebody has given
@@ -307,6 +320,40 @@ type Identity struct {
 	SubtitleRuns []Span
 	ComposerRuns []Span
 	ArrangerRuns []Span
+	LyricistRuns []Span
+}
+
+// Artwork is a picture kept in the score: the file as it was given, and
+// where on the page it goes.
+//
+// The bytes travel in the score rather than a path to them, for the reason
+// the scripts and the comments do: a file that is copied, renamed or sent to
+// somebody takes everything it needs with it, and a path does not — it is a
+// picture that is there on the machine it was made on and missing
+// everywhere else.
+//
+// The file is kept as it came. Converting it to something of ours would be
+// a second decoding to get wrong and would throw away whatever the original
+// knew: an SVG stays a drawing that prints at any size, and a photograph
+// stays a photograph.
+type Artwork struct {
+	// Data is the file itself, and Format what kind it is: "png", "jpeg"
+	// or "svg".
+	Data   []byte
+	Format string
+	// Align is "left", "center" or "right", for a picture narrower than
+	// the page. Empty means centred.
+	Align string
+}
+
+// Clone returns a copy sharing no bytes with the one it came from.
+func (a *Artwork) Clone() *Artwork {
+	if a == nil {
+		return nil
+	}
+	out := *a
+	out.Data = append([]byte(nil), a.Data...)
+	return &out
 }
 
 // Span is a run of header text in one style.
@@ -361,6 +408,7 @@ func (i Identity) Clone() Identity {
 		{&i.SubtitleRuns, &out.SubtitleRuns},
 		{&i.ComposerRuns, &out.ComposerRuns},
 		{&i.ArrangerRuns, &out.ArrangerRuns},
+		{&i.LyricistRuns, &out.LyricistRuns},
 	} {
 		if *f.from != nil {
 			*f.to = append([]Span(nil), *f.from...)
@@ -1184,6 +1232,19 @@ type Score struct {
 	// every time, and the file would not remember what the piece looks
 	// like.
 	Page Page `json:",omitempty"`
+
+	// Cover is a picture printed as the first page of a PDF, and Stamp one
+	// printed at the foot of the last page. Both are nil in nearly every
+	// score.
+	//
+	// They belong to the document and not to the music, which is why they
+	// sit beside Page rather than in the Identity: a cover is the sheet a
+	// publisher wraps the music in, and the printer's block at the foot of
+	// the last page — "POPULAR COMMUNITY SONGS, PRICE 25¢ A COPY" on the
+	// Ellington — is an advertisement, not a note. Neither is drawn while
+	// the music is being written, where they would be in the way.
+	Cover *Artwork `json:",omitempty"`
+	Stamp *Artwork `json:",omitempty"`
 
 	// Markers is what the rehearsal marks in the sequence are called:
 	// letters, numbers, or the number of the bar they stand on.

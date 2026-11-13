@@ -435,6 +435,9 @@ const MESSAGES = {
   "Title": "Titre",
   "Subtitle": "Sous-titre",
   "Composer": "Compositeur",
+  // "Paroles", not "Parolier": the box is labelled by what goes in it on
+  // the page — a French song prints "Paroles de…" opposite "Musique de…".
+  "Lyricist": "Paroles",
   "Copyright": "Droits",
   "Tempo": "Tempo",
   // The words and the metronome mark over the first bar — "Andante
@@ -687,6 +690,7 @@ const MESSAGES = {
   // « Petite note » is what the French tradition calls it, and what Altès
   // calls it in the list of the five agréments in his chapter XIV:
   // "La petite note — en italien, appoggiatura".
+  "Notation above the tab": "Portée au-dessus de la tablature",
   "Add a grace note": "Ajouter une petite note",
   "Grace notes from selection": "Petites notes à partir de la sélection",
   "Appoggiaturas from selection": "Appoggiatures à partir de la sélection",

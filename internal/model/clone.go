@@ -26,44 +26,62 @@ package model
 // CloneTest in the tests walks a fully populated score to check exactly that.
 
 // Clone returns a deep copy of the score, sharing nothing with it.
+//
+// It starts from a copy of the whole struct and then replaces the fields
+// that hold a reference, rather than listing the fields to bring along.
+// Listed, the list goes out of date: it was missing the paper size, the
+// rehearsal-mark style and the cursor, and since undo takes a copy before
+// every edit and puts it back afterwards, one press of undo set a score
+// printed on letter paper back to A4 and its rehearsal marks back to
+// letters. Nothing said so — the music was right and the page was not.
+//
+// A field added to Score now comes along by itself. Only a field holding a
+// slice, a map or a pointer needs a line here, and a field that needs one
+// and does not have one is caught by the tests below, which compare a
+// fully populated score with its copy and then walk both for anything they
+// share.
 func (s *Score) Clone() *Score {
 	if s == nil {
 		return nil
 	}
-	out := &Score{
-		Identity:    s.Identity.Clone(),
-		Tempo:       s.Tempo,
-		Description: s.Description,
-		Numbering:   s.Numbering,
-	}
-	if s.Groups != nil {
-		out.Groups = append([]StaffGroup(nil), s.Groups...)
+	c := *s
+	out := &c
+	out.Identity = s.Identity.Clone()
+	out.Groups = append([]StaffGroup(nil), s.Groups...)
+	// The pictures printed around the music: the cover page and the block
+	// at the foot of the last page. Bytes, so they are copied rather than
+	// pointed at.
+	out.Cover = s.Cover.Clone()
+	out.Stamp = s.Stamp.Clone()
+	if s.Cursor != nil {
+		cur := *s.Cursor
+		out.Cursor = &cur
 	}
 	// The scripts come too. Undo restores one of these, and a score that
 	// forgot its scripts every time somebody pressed Ctrl-Z would lose the
 	// thought that made it on the first mistake after writing it down.
-	if s.Comments != nil {
-		out.Comments = append([]Comment(nil), s.Comments...)
-	}
-	if s.Scripts != nil {
-		out.Scripts = append([]Script(nil), s.Scripts...)
-	}
-	if s.Tags != nil {
-		out.Tags = append([]string(nil), s.Tags...)
-	}
+	// Unconditionally, because out already holds a copy of the original's
+	// slice headers: an append that only ran when the field was set would
+	// leave the two sharing the array whenever it was.
+	out.Comments = append([]Comment(nil), s.Comments...)
+	out.Scripts = append([]Script(nil), s.Scripts...)
+	out.Tags = append([]string(nil), s.Tags...)
 	// And the parts, each of which carries lists of its own.
+	out.Sheets = nil
 	for _, sh := range s.Sheets {
 		out.Sheets = append(out.Sheets, sh.Clone())
 	}
 	// And so do the engraving settings, for the same reason: a snapshot
 	// taken for undo is the whole score, and one that dropped these would
 	// put the house style back the first time anything was undone.
+	out.Engraving = nil
 	if s.Engraving != nil {
 		out.Engraving = make(map[string]float64, len(s.Engraving))
 		for k, v := range s.Engraving {
 			out.Engraving[k] = v
 		}
 	}
+	out.Parts = nil
 	for _, p := range s.Parts {
 		out.Parts = append(out.Parts, p.Clone())
 	}

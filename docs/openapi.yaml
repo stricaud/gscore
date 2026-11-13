@@ -2062,6 +2062,32 @@ paths:
         "200": { $ref: "#/components/responses/Changed" }
         "400": { $ref: "#/components/responses/Error" }
 
+  /api/pairnotation:
+    post:
+      tags: [write]
+      summary: A staff of pitches above every tab staff
+      description: >
+        Puts a staff of pitches over each staff written as tablature alone
+        and joins the pair with a rule and run-through barlines, the way
+        guitar music is printed. The music moves up to the new staff and the
+        tab shows it, so there is one set of notes and not two to keep in
+        step.
+
+
+        The same thing the -notation flag does when a file is opened. A
+        Guitar Pro file is tablature and nothing else, and finding that out
+        after opening it should not mean starting again with a flag.
+      responses:
+        "200":
+          description: How many staves were added.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  added: { type: integer }
+        "400": { $ref: "#/components/responses/Error" }
+
   /api/grace:
     post:
       tags: [marks]

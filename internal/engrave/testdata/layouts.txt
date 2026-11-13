@@ -153,7 +153,7 @@ suite/46g-PickupMeasure-Chordnames-FiguredBass.musicxml 2233c1415cd48479 31
 suite/46h-Barline-Fermata.musicxml d8bbc8ec751aa0c4 16
 suite/46i-OverfullMeasures.musicxml f9645f02a25119ef 50
 suite/46j-EmptyMeasure.musicxml 59f672d4be0aefa4 29
-suite/51a-Header-Credits.musicxml 1978c5d55fb46551 16
+suite/51a-Header-Credits.musicxml 9c3ff8b0de60baae 16
 suite/51b-Header-Quotes.musicxml 73dfda89c4d00ebc 14
 suite/51c-MultipleMetadata.musicxml 08b876a4e46adbf2 15
 suite/51c-MultipleRights.musicxml 56b578c0afddf791 13

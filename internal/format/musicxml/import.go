@@ -1349,7 +1349,16 @@ func readHeader(s *model.Score, doc *scorePartwise) {
 			if strings.TrimSpace(s.Identity.Arranger) == "" {
 				s.Identity.Arranger = c.text()
 			}
-		case "composer", "lyricist", "poet":
+		case "lyricist", "poet":
+			// Its own field now, for the arranger's reason: the words and
+			// the music are by different people, a song prints the two of
+			// them level with each other at opposite ends of the page, and
+			// joined into one field they come back as one person with a
+			// long name.
+			if strings.TrimSpace(s.Identity.Lyricist) == "" {
+				s.Identity.Lyricist = c.text()
+			}
+		case "composer":
 			credit = append(credit, lines...)
 		case "rights":
 			if strings.TrimSpace(s.Identity.Copyright) == "" {
@@ -1371,11 +1380,22 @@ func readHeader(s *model.Score, doc *scorePartwise) {
 			seen[strings.ToLower(v)] = true
 			credit = append(credit, v)
 		}
-		for _, want := range []string{"composer", "lyricist", "poet", ""} {
+		for _, want := range []string{"composer", ""} {
 			for _, c := range doc.Ident.Creators {
 				if strings.EqualFold(strings.TrimSpace(c.Type), want) {
 					add(c.Name)
 				}
+			}
+		}
+	}
+
+	// The lyricist, where the page did not say it and the catalogue does.
+	if strings.TrimSpace(s.Identity.Lyricist) == "" && doc.Ident != nil {
+		for _, c := range doc.Ident.Creators {
+			t := strings.ToLower(strings.TrimSpace(c.Type))
+			if t == "lyricist" || t == "poet" {
+				s.Identity.Lyricist = strings.TrimSpace(c.Name)
+				break
 			}
 		}
 	}

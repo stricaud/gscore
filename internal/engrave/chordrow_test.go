@@ -12,6 +12,7 @@ package engrave
 
 import (
 	"sort"
+	"strings"
 	"testing"
 
 	"github.com/stricaud/gscore/internal/model"
@@ -172,5 +173,44 @@ func TestAPairWritesItsChordsOnce(t *testing.T) {
 		}
 		t.Errorf("%d chord symbols drawn (%v), wanted the 2 that are written",
 			len(lay.Chords), names)
+	}
+}
+
+func TestTheWordsAndTheMusicStandAtOppositeEnds(t *testing.T) {
+	// A song credits the two of them level with each other, the lyricist
+	// on the left and the composer on the right. Stacked one under the
+	// other they read as a list of people rather than as the two halves of
+	// a song, which is what happened while there was only one field.
+	sc := eighths("")
+	sc.Identity.Title = "Indian Love Call"
+	sc.Identity.Composer = "Music by RUDOLF FRIML"
+	sc.Identity.Lyricist = "Words by OTTO HARBACH"
+	opt := DefaultOptions()
+	lay := Engrave(sc, opt)
+
+	var words, music *Text
+	for i := range lay.Texts {
+		switch {
+		case strings.Contains(lay.Texts[i].S, "HARBACH"):
+			words = &lay.Texts[i]
+		case strings.Contains(lay.Texts[i].S, "FRIML"):
+			music = &lay.Texts[i]
+		}
+	}
+	if words == nil || music == nil {
+		t.Fatal("one of the two credits was not drawn at all")
+	}
+	if words.Anchor != "start" {
+		t.Errorf("the words are anchored %q, want the left margin", words.Anchor)
+	}
+	if music.Anchor != "end" {
+		t.Errorf("the music is anchored %q, want the right margin", music.Anchor)
+	}
+	if words.X >= music.X {
+		t.Errorf("the words are at x=%.2f and the music at %.2f", words.X, music.X)
+	}
+	// Level, not stacked: the whole point of two columns.
+	if words.Y != music.Y {
+		t.Errorf("the words sit at y=%.2f and the music at %.2f", words.Y, music.Y)
 	}
 }

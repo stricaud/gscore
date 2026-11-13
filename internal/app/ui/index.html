@@ -468,6 +468,7 @@
     <div class="menu-items">
       <button data-action="add-staff"><span>Add a staff…</span></button>
       <button data-action="add-grand-staff"><span>Add a grand staff</span></button>
+      <button data-action="pair-notation"><span>Notation above the tab</span></button>
       <button data-action="remove-staff"><span>Remove this staff</span></button>
       <hr>
       <button data-action="hide-staff"><span>Hide this staff</span></button>
@@ -1212,6 +1213,12 @@
     <div class="rich-field" data-field="title" data-label="Title"></div>
     <div class="rich-field" data-field="subtitle" data-label="Subtitle"></div>
     <div class="rich-field" data-field="composer" data-label="Composer"></div>
+    <!-- The words are by somebody else as often as not, and a song prints
+         the two of them level with each other at opposite ends of the
+         page: the lyricist on the left, the composer on the right. Written
+         into the composer's box they come out as one person with a very
+         long name. -->
+    <div class="rich-field" data-field="lyricist" data-label="Lyricist"></div>
     <!-- An arranger is not the composer and not a second line of them.
          Every format worth reading keeps the two apart, and so does every
          printed score: the music above, what was done to it below. -->

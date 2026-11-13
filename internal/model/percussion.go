@@ -84,6 +84,18 @@ type PercussionNote struct {
 // Where two instruments share a position, the first is what a click writes and
 // the others are what cycling through them offers, which is how a drummer
 // writes an open hi-hat where a closed one would otherwise go.
+// PercussionLowKey and PercussionHighKey are the range General MIDI gives
+// to percussion: 35 is the acoustic bass drum and 81 the open triangle.
+//
+// What they are for is telling two different problems apart. A key inside
+// the range that no kit places is a gap in the kit, and something to go and
+// fix. A key outside it is not an instrument at all, and no kit will ever
+// have a line for it.
+const (
+	PercussionLowKey  = 35
+	PercussionHighKey = 81
+)
+
 var DrumSet = []PercussionNote{
 	{Step: -2, Name: "Hi-hat with foot", Key: 44, Head: HeadX},
 	{Step: -1, Name: "Bass drum", Key: 35, Head: HeadNormal},
@@ -94,8 +106,21 @@ var DrumSet = []PercussionNote{
 	{Step: 5, Name: "Snare drum", Key: 38, Head: HeadNormal},
 	{Step: 5, Name: "Side stick", Key: 37, Head: HeadCircleX},
 	{Step: 6, Name: "Low-mid tom", Key: 47, Head: HeadNormal},
+	// General MIDI has six toms and a five-line staff has room for five of
+	// them between the bass drum and the snare, so one has to share. The
+	// hi-mid goes with the low-mid, which leaves the highest tom on a line
+	// of its own: a kit that uses 48 nearly always uses it instead of 47
+	// rather than beside it, and the two read as the one mid tom, whereas
+	// sharing with the high tom would make the two ends of a tom fill look
+	// alike. Left out altogether it was written on the middle line with
+	// everything else gscore did not know.
+	{Step: 6, Name: "Hi-mid tom", Key: 48, Head: HeadNormal},
 	{Step: 7, Name: "High tom", Key: 50, Head: HeadNormal},
 	{Step: 8, Name: "Ride cymbal", Key: 51, Head: HeadX},
+	// The second ride, which a drummer with two of them reads on the ride
+	// line like the first. Eighty-seven strokes of a Stairway chart are on
+	// it, and every one of them was written on the middle line.
+	{Step: 8, Name: "Ride cymbal 2", Key: 59, Head: HeadX},
 	{Step: 8, Name: "Ride bell", Key: 53, Head: HeadDiamond},
 	{Step: 9, Name: "Crash cymbal", Key: 49, Head: HeadX},
 	{Step: 10, Name: "Hi-hat closed", Key: 42, Head: HeadX},

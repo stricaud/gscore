@@ -154,3 +154,39 @@ func TestPairingLeavesAStaffOfPitchesAlone(t *testing.T) {
 		t.Errorf("added %d staves to a score with no tab in it, wanted none", n)
 	}
 }
+
+/*
+ * The words and the music are by two different people.
+ *
+ * A song prints them level with each other at opposite ends of the page —
+ * "Words by OTTO HARBACH and OSCAR HAMMERSTEIN IInd" on the left against
+ * "Music by RUDOLF FRIML" on the right — which is a layout, not a sentence,
+ * and cannot be had by writing both names into the composer's field. Every
+ * format that matters keeps them apart too: MusicXML has
+ * <creator type="lyricist">, so a lyricist folded into the composer comes
+ * back from a round trip as part of the composer's name.
+ */
+
+func TestTheLyricistSurvivesACopy(t *testing.T) {
+	id := Identity{
+		Title:    "Indian Love Call",
+		Composer: "Rudolf Friml",
+		Lyricist: "Otto Harbach and Oscar Hammerstein II",
+		LyricistRuns: []Span{
+			{Text: "Words by "}, {Text: "OTTO HARBACH", Bold: true},
+		},
+	}
+	out := id.Clone()
+	if out.Lyricist != id.Lyricist {
+		t.Errorf("the lyricist came back as %q", out.Lyricist)
+	}
+	if len(out.LyricistRuns) != 2 {
+		t.Fatalf("the formatting came back as %v", out.LyricistRuns)
+	}
+	// A clone shares no run list with what it came from, or editing one
+	// score's header edits another's.
+	out.LyricistRuns[0].Text = "changed"
+	if id.LyricistRuns[0].Text != "Words by " {
+		t.Error("the two headers share a run list")
+	}
+}

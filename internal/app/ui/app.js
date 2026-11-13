@@ -1367,6 +1367,7 @@ async function action(name) {
       break;
     case "add-staff": await addStaffDialog(); break;
     case "add-grand-staff": await addGrandStaff(); break;
+    case "pair-notation": await pairNotation(); break;
     case "remove-staff": await removeStaff(); break;
     case "hide-staff": await toggleStaffShown(); break;
     case "show-all-staves": await showAllStaves(); break;
@@ -7401,6 +7402,26 @@ async function setArpeggio(what) {
              what === "none" ? "Roll removed" : "Rolled");
 }
 
+// pairNotation puts a staff of pitches over every staff written as tab.
+//
+// A Guitar Pro file is tablature and nothing else, because that is what the
+// file says. The pitches are known all the same — they are what it plays —
+// so the staff above is the same music written the other way and not a
+// transcription of it: one set of notes, shown twice, which is what keeps
+// the two from drifting apart.
+async function pairNotation() {
+  const res = await fetch("/api/pairnotation", { method: "POST" });
+  if (!res.ok) {
+    status("Could not add it: " + (await res.text()).trim());
+    return;
+  }
+  const d = await res.json().catch(() => ({}));
+  await refreshScore();
+  status(d.added === 1
+    ? "Notation added above the tab"
+    : `Notation added above ${d.added} tab staves`);
+}
+
 // setGrace turns the notes picked up into the small ones leaning on the note
 // written after them.
 //
@@ -10220,6 +10241,7 @@ async function setHeaderDialog() {
   richSet(richBoxes.subtitle, i.subtitleRuns, i.subtitle);
   richSet(richBoxes.composer, i.composerRuns, i.composer);
   richSet(richBoxes.arranger, i.arrangerRuns, i.arranger);
+  richSet(richBoxes.lyricist, i.lyricistRuns, i.lyricist);
   field("copyright", i.copyright);
   field("description", i.description);
   field("tags", (i.tags || []).join(", "));
@@ -10275,7 +10297,7 @@ async function setHeaderDialog() {
     description: $("#score-about-description").value,
     tags: tags.value,
   });
-  for (const name of ["title", "subtitle", "composer", "arranger"]) {
+  for (const name of ["title", "subtitle", "composer", "arranger", "lyricist"]) {
     const runs = richRuns(richBoxes[name]);
     const text = runs.map((r) => r.text).join("");
     p.set(name, text);
@@ -17076,6 +17098,9 @@ const MENU_ICONS = {
   "grace": "\ue560",               // graceNoteAcciaccaturaStemUp
   "grace-add": "\ue564",           // graceNoteSlashStemUp
   "grace-appoggiatura": "\ue562",  // graceNoteAppoggiaturaStemUp
+  // A staff of pitches, which is the thing this adds: the tab it goes over
+  // is already there.
+  "pair-notation": "\ue014",       // staff5Lines
   "group-brace": "\ue000",         // brace
   "group-bracket": "\ue002",       // bracket
 

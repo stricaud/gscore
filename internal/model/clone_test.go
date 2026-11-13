@@ -71,12 +71,28 @@ func populated() *Score {
 	}
 
 	return &Score{
-		Identity: Identity{Title: "T", Subtitle: "S", Composer: "C", Copyright: "©"},
-		Tempo:    Tempo{BPM: 132, Unit: q, Text: "Moderately"},
-		Parts:    []*Part{p, {Clef: Bass, Measures: []*Measure{{Voices: []*Voice{{}}}}}},
+		Identity: Identity{
+			Title: "T", Subtitle: "S", Composer: "C", Copyright: "©",
+			Lyricist: "L",
+		},
+		Tempo: Tempo{BPM: 132, Unit: q, Text: "Moderately"},
+		Parts: []*Part{p, {Clef: Bass, Measures: []*Measure{{Voices: []*Voice{{}}}}}},
 		Groups: []StaffGroup{
 			{First: 0, Last: 1, Symbol: GroupBrace, Barlines: true, Name: "Piano"},
 		},
+		// The decisions about the document, not only about the music.
+		//
+		// They were missing here, and so the equality test below passed
+		// while Clone was quietly dropping them: the paper size, the
+		// rehearsal-mark style and the cursor all went, and since undo
+		// restores a clone, one press of it put a score printed on letter
+		// paper back on A4. A fixture that does not set a field cannot
+		// catch a copy that loses it.
+		Page:    Page{Paper: "letter", Landscape: true, MarginLeft: 14},
+		Markers: MarkerBarNumbers,
+		Cursor:  &Cursor{},
+		Cover:   &Artwork{Data: []byte("\x89PNG"), Format: "png"},
+		Stamp:   &Artwork{Data: []byte("<svg/>"), Format: "svg", Align: "right"},
 	}
 }
 

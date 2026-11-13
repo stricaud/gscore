@@ -343,3 +343,29 @@ func topStepOf(clef model.Clef, el model.Element) int {
 	}
 	return 0
 }
+
+// handlePairNotation puts a staff of pitches above every staff written as
+// tablature alone.
+//
+// The same thing -notation does when a file is opened, offered from inside
+// the editor as well: a Guitar Pro file is tablature and nothing else, and
+// finding that out after opening it should not mean quitting and starting
+// again with a flag. The work itself is the model's — see
+// model.PairWithNotation, which is careful about the numbering that mirrors
+// and staff groups are kept in.
+func (a *App) handlePairNotation(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST required", http.StatusMethodNotAllowed)
+		return
+	}
+	a.lock()
+	defer a.mu.Unlock()
+
+	n := a.score.PairWithNotation()
+	if n == 0 {
+		http.Error(w, "there is no tab staff here that is not already "+
+			"paired with a staff of pitches", http.StatusBadRequest)
+		return
+	}
+	writeJSON(w, map[string]int{"added": n})
+}

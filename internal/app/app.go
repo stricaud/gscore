@@ -292,6 +292,19 @@ func NewBook(scores []*model.Score, filename string) *App {
 	// is what keeps somebody else's piece looking the way they drew it.
 	app.folderSymbols = app.loadFolderSymbols()
 
+	// And then the drawings this file carries, for the reason the view
+	// above is applied here: the first document does not go through
+	// setBook. A score named on the command line is read before the App
+	// exists and handed to it already loaded, so nothing had unpacked its
+	// symbols — the same file opened from the menu showed its marks and
+	// opened from the command line did not.
+	if filename != "" {
+		if f, err := os.Open(filename); err == nil {
+			app.adoptSymbols(f)
+			f.Close()
+		}
+	}
+
 	// This document's own router, built once. Every route below closes over
 	// this App, which is what lets a server hold several documents without
 	// a single handler having to know. See session.go.
@@ -566,6 +579,7 @@ func (a *App) APIRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/pdfreread", a.handlePDFReread)
 	mux.HandleFunc("/api/importsymbols", a.handleImportSymbols)
 	mux.HandleFunc("/api/symbolimport", a.handleSymbolImport)
+	mux.HandleFunc("/api/symbolpicture", a.handleSymbolPicture)
 
 	mux.HandleFunc("/api/undo", a.handleUndo)
 	mux.HandleFunc("/api/redo", a.handleRedo)
@@ -1382,6 +1396,10 @@ func (a *App) handleOpen(w http.ResponseWriter, r *http.Request) {
 		a.forgetPDF()
 	}
 	a.setBook(scores, name, err)
+	// And the drawings the file carries, for the same reason the other way
+	// in takes them: a score that refers to symbols the registry has not
+	// got is a score with holes in it.
+	a.adoptSymbols(bytesReader(body))
 	a.mu.Unlock()
 	writeJSON(w, map[string]any{"status": "ok", "filename": name, "tunes": len(scores)})
 }

@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/stricaud/gscore/internal/model"
+	"github.com/stricaud/gscore/internal/symbol"
 )
 
 // A score carrying everything added since the format was first written has to
@@ -1010,4 +1011,42 @@ func marksOfNote(el model.Element) *model.Marks {
 		return &n.Marks
 	}
 	return nil
+}
+
+// An outline symbol survives being saved.
+//
+// Only grids of pixels were written, so a symbol made from an SVG was on
+// the page until the file was saved and gone when it was opened again.
+// Nothing said so: the score kept the name and the registry had nothing
+// under it, so the mark simply did not appear.
+func TestRoundTripKeepsAnOutlineSymbol(t *testing.T) {
+	reg := symbol.NewRegistry()
+	if err := reg.Add(&symbol.Symbol{
+		Name: "mark", Kind: symbol.FromVector, Path: "M0 0 L1 0 L1 1 Z",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	s := model.NewScore()
+	n := &model.Note{
+		Pitch: model.Pitch{Step: model.StepB, Octave: 4},
+		Dur:   model.Duration{Num: 1, Den: 4},
+	}
+	n.Symbols = []model.SymbolMark{{Name: "mark"}}
+	s.Parts[0].Measures[0].Voices[0].Elements = []model.Element{n}
+
+	var buf bytes.Buffer
+	if err := Write(&buf, s, reg); err != nil {
+		t.Fatal(err)
+	}
+	_, back, err := Read(bytes.NewReader(buf.Bytes()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, ok := back.Lookup("mark")
+	if !ok {
+		t.Fatal("the outline is gone from the file")
+	}
+	if got.Kind != symbol.FromVector || got.Path != "M0 0 L1 0 L1 1 Z" {
+		t.Errorf("it came back as %v with path %q", got.Kind, got.Path)
+	}
 }

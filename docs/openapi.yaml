@@ -366,6 +366,12 @@ paths:
             the window can ask for it again at another size without the
             dialog opening a second time.
           schema: { type: string, enum: ["1"] }
+        - name: symbolpicture
+          in: query
+          description: >
+            Pick a picture to use as a symbol as it is, rather than to
+            trace one from. Takes `name`, and `height` in staff spaces.
+          schema: { type: string, enum: ["1"] }
         - name: artwork
           in: query
           description: >
@@ -4249,6 +4255,47 @@ paths:
                   status: { type: string }
                   added: { type: integer }
                   replaced: { type: integer }
+        "400": { $ref: "#/components/responses/Error" }
+
+  /api/symbolpicture:
+    post:
+      tags: [render]
+      summary: Use a picture as a symbol, as it is
+      description: >
+        The other door beside `/api/symbolimport`. That one traces a
+        picture into the drawing window's grid of ink and nothing, which is
+        right for sketching a sign and wrong for a photograph or a
+        publisher's device: reduced to one bit, the thing then has to be
+        repaired square by square.
+
+
+        This keeps the picture. An SVG becomes outlines and prints at the
+        printer's own resolution; anything else becomes a grid of its own
+        colours. Nothing is traced and nothing is thresholded.
+
+
+        How large it is drawn is a question for the score and not for the
+        picture — see `/api/symbolscale`, which is per placement — so the
+        same device can be small over a note and large at the head of a
+        movement. It arrives two staff spaces tall and pinned by its
+        middle, so that making it larger grows it about the place it was
+        put rather than away from it.
+      parameters:
+        - name: name
+          in: query
+          required: true
+          description: What the symbol is inserted by. Required.
+          schema: { type: string }
+        - name: height
+          in: query
+          description: How tall it is in staff spaces before anybody resizes it.
+          schema: { type: number, exclusiveMinimum: 0 }
+      requestBody:
+        content:
+          application/octet-stream:
+            schema: { type: string, format: binary }
+      responses:
+        "200": { $ref: "#/components/responses/Status" }
         "400": { $ref: "#/components/responses/Error" }
 
   /api/symbolimport:

@@ -181,6 +181,23 @@ func (a *App) handlePickFile(w http.ResponseWriter, r *http.Request) {
 		a.setArtworkFrom(w, which, data, r.URL.Query().Get("align"))
 		return
 	}
+	// And picking a picture to use as a symbol as it is, rather than to
+	// trace one from. Here for the reason the others are: a file box does
+	// nothing in the native window.
+	if r.URL.Query().Get("symbolpicture") == "1" {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		name := r.URL.Query().Get("name")
+		if strings.TrimSpace(name) == "" {
+			name = strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
+		}
+		height, _ := strconv.ParseFloat(r.URL.Query().Get("height"), 64)
+		a.symbolFromPicture(w, name, data, height)
+		return
+	}
 	// And picking a picture to trace a symbol from.
 	//
 	// The drawing window has a file box of its own for this, which does
@@ -275,6 +292,16 @@ func (a *App) openPath(path string) error {
 	a.forgetPDF()
 	a.setBook(scores, path, err)
 	a.mu.Unlock()
+
+	// And the drawings the file carries. Opening read the music and left
+	// the artwork in the zip: a symbol placed, sized and saved was gone
+	// the moment the score was opened again.
+	if sf, err := os.Open(path); err == nil {
+		a.lock()
+		a.adoptSymbols(sf)
+		a.mu.Unlock()
+		sf.Close()
+	}
 	a.remember(path)
 	return nil
 }

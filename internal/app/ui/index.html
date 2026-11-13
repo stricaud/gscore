@@ -426,6 +426,13 @@
         <div class="menu-items">
           <button data-action="symbol-palette"><span>Insert a symbol…</span></button>
           <button data-action="draw-symbol"><span>Draw a new one…</span></button>
+          <!-- The other door. The drawing window is for drawing: a grid
+               of ink and nothing. A picture put through it is reduced to
+               one bit and then has to be repaired square by square, which
+               is not editing. This uses the picture as it is — an SVG
+               keeps its outlines, a photograph keeps its colours — and how
+               large it is drawn is settled in the score afterwards. -->
+          <button data-action="symbol-picture"><span>Use a picture…</span></button>
           <hr>
           <button data-action="import-symbols"><span>Import from a .gscore…</span></button>
           <button data-action="export-symbols"><span>Share mine as a .gscore…</span></button>
@@ -2153,6 +2160,26 @@
       <button value="cancel" type="submit" formnovalidate>Cancel</button>
     </div>
   </form>
+</dialog>
+
+<dialog id="sympic">
+  <h2>Use a picture as a symbol</h2>
+  <p class="small">The picture is used as it is: a drawing keeps its
+     outlines and prints sharp at any size, a photograph keeps its colours.
+     Nothing is traced. How large it is drawn is settled in the score —
+     pick it up and drag a corner.</p>
+  <form method="dialog" id="sympic-form">
+    <label for="sympic-name">Name</label>
+    <input type="text" id="sympic-name" autocomplete="off"
+           placeholder="device" spellcheck="false">
+    <p class="small field-why" id="sympic-why" role="alert" hidden></p>
+    <div class="ask-buttons">
+      <button value="ok" type="submit" class="primary">Choose a picture…</button>
+      <button value="cancel" type="submit" formnovalidate>Cancel</button>
+    </div>
+  </form>
+  <input type="file" id="sympic-file" hidden
+         accept="image/png,image/jpeg,image/svg+xml">
 </dialog>
 
 <dialog id="fretboard">

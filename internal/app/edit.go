@@ -1875,6 +1875,21 @@ func (a *App) handleStaff(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		}
+		// And the bars of silence are re-measured to the new bar.
+		//
+		// A whole-bar rest is a bar's worth of silence, not a note of a
+		// particular length: the one thing it has to be is as long as the
+		// bar it fills. Left at the old length it is a rest that does not
+		// fit — six-four's dotted whole rest sitting in a bar of four-four
+		// — so the bar is overfull, the barline is pushed out, and the
+		// rest prints with an augmentation dot nobody asked for. Reported
+		// exactly that way: "why do I have a dot on my rest".
+		//
+		// Only bars whose whole content is one rest. A bar with music in
+		// it is the writer's business, and shortening a meter under real
+		// notes is a question about the music that no rule here can
+		// answer.
+		relengthWholeBarRests(a.score)
 		if hasAt == nil && at > 0 {
 			changed = append(changed, "time change")
 		} else {
@@ -5857,6 +5872,65 @@ func (a *App) handleClearMeasure(w http.ResponseWriter, r *http.Request) {
 		m.Voices = m.Voices[:1]
 	}
 	writeJSON(w, map[string]any{"status": "ok", "removed": removed})
+}
+
+// relengthWholeBarRests makes every bar of silence as long as its bar.
+//
+// A whole-bar rest means "this bar is silent", so its length is whatever
+// the bar is. It is written down as a duration all the same — it has to
+// be, so that it plays and so that it can be picked up and changed like
+// anything else — and that written duration is what goes stale when the
+// meter changes under it.
+//
+// Only a bar whose whole content is a single rest. A rest standing among
+// notes is a rest of its own length and means what it says.
+func relengthWholeBarRests(s *model.Score) int {
+	fixed := 0
+	for _, p := range s.Parts {
+		for mi, m := range p.Measures {
+			bar := p.TimeAt(mi).BarDuration()
+			if bar.IsZero() || len(m.Voices) == 0 {
+				continue
+			}
+			// One voice holding one rest, and no other voice holding
+			// anything: two lines of music in a bar are two decisions, and
+			// neither of them is "this bar is silent".
+			//
+			// Counting only what lasts. A symbol standing in the bar — a
+			// sign, a mark somebody put there — is an element of the voice
+			// and takes no time at all, so a bar of silence with a mark
+			// over it is still a bar of silence. Counted as music, the one
+			// bar of a score that carried a symbol was the one bar this
+			// would not mend.
+			var only *model.Rest
+			lasting := 0
+			for _, v := range m.Voices {
+				if v == nil {
+					continue
+				}
+				for _, el := range v.Elements {
+					if el.Duration().IsZero() {
+						continue
+					}
+					lasting++
+					if r, ok := el.(*model.Rest); ok {
+						only = r
+					} else {
+						only = nil
+					}
+				}
+			}
+			if lasting != 1 {
+				only = nil
+			}
+			if only == nil || only.Dur.Cmp(bar) == 0 {
+				continue
+			}
+			only.Dur = bar
+			fixed++
+		}
+	}
+	return fixed
 }
 
 // restEmptyMeasures puts a bar's worth of rest into every bar that has

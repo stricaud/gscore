@@ -643,6 +643,39 @@ func (a *App) handleImportSymbols(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// adoptSymbols takes the drawings out of a .gscore being opened and puts
+// them in the registry, so that the score can be drawn.
+//
+// Saving has always carried them — "a .gscore holding a score that refers
+// to symbols it does not contain is a score that opens wrong somewhere
+// else" — and opening threw them away. The score kept the names, the
+// registry had nothing under them, and every hand-drawn mark in it was
+// simply absent: placed, sized, saved, and gone the moment the file was
+// opened again, with nothing on the page or in the log to say why.
+//
+// The file's own drawings win over any already loaded under the same name.
+// They are what this score was written with and what it is a picture of;
+// a symbol of the same name that happens to be in the registry from some
+// other score is a different drawing, and preferring it would redraw
+// somebody's music with a stranger's artwork.
+func (a *App) adoptSymbols(src io.Reader) int {
+	incoming, err := gscorefmt.ReadSymbols(src)
+	if err != nil || incoming == nil {
+		return 0 // not a .gscore, or one with no drawings in it
+	}
+	n := 0
+	for _, name := range incoming.Names() {
+		s, ok := incoming.Lookup(name)
+		if !ok {
+			continue
+		}
+		if a.symbols.Add(s) == nil {
+			n++
+		}
+	}
+	return n
+}
+
 // importSymbolsFrom reads a pack chosen in the file dialog.
 func (a *App) importSymbolsFrom(w http.ResponseWriter, path string) {
 	f, err := os.Open(path)

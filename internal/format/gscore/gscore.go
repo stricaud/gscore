@@ -163,7 +163,28 @@ func write(w io.Writer, s *model.Score, symbols *symbol.Registry, names []string
 		index := make([]symbolEntry, 0, len(names))
 		for _, name := range names {
 			sym, ok := symbols.Lookup(name)
-			if !ok || sym.Kind != symbol.FromPixels || sym.Pixels == nil {
+			if !ok {
+				continue
+			}
+			// An outline goes in as the outline it is.
+			//
+			// It used to be passed over here — only a grid of pixels was
+			// written — so a symbol drawn from an SVG was on the page
+			// until the file was saved and gone when it was opened again.
+			// Nothing said so: the score kept the name and the registry
+			// had nothing under it.
+			if sym.Kind == symbol.FromVector && sym.Path != "" {
+				file := "symbols/" + safeName(name) + ".path"
+				if err := put(file, []byte(sym.Path)); err != nil {
+					return err
+				}
+				index = append(index, symbolEntry{
+					Name: name, File: file, Kind: "vector",
+					Advance: sym.Advance,
+				})
+				continue
+			}
+			if sym.Kind != symbol.FromPixels || sym.Pixels == nil {
 				continue
 			}
 			file := "symbols/" + safeName(name) + ".xpm"
@@ -188,8 +209,11 @@ func write(w io.Writer, s *model.Score, symbols *symbol.Registry, names []string
 }
 
 type symbolEntry struct {
-	Name      string  `json:"name"`
-	File      string  `json:"file"`
+	Name string `json:"name"`
+	File string `json:"file"`
+	// Kind is "vector" for an outline and empty for a grid of pixels,
+	// which is what every entry written before outlines were kept is.
+	Kind      string  `json:"kind,omitempty"`
 	PixelSize float64 `json:"pixelSize"`
 	OriginX   float64 `json:"originX"`
 	OriginY   float64 `json:"originY"`
@@ -392,6 +416,13 @@ func loadSymbols(files map[string]*zip.File, reg *symbol.Registry) {
 		}
 		raw, err := readAll(sf)
 		if err != nil {
+			continue
+		}
+		if e.Kind == "vector" {
+			_ = reg.Add(&symbol.Symbol{
+				Name: e.Name, Kind: symbol.FromVector,
+				Path: string(raw), Advance: e.Advance,
+			})
 			continue
 		}
 		bm, err := symbol.DecodeXPM(bytes.NewReader(raw))

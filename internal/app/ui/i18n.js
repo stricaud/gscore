@@ -436,6 +436,7 @@ const MESSAGES = {
   "Subtitle": "Sous-titre",
   "Composer": "Compositeur",
   // The two pictures printed around the music, and where the stamp sits.
+  "Use a picture…": "Utiliser une image…",
   "Cover page": "Page de couverture",
   "Choose a picture…": "Choisir une image…",
   "Remove": "Retirer",

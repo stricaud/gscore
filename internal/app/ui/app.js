@@ -1353,6 +1353,7 @@ async function action(name) {
     case "arpeggio-up": await setArpeggio("up"); break;
     case "arpeggio-down": await setArpeggio("down"); break;
     case "arpeggio-none": await setArpeggio("none"); break;
+    case "symbol-picture": await symbolPictureDialog(); break;
     case "grace-add": await addGraceNote(); break;
     case "grace": await setGrace("slashed"); break;
     case "grace-appoggiatura": await setGrace("appoggiatura"); break;
@@ -11071,6 +11072,92 @@ async function sendArtwork(which, file) {
   status(which === "cover" ? "Cover page set" : "Final stamp set");
 }
 
+// symbolPictureDialog makes a symbol out of a picture, as it is.
+//
+// The drawing window is for drawing: a grid of ink and nothing. A
+// photograph or a publisher's device put through it is reduced to one bit
+// and then has to be repaired square by square, which is not editing. This
+// keeps the picture — an SVG as outlines, anything else as its own colours
+// — and leaves how large it is drawn to the score, where a corner handle
+// settles it.
+async function symbolPictureDialog() {
+  const dlg = $("#sympic");
+  const name = $("#sympic-name");
+  const why = $("#sympic-why");
+  if (!dlg || !name) return;
+  why.hidden = true;
+  name.value = "";
+
+  const answer = await new Promise((resolve) => {
+    const done = () => {
+      dlg.removeEventListener("close", done);
+      resolve(dlg.returnValue);
+    };
+    dlg.addEventListener("close", done);
+    dlg.returnValue = "";
+    dlg.showModal();
+    setTimeout(() => name.focus(), 0);
+  });
+  if (answer !== "ok") return;
+
+  const given = name.value.trim();
+  if (!given) {
+    status("A symbol needs a name to be inserted by");
+    return;
+  }
+  await pickSymbolPicture(given);
+}
+
+// pickSymbolPicture asks for the file and registers what comes back.
+//
+// Through the platform's dialog where there is one, as every other picture
+// in this program is: a hidden file box does nothing at all in the native
+// window.
+async function pickSymbolPicture(name) {
+  if (state.info?.local) {
+    const res = await fetch(
+      "/api/pickfile?symbolpicture=1&name=" + encodeURIComponent(name),
+      { method: "POST" });
+    if (res.ok) {
+      const d = await res.json();
+      if (d.cancelled) {
+        status("Ready");
+        return;
+      }
+      await afterSymbolPicture(d);
+      return;
+    }
+    // Served rather than local, or no dialog to be had: the file box is
+    // what a browser answers with.
+  }
+  const box = $("#sympic-file");
+  if (!box) return;
+  box.onchange = async () => {
+    const file = box.files && box.files[0];
+    box.value = "";
+    if (!file) return;
+    const res = await fetch(
+      "/api/symbolpicture?name=" + encodeURIComponent(name),
+      { method: "POST", body: await file.arrayBuffer() });
+    if (!res.ok) {
+      status("Could not use that picture: " + (await res.text()).trim());
+      return;
+    }
+    await afterSymbolPicture(await res.json());
+  };
+  box.click();
+}
+
+async function afterSymbolPicture(d) {
+  if (!d || !d.name) return;
+  // The palette is where a symbol is inserted from, and it has just gained
+  // one — the same two steps a pack import takes.
+  await loadInfo();
+  await openPalette();
+  status(`${d.name} is ready — pick it from the palette, ` +
+         "then drag a corner to size it");
+}
+
 // pickArtwork asks for a picture and puts it into the score.
 //
 // Through the native dialog where there is one, exactly as the symbol
@@ -17478,6 +17565,10 @@ const MENU_ICONS = {
   "grace-appoggiatura": "\ue562",  // graceNoteAppoggiaturaStemUp
   // A staff of pitches, which is the thing this adds: the tab it goes over
   // is already there.
+  // A picture used as it is, rather than a grid traced from one. The
+  // camera says "a picture that was taken rather than drawn", which is
+  // exactly the difference between this entry and the one above it.
+  "symbol-picture": "\ueb1b",      // elecCamera
   "pair-notation": "\ue014",       // staff5Lines
   "group-brace": "\ue000",         // brace
   "group-bracket": "\ue002",       // bracket

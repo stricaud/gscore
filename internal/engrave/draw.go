@@ -409,7 +409,7 @@ func (e *engraver) drawMeasure(part *model.Part, b measureBox, x, end float64, s
 	e.setStemDirections(items, part.Time)
 
 	// Noteheads first, then stems and beams, which need the whole group.
-	for _, p := range items {
+	for i, p := range items {
 		// The arpeggio goes in before the noteheads it rolls, because the
 		// room for it was booked in front of the column and the line is
 		// read before them.
@@ -417,7 +417,7 @@ func (e *engraver) drawMeasure(part *model.Part, b measureBox, x, end float64, s
 			e.drawArpeggio(p, m.Arpeggio)
 		}
 		e.drawHeads(part, p)
-		e.drawGrace(part, p)
+		e.drawGrace(part, p, i)
 		e.drawLoneSymbol(p)
 	}
 	e.drawStemsAndBeams(items, part.Time)

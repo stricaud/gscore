@@ -820,6 +820,15 @@ paths:
             notehead becomes a note again. Left off, the whole element
             goes.
           schema: { type: integer }
+        - name: grace
+          in: query
+          description: >
+            Which of the small notes leaning on this element to take out,
+            counting from zero. The last one takes the group with it, since
+            an empty group is a thing the page cannot show and nothing could
+            then be clicked to be rid of. Left off, the element itself goes,
+            and its grace notes with it.
+          schema: { type: integer, minimum: 0 }
       responses:
         "200": { $ref: "#/components/responses/Status" }
         "400": { $ref: "#/components/responses/Error" }
@@ -4502,6 +4511,15 @@ components:
         Several elements at once, as `staff:measure:index` triples separated
         by commas and counting from zero — `0:0:0,0:0:1`. Where a route takes
         this and `part`/`measure`/`at`, this wins.
+
+
+        A fourth number names one of the small notes leaning on that
+        element — `0:3:2:1` is the second grace note of the third element of
+        bar 3. A grace note is not an element of a voice, so three numbers
+        cannot reach one. Routes that work on pitches (accidentals and the
+        brackets round them, moving a notehead, transposing) take it;
+        routes that write a mark on a note refuse it, rather than quietly
+        putting the mark on the note it leans on.
       schema: { type: string }
     step:
       name: step

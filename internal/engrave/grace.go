@@ -129,7 +129,7 @@ func graceLead(el model.Element) float64 {
 // starts before the main note's own accidental: a sharp in front of the note
 // and a grace group in front of that are two things in the same place
 // otherwise, and the group was drawn over the sharp.
-func (e *engraver) drawGrace(part *model.Part, p *placed) {
+func (e *engraver) drawGrace(part *model.Part, p *placed, index int) {
 	m := p.marks()
 	if m == nil || m.Grace == nil || len(m.Grace.Notes) == 0 {
 		return
@@ -169,6 +169,17 @@ func (e *engraver) drawGrace(part *model.Part, p *placed) {
 		}
 		e.lay.Glyphs = append(e.lay.Glyphs, Glyph{
 			Name: "noteheadBlack", X: x, Y: y, Size: graceSize,
+		})
+		// Where it landed, so that it can be clicked and the caret can step
+		// on to it. Recorded here because here is the only place that knows:
+		// the group's layout is worked out from its own notes and their
+		// accidentals, and nothing outside could find these x's again
+		// without doing the same arithmetic a second time.
+		e.lay.Graces = append(e.lay.Graces, GracePos{
+			Part: e.partIndex, Measure: e.barIndex,
+			Index: index, Ord: i, Ref: p.index,
+			X: x, Y: y, Width: head, Step: step,
+			Last: i == len(g.Notes)-1,
 		})
 		e.graceLedgerLines(x, head, step)
 	}

@@ -4595,6 +4595,7 @@ async function loadHits() {
   state.arcs = d.arcs || [];
   state.tremolos = d.tremolos || [];
   state.tuplets = d.tuplets || [];
+  state.graces = d.graces || [];
   state.barlines = d.barlines || [];
   state.headers = d.headers || [];
   state.strips = d.strips || [];
@@ -4972,6 +4973,51 @@ function columnAt(hit, x) {
   return null;
 }
 
+// gracesOn is the small notes leaning on one element, in the order they are
+// played.
+function gracesOn(part, measure, index) {
+  return (state.graces || [])
+    .filter((g) => g.part === part && g.measure === measure && g.index === index)
+    .sort((a, b) => a.ord - b.ord);
+}
+
+// graceAt finds the small note under a point.
+//
+// Tried before the ordinary notes and with less slack than they are given: a
+// grace note is drawn inside the column of the note it leans on, at three
+// fifths the size and a notehead or two to its left, so generous tolerances
+// would read every click on the ornament as a click on the big note — which
+// is what happened when there was nothing here at all.
+function graceAt(hit, x, y) {
+  let best = null;
+  let bestDist = Infinity;
+  for (const g of state.graces || []) {
+    if (g.part !== hit.part || g.measure !== hit.measure) continue;
+    const dx = x < g.x ? g.x - x : Math.max(0, x - (g.x + g.width));
+    const dy = Math.abs(y - g.y);
+    if (dx > 0.4 || dy > 0.9) continue;
+    const d = dx * dx + dy * dy;
+    if (d < bestDist) {
+      best = g;
+      bestDist = d;
+    }
+  }
+  return best;
+}
+
+// selectGrace picks up one of the small notes.
+function selectGrace(hit, g) {
+  state.multi = [];
+  state.anchor = null;
+  state.focus = null;
+  state.selection = {
+    part: hit.part, measure: hit.measure, at: g.index + 1,
+    step: g.step, ref: g.ref, grace: g.ord, replace: true,
+  };
+  markSelection();
+  status("Grace note");
+}
+
 // elementAt finds the element under a point, if the click is near enough to
 // one to have meant it.
 function elementAt(hit, x, y) {
@@ -5235,6 +5281,16 @@ function setupCanvasClicks() {
     // A click picks music up, unless writing with the mouse has been turned
     // on — and then shift picks up, the way it always did.
     const picking = !state.mouseWrites || e.shiftKey;
+    // A grace note first. It sits inside the column of the note it leans
+    // on, so a click meant for the small note is otherwise read as a click
+    // on the big one — and then nothing on the page can ever pick it up.
+    if (picking && !e.shiftKey) {
+      const g = graceAt(hit, x, y);
+      if (g) {
+        selectGrace(hit, g);
+        return;
+      }
+    }
     const el = picking ? elementAt(hit, x, y) : columnAt(hit, x);
 
     // A click landing on something already there picks it up — writing a note
@@ -6594,6 +6650,10 @@ async function deleteSelected() {
     // The notehead that was clicked, where one was: a note of a chord
     // picked up and deleted is that note, not the chord it is in.
     ...pickedHead(),
+    // And a grace note picked up is that grace note, not the note it
+    // leans on — which is what deleting would otherwise have taken.
+    ...(sel.grace !== null && sel.grace !== undefined
+      ? { grace: String(sel.grace) } : {}),
   });
   const res = await fetch("/api/delete?" + p.toString(), { method: "POST" });
   if (!res.ok) {
@@ -6776,6 +6836,22 @@ function markSelection() {
     if (a) {
       svg.insertBefore(
         selectionRect(a.x - 0.4, a.y - 0.4, a.width + 0.8, a.height + 0.8, z),
+        svg.firstChild);
+      return;
+    }
+  }
+
+  // A grace note picked up: the box goes round the small notehead and not
+  // round the note it leans on. The two are a notehead apart on the page,
+  // and lighting the wrong one would say the wrong thing about what
+  // Backspace is about to take away.
+  if (sel.grace !== null && sel.grace !== undefined) {
+    const g = (state.graces || []).find(
+      (x) => x.part === sel.part && x.measure === sel.measure &&
+             x.index === sel.at - 1 && x.ord === sel.grace);
+    if (g) {
+      svg.insertBefore(
+        selectionRect(g.x - 0.3, g.y - 0.7, g.width + 0.6, 1.4, z),
         svg.firstChild);
       return;
     }
@@ -7050,6 +7126,10 @@ async function mark(endpoint, params, said) {
     // In order. A hairpin opens on the first and closes on the last, so a
     // selection handed over shuffled would draw a crescendo backwards.
     p.set("sel", orderedSelection().map((m) => `${m.part}:${m.measure}:${m.index}`).join(","));
+  } else if (sel.grace !== null && sel.grace !== undefined) {
+    // The fourth number names the small note: the element it leans on
+    // cannot name it, because it is not an element of the voice at all.
+    p.set("sel", `${sel.part}:${sel.measure}:${sel.at - 1}:${sel.grace}`);
   } else if (sel.ref !== null && sel.ref !== undefined) {
     // One note picked up: the mark goes on that note, wherever the caret
     // has moved on to. The caret and the selection part company as soon as
@@ -17488,6 +17568,17 @@ function moveCursorBy(delta) {
       continue;
     }
     for (const el of els) {
+      // The small notes leaning on this one come first, because that is
+      // where they are on the page and walking the music is walking what
+      // is drawn. Reported as "when I go left, it does not select it":
+      // the caret stepped from the note straight past its own ornament to
+      // the note before, and a grace note could never be reached at all.
+      for (const g of gracesOn(h.part, h.measure, el.index)) {
+        line.push({
+          measure: h.measure, index: el.index, ref: el.ref,
+          grace: g.ord, step: g.step,
+        });
+      }
       line.push({
         measure: h.measure, index: el.index, ref: el.ref,
         step: el.steps && el.steps.length ? el.steps[0] : undefined,
@@ -17496,9 +17587,17 @@ function moveCursorBy(delta) {
   }
   if (!line.length) return;
 
-  let at = line.findIndex((p) => p.measure === sel.measure && p.ref === sel.ref);
+  // Which place the caret is standing on. The grace number is part of the
+  // answer: a small note and the note it leans on share a ref and an index,
+  // so without it the caret standing on the ornament is found at the note
+  // and one step back lands where it already was.
+  const here = sel.grace ?? null;
+  let at = line.findIndex((p) =>
+    p.measure === sel.measure && p.ref === sel.ref && (p.grace ?? null) === here);
   if (at < 0) {
-    at = line.findIndex((p) => p.measure === sel.measure && p.index === sel.at - 1);
+    at = line.findIndex((p) =>
+      p.measure === sel.measure && p.index === sel.at - 1 &&
+      (p.grace ?? null) === here);
   }
   at = at < 0 ? (delta > 0 ? 0 : line.length - 1) : at + delta;
   at = Math.max(0, Math.min(line.length - 1, at));
@@ -17518,12 +17617,18 @@ function moveCursorBy(delta) {
   state.selection = {
     part: sel.part, measure: p.measure, at: p.index + 1,
     step: p.step ?? sel.step ?? 0, ref: p.ref,
+    ...(p.grace === undefined ? {} : { grace: p.grace }),
     // Moving along the music is going somewhere to write, so what is written
     // goes in at the cursor. Replacing is for what you pointed at.
     replace: false,
   };
   markSelection();
   scrollSelectionIntoView();
+  if (p.grace !== undefined) {
+    status(`Measure ${barNumberOf(p.measure)}, grace note ${p.grace + 1} ` +
+           `on note ${p.index + 1}`);
+    return;
+  }
   status(p.ref === null
     ? `Measure ${barNumberOf(p.measure)} — nothing written here yet`
     : `Measure ${barNumberOf(p.measure)}, note ${p.index + 1}`);

@@ -55,7 +55,10 @@ function load(selection) {
     // the number over a bar is its place in the file.
     barNumberOf: (m) => m + 1,
   };
-  const body = grab("moveCursorBy") + "\nreturn { moveCursorBy };";
+  // gracesOn with it: walking the music now walks the small notes too,
+  // which are drawn in the bar but are not elements of the voice.
+  const body = grab("gracesOn") + "\n" + grab("moveCursorBy") +
+    "\nreturn { moveCursorBy };";
   const api = new Function(...Object.keys(scope), body)(...Object.values(scope));
   return { state, said, ...api };
 }

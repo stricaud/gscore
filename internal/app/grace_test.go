@@ -206,3 +206,127 @@ func TestGraceNotesAreEngravedSmallAndFirst(t *testing.T) {
 		t.Error("the two grace notes are not in the order they were written")
 	}
 }
+
+/*
+ * Reaching a grace note once it is written.
+ *
+ * Reported as "I cannot select the grace note, and when I go left, it does
+ * not select it", which was fair: a grace note is not an element of a voice,
+ * every command in the editor reaches a note by its place in one, and so
+ * there was no way to name one. It could be written and then never touched.
+ *
+ * A fourth number in a selection names it — staff:measure:index:ord — and
+ * the engraver now says where each one landed so that it can be clicked.
+ */
+
+func TestTheEngraverSaysWhereGraceNotesLanded(t *testing.T) {
+	h := newHarness(t)
+	h.note(0, 0, 2, "eighth")
+	h.note(0, 0, 3, "eighth")
+	h.note(0, 0, 4, "half")
+	h.post("/api/grace?sel=0:0:0,0:0:1")
+
+	lay := engrave.Engrave(h.app.score, engrave.DefaultOptions())
+	if len(lay.Graces) != 2 {
+		t.Fatalf("the layout reports %d grace notes, want 2", len(lay.Graces))
+	}
+	for i, g := range lay.Graces {
+		if g.Ord != i {
+			t.Errorf("grace %d calls itself number %d", i, g.Ord)
+		}
+		// The element it leans on, which is the only one left in the bar.
+		if g.Index != 0 {
+			t.Errorf("grace %d leans on element %d, want 0", i, g.Index)
+		}
+		if g.Width <= 0 {
+			t.Errorf("grace %d has no width, so nothing can be clicked", i)
+		}
+	}
+	if !lay.Graces[1].Last || lay.Graces[0].Last {
+		t.Error("the group does not say which of them is the last")
+	}
+}
+
+func TestOneGraceNoteCanBeDeleted(t *testing.T) {
+	h := newHarness(t)
+	h.note(0, 0, 2, "eighth")
+	h.note(0, 0, 3, "eighth")
+	h.note(0, 0, 4, "half")
+	h.post("/api/grace?sel=0:0:0,0:0:1")
+
+	h.post("/api/delete?part=0&measure=0&at=0&grace=0")
+	g := graceOf(h.elements(0, 0)[0])
+	if g == nil || len(g.Notes) != 1 {
+		t.Fatalf("after deleting one the group is %v, want one note left", g)
+	}
+	// The last one takes the group with it: an empty group is a thing the
+	// page cannot show and nothing could then be clicked to be rid of.
+	h.post("/api/delete?part=0&measure=0&at=0&grace=0")
+	if g := graceOf(h.elements(0, 0)[0]); g != nil {
+		t.Errorf("the empty group is still there: %v", g)
+	}
+}
+
+func TestAnAccidentalCanBePutOnAGraceNote(t *testing.T) {
+	// Not a command taught about grace notes one at a time: notesOf is
+	// where everything that works on pitches goes, so teaching it reaches
+	// the accidentals, the brackets round them and transposition at once.
+	h := newHarness(t)
+	h.note(0, 0, 2, "eighth")
+	h.note(0, 0, 4, "half")
+	h.post("/api/grace?sel=0:0:0")
+
+	h.post("/api/accidental?sel=0:0:0:0&accidental=sharp")
+	g := graceOf(h.elements(0, 0)[0])
+	if g == nil || len(g.Notes) != 1 {
+		t.Fatalf("the group is %v", g)
+	}
+	if got := g.Notes[0].Accidental; got != model.Sharp {
+		t.Errorf("the grace note carries %v, want a sharp", got)
+	}
+	// And the note it leans on is untouched, which is the whole point of
+	// being able to name one.
+	n, ok := h.elements(0, 0)[0].(*model.Note)
+	if !ok {
+		t.Fatalf("the carrier is %T", h.elements(0, 0)[0])
+	}
+	if n.Accidental != model.NoAccidental {
+		t.Errorf("the note it leans on was given %v as well", n.Accidental)
+	}
+}
+
+func TestAMarkAimedAtAGraceNoteIsRefused(t *testing.T) {
+	// The dangerous case: a command that does not know what a grace note is
+	// would otherwise take the carrier's marks and put the staccato on the
+	// wrong note, and report that it had worked.
+	h := newHarness(t)
+	h.note(0, 0, 2, "eighth")
+	h.note(0, 0, 4, "half")
+	h.post("/api/grace?sel=0:0:0")
+
+	msg := h.fails("/api/articulation?sel=0:0:0:0&articulation=staccato")
+	if !strings.Contains(msg, "grace note") {
+		t.Errorf("refused with %q, want a word about the grace note", msg)
+	}
+	if mk := marksOfElement(h.elements(0, 0)[0]); len(mk.Articulations) != 0 {
+		t.Error("the mark landed on the note it leans on after all")
+	}
+}
+
+func TestThreeNumbersStillMeanWhatTheyMeant(t *testing.T) {
+	// The fourth number is new; everything written before it must go on
+	// meaning the element, not its first grace note.
+	h := newHarness(t)
+	h.note(0, 0, 2, "eighth")
+	h.note(0, 0, 4, "half")
+	h.post("/api/grace?sel=0:0:0")
+
+	h.post("/api/accidental?sel=0:0:0&accidental=flat")
+	n := h.elements(0, 0)[0].(*model.Note)
+	if n.Accidental != model.Flat {
+		t.Errorf("the note it leans on carries %v, want the flat", n.Accidental)
+	}
+	if g := graceOf(h.elements(0, 0)[0]); g.Notes[0].Accidental != model.NoAccidental {
+		t.Error("the flat went on the grace note instead")
+	}
+}

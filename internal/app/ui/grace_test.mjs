@@ -92,3 +92,104 @@ test("taking them off asks for none and says so", () => {
   assert.ok(/removed/i.test(calls[0].said),
     `the status line says ${JSON.stringify(calls[0].said)}`);
 });
+
+/*
+ * Reaching a grace note after it is written.
+ *
+ * Reported as "I cannot select the grace note, and when I go left, it does
+ * not select it". Both halves were true and had the same cause: a grace note
+ * is not an element of a voice, and everything in the editor walks a voice.
+ * The engraver now says where each small note landed, and the caret walks
+ * what is drawn rather than what is in the voice.
+ */
+
+// moveCursorBy and the two lookups it leans on, over a made-up score.
+function cursor(state) {
+  const grab = (name) => {
+    const m = src.match(new RegExp("^function " + name + "\\([\\s\\S]*?^}", "m"));
+    if (!m) throw new Error("app.js has no " + name);
+    return m[0];
+  };
+  const said = [];
+  const scope = {
+    state,
+    status: (s) => said.push(s),
+    markSelection: () => {},
+    scrollSelectionIntoView: () => {},
+    barNumberOf: (n) => n + 1,
+  };
+  const body = grab("gracesOn") + "\n" + grab("moveCursorBy") +
+    "\nreturn moveCursorBy;";
+  const move = new Function(...Object.keys(scope), body)(...Object.values(scope));
+  return { move, said };
+}
+
+// One bar: a note with two grace notes on it, then a plain note.
+function scored() {
+  return {
+    hits: [{
+      part: 0, measure: 0,
+      elements: [
+        { index: 0, ref: 10, steps: [4] },
+        { index: 1, ref: 11, steps: [6] },
+      ],
+    }],
+    graces: [
+      { part: 0, measure: 0, index: 0, ord: 0, ref: 10, step: 2, x: 1, y: 1, width: 1 },
+      { part: 0, measure: 0, index: 0, ord: 1, ref: 10, step: 3, x: 2, y: 1, width: 1 },
+    ],
+    multi: [],
+    selection: { part: 0, measure: 0, at: 1, ref: 10, step: 4 },
+  };
+}
+
+test("going back from a note lands on its own grace notes", () => {
+  // The reported bug: the caret stepped from the note straight past its
+  // ornament, so a grace note could never be reached from the keyboard.
+  const state = scored();
+  const { move } = cursor(state);
+  move(-1);
+  assert.equal(state.selection.grace, 1, "not on the second grace note");
+  move(-1);
+  assert.equal(state.selection.grace, 0, "not on the first grace note");
+});
+
+test("going on from the last grace note lands on the note it leans on", () => {
+  const state = scored();
+  state.selection = { part: 0, measure: 0, at: 1, ref: 10, step: 2, grace: 0 };
+  const { move } = cursor(state);
+  move(1);
+  assert.equal(state.selection.grace, 1);
+  move(1);
+  assert.equal(state.selection.grace, undefined,
+    "the caret did not come back out of the group");
+  assert.equal(state.selection.at, 1);
+});
+
+test("the caret standing on a grace note is found where it stands", () => {
+  // A small note and the note it leans on share a ref and an index. Without
+  // the grace number in the search the caret would be found at the note,
+  // and one step back would land where it already was.
+  const state = scored();
+  state.selection = { part: 0, measure: 0, at: 1, ref: 10, step: 3, grace: 1 };
+  const { move } = cursor(state);
+  move(-1);
+  assert.equal(state.selection.grace, 0, "the caret did not move");
+});
+
+test("the status line says which grace note", () => {
+  const state = scored();
+  const { move, said } = cursor(state);
+  move(-1);
+  assert.match(said[said.length - 1], /grace note 2/);
+});
+
+test("a score with no grace notes walks exactly as it did", () => {
+  const state = scored();
+  state.graces = [];
+  state.selection = { part: 0, measure: 0, at: 2, ref: 11, step: 6 };
+  const { move } = cursor(state);
+  move(-1);
+  assert.equal(state.selection.at, 1);
+  assert.equal(state.selection.grace, undefined);
+});

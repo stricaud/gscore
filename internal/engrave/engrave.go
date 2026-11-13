@@ -245,6 +245,17 @@ type Layout struct {
 	// is not what somebody looking at twelve notes under a 12 wants.
 	Tuplets []TupletPos `json:"tuplets"`
 
+	// Graces are where the small notes landed, so one can be clicked.
+	//
+	// They are not elements of a voice — they hang off the note they lean
+	// on, because they take no time out of the bar — and everything in the
+	// editor reaches a note by its place in a voice. So there was nothing
+	// to click and nothing for the caret to step on to: a grace note could
+	// be written and then never touched again, which is the complaint that
+	// put this here. Each one names the element it leans on and which of
+	// that element's small notes it is, and the two together name it.
+	Graces []GracePos `json:"graces,omitempty"`
+
 	// Tempos are where the tempo markings ended up, so one can be clicked.
 	//
 	// A change of speed is written above the staff, between the bars rather
@@ -564,6 +575,26 @@ type Hit struct {
 	// A click needs this to tell "select that note" from "put a note here",
 	// which is the difference between reading a score and writing one.
 	Elements []ElementPos `json:"elements"`
+}
+
+// GracePos is where one small note landed, and which one it is.
+//
+// Index and Ord together are its address: the element it leans on, by its
+// place in the bar, and its own place in that element's group. A grace note
+// has no place of its own in a voice to be named by, which is the whole
+// reason this type exists.
+type GracePos struct {
+	Part    int `json:"part"`
+	Measure int `json:"measure"`
+	Index   int `json:"index"`
+	Ord     int `json:"ord"`
+	// Ref is the element it leans on, for anything that works in refs.
+	Ref   int     `json:"ref"`
+	X     float64 `json:"x"`
+	Y     float64 `json:"y"`
+	Width float64 `json:"width"`
+	Step  int     `json:"step"`
+	Last  bool    `json:"last,omitempty"`
 }
 
 // ElementPos is one element's place on the page.

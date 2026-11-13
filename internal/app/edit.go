@@ -58,6 +58,7 @@ func (a *App) handleHits(w http.ResponseWriter, r *http.Request) {
 		"arcs":          lay.Arcs,
 		"tremolos":      lay.Tremolos,
 		"tuplets":       lay.Tuplets,
+		"graces":        lay.Graces,
 		"barlines":      lay.Barlines,
 		"strips":        lay.Strips,
 		"headers":       lay.Headers,
@@ -809,6 +810,25 @@ func (a *App) handleDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// One of the small notes leaning on it, where that is what was picked
+	// up. The group goes with its last note: an empty group is a thing the
+	// page cannot show and nothing could then be clicked to be rid of.
+	if g := q.Get("grace"); g != "" {
+		ord, err := strconv.Atoi(g)
+		mk := marksOfElement(v.Elements[at])
+		if err != nil || ord < 0 || mk == nil || mk.Grace == nil ||
+			ord >= len(mk.Grace.Notes) {
+			http.Error(w, "there is no grace note there", http.StatusBadRequest)
+			return
+		}
+		mk.Grace.Notes = append(mk.Grace.Notes[:ord], mk.Grace.Notes[ord+1:]...)
+		if len(mk.Grace.Notes) == 0 {
+			mk.Grace = nil
+		}
+		writeJSON(w, map[string]any{"status": "ok", "deleted": 1})
+		return
+	}
+
 	// One notehead of a chord, where that is what was picked up.
 	//
 	// A notehead is named by the step it sits on, the way an accidental on
@@ -1315,6 +1335,24 @@ func (a *App) notesOf(q url.Values) ([]keyedNote, error) {
 			if t.index < 0 || t.index >= len(v.Elements) {
 				continue
 			}
+			// One of the small notes leaning on it. Here rather than in
+			// each command that might want one: everything that works on
+			// pitches comes through notesOf — the accidentals, the
+			// brackets round them, moving a notehead, transposing — so a
+			// grace note understood here is a grace note those all reach,
+			// and none of them has to learn what one is.
+			if t.isGrace() {
+				mk := marksOfElement(v.Elements[t.index])
+				if mk == nil || mk.Grace == nil ||
+					t.graceOrd() >= len(mk.Grace.Notes) {
+					continue
+				}
+				out = append(out, keyedNote{
+					Note: mk.Grace.Notes[t.graceOrd()], key: p.Key,
+					part: p, measure: t.measure, index: t.index,
+				})
+				continue
+			}
 			collect(p, t.measure, t.index, v.Elements[t.index], head)
 		}
 		if len(out) == 0 {
@@ -1407,11 +1445,37 @@ func (a *App) handleDynamic(w http.ResponseWriter, r *http.Request) {
 // target names one element: a staff, a measure and a position within it.
 type target struct {
 	part, measure, index int
+	// graceAt names one of the small notes leaning on that element: zero
+	// for the element itself, and otherwise one more than the grace note's
+	// place in the group.
+	//
+	// A fourth number, because three cannot say it. A grace note is not an
+	// element of a voice — it hangs off the note it leans on, since it takes
+	// no time out of the bar — so there is no index that reaches it, and
+	// until there was one a grace note could be written and then never
+	// touched: not clicked, not stepped on to, not deleted by itself.
+	//
+	// Counted from one so that the zero value is the element and not its
+	// first grace note. Targets are made in a dozen places and every one of
+	// them would otherwise have to remember to say "not a grace note"; the
+	// one that forgot would quietly aim a command at an ornament. A field
+	// whose zero value is the common case cannot be forgotten.
+	graceAt int
 }
+
+// isGrace says the target names a small note rather than the element it
+// leans on, and graceOrd is which one, counting from zero.
+func (t target) isGrace() bool { return t.graceAt > 0 }
+func (t target) graceOrd() int { return t.graceAt - 1 }
 
 // parseTargets reads the sel parameter, which is a list of
 // staff:measure:index triples. It is how a command reaches everything inside
 // a dragged rectangle rather than only the note under the cursor.
+//
+// A fourth number names a grace note on that element: "0:3:2:1" is the
+// second small note leaning on the third element of bar 3. Three numbers go
+// on meaning what they always meant, so nothing written before this knows
+// the difference.
 func parseTargets(sel string) ([]target, error) {
 	var out []target
 	for _, piece := range strings.Split(sel, ",") {
@@ -1420,7 +1484,7 @@ func parseTargets(sel string) ([]target, error) {
 			continue
 		}
 		f := strings.Split(piece, ":")
-		if len(f) != 3 {
+		if len(f) != 3 && len(f) != 4 {
 			return nil, editError("a selection looks like staff:measure:index")
 		}
 		var t target
@@ -1434,12 +1498,36 @@ func parseTargets(sel string) ([]target, error) {
 		if t.index, err = strconv.Atoi(f[2]); err != nil {
 			return nil, editError("bad position in the selection")
 		}
+		if len(f) == 4 {
+			ord, err := strconv.Atoi(f[3])
+			if err != nil || ord < 0 {
+				return nil, editError("bad grace note in the selection")
+			}
+			t.graceAt = ord + 1
+		}
 		out = append(out, t)
 	}
 	if len(out) == 0 {
 		return nil, editError("nothing selected")
 	}
 	return out, nil
+}
+
+// graceNoteAt is the small note a target names, with the group it belongs to.
+func (a *App) graceNoteAt(t target) (*model.GraceGroup, *model.Note, error) {
+	_, m, err := a.locate(t.part, t.measure)
+	if err != nil {
+		return nil, nil, err
+	}
+	v := m.Voices[0]
+	if t.index < 0 || t.index >= len(v.Elements) {
+		return nil, nil, editError("there is no note there")
+	}
+	mk := marksOfElement(v.Elements[t.index])
+	if mk == nil || mk.Grace == nil || t.graceOrd() >= len(mk.Grace.Notes) {
+		return nil, nil, editError("there is no grace note there")
+	}
+	return mk.Grace, mk.Grace.Notes[t.graceOrd()], nil
 }
 
 // marksOf returns the marks of every element a command should act on: the
@@ -1465,6 +1553,15 @@ func (a *App) marksOf(q url.Values) ([]*model.Marks, error) {
 			v := m.Voices[0]
 			if t.index < 0 || t.index >= len(v.Elements) {
 				continue
+			}
+			if t.isGrace() {
+				// A mark aimed at a grace note is not a mark for the note
+				// it leans on. Handing back the carrier's marks would put
+				// the staccato, or the dynamic, or the tie on the wrong
+				// note and say it had worked — so the command refuses, and
+				// the ones that do mean something on a small note reach it
+				// through graceNoteAt instead.
+				return nil, editError("that mark cannot be written on a grace note")
 			}
 			if mk := marksOfElement(v.Elements[t.index]); mk != nil {
 				out = append(out, mk)

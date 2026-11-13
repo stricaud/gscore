@@ -16,6 +16,8 @@ import (
 	"sort"
 	"strconv"
 
+	"github.com/stricaud/gscore/internal/engrave"
+
 	"github.com/stricaud/gscore/internal/model"
 )
 
@@ -58,6 +60,13 @@ func (a *App) handleGrace(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 
 	switch {
+	case q.Get("add") == "1":
+		n, err := a.addGrace(q)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		writeJSON(w, map[string]int{"changed": 1, "ord": n})
 	case q.Get("grace") == "none":
 		n, err := a.clearGrace(q)
 		if err != nil {
@@ -236,4 +245,101 @@ func (a *App) slashGrace(q url.Values, slashed bool) (int, error) {
 		return 0, editError("there are no grace notes on that note")
 	}
 	return n, nil
+}
+
+// addGrace hangs one more small note on the note that is picked up.
+//
+// The other way round from makeGrace, and both are needed. Turning notes
+// that are already written into ornaments is the natural gesture when there
+// is room in the bar to write them first — but a bar that is already full
+// has no room, and a bar that is already full is the usual case when
+// somebody is ornamenting music they have just finished. Writing the notes
+// there pushed them into the next bar, so the gesture could not even be
+// started.
+//
+// This adds nothing to the voice and so cannot overflow anything. The pitch
+// is a staff step, resolved by the part's own clef through the same
+// arithmetic a written note goes through: it is not a second way of saying
+// a pitch, it is the way the editor already says one. Left unsaid, the new
+// note sits a step above the note it leans on, which is the commonest
+// ornament there is and is a pitch somebody can then move with the arrows —
+// a grace note can be picked up now, which is what makes that an answer.
+func (a *App) addGrace(q url.Values) (int, error) {
+	targets, err := a.graceTargets(q)
+	if err != nil {
+		return 0, err
+	}
+	t := targets[len(targets)-1]
+	a.lock()
+	defer a.mu.Unlock()
+
+	p, m, err := a.locate(t.part, t.measure)
+	if err != nil {
+		return 0, err
+	}
+	v := m.Voices[0]
+	if t.index < 0 || t.index >= len(v.Elements) {
+		return 0, editError("there is no note there")
+	}
+	el := v.Elements[t.index]
+	mk := marksOfElement(el)
+	if mk == nil {
+		return 0, editError("nothing there to lean on")
+	}
+	if _, isRest := el.(*model.Rest); isRest {
+		return 0, editError("a grace note cannot lean on a rest")
+	}
+
+	clef := p.ClefAt(t.measure)
+	step, hasStep := 0, false
+	if val := q.Get("step"); val != "" {
+		if step, err = strconv.Atoi(val); err != nil {
+			return 0, editError("step is a staff step")
+		}
+		hasStep = true
+	}
+	var pitch model.Pitch
+	switch {
+	case q.Get("pitch") != "":
+		got, _, ok := model.ParsePitch(q.Get("pitch"))
+		if !ok {
+			return 0, editError(q.Get("pitch") + " is not a pitch")
+		}
+		pitch = a.asWritten(p, got)
+	case hasStep:
+		pitch = a.asWritten(p, pitchForStep(clef, step))
+	default:
+		// A step above the note it leans on.
+		pitch = a.asWritten(p, pitchForStep(clef, topStepOf(clef, el)+1))
+	}
+
+	if mk.Grace == nil {
+		mk.Grace = &model.GraceGroup{Slashed: q.Get("slashed") != "0"}
+	}
+	// An eighth, which is how a grace note is written and what the readers
+	// bring in. Two or more of them are beamed by the engraver, so a group
+	// built one note at a time comes out as a group and not as a row of
+	// flagged notes.
+	mk.Grace.Notes = append(mk.Grace.Notes, &model.Note{
+		Pitch: pitch, Dur: model.Duration{Num: 1, Den: 8},
+	})
+	return len(mk.Grace.Notes) - 1, nil
+}
+
+// topStepOf is the staff step of the highest notehead of an element, which
+// is what a grace note is placed above when nobody says where to put it.
+func topStepOf(clef model.Clef, el model.Element) int {
+	switch e := el.(type) {
+	case *model.Note:
+		return engrave.StaffStep(clef, e.Pitch)
+	case *model.Chord:
+		top := 0
+		for i, n := range e.Notes {
+			if s := engrave.StaffStep(clef, n.Pitch); i == 0 || s > top {
+				top = s
+			}
+		}
+		return top
+	}
+	return 0
 }

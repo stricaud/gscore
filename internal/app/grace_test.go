@@ -330,3 +330,90 @@ func TestThreeNumbersStillMeanWhatTheyMeant(t *testing.T) {
 		t.Error("the flat went on the grace note instead")
 	}
 }
+
+func TestAGraceNoteCanBeAddedToAFullBar(t *testing.T) {
+	// The case the other way round could not reach. Turning written notes
+	// into ornaments needs room in the bar to write them first, and a bar
+	// that is already full has none — which is the usual state of a bar
+	// somebody is ornamenting. Writing the notes there pushed them into
+	// the next bar, so the gesture could not even be started.
+	h := newHarness(t)
+	for i := 0; i < 4; i++ {
+		h.note(0, 0, 2+i, "quarter")
+	}
+	if n := len(h.app.score.Parts[0].Measures); n != 1 {
+		t.Fatalf("the setup already spilled into %d bars", n)
+	}
+	h.post("/api/grace?part=0&measure=0&at=1&add=1")
+
+	if n := len(h.app.score.Parts[0].Measures); n != 1 {
+		t.Errorf("adding a grace note made the music %d bars long", n)
+	}
+	if n := len(h.elements(0, 0)); n != 4 {
+		t.Errorf("the bar now holds %d elements, want the 4 it held", n)
+	}
+	g := graceOf(h.elements(0, 0)[0])
+	if g == nil || len(g.Notes) != 1 {
+		t.Fatalf("the first note carries %v, want one grace note", g)
+	}
+}
+
+func TestAnAddedGraceNoteSitsAStepAbove(t *testing.T) {
+	// Somewhere plausible, and somewhere that can then be moved: a grace
+	// note can be picked up now, so the arrows are an answer to "not that
+	// pitch".
+	h := newHarness(t)
+	h.note(0, 0, 4, "quarter")
+	h.post("/api/grace?part=0&measure=0&at=1&add=1")
+
+	carrier := h.elements(0, 0)[0].(*model.Note)
+	g := graceOf(h.elements(0, 0)[0])
+	clef := h.app.score.Parts[0].ClefAt(0)
+	want := engrave.StaffStep(clef, carrier.Pitch) + 1
+	if got := engrave.StaffStep(clef, g.Notes[0].Pitch); got != want {
+		t.Errorf("the grace note is at step %d, want %d — a step above", got, want)
+	}
+}
+
+func TestGraceNotesAddedOneByOneAreBeamed(t *testing.T) {
+	// Built a note at a time, they still have to come out as a group: the
+	// engraver beams two or more, and a row of separately flagged small
+	// notes is what they looked like before it did.
+	h := newHarness(t)
+	h.note(0, 0, 4, "half")
+	for i := 0; i < 3; i++ {
+		h.post("/api/grace?part=0&measure=0&at=1&add=1&step=" + itoa(6+i))
+	}
+	g := graceOf(h.elements(0, 0)[0])
+	if g == nil || len(g.Notes) != 3 {
+		t.Fatalf("the group is %v, want three notes", g)
+	}
+	lay := engrave.Engrave(h.app.score, engrave.DefaultOptions())
+	if len(lay.Quads) == 0 {
+		t.Error("nothing was beamed: the group is a row of flagged notes")
+	}
+	if len(lay.Graces) != 3 {
+		t.Errorf("the layout reports %d grace notes, want 3", len(lay.Graces))
+	}
+}
+
+func TestAGraceNoteCanBeNudgedLikeAnyNote(t *testing.T) {
+	// Not a command taught about grace notes: /api/nudge goes through
+	// notesOf, so it reaches one for the same reason the accidentals do.
+	h := newHarness(t)
+	h.note(0, 0, 4, "quarter")
+	h.post("/api/grace?part=0&measure=0&at=1&add=1")
+	clef := h.app.score.Parts[0].ClefAt(0)
+	before := engrave.StaffStep(clef, graceOf(h.elements(0, 0)[0]).Notes[0].Pitch)
+
+	h.post("/api/nudge?sel=0:0:0:0&steps=-1")
+	after := engrave.StaffStep(clef, graceOf(h.elements(0, 0)[0]).Notes[0].Pitch)
+	if after != before-1 {
+		t.Errorf("the grace note moved from step %d to %d, want one step down",
+			before, after)
+	}
+	// And not the note it leans on.
+	if got := engrave.StaffStep(clef, h.elements(0, 0)[0].(*model.Note).Pitch); got != 4 {
+		t.Errorf("the note it leans on moved to step %d", got)
+	}
+}

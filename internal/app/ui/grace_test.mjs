@@ -28,7 +28,7 @@ import test from "node:test";
 const src = readFileSync(new URL("./app.js", import.meta.url), "utf8");
 const html = readFileSync(new URL("./index.html", import.meta.url), "utf8");
 
-const ACTIONS = ["grace", "grace-appoggiatura", "grace-none"];
+const ACTIONS = ["grace-add", "grace", "grace-appoggiatura", "grace-none"];
 
 test("every grace entry on the menu has a case that answers it", () => {
   for (const action of ACTIONS) {

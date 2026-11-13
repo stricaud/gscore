@@ -2101,6 +2101,22 @@ paths:
             sets how a new one is written. New groups are slashed unless this
             says otherwise.
           schema: { type: string, enum: ["0", "1"] }
+        - name: add
+          in: query
+          description: >
+            Hang one more small note on the note named, instead of turning
+            notes already written into ornaments. It adds nothing to the
+            voice, so it works in a bar that is already full — which the
+            other way round cannot, since that needs room in the bar to
+            write the notes in first. The pitch comes from step or pitch;
+            with neither, it lands a step above the note it leans on. The
+            answer carries ord, which of the group the new note is.
+          schema: { type: string, enum: ["1"] }
+        - $ref: "#/components/parameters/step"
+        - name: pitch
+          in: query
+          description: A pitch by name, such as "A4" or "Bb4", for add.
+          schema: { type: string }
         - name: make
           in: query
           description: >

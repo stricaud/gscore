@@ -1353,6 +1353,7 @@ async function action(name) {
     case "arpeggio-up": await setArpeggio("up"); break;
     case "arpeggio-down": await setArpeggio("down"); break;
     case "arpeggio-none": await setArpeggio("none"); break;
+    case "grace-add": await addGraceNote(); break;
     case "grace": await setGrace("slashed"); break;
     case "grace-appoggiatura": await setGrace("appoggiatura"); break;
     case "grace-none": await setGrace("none"); break;
@@ -7420,6 +7421,30 @@ async function setGrace(what) {
   const slashed = what === "slashed" ? "1" : "0";
   await mark("grace", { slashed, make: "1" },
              slashed === "1" ? "Grace note" : "Appoggiatura");
+}
+
+// addGraceNote hangs one more small note on the note that is picked up.
+//
+// The other verb, and both are wanted. Turning written notes into ornaments
+// needs room in the bar to write them in first, and a bar that is already
+// full has none — which is the usual state of a bar somebody is ornamenting.
+// This adds nothing to the voice, so it works anywhere.
+//
+// It lands a step above the note it leans on, which is the commonest
+// ornament there is, and then Alt with the arrows moves it: a grace note can
+// be picked up now, which is what makes that an answer rather than an
+// excuse. Two or more are beamed by the engraver, so a group built one note
+// at a time comes out as a group.
+async function addGraceNote() {
+  const d = await mark("grace", { add: "1" }, "Grace note added");
+  if (!d) return;
+  // Picked up, so that the arrows move the note just written rather than
+  // whatever was in hand before it.
+  const sel = state.selection;
+  if (sel && d.ord !== undefined) {
+    state.selection = { ...sel, grace: d.ord };
+    markSelection();
+  }
 }
 
 async function setGlissando(what) {
@@ -17049,6 +17074,7 @@ const MENU_ICONS = {
   "arpeggio-down": "\ue635",       // arpeggiatoDown
   "gliss": "\ue585",               // glissandoUp
   "grace": "\ue560",               // graceNoteAcciaccaturaStemUp
+  "grace-add": "\ue564",           // graceNoteSlashStemUp
   "grace-appoggiatura": "\ue562",  // graceNoteAppoggiaturaStemUp
   "group-brace": "\ue000",         // brace
   "group-bracket": "\ue002",       // bracket

@@ -11,8 +11,11 @@
 package app
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
+	gscorefmt "github.com/stricaud/gscore/internal/format/gscore"
 	"github.com/stricaud/gscore/internal/model"
 )
 
@@ -143,5 +146,68 @@ func TestASilentBarWithAMarkInItIsStillASilentBar(t *testing.T) {
 	}
 	if _, ok := els[1].(*model.SymbolElement); !ok {
 		t.Error("the mark was lost")
+	}
+}
+
+/*
+ * And a file that is already wrong is mended on the way in.
+ *
+ * Setting the meter mends the bars, but a score saved before that was
+ * written is saved wrong, and nobody is going to set a meter that is
+ * already right in order to repair it. "I just opened the file and did a
+ * pdf export. The first measure is still with stuff it should not have."
+ */
+
+// writeAndOpen saves a score and opens it in a fresh editor, as though the
+// program had been closed and started again.
+func writeAndOpen(t *testing.T, h *harness) *harness {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "silence.gscore")
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := gscorefmt.Write(f, h.app.score, h.app.symbols); err != nil {
+		t.Fatal(err)
+	}
+	f.Close()
+
+	open := newHarness(t)
+	if err := open.app.openPath(path); err != nil {
+		t.Fatal(err)
+	}
+	return open
+}
+
+func TestOpeningAFileMendsARestLongerThanItsBar(t *testing.T) {
+	h := barsOfSilence(t, 6, 4, 3)
+	// The meter is changed under the rests without going through the
+	// endpoint that re-measures them, which is how a file saved by an
+	// older version came to hold this.
+	h.app.score.Parts[0].Time = model.TimeSignature{Beats: 4, BeatValue: 4}
+
+	open := writeAndOpen(t, h)
+	for i := 0; i < 3; i++ {
+		if got := restOf(t, open, i).Dur; got != (model.Duration{Num: 1, Den: 1}) {
+			t.Errorf("bar %d opened at %v, want a whole bar of four-four",
+				i+1, got)
+		}
+	}
+}
+
+func TestOpeningAFileLeavesAShortBarAlone(t *testing.T) {
+	// The other half of the repair, which opening does not make. Without a
+	// mark for a pickup, an incomplete bar is written by having less in it,
+	// so a bar holding one short rest may be exactly what somebody meant —
+	// and lengthening it on open would quietly add a beat to their music.
+	h := barsOfSilence(t, 4, 4, 2)
+	h.app.score.Parts[0].Measures[0].Voices[0].Elements = []model.Element{
+		&model.Rest{Dur: model.Duration{Num: 1, Den: 4}},
+	}
+
+	open := writeAndOpen(t, h)
+	if got := restOf(t, open, 0).Dur; got != (model.Duration{Num: 1, Den: 4}) {
+		t.Errorf("the short bar opened at %v, want the quarter it was saved as",
+			got)
 	}
 }

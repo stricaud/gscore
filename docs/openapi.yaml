@@ -498,6 +498,14 @@ paths:
           in: query
           description: "`0` leaves out the page numbers."
           schema: { type: string, enum: ["0", "1"] }
+        - name: cover
+          in: query
+          description: |
+            `0` leaves out the cover page, for a score that has one — a
+            working copy rather than the one somebody is handed. No effect
+            on a score with no cover. The stamp in the bottom margin of the
+            last page is always printed.
+          schema: { type: string, enum: ["0", "1"] }
       responses:
         "200":
           description: The PDF.

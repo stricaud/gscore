@@ -67,6 +67,20 @@ type Options struct {
 	Cover *model.Artwork
 	Stamp *model.Artwork
 
+	// OmitCover leaves the cover out of this one export, for a score that
+	// has one.
+	//
+	// A cover is wanted when the PDF is the thing somebody is handed, and
+	// unwanted when it is a working copy — read at a stand, marked up, sent
+	// to be looked over — and which of the two an export is is not
+	// something the score can know. The alternative is taking the cover out
+	// of the score to get a PDF without one and putting it back afterwards,
+	// which is editing the piece to change how one copy of it prints.
+	//
+	// Only the cover, because only the cover is a page of its own. The
+	// stamp sits in the bottom margin, out of the way of the music.
+	OmitCover bool
+
 	// Title, Author and Subject go in the document's own properties, which is
 	// what a library or a file manager shows.
 	Title, Author, Subject string

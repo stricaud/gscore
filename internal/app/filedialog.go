@@ -591,6 +591,11 @@ func (a *App) renderPDF(w io.Writer, r *http.Request) error {
 		popt = popt.Landscape()
 	}
 	popt.PageNumbers = q.Get("pagenumbers") != "0"
+	// The cover is printed unless this export says not to. A score that
+	// has no cover is unaffected either way; one that has is asked about,
+	// because a working copy and a copy somebody is handed are not the
+	// same document. See pdf.Options.OmitCover.
+	popt.OmitCover = q.Get("cover") == "0"
 
 	eopt := engrave.DefaultOptions()
 	eopt.Mode = engrave.Paginated

@@ -36,6 +36,7 @@ import (
 	gpdf "github.com/stricaud/gscore/internal/render/pdf"
 	"github.com/stricaud/gscore/internal/render/svg"
 	"github.com/stricaud/gscore/internal/smufl"
+	"github.com/stricaud/gscore/internal/symbol"
 	"github.com/stricaud/gscore/internal/version"
 
 	// Importers register themselves, which is what replaces the dlopen
@@ -214,7 +215,7 @@ func main() {
 		}
 		fmt.Printf("wrote %s\n", *convert)
 	case *out != "":
-		if err := renderFile(score, *out, *strip, *space, *landscape,
+		if err := renderFile(score, symbolsIn(path), *out, *strip, *space, *landscape,
 			*fontURL, *scriptURL, *soundFont, *audioURL, *bands, !*noPlay); err != nil {
 			fmt.Fprintf(os.Stderr, "gscore: %v\n", err)
 			os.Exit(1)
@@ -458,12 +459,40 @@ func sayIfDivided(s *model.Score, lay *engrave.Layout, popt gpdf.Options) {
 	}
 }
 
+// symbolsIn reads the drawings a .gscore file carries beside its music.
+//
+// A symbol is a mark the music font does not have — a fingering chart, a
+// publisher's device, a sign somebody drew — and the score names it rather
+// than containing it, so a renderer handed the music alone has the name and
+// no way to draw it. The editor reads them when it opens a file; -o did not,
+// and quietly left every one of them out of the PDF. The score looked right
+// on screen and came off the command line with a hole in it.
+//
+// Nil for a file that is not a .gscore or has no drawings in it, which is
+// most of them and is what the renderers expect.
+func symbolsIn(path string) *symbol.Registry {
+	if path == "" {
+		return nil
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return nil
+	}
+	defer f.Close()
+	reg, err := gscorefmt.ReadSymbols(f)
+	if err != nil {
+		return nil
+	}
+	return reg
+}
+
 // renderFile engraves a score to a drawing, in whichever format the name asks
 // for.
 //
 // PDF is paginated whatever -strip says: a continuous strip has no page breaks
 // to print at, and a PDF is pages or it is nothing.
-func renderFile(s *model.Score, path string, strip bool, space float64,
+func renderFile(s *model.Score, syms *symbol.Registry, path string,
+	strip bool, space float64,
 	landscape bool, fontURL, scriptURL, soundFont, audioURL string,
 	bands int, play bool) error {
 	ext := strings.ToLower(filepath.Ext(path))
@@ -520,6 +549,7 @@ func renderFile(s *model.Score, path string, strip bool, space float64,
 	eopt.ShowPartNames = len(s.Parts) > 1
 
 	popt := gpdf.DefaultOptions()
+	popt.Symbols = syms
 	if wantPDF {
 		popt.Title = s.Identity.Title
 		popt.Author = s.Identity.Composer
@@ -559,6 +589,7 @@ func renderFile(s *model.Score, path string, strip bool, space float64,
 
 	ropt := svg.DefaultOptions()
 	ropt.StaffSpace = space
+	ropt.Symbols = syms
 
 	if wantPage {
 		// A page any browser opens: the music drawn, and a player to hear

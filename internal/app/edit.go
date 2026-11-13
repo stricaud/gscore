@@ -5885,6 +5885,34 @@ func (a *App) handleClearMeasure(w http.ResponseWriter, r *http.Request) {
 // Only a bar whose whole content is a single rest. A rest standing among
 // notes is a rest of its own length and means what it says.
 func relengthWholeBarRests(s *model.Score) int {
+	return eachWholeBarRest(s, func(r *model.Rest, bar model.Duration) bool {
+		return r.Dur.Cmp(bar) != 0
+	})
+}
+
+// trimOverlongBarRests shortens a bar of silence that is longer than its bar,
+// and leaves a short one alone.
+//
+// This is the half of the repair that is safe to make without being asked,
+// which is why opening a file makes it. A rest longer than the bar it is in
+// cannot be right under any reading: the bar is overfull, so the barline is
+// pushed out past where every other staff draws it and the rest prints with
+// an augmentation dot. There is nothing to lose by mending it.
+//
+// A rest shorter than its bar is a different matter. Without a mark for a
+// pickup, an incomplete bar is written by having less in it — so a bar
+// holding one short rest may be exactly what somebody meant, and lengthening
+// it on open would quietly add a beat to their music. That one waits for the
+// meter to be set, which is somebody saying what the bars are.
+func trimOverlongBarRests(s *model.Score) int {
+	return eachWholeBarRest(s, func(r *model.Rest, bar model.Duration) bool {
+		return r.Dur.Cmp(bar) > 0
+	})
+}
+
+// eachWholeBarRest re-measures every bar of silence that when picks out, and
+// reports how many it changed.
+func eachWholeBarRest(s *model.Score, when func(*model.Rest, model.Duration) bool) int {
 	fixed := 0
 	for _, p := range s.Parts {
 		for mi, m := range p.Measures {
@@ -5923,7 +5951,7 @@ func relengthWholeBarRests(s *model.Score) int {
 			if lasting != 1 {
 				only = nil
 			}
-			if only == nil || only.Dur.Cmp(bar) == 0 {
+			if only == nil || !when(only, bar) {
 				continue
 			}
 			only.Dur = bar

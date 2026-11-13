@@ -1631,6 +1631,12 @@
       <label><input type="checkbox" id="print-numbers" checked>
         <span><b>Number the pages</b><em>“2/5” along the foot. Counted within each
           part, so a player can tell they have all of theirs.</em></span></label>
+      <!-- Shown only where there is a cover to leave out. A choice about
+           something the score does not have is a line to read and dismiss. -->
+      <label id="print-cover-row" hidden><input type="checkbox" id="print-cover" checked>
+        <span><b>Cover page</b><em>The picture set in Score Setup, as the first
+          page. Turn it off for a working copy — one to read at a stand, mark up,
+          or send to somebody to look over.</em></span></label>
     </div>
     <div class="ask-buttons">
       <button value="ok" type="submit" class="primary">Print</button>

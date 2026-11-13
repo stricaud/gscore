@@ -687,6 +687,7 @@ const MESSAGES = {
   "Zoom": "Zoom",
   "Zoom in": "Agrandir",
   "Zoom out": "Réduire",
+  "The picture set in Score Setup, as the first page. Turn it off for a working copy — one to read at a stand, mark up, or send to somebody to look over.": "L’image définie dans Réglages de la partition, en première page. À désactiver pour une copie de travail — à lire au pupitre, à annoter, ou à envoyer à quelqu’un pour relecture.",
   "“2/5” along the foot. Counted within each part, so a player can tell they have all of theirs.": "« 2/5 » en bas de page. Compté dans chaque partie, pour qu’un musicien voie qu’il a bien toute la sienne.",
   "Instrument lines per system": "Lignes d'instruments par système",
   "Read again": "Relire",

@@ -2661,6 +2661,7 @@ async function exportPDF() {
   if (!choice.pageNumbers) q.set("pagenumbers", "0");
   if (choice.multiRests) q.set("multirest", "1");
   if (choice.concert) q.set("concert", "1");
+  if (choice.cover === false) q.set("cover", "0");
 
   if (state.info?.local) {
     let res = await saveRequest(q.toString(), "Writing the file…");
@@ -14140,7 +14141,8 @@ async function printScore() {
       window.webkit.messageHandlers.gscore.postMessage("print:/api/pdf?what=" +
         encodeURIComponent(choice.what) +
         (choice.multiRests ? "&multirest=1" : "") +
-        (choice.concert ? "&concert=1" : ""));
+        (choice.concert ? "&concert=1" : "") +
+        (choice.cover === false ? "&cover=0" : ""));
       status("Opening the print panel…");
       return;
     }
@@ -14175,6 +14177,19 @@ async function printScore() {
   status("Ready");
 }
 
+// nativePDFPrint says the print command will print gscore's own PDF rather
+// than hand the browser a drawing of the music.
+//
+// It decides whether printing is asked about the cover. The cover is a page
+// of the PDF and of nothing else: the browser's print view is the music
+// alone, so there is nothing there to leave in or out — but the application
+// prints the engraved PDF, where the cover is the first sheet that comes out
+// of the printer and somebody had better have been asked.
+function nativePDFPrint() {
+  return !!(state.info?.local && state.info?.native &&
+            window.gscoreNativePrint && window.webkit?.messageHandlers?.gscore);
+}
+
 // askPrint shows the choices that apply to this file and nothing else.
 //
 // It answers with an object rather than a string because the paper is a
@@ -14201,6 +14216,12 @@ function askPrint(many, parts, title, verb, paper) {
   // is not asking for them by opening this.
   $("#print-multirest").checked = !!state.view.multirest;
   $("#print-concert").checked = !!state.view.concert;
+  // The cover, where the score has one and the pages are gscore's to lay
+  // out. Printing goes through the system's dialog from a drawing of the
+  // music alone, so there is no cover there to leave in or out.
+  const hasCover = (paper || nativePDFPrint()) && !!state.info?.cover;
+  $("#print-cover-row").hidden = !hasCover;
+  if (hasCover) $("#print-cover").checked = true;
 
   return new Promise((resolve) => {
     const done = () => {
@@ -14216,6 +14237,9 @@ function askPrint(many, parts, title, verb, paper) {
         pageNumbers: !paper || $("#print-numbers").checked,
         multiRests: $("#print-multirest").checked,
         concert: $("#print-concert").checked,
+        // True where there is nothing to decide, so the caller can send
+        // the answer without asking again whether it applies.
+        cover: !hasCover || $("#print-cover").checked,
       });
     };
     dlg.addEventListener("close", done);

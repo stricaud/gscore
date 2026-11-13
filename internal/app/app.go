@@ -1288,6 +1288,15 @@ func nameTheStaves(s *model.Score) bool {
 }
 
 func (a *App) setBook(scores []*model.Score, filename string, err error) {
+	// A bar of silence longer than the bar it stands in is mended on the
+	// way in. It is the one repair that needs nobody's permission — a rest
+	// that does not fit cannot be anybody's intention — and it is made here
+	// because this is the single door every opened score comes through,
+	// whichever format it was read from and however it was opened. See
+	// trimOverlongBarRests, which says why the opposite case waits.
+	for _, s := range scores {
+		trimOverlongBarRests(s)
+	}
 	a.book = scores
 	a.current = 0
 	a.score = scores[0]

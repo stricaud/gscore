@@ -171,7 +171,9 @@ func (p *placed) marks() *model.Marks {
 // beamable reports whether the element can carry a beam: a note or chord of an
 // eighth or shorter. Rests and longer notes break a group.
 func (p *placed) beamable() bool {
-	if p.rest != nil {
+	// A beam joins stems, so anything with no stem to join breaks the
+	// group: a rest, and a symbol standing in the bar on its own.
+	if p.rest != nil || p.symbol != nil {
 		return false
 	}
 	// A note in a two-note tremolo carries beams of its own, drawn between
@@ -363,9 +365,7 @@ func (e *engraver) drawMeasure(part *model.Part, b measureBox, x, end float64, s
 	// Only p.x moves. The bar is as wide as it was and the music still ends
 	// where it ended, so nothing the skyline or the next bar depends on
 	// changes.
-	if len(items) == 1 && items[0].rest != nil && !items[0].rest.Hidden &&
-		!b.ahead && barIsFull(part, b) {
-		p := items[0]
+	if p := soleRest(items); p != nil && !b.ahead && barIsFull(part, b) {
 		// The same test says which sign to draw as says where to draw it:
 		// a bar whose whole content is one rest is a silent bar, and a
 		// silent bar is a semibreve rest in the middle of it. See
@@ -554,6 +554,37 @@ func (e *engraver) drawMeasure(part *model.Part, b measureBox, x, end float64, s
 		})
 	}
 	return end
+}
+
+// soleRest is the rest that is the whole of a bar's silence, if there is one.
+//
+// "The whole of it" counts what lasts. A bar may hold marks that take no
+// time as well — a sign standing in the voice on its own, put where somebody
+// wanted it rather than onto a note — and a sign is not music: a bar with a
+// rest and a drawing in it is still a silent bar.
+//
+// Counted as content, the drawing made the bar look occupied, and the rest
+// then missed both halves of what a whole-bar rest gets: it was not centred,
+// and it was not written as a semibreve but at whatever length it literally
+// held. In a score whose bars of silence had gone stale at a dotted whole,
+// the one bar carrying a symbol was the one bar that printed the dot —
+// hard against the clef — while every other bar of the same silence came out
+// right. Reported as "why do I have a dot on my rest".
+func soleRest(items []*placed) *placed {
+	var only *placed
+	for _, p := range items {
+		if p.symbol != nil {
+			continue
+		}
+		if only != nil {
+			return nil // two things that last: not a silent bar
+		}
+		only = p
+	}
+	if only == nil || only.rest == nil || only.rest.Hidden {
+		return nil
+	}
+	return only
 }
 
 // barIsFull reports whether a bar already holds as much time as its meter
@@ -1545,7 +1576,14 @@ func (e *engraver) drawStemsAndBeams(items []*placed, t model.TimeSignature) {
 	}
 
 	for _, p := range items {
-		if p.rest != nil || inGroup[p] {
+		// Nothing without a notehead has a stem. A rest plainly has none,
+		// and neither has a symbol standing in the bar on its own: it is a
+		// sign somebody drew, not a note. It is placed like one, so that it
+		// has somewhere to stand against the staff — and being placed like
+		// one it was given a quarter note's stem as well, drawn from the
+		// middle line down past the bottom of the staff with nothing on the
+		// end of it. A stroke through the bar, growing out of thin air.
+		if p.rest != nil || p.symbol != nil || inGroup[p] {
 			continue
 		}
 		// On the staff it is drawn on, which for a note written across

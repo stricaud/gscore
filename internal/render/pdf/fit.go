@@ -75,6 +75,12 @@ func Fit(s *model.Score, o Options, eo engrave.Options) (Options, engrave.Option
 	// each caller to remember, the cover would be in the file and missing
 	// from half the ways of printing it.
 	o.Cover, o.Stamp = s.Cover, s.Stamp
+	// Unless this export was asked for without it. The flag survives the
+	// line above rather than being read before it, so that "no cover" means
+	// no cover whatever the score turns out to be carrying.
+	if o.OmitCover {
+		o.Cover = nil
+	}
 	// Three goes at it. Shrinking the type lengthens the line, which puts
 	// more bars in a system and can change what has to be written above it,
 	// so the height is not quite settled until it has been engraved at the

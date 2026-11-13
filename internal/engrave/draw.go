@@ -2786,6 +2786,7 @@ func (e *engraver) drawArticulations(m *model.Marks, x float64, lo, hi int, stem
 		// selected, highlighted and dragged like anything else drawn.
 		e.lay.Glyphs = append(e.lay.Glyphs, Glyph{
 			Name: sm.Name, X: x + sm.OffsetX, Y: y + sm.OffsetY, Ref: ref,
+			Scale: sm.ScaleOr1(),
 		})
 		if above {
 			y -= gap
@@ -2816,10 +2817,11 @@ func (e *engraver) drawLoneSymbol(p *placed) {
 		y = e.y + e.staffH() + symbolRise
 	}
 	e.lay.Glyphs = append(e.lay.Glyphs, Glyph{
-		Name: sm.Name,
-		X:    p.x + sm.OffsetX,
-		Y:    y + sm.OffsetY,
-		Ref:  p.index,
+		Name:  sm.Name,
+		X:     p.x + sm.OffsetX,
+		Y:     y + sm.OffsetY,
+		Ref:   p.index,
+		Scale: sm.ScaleOr1(),
 	})
 }
 

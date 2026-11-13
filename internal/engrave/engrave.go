@@ -53,6 +53,24 @@ type Glyph struct {
 	// one thing they are not; a player seeing them in print would look for
 	// what they mean.
 	Colour string `json:"colour,omitempty"`
+
+	// Scale multiplies the size a hand-drawn symbol is drawn at, 0 and 1
+	// both meaning "as it was made".
+	//
+	// Beside Size rather than folded into it because they are different
+	// questions. Size is the type size of a glyph out of the music font,
+	// and a user's symbol has none — it is a picture or an outline with a
+	// size of its own, in staff spaces, and what this says is how much of
+	// that to draw. The renderers read it; nothing else does.
+	Scale float64 `json:"scale,omitempty"`
+}
+
+// ScaleOr1 is the multiplier to draw this glyph at, with zero read as 1.
+func (g Glyph) ScaleOr1() float64 {
+	if g.Scale <= 0 {
+		return 1
+	}
+	return g.Scale
 }
 
 // Beams returns the beams of a drawing.

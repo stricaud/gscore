@@ -625,6 +625,9 @@ func (a *App) APIRoutes(mux *http.ServeMux) {
 		"/api/arpeggio":         a.handleArpeggio,
 		"/api/grace":            a.handleGrace,
 		"/api/pairnotation":     a.handlePairNotation,
+		"/api/cover":            a.handleCover,
+		"/api/symbolscale":      a.handleScaleSymbol,
+		"/api/stamp":            a.handleStamp,
 		"/api/glissando":        a.handleGlissando,
 		"/api/ending":           a.handleEnding,
 		"/api/jump":             a.handleJump,
@@ -948,6 +951,13 @@ type info struct {
 	ComposerRuns []model.Span `json:"composerRuns,omitempty"`
 	ArrangerRuns []model.Span `json:"arrangerRuns,omitempty"`
 	LyricistRuns []model.Span `json:"lyricistRuns,omitempty"`
+
+	// Cover and Stamp say what pictures the score is carrying — what kind
+	// of file and how big — without sending the pictures themselves. The
+	// dialog needs to say "there is a cover already"; it does not need
+	// eight megabytes to say it.
+	Cover *artworkInfo `json:"cover,omitempty"`
+	Stamp *artworkInfo `json:"stamp,omitempty"`
 	// Sent so the window that edits it can open on what is there. Left
 	// out, the box came up empty and saving wrote that emptiness back.
 	Copyright string `json:"copyright"`
@@ -1111,6 +1121,8 @@ func (a *App) handleInfo(w http.ResponseWriter, r *http.Request) {
 		ComposerRuns: a.score.Identity.ComposerRuns,
 		ArrangerRuns: a.score.Identity.ArrangerRuns,
 		LyricistRuns: a.score.Identity.LyricistRuns,
+		Cover:        artworkInfoOf(a.score.Cover),
+		Stamp:        artworkInfoOf(a.score.Stamp),
 		Copyright:    a.score.Identity.Copyright,
 		Tags:         append([]string{}, a.score.Tags...),
 		Description:  a.score.Description,

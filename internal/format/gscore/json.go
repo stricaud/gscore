@@ -337,6 +337,10 @@ type symbolRef struct {
 	Placement string  `json:"placement,omitempty"`
 	OffsetX   float64 `json:"offsetX,omitempty"`
 	OffsetY   float64 `json:"offsetY,omitempty"`
+	// Scale is how much larger this one is drawn than the symbol was
+	// made. Left out where nobody has resized it, which is nearly every
+	// placement of nearly every symbol.
+	Scale float64 `json:"scale,omitempty"`
 }
 
 type marksDoc struct {
@@ -774,6 +778,7 @@ func encodeElement(el model.Element) elemDoc {
 		return elemDoc{Kind: "symbol", Symbol: &symbolRef{
 			Name: e.Symbol.Name, Placement: placementNames[e.Symbol.Placement],
 			OffsetX: e.Symbol.OffsetX, OffsetY: e.Symbol.OffsetY,
+			Scale: e.Symbol.Scale,
 		}}
 	}
 	return elemDoc{Kind: "rest", Dur: "0/1"}
@@ -847,7 +852,7 @@ func encodeMarks(m *model.Marks) *marksDoc {
 	for _, s := range m.Symbols {
 		out.Symbols = append(out.Symbols, symbolRef{
 			Name: s.Name, Placement: placementNames[s.Placement],
-			OffsetX: s.OffsetX, OffsetY: s.OffsetY,
+			OffsetX: s.OffsetX, OffsetY: s.OffsetY, Scale: s.Scale,
 		})
 	}
 	if m.Tuplet != nil {
@@ -1211,6 +1216,7 @@ func decodeElement(ed elemDoc) (model.Element, error) {
 		return &model.SymbolElement{Symbol: model.SymbolMark{
 			Name: ed.Symbol.Name, Placement: placementValues[ed.Symbol.Placement],
 			OffsetX: ed.Symbol.OffsetX, OffsetY: ed.Symbol.OffsetY,
+			Scale: ed.Symbol.Scale,
 		}}, nil
 	}
 	return nil, fmt.Errorf("gscore: unknown element kind %q", ed.Kind)
@@ -1290,7 +1296,7 @@ func decodeMarks(md *marksDoc, m *model.Marks) {
 	for _, s := range md.Symbols {
 		m.Symbols = append(m.Symbols, model.SymbolMark{
 			Name: s.Name, Placement: placementValues[s.Placement],
-			OffsetX: s.OffsetX, OffsetY: s.OffsetY,
+			OffsetX: s.OffsetX, OffsetY: s.OffsetY, Scale: s.Scale,
 		})
 	}
 	if md.Tuplet != nil && md.Tuplet.Actual > 0 && md.Tuplet.Normal > 0 {

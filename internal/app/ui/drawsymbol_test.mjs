@@ -198,8 +198,75 @@ test("both ways in share the one piece of code", () => {
 test("the picture fills the canvas and offers a name", () => {
   const body = grab("usePicture");
   assert.match(body, /drawInit\(/);
-  assert.match(body, /draw\.pixels\[y \* draw\.size \+ x\]/);
+  assert.match(body, /draw\.pixels\[/);
   assert.match(body, /drawRender\(\)/);
   // The name is only a suggestion: one already typed is not overwritten.
   assert.match(body, /if \(!\$\("#sym-name"\)\.value && named\)/);
+});
+
+test("the picture is centred in the grid, not jammed into the corner", () => {
+  // A picture scaled to fit is as wide or as tall as the grid and rarely
+  // both, so there is a spare band — and it belongs on both sides.
+  const body = grab("usePicture");
+  assert.match(body, /offX/);
+  assert.match(body, /offY/);
+  assert.match(body, /draw\.size - d\.w/);
+  assert.match(body, /draw\.size - d\.h/);
+});
+
+test("the size selector zooms the picture instead of discarding it", () => {
+  // With a picture in hand, choosing a bigger grid asks for the picture
+  // again at that size. Before this it cleared the grid, so the only way
+  // to see an imported symbol larger was to import it a second time.
+  const body = grab("refitPicture");
+  assert.match(body, /fit=/);
+  assert.match(body, /draw\.picture/);
+  // And the name already typed survives the zoom.
+  assert.match(body, /\$\("#sym-name"\)\.value/);
+  assert.match(src, /if \(await refitPicture\(size\)\) return;/);
+});
+
+test("a picture is asked for at the size the grid is set to", () => {
+  // Rather than at its own size and then cut down: the server does the
+  // scaling, where there is a real picture to average rather than a grid
+  // of ink and nothing.
+  assert.match(src, /\/api\/symbolimport\?fit=/);
+});
+
+test("emptying the grid forgets the picture", () => {
+  // Otherwise the next change of size would bring back a picture somebody
+  // had just cleared.
+  assert.match(src, /draw\.picture = null;/);
+});
+
+/*
+ * Both ways of choosing a picture ask for it at the size the grid is set
+ * to, and both keep the bytes so the size selector can ask again.
+ *
+ * Only the browser's half was given a size at first. In the native window
+ * the picture goes through the platform's dialog, so it came back at its
+ * own size and was laid into the grid corner-first — a wide drawing
+ * arrived as its left-hand end — and the page never saw the bytes, so the
+ * selector had nothing to re-fit. Reported as "I import a picture for my
+ * symbol I am seeing this and I cannot use it, zoom / unzoom etc."
+ */
+
+test("the platform's dialog is asked for a size too", () => {
+  const body = grab("importPicture");
+  assert.match(body, /picture=1&fit=/);
+  assert.match(body, /#sym-size/);
+});
+
+test("a picture picked through the dialog keeps its bytes", () => {
+  // Otherwise the size selector has nothing to ask again with, and the
+  // only way to see it larger is to find the file a second time.
+  const body = grab("importPicture");
+  assert.match(body, /d\.source/);
+  assert.match(body, /draw\.picture = \{/);
+});
+
+test("the grid selector shows the grid that is actually there", () => {
+  // It used to go on showing whatever it was set to while the grid under
+  // it was another size, so a window saying "16 x 16" was drawn on 48.
+  assert.match(grab("usePicture"), /\$\("#sym-size"\)\.value = String\(size\)/);
 });

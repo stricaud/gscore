@@ -7763,7 +7763,11 @@ const setDeadNote = () =>
 // could edit in a text editor. This is that, with a mouse: the only way to get
 // a mark onto the page that no music font carries.
 
-const draw = { size: 16, pixels: null, scale: 0.125, painting: false, erase: false };
+// picture is the file an imported symbol was made from, kept so that the
+// size selector can ask for it again at another size. Cleared when the grid
+// is emptied, because then there is nothing to zoom.
+const draw = { size: 16, pixels: null, scale: 0.125, painting: false,
+  erase: false, picture: null };
 
 function drawInit(size) {
   draw.size = size;
@@ -7832,9 +7836,19 @@ function setupDrawing() {
   });
   c.addEventListener("pointerup", () => { draw.painting = false; });
 
-  $("#sym-size").addEventListener("change", (e) => drawInit(Number(e.target.value)));
+  $("#sym-size").addEventListener("change", async (e) => {
+    const size = Number(e.target.value);
+    // With a picture in hand the size is how large to draw it, not a
+    // reason to throw it away: refitPicture asks for it again at that
+    // size and only an empty grid starts over.
+    if (await refitPicture(size)) return;
+    drawInit(size);
+  });
   $("#sym-scale").addEventListener("change", (e) => { draw.scale = Number(e.target.value); });
-  $("#sym-clear").addEventListener("click", () => drawInit(draw.size));
+  $("#sym-clear").addEventListener("click", () => {
+    draw.picture = null;
+    drawInit(draw.size);
+  });
   $("#sym-import").addEventListener("click", () => void importPicture());
 
   $("#pack-file").addEventListener("change", async (e) => {
@@ -7854,14 +7868,17 @@ function setupDrawing() {
   $("#sym-file").addEventListener("change", async (e) => {
     const file = e.target.files[0];
     if (!file) return;
-    const res = await fetch("/api/symbolimport", {
-      method: "POST",
-      body: await file.arrayBuffer(),
-    });
+    const bytes = await file.arrayBuffer();
+    const res = await fetch(
+      "/api/symbolimport?fit=" + encodeURIComponent($("#sym-size").value),
+      { method: "POST", body: bytes });
     if (!res.ok) {
       status("Could not read that picture: " + (await res.text()).trim());
       return;
     }
+    // Kept, so the size selector can ask for it again at another size
+    // without the file being found a second time.
+    draw.picture = { bytes, name: file.name };
     usePicture(await res.json(), file.name);
     e.target.value = "";
   });
@@ -7879,10 +7896,22 @@ function setupDrawing() {
 // why. The same route the symbol packs already take.
 async function importPicture() {
   if (state.info?.local) {
-    const res = await fetch("/api/pickfile?picture=1", { method: "POST" });
+    // Fitted to the grid that is set, the same as the file box asks for.
+    // Without it the picture came back at its own size and was laid into
+    // the grid corner-first, so a wide drawing arrived as its left-hand
+    // end — which is what it did, because only the browser's half of this
+    // was given a size to fit.
+    const res = await fetch(
+      "/api/pickfile?picture=1&fit=" + encodeURIComponent($("#sym-size").value),
+      { method: "POST" });
     if (res.ok) {
       const d = await res.json();
       if (!d.cancelled) {
+        // The bytes come back with it, so the size selector can ask for
+        // the picture again without the dialog opening a second time.
+        if (d.source) {
+          draw.picture = { bytes: base64Bytes(d.source), name: d.name || "" };
+        }
         usePicture(d, d.name || "");
       } else {
         status("Ready");
@@ -7897,13 +7926,24 @@ async function importPicture() {
 
 // usePicture puts an imported picture onto the drawing canvas.
 function usePicture(d, filename) {
-  // Fit the imported picture into a grid the editor offers.
+  // The grid it came back fitted to, or the smallest the editor offers
+  // that holds it whole.
   const n = Math.max(d.w, d.h);
   const choices = [12, 16, 24, 32, 48].filter((v) => v >= n);
-  drawInit(choices.length ? choices[0] : 48);
-  for (let y = 0; y < d.h && y < draw.size; y++) {
-    for (let x = 0; x < d.w && x < draw.size; x++) {
-      draw.pixels[y * draw.size + x] = d.pixels[y * d.w + x];
+  const size = choices.length ? choices[0] : 48;
+  drawInit(size);
+  // And the selector says so. It used to go on showing whatever it was
+  // set to while the grid under it was another size entirely, which is
+  // how a window saying "16 x 16" came to be drawn on a grid of 48.
+  $("#sym-size").value = String(size);
+  // Centred in the grid rather than jammed into the corner: a picture
+  // scaled to fit is as wide or as tall as the grid but rarely both, and
+  // the spare band belongs on both sides of it.
+  const offX = Math.max(0, Math.floor((draw.size - d.w) / 2));
+  const offY = Math.max(0, Math.floor((draw.size - d.h) / 2));
+  for (let y = 0; y < d.h && y + offY < draw.size; y++) {
+    for (let x = 0; x < d.w && x + offX < draw.size; x++) {
+      draw.pixels[(y + offY) * draw.size + x + offX] = d.pixels[y * d.w + x];
     }
   }
   if (d.pixelSize) {
@@ -7914,8 +7954,38 @@ function usePicture(d, filename) {
   if (!$("#sym-name").value && named) $("#sym-name").value = named;
   drawRender();
   status(filename
-    ? "Imported " + filename + " — edit and save"
-    : "Imported — edit and save");
+    ? `Imported ${filename} at ${d.w}\u00d7${d.h} — name it and save`
+    : `Imported at ${d.w}\u00d7${d.h} — name it and save`);
+}
+
+// base64Bytes turns what the server sent back into bytes to post again.
+function base64Bytes(b64) {
+  const bin = atob(b64);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out.buffer;
+}
+
+// refitPicture brings the imported picture back at another size.
+//
+// The grid selector is the zoom once a picture is in: choosing a larger
+// grid asks the server for the picture scaled to it, rather than keeping
+// the pixels there are and surrounding them with empty squares. The bytes
+// are kept in the page so that zooming does not mean finding the file
+// again.
+async function refitPicture(size) {
+  if (!draw.picture) return false;
+  const res = await fetch("/api/symbolimport?fit=" + encodeURIComponent(size), {
+    method: "POST", body: draw.picture.bytes,
+  });
+  if (!res.ok) {
+    status("Could not read that picture: " + (await res.text()).trim());
+    return false;
+  }
+  const keep = $("#sym-name").value;
+  usePicture(await res.json(), draw.picture.name);
+  if (keep) $("#sym-name").value = keep;
+  return true;
 }
 
 // symbolNameIsFine clears the complaint about the name as soon as it is
@@ -10242,6 +10312,8 @@ async function setHeaderDialog() {
   richSet(richBoxes.composer, i.composerRuns, i.composer);
   richSet(richBoxes.arranger, i.arrangerRuns, i.arranger);
   richSet(richBoxes.lyricist, i.lyricistRuns, i.lyricist);
+  setupArtwork();
+  showArtwork(i);
   field("copyright", i.copyright);
   field("description", i.description);
   field("tags", (i.tags || []).join(", "));
@@ -10942,6 +11014,131 @@ async function chordSymbolDialog() {
     useName.checked && text !== ""
       ? (params.frame ? text + " with a diagram" : text)
       : "Chord diagram");
+}
+
+/*
+ * The cover and the stamp.
+ *
+ * Sent as they are picked rather than when the dialog is saved, because
+ * they are not words: a file is chosen once and either it is in the score
+ * or it is not, and holding it until Save would mean holding megabytes of
+ * picture in the page waiting for a button.
+ */
+
+// showArtwork says what the score is carrying, so the dialog does not open
+// with two empty file pickers and no way of telling whether there is a
+// cover already.
+// showOneArtwork says what one of the two is now.
+//
+// art is null where there is none: the field is left out of the score's
+// own answer when it is empty, so "absent" and "gone" have to be told
+// apart by the caller rather than guessed at here.
+function showOneArtwork(which, art) {
+  const el = $("#score-about-" + which + "-is");
+  if (el) {
+    el.textContent = art && art.format
+      ? `${art.format.toUpperCase()}, ${Math.round((art.bytes || 0) / 1024)} kB` +
+        " — choose another to replace it"
+      : (which === "cover" ? "No cover." : "No stamp.");
+  }
+  if (which === "stamp") {
+    const al = $("#score-about-stamp-align");
+    if (al) al.value = (art && art.align) || "center";
+  }
+}
+
+// showArtwork says what the score is carrying, from its own answer, where
+// a picture that is not there is a field that is not sent.
+function showArtwork(i) {
+  showOneArtwork("cover", i.cover || null);
+  showOneArtwork("stamp", i.stamp || null);
+}
+
+// sendArtwork puts one picture into the score.
+async function sendArtwork(which, file) {
+  if (!file) return;
+  const q = which === "stamp"
+    ? "?align=" + encodeURIComponent($("#score-about-stamp-align").value)
+    : "";
+  const res = await fetch(`/api/${which}${q}`,
+    { method: "POST", body: await file.arrayBuffer() });
+  if (!res.ok) {
+    status("Could not use it: " + (await res.text()).trim());
+    return;
+  }
+  const d = await res.json().catch(() => ({}));
+  showOneArtwork(which, { format: d.format, bytes: d.bytes, align: d.align });
+  status(which === "cover" ? "Cover page set" : "Final stamp set");
+}
+
+// pickArtwork asks for a picture and puts it into the score.
+//
+// Through the native dialog where there is one, exactly as the symbol
+// importer does. A hidden <input type="file"> does nothing at all in the
+// native window — the shell puts no panel up — so a bare file box sat
+// there doing nothing with no way to tell why. Reported as "I click on
+// Choose file and I don't see anything happening", which is precisely what
+// it looked like.
+async function pickArtwork(which) {
+  if (state.info?.local) {
+    const q = which === "stamp"
+      ? "&align=" + encodeURIComponent($("#score-about-stamp-align").value)
+      : "";
+    const res = await fetch(`/api/pickfile?artwork=${which}${q}`,
+      { method: "POST" });
+    if (res.ok) {
+      const d = await res.json();
+      if (d.cancelled) {
+        status("Ready");
+        return;
+      }
+      showOneArtwork(which, d);
+      status(which === "cover" ? "Cover page set" : "Final stamp set");
+      return;
+    }
+    // Served rather than local, or no dialog to be had: fall through to
+    // the file box, which is what a browser answers with.
+  }
+  $("#score-about-" + which).click();
+}
+
+// clearArtwork takes one away.
+async function clearArtwork(which) {
+  const res = await fetch(`/api/${which}?clear=1`, { method: "POST" });
+  if (!res.ok) {
+    status("Could not remove it: " + (await res.text()).trim());
+    return;
+  }
+  showOneArtwork(which, null);
+  status(which === "cover" ? "Cover removed" : "Stamp removed");
+}
+
+// setupArtwork wires the two pickers and the alignment, once.
+function setupArtwork() {
+  for (const which of ["cover", "stamp"]) {
+    const input = $("#score-about-" + which);
+    if (!input || input.dataset.wired) continue;
+    input.dataset.wired = "1";
+    input.onchange = async () => {
+      await sendArtwork(which, input.files && input.files[0]);
+      input.value = "";
+    };
+    const pick = $("#score-about-" + which + "-pick");
+    if (pick) pick.onclick = () => void pickArtwork(which);
+    const clear = $("#score-about-" + which + "-clear");
+    if (clear) clear.onclick = () => void clearArtwork(which);
+  }
+  const al = $("#score-about-stamp-align");
+  if (al && !al.dataset.wired) {
+    al.dataset.wired = "1";
+    // On its own, for a stamp already there: moving it from the middle to
+    // the right should not mean finding the file again.
+    al.onchange = async () => {
+      const res = await fetch("/api/stamp?align=" + encodeURIComponent(al.value),
+        { method: "POST" });
+      if (res.ok) status("Stamp moved");
+    };
+  }
 }
 
 // markChord writes the symbol where the selection says, which is the note
@@ -13793,11 +13990,21 @@ async function openKeyPicker(partIndex, at) {
     status("Could not set the key: " + (await res.text()).trim());
     return;
   }
+  const d = await res.json().catch(() => ({}));
   await reload();
   const named = keyOptions.find((k) => k.fifths === fifths);
+  const key = named ? named.major + " major" : "Key";
+  // What happened, not what was asked for. Setting a bar to the key
+  // already in force takes a change away rather than writing one, and
+  // saying "E major from measure 9" over a page that has lost its key
+  // change is how a change that worked looks like one that did not.
+  if (measure > 0 && d.written === 0 && d.removed > 0) {
+    status(`The key change at measure ${barNumberOf(measure)} is gone`);
+    return;
+  }
   status(measure > 0
-    ? `${named ? named.major + " major" : "Key"} from measure ${barNumberOf(measure)}, on every staff`
-    : `${named ? named.major + " major" : "Key"}, on every staff`);
+    ? `${key} from measure ${barNumberOf(measure)}, on every staff`
+    : `${key}, on every staff`);
 }
 
 // keyFifthsOf reads how many sharps or flats a staff has at a bar, out of the
@@ -16344,12 +16551,42 @@ function setupMarquee() {
 function setupSymbolDragging() {
   const wrap = $("#canvas-wrap");
   let dragging = null;
+  let resizing = null;
 
   wrap.addEventListener("pointerdown", (e) => {
     // Any drawn symbol, whichever way it was drawn. A grid comes out as
     // an <image> and an outline as a <path>, and asking only for the
     // first made every symbol from the folder unpickable — visible on
     // the page and deaf to the mouse.
+    // A corner square resizes what is already picked, rather than picking
+    // something up: the squares are drawn over the symbol and a press on
+    // one is a press about its size.
+    const grip = e.target.closest ? e.target.closest(".symbol-handle") : null;
+    if (grip && pickedSymbol && e.button === 0) {
+      const on = $("#canvas-wrap [data-symbol].picked");
+      if (on) {
+        e.preventDefault();
+        e.stopPropagation();
+        const box = on.getBBox();
+        resizing = {
+          el: on,
+          cx: box.x + box.width / 2,
+          cy: box.y + box.height / 2,
+          // How far the corner is from the middle now, and what that is a
+          // picture of: the ratio of the two is the new size.
+          from: Math.hypot(box.width / 2, box.height / 2),
+          was: Number(on.dataset.scale || 1) || 1,
+          // An outline is placed by a transform of its own, so the one
+          // that shows the resize is put in front of it rather than over
+          // it: written over, the symbol would jump to the top left
+          // corner of the page for as long as the drag lasted.
+          transform: on.getAttribute("transform") || "",
+        };
+        on.setPointerCapture(e.pointerId);
+        status("Resizing " + pickedSymbol.name);
+      }
+      return;
+    }
     const img = e.target.closest ? e.target.closest("[data-symbol]") : null;
     if (!img || e.button !== 0) return;
     const ref = Number(img.dataset.ref || 0);
@@ -16377,7 +16614,38 @@ function setupSymbolDragging() {
     status("Moving " + dragging.name);
   });
 
+  // Where a pointer is, in the drawing's own coordinates: the handles and
+  // the symbol live in the SVG, and the page is scrolled and zoomed under
+  // them.
+  const inDrawing = (e) => {
+    const svg = currentSVG();
+    if (!svg || !svg.getScreenCTM) return null;
+    const m = svg.getScreenCTM();
+    if (!m) return null;
+    const p = svg.createSVGPoint();
+    p.x = e.clientX;
+    p.y = e.clientY;
+    return p.matrixTransform(m.inverse());
+  };
+
   wrap.addEventListener("pointermove", (e) => {
+    if (resizing) {
+      const at = inDrawing(e);
+      if (!at) return;
+      // How far the pointer is from the middle, against how far the corner
+      // was: a drag outward makes it larger in proportion, which is what a
+      // corner handle means everywhere.
+      const now = Math.hypot(at.x - resizing.cx, at.y - resizing.cy);
+      if (resizing.from <= 0) return;
+      const k = Math.max(0.1, Math.min(10, now / resizing.from));
+      resizing.scale = resizing.was * k;
+      // Shown live from the middle, so it is clear what is happening
+      // before the score is drawn again from the model.
+      resizing.el.setAttribute("transform",
+        `translate(${resizing.cx},${resizing.cy}) scale(${k}) ` +
+        `translate(${-resizing.cx},${-resizing.cy}) ` + resizing.transform);
+      return;
+    }
     if (!dragging) return;
     // Moved live, so it is clear what is happening; the score is redrawn
     // from the model once the mark is let go.
@@ -16393,6 +16661,25 @@ function setupSymbolDragging() {
   });
 
   const drop = async (e) => {
+    if (resizing) {
+      const r = resizing;
+      resizing = null;
+      // Back to the transform it had, if it had one: the score is about
+      // to be drawn again from the model anyway, and an outline left
+      // without its own placement in the meantime jumps across the page.
+      if (r.transform) {
+        r.el.setAttribute("transform", r.transform);
+      } else {
+        r.el.removeAttribute("transform");
+      }
+      suppressClick = true;
+      if (!r.scale || Math.abs(r.scale - r.was) < 0.01) {
+        status("Ready");
+        return;
+      }
+      await setSymbolScale(Math.max(0.1, Math.min(10, r.scale)));
+      return;
+    }
     if (!dragging) return;
     const d = dragging;
     dragging = null;
@@ -16449,6 +16736,7 @@ function dropSymbol() {
 // markPickedSymbol outlines the one that is picked, so that it is clear
 // what the arrow keys are about to move.
 function markPickedSymbol() {
+  let on = null;
   $$("#canvas-wrap [data-symbol]").forEach((img) => {
     const where = elementByRef(Number(img.dataset.ref || 0));
     const mine = pickedSymbol && where &&
@@ -16457,7 +16745,97 @@ function markPickedSymbol() {
       where.index === pickedSymbol.index &&
       img.dataset.symbol === pickedSymbol.name;
     img.classList.toggle("picked", !!mine);
+    if (mine) on = img;
   });
+  drawSymbolHandles(on);
+}
+
+// drawSymbolHandles puts a square at each corner of the picked symbol.
+//
+// The outline already says which symbol the keys will move; the squares
+// say it can be resized, which nothing on the page said before. Drawn over
+// the music rather than built into the symbol, because they are not part
+// of the score: they come and go with the selection and never print.
+//
+// Corners and not edges. A symbol keeps its proportions — it is a drawing,
+// and a drawing stretched one way is a different drawing — so there is
+// only one number to change, and a corner is where a reader expects to
+// take hold of it.
+function drawSymbolHandles(img) {
+  const svg = currentSVG();
+  if (!svg) return;
+  svg.querySelectorAll(".symbol-handle").forEach((n) => n.remove());
+  if (!img) return;
+  let box;
+  try {
+    box = img.getBBox();
+  } catch (_) {
+    return; // not laid out yet; the next repaint will bring it back
+  }
+  if (!box || box.width <= 0 || box.height <= 0) return;
+  const r = Math.max(3, Math.min(6, box.width / 6));
+  for (const [cx, cy, corner] of [
+    [box.x, box.y, "nw"], [box.x + box.width, box.y, "ne"],
+    [box.x, box.y + box.height, "sw"],
+    [box.x + box.width, box.y + box.height, "se"],
+  ]) {
+    const h = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+    h.setAttribute("class", "symbol-handle");
+    h.setAttribute("x", String(cx - r / 2));
+    h.setAttribute("y", String(cy - r / 2));
+    h.setAttribute("width", String(r));
+    h.setAttribute("height", String(r));
+    h.dataset.corner = corner;
+    svg.appendChild(h);
+  }
+}
+
+// scaleSymbol makes the picked symbol larger or smaller.
+//
+// By a step of what it is now rather than to a size, so that the same press
+// does the same thing whatever the symbol is already at: a tenth larger is
+// a tenth larger at any size, where "to 1.1" would be a jump back to nearly
+// nothing for a mark somebody had made three times as big.
+//
+// Per placement. The symbol itself is untouched, so the same drawing
+// standing somewhere else on the page does not change.
+async function scaleSymbol(by) {
+  if (!pickedSymbol) return false;
+  const p = new URLSearchParams({
+    part: String(pickedSymbol.part), measure: String(pickedSymbol.measure),
+    at: String(pickedSymbol.index + 1), name: pickedSymbol.name,
+    by: by.toFixed(4),
+  });
+  const res = await fetch("/api/symbolscale?" + p, { method: "POST" });
+  if (!res.ok) {
+    status("Could not resize it: " + (await res.text()).trim());
+    return true;
+  }
+  const d = await res.json().catch(() => ({}));
+  await refreshScore();
+  markPickedSymbol();
+  status(`${pickedSymbol.name} at ${Math.round((d.scale || 1) * 100)}%`);
+  return true;
+}
+
+// setSymbolScale puts it at a size outright, which is what a handle
+// dragged across the page has worked out.
+async function setSymbolScale(scale) {
+  if (!pickedSymbol) return;
+  const p = new URLSearchParams({
+    part: String(pickedSymbol.part), measure: String(pickedSymbol.measure),
+    at: String(pickedSymbol.index + 1), name: pickedSymbol.name,
+    scale: scale.toFixed(4),
+  });
+  const res = await fetch("/api/symbolscale?" + p, { method: "POST" });
+  if (!res.ok) {
+    status("Could not resize it: " + (await res.text()).trim());
+    return;
+  }
+  const d = await res.json().catch(() => ({}));
+  await refreshScore();
+  markPickedSymbol();
+  status(`${pickedSymbol.name} at ${Math.round((d.scale || 1) * 100)}%`);
 }
 
 // nudgeSymbol moves the picked symbol by a step, in staff spaces.
@@ -17441,6 +17819,20 @@ function setupKeys() {
       if (by) {
         e.preventDefault();
         void nudgeSymbol(by[0], by[1]);
+        return;
+      }
+      // Larger and smaller, on the keys that mean that everywhere else.
+      // The handles are the obvious way and these are the exact one: a
+      // tenth a press, so a mark can be brought to a size rather than
+      // dragged past it and back.
+      if (e.key === "+" || e.key === "=") {
+        e.preventDefault();
+        void scaleSymbol(1.1);
+        return;
+      }
+      if (e.key === "-" || e.key === "_") {
+        e.preventDefault();
+        void scaleSymbol(1 / 1.1);
         return;
       }
       if (e.key === "Escape") {

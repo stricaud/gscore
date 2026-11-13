@@ -443,18 +443,22 @@ func drawVectorSymbol(b *strings.Builder, opt Options, g engrave.Glyph,
 		return nil
 	}
 	s := opt.StaffSpace
+	k := g.ScaleOr1()
 	attr := ""
 	if interactive {
 		attr = fmt.Sprintf(` data-symbol="%s"`, html.EscapeString(g.Name))
 		if g.Ref != 0 {
 			attr += fmt.Sprintf(` data-ref="%d"`, g.Ref)
 		}
+		attr += fmt.Sprintf(` data-scale="%.3f"`, k)
 	}
 	// One transform rather than a rewritten path: the outline is the
 	// same shape wherever it is put, and scaling it here keeps the file
-	// small when a symbol is used many times.
+	// small when a symbol is used many times. How large this placement is
+	// drawn goes into the same transform, after the move, so the drawing
+	// grows about the point it is pinned to.
 	fmt.Fprintf(b, `<path d="%s" fill="currentColor" transform="translate(%.2f,%.2f) scale(%.4f)"%s/>`+"\n",
-		html.EscapeString(sym.Path), g.X*s, g.Y*s, s, attr)
+		html.EscapeString(sym.Path), g.X*s, g.Y*s, s*k, attr)
 	return nil
 }
 
@@ -479,10 +483,15 @@ func drawSymbol(b *strings.Builder, opt Options, g engrave.Glyph, interactive bo
 	if err := pngEncode(&png, px.Image()); err != nil {
 		return err
 	}
-	w := px.WidthInSpaces() * s
-	h := px.HeightInSpaces() * s
-	x := g.X*s - px.OriginX*px.PixelSize*s
-	y := g.Y*s - px.OriginY*px.PixelSize*s
+	// How large this placement is drawn: the scale multiplies everything
+	// measured from the grid, the size and the origin alike, so a symbol
+	// made larger grows about the point it is pinned to rather than away
+	// from it.
+	k := g.ScaleOr1()
+	w := px.WidthInSpaces() * k * s
+	h := px.HeightInSpaces() * k * s
+	x := g.X*s - px.OriginX*px.PixelSize*k*s
+	y := g.Y*s - px.OriginY*px.PixelSize*k*s
 
 	// The editor needs to be able to point at it: which element it belongs to,
 	// and which symbol it is, so that dragging it knows what to move.
@@ -492,6 +501,9 @@ func drawSymbol(b *strings.Builder, opt Options, g engrave.Glyph, interactive bo
 		if g.Ref != 0 {
 			attr += fmt.Sprintf(` data-ref="%d"`, g.Ref)
 		}
+		// What it is drawn at, so that a handle dragged on the page knows
+		// what it is changing from.
+		attr += fmt.Sprintf(` data-scale="%.3f"`, k)
 	}
 	fmt.Fprintf(b, `<image x="%.2f" y="%.2f" width="%.2f" height="%.2f" `+
 		`image-rendering="pixelated"%s href="data:image/png;base64,%s"/>`+"\n",

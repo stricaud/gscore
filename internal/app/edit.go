@@ -455,6 +455,40 @@ func (a *App) locateForWriting(partIdx, measIdx int) (*model.Part, *model.Measur
 	return a.locate(partIdx, measIdx)
 }
 
+// openBarForWriting makes the bar drawn past the end of the music into a bar
+// of the piece, on every staff, and says whether that bar exists afterwards.
+//
+// The editor draws one blank bar past the last one so there is somewhere to
+// click and begin the next. It is not a bar of the piece until something is
+// written in it — and writing a key signature there is as good a reason to
+// begin a bar as writing a note is. Note entry has always made it; the key
+// and the clef refused with "there is no such measure" about the bar the
+// person had just clicked, which reads as the program not working.
+//
+// One bar past the end and no further. A key asked for at bar fifty of an
+// eight-bar piece is a mistake, not an instruction to write forty-two empty
+// bars, and the caller says so with the length in hand.
+//
+// Every staff gains it, so the barlines stay in a column — the same rule
+// locateForWriting follows, and the reason it is written once here.
+func (a *App) openBarForWriting(at int) bool {
+	longest := 0
+	for _, p := range a.score.Parts {
+		if n := len(p.Measures); n > longest {
+			longest = n
+		}
+	}
+	if at < 0 || at > longest || longest == 0 {
+		return at >= 0 && at < longest
+	}
+	if at == longest {
+		for _, p := range a.score.Parts {
+			measureAt(p, at)
+		}
+	}
+	return true
+}
+
 // measureAt returns a part's nth measure, making it and any before it if the
 // part does not reach that far yet.
 func measureAt(p *model.Part, n int) *model.Measure {
@@ -1779,7 +1813,9 @@ func (a *App) handleStaff(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			if hasAt == nil && at > 0 {
-				if at >= len(p.Measures) {
+				// The blank bar past the end becomes a bar of the piece,
+				// as it does when a note is written there.
+				if !a.openBarForWriting(at) || at >= len(p.Measures) {
 					http.Error(w, "no such measure", http.StatusBadRequest)
 					return
 				}

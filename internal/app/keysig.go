@@ -12,6 +12,7 @@
 package app
 
 import (
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -247,24 +248,95 @@ func (a *App) handleSetKey(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]string{"status": "ok", "where": "staff"})
 		return
 	}
-	if at >= len(a.score.Parts[part].Measures) {
-		http.Error(w, "there is no such measure", http.StatusBadRequest)
-		return
-	}
+	// A staff that shows another's music holds no measures of its own, so
+	// the bar is looked for on the staff that does. Everything else that
+	// writes goes through MusicOf for this reason; this did not, and a key
+	// asked for from the lower half of a notation-and-tablature pair —
+	// which is the half somebody reading the tab is looking at — was
+	// refused with "there is no such measure" about a bar plainly on the
+	// page in front of them.
+	part = a.score.MusicIndex(part)
+
+	// The bar has to exist somewhere, and not necessarily on the staff the
+	// picker was opened from.
+	//
+	// Staves of different lengths are ordinary: a part that stops early, a
+	// staff added later, a voice that rests to the end and was never given
+	// the bars. Asked against the one staff that happened to be clicked,
+	// a key change at a bar plainly on the page was refused with "there is
+	// no such measure" — which is true of that staff and false of the
+	// music, and reads as the program simply not working. Reported exactly
+	// that way.
+	longest := 0
 	for _, p := range a.score.Parts {
-		if at >= len(p.Measures) || p.Unpitched() {
+		if p.Unpitched() || p.Mirrors() {
 			continue
 		}
+		if n := len(p.Measures); n > longest {
+			longest = n
+		}
+	}
+	if longest == 0 {
+		http.Error(w, "there is no staff here that is written in a key",
+			http.StatusBadRequest)
+		return
+	}
+	// The blank bar the editor draws past the end is somewhere to click and
+	// not yet a bar of the piece. Writing a key there makes it one, exactly
+	// as writing a note there does — see openBarForWriting, which is the
+	// one place that rule lives.
+	if at == longest && a.openBarForWriting(at) {
+		longest = at + 1
+	}
+	if at >= longest {
+		http.Error(w, fmt.Sprintf(
+			"there is no measure %d: the music is %d bars long",
+			at+1, longest), http.StatusBadRequest)
+		return
+	}
+	// What actually happened, which is not the same as what was asked.
+	//
+	// A key equal to the one already in force is how a change is taken
+	// away — and where there was no change to take away it does nothing at
+	// all. Reported as "ok" either way, the editor said "E major from
+	// measure 9, on every staff" over a page that had not altered, which
+	// is indistinguishable from the change being lost somewhere. Reported
+	// exactly that way: "I change and I don't see it."
+	written, removed, pitched := 0, 0, 0
+	for _, p := range a.score.Parts {
+		// A mirror is passed over rather than written to: the staff it
+		// names holds the music and is in this loop as well.
+		if at >= len(p.Measures) || p.Unpitched() || p.Mirrors() {
+			continue
+		}
+		pitched++
 		want := p.Transpose.Written(asked).Fifths
-		// Changing to what is already in force is how a change is taken away.
 		if p.KeyAt(at-1).Fifths == want {
-			p.Measures[at].Key = nil
+			if p.Measures[at].Key != nil {
+				p.Measures[at].Key = nil
+				removed++
+			}
 			continue
 		}
 		k := model.KeySignature{Fifths: want, Mode: p.KeyAt(at).Mode}
 		p.Measures[at].Key = &k
+		written++
 	}
-	writeJSON(w, map[string]any{"status": "ok", "where": "measure", "measure": at})
+	if pitched == 0 {
+		http.Error(w, "there is no staff here that is written in a key",
+			http.StatusBadRequest)
+		return
+	}
+	if written == 0 && removed == 0 {
+		http.Error(w, fmt.Sprintf(
+			"measure %d is in that key already, so there is nothing to change",
+			at+1), http.StatusBadRequest)
+		return
+	}
+	writeJSON(w, map[string]any{
+		"status": "ok", "where": "measure", "measure": at,
+		"written": written, "removed": removed,
+	})
 }
 
 // handleTimeSigSVG draws one time signature on a fragment of staff.

@@ -1228,6 +1228,37 @@
     <label class="tempo-bar" for="score-about-copyright"><span>Copyright</span>
       <input type="text" id="score-about-copyright" autocomplete="off"></label>
     <hr>
+    <!-- Two pictures printed around the music, and neither of them music.
+         A cover is the sheet a publisher wraps the score in; the stamp is
+         the block a printer puts at the foot of the last page. They appear
+         in a PDF and nowhere else — not in the editor, where a cover
+         between you and bar one would be in the way. -->
+    <p class="small">Printed only when the score is exported as a PDF, and
+       never shown while you write.</p>
+    <!-- A button and a hidden file box, not a bare <input type="file">.
+         In the native window a file box does nothing at all — the shell
+         puts no panel up — so the control sat there and nothing happened,
+         with nothing on the screen to say why. The symbol importer learned
+         this already; this went the same way until it was reported. -->
+    <div class="tempo-bar"><span>Cover page</span>
+      <button type="button" id="score-about-cover-pick">Choose a picture…</button>
+      <button type="button" id="score-about-cover-clear">Remove</button>
+      <input type="file" id="score-about-cover" hidden
+             accept="image/png,image/jpeg,image/svg+xml"></div>
+    <div class="small" id="score-about-cover-is">No cover.</div>
+    <div class="tempo-bar"><span>Final stamp</span>
+      <button type="button" id="score-about-stamp-pick">Choose a picture…</button>
+      <button type="button" id="score-about-stamp-clear">Remove</button>
+      <input type="file" id="score-about-stamp" hidden
+             accept="image/png,image/jpeg,image/svg+xml"></div>
+    <div class="small" id="score-about-stamp-is">No stamp.</div>
+    <label class="tempo-bar" for="score-about-stamp-align"><span>Stamp at</span>
+      <select id="score-about-stamp-align">
+        <option value="left">Left</option>
+        <option value="center" selected>Centre</option>
+        <option value="right">Right</option>
+      </select></label>
+    <hr>
     <p class="small">Kept in the file and not printed: what this score is,
        for finding it again among others.</p>
     <label class="about-wide" for="score-about-description"><span>Description</span>

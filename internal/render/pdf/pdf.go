@@ -36,6 +36,7 @@ import (
 
 	"github.com/stricaud/gscore/internal/brand"
 	"github.com/stricaud/gscore/internal/engrave"
+	"github.com/stricaud/gscore/internal/model"
 	"github.com/stricaud/gscore/internal/pdf"
 	"github.com/stricaud/gscore/internal/smufl"
 	"github.com/stricaud/gscore/internal/symbol"
@@ -55,6 +56,16 @@ type Options struct {
 
 	// Symbols resolves the names the music font does not carry.
 	Symbols *symbol.Registry
+
+	// Cover is a picture printed as the first page of the document, and
+	// Stamp one printed along the foot of its last page. Both are nil in
+	// nearly every score. See artwork.go.
+	//
+	// Options and not the layout, because neither is music: the engraver
+	// does not know they exist, nothing on the screen shows them, and a
+	// score exported as SVG or opened in the editor is the music alone.
+	Cover *model.Artwork
+	Stamp *model.Artwork
 
 	// Title, Author and Subject go in the document's own properties, which is
 	// what a library or a file manager shows.
@@ -160,7 +171,7 @@ func Render(w io.Writer, lay *engrave.Layout, opt Options) error {
 	doc.Creator = brand.Name
 
 	r := &renderer{doc: doc, lay: lay, opt: opt, s: pdf.Point(opt.StaffSpace),
-		first: true}
+		first: true, last: true}
 
 	music, err := doc.Embed("Bravura", smufl.FontData())
 	if err != nil {
@@ -172,6 +183,8 @@ func Render(w io.Writer, lay *engrave.Layout, opt Options) error {
 	r.textItalic = doc.Standard(pdf.TimesItalic)
 	r.textBoldItalic = doc.Standard(pdf.TimesBoldItalic)
 
+	// Before the music, because it is the first page.
+	coverPage(doc, opt)
 	r.run()
 	return doc.Write(w)
 }
@@ -220,9 +233,14 @@ func RenderSections(w io.Writer, secs []Section) error {
 	if err != nil {
 		return err
 	}
+	// One cover for the document, taken from the first section: a score and
+	// its parts are one PDF, and a cover before each part is a cover in the
+	// middle of the music.
+	coverPage(doc, secs[0].Opt)
 	for i, sec := range secs {
 		r := &renderer{doc: doc, lay: sec.Layout, opt: sec.Opt,
-			s: pdf.Point(sec.Opt.StaffSpace), first: i == 0}
+			s:     pdf.Point(sec.Opt.StaffSpace),
+			first: i == 0, last: i == len(secs)-1}
 		r.music = music
 		r.text = doc.Standard(pdf.Times)
 		r.textBold = doc.Standard(pdf.TimesBold)
@@ -253,6 +271,11 @@ type renderer struct {
 	// layouts and one document, so it is the document's first page that
 	// counts, not each layout's.
 	first bool
+	// last says this renderer draws the last of the document's sections,
+	// so that its last page is the document's last and is the one the
+	// stamp goes on. A score and its parts are one document, and a stamp
+	// after every part is not a stamp at the end.
+	last bool
 }
 
 // run cuts the layout into pages and draws each one.
@@ -286,6 +309,11 @@ func (r *renderer) run() {
 		r.draw(band.top, band.bottom)
 		r.page.Restore()
 		r.pageNumber(n+1, len(bands))
+		// The foot of the document's last page, which is where a printer
+		// puts a block of their own.
+		if r.last && n == len(bands)-1 {
+			r.footStamp()
+		}
 		r.page.Close()
 	}
 }
@@ -810,14 +838,20 @@ func (r *renderer) drawSymbol(g engrave.Glyph) {
 	if img == nil {
 		return
 	}
-	w := pdf.Point(px.WidthInSpaces()) * r.s
-	h := pdf.Point(px.HeightInSpaces()) * r.s
+	// How large this one is drawn. A drawing is used in many places and
+	// each of them says its own size, so the scale is on the placement
+	// and multiplies everything measured from the grid — the size and the
+	// origin alike, or a symbol made larger would grow away from the
+	// point it was pinned to.
+	k := g.ScaleOr1()
+	w := pdf.Point(px.WidthInSpaces()*k) * r.s
+	h := pdf.Point(px.HeightInSpaces()*k) * r.s
 	// The origin is the point in the grid that lands where the symbol was
 	// placed. Across, that is a simple shift left; down, the layout measures
 	// from the top of the picture and a PDF places images by their bottom
 	// corner, so the rest of the height has to be taken off as well.
-	x := r.x(g.X) - pdf.Point(px.OriginX*px.PixelSize)*r.s
-	y := r.y(g.Y) + pdf.Point(px.OriginY*px.PixelSize)*r.s - h
+	x := r.x(g.X) - pdf.Point(px.OriginX*px.PixelSize*k)*r.s
+	y := r.y(g.Y) + pdf.Point(px.OriginY*px.PixelSize*k)*r.s - h
 	r.page.Image(img, x, y, w, h)
 }
 
@@ -836,8 +870,12 @@ func (r *renderer) drawVectorSymbol(g engrave.Glyph, sym *symbol.Symbol) {
 	if err != nil || len(path) == 0 {
 		return
 	}
+	// The path is measured from the symbol's own origin, so scaling it is
+	// scaling the offsets: the point it is pinned to stays where it is and
+	// the drawing grows about it.
+	k := g.ScaleOr1()
 	at := func(p symbol.Point) (pdf.Point, pdf.Point) {
-		return r.x(g.X + p.X), r.y(g.Y + p.Y)
+		return r.x(g.X + p.X*k), r.y(g.Y + p.Y*k)
 	}
 	open := false
 	for _, seg := range path {

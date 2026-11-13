@@ -345,6 +345,14 @@ paths:
           in: query
           description: Offer symbol packs rather than scores.
           schema: { type: string }
+        - name: fit
+          in: query
+          description: >
+            The grid to scale a picked picture into. Both ways of choosing
+            one take it: without it the picture came back at its own size
+            and was laid into the grid corner-first, so a wide drawing
+            arrived as its left-hand end.
+          schema: { type: integer, minimum: 1, maximum: 256 }
         - name: picture
           in: query
           description: >
@@ -353,8 +361,23 @@ paths:
             `/api/symbolimport` gives — rather than opening anything. The
             drawing window has a file box of its own for this, which does
             nothing in the native window, since a hidden file input needs
-            the shell to put a panel up and this shell does not.
+            the shell to put a panel up and this shell does not. The
+            answer carries the picture's own bytes in `source` as well, so
+            the window can ask for it again at another size without the
+            dialog opening a second time.
           schema: { type: string, enum: ["1"] }
+        - name: artwork
+          in: query
+          description: >
+            Pick the cover or the final stamp and read it straight into the
+            score, rather than opening anything. Here for the reason
+            `picture` is: a file box does nothing in the native window, so
+            the button sat there and nothing happened.
+          schema: { type: string, enum: [cover, stamp] }
+        - name: align
+          in: query
+          description: Which end of the page a stamp picked here sits at.
+          schema: { type: string, enum: [left, center, right] }
       responses:
         "200":
           description: What was chosen, or that nothing was.
@@ -2060,6 +2083,104 @@ paths:
           schema: { type: string, enum: [on, up, down, none] }
       responses:
         "200": { $ref: "#/components/responses/Changed" }
+        "400": { $ref: "#/components/responses/Error" }
+
+  /api/symbolscale:
+    post:
+      tags: [render]
+      summary: Make a placed symbol larger or smaller
+      description: >
+        Per placement and not per symbol, which is the whole point: one
+        drawing is used in many places, and the same drawing wants to be
+        small over a note and large at the head of a movement. The symbol
+        itself is untouched, so nothing drawn anywhere else changes.
+
+
+        A multiplier rather than a size in spaces, so it survives a change
+        of staff size and says what somebody decided — "half again as big" —
+        rather than what that came to on the day. Between a tenth of the
+        drawn size and ten times it: smaller is a speck nobody will find
+        again to put right, larger is taller than any page of music.
+      parameters:
+        - $ref: "#/components/parameters/part"
+        - $ref: "#/components/parameters/measure"
+        - $ref: "#/components/parameters/at"
+        - name: name
+          in: query
+          description: Which symbol, where the element wears more than one.
+          schema: { type: string }
+        - name: scale
+          in: query
+          description: The size to draw it at, 1 being as it was made.
+          schema: { type: number, minimum: 0.1, maximum: 10 }
+        - name: by
+          in: query
+          description: >
+            A step from whatever it is now — 1.1 for a little larger. One
+            of scale or by is wanted.
+          schema: { type: number, exclusiveMinimum: 0 }
+      responses:
+        "200":
+          description: How many were scaled, and to what.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  scaled: { type: integer }
+                  scale: { type: number }
+        "400": { $ref: "#/components/responses/Error" }
+
+  /api/cover:
+    post:
+      tags: [write]
+      summary: The picture printed as the first page of a PDF
+      description: >
+        Takes the picture in as the body of the request: a PNG, a JPEG or an
+        SVG, up to 8 MB. What it is is read from the bytes and not from the
+        name it arrived under, so a drawing saved as "cover.png" is still a
+        drawing and prints as outlines.
+
+
+        The file travels in the score, not a path to it: a score that is
+        copied or emailed takes its cover with it. It is printed to the
+        edges of the sheet with its own proportions kept, and it appears
+        only in a PDF — never in the editor, never in an SVG export. A cover
+        standing between you and bar one would be in the way.
+      parameters:
+        - name: clear
+          in: query
+          description: Take the cover away.
+          schema: { type: string, enum: ["1"] }
+      responses:
+        "200": { $ref: "#/components/responses/Status" }
+        "400": { $ref: "#/components/responses/Error" }
+
+  /api/stamp:
+    post:
+      tags: [write]
+      summary: The picture printed along the foot of a PDF's last page
+      description: >
+        The same as the cover, in the bottom margin of the document's last
+        page — where a printer puts a block of their own. The margin is the
+        one band of a page known to be empty, so it can never print over a
+        system however long the piece runs; a page with no bottom margin to
+        speak of gets no stamp rather than a stamp over its last bar.
+
+
+        Sent with no body and an align, it moves a stamp already there
+        rather than asking for it again.
+      parameters:
+        - name: align
+          in: query
+          description: Which end of the page it sits at. Empty is centred.
+          schema: { type: string, enum: [left, center, right] }
+        - name: clear
+          in: query
+          description: Take the stamp away.
+          schema: { type: string, enum: ["1"] }
+      responses:
+        "200": { $ref: "#/components/responses/Status" }
         "400": { $ref: "#/components/responses/Error" }
 
   /api/pairnotation:
@@ -4134,7 +4255,27 @@ paths:
     post:
       tags: [render]
       summary: Add one symbol from an image
-      description: An XPM, PNG, GIF or JPEG sent in the body, traced into a symbol the engraver can draw.
+      description: >
+        An XPM, PNG, GIF or JPEG sent in the body, traced into a symbol the
+        engraver can draw.
+
+
+        With fit, the picture is scaled to that grid whole, keeping its
+        proportions, before it is reduced to ink and nothing. Without it the
+        picture goes in at its own size and anything larger than the grid is
+        refused — which is what used to happen to every picture, so a logo
+        came in as its top left corner.
+
+
+        Each new pixel takes the darkest of the ones under it rather than
+        their average: the grid is one bit deep, so the question for a cell
+        is whether a line passes through it, and a hairline averaged across
+        a forty-pixel cell is not ink.
+      parameters:
+        - name: fit
+          in: query
+          description: The grid to scale the picture into, 12 to 256.
+          schema: { type: integer, minimum: 1, maximum: 256 }
       requestBody:
         content:
           application/octet-stream:

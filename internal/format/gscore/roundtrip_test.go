@@ -924,3 +924,90 @@ func TestCommentsSurviveTheRoundTrip(t *testing.T) {
 		t.Errorf("the second came back as %+v", back.Comments[1])
 	}
 }
+
+// The pictures printed around the music come back too.
+//
+// A cover and a stamp are bytes rather than words, and the container is the
+// one thing that must not quietly lose them: a score that forgot its cover
+// every time it was saved would be a cover somebody set once and never saw
+// again.
+func TestRoundTripKeepsTheCoverAndTheStamp(t *testing.T) {
+	s := model.NewScore()
+	s.Cover = &model.Artwork{Data: []byte{0x89, 'P', 'N', 'G', 1, 2, 3}, Format: "png"}
+	s.Stamp = &model.Artwork{Data: []byte("<svg/>"), Format: "svg", Align: "right"}
+
+	var buf bytes.Buffer
+	if err := Write(&buf, s, nil); err != nil {
+		t.Fatal(err)
+	}
+	got, _, err := Read(bytes.NewReader(buf.Bytes()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Cover == nil || !bytes.Equal(got.Cover.Data, s.Cover.Data) {
+		t.Errorf("the cover came back as %v", got.Cover)
+	}
+	if got.Cover != nil && got.Cover.Format != "png" {
+		t.Errorf("the cover came back as a %q", got.Cover.Format)
+	}
+	if got.Stamp == nil || got.Stamp.Align != "right" ||
+		!bytes.Equal(got.Stamp.Data, s.Stamp.Data) {
+		t.Errorf("the stamp came back as %v", got.Stamp)
+	}
+}
+
+// And how large a placed symbol is drawn.
+//
+// Per placement, so a drawing used in two places at two sizes comes back
+// at both: the size is on the placement and not on the symbol.
+func TestRoundTripKeepsHowLargeASymbolIsDrawn(t *testing.T) {
+	s := model.NewScore()
+	v := s.Parts[0].Measures[0].Voices[0]
+	n := &model.Note{
+		Pitch: model.Pitch{Step: model.StepB, Octave: 4},
+		Dur:   model.Duration{Num: 1, Den: 4},
+	}
+	n.Symbols = []model.SymbolMark{
+		{Name: "mine", Scale: 2.5},
+		{Name: "mine"}, // the same drawing, left as it was made
+	}
+	v.Elements = append(v.Elements, n)
+	v.Elements = append(v.Elements, &model.SymbolElement{
+		Symbol: model.SymbolMark{Name: "mine", Scale: 0.5},
+	})
+
+	var buf bytes.Buffer
+	if err := Write(&buf, s, nil); err != nil {
+		t.Fatal(err)
+	}
+	got, _, err := Read(bytes.NewReader(buf.Bytes()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	back := got.Parts[0].Measures[0].Voices[0].Elements
+	marks := marksOfNote(back[0])
+	if marks == nil || len(marks.Symbols) != 2 {
+		t.Fatalf("the note came back with %v", marks)
+	}
+	if marks.Symbols[0].ScaleOr1() != 2.5 {
+		t.Errorf("the first is at %v", marks.Symbols[0].ScaleOr1())
+	}
+	if marks.Symbols[1].Scale != 0 {
+		t.Errorf("the second came back carrying a scale of %v",
+			marks.Symbols[1].Scale)
+	}
+	lone, ok := back[1].(*model.SymbolElement)
+	if !ok {
+		t.Fatalf("the lone symbol came back as %T", back[1])
+	}
+	if lone.Symbol.ScaleOr1() != 0.5 {
+		t.Errorf("the lone symbol is at %v", lone.Symbol.ScaleOr1())
+	}
+}
+
+func marksOfNote(el model.Element) *model.Marks {
+	if n, ok := el.(*model.Note); ok {
+		return &n.Marks
+	}
+	return nil
+}

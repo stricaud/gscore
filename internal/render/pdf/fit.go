@@ -70,6 +70,11 @@ func Fit(s *model.Score, o Options, eo engrave.Options) (Options, engrave.Option
 	if o.StaffSpace <= 0 {
 		o.StaffSpace = DefaultOptions().StaffSpace
 	}
+	// The pictures printed around the music travel with the score, and this
+	// is the one place every PDF goes through on its way to paper. Left to
+	// each caller to remember, the cover would be in the file and missing
+	// from half the ways of printing it.
+	o.Cover, o.Stamp = s.Cover, s.Stamp
 	// Three goes at it. Shrinking the type lengthens the line, which puts
 	// more bars in a system and can change what has to be written above it,
 	// so the height is not quite settled until it has been engraved at the

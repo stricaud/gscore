@@ -27,6 +27,11 @@ import test from "node:test";
 
 const src = readFileSync(new URL("./app.js", import.meta.url), "utf8");
 const html = readFileSync(new URL("./index.html", import.meta.url), "utf8");
+const grab = (name) => {
+  const m = src.match(new RegExp("^(?:async )?function " + name + "\\([\\s\\S]*?^}", "m"));
+  if (!m) throw new Error("app.js has no " + name);
+  return m[0];
+};
 
 const ACTIONS = ["grace-add", "grace", "grace-appoggiatura", "grace-none"];
 
@@ -192,4 +197,92 @@ test("a score with no grace notes walks exactly as it did", () => {
   move(-1);
   assert.equal(state.selection.at, 1);
   assert.equal(state.selection.grace, undefined);
+});
+
+/*
+ * The cover and the stamp are chosen through the platform's own dialog.
+ *
+ * A hidden <input type="file"> does nothing at all in the native window —
+ * the shell puts no panel up — so a bare file box sat there and nothing
+ * happened, with nothing on the screen to say why. Reported as "I click on
+ * Choose file and I don't see anything happening". The symbol importer had
+ * already learned this; these two went the same way until they were used.
+ */
+
+test("the cover and stamp ask the platform before the file box", () => {
+  const body = grab("pickArtwork");
+  assert.match(body, /state\.info\?\.local/);
+  assert.match(body, /\/api\/pickfile\?artwork=/);
+  // And fall back to the box, which is what a browser answers with.
+  assert.match(body, /\$\("#score-about-" \+ which\)\.click\(\)/);
+});
+
+test("the two fields have a button to press, not a bare file box", () => {
+  for (const which of ["cover", "stamp"]) {
+    assert.ok(html.includes(`id="score-about-${which}-pick"`),
+      `${which} has no button`);
+    assert.ok(html.includes(`id="score-about-${which}"`) &&
+      html.includes(`id="score-about-${which}" hidden`),
+      `${which}'s file box is not hidden behind the button`);
+  }
+});
+
+test("a picker says nothing about the other picture", () => {
+  // The score leaves a field out when it is empty, so "absent" and "gone"
+  // cannot be told apart by a partial answer: the pickers update one and
+  // only the score's own answer sets both.
+  assert.match(grab("showArtwork"), /showOneArtwork\("cover"/);
+  assert.match(grab("showArtwork"), /showOneArtwork\("stamp"/);
+  assert.match(grab("pickArtwork"), /showOneArtwork\(which, d\)/);
+});
+
+/*
+ * A placed symbol can be made larger or smaller where it stands.
+ *
+ * Corners and not edges: a symbol keeps its proportions — it is a drawing,
+ * and a drawing stretched one way is a different drawing — so there is one
+ * number to change and a corner is where a reader expects to take hold.
+ */
+
+test("the picked symbol gets a square at each corner", () => {
+  const body = grab("drawSymbolHandles");
+  assert.match(body, /getBBox/);
+  assert.match(body, /symbol-handle/);
+  // Four of them, named so the drag knows which was taken.
+  for (const c of ["nw", "ne", "sw", "se"]) {
+    assert.ok(body.includes(`"${c}"`), `no ${c} corner`);
+  }
+});
+
+test("the handles are cleared before they are drawn again", () => {
+  // Left behind, every selection would add four more to the page.
+  assert.match(grab("drawSymbolHandles"),
+    /querySelectorAll\("\.symbol-handle"\)\.forEach/);
+});
+
+test("a corner resizes and does not move", () => {
+  // The squares sit over the symbol, so without this a press on one would
+  // be read as a press on the symbol and start a drag instead.
+  assert.match(src, /closest\("\.symbol-handle"\)/);
+  assert.match(src, /resizing = \{/);
+});
+
+test("an outline keeps its own placement while being resized", () => {
+  // A path is placed by a transform of its own; written over rather than
+  // added to, the symbol would jump to the corner of the page for as long
+  // as the drag lasted.
+  assert.match(src, /transform: on\.getAttribute\("transform"\)/);
+  assert.match(src, /\+ resizing\.transform/);
+});
+
+test("the keys resize by a step of what it is now", () => {
+  // So the same press does the same thing at any size.
+  assert.match(grab("scaleSymbol"), /by: by\.toFixed/);
+  assert.match(src, /scaleSymbol\(1\.1\)/);
+  assert.match(src, /scaleSymbol\(1 \/ 1\.1\)/);
+});
+
+test("a handle dragged across the page sets a size outright", () => {
+  assert.match(grab("setSymbolScale"), /scale: scale\.toFixed/);
+  assert.match(src, /setSymbolScale\(Math\.max\(0\.1, Math\.min\(10,/);
 });

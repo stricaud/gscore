@@ -1052,6 +1052,9 @@ body.native #menubar { padding-left: 12px; }
 #canvas text.g[data-ref],
 #canvas image[data-symbol] { cursor: crosshair; }
 
+/* A corner of the picked symbol, which resizes it rather than moving it. */
+#canvas-wrap .symbol-handle { cursor: nwse-resize; }
+
 body.over-strip #canvas svg,
 body.over-strip #canvas .tune,
 body.over-strip #canvas text.g[data-ref] { cursor: pointer; }
@@ -3003,3 +3006,15 @@ dialog.wide { max-width: min(96vw, 1100px); }
 }
 .about-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
 #score-about .ask-buttons { flex: none; }
+
+/* The corner squares that resize the picked symbol.
+ *
+ * The dashed outline above says which symbol the keys will move; these say
+ * it can be made larger or smaller, which nothing on the page said before.
+ * Drawn over the music and never printed: they belong to the selection,
+ * not to the score. */
+#canvas-wrap .symbol-handle {
+  fill: var(--bg, #fff);
+  stroke: var(--accent, #3b7dd8);
+  stroke-width: 1.2;
+}

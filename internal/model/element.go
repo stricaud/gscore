@@ -197,6 +197,37 @@ type SymbolMark struct {
 	// survives a change of size, and saved with the score because losing it
 	// would lose the decision.
 	OffsetX, OffsetY float64
+
+	// Scale makes this one larger or smaller than the symbol was drawn,
+	// 1 being as drawn. Zero is 1: a symbol nobody has resized says
+	// nothing about its size.
+	//
+	// Per placement and not per symbol, which is the whole point. One
+	// drawing is used in many places — a breath mark, a fingering sign, a
+	// publisher's device — and the same drawing wants to be small over a
+	// note and large at the head of a movement. Kept on the symbol itself
+	// it would be one size everywhere, and a second copy of the drawing at
+	// another size is a second thing to keep in step.
+	//
+	// A multiplier rather than a size in spaces, for the reason the offsets
+	// are in spaces: it survives a change of staff size, and it says what
+	// somebody decided — "half again as big" — rather than what that came
+	// to on the day.
+	Scale float64 `json:",omitempty"`
+}
+
+// ScaleOr1 is how much larger this placement is drawn than the symbol was
+// made, with zero read as "as drawn".
+//
+// Everything that draws a symbol goes through this rather than reading the
+// field, so that the zero value means the same thing everywhere: a score
+// written before symbols could be resized has no scale on any of them and
+// must come out exactly as it did.
+func (s SymbolMark) ScaleOr1() float64 {
+	if s.Scale <= 0 {
+		return 1
+	}
+	return s.Scale
 }
 
 // Tuplet records that an element is part of a group played in less (or more)

@@ -165,6 +165,22 @@ func (a *App) handlePickFile(w http.ResponseWriter, r *http.Request) {
 		a.importSymbolsFrom(w, path)
 		return
 	}
+	// And picking the cover or the stamp, which are files read straight
+	// into the score.
+	//
+	// Here for the reason the picture below is here: a hidden
+	// <input type="file"> does nothing at all in the native window, so
+	// the button sat there and nothing happened, with nothing on the
+	// screen to say why. Reported exactly that way.
+	if which := r.URL.Query().Get("artwork"); which == "cover" || which == "stamp" {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		a.setArtworkFrom(w, which, data, r.URL.Query().Get("align"))
+		return
+	}
 	// And picking a picture to trace a symbol from.
 	//
 	// The drawing window has a file box of its own for this, which does
@@ -173,13 +189,16 @@ func (a *App) handlePickFile(w http.ResponseWriter, r *http.Request) {
 	// same button asks here instead, and the picture comes back as the
 	// grid rather than as a file.
 	if r.URL.Query().Get("picture") == "1" {
+		fit, _ := strconv.Atoi(r.URL.Query().Get("fit"))
 		data, err := os.ReadFile(path)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
 		name := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
-		writePictureGrid(w, data, name)
+		// With the bytes, so the window can ask for the picture again at
+		// another size without the dialog opening a second time.
+		writePictureGrid(w, data, name, fit, true)
 		return
 	}
 	if err := a.openPath(path); err != nil {

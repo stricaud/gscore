@@ -435,6 +435,19 @@ const MESSAGES = {
   "Title": "Titre",
   "Subtitle": "Sous-titre",
   "Composer": "Compositeur",
+  // The two pictures printed around the music, and where the stamp sits.
+  "Cover page": "Page de couverture",
+  "Choose a picture…": "Choisir une image…",
+  "Remove": "Retirer",
+  "Final stamp": "Vignette finale",
+  "Stamp at": "Vignette à",
+  "Left": "Gauche",
+  "Centre": "Centre",
+  "Right": "Droite",
+  "No cover.": "Pas de couverture.",
+  "No stamp.": "Pas de vignette.",
+  "Printed only when the score is exported as a PDF, and never shown while you write.":
+    "Imprimé seulement à l’export PDF, jamais affiché pendant que vous écrivez.",
   // "Paroles", not "Parolier": the box is labelled by what goes in it on
   // the page — a French song prints "Paroles de…" opposite "Musique de…".
   "Lyricist": "Paroles",

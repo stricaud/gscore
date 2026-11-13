@@ -12,7 +12,9 @@ package app
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"image"
 	"image/color"
 	_ "image/gif"
@@ -54,6 +56,16 @@ type symbolDoc struct {
 	PixelSize float64 `json:"pixelSize"`
 	OriginX   float64 `json:"originX"`
 	OriginY   float64 `json:"originY"`
+
+	// Source is the picture this grid was made from, where it came in
+	// through the platform's dialog rather than from the page.
+	//
+	// So that the window can ask for it again at another size. The page
+	// holds the bytes when it chose the file itself; picked through the
+	// native dialog it never sees them, and without them the size selector
+	// had nothing to re-fit — which is exactly what "I cannot use it, zoom
+	// / unzoom etc." was. Sent once, when the picture is chosen.
+	Source string `json:"source,omitempty"`
 }
 
 type symbolInfo struct {
@@ -257,7 +269,8 @@ func (a *App) handleSymbolImport(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	writePictureGrid(w, data, "")
+	fit, _ := strconv.Atoi(r.URL.Query().Get("fit"))
+	writePictureGrid(w, data, "", fit, false)
 }
 
 // writePictureGrid turns a picture into the grid the drawing window works
@@ -267,7 +280,8 @@ func (a *App) handleSymbolImport(w http.ResponseWriter, r *http.Request) {
 // body, and read off the disk after a native dialog. The reading is the
 // same either way and belongs in one place — the window that receives it
 // cannot tell, and should not have to.
-func writePictureGrid(w http.ResponseWriter, data []byte, name string) {
+func writePictureGrid(w http.ResponseWriter, data []byte, name string, fit int,
+	withSource bool) {
 	var bm *symbol.Bitmap
 	var err error
 	if bytes.Contains(data[:min(len(data), 256)], []byte("XPM")) {
@@ -276,6 +290,14 @@ func writePictureGrid(w http.ResponseWriter, data []byte, name string) {
 		var img image.Image
 		img, _, err = image.Decode(bytes.NewReader(data))
 		if err == nil {
+			// Into the grid asked for, whole, rather than whatever corner
+			// of it happened to fit. A picture bigger than the grid used
+			// to be refused outright and one that fitted was laid in at
+			// its own size and cut off at the edge — so a logo came in as
+			// its top left corner, which is not the logo.
+			if fit > 0 {
+				img = scaleToFit(img, fit)
+			}
 			bm, err = fromImage(img)
 		}
 	}
@@ -283,8 +305,10 @@ func writePictureGrid(w http.ResponseWriter, data []byte, name string) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	if bm.W > 256 || bm.H > 256 {
-		http.Error(w, "that picture is larger than the editor's 256 pixel grid",
+	if bm.W > maxGrid || bm.H > maxGrid {
+		http.Error(w, fmt.Sprintf(
+			"that picture is %dx%d, larger than the editor's %d pixel grid; "+
+				"say which size to fit it to", bm.W, bm.H, maxGrid),
 			http.StatusBadRequest)
 		return
 	}
@@ -301,10 +325,95 @@ func writePictureGrid(w http.ResponseWriter, data []byte, name string) {
 			}
 		}
 	}
-	writeJSON(w, symbolDoc{
+	doc := symbolDoc{
 		Name: name, W: bm.W, H: bm.H, Pixels: pix,
 		PixelSize: bm.PixelSize, OriginX: bm.OriginX, OriginY: bm.OriginY,
-	})
+	}
+	if withSource {
+		doc.Source = base64.StdEncoding.EncodeToString(data)
+	}
+	writeJSON(w, doc)
+}
+
+// maxGrid is the largest grid the drawing window works in.
+const maxGrid = 256
+
+// scaleToFit shrinks or grows a picture so that its longer side is n,
+// keeping its proportions.
+//
+// Each new pixel takes the darkest of the ones that fall under it, rather
+// than their average or one of them picked out.
+//
+// Because of what happens next: a symbol is thresholded to ink or nothing
+// immediately afterwards, and the question for every cell is not "what
+// colour is this on average" but "is there a line here". Sampled at one
+// point, a thin line falls between the samples and disappears. Averaged, it
+// disappears too as soon as the picture is shrunk far: a hairline across a
+// forty-pixel cell darkens it by a fortieth, which is nowhere near ink, so
+// a drawing reduced to a sixteen-pixel grid came back blank.
+//
+// Taking the darkest keeps every stroke at any reduction, which is what a
+// drawing needs. It is the wrong rule for a photograph — nearly every cell
+// of one holds something dark — but a photograph was never going to be a
+// symbol: the grid it is going into is one bit deep.
+func scaleToFit(img image.Image, n int) image.Image {
+	b := img.Bounds()
+	if b.Dx() <= 0 || b.Dy() <= 0 || n <= 0 {
+		return img
+	}
+	w, h := b.Dx(), b.Dy()
+	if w >= h {
+		h = max(1, h*n/w)
+		w = n
+	} else {
+		w = max(1, w*n/h)
+		h = n
+	}
+	if w == b.Dx() && h == b.Dy() {
+		return img
+	}
+	out := image.NewNRGBA(image.Rect(0, 0, w, h))
+	for y := 0; y < h; y++ {
+		// The band of the original this row of the new picture covers.
+		y0 := b.Min.Y + y*b.Dy()/h
+		y1 := b.Min.Y + (y+1)*b.Dy()/h
+		if y1 <= y0 {
+			y1 = y0 + 1
+		}
+		for x := 0; x < w; x++ {
+			x0 := b.Min.X + x*b.Dx()/w
+			x1 := b.Min.X + (x+1)*b.Dx()/w
+			if x1 <= x0 {
+				x1 = x0 + 1
+			}
+			var pick color.NRGBA
+			dark, found := 1<<31, false
+			for yy := y0; yy < y1; yy++ {
+				for xx := x0; xx < x1; xx++ {
+					r, g, bl, al := img.At(xx, yy).RGBA()
+					c := color.NRGBA{
+						R: uint8(r >> 8), G: uint8(g >> 8),
+						B: uint8(bl >> 8), A: uint8(al >> 8),
+					}
+					// What is see-through is not a line, whatever colour
+					// it says it is: the transparent corners of a PNG are
+					// often black.
+					if c.A <= 128 {
+						continue
+					}
+					lum := (int(c.R)*299 + int(c.G)*587 + int(c.B)*114) / 1000
+					if !found || lum < dark {
+						pick, dark, found = c, lum, true
+					}
+				}
+			}
+			if !found {
+				continue // nothing opaque fell here
+			}
+			out.SetNRGBA(x, y, pick)
+		}
+	}
+	return out
 }
 
 func fromImage(img image.Image) (*symbol.Bitmap, error) {
@@ -625,4 +734,121 @@ func (a *App) handleExportSymbols(w http.ResponseWriter, r *http.Request) {
 	if err := gscorefmt.WritePack(w, symbols); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
+}
+
+// How large a symbol may be made.
+//
+// A tenth of its drawn size and ten times it. The small end is where a mark
+// stops being a mark and becomes a speck somebody will not find again to
+// put right; the large end is a few staves tall, which is as big as
+// anything on a page of music ever is. Between them is every size anybody
+// means, and outside them is a mistyped number or a drag that ran away.
+const (
+	minSymbolScale = 0.1
+	maxSymbolScale = 10.0
+)
+
+// handleScaleSymbol makes a placed symbol larger or smaller.
+//
+// Per placement, which is the whole point: one drawing is used in many
+// places and the same drawing wants to be small over a note and large at
+// the head of a movement. The symbol itself is untouched, so nothing drawn
+// anywhere else changes.
+//
+//	POST /api/symbolscale?part=0&measure=3&at=2&name=mine&scale=1.5
+//	POST /api/symbolscale?...&by=1.1     a step larger than it is now
+func (a *App) handleScaleSymbol(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST required", http.StatusMethodNotAllowed)
+		return
+	}
+	q := r.URL.Query()
+	name := q.Get("name")
+	to, hasTo := parseScale(q.Get("scale"))
+	by, hasBy := parseScale(q.Get("by"))
+	if !hasTo && !hasBy {
+		http.Error(w, "say what to scale it to, or what to scale it by",
+			http.StatusBadRequest)
+		return
+	}
+	// What one asking turns into, given what it is now.
+	next := func(was float64) (float64, bool) {
+		v := to
+		if !hasTo {
+			v = was * by
+		}
+		if v < minSymbolScale || v > maxSymbolScale {
+			return 0, false
+		}
+		return v, true
+	}
+
+	// A symbol standing in the bar on its own is reached first, since it
+	// carries no Marks for markAt to find — the same order handleMoveSymbol
+	// takes, and for the same reason.
+	if lone, ok := a.loneSymbolAt(q); ok {
+		a.lock()
+		defer a.mu.Unlock()
+		if name != "" && lone.Symbol.Name != name {
+			http.Error(w, "no such symbol there", http.StatusBadRequest)
+			return
+		}
+		v, ok := next(lone.Symbol.ScaleOr1())
+		if !ok {
+			http.Error(w, tooFarMessage(), http.StatusBadRequest)
+			return
+		}
+		lone.Symbol.Scale = v
+		writeJSON(w, map[string]any{"scaled": 1, "scale": v})
+		return
+	}
+
+	m, err := a.markAt(q)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	a.lock()
+	defer a.mu.Unlock()
+
+	scaled, last, outside := 0, 1.0, false
+	for i := range m.Symbols {
+		if name != "" && m.Symbols[i].Name != name {
+			continue
+		}
+		v, ok := next(m.Symbols[i].ScaleOr1())
+		if !ok {
+			outside = true
+			continue
+		}
+		m.Symbols[i].Scale = v
+		last = v
+		scaled++
+	}
+	if scaled == 0 {
+		if outside {
+			http.Error(w, tooFarMessage(), http.StatusBadRequest)
+			return
+		}
+		http.Error(w, "no such symbol on that element", http.StatusBadRequest)
+		return
+	}
+	writeJSON(w, map[string]any{"scaled": scaled, "scale": last})
+}
+
+func parseScale(s string) (float64, bool) {
+	if s == "" {
+		return 0, false
+	}
+	v, err := strconv.ParseFloat(s, 64)
+	if err != nil || v <= 0 {
+		return 0, false
+	}
+	return v, true
+}
+
+func tooFarMessage() string {
+	return fmt.Sprintf(
+		"a symbol is drawn between a tenth of its own size and %g times it",
+		maxSymbolScale)
 }

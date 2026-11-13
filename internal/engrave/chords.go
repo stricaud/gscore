@@ -43,6 +43,22 @@ const (
 	// chordGap is the air between the music and the chord symbols over it,
 	// where the music reaches up past the staff.
 	chordGap = 0.8
+	// chordSymbolGap is the air between one chord symbol and the next along
+	// the row.
+	//
+	// A symbol is set from its own note's x and runs to the right of it, so
+	// two symbols on neighbouring beats stand only as far apart as the beats
+	// do. Nothing booked that room: a bar of Stairway with G/B on one beat
+	// and Am on the next printed the two through each other, which reads as
+	// "GABm", and A7sus4 ran into the D after it on one guitar while the
+	// same two chords over the other guitar happened to clear — the beats
+	// there fell further apart, which is luck, not engraving. Lyrics have
+	// claimed their width since they were written; chord symbols never did.
+	//
+	// Nearly a whole space, because the eye has to cut a row of chords into
+	// separate names at a glance, and names set as close as the letters
+	// inside them do not come apart.
+	chordSymbolGap = 0.9
 	// chordCapHeight is how tall a capital stands above the baseline, as a
 	// fraction of the type size. Times Bold's own, which is the face a PDF
 	// with nothing embedded in it sets this text in.
@@ -229,6 +245,25 @@ func (e *engraver) placeChords(sky *skyline, x0, x1 float64) {
 			Name: p.c.String(), Frets: p.c.Frame.Spell(),
 		})
 	}
+}
+
+// chordRoom is how wide the widest chord symbol written over one column is.
+//
+// The counterpart of lyricRoom, and wanted for the same reason: a column has
+// to be wide enough for what is written about it, not only for the notes in
+// it.
+func chordRoom(col slot) float64 {
+	out := 0.0
+	for _, v := range col.elems {
+		mk := marksOfElement(v.el)
+		if mk == nil || mk.Chord == nil {
+			continue
+		}
+		if w := chordWidth(mk.Chord); w > out {
+			out = w
+		}
+	}
+	return out
 }
 
 // chordWidth is how wide a written chord symbol is, for the outline.

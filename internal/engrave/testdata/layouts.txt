@@ -171,12 +171,12 @@ suite/61h-Lyrics-BeamsMelismata.musicxml 3e4ba2643f5de511 116
 suite/61i-Lyrics-Chords.musicxml 4ade91e4f49305b1 17
 suite/61j-Lyrics-Elisions.musicxml 919b0846de9bcb1a 22
 suite/61k-Lyrics-SpannersExtenders.musicxml 7a4d036cea2938fa 44
-suite/71a-Chordnames.musicxml e1cd18149762e887 44
-suite/71b-Chordnames-Kinds.musicxml 7989d0d7f2399ef2 210
-suite/71c-ChordsFrets.musicxml 23dcc639308645a4 43
+suite/71a-Chordnames.musicxml d53a8c515512620f 44
+suite/71b-Chordnames-Kinds.musicxml 528ceefbf1e9e37c 210
+suite/71c-ChordsFrets.musicxml 252d493616761f46 43
 suite/71d-ChordsFrets-Multistaff.musicxml 7ad6cc72dadf231c 64
 suite/71e-TabStaves.musicxml 88f63001bc3d7895 414
-suite/71f-AllChordTypes.musicxml 23bf5cbd823c3f82 267
+suite/71f-AllChordTypes.musicxml 3921a2b2be8b4579 267
 suite/71g-MultipleChordnames.musicxml 46a96846b1d85a08 18
 suite/72a-TransposingInstruments.musicxml cf896d06fdc73f2e 87
 suite/72b-TransposingInstruments-Full.musicxml 34d1b6a0c71a52bc 141

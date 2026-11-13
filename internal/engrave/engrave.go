@@ -1413,6 +1413,21 @@ type measureBox struct {
 	// case to bolt on afterwards.
 	change signatureChange
 	prefix float64
+
+	// chordOver is how far the bar's last chord symbol still reaches past
+	// its own barline, and chordInto how far into the bar its first symbol
+	// stands. A chord at the end of one bar and one at the head of the next
+	// are only as far apart as the barline between them, which is not far:
+	// "A7sus4" at the end of bar 44 printed through the "D" at the head of
+	// 45. Neither bar can see the other while it is being measured, so each
+	// leaves these two numbers behind and the bars are set apart afterwards.
+	//
+	// chordInto is negative when the bar has no chord at all, which is not
+	// the same as a chord standing at nothing: a bar with none imposes no
+	// constraint, a bar whose chord is on the downbeat imposes the whole of
+	// it.
+	chordOver float64
+	chordInto float64
 }
 
 // signatureChange is a new key or meter taking effect at a measure.
@@ -1923,6 +1938,22 @@ func (e *engraver) layout() {
 			b.ideal += w
 			b.minimum += w
 			rows = append(rows, b)
+		}
+		// A chord at the end of one bar and one at the head of the next:
+		// neither bar could see the other while it was measured, so they are
+		// set apart here, from what each left behind. What is missing goes to
+		// the last column of the earlier bar, which opens the gap before the
+		// barline rather than moving either chord off its own beat.
+		for mi := 0; mi+1 < len(rows); mi++ {
+			cur, next := &rows[mi], &rows[mi+1]
+			if cur.chordOver <= 0 || next.chordInto < 0 || len(cur.slots) == 0 {
+				continue
+			}
+			if short := cur.chordOver - next.prefix - next.chordInto; short > 0 {
+				cur.slots[len(cur.slots)-1].width += short
+				cur.ideal += short
+				cur.minimum += short
+			}
 		}
 		byPart[p] = rows
 		if mirrors[i] != nil {
@@ -2963,6 +2994,12 @@ func (e *engraver) measureBox(p *model.Part, m *model.Measure, index int) measur
 	for i := range box.slots {
 		words[i] = lyricRoom(box.slots[i])
 	}
+	// And the chord symbols, measured here and spaced after the columns are,
+	// because what a symbol needs depends on where the next symbol falls.
+	names := make([]float64, len(box.slots))
+	for i := range box.slots {
+		names[i] = chordRoom(box.slots[i])
+	}
 	for i := range box.slots {
 		col := &box.slots[i]
 		span := model.Duration{Num: 0, Den: 1}
@@ -3022,6 +3059,44 @@ func (e *engraver) measureBox(p *model.Part, m *model.Measure, index int) measur
 		// print the sharp through the notehead before it.
 		box.minimum += col.lead - tuck + col.tuck + least
 	}
+	// The chord symbols, now that the columns have their widths.
+	//
+	// A symbol is written from its own column's x and runs rightwards, so
+	// what it needs is not room in its own column but room before the next
+	// symbol — which may be several columns along. Hanging over the columns
+	// between is right and is what every chart does; hanging over the next
+	// name is not. So each symbol is measured against the distance to the
+	// one after it, and whatever is missing is given to the last column it
+	// reaches over, where it opens the gap in front of the next name
+	// instead of pushing this one's own note off its beat.
+	//
+	// In the minimum as well as the ideal, for the lyrics' reason: two
+	// chord names printed through each other are not a tighter setting of
+	// the music, they are an unreadable one.
+	for i := 0; i < len(names); i++ {
+		if names[i] == 0 {
+			continue
+		}
+		j := i + 1
+		for j < len(names) && names[j] == 0 {
+			j++
+		}
+		if j >= len(names) {
+			break // nothing after it in this bar; the barline sees to it
+		}
+		have := 0.0
+		for k := i; k < j; k++ {
+			have += box.slots[k].width
+			if k > i {
+				have += box.slots[k].lead
+			}
+		}
+		if short := names[i] + chordSymbolGap - have; short > 0 {
+			box.slots[j-1].width += short
+			box.ideal += short
+			box.minimum += short
+		}
+	}
 	// The last syllable of a bar needs its own half before the barline.
 	if n := len(words); n > 0 && words[n-1] > 0 {
 		box.ideal += words[n-1]/2 + lyricGap
@@ -3049,6 +3124,31 @@ func (e *engraver) measureBox(p *model.Part, m *model.Measure, index int) measur
 	left, right := e.barlineRoom(m.RightBarline)
 	box.ideal += sp.BetweenMeasures + sp.AfterBarline + left + right
 	box.minimum += sp.BetweenMeasures + sp.AfterBarline + left + right
+
+	// What the bar's own chords leave for its neighbours. See measureBox's
+	// chordOver and chordInto: a bar cannot see the one after it from here,
+	// so it records how far its last symbol overhangs and how far its first
+	// one stands in, and they are set apart once both are measured.
+	box.chordInto = -1
+	for i, d := 0, 0.0; i < len(box.slots); i++ {
+		if names[i] > 0 {
+			box.chordInto = d + box.slots[i].lead
+			break
+		}
+		d += box.slots[i].lead + box.slots[i].width
+	}
+	for i := len(box.slots) - 1; i >= 0; i-- {
+		if names[i] == 0 {
+			continue
+		}
+		rest := box.slots[i].width
+		for k := i + 1; k < len(box.slots); k++ {
+			rest += box.slots[k].lead + box.slots[k].width
+		}
+		rest += sp.BetweenMeasures + sp.AfterBarline + left + right
+		box.chordOver = names[i] + chordSymbolGap - rest
+		break
+	}
 	return box
 }
 

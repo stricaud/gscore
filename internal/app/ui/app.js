@@ -1353,6 +1353,9 @@ async function action(name) {
     case "arpeggio-up": await setArpeggio("up"); break;
     case "arpeggio-down": await setArpeggio("down"); break;
     case "arpeggio-none": await setArpeggio("none"); break;
+    case "grace": await setGrace("slashed"); break;
+    case "grace-appoggiatura": await setGrace("appoggiatura"); break;
+    case "grace-none": await setGrace("none"); break;
     case "gliss": await setGlissando("on"); break;
     case "gliss-none": await setGlissando("none"); break;
     case "staff-lines":
@@ -7315,6 +7318,28 @@ async function setPedal(what, style) {
 async function setArpeggio(what) {
   await mark("arpeggio", { arpeggio: what },
              what === "none" ? "Roll removed" : "Rolled");
+}
+
+// setGrace turns the notes picked up into the small ones leaning on the note
+// written after them.
+//
+// What is picked up is the ornament and not what it ornaments, which is the
+// way round that needs no second way of saying a pitch: the notes were
+// entered as notes, with the clefs, octaves and accidentals the note entry
+// already handles, and are then told to lean. A command carrying a pitch of
+// its own would have its own mistakes about transposing staves.
+//
+// They leave the bar, because a grace note takes no time out of it — that is
+// what it is — so the bar is that much shorter and what is left shows as
+// room to write in.
+async function setGrace(what) {
+  if (what === "none") {
+    await mark("grace", { grace: "none" }, "Grace notes removed");
+    return;
+  }
+  const slashed = what === "slashed" ? "1" : "0";
+  await mark("grace", { slashed, make: "1" },
+             slashed === "1" ? "Grace note" : "Appoggiatura");
 }
 
 async function setGlissando(what) {
@@ -16943,6 +16968,8 @@ const MENU_ICONS = {
   "arpeggio-up": "\ue634",         // arpeggiatoUp
   "arpeggio-down": "\ue635",       // arpeggiatoDown
   "gliss": "\ue585",               // glissandoUp
+  "grace": "\ue560",               // graceNoteAcciaccaturaStemUp
+  "grace-appoggiatura": "\ue562",  // graceNoteAppoggiaturaStemUp
   "group-brace": "\ue000",         // brace
   "group-bracket": "\ue002",       // bracket
 
@@ -19659,6 +19686,7 @@ const MENU_DRAWINGS = {
   "pedal-none": REMOVE_MARK,
   "arpeggio-none": REMOVE_MARK,
   "gliss-none": REMOVE_MARK,
+  "grace-none": REMOVE_MARK,
   "slur-none": REMOVE_MARK,
   "tie-none": REMOVE_MARK,
   "dyn-none": REMOVE_MARK,

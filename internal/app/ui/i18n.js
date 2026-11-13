@@ -684,6 +684,12 @@ const MESSAGES = {
   "Roll the chord": "Arpéger l’accord",
   "Roll it downwards": "Arpéger vers le bas",
   "No roll": "Pas d’arpège",
+  // « Petite note » is what the French tradition calls it, and what Altès
+  // calls it in the list of the five agréments in his chapter XIV:
+  // "La petite note — en italien, appoggiatura".
+  "Grace note": "Petite note",
+  "Appoggiatura": "Appoggiature",
+  "No grace notes": "Pas de petite note",
   "Pedal": "Pédale",
   "Pedal under the passage": "Pédale sous le passage",
   "Change the pedal here": "Changer la pédale ici",

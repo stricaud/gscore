@@ -623,6 +623,7 @@ func (a *App) APIRoutes(mux *http.ServeMux) {
 		"/api/trill":            a.handleTrill,
 		"/api/pedal":            a.handlePedal,
 		"/api/arpeggio":         a.handleArpeggio,
+		"/api/grace":            a.handleGrace,
 		"/api/glissando":        a.handleGlissando,
 		"/api/ending":           a.handleEnding,
 		"/api/jump":             a.handleJump,

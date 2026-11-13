@@ -1033,6 +1033,11 @@ func TestEveryKindOfEditIsUndoable(t *testing.T) {
 			h.note(0, 0, 2, "quarter")
 			h.post("/api/stem?part=0&measure=0&at=1&stem=down")
 		}},
+		{name: "grace", do: func(h *harness) {
+			h.note(0, 0, 2, "quarter")
+			h.note(0, 0, 4, "quarter")
+			h.post("/api/grace?part=0&measure=0&at=1")
+		}},
 		{name: "articulation", do: func(h *harness) {
 			h.note(0, 0, 2, "quarter")
 			h.post("/api/articulation?part=0&measure=0&at=1&articulation=staccato")

@@ -2053,6 +2053,55 @@ paths:
         "200": { $ref: "#/components/responses/Changed" }
         "400": { $ref: "#/components/responses/Error" }
 
+  /api/grace:
+    post:
+      tags: [marks]
+      summary: Small notes leaning on the note after them
+      description: >
+        Turns the notes named into the grace notes of the note written after
+        them, in the order they were written. They leave the voice, because a
+        grace note takes no time out of the bar — which is what it is — so the
+        bar is that much shorter afterwards and the editor shows the rest as
+        room to write in.
+
+
+        The pitches are not given here. They are entered with the note entry
+        that already exists, with its clefs, octaves and accidentals, and then
+        told to lean: a pitch named again in this command would be a second
+        way of saying one, with its own mistakes about transposing staves.
+
+
+        All of the notes have to be in one bar of one staff, and the note they
+        lean on cannot be a rest.
+      parameters:
+        - $ref: "#/components/parameters/part"
+        - $ref: "#/components/parameters/measure"
+        - $ref: "#/components/parameters/at"
+        - $ref: "#/components/parameters/sel"
+        - name: grace
+          in: query
+          description: none takes the whole group off the note named.
+          schema: { type: string, enum: [none] }
+        - name: slashed
+          in: query
+          description: >
+            The stroke through the stems: 1 for the crush played before the
+            beat, 0 for the appoggiatura that takes its time out of the note
+            it leans on. A player does two different things with them. Given
+            on its own it changes a group already there; given with make=1 it
+            sets how a new one is written. New groups are slashed unless this
+            says otherwise.
+          schema: { type: string, enum: ["0", "1"] }
+        - name: make
+          in: query
+          description: >
+            Make a group even though slashed was given, rather than change
+            the stroke on one already there.
+          schema: { type: string, enum: ["1"] }
+      responses:
+        "200": { $ref: "#/components/responses/Changed" }
+        "400": { $ref: "#/components/responses/Error" }
+
   /api/glissando:
     post:
       tags: [marks]

@@ -3790,8 +3790,7 @@ func (a *App) handleAddStaff(w http.ResponseWriter, r *http.Request) {
 	a.score.Parts = append(a.score.Parts, nil)
 	copy(a.score.Parts[at+1:], a.score.Parts[at:])
 	a.score.Parts[at] = part
-	shiftGroups(a.score, at, 1)
-	shiftMirrors(a.score, at, 1)
+	shiftStaves(a.score, at, 1)
 
 	// Written as tablature, or as the pair a guitar part is usually
 	// printed as: the notation above and the tab below, joined down the
@@ -3815,8 +3814,7 @@ func (a *App) handleAddStaff(w http.ResponseWriter, r *http.Request) {
 			a.score.Parts = append(a.score.Parts, nil)
 			copy(a.score.Parts[at+2:], a.score.Parts[at+1:])
 			a.score.Parts[at+1] = below
-			shiftGroups(a.score, at+1, 1)
-			shiftMirrors(a.score, at+1, 1)
+			shiftStaves(a.score, at+1, 1)
 			a.score.Groups = append(a.score.Groups, model.StaffGroup{
 				First: at, Last: at + 1, Symbol: model.GroupLine,
 				Barlines: true, Name: part.Name,
@@ -3849,8 +3847,7 @@ func (a *App) handleRemoveStaff(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a.score.Parts = append(a.score.Parts[:at], a.score.Parts[at+1:]...)
-	shiftGroups(a.score, at, -1)
-	shiftMirrors(a.score, at, -1)
+	shiftStaves(a.score, at, -1)
 	writeJSON(w, map[string]any{"status": "ok", "staves": len(a.score.Parts)})
 }
 
@@ -3905,47 +3902,12 @@ func (a *App) handleMoveStaff(w http.ResponseWriter, r *http.Request) {
 // shiftMirrors keeps a staff that mirrors another pointing at it when the
 // staves above them move.
 //
-// A tablature says which staff it shows by that staff's number, and a
-// staff added or taken away above it changes every number after it. Left
-// alone, a guitar's tab ends up naming whatever staff has fallen into
-// that place — or itself, after which it shows nothing at all, which is
-// how a pair came out empty the first time a staff was removed above it.
-//
-// A mirror whose staff has gone stops being one. It keeps its tuning and
-// its ruling and simply holds nothing, which is a staff somebody can see
-// and delete, rather than a dangling reference nothing explains.
-func shiftMirrors(s *model.Score, at, delta int) {
-	for i, p := range s.Parts {
-		if p.MirrorOf == nil {
-			continue
-		}
-		n := *p.MirrorOf
-		if n >= at {
-			n += delta
-		}
-		if n < 0 || n >= len(s.Parts) || n == i {
-			p.MirrorOf = nil
-			continue
-		}
-		p.MirrorOf = &n
-	}
-}
-
-func shiftGroups(s *model.Score, at, delta int) {
-	var kept []model.StaffGroup
-	for _, g := range s.Groups {
-		if g.First >= at {
-			g.First += delta
-		}
-		if g.Last >= at {
-			g.Last += delta
-		}
-		if g.First < 0 || g.Last >= len(s.Parts) || g.Last <= g.First {
-			continue
-		}
-		kept = append(kept, g)
-	}
-	s.Groups = kept
+// shiftStaves renumbers the mirrors and the groups after staves have been
+// put in or taken out at `at`. The rule itself lives in the model, with
+// pairing, because pairing is the other thing that renumbers them and two
+// copies of a renumbering rule is one copy too many.
+func shiftStaves(s *model.Score, at, delta int) {
+	model.ShiftStaffIndexes(s, at, delta)
 }
 
 // handleMeasureRepeat marks a bar as a repeat of the one before it.

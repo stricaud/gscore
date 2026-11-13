@@ -67,6 +67,8 @@ func main() {
 		out         = flag.String("o", "", "render to this file and exit; .pdf or .svg, by the extension")
 		convert     = flag.String("convert", "", "convert the input to this file and exit; the format follows the extension")
 		describe    = flag.Bool("describe", false, "print what the score contains and exit")
+		notation    = flag.Bool("notation", false,
+			"put a staff of pitches above every tab staff, joined to it")
 		port        = flag.Int("port", 0, "serve the editor on this port (0 picks a free one)")
 		serve       = flag.String("serve", "", "run as a web server on this address, such as :8080 or 0.0.0.0:8080")
 		browser     = flag.Bool("browser", false, "show the editor in a web browser instead of a native window")
@@ -152,6 +154,19 @@ func main() {
 			}
 			os.Exit(1)
 		}
+	}
+
+	// A staff of pitches over each tab staff, where it was asked for. Before
+	// anything else is done with the score, so that the editor, -o and
+	// -convert all see the same thing: a tab file opened to read from and
+	// the PDF printed from it should not differ.
+	//
+	// A Guitar Pro file is tablature and nothing else — that is what the
+	// file says — but the pitches are known, since they are what it plays,
+	// so the staff above is the same music written the other way and not a
+	// transcription. See model.PairWithNotation.
+	if *notation && score != nil {
+		score.PairWithNotation()
 	}
 
 	// Tags asked for on the command line go on before anything else is done

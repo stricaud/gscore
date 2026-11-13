@@ -106,6 +106,13 @@ func (e *engraver) systemChordRoom(parts []*model.Part, start, end int) float64 
 // nothing over the drums, and widening every gap in the score by the height
 // of a guitar diagram pushes a pianist's two staves half a page apart.
 func (e *engraver) partChordRoom(p *model.Part, start, end int) float64 {
+	// A mirror does not write the chords again, so it does not need the
+	// room for them either — see waitChord. Asked for it anyway, the gap
+	// above a tab staff opened by the height of a fingering diagram that
+	// was never drawn in it.
+	if p.Mirrors() {
+		return 0
+	}
 	room := 0.0
 	{
 		for mi := start; mi < end && mi < len(p.Measures); mi++ {
@@ -198,6 +205,21 @@ type pendingChord struct {
 // which is how "Am7" came to be printed across its own notehead.
 func (e *engraver) waitChord(c *model.ChordSymbol, x float64, measure, ref int) {
 	if c == nil {
+		return
+	}
+	// Once over a pair, not once over each half of it.
+	//
+	// A guitar printed as notation above and tablature below is one player
+	// reading one line written down twice, and the chords belong to the
+	// line, not to either writing of it. Drawn from both staves they came
+	// out twice — two rows of names and two rows of fingering diagrams, the
+	// lower row sitting between the staves — which is not how any chart is
+	// printed and is half a page of air for nothing.
+	//
+	// The upper staff of the pair is the one that holds the music, so
+	// skipping the mirror puts the row where a chart puts it: at the top,
+	// over both.
+	if e.staffMirrors {
 		return
 	}
 	e.chordRow = append(e.chordRow, pendingChord{

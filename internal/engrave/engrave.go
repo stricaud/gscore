@@ -1119,6 +1119,10 @@ type engraver struct {
 	nextRef int
 	// partIndex is whose staff is being drawn, for the hit regions.
 	partIndex int
+	// staffMirrors says the staff being drawn shows another staff's music
+	// rather than holding its own, so that what belongs over the pair and
+	// not over each half of it is written once. See waitChord.
+	staffMirrors bool
 	// barIndex is which bar of it, for the same reason.
 	barIndex int
 
@@ -3885,6 +3889,7 @@ func (e *engraver) drawSystem(parts []*model.Part, boxes [][]measureBox,
 			}
 			b := boxes[pi][mi]
 			e.partIndex = e.staffNumber(pi)
+			e.staffMirrors = p.Mirrors()
 			if run, ok := e.multi[mi]; ok {
 				if mi == start && b.prefix > 0 {
 					// Already written in the system's head.

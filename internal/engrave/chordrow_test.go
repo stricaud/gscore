@@ -153,3 +153,24 @@ func TestChordsStayApartWhenTheSystemIsSqueezed(t *testing.T) {
 		t.Errorf("squeezed, %q and %q overlap by %.2f", a, b, -gap)
 	}
 }
+
+func TestAPairWritesItsChordsOnce(t *testing.T) {
+	// A guitar printed as notation above and tablature below is one player
+	// reading one line written down twice, and the chords belong to the
+	// line. Drawn from both staves they came out twice: two rows of names
+	// and two rows of fingering diagrams, the second row between the staves.
+	sc := eighths("Gm7", "", "", "", "Cmaj7", "", "", "")
+	sc.Parts[0].Tab, _ = model.TuningNamed("guitar")
+	if n := sc.PairWithNotation(); n != 1 {
+		t.Fatalf("pairing added %d staves, wanted 1", n)
+	}
+	lay := Engrave(sc, DefaultOptions())
+	if len(lay.Chords) != 2 {
+		names := make([]string, len(lay.Chords))
+		for i, c := range lay.Chords {
+			names[i] = c.Name
+		}
+		t.Errorf("%d chord symbols drawn (%v), wanted the 2 that are written",
+			len(lay.Chords), names)
+	}
+}

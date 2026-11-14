@@ -1465,7 +1465,12 @@ type slot struct {
 	// values is mostly air: a quarter note gets 2.8 spaces and its
 	// notehead is 1.18 of them, so a sharp fits in what is left and costs
 	// nothing.
-	tuck  float64
+	tuck float64
+	// flag is how far right of the column the ink reaches for a flag,
+	// measured from the notehead like everything else here. A flag is as
+	// much a part of its note as a dot is, and the gap it stands in is
+	// not air for the next note's accidental to tuck into. See columnInk.
+	flag  float64
 	width float64 // how wide the column is
 }
 
@@ -3079,6 +3084,7 @@ func (e *engraver) measureBox(p *model.Part, m *model.Measure, index int) measur
 			col.elems = append(col.elems, en.v)
 			col.lead = math.Max(col.lead, en.lead)
 			col.tuck = math.Max(col.tuck, en.tuck)
+			col.flag = math.Max(col.flag, en.room)
 			col.width = math.Max(col.width, en.room)
 		}
 		// Two lines of music close enough to clash need room for the one
@@ -3543,7 +3549,16 @@ func (e *engraver) columnInk(col slot) float64 {
 			widest = w
 		}
 	}
-	return widest
+	// And the flag, which hangs off the right of an up stem exactly as a
+	// dot does and reaches further than either.
+	//
+	// Left out, the room booked for the flag read as air, and air is
+	// where the next note's accidental is tucked to keep it inside its
+	// own note's allocation. So the flag was given its room and the flat
+	// after it was put straight back inside that room: bar 18 of the
+	// flute in this Ellington printed the third flat across the eighth
+	// note's flag.
+	return math.Max(widest, col.flag)
 }
 
 // noteheadInk is how wide a notehead's ink is.

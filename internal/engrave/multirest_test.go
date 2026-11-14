@@ -280,3 +280,96 @@ func TestTheSwallowedBarsAreNotNumbered(t *testing.T) {
 		}
 	}
 }
+
+/*
+ * And the bars it swallows do not each get a system of their own.
+ *
+ * A swallowed bar's column collapses onto the end of the run, so it takes
+ * no room and draws nothing. The line breaker scored it exactly as it
+ * scored the line ending at the sign, and an equal score does not beat the
+ * best — so the system ended at the sign and every bar after it was handed
+ * a line to itself with nothing on it. The alto flute of one big band score
+ * came out as a page of music followed by four pages of empty staves:
+ * fifty-three systems holding one invisible bar each.
+ */
+
+// blankSystems names the systems that hold nothing but bars a multi-rest
+// swallowed — a staff ruled across the page with a clef on it and no music.
+//
+// By the bars rather than by the ink: a system like that is still given the
+// clef and the key signature at its head, so counting glyphs says it has
+// something on it when what it has is a label for nothing.
+func blankSystems(s *model.Score, lay *Layout) []SystemPos {
+	bars := 0
+	for _, p := range s.Parts {
+		if n := len(p.Measures); n > bars {
+			bars = n
+		}
+	}
+	_, hidden := planMultiRests(s.Parts, bars)
+	var out []SystemPos
+	for _, sy := range lay.Systems {
+		blank := true
+		for b := sy.First; b <= sy.Last; b++ {
+			if !hidden[b] {
+				blank = false
+				break
+			}
+		}
+		if blank {
+			out = append(out, sy)
+		}
+	}
+	return out
+}
+
+func TestABarSwallowedByAMultiRestDoesNotStartASystem(t *testing.T) {
+	// Five bars of music and then sixty of silence, which is the shape of
+	// a wind part that has finished and is counting to the end.
+	s := restBars(65, 1, map[int][]int{0: {0, 1, 2, 3, 4}})
+	o := multiOpts(true)
+	o.Mode = Paginated
+	lay := Engrave(s, o)
+
+	if len(lay.Systems) == 0 {
+		t.Fatal("nothing was laid out")
+	}
+	for _, sy := range blankSystems(s, lay) {
+		t.Errorf("a system holds bars %d-%d, every one of them swallowed "+
+			"by the multi-rest: a staff ruled for nothing", sy.First, sy.Last)
+	}
+	if len(lay.Systems) > 4 {
+		t.Errorf("%d systems for five bars of music and one multi-rest",
+			len(lay.Systems))
+	}
+	// The last system reaches the end of the piece: the swallowed bars
+	// belong to the run's own line.
+	if last := lay.Systems[len(lay.Systems)-1]; last.Last != 64 {
+		t.Errorf("the last system ends at bar %d, and the piece has 65", last.Last+1)
+	}
+}
+
+// The line is usually full by the time the sign is placed, and that is the
+// case that got onto paper: `ideal >= avail` ends the search at the sign,
+// so the bars after it are never even looked at. Narrow lines make every
+// width do it.
+func TestSwallowedBarsJoinTheLineEvenWhenItIsAlreadyFull(t *testing.T) {
+	for _, line := range []float64{30, 40, 50, 60, 80, 100} {
+		for _, music := range []int{6, 7, 9, 10, 12} {
+			var notes []int
+			for i := 0; i < music; i++ {
+				notes = append(notes, i)
+			}
+			s := restBars(60, 1, map[int][]int{0: notes})
+			o := multiOpts(true)
+			o.Mode = Paginated
+			o.LineWidth = line
+			lay := Engrave(s, o)
+			for _, sy := range blankSystems(s, lay) {
+				t.Errorf("line %.0f, %d bars of music: a system holds bars "+
+					"%d-%d and every one of them is swallowed",
+					line, music, sy.First, sy.Last)
+			}
+		}
+	}
+}

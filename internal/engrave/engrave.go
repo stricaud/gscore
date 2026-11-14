@@ -2333,7 +2333,19 @@ func (e *engraver) breakAt(widths, least []float64, prefix float64) int {
 		if i > 0 && ideal > avail && floor > avail {
 			break
 		}
-		if bad := lineBadness(avail, ideal); bad < bestBad {
+		// A bar that takes no room at all is one a multi-measure rest has
+		// swallowed: its column collapsed onto the end of the run and it
+		// draws nothing. It cannot make a line worse, and it must never
+		// start one — so it goes wherever the bar before it went.
+		//
+		// Left to the badness alone it never did. The run's sign is the
+		// best line this far, the bars after it score exactly the same,
+		// and an equal score does not beat the best — so the system ended
+		// at the sign and each swallowed bar was handed a system of its
+		// own, with nothing on it. The alto flute's part came out as one
+		// page of music and four of empty staves: fifty-three systems
+		// holding one invisible bar each.
+		if bad := lineBadness(avail, ideal); bad < bestBad || widths[i] == 0 {
 			best, bestBad = i+1, bad
 		}
 		// Once the line is over-full, every further bar only makes it
@@ -2344,6 +2356,13 @@ func (e *engraver) breakAt(widths, least []float64, prefix float64) int {
 	}
 	if best == 0 {
 		best = 1 // a measure too wide for any line still has to go somewhere
+	}
+	// And the bars that take no room join the line before them however the
+	// loop above ended. The usual case ends it early: a multi-measure rest
+	// fills the line with its own sign, so the loop breaks out there and
+	// never reaches the bars that sign swallowed.
+	for best < len(widths) && widths[best] == 0 {
+		best++
 	}
 	return best
 }

@@ -1612,6 +1612,152 @@ body.player.bare { grid-template-rows: 1fr; }
 
 .pad.on .pad-midi { color: inherit; opacity: 0.8; }
 
+/* ---------- piano mode ---------- */
+
+/* A piano along the bottom of the window, with the letter that plays each
+   key written on it. Drawn as a keyboard and not as a list, because where
+   a letter falls on the keyboard is the whole of what there is to learn,
+   and three octaves end to end say it at a glance. */
+#pianokeys {
+  border-top: 1px solid var(--line);
+  background: var(--panel);
+  padding: 6px 10px 10px;
+}
+
+#pianokeys-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 6px;
+}
+
+.pianokeys-title {
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  font-size: calc(11px * var(--ui-scale));
+  color: var(--muted);
+}
+
+/* The hints go last and give up their room first, as the drum pads' does:
+   on a narrow window the keyboard matters and the sentences do not. They
+   drop off the end one at a time, the last one first, which leaves the
+   one that matters most showing longest. */
+.pianokeys-hints {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.pianokeys-hints > span {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.pianokeys-hints > span + span::before {
+  content: "·";
+  margin-right: 10px;
+  color: var(--line);
+}
+
+.pianokeys-hints kbd { padding: 0 4px; margin-right: 2px; }
+
+/* The keys share the width and shrink no further than a finger: past that
+   the keyboard scrolls rather than becoming a row of slivers. */
+#pianokeys-board {
+  display: flex;
+  align-items: flex-start;
+  overflow-x: auto;
+  padding-bottom: 2px;
+}
+
+.piano-white {
+  position: relative;
+  flex: 1 1 0;
+  min-width: calc(26px * var(--ui-scale));
+  height: calc(74px * var(--ui-scale));
+  /* A white key is white and a black key is black in both themes, because
+     that is what a piano is. The ink is set alongside them rather than
+     inherited, so the letters stay legible on a dark one. */
+  background: #f6f4f0;
+  color: #1c1a18;
+  border: 1px solid var(--line);
+  border-radius: 0 0 4px 4px;
+  /* Neighbouring keys share a border, so the line between two of them is
+     one line and not two. */
+  margin-right: -1px;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 2px;
+  padding-bottom: 5px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.piano-white:hover { background: var(--accent-soft); }
+
+/* Held, which is what says the next letter will be a notehead on this note
+   rather than the note after it. */
+.piano-white.down {
+  background: var(--accent);
+  color: var(--paper);
+}
+
+.piano-name {
+  font-size: calc(9px * var(--ui-scale));
+  color: #6d6862;
+}
+
+.piano-white.down .piano-name { color: inherit; opacity: 0.85; }
+
+.piano-letters { display: flex; gap: 2px; }
+
+.piano-letters kbd {
+  font-size: calc(10px * var(--ui-scale));
+  padding: 1px 4px;
+  color: #1c1a18;
+  background: #d8d4cc;
+}
+
+.piano-white.down .piano-letters kbd {
+  color: var(--accent);
+  background: var(--paper);
+}
+
+/* Astride the line between two white keys, which is where it is on a
+   piano. Half over each, so the two-and-three pattern comes out of the
+   gaps where there is no black key at all — the thing that makes a drawn
+   keyboard readable at a glance. */
+.piano-black {
+  position: absolute;
+  top: 0;
+  right: -29%;
+  width: 58%;
+  height: 60%;
+  background: #211f1c;
+  border: 1px solid #0d0c0b;
+  border-radius: 0 0 3px 3px;
+  z-index: 2;
+  cursor: pointer;
+}
+
+.piano-black:hover, .piano-black.down { background: var(--accent); }
+
+/* The keys the mode has borrowed. The commands still work from the menu —
+   only their key is on loan — so the hint is struck through rather than
+   the entry being greyed out, which is what the shortcuts window already
+   does for a key something else has taken. */
+body.piano-mode .menu-items button > kbd[data-lent] {
+  opacity: 0.45;
+  text-decoration: line-through;
+}
+
 /* ---------- Set Tempo ---------- */
 
 /* The note the number counts, as the notes themselves. A metronome mark

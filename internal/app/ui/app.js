@@ -66,6 +66,11 @@ const state = {
   // with the mouse turns it back on for anyone who prefers it, and shift
   // still selects while it is on.
   mouseWrites: false,
+  // Whether the letters are a piano keyboard rather than commands. Off, and
+  // not remembered between sessions: a mode that has taken every letter in
+  // the alphabet is one somebody wants to have switched on themselves, and
+  // not to find already on in the morning. See setPiano.
+  piano: false,
   // Whether a click sounds on every beat while the music plays. Off until
   // somebody asks for it: nobody presses Play expecting a metronome.
   // Remembered between sessions, like the mouse. See setMetronome.
@@ -1302,6 +1307,9 @@ async function action(name) {
     case "console": await openConsole(); break;
     case "note-input":
       setMouseWrites(!state.mouseWrites);
+      break;
+    case "piano-mode":
+      togglePiano();
       break;
     case "insert-note":
       await insertAtSelection(false);
@@ -6319,9 +6327,29 @@ function onMidiMessage(e) {
 // cursor ends up, and two of them in flight would both be working from
 // where it was before either had landed — which on a chord played with
 // five fingers is five notes written one after another in the wrong bar.
-function playedNote(note) {
-  midiIn.queue.push({ note, at: Date.now() });
+//
+// join says whether this note belongs to the one before it. A MIDI keyboard
+// leaves it unsaid and is answered by the clock, because all that arrives
+// from it is the moment a key went down. The typing keyboard says so
+// outright: it can see that the first key is still held. See pianoKeyDown.
+//
+// note is a number or a name, and which it is matters. A number is a pitch
+// that sounded — what a MIDI keyboard sends, and what a black key on the
+// drawn keyboard means — and the key signature only chooses how to spell
+// it. A name is a letter of the scale, and the key signature says what it
+// is: F in G major is F sharp. See pianoPress.
+function playedNote(note, join) {
+  midiIn.queue.push({ note, at: Date.now(), join });
   drainMidi();
+}
+
+// playedParam says which of the two a note is, for the request.
+//
+// A bare letter and a sounding number are different questions to ask of the
+// server, and asking the wrong one is what put a natural in front of every
+// F somebody typed in G major.
+function playedParam(p, note) {
+  p.set(typeof note === "number" ? "midi" : "pitch", String(note));
 }
 
 async function drainMidi() {
@@ -6329,31 +6357,41 @@ async function drainMidi() {
   midiIn.busy = true;
   try {
     while (midiIn.queue.length) {
-      const { note, at } = midiIn.queue.shift();
-      await writePlayedNote(note, at);
+      const { note, at, join } = midiIn.queue.shift();
+      await writePlayedNote(note, at, join);
     }
   } finally {
     midiIn.busy = false;
   }
 }
 
-async function writePlayedNote(note, at) {
+async function writePlayedNote(note, at, join) {
   const sel = state.selection;
   if (!sel) {
     status("Click where the music should go first");
     return;
   }
-  // Part of the note already being written, if it arrived soon enough and
-  // the cursor has not been moved in between.
-  const together = midiIn.chord &&
-    at - midiIn.chord.at < midiIn.window &&
-    midiIn.chord.part === sel.part && midiIn.chord.measure === sel.measure;
+  // Part of the note already being written: because the player said so, or
+  // failing that because it arrived soon enough — and either way only while
+  // the cursor is still standing where the last note left it.
+  //
+  // Where it left it, and not where the note went: a note that fills its bar
+  // leaves the caret at the start of the next one, with the note it wrote
+  // behind the barline. Asking instead whether the caret is still in the
+  // note's own bar made the second note of a chord written at the end of a
+  // full bar start a new note in the bar after. See carryCaretOn.
+  const caret = midiIn.chord?.caret;
+  const unmoved = !!caret && caret.part === sel.part &&
+    caret.measure === sel.measure && caret.at === sel.at;
+  const together = !!midiIn.chord && unmoved &&
+    (join === undefined ? at - midiIn.chord.at < midiIn.window : join);
 
   if (together) {
     const p = new URLSearchParams({
       part: String(midiIn.chord.part), measure: String(midiIn.chord.measure),
-      index: String(midiIn.chord.index), midi: String(note),
+      index: String(midiIn.chord.index),
     });
+    playedParam(p, note);
     // The line the note under it was written in.
     withVoice(p, midiIn.chord.voice);
     const res = await fetch("/api/addpitch?" + p, { method: "POST" });
@@ -6369,9 +6407,9 @@ async function writePlayedNote(note, at) {
 
   const p = new URLSearchParams({
     part: String(sel.part), measure: String(sel.measure),
-    at: String(sel.at), midi: String(note), dur: state.tool.duration,
-    kind: "note",
+    at: String(sel.at), dur: state.tool.duration, kind: "note",
   });
+  playedParam(p, note);
   if (state.tool.dots > 0) p.set("dots", String(state.tool.dots));
   withVoice(p);
   const res = await fetch("/api/insert?" + p, { method: "POST" });
@@ -6399,12 +6437,16 @@ async function writePlayedNote(note, at) {
   // Where the note landed, so the keys pressed with it are added to it
   // rather than written after it. at is already past the note, so the
   // note itself is the one before.
-  midiIn.chord = {
+  const landed = {
     at, part: sel.part, measure: sel.measure, index: sel.at - 1,
     voice: sel.voice,
   };
   await refreshScore();
   carryCaretOn(sel);
+  // And where that left the caret, which is what the next key is measured
+  // against. Read after carrying it on, so a full bar is accounted for.
+  landed.caret = { part: sel.part, measure: sel.measure, at: sel.at };
+  midiIn.chord = landed;
   markSelection();
   scrollSelectionIntoView();
 }
@@ -6454,6 +6496,358 @@ async function midiDialog() {
 function midiTick() {
   const el = $("#midi-tick");
   if (el) el.textContent = midiIn.portId ? "\u2713" : "";
+}
+
+/* ---------- the typing keyboard as a piano ---------- */
+
+/*
+ * Piano mode: the letters are a keyboard.
+ *
+ * Most people do not have a MIDI keyboard plugged in, and the ones who do
+ * have not got it plugged in at the kitchen table. The keys are already
+ * under the hands, so they are the keyboard: press a letter and the note
+ * is written, exactly as a MIDI key is, through the same path and with the
+ * same length from the toolbar. Asked for as "I would love to use the
+ * keyboard like a piano so I can select the range easily".
+ *
+ * Three rows, three octaves, every row starting on C. One finger is one
+ * note name whichever row it is in \u2014 D is always the third key along \u2014 so
+ * there is one row to learn rather than twenty-six keys, and three octaves
+ * are under the hands at once with nothing to switch between. That is the
+ * range part of it: C3 to E6 without reaching for anything, and [ and ]
+ * for the music that goes outside it.
+ *
+ * Held together is a chord. Not a stopwatch, which is what a MIDI keyboard
+ * needs because all it ever says is that a key went down: here the program
+ * can see that the first key is still down, so holding the lower note and
+ * pressing the upper one stacks them, and letting go between them writes
+ * two notes. That is what a piano does, and it is how the thirds and sixths
+ * of a two-part study get typed \u2014 the reason the mode was asked for.
+ *
+ * It is a mode because it has to be: the letters are commands the rest of
+ * the time, and twenty-six of them. So it is switched on deliberately, it
+ * says so in the status line, it puts the whole map on the screen while it
+ * is on, the menus strike through the keys they have lent it, and Escape
+ * ends it. Nothing about it is remembered for next time.
+ *
+ * Only the diatonic notes are here. The accidental keys are untouched and
+ * still arm the next note, and the key signature does the rest: the server
+ * spells what it is sent by the key it is in, so F in D major is written
+ * F sharp without anybody saying so. See PitchInKey.
+ */
+
+// The rows, bottom to top, written as the letters a QWERTY keyboard has in
+// those places. A row is read left to right as a scale from the C it starts
+// on. The rows run past an octave where the keys are there to be used \u2014 k
+// and l carry the home row up to D5 \u2014 and stop short of the punctuation,
+// which goes on meaning what it means everywhere else: the digits are still
+// the note lengths and the full stop is still the dot.
+const PIANO_ROWS = [
+  { keys: "zxcvbnm", octave: 3 },
+  { keys: "asdfghjkl", octave: 4 },
+  { keys: "qwertyuiop", octave: 5 },
+];
+
+// The map the keys obey, kept by where a key is and not by what it prints:
+// KeyA, not "a".
+//
+// Where a key is is the whole of what this layout is about \u2014 three rows
+// one above another, the same finger the same note name in each \u2014 and on
+// an AZERTY keyboard the letters are in different places, so a map kept by
+// letter would have the rows crossing over each other. By place, the
+// keyboard is three rows under the hands whatever is printed on it.
+const PIANO_KEYS = new Map();
+for (const row of PIANO_ROWS) {
+  [...row.keys].forEach((k, i) => PIANO_KEYS.set(
+    "Key" + k.toUpperCase(), { octave: row.octave, degree: i, letter: k }));
+}
+
+const PIANO_NAMES = ["C", "D", "E", "F", "G", "A", "B"];
+const PIANO_SEMIS = [0, 2, 4, 5, 7, 9, 11];
+
+const pianoIn = {
+  // The keys that are down. A key pressed while this is not empty is a
+  // notehead on the note the first one wrote.
+  held: new Set(),
+  // How many octaves the whole map has been moved, for a part that lies
+  // outside the three rows. Shown on the map, so it is never a surprise.
+  shift: 0,
+  // What is printed on each key, where that is not what a QWERTY keyboard
+  // prints. See pianoLabelOf.
+  labels: new Map(),
+};
+
+// pianoNoteOf says what note a key plays, or nothing if it is not one of
+// them. It is given a place on the keyboard \u2014 KeyA \u2014 and not a letter.
+function pianoNoteOf(code) {
+  const p = PIANO_KEYS.get(code);
+  if (!p) return null;
+  const octave = p.octave + Math.floor(p.degree / 7) + pianoIn.shift;
+  const degree = p.degree % 7;
+  return {
+    name: PIANO_NAMES[degree] + octave,
+    midi: (octave + 1) * 12 + PIANO_SEMIS[degree],
+  };
+}
+
+// pianoLabelOf is the letter to write on a drawn key: what that key prints
+// on the keyboard in front of the person, which is not always what it
+// prints on a QWERTY one.
+//
+// Learnt two ways, because neither on its own covers everybody. Chrome and
+// Edge will say outright what the layout is; Safari and the native window
+// will not, so the keys themselves are taken at their word as they are
+// pressed \u2014 a key pressed says what is written on it, and the picture
+// corrects itself under the hands. See notePianoLabel.
+function pianoLabelOf(code) {
+  return pianoIn.labels.get(code) || PIANO_KEYS.get(code)?.letter || "";
+}
+
+// readKeyboardLayout asks the browser what is printed on the keys.
+async function readKeyboardLayout() {
+  try {
+    const map = await navigator.keyboard?.getLayoutMap?.();
+    if (!map) return false;
+    let learnt = false;
+    for (const code of PIANO_KEYS.keys()) {
+      const ch = map.get(code);
+      if (ch && ch.length === 1 && ch !== pianoLabelOf(code)) {
+        pianoIn.labels.set(code, ch);
+        learnt = true;
+      }
+    }
+    return learnt;
+  } catch (_) {
+    return false; // not every browser has one, and it is not needed
+  }
+}
+
+// notePianoLabel takes a key at its word about what is printed on it.
+function notePianoLabel(code, ch) {
+  if (!ch || ch.length !== 1 || !/\p{L}/u.test(ch)) return;
+  if (!PIANO_KEYS.has(code) || pianoLabelOf(code) === ch) return;
+  pianoIn.labels.set(code, ch);
+  renderPianoKeys();
+}
+
+function togglePiano() {
+  setPiano(!state.piano);
+}
+
+// setPiano switches the mode, and says so in every place somebody might be
+// looking: the status line, the tick on the menu, the keys the menus have
+// lent it, and the map along the bottom of the window.
+function setPiano(on) {
+  state.piano = !!on && !state.readOnly;
+  pianoIn.held.clear();
+  document.body.classList.toggle("piano-mode", state.piano);
+  const strip = $("#pianokeys");
+  if (strip) strip.hidden = !state.piano;
+  if (state.piano) {
+    renderPianoKeys();
+    // Drawn first and corrected a moment later, where the browser will say
+    // what the keys print: waiting on the answer to draw anything would
+    // hold the keyboard back for a question most browsers cannot answer.
+    void readKeyboardLayout().then((learnt) => learnt && renderPianoKeys());
+  }
+  markViewTicks();
+  status(state.piano
+    ? "Piano mode: the letters play. Hold one and press another for a chord, " +
+      "[ and ] for an octave down or up, Escape to stop"
+    : "Piano mode off \u2014 the letters are commands again");
+}
+
+// pianoPress plays one key of the drawn keyboard, by whatever pressed it.
+//
+// id is what is holding it down — the place on the keyboard for a typed
+// key, the pitch for a black one clicked with the mouse — so that the same
+// key released by the same finger lets go of it and nothing else does.
+//
+// note is a name for a white key and a number for a black one, and that is
+// the difference between the two rows of a piano rather than an accident.
+// A white key is a letter of the scale: press F in G major and you mean the
+// F of that key, which is F sharp — which is what somebody typing a part in
+// G major means every time, and what the key signature is there to say. A
+// black key is a note outside the scale and has nothing but its sound to go
+// on, so it goes as a number and is spelled by the key it lands in.
+//
+// It used to send the sounding pitch for both. Reported as "why are natural
+// put? There is no need, I have to remove this all the time": every white
+// key the signature altered came out as the natural of that letter, with a
+// natural printed in front of it, and in three flats that is three notes of
+// every scale.
+function pianoPress(id, note) {
+  // Still holding one means this is a notehead on it, and not the next
+  // note. Decided here, while the fingers are where they are, rather than
+  // where the note is written: the writing is a round trip to the server
+  // and the hand will have moved on by the time it comes back.
+  const join = pianoIn.held.size > 0;
+  pianoIn.held.add(id);
+  markPianoKeys();
+  playedNote(note, join);
+}
+
+function pianoRelease(id) {
+  if (!pianoIn.held.delete(id)) return;
+  markPianoKeys();
+}
+
+// pianoKeyDown writes the note a key of the keyboard plays.
+function pianoKeyDown(code) {
+  const note = pianoNoteOf(code);
+  if (!note) return false;
+  // By name: a letter key is a letter of the scale. See pianoPress.
+  pianoPress(code, note.name);
+  return true;
+}
+
+function pianoKeyUp(code) {
+  pianoRelease(code);
+}
+
+// lettingGo drops every key being held. A key that is down when the window
+// loses focus never sends its keyup \u2014 the keystroke that switched windows
+// went somewhere else \u2014 and a key the program still thinks is down makes
+// the next note a chord with one written minutes ago.
+function lettingGo() {
+  for (const k of [...pianoIn.held]) pianoRelease(k);
+}
+
+// shiftPianoOctave moves the whole map, for the music that lies outside the
+// three rows: a bass part under them, a piccolo part over them.
+function shiftPianoOctave(by) {
+  const was = pianoIn.shift;
+  // Three either way, which is as far as there is anywhere to go: the top
+  // row three octaves up is already past the top of a piano.
+  pianoIn.shift = Math.max(-3, Math.min(3, was + by));
+  if (pianoIn.shift === was) {
+    status(by > 0 ? "The keys are as high as they go"
+                  : "The keys are as low as they go");
+    return;
+  }
+  renderPianoKeys();
+  // The leftmost key of the home row, named by where it is: KeyA is that
+  // place on every keyboard, whatever is printed on it.
+  status("The home row starts on " + pianoNoteOf("KeyA").name);
+}
+
+// pianoWhites lists the keyboard the letters add up to, lowest note first:
+// one entry a white key, with the letters that play it.
+//
+// Built from the rows rather than written out, so the picture and the keys
+// cannot disagree. Two letters land on the same note where the rows overlap
+// \u2014 the home row carries on to D5 and the top row starts at C5 \u2014 and that
+// is worth seeing rather than hiding: both are printed on the key.
+function pianoWhites() {
+  const byMidi = new Map();
+  for (const code of PIANO_KEYS.keys()) {
+    const n = pianoNoteOf(code);
+    const had = byMidi.get(n.midi) || { midi: n.midi, name: n.name, keys: [] };
+    had.keys.push(code);
+    byMidi.set(n.midi, had);
+  }
+  return [...byMidi.values()].sort((a, b) => a.midi - b.midi);
+}
+
+// renderPianoKeys draws a piano with the letters written on its keys.
+//
+// A picture of a keyboard rather than a list of letters, because that is
+// the thing being explained: where a letter is on the keyboard is the whole
+// of what there is to learn here, and three octaves drawn end to end say it
+// at a glance \u2014 including that the rows overlap and that the hands sit
+// where the music is. Asked for as "maybe we could see a piano and the keys
+// written on it so it would be easier to understand".
+//
+// It is a real keyboard and not a diagram: every key plays, with the mouse,
+// by the same rules as the letters \u2014 hold one down and press another and
+// they are a chord. The black keys have no letter, because the letters are
+// the notes of the scale and the key signature spells the rest; they are
+// drawn because a keyboard without them is not one you can read, and they
+// are clickable because once they are drawn, anybody will try.
+function renderPianoKeys() {
+  const board = $("#pianokeys-board");
+  if (!board) return;
+  board.textContent = "";
+  // Which degrees have a black key above them: C, D, F, G and A. No E or
+  // B, which is the gap that makes a keyboard readable at all.
+  const sharped = new Set([0, 1, 3, 4, 5]);
+  const whites = pianoWhites();
+  for (const [i, note] of whites.entries()) {
+    const printed = note.keys.map((c) => pianoLabelOf(c).toUpperCase());
+    const key = document.createElement("div");
+    key.className = "piano-white";
+    key.dataset.keys = note.keys.join(" ");
+    key.title = note.name + " \u2014 press " + printed.join(" or ");
+
+    const name = document.createElement("span");
+    name.className = "piano-name";
+    name.textContent = note.name;
+    const letters = document.createElement("span");
+    letters.className = "piano-letters";
+    for (const ch of printed) {
+      const kbd = document.createElement("kbd");
+      kbd.textContent = ch;
+      letters.append(kbd);
+    }
+    key.append(name, letters);
+    pianoPlayable(key, note.keys[0], note.name);
+
+    // The black key sits astride the line between this white one and the
+    // next, which is where it is on a piano \u2014 and only where there is a
+    // next one for it to sit against.
+    const degree = PIANO_NAMES.indexOf(note.name[0]);
+    if (sharped.has(degree) && i < whites.length - 1) {
+      const black = document.createElement("div");
+      black.className = "piano-black";
+      black.title = note.name[0] + "\u266f" + note.name.slice(1) +
+        " \u2014 no letter: the key signature spells the sharps and flats, " +
+        "and # _ = write one on the note";
+      pianoPlayable(black, "#" + (note.midi + 1), note.midi + 1);
+      key.append(black);
+    }
+    board.append(key);
+  }
+  const shift = $("#pianokeys-shift");
+  if (shift) {
+    shift.textContent = pianoIn.shift
+      ? "moved " + Math.abs(pianoIn.shift) +
+        (Math.abs(pianoIn.shift) === 1 ? " octave " : " octaves ") +
+        (pianoIn.shift > 0 ? "up" : "down")
+      : "";
+  }
+  markPianoKeys();
+}
+
+// pianoPlayable makes a drawn key play when it is pressed with the mouse.
+//
+// mousedown and mouseup rather than click, so that the mouse is a finger
+// like any other: hold a key down with it and type a letter, and the two
+// are a chord.
+function pianoPlayable(el, id, note) {
+  el.dataset.id = id;
+  el.addEventListener("mousedown", (e) => {
+    e.preventDefault(); // the music keeps the focus
+    e.stopPropagation(); // a black key is drawn over a white one
+    pianoPress(id, note);
+  });
+  const up = (e) => {
+    e.stopPropagation();
+    pianoRelease(id);
+  };
+  el.addEventListener("mouseup", up);
+  el.addEventListener("mouseleave", up);
+}
+
+// markPianoKeys lights the keys that are held, which is what says a chord
+// is being built rather than two notes written one after the other.
+function markPianoKeys() {
+  for (const el of $$("#pianokeys-board [data-keys]")) {
+    el.classList.toggle("down",
+      el.dataset.keys.split(" ").some((c) => pianoIn.held.has(c)));
+  }
+  for (const el of $$("#pianokeys-board .piano-black")) {
+    el.classList.toggle("down", pianoIn.held.has(el.dataset.id));
+  }
 }
 
 async function insertAtSelection(rest, keepSelection) {
@@ -11096,6 +11490,8 @@ function markViewTicks() {
   if (nc) nc.textContent = state.colourNotes ? "✓" : "";
   const w = $("#mouse-tick");
   if (w) w.textContent = state.mouseWrites ? "✓" : "";
+  const pn = $("#piano-tick");
+  if (pn) pn.textContent = state.piano ? "✓" : "";
 }
 
 // setMouseWrites switches between pointing and writing, and remembers which.
@@ -17358,6 +17754,12 @@ const KEY_BINDINGS = [
   { id: "mouse-writes", menu: "note-input", keys: "i", group: "Writing",
     label: "Write with the mouse, rather than pointing with it",
     run: () => setMouseWrites(!state.mouseWrites) },
+  // Mod rather than a bare letter, because a bare letter is the one thing
+  // the mode itself needs: every letter means a note while it is on, so the
+  // key that started it could never stop it. Escape does that.
+  { id: "piano-mode", menu: "piano-mode", keys: "Mod+p", group: "Writing",
+    label: "Play the notes in from the letter keys",
+    run: () => togglePiano() },
   { id: "type-music", menu: "type-music", keys: "Mod+k", group: "Writing",
     label: "Type the music in, at the cursor",
     run: () => toggleTypeBar() },
@@ -17967,11 +18369,22 @@ function syncMenuKeys() {
     if (!el) continue;
     // Both keys where there are two, the command's own first. A menu that
     // showed one of them would be telling half the truth about Save.
-    let text = shortcutText(keyFor(b), true);
+    const key = keyFor(b);
+    let text = shortcutText(key, true);
     if (b.also && !(b.id in (state.keys || {}))) {
       text += " " + shortcutText(b.also, true);
     }
     el.textContent = text;
+    // A bare letter is a key piano mode borrows while it is on, and the
+    // menu says so by striking the hint through. Every letter, because the
+    // mode takes all twenty-six places and every keyboard has the same
+    // twenty-six letters on them somewhere. Marked here rather than when
+    // the mode is switched, because which keys they are is a fact about
+    // the binding and does not change with the mode — and a key somebody
+    // has rebound is marked or unmarked as it should be, because this runs
+    // again when they do.
+    if (/^[a-z]$/.test(key)) el.dataset.lent = "";
+    else delete el.dataset.lent;
   }
 }
 
@@ -18240,6 +18653,41 @@ function setupKeys() {
       return;
     }
 
+    // Piano mode: the letters are a keyboard rather than commands, for as
+    // long as it is switched on. Last of the three, so a drum staff's
+    // letters and a tab staff's digits still win on their own staves —
+    // those are what that staff is written with, and they are not a mode
+    // anybody switched on.
+    //
+    // The letters only. Everything else goes on doing what it did: the
+    // digits are still the note lengths, the signs are still the
+    // accidentals, Space still writes what the palette is holding, and
+    // every command with a modifier on it is untouched.
+    if (state.piano && !e.shiftKey && !e.altKey && !e.ctrlKey && !e.metaKey) {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        setPiano(false);
+        return;
+      }
+      if (e.key === "[" || e.key === "]") {
+        e.preventDefault();
+        shiftPianoOctave(e.key === "[" ? -1 : 1);
+        return;
+      }
+      // By where the key is, not by what it prints: see PIANO_KEYS.
+      if (PIANO_KEYS.has(e.code)) {
+        e.preventDefault();
+        // And what it prints is worth knowing, for the picture. A key
+        // pressed is a key saying what is written on it.
+        notePianoLabel(e.code, e.key);
+        // A key held down repeats, and a repeat is not a finger. Held is
+        // how a chord is asked for here, so without this the lower note of
+        // every chord would be written over and over while it was waited on.
+        if (!e.repeat) pianoKeyDown(e.code);
+        return;
+      }
+    }
+
     const bound = bindingFor(e);
     if (!bound) return;
     // Inputs and open dialogs are already out, so there is no default worth
@@ -18248,6 +18696,15 @@ function setupKeys() {
     e.preventDefault();
     bound.run();
   });
+
+  // The other half of a piano key: letting go of it. Only the mode's own
+  // keys are in the set, so every other keyup falls straight through.
+  document.addEventListener("keyup", (e) => {
+    if (pianoIn.held.size) pianoKeyUp(e.code);
+  });
+  // And a window that loses the focus has let go of everything, whatever
+  // its keys did on the way out. See lettingGo.
+  window.addEventListener("blur", lettingGo);
 }
 
 /* ---------- moving, copying and pasting ---------- */
@@ -20695,6 +21152,15 @@ const MENU_DRAWINGS = {
   "beam-auto": '<path d="M6 17V6.5M18 17V8.5"/>' +
     '<path d="M5.5 7l13-1.9" stroke-dasharray="3 2.2"/>',
 
+  /* A piano, from above: the white keys as uprights and the black ones in
+     their two-and-three, which is the one shape everybody reads as a
+     keyboard however small it is drawn. */
+  "piano-mode": '<rect x="2.5" y="5.5" width="19" height="13" rx="1.5"/>' +
+    '<path d="M7.25 5.5v13M12 5.5v13M16.75 5.5v13"/>' +
+    '<rect x="5.9" y="5.5" width="2.7" height="7.5" fill="currentColor"/>' +
+    '<rect x="15.4" y="5.5" width="2.7" height="7.5" fill="currentColor"/>' +
+    '<rect x="10.65" y="5.5" width="2.7" height="7.5" fill="currentColor"/>',
+
   /* Typing music instead of clicking it, and the line you type into. */
   "type-music": '<rect x="2.5" y="12.5" width="19" height="8" rx="1.8"/>' +
     '<path d="M6 15.5h.01M9.5 15.5h.01M13 15.5h.01M16.5 15.5h.01M8 18.5h8"/>' +
@@ -21642,10 +22108,11 @@ const SCRIPT_GROUPS = new Set([
   "Selecting and moving",
 ]);
 
-// The few inside those groups that are still not a script's: two modes,
-// which a script would leave switched on behind it, and the go-to-bar
+// The few inside those groups that are still not a script's: the three
+// modes, which a script would leave switched on behind it, and the go-to-bar
 // window, which is at(bar) said with a dialog in the way.
-const SCRIPT_NOT = new Set(["mouse-writes", "type-music", "jump", "jump-mod"]);
+const SCRIPT_NOT = new Set(["mouse-writes", "type-music", "piano-mode",
+                            "jump", "jump-mod"]);
 
 // And the ones with no group, which are the commands that answer only to
 // their name. Listed rather than allowed wholesale: the others open a

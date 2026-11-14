@@ -1,6 +1,7 @@
 package app
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -366,6 +367,77 @@ func TestBracketsCanBeTurnedOnAndOffOutright(t *testing.T) {
 	h.post("/api/accidental?parens=off&sel=0:0:0")
 	if n.Parens {
 		t.Error("parens=off did not take them off")
+	}
+}
+
+/*
+ * A letter played in, and a pitch played in.
+ *
+ * Piano mode types letters: the keys of the drawn keyboard are the notes of
+ * the scale, and which notes those are is what the key signature says. A
+ * MIDI keyboard plays pitches: a white F is an F natural whatever the
+ * signature says, because that is the key the player pressed.
+ *
+ * They used to be the same request and the letters went as pitches.
+ * Reported as "why are natural put? There is no need, I have to remove this
+ * all the time": in three flats, three notes of every scale came out as the
+ * natural of their letter with a natural printed in front of it.
+ */
+
+// A letter is the key's own note, and needs no sign to say so.
+func TestATypedLetterIsTheKeysOwnNote(t *testing.T) {
+	for _, tc := range []struct {
+		fifths int
+		want   string
+	}{
+		{0, "C4 D4 E4 F4"},
+		{1, "C4 D4 E4 F#4"},
+		{2, "C#4 D4 E4 F#4"},
+		{-2, "C4 D4 Eb4 F4"},
+		{-3, "C4 D4 Eb4 F4"},
+	} {
+		h := newHarness(t)
+		h.post(fmt.Sprintf("/api/setkey?part=0&measure=0&fifths=%d", tc.fifths))
+		for _, n := range []string{"C4", "D4", "E4", "F4"} {
+			h.post("/api/insert?part=0&measure=0&at=-1&dur=quarter&kind=note&pitch=" + n)
+		}
+		if got := pitches(h); got != tc.want {
+			t.Errorf("%d fifths: wrote %s, want %s", tc.fifths, got, tc.want)
+		}
+		if got := signs(t, h); got != "" {
+			t.Errorf("%d fifths: printed %q, which the signature had already said",
+				tc.fifths, got)
+		}
+	}
+}
+
+// And the notehead stacked on it, which is the other half of typing a
+// two-part study in.
+func TestATypedLetterInAChordFollowsTheKeyToo(t *testing.T) {
+	h := newHarness(t)
+	h.post("/api/setkey?part=0&measure=0&fifths=-3")
+	h.post("/api/insert?part=0&measure=0&at=-1&dur=half&kind=note&pitch=E4")
+	h.post("/api/addpitch?part=0&measure=0&index=0&pitch=A4")
+	if got := pitches(h); got != "Eb4 Ab4" {
+		t.Errorf("wrote %s, want Eb4 Ab4", got)
+	}
+	if got := signs(t, h); got != "" {
+		t.Errorf("printed %q on a third the signature had already spelled", got)
+	}
+}
+
+// A number is a pitch that sounded, and goes on being one: somebody who
+// presses the white F in G major on a MIDI keyboard has played an F
+// natural, and the page has to say so or it is not what they played.
+func TestAPlayedPitchKeepsItsOwnSpelling(t *testing.T) {
+	h := newHarness(t)
+	h.post("/api/setkey?part=0&measure=0&fifths=1")
+	h.post("/api/insert?part=0&measure=0&at=-1&dur=quarter&kind=note&midi=65")
+	if got := pitches(h); got != "F4" {
+		t.Errorf("wrote %s, want F4", got)
+	}
+	if got := signs(t, h); got != "n" {
+		t.Errorf("printed %q: an F natural in G major needs its natural", got)
 	}
 }
 

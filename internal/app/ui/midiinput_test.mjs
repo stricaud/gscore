@@ -99,14 +99,36 @@ test("a key press joins the queue rather than writing straight away", () => {
 
 /* ---------- chords ---------- */
 
-// No two fingers land at the same millisecond, so "together" is a window.
+// No two fingers land at the same millisecond, so "together" is a window —
+// for a MIDI keyboard, which says only that a key went down. The typing
+// keyboard can see that the first key is still held and says so outright,
+// which is what join is: the clock is the fallback and not the rule.
 test("keys pressed together go onto one note", () => {
   const body = grab("writePlayedNote");
-  assert.match(body, /at - midiIn\.chord\.at < midiIn\.window/);
+  assert.match(body,
+    /join === undefined \? at - midiIn\.chord\.at < midiIn\.window : join/);
   assert.match(body, /api\/addpitch/);
-  // And only where the cursor has not been moved in between.
-  assert.match(body, /midiIn\.chord\.part === sel\.part/);
-  assert.match(body, /midiIn\.chord\.measure === sel\.measure/);
+});
+
+// And only where the cursor has not been moved in between — measured
+// against where the last note left the caret, and not against the bar the
+// note went into. They are not the same bar when the note filled its bar:
+// the caret is carried over the barline and the note is left behind it.
+// Asking whether the caret was still in the note's own bar made the second
+// note of a chord played at the end of a full bar start a new note in the
+// bar after.
+test("a chord is built on where the cursor was left standing", () => {
+  const body = grab("writePlayedNote");
+  assert.match(body, /const caret = midiIn\.chord\?\.caret/);
+  assert.match(body, /caret\.part === sel\.part/);
+  assert.match(body, /caret\.measure === sel\.measure/);
+  assert.match(body, /caret\.at === sel\.at/);
+  // Written down after the caret has been carried on, or it records the
+  // bar the note went into all over again.
+  const carried = body.indexOf("carryCaretOn(sel)");
+  const noted = body.indexOf("landed.caret =");
+  assert.ok(carried > 0 && noted > carried,
+    "the caret is recorded before it has been carried over the barline");
 });
 
 test("the window is short enough that two notes are two", () => {
@@ -121,11 +143,19 @@ test("the window is short enough that two notes are two", () => {
 // The number is sent as it is and spelled on the server, where the key
 // signature is. Spelling it here would be a second opinion about the same
 // note.
+//
+// A number and not a letter, which is the difference between what a MIDI
+// keyboard does and what piano mode does: a white F pressed on a keyboard
+// is an F natural whatever the signature says, because that is the key the
+// player pressed. See playedParam.
 test("the number is sent as it arrived, to be spelled by the key", () => {
+  assert.match(grab("playedParam"), /typeof note === "number" \? "midi"/);
   const body = grab("writePlayedNote");
-  assert.match(body, /midi: String\(note\)/);
+  assert.match(body, /playedParam\(p, note\)/);
   assert.doesNotMatch(body, /sharp|flat|%12/i,
     "the editor is spelling the note itself");
+  // What arrives from a port is a number and goes on being one.
+  assert.match(grab("onMidiMessage"), /playedNote\(note\)/);
 });
 
 test("the note is written with the length the toolbar holds", () => {

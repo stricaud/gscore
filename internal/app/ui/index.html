@@ -214,6 +214,11 @@
            lands. The keyboard writes either way, which is what this is a
            switch away from. -->
       <button data-action="note-input"><span>Write with the mouse</span><kbd>I</kbd><kbd id="mouse-tick"></kbd></button>
+      <!-- The letters as a piano keyboard, with the keyboard itself drawn
+           along the bottom of the window while it is on. Every letter means
+           a note for as long as it lasts, which is why it is switched on
+           deliberately and why Escape ends it. -->
+      <button data-action="piano-mode"><span>Piano mode</span><kbd>⌘P</kbd><kbd id="piano-tick"></kbd></button>
       <button data-action="type-music"><span>Type the music</span><kbd>⌘K</kbd><kbd id="type-tick"></kbd></button>
       <button data-action="console"><span>Script console…</span></button>
       <hr>
@@ -805,6 +810,30 @@
       cursor is on a drum staff, to write it</span>
   </div>
   <div id="drumpad-grid"></div>
+</div>
+
+<!-- The piano, while piano mode is on. The keys are drawn with the letter
+     that plays each one written on them, because where a letter is on the
+     keyboard is the whole of what there is to learn — and a picture of a
+     keyboard says it at a glance where a list of twenty-six letters does
+     not. Filled in by renderPianoKeys, which builds it from the same table
+     the keys themselves obey. -->
+<div id="pianokeys" hidden>
+  <div id="pianokeys-head">
+    <span class="pianokeys-title">Piano mode</span>
+    <span class="small" id="pianokeys-shift"></span>
+    <!-- One whole phrase to a span, with the keys outside the words. The
+         dictionary is keyed on the English a text node holds, so a
+         sentence with a <kbd> in the middle of it is three fragments
+         nobody can translate into a sentence. -->
+    <span class="small pianokeys-hints">
+      <span>Hold one key and press another for a chord</span>
+      <span><kbd>[</kbd><kbd>]</kbd> an octave down or up</span>
+      <span>The digits are still the note lengths</span>
+      <span><kbd>Esc</kbd> to stop</span>
+    </span>
+  </div>
+  <div id="pianokeys-board"></div>
 </div>
 
 <!-- Gilbert, while a score is being opened.

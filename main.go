@@ -822,6 +822,6 @@ func describeScore(s *model.Score) {
 				notes += len(v.Elements)
 			}
 		}
-		fmt.Printf("%s: %s, %d measures, %d elements\n", name, p.Clef, len(p.Measures), notes)
+		fmt.Printf("%s: %s, %d bars, %d elements\n", name, p.Clef, len(p.Measures), notes)
 	}
 }

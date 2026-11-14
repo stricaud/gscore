@@ -107,14 +107,33 @@ test("the dialog's way out skips validation", () => {
   }
 });
 
-/* ---------- the metronome marking ---------- */
+/* ---------- the tempo marking ---------- */
 
-test("the metronome marking can be shown and hidden", () => {
-  const m = html.match(/data-action="view-tempomark"[^>]*>/);
+// "Andante (♩ = 58)" over the first bar. The metronome mark and the word
+// that goes with it, which is what the engraver calls it too — see
+// ShowTempoMark. This test used to assert that the French dictionary knew
+// a label called "Metronome marking", which was the name of a different
+// entry altogether: the one that draws an arrow over every beat. The two
+// had swapped names, and the test held the swap in place.
+test("the tempo marking can be shown and hidden", () => {
+  const m = html.match(/data-action="view-tempomark"[^>]*><span>([^<]+)</);
   assert.ok(m, "no menu entry");
+  assert.equal(m[1], "Tempo marking");
   assert.ok(!m[0].includes("disabled"));
   assert.match(src, /case "view-tempomark": await setView\("tempomark"/);
-  assert.ok(fr.includes('"Metronome marking":'), "no French");
+  assert.ok(fr.includes('"Tempo marking":'), "no French");
+});
+
+// And the other one, so neither can quietly take the other's name again.
+// A metronome mark is ♩ = 58; these are the beats it would be ticking.
+test("the beat marks are not called a metronome marking", () => {
+  const m = html.match(/data-action="view-beatmarks"[^>]*><span>([^<]+)</);
+  assert.ok(m, "no menu entry");
+  assert.equal(m[1], "Beat marks");
+  assert.ok(fr.includes('"Beat marks":'), "no French");
+  const labels = [...html.matchAll(/<span>([^<]+)<\/span>/g)].map((x) => x[1]);
+  assert.ok(!labels.some((l) => /metronome marking/i.test(l)),
+            "a menu entry still calls itself a metronome marking");
 });
 
 // A tick that starts out lying is worse than no tick: what the editor

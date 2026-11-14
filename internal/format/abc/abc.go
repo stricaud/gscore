@@ -1871,7 +1871,7 @@ func (p *parser) music(line string) error {
 				p.note(err.Error())
 			}
 		case c == 'Z':
-			return p.errf("multi-measure rests are not supported yet")
+			return p.errf("multi-bar rests are not supported yet")
 		default:
 			p.ignore(sc)
 		}

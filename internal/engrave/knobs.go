@@ -134,7 +134,7 @@ var Knobs = []Knob{
 	{"afterBarline", "Space after barline", "Barlines", 0, 3, "spaces",
 		func(o *Options) float64 { return o.Spacings.AfterBarline },
 		func(o *Options, v float64) { o.Spacings.AfterBarline = v }},
-	{"betweenMeasures", "Space left between measures", "Barlines", 0, 3, "spaces",
+	{"betweenMeasures", "Space left between bars", "Barlines", 0, 3, "spaces",
 		func(o *Options) float64 { return o.Spacings.BetweenMeasures },
 		func(o *Options, v float64) { o.Spacings.BetweenMeasures = v }},
 

@@ -96,7 +96,7 @@
       <button data-action="paste"><span>Paste</span><kbd>⌘V</kbd></button>
       <button data-action="delete"><span>Delete</span><kbd>⌫</kbd></button>
       <hr>
-      <button data-action="jump"><span>Go to measure…</span><kbd>J</kbd></button>
+      <!-- Go to bar is in the Bar menu, with the rest of them. -->
       <!-- Where this staff leaves off, which is where carrying on with it
            starts. A long way from wherever you are, which is why it is
            here and not on a button at the head of the score. -->
@@ -129,6 +129,8 @@
       <div class="submenu">
         <button class="submenu-title"><span>Articulation</span><kbd>▸</kbd></button>
         <div class="menu-items">
+          <!-- The empty <kbd> is where the key is written in: these marks
+               are bound to keys by the shortcut table, not here. -->
           <button data-action="artic-staccato"><span>Staccato</span><kbd></kbd></button>
           <button data-action="artic-staccatissimo"><span>Staccatissimo</span><kbd></kbd></button>
           <button data-action="artic-tenuto"><span>Tenuto</span><kbd></kbd></button>
@@ -166,7 +168,6 @@
           <button data-action="acc-dflat"><span>Double flat</span></button>
           <hr>
           <button data-action="acc-parens"><span>In brackets</span></button>
-          <hr>
         </div>
       </div>
 
@@ -218,21 +219,10 @@
       <hr>
       <button data-action="insert-note"><span>Note</span></button>
       <button data-action="insert-rest"><span>Rest</span></button>
-      <button data-action="add-measure"><span>Measure</span><kbd>M</kbd></button>
-      <!-- Bars to the right of the one picked, for the ones missed while
-           typing and found four pages later. -->
-      <button data-action="insert-measures"><span>Measures after this one…</span></button>
-      <!-- And the way back. Emptying a bar is not removing it: an empty bar
-           is a bar of rest, which the player counts. -->
-      <button data-action="remove-measure"><span>Remove this measure</span></button>
-      <!-- Ends the bar where the cursor is. With the barlines kept to the
-           meter a bar ends when it is full; with them left loose nothing
-           ends one, and this is how you say where. -->
-      <button data-action="split-measure"><span>Barline here</span><kbd>⇥</kbd></button>
-      <hr>
-      <button data-action="repeat-bar"><span>Repeat the bar before</span><kbd>R</kbd></button>
-      <button data-action="repeat-2bars"><span>Repeat the two bars before</span></button>
-      <button data-action="repeat-none"><span>Write the bar out</span></button>
+      <!-- Everything that makes, removes or repeats a bar is in the Bar
+           menu. It used to be here, which put seven commands about the
+           shape of the piece in among the things written onto it, and made
+           this menu the one that had to scroll. -->
       <hr>
       <button data-action="insert-chord"><span>Chord symbol…</span><kbd>C</kbd></button>
       <button data-action="insert-text"><span>Text…</span><kbd>T</kbd></button>
@@ -243,9 +233,14 @@
            alone, which is what a piece modulating or changing meter is.
            They are in the Score menu as well, because they are as much a
            decision about the piece as something you insert — and this is
-           where somebody looks for them. -->
-      <button data-action="set-key"><span>Key signature…</span></button>
-      <button data-action="set-time"><span>Time signature…</span></button>
+           where somebody looks for them.
+
+           Word for word the same as the Score menu's, because they are the
+           same commands. Named differently they read as six commands
+           rather than three, and somebody who has used one has no way of
+           knowing they have already met the other. -->
+      <button data-action="set-key"><span>Key signature from here…</span></button>
+      <button data-action="set-time"><span>Time signature from here…</span></button>
       <!-- Written where the cursor is, which can be partway through a bar:
            a cello climbing into the tenor clef for a phrase does not wait
            for the barline. The staff's own clef — what the whole part is
@@ -254,21 +249,7 @@
       <button data-action="set-tempo"><span>Tempo…</span></button>
       <hr>
 
-      <div class="submenu">
-        <button class="submenu-title"><span>Barline</span><kbd>▸</kbd></button>
-        <div class="menu-items">
-          <button data-action="bar-single"><span>Single</span></button>
-          <button data-action="bar-double"><span>Double</span></button>
-          <button data-action="bar-final"><span>Final</span></button>
-          <!-- The final the other way round. It opens a section — the
-               first bar after an introduction — where the final closes
-               one, and the two are a pair on the page. -->
-          <button data-action="bar-heavy-light"><span>Heavy–light</span></button>
-          <hr>
-          <button data-action="bar-open"><span>Open repeat</span></button>
-          <button data-action="bar-close"><span>Close repeat</span></button>
-        </div>
-      </div>
+      <!-- The Barline submenu is in the Bar menu. -->
 
       <div class="submenu">
         <button class="submenu-title"><span>Dynamic</span><kbd>▸</kbd></button>
@@ -387,39 +368,9 @@
         </div>
       </div>
 
-      <!-- How a fretted instrument plays the note. Written on the tab,
-           and on the staff of pitches beside it: a part printed without
-           its tab still has to say where the hammer-ons are. -->
-      <div class="submenu">
-        <button class="submenu-title"><span>Tab</span><kbd>▸</kbd></button>
-        <div class="menu-items">
-          <button data-action="tab-hammer-on"><span>Hammer-on</span><kbd>H</kbd></button>
-          <button data-action="tab-pull-off"><span>Pull-off</span><kbd>P</kbd></button>
-          <button data-action="tab-slide-up"><span>Slide up</span><kbd>/</kbd></button>
-          <button data-action="tab-slide-down"><span>Slide down</span><kbd>\</kbd></button>
-          <hr>
-          <button data-action="tab-bend"><span>Bend a whole tone</span><kbd>full</kbd></button>
-          <button data-action="tab-bend-half"><span>Bend a semitone</span><kbd>1/2</kbd></button>
-          <button data-action="tab-bend-release"><span>Bend and release</span></button>
-          <button data-action="tab-pre-bend"><span>Pre-bend</span></button>
-          <hr>
-          <button data-action="tab-vibrato"><span>Vibrato</span></button>
-          <button data-action="tab-wide-vibrato"><span>Wide vibrato</span></button>
-          <button data-action="tab-palm-mute"><span>Palm mute</span><kbd>P.M.</kbd></button>
-          <button data-action="tab-let-ring"><span>Let ring</span></button>
-          <hr>
-          <button data-action="tab-natural-harmonic"><span>Natural harmonic</span><kbd>N.H.</kbd></button>
-          <button data-action="tab-artificial-harmonic"><span>Artificial harmonic</span><kbd>A.H.</kbd></button>
-          <button data-action="tab-pinch-harmonic"><span>Pinch harmonic</span><kbd>P.H.</kbd></button>
-          <button data-action="tab-tap"><span>Tap</span><kbd>T</kbd></button>
-          <hr>
-          <!-- A dead note is a notehead and not a technique: the drum
-               staves already write one, and the tab draws it as the x it
-               is. Two ways to say it would be one too many. -->
-          <button data-action="tab-dead-note"><span>Dead note</span><kbd>x</kbd></button>
-          <button data-action="tab-none"><span>No tab mark</span></button>
-        </div>
-      </div>
+      <!-- The tab techniques are in the Staff menu, with the rest of
+           tablature. They were here, which left the subject split across
+           two menus for no reason either of them could tell you. -->
 
       <div class="submenu">
         <button class="submenu-title"><span>Symbol</span><kbd>▸</kbd></button>
@@ -441,29 +392,87 @@
     </div>
   </div>
 
-  <div class="menu" data-menu="score">
-    <button class="menu-title">Score</button>
+  <!-- The bar: making one, removing one, saying where it ends, repeating
+       it, numbering it.
+
+       Its commands were spread over three menus — Insert made and removed
+       bars, Score numbered them and kept them to the meter, Edit went to
+       one — and half of them said "measure" while the other half said
+       "bar". One menu, one word. It also takes seven rows off the Insert
+       menu, which was long enough to have to scroll. -->
+  <div class="menu" data-menu="bar">
+    <button class="menu-title">Bar</button>
     <div class="menu-items">
-      <button data-action="score-setup"><span>Score setup…</span></button>
+      <!-- First, because on anything longer than a page it is the one
+           reached for most. It was under Edit, where Go to usually lives
+           in a program that edits text — but what it goes to is a bar. -->
+      <button data-action="jump"><span>Go to bar…</span><kbd>J</kbd></button>
       <hr>
-      <button data-action="set-tempo"><span>Set tempo…</span></button>
-      <button data-action="set-header"><span>About this score…</span></button>
+      <button data-action="add-measure"><span>Add a bar at the end</span><kbd>M</kbd></button>
+      <!-- Bars to the right of the one picked, for the ones missed while
+           typing and found four pages later. -->
+      <button data-action="insert-measures"><span>Insert bars after this one…</span></button>
+      <!-- And the way back. Emptying a bar is not removing it: an empty bar
+           is a bar of rest, which the player counts. -->
+      <button data-action="remove-measure"><span>Remove this bar</span></button>
+      <!-- Ends the bar where the cursor is. With the barlines kept to the
+           meter a bar ends when it is full; with them left loose nothing
+           ends one, and this is how you say where. -->
+      <button data-action="split-measure"><span>Barline here</span><kbd>⇥</kbd></button>
       <hr>
-      <button data-action="set-key"><span>Key signature from here…</span></button>
+      <button data-action="repeat-bar"><span>Repeat the bar before</span><kbd>R</kbd></button>
+      <button data-action="repeat-2bars"><span>Repeat the two bars before</span></button>
+      <button data-action="repeat-none"><span>Write the bar out</span></button>
+      <hr>
       <!-- A piece that begins before the first beat. Everything else
            follows from the first bar being short: it is not numbered, and
            bar one is the first full bar. -->
-      <button data-action="set-pickup"><span>Pickup measure…</span></button>
-      <button data-action="set-time"><span>Time signature from here…</span></button>
-      <button data-action="set-numbering"><span>Bar numbers…</span></button>
-      <button data-action="marker-style"><span>Rehearsal marks…</span></button>
-      <button data-action="set-systems"><span>Lines of music…</span></button>
-      <hr>
+      <button data-action="set-pickup"><span>Pickup bar…</span></button>
+      <!-- Numbering, not numbers: the View menu's "Bar numbers" turns them
+           on and off and this settles how they are counted and drawn. Both
+           were called "Bar numbers" and "Measure numbers", which named the
+           same subject twice and told you nothing about which did what. -->
+      <button data-action="set-numbering"><span>Bar numbering…</span></button>
       <!-- Whether a bar that is too long has its last notes moved into the
            next one. On is what makes typing music in feel like typing; off
            is how old music gets typed in at all, where the barring is a
            guide and the count is left to the player. -->
       <button data-action="track-barlines"><span>Keep bars to the meter</span><kbd id="barline-tick">✓</kbd></button>
+      <hr>
+      <!-- What closes the bar. In the menu about bars, which is where it
+           was looked for; it was the one bar command in Insert that did
+           not make or remove anything. -->
+      <div class="submenu">
+        <button class="submenu-title"><span>Barline</span><kbd>▸</kbd></button>
+        <div class="menu-items">
+          <button data-action="bar-single"><span>Single</span></button>
+          <button data-action="bar-double"><span>Double</span></button>
+          <button data-action="bar-final"><span>Final</span></button>
+          <!-- The final the other way round. It opens a section — the
+               first bar after an introduction — where the final closes
+               one, and the two are a pair on the page. -->
+          <button data-action="bar-heavy-light"><span>Heavy–light</span></button>
+          <hr>
+          <button data-action="bar-open"><span>Open repeat</span></button>
+          <button data-action="bar-close"><span>Close repeat</span></button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="menu" data-menu="score">
+    <button class="menu-title">Score</button>
+    <div class="menu-items">
+      <button data-action="score-setup"><span>Score setup…</span></button>
+      <hr>
+      <!-- Word for word as the Insert menu says it: the same command. -->
+      <button data-action="set-tempo"><span>Tempo…</span></button>
+      <button data-action="set-header"><span>About this score…</span></button>
+      <hr>
+      <button data-action="set-key"><span>Key signature from here…</span></button>
+      <button data-action="set-time"><span>Time signature from here…</span></button>
+      <button data-action="marker-style"><span>Rehearsal marks…</span></button>
+      <button data-action="set-systems"><span>Lines of music…</span></button>
       <hr>
       <button data-action="score-options"><span>Engraving…</span></button>
       <button data-action="parameters" disabled><span>Parameters…</span></button>
@@ -498,11 +507,55 @@
         </div>
       </div>
       <hr>
+      <!-- Tablature, all of it. The techniques used to be a submenu of
+           Insert while everything else about a tab was here, so the
+           subject was split across two menus and neither said so. -->
       <button data-action="tab"><span>Write as tablature…</span></button>
+      <button data-action="tab-transposition"><span>Tab transposition…</span></button>
+      <button data-action="chord-builder"><span>Chord builder…</span></button>
       <button data-action="string-up"><span>Move note to the string above</span></button>
       <button data-action="string-down"><span>Move note to the string below</span></button>
-      <button data-action="chord-builder"><span>Chord builder…</span></button>
-      <button data-action="tab-transposition"><span>Tab transposition…</span></button>
+      <!-- How a fretted instrument plays the note. Written on the tab,
+           and on the staff of pitches beside it: a part printed without
+           its tab still has to say where the hammer-ons are.
+
+           The letters a tab prints — H, P, P.M., N.H. — used to be shown
+           in the column on the right. That column is where a keyboard
+           shortcut goes, and three of them were keys that do something
+           else entirely: H exports a web page, P exports a PDF and /
+           ties the notes. A key printed beside an entry that does
+           something else is worse than no key at all, and the name says
+           what the mark is without them. -->
+      <div class="submenu">
+        <button class="submenu-title"><span>Tab technique</span><kbd>▸</kbd></button>
+        <div class="menu-items">
+          <button data-action="tab-hammer-on"><span>Hammer-on</span></button>
+          <button data-action="tab-pull-off"><span>Pull-off</span></button>
+          <button data-action="tab-slide-up"><span>Slide up</span></button>
+          <button data-action="tab-slide-down"><span>Slide down</span></button>
+          <hr>
+          <button data-action="tab-bend"><span>Bend a whole tone</span></button>
+          <button data-action="tab-bend-half"><span>Bend a semitone</span></button>
+          <button data-action="tab-bend-release"><span>Bend and release</span></button>
+          <button data-action="tab-pre-bend"><span>Pre-bend</span></button>
+          <hr>
+          <button data-action="tab-vibrato"><span>Vibrato</span></button>
+          <button data-action="tab-wide-vibrato"><span>Wide vibrato</span></button>
+          <button data-action="tab-palm-mute"><span>Palm mute</span></button>
+          <button data-action="tab-let-ring"><span>Let ring</span></button>
+          <hr>
+          <button data-action="tab-natural-harmonic"><span>Natural harmonic</span></button>
+          <button data-action="tab-artificial-harmonic"><span>Artificial harmonic</span></button>
+          <button data-action="tab-pinch-harmonic"><span>Pinch harmonic</span></button>
+          <button data-action="tab-tap"><span>Tap</span></button>
+          <hr>
+          <!-- A dead note is a notehead and not a technique: the drum
+               staves already write one, and the tab draws it as the x it
+               is. Two ways to say it would be one too many. -->
+          <button data-action="tab-dead-note"><span>Dead note</span></button>
+          <button data-action="tab-none"><span>No tab mark</span></button>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -521,27 +574,34 @@
       <button data-action="zoom-reset"><span>Actual size</span><kbd>⌘0</kbd></button>
       <hr>
       <button data-action="view-names"><span>Staff names</span><kbd id="names-tick"></kbd></button>
-      <button data-action="view-numbers"><span>Measure numbers</span><kbd id="numbers-tick"></kbd></button>
+      <button data-action="view-numbers"><span>Bar numbers</span><kbd id="numbers-tick"></kbd></button>
       <!-- Bars of rest counted rather than drawn one by one. Off while
            writing: a bar that is not drawn is a bar there is nowhere to
            click in. It is here so that what will be printed can be looked
            at without printing it. -->
-      <button data-action="view-multirest"><span>Multi-measure rests</span><kbd id="multirest-tick"></kbd></button>
+      <button data-action="view-multirest"><span>Multi-bar rests</span><kbd id="multirest-tick"></kbd></button>
       <!-- The words and the metronome mark over the first bar: "Andante
            (♩ = 58)". Off is for a part being read for its notes, or a piece
            whose speed the title says.
 
-           Called the tempo marking and not the metronome marking, which is
-           what it said and was the wrong name for it twice over: it is the
-           words as much as the number, and somebody who turns on a thing
-           called "metronome marking" is asking to be shown the beat, not a
-           line of text over the first bar. That is the entry below. -->
+           Tempo marking and not metronome mark, though it writes one: it
+           is the words as much as the number, and a piece marked Andante
+           with no figure still has one. The entry below draws the beats
+           themselves and is called Beat marks, which is the pair of names
+           that keeps them apart — the two had swapped for a while. -->
       <button data-action="view-tempomark"><span>Tempo marking</span><kbd id="tempomark-tick"></kbd></button>
       <!-- An arrow over every beat: where the pulse falls, bar by bar.
            What a metronome would be ticking on, drawn. Off by default —
            it is an aid to reading and not part of the notation, which is
-           also why it is drawn in a colour of its own. -->
-      <button data-action="view-beatmarks"><span>Metronome marking</span><kbd id="beatmarks-tick"></kbd></button>
+           also why it is drawn in a colour of its own.
+
+           Beat marks, and not "metronome marking", which is what it said
+           and was the name of the entry above it: a metronome mark is
+           ♩ = 58, which is exactly what Tempo marking writes. The engine
+           agrees — see ShowTempoMark, "writes the metronome mark and the
+           word that goes with it" — so the menu was the only thing in
+           gscore using the term for something else. -->
+      <button data-action="view-beatmarks"><span>Beat marks</span><kbd id="beatmarks-tick"></kbd></button>
       <!-- A colour per note name, for a reader who cannot yet name a line
            by looking at it. Kept for the person rather than in the score,
            and printed as well as shown: see the dialog. -->
@@ -551,7 +611,6 @@
            in three keys playing the same line look like three lines until
            this is on. -->
       <button data-action="view-concert"><span>Concert pitch</span><kbd id="concert-tick"></kbd></button>
-      <hr>
       <hr>
       <!-- Every fingering the flute has, to be looked through: the
            alternates, and the trills, which are a pair of notes rather
@@ -1100,7 +1159,7 @@
 
 <!-- The bar before the first bar. -->
 <dialog id="pickup">
-  <h2>Pickup measure</h2>
+  <h2>Pickup bar</h2>
   <p class="small">A piece that begins before the first beat. The bar is left
      short, bar one becomes the first full bar, and the numbering follows.</p>
   <form method="dialog" id="pickup-form">
@@ -1619,7 +1678,7 @@
         <span><b>Concert pitch</b><em>Every part printed as it sounds instead of as
           its player reads it. A score to study from; not a part to play from.</em></span></label>
       <label><input type="checkbox" id="print-multirest">
-        <span><b>Multi-measure rests</b><em>A stretch where every staff rests is
+        <span><b>Multi-bar rests</b><em>A stretch where every staff rests is
           printed as one bar with the count over it, instead of as that many empty
           bars. What a player reads from; not what you write in.</em></span></label>
     </div>

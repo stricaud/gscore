@@ -118,7 +118,7 @@ const state = {
   pausedSel: "",
   // Drawing options that belong to the view rather than to the file.
   // Measure numbers are on: the engraver's DefaultOptions says so, and this
-  // has to say the same thing or the tick beside "Measure numbers" in the
+  // has to say the same thing or the tick beside "Bar numbers" in the
   // View menu starts out contradicting the page.
   // What the drawing shows. The metronome marking starts on, which is
   // what DefaultOptions does on the other side — a tick that starts out
@@ -368,11 +368,11 @@ async function setKeyHere(fifths) {
   }
   await refreshScore();
   if (fifths === "none") {
-    status(`Key change at measure ${barNumberOf(at)} removed`);
+    status(`Key change at bar ${barNumberOf(at)} removed`);
     return;
   }
   status(at > 0
-    ? `Key changed at measure ${barNumberOf(at)}`
+    ? `Key changed at bar ${barNumberOf(at)}`
     : "Key of the piece changed");
 }
 
@@ -1315,7 +1315,7 @@ async function action(name) {
     case "add-measure":
       await fetch("/api/addmeasure", { method: "POST" });
       await reload();
-      status("Measure added");
+      status("Bar added");
       break;
     case "insert-measures": await insertMeasuresDialog(); break;
     case "remove-measure": await removeMeasure(); break;
@@ -2163,7 +2163,7 @@ function drawSprints() {
       // A staff with no notes at all has no answer to that, so it gives
       // the other one: the end, which is where writing it would start.
       const what = entry
-        ? r.name + " comes in at measure " + barNumberOf(entry.measure)
+        ? r.name + " comes in at bar " + barNumberOf(entry.measure)
         : "Go to the end of " + r.name + ", which has no notes yet";
       b.title = what;
       b.setAttribute("aria-label", what);
@@ -2252,7 +2252,7 @@ function drawStaffNames() {
       el.textContent = r.name;
       const entry = staffEntry(r.part, r.top);
       el.title = entry
-        ? r.name + " comes in at measure " + barNumberOf(entry.measure) +
+        ? r.name + " comes in at bar " + barNumberOf(entry.measure) +
           " — click to go there"
         : "Go to the end of " + r.name + ", which has no notes yet";
       el.addEventListener("click", () => void sprintToStaffEntry(r.part, r.top));
@@ -2343,7 +2343,7 @@ async function sprintToStaffEntry(part, top) {
   flashMeasure(box);
   const where = movementAt(entry.measure);
   const named = where && where.title ? ` of ${where.title}` : "";
-  status(`${name} comes in at measure ${barNumberOf(entry.measure)}${named}`);
+  status(`${name} comes in at bar ${barNumberOf(entry.measure)}${named}`);
 }
 
 async function sprintToStaffEnd(part, top) {
@@ -2379,7 +2379,7 @@ async function sprintToStaffEnd(part, top) {
   flashMeasure(box);
   const where = movementAt(last.measure);
   const named = where && where.title ? ` of ${where.title}` : "";
-  status(`${name}: measure ${barNumberOf(last.measure)}${named}`);
+  status(`${name}: bar ${barNumberOf(last.measure)}${named}`);
 }
 
 // setupVirtualDraw fetches the next stretch as the view approaches the edge
@@ -2616,7 +2616,7 @@ async function loadInfo() {
         <div><span>Key</span><button class="linklike" data-key-part="${idx}">${p.key}</button></div>
         <div><span>Time</span><button class="linklike" data-time-part="${idx}">${p.time}</button></div>
         <div><span>Sounds as</span><button class="linklike" data-inst-part="${idx}">${escapeHTML(p.instrument || "piano")}</button></div>
-        <div><span>Measures</span><b>${p.measures}</b></div>
+        <div><span>Bars</span><b>${p.measures}</b></div>
         ${p.hidden
           ? `<button class="show-again" data-show-part="${idx}">Hidden — show it again</button>`
           : ""}
@@ -5538,7 +5538,7 @@ function setupCanvasClicks() {
     // is where the keyboard will write.
     if (picking || state.readOnly) {
       markSelection();
-      status(`Measure ${barNumberOf(hit.measure)}`);
+      status(`Bar ${barNumberOf(hit.measure)}`);
       return;
     }
     await insertAtSelection(state.tool.rest, false);
@@ -5702,7 +5702,7 @@ function selectRange(from, to) {
   markSelection();
   status(state.multi.length === 1
     ? "1 selected"
-    : `${state.multi.length} selected \u2014 measures ${barNumberOf(a.measure)}\u2013${barNumberOf(b.measure)}`);
+    : `${state.multi.length} selected \u2014 bars ${barNumberOf(a.measure)}\u2013${barNumberOf(b.measure)}`);
 }
 
 // selectBudget is the most that can be picked up at once.
@@ -6025,7 +6025,7 @@ function selectMeasure(part, measure) {
   const has = [];
   if (hit?.keyChange) has.push("a key change");
   if (hit?.timeChange) has.push("a meter change");
-  status(`Measure ${barNumberOf(measure)}` +
+  status(`Bar ${barNumberOf(measure)}` +
     (has.length ? ` — ${has.join(" and ")} here` : "") +
     " · Score ▸ Key or Time applies from here");
 }
@@ -6080,7 +6080,7 @@ function select(hit, el, step) {
   // box round a small chord.
   const what = el.kind === "chord" && head !== null && (el.steps || []).length > 1
     ? "one notehead of chord" : el.kind;
-  status(`Selected ${what} ${el.index + 1} of measure ${barNumberOf(hit.measure)}`);
+  status(`Selected ${what} ${el.index + 1} of bar ${barNumberOf(hit.measure)}`);
 }
 
 function clearSelection() {
@@ -6459,7 +6459,7 @@ function midiTick() {
 async function insertAtSelection(rest, keepSelection) {
   const sel = state.selection;
   if (!sel) {
-    status("Click a measure first");
+    status("Click a bar first");
     return;
   }
   // What was picked up is written over; what the cursor is pointing between
@@ -6577,7 +6577,7 @@ async function insertAtSelection(rest, keepSelection) {
     const name = drumName(state.tool.drum, sel.step);
     if (name) what = name + ", " + state.tool.duration;
   }
-  status(moved ? `${what} — measure ${barNumberOf(sel.measure)}` : what + " inserted");
+  status(moved ? `${what} — bar ${barNumberOf(sel.measure)}` : what + " inserted");
   void keepSelection;
 }
 
@@ -6883,8 +6883,8 @@ async function deleteSelected() {
     const d = await res.json().catch(() => ({}));
     await refreshScore();
     status(d.removed
-      ? `Measure ${barNumberOf(sel.measure)} emptied — ${d.removed} removed`
-      : `Measure ${barNumberOf(sel.measure)} was already empty`);
+      ? `Bar ${barNumberOf(sel.measure)} emptied — ${d.removed} removed`
+      : `Bar ${barNumberOf(sel.measure)} was already empty`);
     return;
   }
 
@@ -6941,7 +6941,7 @@ async function deleteSelected() {
 async function setBarline(style) {
   const sel = state.selection;
   if (!sel) {
-    status("Click the measure whose barline you want to change");
+    status("Click the bar whose barline you want to change");
     return;
   }
   const p = new URLSearchParams({
@@ -7614,7 +7614,7 @@ const setOctave = (amount, said) =>
 async function setEnding(numbers) {
   const sel = state.selection;
   if (!sel) {
-    status("Click a measure first");
+    status("Click a bar first");
     return;
   }
   // A range selection may cover several bars; the bracket spans all of them.
@@ -7635,8 +7635,8 @@ async function setEnding(numbers) {
   await refreshScore();
   status(numbers === "" ? "Ending removed"
                         : `Ending ${numbers.replace(",", " and ")} over ` +
-                          (first === last ? `measure ${first + 1}`
-                                          : `measures ${first + 1}–${last + 1}`));
+                          (first === last ? `bar ${first + 1}`
+                                          : `bars ${first + 1}–${last + 1}`));
 }
 
 // The marks gscore could read and not write: a trill, the pedal, the stroke
@@ -7745,7 +7745,7 @@ async function setGlissando(what) {
 async function setJump(what, label) {
   const sel = state.selection;
   if (!sel) {
-    status("Click a measure first");
+    status("Click a bar first");
     return;
   }
   const p = new URLSearchParams({ measure: String(sel.measure), ...what });
@@ -7756,8 +7756,8 @@ async function setJump(what, label) {
   }
   await refreshScore();
   const none = what.sign === "none" || what.jump === "none";
-  status(none ? `Cleared at measure ${barNumberOf(sel.measure)}`
-              : `${label.split(" \u2014 ")[0]} at measure ${barNumberOf(sel.measure)}`);
+  status(none ? `Cleared at bar ${barNumberOf(sel.measure)}`
+              : `${label.split(" \u2014 ")[0]} at bar ${barNumberOf(sel.measure)}`);
 }
 
 // A slur arcs over a passage and a tie joins neighbours, so both want a range
@@ -8403,7 +8403,7 @@ function drawPalette(query) {
 async function insertSymbol(name) {
   const sel = state.selection;
   if (!sel) {
-    status("Click the measure to put it in first");
+    status("Click the bar to put it in first");
     return;
   }
   const p = new URLSearchParams({
@@ -10702,7 +10702,7 @@ async function setTimeDialog(at) {
   const where = $("#timesig-where");
   if (where) {
     where.textContent = measure > 0
-      ? `From measure ${barNumberOf(measure)} to the end, on every staff.`
+      ? `From bar ${barNumberOf(measure)} to the end, on every staff.`
       : "For the whole piece, on every staff.";
   }
   const hitHere = state.hits.find(
@@ -10739,7 +10739,7 @@ async function setTimeDialog(at) {
       return;
     }
     await refreshScore();
-    status(`The meter change at measure ${barNumberOf(measure)} is gone`);
+    status(`The meter change at bar ${barNumberOf(measure)} is gone`);
     return;
   }
 
@@ -10764,7 +10764,7 @@ async function setTimeDialog(at) {
   }
   await refreshScore();
   status(measure > 0
-    ? `${meter} from measure ${barNumberOf(measure)}, on every staff`
+    ? `${meter} from bar ${barNumberOf(measure)}, on every staff`
     : `${meter}, on every staff`);
 }
 
@@ -10812,7 +10812,7 @@ async function setInstrumentDialog() {
 // openBarlinePicker asks what the clicked barline should be.
 async function openBarlinePicker(bar) {
   const v = await ask({
-    title: `Barline after measure ${barNumberOf(bar.measure)}`,
+    title: `Barline after bar ${barNumberOf(bar.measure)}`,
     label: "Draw it as",
     value: bar.style,
     note: "A repeat sends the player back to the matching open repeat.",
@@ -10840,7 +10840,7 @@ async function openBarlinePicker(bar) {
     }
     clearSelection();
     await refreshScore();
-    status(`Measures ${barNumberOf(bar.measure)} and ${barNumberOf(bar.measure + 1)} are now one`);
+    status(`Bars ${barNumberOf(bar.measure)} and ${barNumberOf(bar.measure + 1)} are now one`);
     return;
   }
 
@@ -11026,7 +11026,7 @@ async function setView(what, on) {
   await refreshScore();
   const said = {
     names: on ? "Staff names shown" : "Staff names hidden",
-    numbers: on ? "Measure numbers shown" : "Measure numbers hidden",
+    numbers: on ? "Bar numbers shown" : "Bar numbers hidden",
     // Said in full, because what it does to the page is not obvious from
     // the words: the bars are still there, and still played.
     multirest: on
@@ -11173,7 +11173,7 @@ function loadMetronome() {
 async function chordSymbolDialog() {
   const sel = state.selection;
   if (!sel) {
-    status("Click a measure first — the chord goes above it");
+    status("Click a bar first — the chord goes above it");
     return;
   }
   const dlg = $("#chord");
@@ -11626,7 +11626,7 @@ let lastTextStyle = "expression";
 async function markerDialog() {
   const sel = state.selection;
   if (!sel) {
-    status("Click a measure first");
+    status("Click a bar first");
     return;
   }
   // The cursor is standing in the blank bar past the end the moment the
@@ -11635,7 +11635,7 @@ async function markerDialog() {
   // writing rather than a bar of the piece, so there is nothing there for
   // a mark to be written over. Said before the question rather than after
   // it: the sequence named the mark, offered it, took the answer and then
-  // put "there is no such measure" in the status line, which from the
+  // put "there is no such bar" in the status line, which from the
   // other side of the screen is a letter that was asked for and silently
   // not drawn.
   if (blankBarPastTheEnd(sel.measure)) {
@@ -11662,7 +11662,7 @@ async function markerDialog() {
     : [{ value: "bars", label: bar + " — the number of its bar, and the rest by theirs" }];
 
   const v = await ask({
-    title: `Rehearsal mark at measure ${barNumberOf(sel.measure)}`,
+    title: `Rehearsal mark at bar ${barNumberOf(sel.measure)}`,
     label: "Mark",
     value: "auto",
     note: "Written over every staff, because “from B” has to mean the same " +
@@ -11701,7 +11701,7 @@ async function markerDialog() {
       break;
     default: {
       const text = await ask({
-        title: `Rehearsal mark at measure ${barNumberOf(sel.measure)}`,
+        title: `Rehearsal mark at bar ${barNumberOf(sel.measure)}`,
         label: "Call it",
         value: here && here !== next ? here : "",
         note: "Left out of the sequence, so the letters either side of it " +
@@ -11978,9 +11978,9 @@ async function setClefDialog(part, at) {
   $("#clefpick-where").textContent = !here
     ? "For this staff, from its first bar."
     : spot > 1
-      ? `In measure ${barNumberOf(measure)}, in front of the note the ` +
+      ? `In bar ${barNumberOf(measure)}, in front of the note the ` +
         "cursor is on."
-      : `From measure ${barNumberOf(measure)}, where the sign is drawn at ` +
+      : `From bar ${barNumberOf(measure)}, where the sign is drawn at ` +
         "the barline.";
 
   // Drawn rather than listed. A musician knows the signs and would have to
@@ -12081,11 +12081,11 @@ async function setClefDialog(part, at) {
   }
   await refreshScore();
   if (v === "none") {
-    status(`Clef change in measure ${barNumberOf(measure)} removed`);
+    status(`Clef change in bar ${barNumberOf(measure)} removed`);
     return;
   }
   const said = choices.find((c) => c.value === v)?.label || v;
-  status(here ? `${said} from measure ${barNumberOf(measure)}`
+  status(here ? `${said} from bar ${barNumberOf(measure)}`
               : `${said} clef`);
 }
 
@@ -12468,12 +12468,12 @@ function instrumentNamed(value) {
 async function insertMeasuresDialog() {
   const sel = state.selection;
   if (!sel) {
-    status("Click a measure first");
+    status("Click a bar first");
     return;
   }
   const at = sel.measure;
   const howMany = await ask({
-    title: `Insert after measure ${barNumberOf(at)}`,
+    title: `Insert after bar ${barNumberOf(at)}`,
     label: "How many",
     value: "1",
     note: "Empty bars, to the right of this one. The rest of the piece " +
@@ -14256,7 +14256,7 @@ async function openKeyPicker(partIndex, at) {
   // that did nothing, unless something says which bar it was.
   const measure = at !== undefined ? at : (state.selection?.measure ?? 0);
   $("#keysig-where").textContent = measure > 0
-    ? `From measure ${barNumberOf(measure)} to the end, on every staff.`
+    ? `From bar ${barNumberOf(measure)} to the end, on every staff.`
     : "For the whole piece, on every staff.";
 
   // What the staff is in now: where the slider starts, and what a change at
@@ -14322,7 +14322,7 @@ async function openKeyPicker(partIndex, at) {
       return;
     }
     await reload();
-    status(`The key change at measure ${barNumberOf(measure)} is gone`);
+    status(`The key change at bar ${barNumberOf(measure)} is gone`);
     return;
   }
   if (result !== "ok") return;
@@ -14343,14 +14343,14 @@ async function openKeyPicker(partIndex, at) {
   const key = named ? named.major + " major" : "Key";
   // What happened, not what was asked for. Setting a bar to the key
   // already in force takes a change away rather than writing one, and
-  // saying "E major from measure 9" over a page that has lost its key
+  // saying "E major from bar 9" over a page that has lost its key
   // change is how a change that worked looks like one that did not.
   if (measure > 0 && d.written === 0 && d.removed > 0) {
-    status(`The key change at measure ${barNumberOf(measure)} is gone`);
+    status(`The key change at bar ${barNumberOf(measure)} is gone`);
     return;
   }
   status(measure > 0
-    ? `${key} from measure ${barNumberOf(measure)}, on every staff`
+    ? `${key} from bar ${barNumberOf(measure)}, on every staff`
     : `${key}, on every staff`);
 }
 
@@ -15796,7 +15796,7 @@ async function playNow(opts) {
   cursorFrom = 0;
   $("#play-btn").classList.add("active");
   const where = from > 0
-    ? ` from measure ${(cursorAt(pb.measures, from)?.measure ?? 0) + 1}`
+    ? ` from bar ${(cursorAt(pb.measures, from)?.measure ?? 0) + 1}`
     : "";
   // What is making the sound, which until now the line did not say.
   //
@@ -16613,7 +16613,7 @@ function pause() {
   state.pausedSel = selectionKey();
   status(lastMeasure === null
     ? `Paused at ${clock(state.pausedAt)}`
-    : `Paused at measure ${lastMeasure + 1} — ${clock(state.pausedAt)}`);
+    : `Paused at bar ${lastMeasure + 1} — ${clock(state.pausedAt)}`);
 }
 
 // togglePlay is the one thing the space bar, the play button and an embedding
@@ -18296,7 +18296,7 @@ async function nudge(steps) {
 function moveCursorPitch(steps) {
   const sel = state.selection;
   if (!sel) {
-    status("Click a measure first");
+    status("Click a bar first");
     return;
   }
   // Four ledger lines either way is as far as anybody writes without
@@ -18371,7 +18371,7 @@ async function chordAtCursor() {
 function moveCursorBy(delta) {
   const sel = state.selection;
   if (!sel) {
-    status("Click a measure first");
+    status("Click a bar first");
     return;
   }
   const staff = state.hits
@@ -18453,13 +18453,13 @@ function moveCursorBy(delta) {
   markSelection();
   scrollSelectionIntoView();
   if (p.grace !== undefined) {
-    status(`Measure ${barNumberOf(p.measure)}, grace note ${p.grace + 1} ` +
+    status(`Bar ${barNumberOf(p.measure)}, grace note ${p.grace + 1} ` +
            `on note ${p.index + 1}`);
     return;
   }
   status(p.ref === null
-    ? `Measure ${barNumberOf(p.measure)} — nothing written here yet`
-    : `Measure ${barNumberOf(p.measure)}, note ${p.index + 1}`);
+    ? `Bar ${barNumberOf(p.measure)} — nothing written here yet`
+    : `Bar ${barNumberOf(p.measure)}, note ${p.index + 1}`);
 }
 
 // scrollSelectionIntoView keeps the cursor on screen as it walks the music.
@@ -18522,8 +18522,8 @@ async function jumpToMeasure() {
   const named = where && where.title ? ` of ${where.title}` : "";
 
   const answer = await ask({
-    title: "Go to measure",
-    label: `Measure number (1 to ${last})${named}`,
+    title: "Go to bar",
+    label: `Bar number (1 to ${last})${named}`,
     value: String(barNumberOf(state.selection?.measure ?? 0)),
     note: where
       ? `${where.title || "This movement"} is numbered from its own first ` +
@@ -18534,11 +18534,11 @@ async function jumpToMeasure() {
 
   const n = Math.round(Number(String(answer).trim()));
   if (!Number.isFinite(n) || n < 1) {
-    status("That is not a measure number");
+    status("That is not a bar number");
     return;
   }
   if (n > last) {
-    status(`There ${last === 1 ? "is" : "are"} only ${last} measure` +
+    status(`There ${last === 1 ? "is" : "are"} only ${last} bar` +
            `${last === 1 ? "" : "s"}${named}`);
     return;
   }
@@ -18588,7 +18588,7 @@ function blankBarPastTheEnd(measure) {
 async function goToMeasure(index, part) {
   const box = measureBox(index);
   if (!box) {
-    status(`Measure ${barNumberOf(index)} is not on the page`);
+    status(`Bar ${barNumberOf(index)} is not on the page`);
     return;
   }
   selectMeasure(part ?? state.selection?.part ?? 0, index);
@@ -18598,7 +18598,7 @@ async function goToMeasure(index, part) {
   await ensureTiles();
   flashMeasure(box);
   const where = movementAt(index);
-  status(`Measure ${barNumberOf(index)}` +
+  status(`Bar ${barNumberOf(index)}` +
          (where && where.title ? ` — ${where.title}` : ""));
 }
 
@@ -23179,7 +23179,7 @@ if (!want || !want.length) {
   return;
 }
 
-const asked = await ask("How many measures?", "16", {
+const asked = await ask("How many bars?", "16", {
   note: "Four to twenty-four. It comes out in four-bar thoughts.",
 });
 if (asked === null) {

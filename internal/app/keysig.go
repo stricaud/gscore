@@ -224,7 +224,7 @@ func (a *App) handleSetKey(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		if removed == 0 {
-			http.Error(w, "there is no key change at that measure",
+			http.Error(w, "there is no key change at that bar",
 				http.StatusBadRequest)
 			return
 		}
@@ -253,7 +253,7 @@ func (a *App) handleSetKey(w http.ResponseWriter, r *http.Request) {
 	// writes goes through MusicOf for this reason; this did not, and a key
 	// asked for from the lower half of a notation-and-tablature pair —
 	// which is the half somebody reading the tab is looking at — was
-	// refused with "there is no such measure" about a bar plainly on the
+	// refused with "there is no such bar" about a bar plainly on the
 	// page in front of them.
 	part = a.score.MusicIndex(part)
 
@@ -290,7 +290,7 @@ func (a *App) handleSetKey(w http.ResponseWriter, r *http.Request) {
 	}
 	if at >= longest {
 		http.Error(w, fmt.Sprintf(
-			"there is no measure %d: the music is %d bars long",
+			"there is no bar %d: the music is %d bars long",
 			at+1, longest), http.StatusBadRequest)
 		return
 	}
@@ -329,7 +329,7 @@ func (a *App) handleSetKey(w http.ResponseWriter, r *http.Request) {
 	}
 	if written == 0 && removed == 0 {
 		http.Error(w, fmt.Sprintf(
-			"measure %d is in that key already, so there is nothing to change",
+			"bar %d is in that key already, so there is nothing to change",
 			at+1), http.StatusBadRequest)
 		return
 	}

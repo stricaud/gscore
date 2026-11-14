@@ -163,7 +163,7 @@ test("the arrow runs to the end of the band it stands beside", async () => {
   assert.equal(t.state.selection.measure, 68,
     "it left the first movement for the end of the third");
   assert.equal(t.state.selection.at, 1, "the cursor is not after the last note written");
-  assert.match(t.said.join(" "), /measure 69 of Movement I/,
+  assert.match(t.said.join(" "), /bar 69 of Movement I/,
     "it does not say where it arrived, in the numbers over those bars");
 });
 
@@ -171,7 +171,7 @@ test("the arrow beside a lower band runs to the end of that one", async () => {
   const t = sprinter(bands, sonata);
   await t.run(0, 300);
   assert.equal(t.state.selection.measure, 334, "the third movement does not end where it ends");
-  assert.match(t.said.join(" "), /measure 202 of Movement III/,
+  assert.match(t.said.join(" "), /bar 202 of Movement III/,
     "the bar is not numbered from its own movement");
 });
 

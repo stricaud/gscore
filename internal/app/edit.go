@@ -480,7 +480,7 @@ func (a *App) locateForWriting(partIdx, measIdx int) (*model.Part, *model.Measur
 // click and begin the next. It is not a bar of the piece until something is
 // written in it — and writing a key signature there is as good a reason to
 // begin a bar as writing a note is. Note entry has always made it; the key
-// and the clef refused with "there is no such measure" about the bar the
+// and the clef refused with "there is no such bar" about the bar the
 // person had just clicked, which reads as the program not working.
 //
 // One bar past the end and no further. A key asked for at bar fifty of an
@@ -1157,7 +1157,7 @@ func (e editError) Error() string { return string(e) }
 
 const (
 	errBadPart    = editError("no such staff")
-	errBadMeasure = editError("no such measure")
+	errBadMeasure = editError("no such bar")
 )
 
 var stemByName = map[string]model.Stem{
@@ -1471,7 +1471,7 @@ func (a *App) notesOf(q url.Values) ([]keyedNote, error) {
 	}
 	v := m.Voices[0]
 	if len(v.Elements) == 0 {
-		return nil, editError("the measure is empty")
+		return nil, editError("the bar is empty")
 	}
 	if at <= 0 || at > len(v.Elements) {
 		at = len(v.Elements)
@@ -1601,7 +1601,7 @@ func parseTargets(sel string) ([]target, error) {
 			return nil, editError("bad staff in the selection")
 		}
 		if t.measure, err = strconv.Atoi(f[1]); err != nil {
-			return nil, editError("bad measure in the selection")
+			return nil, editError("bad bar in the selection")
 		}
 		pos := f[2]
 		if slash := strings.IndexByte(pos, '/'); slash >= 0 {
@@ -1727,7 +1727,7 @@ func (a *App) markAt(q url.Values) (*model.Marks, error) {
 	}
 	v := m.Voices[0]
 	if len(v.Elements) == 0 {
-		return nil, editError("the measure is empty")
+		return nil, editError("the bar is empty")
 	}
 	if at <= 0 || at > len(v.Elements) {
 		at = len(v.Elements)
@@ -1883,7 +1883,7 @@ func (a *App) handleStaff(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			if at >= len(p.Measures) || p.Measures[at].Clef == nil {
-				http.Error(w, "there is no clef change at that measure",
+				http.Error(w, "there is no clef change at that bar",
 					http.StatusBadRequest)
 				return
 			}
@@ -1898,7 +1898,7 @@ func (a *App) handleStaff(w http.ResponseWriter, r *http.Request) {
 				// The blank bar past the end becomes a bar of the piece,
 				// as it does when a note is written there.
 				if !a.openBarForWriting(at) || at >= len(p.Measures) {
-					http.Error(w, "no such measure", http.StatusBadRequest)
+					http.Error(w, "no such bar", http.StatusBadRequest)
 					return
 				}
 				// Only where it is a change. A clef written again where
@@ -1932,7 +1932,7 @@ func (a *App) handleStaff(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		if removed == 0 {
-			http.Error(w, "there is no meter change at that measure",
+			http.Error(w, "there is no meter change at that bar",
 				http.StatusBadRequest)
 			return
 		}
@@ -2656,7 +2656,7 @@ func (a *App) handleEnding(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if changed == 0 {
-		http.Error(w, "there is no such measure", http.StatusBadRequest)
+		http.Error(w, "there is no such bar", http.StatusBadRequest)
 		return
 	}
 	writeJSON(w, map[string]int{"changed": changed})
@@ -2721,7 +2721,7 @@ func (a *App) handleJump(w http.ResponseWriter, r *http.Request) {
 		changed++
 	}
 	if changed == 0 {
-		http.Error(w, "there is no such measure", http.StatusBadRequest)
+		http.Error(w, "there is no such bar", http.StatusBadRequest)
 		return
 	}
 	writeJSON(w, map[string]int{"changed": changed})
@@ -3502,7 +3502,7 @@ func (a *App) handleMarker(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if !a.score.SetMarker(measIdx, text, auto) {
-		http.Error(w, "there is no such measure", http.StatusBadRequest)
+		http.Error(w, "there is no such bar", http.StatusBadRequest)
 		return
 	}
 	a.writeMarks(w, measIdx)
@@ -4386,7 +4386,7 @@ func (a *App) tieTargets(q url.Values) ([]tieTarget, error) {
 	}
 	v := m.Voices[0]
 	if len(v.Elements) == 0 {
-		return nil, editError("the measure is empty")
+		return nil, editError("the bar is empty")
 	}
 	if at <= 0 || at > len(v.Elements) {
 		at = len(v.Elements)
@@ -5093,7 +5093,7 @@ func (a *App) handleTuplet(w http.ResponseWriter, r *http.Request) {
 	}
 	v := m.Voices[0]
 	if len(v.Elements) == 0 {
-		http.Error(w, "the measure is empty", http.StatusBadRequest)
+		http.Error(w, "the bar is empty", http.StatusBadRequest)
 		return
 	}
 	if at <= 0 || at > len(v.Elements) {

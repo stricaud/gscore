@@ -265,7 +265,7 @@ func TestNaturalIsWrittenAndIsSeen(t *testing.T) {
 // The editor draws one empty bar after the last one on every staff, so that
 // there is somewhere to click before there is anything to click on, and
 // writing a note there is what makes it a bar of the piece. Paste asked for
-// the bar as it stood and was told "no such measure" — so copying a dotted
+// the bar as it stood and was told "no such bar" — so copying a dotted
 // rest and putting it on the staff below, which is the whole point of
 // copying it rather than going back to the menu, did not work.
 func TestPasteIntoTheBarAfterTheMusic(t *testing.T) {

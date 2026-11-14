@@ -146,7 +146,7 @@ test("the page has him and the stylesheet puts him over it", () => {
 test("there is one sprint per staff, and it says which staff", () => {
   const fn = src.match(/^function drawSprints\(\)[\s\S]*?^}/m)[0];
   assert.ok(fn.includes("sprintRows("), "the sprints are not built from the staves");
-  assert.ok(fn.includes("comes in at measure "),
+  assert.ok(fn.includes("comes in at bar "),
     "a sprint does not say when its staff comes in");
   assert.ok(fn.includes("sprintToStaffEntry("),
     "a sprint still runs to the end of the staff");

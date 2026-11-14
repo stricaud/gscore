@@ -96,7 +96,7 @@ func (a *App) handleClef(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		if !gone {
-			http.Error(w, "there is no clef change in that measure",
+			http.Error(w, "there is no clef change in that bar",
 				http.StatusBadRequest)
 			return
 		}

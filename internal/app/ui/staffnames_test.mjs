@@ -136,7 +136,7 @@ test("a label goes to the bar its instrument comes in at", () => {
   const body = grab("drawStaffNames");
   assert.ok(body.includes("sprintToStaffEntry("),
     "clicking a staff's name does not take you to where it plays");
-  assert.ok(body.includes("comes in at measure "),
+  assert.ok(body.includes("comes in at bar "),
     "the label does not say when its instrument comes in");
 });
 

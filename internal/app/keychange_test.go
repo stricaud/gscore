@@ -68,9 +68,9 @@ func TestAskingForTheKeyAlreadyInForceSaysSo(t *testing.T) {
 	if !strings.Contains(msg, "already") {
 		t.Errorf("refused with %q", msg)
 	}
-	// Measure numbers, not indexes: the message is read by somebody
+	// Bar numbers, not indexes: the message is read by somebody
 	// looking at a bar number printed over the bar.
-	if !strings.Contains(msg, "measure 9") {
+	if !strings.Contains(msg, "bar 9") {
 		t.Errorf("the message names the wrong bar: %q", msg)
 	}
 }
@@ -96,7 +96,7 @@ func TestAKeyCanBeSetFromAStaffThatMirrorsAnother(t *testing.T) {
 	// The lower half of a notation-and-tablature pair holds no measures of
 	// its own — it shows the staff above it — and it is the half somebody
 	// reading the tab is looking at. Asked there, the key used to be
-	// refused with "there is no such measure" about a bar plainly on the
+	// refused with "there is no such bar" about a bar plainly on the
 	// page.
 	h := newHarness(t)
 	h.app.score.Parts[0].Tab, _ = model.TuningNamed("guitar")
@@ -126,7 +126,7 @@ func TestAKeyIsSetFromAStaffShorterThanTheRest(t *testing.T) {
 	// staff added later, a voice that rests to the end and was never given
 	// the bars. The bar has to exist somewhere, not on the one staff that
 	// happened to be clicked — asked that way, a key change at a bar
-	// plainly on the page was refused with "there is no such measure",
+	// plainly on the page was refused with "there is no such bar",
 	// which is true of that staff and false of the music.
 	h := newHarness(t)
 	h.post("/api/addstaff?instrument=flute&written=pitches")
@@ -208,7 +208,7 @@ func TestAKeyFarPastTheEndIsStillRefused(t *testing.T) {
 
 func TestAClefAtTheBlankBarBeginsThatBarToo(t *testing.T) {
 	// The same rule, because it is the same gesture: the clef refused
-	// with "no such measure" at exactly the bar the key did.
+	// with "no such bar" at exactly the bar the key did.
 	h := scoreOfBars(t, 8)
 	h.post("/api/staff?part=0&at=8&clef=bass")
 	if n := len(h.app.score.Parts[0].Measures); n != 9 {

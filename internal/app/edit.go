@@ -535,7 +535,14 @@ func measureAt(p *model.Part, n int) *model.Measure {
 // phrase rather than by beat, an exercise whose last bar is however long the
 // line was. A program that insists on the arithmetic cannot be used to type
 // any of it in, because every bar it fixes is a bar it has rewritten.
-func spill(p *model.Part, from int) {
+func spill(p *model.Part, from int) { spillVoice(p, from, 0) }
+
+// spillVoice is the same for one named line of the staff.
+//
+// A line overflows on its own. The other voices of the bar are a different
+// line of music played at the same time, and are no more pushed along by
+// this one than the bar below it is.
+func spillVoice(p *model.Part, from, voice int) {
 	if !TrackBarlines() {
 		return
 	}
@@ -544,12 +551,15 @@ func spill(p *model.Part, from int) {
 		return
 	}
 	for i := from; i < len(p.Measures); i++ {
-		v := p.Measures[i].Voices[0]
+		v := lineOf(p.Measures[i], voice)
 		moved := false
 		for len(v.Elements) > 1 && v.Duration().Cmp(bar) > 0 {
 			last := v.Elements[len(v.Elements)-1]
 			v.Elements = v.Elements[:len(v.Elements)-1]
-			next := measureAt(p, i+1).Voices[0]
+			next, err := voiceForWriting(measureAt(p, i+1), voice)
+			if err != nil {
+				return
+			}
 			next.Elements = append([]model.Element{last}, next.Elements...)
 			moved = true
 		}
@@ -6642,13 +6652,21 @@ func (a *App) handleABC(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	v := m.Voices[0]
+	// The line of the staff the cursor is standing in. A phrase typed into
+	// the second voice of a piano right hand belongs to that voice; it used
+	// to go into the first whatever the pen said, which in a bar that
+	// already had two lines wrote the melody on top of the held chords.
+	v, err := voiceForWriting(m, vi)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 	if at < 0 || at > len(v.Elements) {
 		at = len(v.Elements)
 	}
 	tail := append([]model.Element{}, v.Elements[at:]...)
 	v.Elements = append(append(v.Elements[:at:at], add...), tail...)
-	spill(p, measIdx)
+	spillVoice(p, measIdx, vi)
 
 	// The barlines, now that it is known which bar each one's note landed
 	// in. A line on the last note of the fragment closes the bar it ended

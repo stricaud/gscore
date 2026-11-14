@@ -399,6 +399,22 @@ type msStaff struct {
 	// from it — and the only way to know that is to have been counting.
 	tick int
 
+	// meter is the time signature in force on this staff, and with it how
+	// long a bar is when nothing in it could be read.
+	//
+	// A bar MuseScore wrote as one element this reader does not know — a
+	// RepeatMeasure, the 𝄎 that says "play the bar before again" — comes
+	// out holding nothing, and counting it as no time at all leaves the
+	// clock short by a bar. Six of them in the drum part of one big band
+	// score left every <tick> from there on reading six bars early, so
+	// instead of rewinding to open the bar's second voice they looked like
+	// a gap far ahead in the first: the bass drum was laid end to end
+	// after the cymbals behind five and a quarter whole notes of silence,
+	// and the bar came out seven times as long as its meter. Playback
+	// takes a bar's length from the longest part, so the playhead sat in
+	// that one bar for seventeen seconds while the band played on.
+	meter model.TimeSignature
+
 	// clefWait is a change of clef that has not reached a note yet.
 	//
 	// MuseScore writes the change at the tick it happens, and a change
@@ -709,6 +725,9 @@ func (r *reader) staff(doc *document, id string) error {
 	if !ok {
 		st = &msStaff{id: id, transChr: doc.transposeOf(id)}
 		st.clef = doc.defaultClef(id)
+		// Four four until the score says otherwise, which is what a
+		// MuseScore file with no TimeSig in its first bar means.
+		st.meter = model.TimeSignature{Beats: 4, BeatValue: 4}
 		doc.staves[id] = st
 		doc.order = append(doc.order, id)
 	}
@@ -988,6 +1007,7 @@ func (r *reader) measure(doc *document, st *msStaff) error {
 	var loose *voiceState   // MuseScore 2 wrote voice one without a wrapper
 	at, pending := 0, false // where <tick> last asked for, and whether one has
 	startRepeat := false
+	repeatBar := false // this bar is the 𝄎 that repeats the one before
 
 	// fresh opens a voice, handing the first one of the bar any change of
 	// clef the bar before ran out of notes to carry.
@@ -1103,6 +1123,13 @@ func (r *reader) measure(doc *document, st *msStaff) error {
 			// drawn forty times too wide with its notes at either end.
 			at, pending = n-start, true
 			return nil
+		case "RepeatMeasure":
+			// 𝄎 — play the bar before again. MuseScore writes the sign
+			// and nothing else, so the music has to be fetched from the
+			// bar before; left unread the bar came out silent, which in
+			// this drum part is fifty bars of the ninety.
+			repeatBar = true
+			return r.dec.Skip()
 		case "startRepeat":
 			startRepeat = true
 			return r.dec.Skip()
@@ -1177,17 +1204,44 @@ func (r *reader) measure(doc *document, st *msStaff) error {
 		r.closeVoice(loose)
 		m.Voices = append(m.Voices, loose.v)
 	}
+	// The bar written as 𝄎 is the bar before it, played again.
+	//
+	// Its music only, and not the bar it came from: a repeat sign says
+	// nothing about barlines, repeats, titles or a change of key, and a
+	// bar that happens to follow a double bar is not itself one.
+	if repeatBar && allEmpty(m.Voices) {
+		if n := len(st.measures); n > 0 {
+			m.Voices = repeatOf(st.measures[n-1])
+		} else {
+			r.report("a RepeatMeasure in the first bar has nothing to repeat")
+		}
+	}
 	if len(m.Voices) == 0 {
 		m.Voices = append(m.Voices, &model.Voice{})
 	}
 	// Carry the count on to the next bar. The bar's length is the longest
 	// of its voices: they all fill it, and whichever reaches furthest says
 	// how far it reaches.
+	if m.Time != nil {
+		st.meter = *m.Time
+	}
 	longest := 0
 	for _, v := range m.Voices {
 		if n := voiceTicks(v); n > longest {
 			longest = n
 		}
+	}
+	// A bar that came out with nothing in it is a bar whose contents this
+	// reader did not understand, not a bar of no length: MuseScore writes
+	// a rest for a bar that is really empty. Its meter's worth of time
+	// passed on MuseScore's clock whatever happened here, and the ticks
+	// after it are counted from there. See msStaff.meter.
+	//
+	// Only when it is empty. A bar with music in it that falls short is a
+	// pickup, or an irregular bar somebody meant, and stretching those to
+	// the meter would push every tick after them the other way.
+	if longest == 0 {
+		longest = durationTicks(st.meter.BarDuration())
 	}
 	st.tick += longest
 	if startRepeat {
@@ -3098,4 +3152,57 @@ func durationTicks(d model.Duration) int {
 		return 0
 	}
 	return d.Num * msTicksPerQuarter * 4 / d.Den
+}
+
+// allEmpty says no voice of a bar holds anything.
+func allEmpty(vs []*model.Voice) bool {
+	for _, v := range vs {
+		if v != nil && len(v.Elements) > 0 {
+			return false
+		}
+	}
+	return true
+}
+
+// repeatOf is the music of one bar, copied for the 𝄎 that repeats it.
+//
+// Copied and not shared: the two bars are separately editable afterwards,
+// and a model where one note is in two bars at once is a model where
+// changing a note changes a bar nobody was looking at.
+//
+// The arcs are left behind. A tie or a slur is written between two
+// particular notes, and the copy's ends land on nothing: a tie opened in
+// the repeated bar and never closed is a note the player holds for ever
+// and a curve the engraver draws off the end of the system. The repeat
+// sign is for a bar of drumming or an accompaniment figure, where there is
+// nothing to tie anyway.
+func repeatOf(prev *model.Measure) []*model.Voice {
+	var out []*model.Voice
+	for _, v := range prev.Voices {
+		if v == nil {
+			out = append(out, nil)
+			continue
+		}
+		c := v.Clone()
+		for _, el := range c.Elements {
+			unarc(el)
+		}
+		out = append(out, c)
+	}
+	return out
+}
+
+// unarc takes the ties and slurs off a copied element.
+func unarc(el model.Element) {
+	switch e := el.(type) {
+	case *model.Note:
+		e.TieStart, e.TieStop = false, false
+	case *model.Chord:
+		for _, n := range e.Notes {
+			n.TieStart, n.TieStop = false, false
+		}
+	}
+	if mk := marksOf(el); mk != nil {
+		mk.SlurStart, mk.SlurStop = 0, 0
+	}
 }

@@ -70,7 +70,10 @@ function load(names, extra = {}) {
       return { ok: true, async json() { return {}; }, async text() { return ""; } };
     },
   };
-  const body = [grab("withVoice"), grab("drawnAt"), ...names.map(grab)].join("\n") +
+  // carryCaretOn because adding a notehead leaves the caret where writing
+  // leaves it: over the barline, when the bar the chord is in is full.
+  const body = [grab("withVoice"), grab("drawnAt"), grab("carryCaretOn"),
+                ...names.map(grab)].join("\n") +
     "\nreturn { " + names.join(", ") + " };";
   const api = new Function(...Object.keys(scope), body)(...Object.values(scope));
   return { ...api, state, said, sent };

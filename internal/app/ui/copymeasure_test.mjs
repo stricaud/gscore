@@ -35,7 +35,8 @@ function targets(selection, multi = []) {
       elements: [{ index: 0, ref: 7 }, { index: 1, ref: 8 }, { index: 2, ref: 9 }],
     }],
   };
-  const body = grab("selOf") + "\n" + grab("orderedSelection") + "\n" + grab("selectionTargets") + "\n" +
+  const body = grab("selOf") + "\n" + grab("orderedSelection") + "\n" +
+    grab("selectedElement") + "\n" + grab("selectionTargets") + "\n" +
     grab("measureTargets") + "\nreturn () => selectionTargets() || measureTargets();";
   return new Function("state", body)(state)();
 }

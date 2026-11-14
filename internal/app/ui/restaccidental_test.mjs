@@ -59,7 +59,8 @@ function load(picked) {
     setVoice(n) { state.voice = n; },
     t: (s) => s,
   };
-  const body = grab("drawnAt") + "\n" + grab("pickedUpIsPitched") + "\n" +
+  const body = grab("drawnAt") + "\n" + grab("selectedElement") + "\n" +
+    grab("pickedUpIsPitched") + "\n" +
     grab("paletteAction") + "\nreturn { paletteAction, pickedUpIsPitched };";
   const api = new Function(...Object.keys(scope), body)(...Object.values(scope));
   return { state, said, written, ...api, REST, NOTE };

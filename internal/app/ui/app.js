@@ -547,6 +547,69 @@ function drawnAt(part, measure, index, voice) {
     (e) => e.index === index && (e.voice || 0) === (voice || 0)) || null;
 }
 
+// selectedElement finds the one note that is selected: the bar it is drawn
+// in and the element itself, or null when nothing is selected.
+//
+// By the ref the server gave it, and not by counting back from the caret.
+// The two agree for as long as the caret stands just past the note, which
+// is where writing leaves it — and they part company the moment a bar
+// fills. The caret is carried to the front of the next bar while the
+// selection goes on naming the note that filled the bar before, because
+// the caret says where the next note goes and the selection says what the
+// last one was, and once a bar is full those are two different places.
+//
+// Counting back from the caret then asked for element -1 of a bar the note
+// is not in. Reported as Mod+Space refusing to stack a notehead — "there
+// is no note to add to" — as soon as the bar being filled ran out; and the
+// same miss aimed a dynamic or a tie typed in the same breath at nothing
+// at all.
+function selectedElement() {
+  const sel = state.selection;
+  if (!sel || sel.ref === null || sel.ref === undefined) return null;
+  // Refs are numbered in reading order over the whole engraving, so one
+  // ref is one element and the bar it lies in is whichever one holds it.
+  for (const h of state.hits) {
+    if (h.part !== sel.part) continue;
+    const el = (h.elements || []).find((e) => e.ref === sel.ref);
+    if (el) return { hit: h, el };
+  }
+  return null;
+}
+
+// elementBeforeCaret is the element the caret is standing just after — the
+// one written last, because that is where writing leaves the caret — with
+// the bar it is drawn in. Null when there is nothing behind the caret.
+//
+// It steps back over a barline, because the caret does. Writing the note
+// that fills a bar carries the caret to the front of the next bar, so the
+// note it has just written is the last one of the bar behind it, and
+// counting back inside the caret's own bar asked for element -1 and found
+// nothing. Reported as: "pressing ctrl+space does not add the note to the
+// previous one as a chord once it moved to the next measure".
+//
+// Back one bar and no further. A caret at the front of a bar that follows
+// an empty one is not standing after anything: the question this answers
+// is what was written a moment ago, and the answer there is nothing.
+//
+// Unlike selectedElement this does not ask what is picked up, and it must
+// not: aiming the next notehead with an arrow key lets go of the note, on
+// purpose, and the chord being built is still the one behind the caret.
+function elementBeforeCaret() {
+  const sel = state.selection;
+  if (!sel) return null;
+  const voice = sel.voice || 0;
+  const barOf = (m) =>
+    state.hits.find((h) => h.part === sel.part && h.measure === m) || null;
+  if (sel.at > 0) {
+    const el = drawnAt(sel.part, sel.measure, sel.at - 1, voice);
+    return el ? { hit: barOf(sel.measure), el } : null;
+  }
+  const hit = barOf(sel.measure - 1);
+  if (!hit) return null;
+  const line = (hit.elements || []).filter((e) => (e.voice || 0) === voice);
+  return line.length ? { hit, el: line[line.length - 1] } : null;
+}
+
 // pickedUpIsPitched says what is selected has a notehead to write a sign on:
 // a note or a chord, rather than a rest or a sign standing in the bar.
 function pickedUpIsPitched() {
@@ -555,9 +618,7 @@ function pickedUpIsPitched() {
     return state.multi.some(
       (m) => pitched(drawnAt(m.part, m.measure, m.index, m.voice)));
   }
-  const sel = state.selection;
-  if (!sel) return false;
-  return pitched(drawnAt(sel.part, sel.measure, sel.at - 1, sel.voice));
+  return pitched(selectedElement()?.el);
 }
 
 // withVoice puts the line being written into a request, where it is not
@@ -6572,6 +6633,13 @@ async function addPitch(hit, el, step) {
   await refreshScore();
   const now = drawnAt(hit.part, hit.measure, el.index, voice);
   if (now) state.selection.ref = now.ref;
+  // The caret belongs where the next note goes, and the chord just added to
+  // may be the one that filled its bar — reached from the next bar, which is
+  // where the caret had already been carried. Without this the caret came
+  // back over the barline and sat hard against it, pointing at a bar with no
+  // room in it. Adding a notehead is writing, so it leaves the caret where
+  // writing leaves it.
+  carryCaretOn(state.selection);
   markSelection();
   status("Added to the chord");
 }
@@ -6820,12 +6888,21 @@ async function deleteSelected() {
     return;
   }
 
-  if (!sel || sel.at <= 0) {
+  // What the caret is standing just after, which is behind the barline when
+  // the caret has been carried into the next bar. Backspace straight after
+  // writing the note that filled a bar used to answer "nothing selected to
+  // delete", which is the one thing somebody who has just written a note
+  // knows to be untrue. By the caret and not by what is picked up, because
+  // aiming the next note with an arrow lets go of this one on purpose and
+  // Backspace after that still means the note behind the caret.
+  const gone = !sel ? null : elementBeforeCaret();
+  if (!gone) {
     status("Nothing selected to delete");
     return;
   }
   const p = new URLSearchParams({
-    part: String(sel.part), measure: String(sel.measure), at: String(sel.at - 1),
+    part: String(sel.part), measure: String(gone.hit.measure),
+    at: String(gone.el.index),
     // The notehead that was clicked, where one was: a note of a chord
     // picked up and deleted is that note, not the chord it is in.
     ...pickedHead(),
@@ -6852,7 +6929,10 @@ async function deleteSelected() {
                         : `Notehead removed — ${d.left} left`);
     return;
   }
-  sel.at -= 1;
+  // Into the gap it left — which is in the bar the note was in, not the bar
+  // the caret had been carried on to.
+  sel.measure = gone.hit.measure;
+  sel.at = gone.el.index;
   sel.head = null;
   await refreshScore();
   status("Deleted");
@@ -18264,18 +18344,15 @@ async function chordAtCursor() {
     status("Write a note first");
     return;
   }
-  const hit = state.hits.find(
-    (h) => h.part === sel.part && h.measure === sel.measure
-  );
-  if (!hit) {
+  // The note the caret is standing just after, which steps back over a
+  // barline because the caret does.
+  const one = elementBeforeCaret();
+  if (!one) {
     status("Write a note first");
     return;
   }
-  // The element before the cursor is the one just written, because that is
-  // where the cursor is left.
-  const el = (hit.elements || []).find(
-    (x) => x.index === sel.at - 1 && (x.voice || 0) === (sel.voice || 0));
-  if (!el || el.kind === "rest") {
+  const { hit, el } = one;
+  if (el.kind === "rest") {
     status("There is no note to add to");
     return;
   }
@@ -18768,8 +18845,11 @@ function selectionTargets() {
     if (!els.length) return null;
     return els.map((el) => selOf(sel.part, sel.measure, el.index, el.voice)).join(",");
   }
-  if (sel.ref === null || sel.ref === undefined) return null;
-  return selOf(sel.part, sel.measure, sel.at - 1, sel.voice);
+  // Where the note is drawn, rather than where the caret is: after a bar
+  // fills they are different bars. See selectedElement.
+  const one = selectedElement();
+  if (!one) return null;
+  return selOf(one.hit.part, one.hit.measure, one.el.index, one.el.voice);
 }
 
 /* ---------- player mode ---------- */

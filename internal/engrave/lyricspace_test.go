@@ -357,3 +357,86 @@ func TestAHeldSyllableIsGivenRoomToRunIn(t *testing.T) {
 			len(extenders(held)))
 	}
 }
+
+/*
+ * A held syllable follows its sound into another voice.
+ *
+ * The line was kept per line of music, and the sound it follows is not: a
+ * note held across a barline can arrive written in a different voice from
+ * the one it left, which is how some files are written and how Bumpty Bump
+ * is written at bar 25. Kept per voice, the line found nothing in its own
+ * voice to close it, so it was drawn to the margin of that system and
+ * picked up again on the next — and on every system after that. Reported
+ * as "why the pdf export makes the lyrics on bars 27 to 30 underlined?",
+ * which is what a line running under a whole system of words looks like.
+ */
+
+// heldIntoAnotherVoice is three bars: a syllable held on a whole note in
+// the first voice, tied into a bar whose music is in the second, and then a
+// bar of words to stop against.
+func heldIntoAnotherVoice() *model.Score {
+	whole := func() *model.Note {
+		return &model.Note{
+			Pitch: model.Pitch{Step: model.StepB, Octave: 4},
+			Dur:   model.Duration{Num: 1, Den: 1},
+		}
+	}
+	sings, held := whole(), whole()
+	sings.Lyrics = []model.Lyric{{
+		Text: "craze:", Verse: 1, Syllabic: model.SyllableSingle, Extend: true,
+	}}
+	sings.TieStart, held.TieStop = true, true
+
+	after := whole()
+	after.Lyrics = []model.Lyric{{
+		Text: "Grab", Verse: 1, Syllabic: model.SyllableSingle,
+	}}
+	last := &model.Measure{
+		Voices:       []*model.Voice{{}, {Elements: []model.Element{after}}},
+		RightBarline: model.BarFinal,
+	}
+	return &model.Score{
+		Tempo: model.Tempo{BPM: 120, Unit: model.Duration{Num: 1, Den: 4}},
+		Parts: []*model.Part{{
+			Clef: model.Treble,
+			Time: model.TimeSignature{Beats: 4, BeatValue: 4},
+			Measures: []*model.Measure{
+				// Sung in the first voice.
+				{Voices: []*model.Voice{{Elements: []model.Element{sings}}, {}}},
+				// Held into the second.
+				{Voices: []*model.Voice{{}, {Elements: []model.Element{held}}}},
+				last,
+			},
+		}},
+	}
+}
+
+func TestAHeldSyllableFollowsItsSoundIntoAnotherVoice(t *testing.T) {
+	lay := Engrave(heldIntoAnotherVoice(), DefaultOptions())
+
+	lines := extenders(lay)
+	if len(lines) != 1 {
+		t.Fatalf("%d lines ruled under the words, want the one", len(lines))
+	}
+	var next Text
+	for _, s := range syllables(lay) {
+		if s.S == "Grab" {
+			next = s
+		}
+	}
+	if next.S == "" {
+		t.Fatal("the word it runs to is not on the page")
+	}
+	if right := (next.X - textWidth(next.S, lyricSize)/2) - lines[0].X2; right <= 0 {
+		t.Errorf("the line runs %.2f spaces into %q: it was never stopped",
+			-right, next.S)
+	}
+	// And stops at the end of the sound, which is the bar the tie ends in.
+	if len(lay.Barlines) < 2 {
+		t.Fatalf("%d barlines, want the two between three bars", len(lay.Barlines))
+	}
+	if lines[0].X2 > lay.Barlines[1].X {
+		t.Errorf("the line runs to %.2f, past the end of the held note at %.2f",
+			lines[0].X2, lay.Barlines[1].X)
+	}
+}

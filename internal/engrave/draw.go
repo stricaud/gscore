@@ -3144,7 +3144,15 @@ func (e *engraver) lyricY(verse int) float64 {
 // line is the next thing to be sung or not sung — the line stops at the end
 // of the sound whatever comes after it.
 func (e *engraver) extendAt(m *model.Marks, p *placed) {
-	open := e.staffSpans(e.partIndex, p.voice)
+	// Held for the staff and not for one of its lines of music — see
+	// allVoices, which ties are kept this way for the same reason. A note
+	// held across a barline can arrive written in a different voice from
+	// the one it left: Bumpty Bump sings "craze:" on a whole note in the
+	// first voice and ties it into a bar whose music is in the second. Kept
+	// per voice, the line holding that syllable found nothing to close it
+	// and was drawn to the margin of every system after it — which is what
+	// "why the pdf export makes the lyrics underlined" looks like.
+	open := e.staffSpans(e.partIndex, allVoices)
 	x := p.x + noteheadWidth(p.value)/2
 	// The far edge of this column, which is where the sound in it ends.
 	right := p.x + p.width
@@ -3158,6 +3166,17 @@ func (e *engraver) extendAt(m *model.Marks, p *placed) {
 		if ex.holding && m.TieStop {
 			ex.holding = m.TieStart
 			ex.limit = right
+			// And the line follows the sound into whatever voice it is
+			// written in now, so that what ends it is the next thing in
+			// that voice.
+			ex.voice = p.voice
+			continue
+		}
+		// Only the line of music the syllable is being held on. The staff's
+		// other voices are a different line played at the same time, and a
+		// note of theirs is no more the end of this syllable than the staff
+		// below is.
+		if ex.voice != p.voice {
 			continue
 		}
 		e.drawExtender(ex, math.Min(ex.limit, e.lyricLeft(m, x, verse)-extendAir))
@@ -3182,6 +3201,7 @@ func (e *engraver) extendAt(m *model.Marks, p *placed) {
 			rel:     y - e.y,
 			holding: m.TieStart,
 			limit:   right,
+			voice:   p.voice,
 		}
 	}
 }

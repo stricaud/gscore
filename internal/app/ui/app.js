@@ -17954,9 +17954,9 @@ const KEY_BINDINGS = [
     label: "Down an octave",
     run: () => { if (heldForMoving()) void nudge(-7); else moveCursorPitch(-7); } },
   { id: "nudge-up", keys: "Alt+ArrowUp", group: "Selecting and moving",
-    label: "Move the note up a step", run: () => void nudge(1) },
+    label: "Move the note or rest up a step", run: () => void nudge(1) },
   { id: "nudge-down", keys: "Alt+ArrowDown", group: "Selecting and moving",
-    label: "Move the note down a step", run: () => void nudge(-1) },
+    label: "Move the note or rest down a step", run: () => void nudge(-1) },
   // Moving the music to another key, which is not the same thing as moving
   // notes about the staff: a semitone here is a minor second, so the notes
   // land spelled the way the new key spells them — C to D flat going up,
@@ -18716,7 +18716,7 @@ function setupKeys() {
 // staff, which is what a player reads.
 async function nudge(steps) {
   if (!pickedNotes()) {
-    status("Click a note first");
+    status("Click a note or a rest first");
     return;
   }
   // The notehead that was clicked, where one was: clicking a note of a

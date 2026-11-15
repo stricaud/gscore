@@ -90,6 +90,16 @@ type placed struct {
 	// underneath it, through the beam.
 	stemDir int
 
+	// restShift is how far this rest is moved to keep out of the other
+	// voice's way, in staff steps: upward for the voice that stems up,
+	// downward for the one that stems down, and zero on a staff with a
+	// single line of music, where a rest stays in the middle where it
+	// belongs. See restClear.
+	//
+	// Not stemDir, which a rest has no use for and which other things read
+	// as "this note has a stem pointing that way".
+	restShift int
+
 	// cross says this element is written on the staff above or below the
 	// one it belongs to, and crossDY how far that is. See crossstaff.go.
 	// Its step has already been read against that staff's clef, so
@@ -1004,10 +1014,9 @@ func (e *engraver) drawRestAt(p *placed) {
 		value, dots = model.Whole, 0
 	}
 	name := smufl.RestGlyph(value)
-	step := 4.0
-	if value == model.Whole {
-		step = 6
-	}
+	// Out of the other voice's way on a staff that is shared, and then
+	// wherever the writer has put it. See restShift and model.Rest.Lift.
+	step := restBaseStep(p) + float64(p.restShift+p.rest.Lift)
 	e.lay.Glyphs = append(e.lay.Glyphs, Glyph{
 		Name: name, X: p.x, Y: e.y + stepY(step), Ref: p.index,
 		Size: e.glyphSize(),
@@ -1015,6 +1024,57 @@ func (e *engraver) drawRestAt(p *placed) {
 	e.lay.Refs[p.index] = RefPos{X: p.x, Y: e.y + stepY(step), Staff: e.y}
 	// A rest has no stem for the dots to clear.
 	e.drawDots(p.x+e.adv(name)+e.opt.Spacings.DotToNote, step, dots)
+}
+
+// restBaseStep is where a rest is drawn on a staff nothing else shares: the
+// middle line, and the line above it for a whole rest, which hangs.
+func restBaseStep(p *placed) float64 {
+	if p.fullBar || p.value == model.Whole {
+		return 6
+	}
+	return 4
+}
+
+// restClear is how far a rest moves to keep out of the other voice's way, in
+// staff steps, in the direction its own voice's stems point.
+//
+// Two spaces to begin with, which is where a rest in two-voice writing
+// belongs and is far enough nearly always. Where the other voice is playing
+// something up there too it goes further: past the note that voice sounds in
+// the same column, with two spaces to spare. A fixed shift lands on the
+// other voice as readily as it started on it — the Altes has two that did,
+// an eighth rest and a quarter rest each printed exactly over a notehead.
+//
+// Only what sounds at the same moment is in the way, which on the page is
+// what stands in the same column: notes of the other voice elsewhere in the
+// bar are somewhere else along it and cannot be collided with.
+func restClear(p *placed, items []*placed, dir int) int {
+	// Half a notehead either side: two voices sounding together are placed
+	// in one column, and a second in a chord pushes a head across the stem
+	// without leaving that column.
+	const sameColumn = 1.2
+
+	want := float64(dir * restVoiceStep)
+	base := restBaseStep(p)
+	for _, q := range items {
+		if q == p || q.voice == p.voice || q.rest != nil {
+			continue
+		}
+		if math.Abs(q.x-p.x) > sameColumn {
+			continue
+		}
+		switch {
+		case dir > 0:
+			if over := float64(q.hi) + restVoiceStep - base; over > want {
+				want = over
+			}
+		case dir < 0:
+			if under := float64(q.lo) - restVoiceStep - base; under < want {
+				want = under
+			}
+		}
+	}
+	return int(want)
 }
 
 // drawAccidental writes a note's sign in front of it, in brackets where the
@@ -1566,6 +1626,18 @@ func (e *engraver) setStemDirections(items []*placed, t model.TimeSignature) {
 		}
 		for _, p := range g {
 			p.stemDir = dir
+		}
+	}
+	// A rest on a shared staff keeps out of the other voice's way, on the
+	// same side as its own voice's stems. Two voices write a rest in the
+	// same place as readily as they write a note there, and the middle of
+	// the staff is where both of them land: a quarter rest in the second
+	// voice was printed over the first voice's held note.
+	if multi {
+		for _, p := range items {
+			if p.rest != nil {
+				p.restShift = restClear(p, items, byVoice(p))
+			}
 		}
 	}
 	// Whatever is left stands alone and keeps its own inclination. Setting

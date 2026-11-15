@@ -313,6 +313,9 @@ type elemDoc struct {
 	// and would not come back as it was saved.
 	Forced bool `json:"accidentalForced,omitempty"`
 	Hidden bool `json:"hidden,omitempty"`
+	// Lift is how far a rest has been moved off where it would otherwise be
+	// drawn, in staff steps. See model.Rest.Lift.
+	Lift int `json:"lift,omitempty"`
 	// Head is the notehead's shape and Percussion the drum it plays, both
 	// of which a drum staff needs and neither of which the pitch can say.
 	Head       string     `json:"notehead,omitempty"`
@@ -761,7 +764,7 @@ func encodeElement(el model.Element) elemDoc {
 	case *model.Rest:
 		return elemDoc{
 			Kind: "rest", Dur: durString(e.Dur), Hidden: e.Hidden,
-			Marks: encodeMarks(&e.Marks),
+			Lift: e.Lift, Marks: encodeMarks(&e.Marks),
 		}
 	case *model.Chord:
 		d := elemDoc{Kind: "chord", Dur: durString(e.Dur), Marks: encodeMarks(&e.Marks)}
@@ -1195,7 +1198,7 @@ func decodeElement(ed elemDoc) (model.Element, error) {
 		decodeMarks(ed.Marks, &n.Marks)
 		return n, nil
 	case "rest":
-		r := &model.Rest{Dur: dur, Hidden: ed.Hidden}
+		r := &model.Rest{Dur: dur, Hidden: ed.Hidden, Lift: ed.Lift}
 		decodeMarks(ed.Marks, &r.Marks)
 		return r, nil
 	case "chord":

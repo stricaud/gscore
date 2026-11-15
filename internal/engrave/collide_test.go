@@ -33,17 +33,17 @@ import (
  * layout rather than from a picture of it.
  */
 func TestMarksClearOfNoteheads(t *testing.T) {
-	// Where a rest and a notehead do still share the same ground.
+	// Nothing in the tree does any more.
 	//
-	// Two voices on one staff, a rest in one of them sounding at the same
-	// moment as a note in the other. They belong at the same place along the
-	// bar — that is what sounding together means — so the rest has to move
-	// up or down out of the way rather than along, and nothing here does
-	// that yet. Listed rather than quietly tolerated, so that a third one
-	// appearing somewhere else says so.
-	expected := map[string]int{
-		"33c-Spanners-Slurs.musicxml": 1,
-	}
+	// There was one here, kept on a list rather than quietly tolerated: two
+	// voices on one staff, a rest in one of them sounding at the same moment
+	// as a note in the other. They belong at the same place along the bar —
+	// that is what sounding together means — so the rest has to move up or
+	// down out of the way rather than along, and nothing did that. Something
+	// does now: see restClear. The list is kept, empty, because a score that
+	// cannot be made to come out clean is better written down here than left
+	// to fail every run.
+	expected := map[string]int{}
 
 	total := 0
 	for name, path := range corpus(t) {

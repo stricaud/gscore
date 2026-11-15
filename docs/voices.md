@@ -92,6 +92,27 @@ score's own bars — and a flat stream has nowhere to put a second voice. The
 <code>&amp;</code> and everything after it is dropped. Pick the voice and type
 the line instead.</p>
 
+## What gets out of the way
+
+Two voices on one staff want the same places on it, and three things move so
+that they do not fight over them. The stems oppose: the upper voice's point
+up and the lower voice's down, however high or low either happens to sit.
+Ties and slurs follow the stems — the upper voice's curve over the top, the
+lower voice's underneath — so a held note in one line is never arched
+through the other.
+
+And the **rests** step aside. A rest belongs in the middle of the staff, and
+with two voices there both of them belong there, so each moves off to its own
+voice's side: up for the upper, down for the lower. Where the other voice is
+playing something up there as well, the rest goes past it rather than onto
+it.
+
+<p class="tip"><b>And you can move one by hand.</b> Click a rest and press
+<kbd>↑</kbd> or <kbd>↓</kbd>, the same keys that move a note. Where you put
+it is saved with the score. Nothing else about a rest can be moved, so the
+arrows mean this and nothing else — and for a run of music with rests in it
+the arrows move the notes and leave the silences where they are.</p>
+
 ## What carries it
 
 A second voice is only worth writing if it survives the journey. It does:

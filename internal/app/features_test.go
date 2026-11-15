@@ -2847,3 +2847,69 @@ func TestTwoHairpinsThatMeetAreDrawnOnOneLine(t *testing.T) {
 		t.Errorf("there is %g of a staff space between them, which is a hole", gap)
 	}
 }
+
+/*
+ * A rest moves up and down the staff like a note.
+ *
+ * Where a rest sits is the one thing about it there is to move, and on a
+ * staff two voices share it is a thing somebody wants to move: the engraver
+ * puts a rest out of the other voice's way and that is where most of them
+ * belong, but the writer can see what the rules cannot. The gesture is the
+ * one that already moves a note — pick it up and press the arrow — because
+ * that is the gesture anybody will try. Asked for from the page: "I should
+ * be able to move it by selecting it just like a note with up and down."
+ */
+
+func TestARestMovesWithTheArrows(t *testing.T) {
+	h := newHarness(t)
+	h.post("/api/insert?part=0&measure=0&at=-1&step=4&dur=quarter&kind=rest")
+	rest, ok := h.app.score.Parts[0].Measures[0].Voices[0].Elements[0].(*model.Rest)
+	if !ok {
+		t.Fatal("the bar did not come out with a rest in it")
+	}
+
+	h.post("/api/nudge?part=0&measure=0&at=1&steps=1")
+	if rest.Lift != 1 {
+		t.Errorf("after one press up the rest is lifted %d", rest.Lift)
+	}
+	h.post("/api/nudge?part=0&measure=0&at=1&steps=-3")
+	if rest.Lift != -2 {
+		t.Errorf("after three presses down the rest is lifted %d", rest.Lift)
+	}
+}
+
+// By the selection too, which is how the editor names what has been clicked.
+func TestARestInTheSelectionMovesWithTheArrows(t *testing.T) {
+	h := newHarness(t)
+	h.note(0, 0, 4, "quarter")
+	h.post("/api/insert?part=0&measure=0&at=-1&step=4&dur=quarter&kind=rest")
+	h.post("/api/nudge?sel=0:0:1&steps=2")
+
+	rest, ok := h.app.score.Parts[0].Measures[0].Voices[0].Elements[1].(*model.Rest)
+	if !ok {
+		t.Fatal("the second element is not the rest")
+	}
+	if rest.Lift != 2 {
+		t.Errorf("the rest is lifted %d, want 2", rest.Lift)
+	}
+}
+
+// Nudging music moves the notes and leaves the silences between them where
+// they are: a rest has no pitch, so there is nothing in it to transpose.
+func TestNudgingARunLeavesItsRestsAlone(t *testing.T) {
+	h := newHarness(t)
+	h.note(0, 0, 4, "quarter")
+	h.post("/api/insert?part=0&measure=0&at=-1&step=4&dur=quarter&kind=rest")
+	h.note(0, 0, 4, "quarter")
+
+	els := h.app.score.Parts[0].Measures[0].Voices[0].Elements
+	before := els[0].(*model.Note).Pitch.DiatonicIndex()
+	h.post("/api/nudge?sel=0:0:0,0:0:1,0:0:2&steps=1")
+
+	if got := els[0].(*model.Note).Pitch.DiatonicIndex(); got != before+1 {
+		t.Errorf("the first note did not move up a step")
+	}
+	if lift := els[1].(*model.Rest).Lift; lift != 0 {
+		t.Errorf("the rest in the middle of the run moved by %d", lift)
+	}
+}

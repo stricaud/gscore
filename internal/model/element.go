@@ -1154,6 +1154,15 @@ type Rest struct {
 	// ABC's x.
 	Hidden bool
 
+	// Lift is how far this rest has been moved from where it would otherwise
+	// be drawn, in staff steps — half a space each, upward positive.
+	//
+	// Most of where a rest goes the engraver works out: on a staff two
+	// voices share it stands clear of the other voice, on its own side. This
+	// is what is left over, for the bars where the writer can see something
+	// the rules cannot.
+	Lift int `json:",omitempty"`
+
 	Marks
 }
 

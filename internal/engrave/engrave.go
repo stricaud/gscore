@@ -887,6 +887,13 @@ const (
 	// middleStep is the staff step of the middle line, the pivot for stem
 	// direction, from realize_area.c:605.
 	middleStep = 4
+	// restVoiceStep is how far a rest is moved off the middle of the staff
+	// to keep out of the other voice's way where a staff is shared, in staff
+	// steps. Two spaces, which puts a quarter rest of the upper voice on the
+	// top line of the staff and the lower voice's on the bottom one — far
+	// enough to read as belonging to its own line of music, and still inside
+	// the staff.
+	restVoiceStep = 4
 	// stemLength is the standard stem, in staff spaces.
 	stemLength = 3.5
 	// dynamicDrop is how far below the bottom staff line a dynamic sits.

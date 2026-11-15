@@ -1050,3 +1050,25 @@ func TestRoundTripKeepsAnOutlineSymbol(t *testing.T) {
 		t.Errorf("it came back as %v with path %q", got.Kind, got.Path)
 	}
 }
+
+// Where a rest has been put travels in the file with it.
+//
+// It is a thing somebody did by hand — see model.Rest.Lift — so losing it on
+// the way to disk would lose work, and silently: the rest comes back where
+// the engraver would have put it, which looks like a rest in a reasonable
+// place rather than like a file that forgot something.
+func TestWhereARestWasPutSurvivesTheFile(t *testing.T) {
+	s := viewScore()
+	rest := &model.Rest{Dur: model.Duration{Num: 1, Den: 4}, Lift: -3}
+	v := s.Parts[0].Measures[0].Voices[0]
+	v.Elements = append(v.Elements, rest)
+
+	got := roundTrip(t, s)
+	back, ok := got.Parts[0].Measures[0].Voices[0].Elements[1].(*model.Rest)
+	if !ok {
+		t.Fatalf("the rest came back as %T", got.Parts[0].Measures[0].Voices[0].Elements[1])
+	}
+	if back.Lift != -3 {
+		t.Errorf("the rest came back lifted %d, want -3", back.Lift)
+	}
+}

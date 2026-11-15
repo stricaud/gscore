@@ -2752,7 +2752,23 @@ func (a *App) handleNudge(w http.ResponseWriter, r *http.Request) {
 
 	notes, err := a.notesOf(q)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		// Nothing with a pitch in it. A rest has no pitch and still has a
+		// place on the staff, and putting it where it should go is the same
+		// gesture with the same keys: pick it up and press the arrow. Where
+		// a rest sits is the one thing about it there is to move.
+		//
+		// Only where there is no note to move, so that nudging a run of
+		// music moves the notes and leaves the silences between them where
+		// they are. A rest has no pitch to transpose.
+		rests := a.restsOf(q)
+		if len(rests) == 0 {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		for _, r := range rests {
+			r.Lift += steps
+		}
+		writeJSON(w, map[string]int{"changed": len(rests)})
 		return
 	}
 	for _, n := range notes {
@@ -2765,6 +2781,64 @@ func (a *App) handleNudge(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, map[string]int{"changed": len(notes)})
+}
+
+// restsOf is the rests the request names, which is notesOf's question asked
+// about the silences instead.
+//
+// Short where notesOf is long, because none of what makes that one long
+// applies: a rest has no noteheads to tell apart, no key to spell it in, and
+// nothing leaning on it. Nothing to say is nothing to fail over either — a
+// selection with no rest in it is simply no rests, and the caller says what
+// that means.
+func (a *App) restsOf(q url.Values) []*model.Rest {
+	a.lock()
+	defer a.mu.Unlock()
+
+	var out []*model.Rest
+	at := func(part, measure, voice, index int) {
+		_, m, err := a.locate(part, measure)
+		if err != nil {
+			return // a stale selection is not worth failing over
+		}
+		v := lineOf(m, voice)
+		if index < 0 || index >= len(v.Elements) {
+			return
+		}
+		if r, ok := v.Elements[index].(*model.Rest); ok {
+			out = append(out, r)
+		}
+	}
+
+	if sel := q.Get("sel"); sel != "" {
+		targets, err := parseTargets(sel)
+		if err != nil {
+			return nil
+		}
+		for _, t := range targets {
+			if t.isGrace() {
+				continue // a grace note is a note, and never a rest
+			}
+			at(t.part, t.measure, t.voice, t.index)
+		}
+		return out
+	}
+
+	part, _ := strconv.Atoi(q.Get("part"))
+	measure, _ := strconv.Atoi(q.Get("measure"))
+	index, err := strconv.Atoi(q.Get("at"))
+	if err != nil {
+		index = -1
+	}
+	_, m, err := a.locate(part, measure)
+	if err != nil || len(m.Voices) == 0 {
+		return nil
+	}
+	if n := len(m.Voices[0].Elements); index <= 0 || index > n {
+		index = n
+	}
+	at(part, measure, 0, index-1)
+	return out
 }
 
 // handleShift moves the selected run one place along the music.

@@ -725,6 +725,19 @@ const (
 	// covering a phrase, so it stays close to them.
 	tieLift = 0.55
 	tieArch = 0.7
+	// tieGap is the air between a tie's end and the notehead it leaves or
+	// arrives at.
+	//
+	// Both ends used to be put at the middle of their noteheads, which is
+	// where a tie is measured from and not where it is drawn from: the
+	// curve set out from under the notehead, so at tieLift below the middle
+	// of a head half a space tall it came out of the bottom of it. Reported
+	// from the page as the curve touching the note. A tie joins two notes
+	// and is not part of either, so it stands off both of them.
+	tieGap = 0.2
+	// tieLeast is the shortest curve worth drawing, which is what two notes
+	// close enough to leave no room between them get instead of nothing.
+	tieLeast = 0.8
 
 	// slurClearance is the air a slur leaves between itself and the music it
 	// arcs over.
@@ -974,11 +987,15 @@ func (e *engraver) slurAt(part *model.Part, m *model.Marks, p *placed, measure i
 	}
 	sort.Ints(closable)
 
+	// The two ends of a tie are beside the noteheads and not under them: it
+	// leaves the first note and arrives at the second. See tieGap.
+	leaves, arrives := p.x+noteheadWidth(p.value)+tieGap, p.x-tieGap
+
 	for _, h := range e.tiedHeads(p, m) {
 		if h.stop {
 			if t, ok := tied.ties[h.step]; ok {
 				t.toRef = p.index
-				e.drawTieOrSlur(t, x, e.y+stepY(float64(h.step)), tieLift, false, true)
+				e.closeTie(t, arrives, e.y+stepY(float64(h.step)))
 				delete(tied.ties, h.step)
 			}
 		}
@@ -988,7 +1005,7 @@ func (e *engraver) slurAt(part *model.Part, m *model.Marks, p *placed, measure i
 			}
 			if _, already := tied.ties[h.step]; !already {
 				tied.ties[h.step] = &openSpan{
-					x: x, y: e.y + stepY(float64(h.step)),
+					x: leaves, y: e.y + stepY(float64(h.step)),
 					rel: stepY(float64(h.step)), above: h.above,
 					voice: p.voice, step: h.step,
 					ref: p.index, part: e.partIndex, measure: measure,
@@ -1004,13 +1021,27 @@ func (e *engraver) slurAt(part *model.Part, m *model.Marks, p *placed, measure i
 		if !ok || t.x < 0 {
 			continue // closed above, or waiting to resume after a break
 		}
-		if t.x == x {
+		if t.ref == p.index && t.measure == measure {
 			continue // opened by this element, on another notehead
 		}
 		t.toRef = p.index
-		e.drawTieOrSlur(t, x, e.y+stepY(float64(step)), tieLift, false, true)
+		e.closeTie(t, arrives, e.y+stepY(float64(step)))
 		delete(tied.ties, step)
 	}
+}
+
+// closeTie draws a tie that has found the note it runs to.
+//
+// Both ends are moved off their noteheads first — see tieGap — unless the two
+// notes stand so close together that there is no room left between them, and
+// then the curve is centred in what room there is. A short tie is a tie; no
+// tie at all is a note that looks held and is not.
+func (e *engraver) closeTie(t *openSpan, arrives, y float64) {
+	if room := arrives - t.x; room < tieLeast {
+		mid := (t.x + arrives) / 2
+		t.x, arrives = mid-tieLeast/2, mid+tieLeast/2
+	}
+	e.drawTieOrSlur(t, arrives, y, tieLift, false, true)
 }
 
 // tiedHead is one notehead of an element, which way its tie arcs, and

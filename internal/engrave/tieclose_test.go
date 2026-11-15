@@ -73,8 +73,11 @@ func TestATieWithNoEndStopsAtTheNextNote(t *testing.T) {
 	if end := lay.Curves[0].X2; end > third {
 		t.Errorf("the tie ends at %.2f, past the third note at %.2f", end, third)
 	}
-	if end := lay.Curves[0].X2; end < second {
-		t.Errorf("the tie ends at %.2f, before the note it is tied to at %.2f", end, second)
+	// Up to the note it is tied to. Not onto it: a tie stops a hair short of
+	// the notehead it arrives at rather than running under it. See tieGap.
+	if end := lay.Curves[0].X2; end < second-tieGap {
+		t.Errorf("the tie ends at %.2f, short of the note it is tied to at %.2f",
+			end, second)
 	}
 }
 
@@ -181,5 +184,78 @@ func TestAnUnendedTieInAChord(t *testing.T) {
 	}
 	if width := lay.Curves[0].X2 - lay.Curves[0].X1; width > 4 {
 		t.Errorf("the chord's tie is %.2f spaces wide", width)
+	}
+}
+
+/*
+ * A tie stands off both of the noteheads it joins.
+ *
+ * Both ends used to be put at the middle of their noteheads, which is where
+ * a tie is measured from and not where it is drawn from. A notehead is about
+ * half a space tall, so at tieLift below the middle of one the curve came out
+ * of the bottom of the head it was leaving and went into the bottom of the
+ * head it was arriving at. Reported from the page: "for ties I find the curve
+ * too close to the note. It is touching it and it should not."
+ */
+
+func TestATieDoesNotTouchTheNotesItJoins(t *testing.T) {
+	held := tiedTestNote(model.StepC, 4)
+	held.TieStart = true
+	stops := tiedTestNote(model.StepC, 4)
+	stops.TieStop = true
+	score := tieTestBar(held, stops,
+		tiedTestNote(model.StepE, 4), tiedTestNote(model.StepF, 4))
+
+	lay := Engrave(score, DefaultOptions())
+	if len(lay.Curves) != 1 {
+		t.Fatalf("%d curves drawn, want the one tie", len(lay.Curves))
+	}
+	tie := lay.Curves[0]
+
+	hit := lay.Hits[0]
+	if len(hit.Elements) < 2 {
+		t.Fatal("the bar did not come out with its notes in it")
+	}
+	// X is a notehead's left edge, and a quarter note's head is one
+	// noteheadWidth across.
+	head := noteheadWidth(model.Quarter)
+	from, to := hit.Elements[0].X, hit.Elements[1].X
+
+	if air := tie.X1 - (from + head); air <= 0 {
+		t.Errorf("the tie starts %.2f spaces inside the note it leaves", -air)
+	}
+	if air := to - tie.X2; air <= 0 {
+		t.Errorf("the tie ends %.2f spaces inside the note it arrives at", -air)
+	}
+	// And still joins them: a curve that has backed away from both notes
+	// until there is nothing left of it joins nothing.
+	if tie.X2-tie.X1 < tieLeast {
+		t.Errorf("the tie is %.2f spaces wide, which is no curve at all",
+			tie.X2-tie.X1)
+	}
+}
+
+// Two notes with no room between them get a short tie rather than none.
+func TestATieBetweenNotesStandingCloseIsStillDrawn(t *testing.T) {
+	held := tiedTestNote(model.StepC, 4)
+	held.TieStart = true
+	stops := tiedTestNote(model.StepC, 4)
+	stops.TieStop = true
+	var notes []*model.Note
+	notes = append(notes, held, stops)
+	for i := 0; i < 14; i++ {
+		notes = append(notes, tiedTestNote(model.StepA, 4))
+	}
+	score := tieTestBar(notes...)
+
+	opt := DefaultOptions()
+	opt.LineWidth = 60 // squeezed to its minimum
+	lay := Engrave(score, opt)
+
+	if len(lay.Curves) != 1 {
+		t.Fatalf("%d curves drawn, want the one tie", len(lay.Curves))
+	}
+	if w := lay.Curves[0].X2 - lay.Curves[0].X1; w < tieLeast-0.001 {
+		t.Errorf("squeezed, the tie came out %.2f spaces wide", w)
 	}
 }

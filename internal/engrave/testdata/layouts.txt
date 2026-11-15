@@ -6,7 +6,7 @@ abc/boite-musique.abc ce670b05b3bd5c03 514
 abc/decoration.abc c8f4673a8e66ca93 31
 abc/pitch.abc 376aa6d8311eb1d1 227
 abc/sunshine.abc 7702bcad8c455962 136
-samples/altes-10e-solo.abc 499e773fed655a38 9777
+samples/altes-10e-solo.abc 959693679935dddc 9777
 samples/boite-musique.abc ce670b05b3bd5c03 514
 suite/01a-Pitches-Pitches.musicxml 5177aba21f65c2bd 548
 suite/01b-Pitches-Intervals.musicxml 6f4787733f66de48 405
@@ -91,7 +91,7 @@ suite/32e-Arpeggios-Cross.musicxml bcbfd1d0aa7d3e24 104
 suite/32e-Fermatas.musicxml 15cd5cd78b6f3854 38
 suite/33a-Spanners.musicxml 6e927c09ad1b11d6 232
 suite/33b-Spanners-Tie.musicxml a71e569764d7aadc 15
-suite/33c-Spanners-Slurs.musicxml fe8a60f69ee494a6 45
+suite/33c-Spanners-Slurs.musicxml 00e9f5ab2c0f53c5 45
 suite/33d-Spanners-OctaveShifts.musicxml 88b47d65189b57d6 53
 suite/33e-Spanners-OctaveShifts-InvalidSize.musicxml 13386c36279433e7 32
 suite/33f-Trill-EndingOnGraceNote.musicxml c00083bce12646e2 50
@@ -99,7 +99,7 @@ suite/33g-Slur-ChordedNotes.musicxml 6a9d3361df421e8f 25
 suite/33h-Spanners-Glissando.musicxml 57ccd8c8d442afb5 135
 suite/33i-Ties-NotEnded.musicxml a363b50287cb7375 27
 suite/33j-Beams-Tremolos.musicxml 884665f7d6f0a131 69
-suite/33k-Tie-Types.musicxml 8ed1a93ea15e4cff 63
+suite/33k-Tie-Types.musicxml aa7b774f03fbac53 63
 suite/34a-Print-Object-Spanners.musicxml e461b0d5f64c8180 164
 suite/34b-Colors.musicxml 8543e7eb5e5e657b 298
 suite/34c-Font-Size.musicxml 17d19143208f0f57 170
@@ -117,8 +117,8 @@ suite/41i-PartNameDisplay-Override.musicxml 61e51d04a9e8a1a4 30
 suite/41j-PartNameDisplay-Multiple-DisplayText-Children.musicxml d15f880bbc29f364 13
 suite/41k-PartName-Print.musicxml a71518ffdaffa1ed 16
 suite/41l-GroupNameDisplay-Override.musicxml 54a3d4d4630780e5 58
-suite/42a-MultiVoice-TwoVoicesOnStaff-Lyrics.musicxml 5f4127b231d7cb17 66
-suite/42b-MultiVoice-MidMeasureClefChange.musicxml 34f32b203421d12f 110
+suite/42a-MultiVoice-TwoVoicesOnStaff-Lyrics.musicxml 4aaf9871ee903b8e 66
+suite/42b-MultiVoice-MidMeasureClefChange.musicxml a1dad38850082fc5 110
 suite/43a-PianoStaff.musicxml b265204262c59e9b 25
 suite/43b-MultiStaff-DifferentKeys.musicxml 82a9936fef99b726 27
 suite/43c-MultiStaff-DifferentKeysAfterBackup.musicxml 82a9936fef99b726 27

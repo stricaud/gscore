@@ -532,76 +532,129 @@ func TestNoSlurInTheSamplesCutsABeam(t *testing.T) {
 	}
 }
 
-// A slur clears the other voice's stems at its own two notes.
+// A slur on a shared staff keeps to its own voice's side.
 //
 // Reported from bar 48 of the eighth Altes solo, in the piano: two voices
 // on one staff, both slurred between the same two chords, and the two
 // curves drawn as a lens with the lower voice's stems run straight through
 // the upper one.
 //
-// A slur goes on the side away from the stems of the notes it covers, and
-// with two voices there is no such side — one points up and the other
-// down. The curve of the voice that stems down is drawn above, which is
-// where the other voice's stems are, and the ends of that curve sit in the
-// same two columns of the staff as those stems. What is between the ends
-// is lifted over by the arch; the ends are the ones that have to be told.
-func TestASlurClearsTheOtherVoicesStems(t *testing.T) {
+// A slur goes on the side away from the stems of the notes it covers, which
+// is right while the stems are saying which way a note leans. Where two
+// voices share a staff they are saying something else — which line of music
+// a note belongs to, up for the upper and down for the lower — and a curve
+// put away from them is a curve put into the other voice. That is where the
+// lens came from: each voice's slur drawn over the other's notes.
+//
+// So on a shared staff each voice's curves go on its own outer side, which
+// is the side its stems point. See curveAbove. Then there is nothing to
+// clear, because there is nothing in the way.
+func TestASlurOnASharedStaffKeepsToItsOwnSide(t *testing.T) {
 	s := model.NewScore()
 	m := s.Parts[0].Measures[0]
 	half := model.Duration{Num: 1, Den: 2}
-	// The voice that stems up, written above.
+	// The upper voice, stems up, slurred.
 	up := &model.Voice{}
 	for i := 0; i < 2; i++ {
 		n := &model.Note{Pitch: model.Pitch{Step: model.StepC, Octave: 5}, Dur: half}
 		n.Marks.Stem = model.StemUp
+		n.Marks.SlurStart = model.SlurEnd(i == 0)
+		n.Marks.SlurStop = model.SlurEnd(i == 1)
 		up.Elements = append(up.Elements, n)
 	}
-	// And the one that stems down, slurred, whose curve therefore goes
-	// above and into the other voice's stems.
+	// And the lower, stems down, slurred as well: the two chords of the
+	// report.
 	down := &model.Voice{}
 	for i := 0; i < 2; i++ {
 		n := &model.Note{Pitch: model.Pitch{Step: model.StepA, Octave: 4}, Dur: half}
 		n.Marks.Stem = model.StemDown
+		n.Marks.SlurStart = model.SlurEnd(i == 0)
+		n.Marks.SlurStop = model.SlurEnd(i == 1)
 		down.Elements = append(down.Elements, n)
 	}
-	down.Elements[0].(*model.Note).Marks.SlurStart = 1
-	down.Elements[1].(*model.Note).Marks.SlurStop = 1
 	m.Voices = []*model.Voice{up, down}
 
 	lay := Engrave(s, DefaultOptions())
-	sl := theSlur(t, lay)
-	if sl.CY >= (sl.Y1+sl.Y2)/2 {
-		t.Fatalf("the slur is not above: ends %.2f..%.2f, arch %.2f",
-			sl.Y1, sl.Y2, sl.CY)
+	if len(lay.Curves) != 2 {
+		t.Fatalf("%d curves drawn, want one slur for each voice", len(lay.Curves))
 	}
+	// Which is which: the one that arches upward and the one that arches
+	// down. y grows downward, so an arch above has its control point above
+	// the line between its ends.
+	var over, under *Curve
+	for i := range lay.Curves {
+		c := &lay.Curves[i]
+		if c.CY < (c.Y1+c.Y2)/2 {
+			over = c
+		} else {
+			under = c
+		}
+	}
+	if over == nil || under == nil {
+		t.Fatalf("both slurs arch the same way: %+v", lay.Curves)
+	}
+	// The upper voice's is the one above, and it is above the staff rather
+	// than inside it. The lower voice's is below. Neither is in the other's
+	// half of the staff, which is the whole of the fix: no lens, and no
+	// stems through a curve.
+	staff := lay.Hits[0]
+	middle := staff.StaffTop + staff.StaffHeight/2
+	if over.CY > middle {
+		t.Errorf("the upper voice's slur arches at %.2f, below the middle "+
+			"of the staff at %.2f", over.CY, middle)
+	}
+	if under.CY < middle {
+		t.Errorf("the lower voice's slur arches at %.2f, above the middle "+
+			"of the staff at %.2f", under.CY, middle)
+	}
+	// And they do not cross: a lens is two curves that overlap in y.
+	if under.CY <= over.CY {
+		t.Errorf("the two slurs are drawn as a lens: %.2f and %.2f",
+			over.CY, under.CY)
+	}
+}
 
-	// The tops of the other voice's stems, in the two columns the slur
-	// ends in. A stem is a vertical line; the ledger lines a low note
-	// carries are horizontal and are not.
-	top := func(x float64) float64 {
-		out := math.Inf(1)
-		for _, l := range lay.Lines {
-			if l.X1 != l.X2 || math.Abs(l.X1-x) > 1 {
-				continue
-			}
-			out = math.Min(out, math.Min(l.Y1, l.Y2))
-		}
-		return out
+// A tie on a shared staff does the same, which is what was reported from
+// the page: a whole note in the first voice, chords in the second under it,
+// and the tie drawn down through them.
+func TestATieOnASharedStaffKeepsToItsOwnSide(t *testing.T) {
+	s := model.NewScore()
+	m := s.Parts[0].Measures[0]
+	whole := model.Duration{Num: 1, Den: 1}
+	held := &model.Note{Pitch: model.Pitch{Step: model.StepB, Octave: 4}, Dur: whole}
+	held.Marks.TieStart = true
+	stops := &model.Note{Pitch: model.Pitch{Step: model.StepB, Octave: 4}, Dur: whole}
+	stops.Marks.TieStop = true
+
+	under := &model.Voice{}
+	for i := 0; i < 8; i++ {
+		under.Elements = append(under.Elements, &model.Note{
+			Pitch: model.Pitch{Step: model.StepD, Octave: 4},
+			Dur:   model.Duration{Num: 1, Den: 4},
+		})
 	}
-	for _, end := range []struct {
-		what string
-		x, y float64
-	}{{"begins", sl.X1, sl.Y1}, {"ends", sl.X2, sl.Y2}} {
-		stem := top(end.x)
-		if math.IsInf(stem, 0) {
-			t.Fatalf("no stem found in the column the slur %s in", end.what)
-		}
-		// y grows downward, so clear of the stem means above its top.
-		if end.y > stem {
-			t.Errorf("the slur %s at %.2f and the other voice's stem there "+
-				"reaches %.2f, so the stem is drawn through the curve",
-				end.what, end.y, stem)
-		}
+	m.Voices = []*model.Voice{
+		{Elements: []model.Element{held}},
+		{Elements: under.Elements[:4]},
+	}
+	s.Parts[0].Measures = append(s.Parts[0].Measures, &model.Measure{
+		Voices: []*model.Voice{
+			{Elements: []model.Element{stops}},
+			{Elements: under.Elements[4:]},
+		},
+		RightBarline: model.BarFinal,
+	})
+
+	lay := Engrave(s, DefaultOptions())
+	if len(lay.Curves) != 1 {
+		t.Fatalf("%d curves drawn, want the one tie", len(lay.Curves))
+	}
+	tie := lay.Curves[0]
+	// Over the held note, not under it: under it is where the other voice
+	// is playing.
+	if tie.CY >= (tie.Y1+tie.Y2)/2 {
+		t.Errorf("the first voice's tie arches downward, into the second "+
+			"voice: ends %.2f..%.2f, arch %.2f", tie.Y1, tie.Y2, tie.CY)
 	}
 }
 
@@ -641,9 +694,15 @@ func TestSlursDoNotQueueUnderEachOther(t *testing.T) {
 			}
 		}
 		lay := Engrave(score, DefaultOptions())
+		// How deep under its own staff, and not how far down the page. A
+		// bar with four slurs in it asks for more room over its staff than
+		// a bar with one, so the staff itself sits lower on the page, and
+		// measured from the top of the drawing the same slur in the same
+		// place under the same notes reads as having been pushed.
+		top := lay.Hits[0].StaffTop
 		out := []float64{}
 		for _, c := range lay.Curves {
-			out = append(out, c.CY)
+			out = append(out, c.CY-top)
 		}
 		return out
 	}

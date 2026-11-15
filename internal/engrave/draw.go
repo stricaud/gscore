@@ -933,6 +933,29 @@ func (e *engraver) stemUp(p *placed) bool {
 	return (middleStep - p.lo) > (p.hi - middleStep)
 }
 
+// curveAbove is which side of the music a tie or a slur belonging to this
+// element falls on.
+//
+// Away from the stems where the staff has one line of music on it: a curve
+// on the stem side would have to clear the whole stem and ends up somewhere
+// no reader expects.
+//
+// Where two voices share a staff it is the other way round, because the
+// stems are no longer saying anything about the note. They are saying which
+// line of music it belongs to — up for the upper voice, down for the lower,
+// however high or low either happens to sit — so a curve placed away from
+// them is a curve placed into the other voice. The first voice's whole note
+// had its tie drawn underneath it, through the chords the second voice plays
+// there: reported as "voice 1 has the whole note, and voice 2 the other
+// elements, but there are too many collisions". Printed music gives each
+// voice its own outer side, which is the side its stems point.
+func (e *engraver) curveAbove(p *placed) bool {
+	if e.sharedStaff {
+		return e.stemUp(p)
+	}
+	return !e.stemUp(p)
+}
+
 // drawHeads draws an element's noteheads, at whatever size that element is
 // written at: full size for the music, smaller for a cue. See cue.go.
 func (e *engraver) drawHeads(part *model.Part, p *placed) {
@@ -1457,6 +1480,11 @@ func (e *engraver) setStemDirections(items []*placed, t model.TimeSignature) {
 			break
 		}
 	}
+	// Kept for the bar, because the stems are not the only thing this
+	// settles: which side a tie or a slur falls on turns on it too. See
+	// curveAbove.
+	e.sharedStaff = multi
+
 	// Which voice is actually the upper one.
 	//
 	// Normally the first, which is what the numbering means and what the

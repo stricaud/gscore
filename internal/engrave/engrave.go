@@ -1125,6 +1125,11 @@ type engraver struct {
 	// articMeasure is the bar whose marks are being drawn, so that an
 	// articulation can say where it belongs.
 	articMeasure int
+	// sharedStaff says the bar being drawn has more than one line of music
+	// on it, which changes what a stem is saying and so which side a tie or
+	// a slur falls on. Set by setStemDirections, which is where the question
+	// is already asked. See curveAbove.
+	sharedStaff bool
 	// room is how much space each system's ink actually took above its
 	// staff, measured on a previous pass and keyed by the system's first
 	// bar. Empty on the first pass, when there is nothing to go on but the

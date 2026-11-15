@@ -843,7 +843,7 @@ func (e *engraver) slurAt(part *model.Part, m *model.Marks, p *placed, measure i
 
 	// The side this note alone would put the curve on, which is what a tie
 	// uses and what a slur falls back to when it covers one note.
-	above := !e.stemUp(p)
+	above := e.curveAbove(p)
 
 	// Closing first, then opening.
 	//
@@ -893,6 +893,13 @@ func (e *engraver) slurAt(part *model.Part, m *model.Marks, p *placed, measure i
 			// Away from the stems of the notes it covers — and above wherever
 			// they point both ways, there being no side away from them then.
 			sl.above = sl.down > 0 || sl.up == 0
+			// Unless the staff is shared, where the stems say which voice a
+			// note belongs to and nothing about which way it leans. Then the
+			// phrase keeps to its own voice's side, which is where it was
+			// put when it opened. See curveAbove.
+			if e.sharedStaff {
+				sl.above = e.curveAbove(p)
+			}
 		}
 		// Each end on its own note. What lies between them is lifted over
 		// by the arch, not by dragging the ends out to meet it.
@@ -1060,14 +1067,17 @@ type tiedHead struct {
 // and a mark on the chord means all of them, which is the common case said
 // briefly.
 //
-// A single note's tie arcs away from its stem, as a slur does. A chord's ties
-// arc outward from the middle: the upper notes curve up and the lower ones
-// down, so the curves open away from each other instead of crossing the
-// noteheads between them.
+// A single note's tie arcs away from its stem, as a slur does — see
+// curveAbove, which is also what decides it where two voices share the staff.
+// A chord's ties arc outward from the middle: the upper notes curve up and
+// the lower ones down, so the curves open away from each other instead of
+// crossing the noteheads between them. On a shared staff they do not fan: the
+// whole chord belongs to one of the two lines of music, and its curves go on
+// that line's own side, clear of the other.
 func (e *engraver) tiedHeads(p *placed, m *model.Marks) []tiedHead {
 	if p.note != nil {
 		return []tiedHead{{
-			step: p.step, above: !e.stemUp(p),
+			step: p.step, above: e.curveAbove(p),
 			start: m.TieStart, stop: m.TieStop,
 		}}
 	}
@@ -1078,8 +1088,12 @@ func (e *engraver) tiedHeads(p *placed, m *model.Marks) []tiedHead {
 	out := make([]tiedHead, 0, len(p.chord.Notes))
 	for _, n := range p.chord.Notes {
 		step := StaffStep(e.clef, n.Pitch)
+		above := float64(step) >= middle
+		if e.sharedStaff {
+			above = e.curveAbove(p)
+		}
 		out = append(out, tiedHead{
-			step: step, above: float64(step) >= middle,
+			step: step, above: above,
 			// The chord's own mark covers every notehead; a notehead's own
 			// mark covers just itself.
 			start: m.TieStart || n.TieStart,

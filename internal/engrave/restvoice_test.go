@@ -201,3 +201,58 @@ func TestARestIsClickableWhereItIsDrawn(t *testing.T) {
 			rests[0].Y, found.Y)
 	}
 }
+
+/*
+ * A bar is full when its music fills it, whichever voice the music is in.
+ *
+ * It asked the first voice and nothing else, so a bar whose music is written
+ * in the second — which Bumpty Bump does from bar 26 on — reported itself as
+ * having room however full it was. The editor carries the writing point over
+ * the barline when the bar it is in fills, so it never carried: a fifth
+ * quarter went into a bar of four, and then a sixth. Reported as "entering
+ * the last note should have moved to the next bar. Why it didn't?"
+ */
+
+func TestABarIsFullWhicheverVoiceFillsIt(t *testing.T) {
+	four := []model.Element{
+		restTestNote(model.StepG, 4), restTestNote(model.StepG, 4),
+		restTestNote(model.StepG, 4), restTestNote(model.StepG, 4),
+	}
+	// twoVoices is a bar of cut time: four quarters fill it.
+	score := twoVoices(nil, four)
+	lay := Engrave(score, DefaultOptions())
+
+	if len(lay.Hits) == 0 {
+		t.Fatal("no bars in the layout")
+	}
+	hit := lay.Hits[0]
+	if !hit.Full {
+		t.Error("a bar filled in its second voice says it has room")
+	}
+	if len(hit.FullVoices) != 1 || hit.FullVoices[0] != 1 {
+		t.Errorf("the full lines of music are %v, want the second one alone",
+			hit.FullVoices)
+	}
+}
+
+// And which lines are full is asked separately from whether the bar is,
+// because they are different questions: one voice can be full while the
+// other has three beats left in it.
+func TestOneFullVoiceDoesNotFillTheOther(t *testing.T) {
+	whole := &model.Note{
+		Pitch: model.Pitch{Step: model.StepG, Octave: 4},
+		Dur:   model.Duration{Num: 1, Den: 1},
+	}
+	score := twoVoices([]model.Element{whole},
+		[]model.Element{restTestNote(model.StepD, 4)})
+	lay := Engrave(score, DefaultOptions())
+
+	hit := lay.Hits[0]
+	if !hit.Full {
+		t.Error("a bar with a whole note in it says it has room")
+	}
+	if len(hit.FullVoices) != 1 || hit.FullVoices[0] != 0 {
+		t.Errorf("the full lines of music are %v, want the first one alone",
+			hit.FullVoices)
+	}
+}

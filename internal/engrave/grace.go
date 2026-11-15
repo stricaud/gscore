@@ -144,7 +144,7 @@ func (e *engraver) drawGrace(part *model.Part, p *placed, index int) {
 	case p.chord != nil:
 		el = p.chord
 	}
-	left := p.x - e.accidentalLead(el) - lay.width
+	left := p.x - e.accidentalLead(e.clef, el) - lay.width
 
 	head := smufl.Advance("noteheadBlack") * graceScale
 	t := e.opt.Defaults.StemThickness * graceScale
@@ -341,7 +341,7 @@ func (e *engraver) graceSlurAnchor(part *model.Part, p *placed) (x float64, step
 	}
 	lay := graceLayout(m.Grace)
 	head := smufl.Advance("noteheadBlack") * graceScale
-	left := p.x - e.accidentalLead(el) - lay.width
+	left := p.x - e.accidentalLead(e.clef, el) - lay.width
 
 	// The stems, as drawGrace lays them out: one note carries a flag on a
 	// stem of its own, and two or more are beamed and each stem runs to the

@@ -584,6 +584,14 @@ type Hit struct {
 	// and sent the note into the next bar, which is how clicking one bar
 	// wrote in the one beside it.
 	Full bool `json:"full,omitempty"`
+	// FullVoices lists the lines of music on this staff that are themselves
+	// as long as the meter allows.
+	//
+	// Full is about the bar, and on a staff two voices share that is not the
+	// same question: one line can be full while the other has three beats
+	// left in it. What decides where the next note goes is the line it is
+	// being written on, not the bar around it.
+	FullVoices []int `json:"fullVoices,omitempty"`
 	// Ahead says this is the blank bar drawn past the end of the music,
 	// which is somewhere to click and not a bar of the piece. Counting it
 	// as one makes the score a bar longer than it is, and whoever is
@@ -1132,6 +1140,9 @@ type engraver struct {
 	// articMeasure is the bar whose marks are being drawn, so that an
 	// articulation can say where it belongs.
 	articMeasure int
+	// accSpots is where each note's accidental goes in the bar being drawn,
+	// worked out for every column of it at once. See planAccidentals.
+	accSpots map[*model.Note]accidentalAt
 	// sharedStaff says the bar being drawn has more than one line of music
 	// on it, which changes what a stem is saying and so which side a tie or
 	// a slur falls on. Set by setStemDirections, which is where the question
@@ -3080,6 +3091,10 @@ func (e *engraver) measureBox(p *model.Part, m *model.Measure, index int) measur
 		// there: see slot.tuck.
 		tuck float64
 		room float64 // what a flag needs, if this one has one
+		// clef is the one in force where this element stands, which a bar
+		// that changes clef partway through makes a question worth asking.
+		// The accidentals of a column are measured against it.
+		clef model.Clef
 	}
 	var entries []entry
 	empty := true
@@ -3102,7 +3117,6 @@ func (e *engraver) measureBox(p *model.Part, m *model.Measure, index int) measur
 				// which is drawn clear of the whole chord and moves left
 				// with it.
 				lead: graceLead(el) + chordStepOut(el) + arpeggioLead(el),
-				tuck: e.accidentalLead(el),
 				room: flags[flagAt{voice: vi, order: i}],
 			})
 			at = at.Add(el.Duration())
@@ -3133,6 +3147,7 @@ func (e *engraver) measureBox(p *model.Part, m *model.Measure, index int) measur
 			entries[k].lead += e.clefLead(*mk.Clef)
 			clef = *mk.Clef
 		}
+		entries[k].clef = clef
 		// And the same for a key turning partway through the bar, which
 		// needs room for its naturals as well as its own accidentals.
 		if mk.Key != nil && *mk.Key != key {
@@ -3144,6 +3159,7 @@ func (e *engraver) measureBox(p *model.Part, m *model.Measure, index int) measur
 	for i := 0; i < len(entries); {
 		j := i
 		col := slot{at: entries[i].at}
+		colClef := entries[i].clef
 		for ; j < len(entries) && entries[j].at.Cmp(col.at) == 0; j++ {
 			en := entries[j]
 			en.v.index = e.nextRef
@@ -3151,6 +3167,7 @@ func (e *engraver) measureBox(p *model.Part, m *model.Measure, index int) measur
 			col.elems = append(col.elems, en.v)
 			col.lead = math.Max(col.lead, en.lead)
 			col.tuck = math.Max(col.tuck, en.tuck)
+			colClef = en.clef
 			col.flag = math.Max(col.flag, en.room)
 			col.width = math.Max(col.width, en.room)
 		}
@@ -3162,6 +3179,11 @@ func (e *engraver) measureBox(p *model.Part, m *model.Measure, index int) measur
 		// stands there is the barline. The Altes prints its bar 10 that way
 		// — a chord of half notes written on top of the barline.
 		col.lead += e.voiceShift(p.Clef, col)
+		// And room for the accidentals of everything sounding here, which
+		// are set out in files together. Booked per note, the outer files
+		// of a column whose signs step out were printed over whatever
+		// stood before it. See planAccidentals.
+		col.tuck = math.Max(col.tuck, e.columnAccidentalLead(colClef, col))
 		box.slots = append(box.slots, col)
 		i = j
 	}
@@ -3453,12 +3475,38 @@ func keyChangeSteps(c model.Clef, from, to model.KeySignature) (naturals, accide
 // noteheads a second apart carry their accidentals in a column, not one on top
 // of another. Taking the widest is enough for them not to collide with the
 // music in front.
-func (e *engraver) accidentalLead(el model.Element) float64 {
+// columnAccidentalLead is the room a column's accidentals need in front of
+// it: as wide as the files they are actually set out in.
+func (e *engraver) columnAccidentalLead(clef model.Clef, col slot) float64 {
+	var notes []*model.Note
+	for _, v := range col.elems {
+		switch n := v.el.(type) {
+		case *model.Note:
+			notes = append(notes, n)
+		case *model.Chord:
+			notes = append(notes, n.Notes...)
+		}
+	}
+	return e.accidentalLeadOf(clef, notes)
+}
+
+func (e *engraver) accidentalLead(clef model.Clef, el model.Element) float64 {
+	var notes []*model.Note
+	switch n := el.(type) {
+	case *model.Note:
+		notes = []*model.Note{n}
+	case *model.Chord:
+		notes = n.Notes
+	}
+	return e.accidentalLeadOf(clef, notes)
+}
+
+// accidentalLeadOf is that room for a given set of notes.
+func (e *engraver) accidentalLeadOf(clef model.Clef, notes []*model.Note) float64 {
 	sp := e.opt.Spacings
-	widest := 0.0
-	consider := func(n *model.Note) {
+	width := func(n *model.Note) float64 {
 		if n.Accidental == model.NoAccidental {
-			return
+			return 0
 		}
 		w := smufl.Advance(smufl.AccidentalGlyph(n.Accidental))
 		// Brackets round it reach further left again, and the room has to
@@ -3467,16 +3515,35 @@ func (e *engraver) accidentalLead(el model.Element) float64 {
 			w += smufl.Advance("accidentalParensLeft") +
 				smufl.Advance("accidentalParensRight")
 		}
-		if w > widest {
-			widest = w
-		}
+		return w
 	}
-	switch n := el.(type) {
-	case *model.Note:
-		consider(n)
-	case *model.Chord:
-		for _, cn := range n.Notes {
-			consider(cn)
+	if len(notes) == 0 {
+		return 0
+	}
+	// As wide as the signs are actually set out, which is as many files as
+	// it took to keep them apart. Booked as the widest single sign, a
+	// column whose accidentals step out into two or three files had the
+	// outer ones printed over whatever stood before it. See
+	// accidentalFiles.
+	steps := make([]int, len(notes))
+	for i, n := range notes {
+		steps[i] = e.noteStep(clef, n)
+	}
+	files := accidentalFiles(notes, steps)
+	shifts := accidentalShifts(files, func(i int) float64 { return width(notes[i]) })
+
+	widest := 0.0
+	for i, n := range notes {
+		k := files[i]
+		if k < 0 {
+			continue
+		}
+		reach := width(n)
+		if k > 0 {
+			reach += shifts[k]
+		}
+		if reach > widest {
+			widest = reach
 		}
 	}
 	if widest == 0 {

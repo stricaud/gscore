@@ -6,7 +6,7 @@ abc/boite-musique.abc ce670b05b3bd5c03 514
 abc/decoration.abc c8f4673a8e66ca93 31
 abc/pitch.abc 376aa6d8311eb1d1 227
 abc/sunshine.abc 7702bcad8c455962 136
-samples/altes-10e-solo.abc 722069604fbc6047 9777
+samples/altes-10e-solo.abc 7c6c5b80afd77721 9777
 samples/boite-musique.abc ce670b05b3bd5c03 514
 suite/01a-Pitches-Pitches.musicxml 5177aba21f65c2bd 548
 suite/01b-Pitches-Intervals.musicxml 6f4787733f66de48 405
@@ -58,7 +58,7 @@ suite/21d-Chords-SchubertStabatMater.musicxml da3b96acd13d5249 36
 suite/21e-Chords-PickupMeasures.musicxml 945621b5968c6c45 21
 suite/21f-Chord-ElementInBetween.musicxml 6a0d72b4f24b0ed9 18
 suite/21g-Chords-Tremolos.musicxml 7b22bd699c00a288 55
-suite/21h-Chord-Accidentals.musicxml cbbbbbb6e18b944f 18
+suite/21h-Chord-Accidentals.musicxml 7fed94ed52309ef6 18
 suite/21i-Chord-DifferentVoices.musicxml c14c789fd9c21932 17
 suite/22a-Noteheads.musicxml 3467aa14464a3d91 367
 suite/22b-Staff-Notestyles.musicxml decf6a77a0724839 76

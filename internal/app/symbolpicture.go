@@ -12,6 +12,7 @@ package app
 
 import (
 	"bytes"
+	"crypto/rand"
 	"fmt"
 	"image"
 	"image/color"
@@ -21,6 +22,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/stricaud/gscore/internal/symbol"
 )
@@ -81,7 +83,35 @@ func (a *App) handleSymbolPicture(w http.ResponseWriter, r *http.Request) {
 	}
 	q := r.URL.Query()
 	height, _ := strconv.ParseFloat(q.Get("height"), 64)
-	a.symbolFromPicture(w, q.Get("name"), data, height)
+	name := q.Get("name")
+	// auto=1 is "I have not got a name for it": the picture came off the
+	// clipboard and asking for one is a question between somebody and the
+	// thing they are trying to paste. A name is still needed — it is how a
+	// symbol is inserted, and how the score refers to it — so one is made.
+	if q.Get("auto") == "1" && strings.TrimSpace(name) == "" {
+		name = newSymbolName()
+	}
+	a.symbolFromPicture(w, name, data, height)
+}
+
+// newSymbolName is a name for a symbol nobody has named: a UUID, which is
+// unique without having to ask the registry and tells a reader at a glance
+// that it was not chosen.
+//
+// Version 4, as the random ones are: sixteen bytes with the version and
+// variant written into them, in the usual eight-four-four-four-twelve.
+func newSymbolName() string {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		// Random is how a UUID is unique, and there is no honest fallback
+		// that is: the clock would do, but two pastes in the same
+		// millisecond would collide. The registry refuses a name it
+		// already has, which is the backstop.
+		return fmt.Sprintf("pasted-%d", time.Now().UnixNano())
+	}
+	b[6] = b[6]&0x0f | 0x40
+	b[8] = b[8]&0x3f | 0x80
+	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
 }
 
 // symbolFromPicture is the work, shared by the two ways a picture arrives:

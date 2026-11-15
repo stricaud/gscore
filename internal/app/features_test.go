@@ -2943,3 +2943,151 @@ func TestARestIsDeletedFromWhicheverVoiceItIsIn(t *testing.T) {
 		t.Error("deleting the first voice's rest took the second voice's note")
 	}
 }
+
+/*
+ * Turning a tie over.
+ *
+ * The engraver puts a tie on the side away from the stems, which is right
+ * nearly always and not always — the writer can see what the rule cannot.
+ * The gesture is the one that already points a stem, because it is the same
+ * gesture: here is something placed for you, and here is you overruling it.
+ * Asked for from the page: "I also want to type u or d and change it myself
+ * like stems."
+ */
+
+func TestATieIsTurnedOverByHand(t *testing.T) {
+	h := newHarness(t)
+	h.note(0, 0, 4, "quarter")
+	h.note(0, 0, 4, "quarter")
+	h.post("/api/tie?part=0&measure=0&at=1")
+
+	first := h.app.score.Parts[0].Measures[0].Voices[0].Elements[0].(*model.Note)
+	if !first.TieStart {
+		t.Fatal("the two notes did not come out tied")
+	}
+
+	h.post("/api/tie?sel=0:0:0&dir=down")
+	if first.TieDir != model.StemDown {
+		t.Errorf("after asking for down the tie is %v", first.TieDir)
+	}
+	h.post("/api/tie?sel=0:0:0&dir=up")
+	if first.TieDir != model.StemUp {
+		t.Errorf("after asking for up the tie is %v", first.TieDir)
+	}
+	h.post("/api/tie?sel=0:0:0&dir=auto")
+	if first.TieDir != model.StemAuto {
+		t.Errorf("after giving it back the tie is %v", first.TieDir)
+	}
+}
+
+// Nothing is tied or untied by it: it is the curve already there, turned.
+func TestTurningATieDoesNotTieAnything(t *testing.T) {
+	h := newHarness(t)
+	h.note(0, 0, 4, "quarter")
+	h.note(0, 0, 4, "quarter")
+
+	if out := h.postFails("/api/tie?sel=0:0:0&dir=up"); !strings.Contains(out, "no tie") {
+		t.Errorf("asking to turn a tie that is not there said %q", out)
+	}
+	first := h.app.score.Parts[0].Measures[0].Voices[0].Elements[0].(*model.Note)
+	if first.TieStart {
+		t.Error("asking for a direction tied the notes together")
+	}
+}
+
+// A direction nobody can read is an error rather than a guess.
+func TestATieDirectionIsUpDownOrAuto(t *testing.T) {
+	h := newHarness(t)
+	h.note(0, 0, 4, "quarter")
+	h.note(0, 0, 4, "quarter")
+	h.post("/api/tie?part=0&measure=0&at=1")
+	if out := h.postFails("/api/tie?sel=0:0:0&dir=sideways"); out == "" {
+		t.Error("a direction nobody can read was accepted")
+	}
+}
+
+/*
+ * The words go to the music, whichever voice it is written in.
+ *
+ * They went to the first voice, which is not the same thing: a file can put
+ * a staff's music in its second voice and leave the first empty, and Bumpty
+ * Bump does from bar 26 on. Asked for the first voice alone, the staff
+ * looked four bars shorter than it is — the verse ran out of notes partway,
+ * and every syllable typed past that point was dropped on the floor.
+ * Reported as "it did not continue writing the lyrics and worse, opening the
+ * dialog again I lost what I just wrote", which is exactly what a syllable
+ * with nowhere to land looks like from the outside.
+ */
+
+func TestLyricsFindTheMusicWhicheverVoiceItIsIn(t *testing.T) {
+	h := newHarness(t)
+	// Bar 1 sings in the first voice; bar 2 has an empty first voice and its
+	// music in the second.
+	h.note(0, 0, 4, "half")
+	h.note(0, 0, 4, "half")
+	h.post("/api/insert?part=0&measure=1&at=-1&voice=1&step=4&dur=half&kind=note")
+	h.post("/api/insert?part=0&measure=1&at=-1&voice=1&step=4&dur=half&kind=note")
+	// An empty first voice in bar 2, which is what the file has.
+	h.app.score.Parts[0].Measures[1].Voices[0].Elements = nil
+
+	out := h.post("/api/lyrics?part=0&verse=1&text=" +
+		url.QueryEscape("one two three four"))
+	if w, _ := out["warning"].(string); w != "" {
+		t.Errorf("writing four syllables on four notes warned: %s", w)
+	}
+	if got := syllablesUnder(h, 1); len(got) != 2 ||
+		got[0] != "one two" || got[1] != "three four" {
+		t.Errorf("sang %q, want the words across both bars", got)
+	}
+	// And they come back as they were typed.
+	var back struct{ Text string }
+	if err := json.Unmarshal([]byte(h.get("/api/getlyrics?part=0&verse=1")), &back); err != nil {
+		t.Fatal(err)
+	}
+	if back.Text != "one two three four" {
+		t.Errorf("the verse came back as %q", back.Text)
+	}
+}
+
+// Where two voices really do share the staff, the first still takes the
+// words: it is the first one with notes in it.
+func TestLyricsStillGoUnderTheFirstVoiceThatSings(t *testing.T) {
+	h := newHarness(t)
+	h.note(0, 0, 4, "half")
+	h.note(0, 0, 4, "half")
+	h.post("/api/insert?part=0&measure=0&at=-1&voice=1&step=0&dur=half&kind=note")
+	h.post("/api/insert?part=0&measure=0&at=-1&voice=1&step=0&dur=half&kind=note")
+
+	h.post("/api/lyrics?part=0&verse=1&text=" + url.QueryEscape("one two"))
+
+	m := h.app.score.Parts[0].Measures[0]
+	for _, el := range m.Voices[1].Elements {
+		if mk := marksOfElement(el); mk != nil && len(mk.Lyrics) > 0 {
+			t.Error("the words went under the second voice")
+		}
+	}
+	sung := 0
+	for _, el := range m.Voices[0].Elements {
+		if mk := marksOfElement(el); mk != nil {
+			sung += len(mk.Lyrics)
+		}
+	}
+	if sung != 2 {
+		t.Errorf("%d syllables under the first voice, want 2", sung)
+	}
+}
+
+// A bar that rests in its first voice and sings in its second sings the
+// words: a rest is not something anybody sings on.
+func TestLyricsPassOverAVoiceThatOnlyRests(t *testing.T) {
+	h := newHarness(t)
+	h.post("/api/insert?part=0&measure=0&at=-1&step=4&dur=whole&kind=rest")
+	h.post("/api/insert?part=0&measure=0&at=-1&voice=1&step=4&dur=half&kind=note")
+	h.post("/api/insert?part=0&measure=0&at=-1&voice=1&step=4&dur=half&kind=note")
+
+	h.post("/api/lyrics?part=0&verse=1&text=" + url.QueryEscape("one two"))
+
+	if got := syllablesUnder(h, 1); len(got) != 1 || got[0] != "one two" {
+		t.Errorf("sang %q, want both syllables in the one bar", got)
+	}
+}

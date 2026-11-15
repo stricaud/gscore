@@ -434,6 +434,16 @@ type Marks struct {
 	// a measure.
 	TieStart, TieStop bool
 
+	// TieDir forces which way the tie leaving this element arcs, where the
+	// engraver's own answer is not the one wanted.
+	//
+	// The same thing Stem is for, and for the same reason: the rule is a
+	// default and the writer can see what it cannot. It belongs to the note
+	// the tie leaves, which is the one that carries TieStart — a note held
+	// through three bars stops one tie and starts the next, and the curve
+	// the direction names is the one going on from here.
+	TieDir Stem `json:",omitempty"`
+
 	// SlurStart and SlurStop bracket a phrase, which unlike a tie may span
 	// any pitches. They count the curves that open and close here rather
 	// than merely saying that one does.

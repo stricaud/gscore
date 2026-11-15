@@ -1072,3 +1072,22 @@ func TestWhereARestWasPutSurvivesTheFile(t *testing.T) {
 		t.Errorf("the rest came back lifted %d, want -3", back.Lift)
 	}
 }
+
+// A tie turned over by hand stays turned over.
+func TestATiesDirectionSurvivesTheFile(t *testing.T) {
+	s := viewScore()
+	v := s.Parts[0].Measures[0].Voices[0]
+	held := v.Elements[0].(*model.Note)
+	held.TieStart, held.TieDir = true, model.StemDown
+	v.Elements = append(v.Elements, &model.Note{
+		Pitch: model.Pitch{Step: model.StepG, Octave: 4},
+		Dur:   model.Duration{Num: 1, Den: 4},
+		Marks: model.Marks{TieStop: true},
+	})
+
+	got := roundTrip(t, s)
+	back := got.Parts[0].Measures[0].Voices[0].Elements[0].(*model.Note)
+	if back.TieDir != model.StemDown {
+		t.Errorf("the tie came back %v, want down", back.TieDir)
+	}
+}

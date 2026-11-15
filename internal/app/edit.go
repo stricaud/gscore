@@ -3083,6 +3083,61 @@ func voiceOf(p *model.Part, measure, n int) *model.Voice {
 // step with the model, for no gain — nothing outside gscore reads it.
 type clipboard struct {
 	elements []model.Element
+	// where says, for each element, which bar of the copy it came out of
+	// and which line of music it stood on.
+	//
+	// Both, because a copy is a shape and not a list. Music copied with a
+	// barline in it has a barline in it: flattened, two bars of four
+	// quarters came back as eight quarters inside a bar of four, which is
+	// not a bar — "when I paste it does not paste the bar". And music
+	// copied from two lines of one staff is two lines: flattened, a bar of
+	// a piano part came back with both hands in the upper voice, the rests
+	// of one sitting among the notes of the other — "I copied bar 23 in 24
+	// as they are the same, however the output was different".
+	where []clipAt
+}
+
+// clipAt is where one copied element stood: which bar of the copy, counting
+// from nought at the first, and which line of music of that bar.
+type clipAt struct{ bar, voice int }
+
+// clipPiece is one line of music of one bar of a copy.
+type clipPiece struct {
+	bar, voice int
+	elements   []model.Element
+}
+
+// pieces is what was copied, cut back into the bars and the lines of music
+// it came from, in the order it was copied in.
+func (c *clipboard) pieces() []clipPiece {
+	var out []clipPiece
+	at := map[clipAt]int{} // where each piece is in out
+	for i, el := range c.elements {
+		var w clipAt
+		if i < len(c.where) {
+			w = c.where[i]
+		}
+		j, seen := at[w]
+		if !seen {
+			j = len(out)
+			at[w] = j
+			out = append(out, clipPiece{bar: w.bar, voice: w.voice})
+		}
+		out[j].elements = append(out[j].elements, el)
+	}
+	return out
+}
+
+// voices is how many lines of music the copy came from.
+func (c *clipboard) voices() int {
+	seen := map[int]bool{}
+	for _, w := range c.where {
+		seen[w.voice] = true
+	}
+	if len(seen) == 0 {
+		return 1
+	}
+	return len(seen)
 }
 
 // handleCopy takes a copy of the selection.
@@ -3101,6 +3156,9 @@ func (a *App) handleCopy(w http.ResponseWriter, r *http.Request) {
 	defer a.mu.Unlock()
 
 	var out []model.Element
+	var where []clipAt
+	bar := 0
+	last := [2]int{-1, -1} // the staff and bar the one before came from
 	for _, t := range targets {
 		_, m, err := a.locate(t.part, t.measure)
 		if err != nil {
@@ -3110,14 +3168,24 @@ func (a *App) handleCopy(w http.ResponseWriter, r *http.Request) {
 		if t.index < 0 || t.index >= len(v.Elements) {
 			continue
 		}
+		// A barline crossed is a barline remembered, and so is the line of
+		// music each note stood on. See clipboard.where.
+		here := [2]int{t.part, t.measure}
+		if last[1] >= 0 && here != last {
+			bar++
+		}
+		last = here
 		out = append(out, cloneElement(v.Elements[t.index]))
+		where = append(where, clipAt{bar: bar, voice: t.voice})
 	}
 	if len(out) == 0 {
 		http.Error(w, "there is nothing there to copy", http.StatusBadRequest)
 		return
 	}
-	*a.clipboard() = clipboard{elements: out}
-	writeJSON(w, map[string]int{"copied": len(out)})
+	clip := clipboard{elements: out, where: where}
+	*a.clipboard() = clip
+	writeJSON(w, map[string]int{
+		"copied": len(out), "bars": bar + 1, "voices": clip.voices()})
 }
 
 // handlePaste puts the copy back at the cursor.
@@ -3152,55 +3220,119 @@ func (a *App) handlePaste(w http.ResponseWriter, r *http.Request) {
 	// measure" — on the one bar of the piece a reader is most likely to aim
 	// at, the empty one at the end, and on the staff just added under the
 	// one being copied from.
-	p, m, err := a.locateForWriting(partIdx, measIdx)
+	p, _, err := a.locateForWriting(partIdx, measIdx)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	v, err := voiceForWriting(m, vi)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-	if at < 0 || at > len(v.Elements) {
-		at = len(v.Elements)
-	}
-	// Into the bar, not after its rest. See openEmptyBar: a bar holding
-	// nothing but its own bar of rest is an empty bar, and it is full, so
-	// pasting after the rest carried the music into the bar after it.
-	at = openEmptyBar(p, m, measIdx, at, vi)
 
-	// A fresh copy each time, so pasting twice does not give two references
-	// to the same notes — changing one would silently change the other.
-	clip := a.clipboard()
-	add := make([]model.Element, len(clip.elements))
-	for i, el := range clip.elements {
-		add[i] = cloneElement(el)
-	}
-
-	// What is pasted takes the place of what was there, rather than shoving
-	// it along. Pasting a bar of a part over another bar should give a bar,
-	// not two bars' worth of music in one and everything after it moved; and
-	// what is pasted over is what was selected to paste over.
+	// The copy goes back the shape it was taken in: one bar of it to each
+	// bar from here on, and each of its lines of music to a line of its own.
+	// A run out of one bar of one voice is one piece and lands as a run of
+	// notes, which is what it was.
 	//
 	// insert=1 is the other way, for adding to a bar rather than replacing
 	// part of it.
-	over := len(add)
-	if r.URL.Query().Get("insert") == "1" {
-		over = 0
-	}
-	if at+over > len(v.Elements) {
-		over = len(v.Elements) - at
-	}
-	tail := append([]model.Element{}, v.Elements[at+over:]...)
-	v.Elements = append(append(v.Elements[:at:at], add...), tail...)
+	insert := q.Get("insert") == "1"
+	clip := a.clipboard()
+	pieces := clip.pieces()
+	// A copy of one line of music goes wherever the pen is, which is how a
+	// phrase is moved from one voice to another. A copy of several keeps its
+	// own, because the whole point of it is the lines standing apart.
+	manyVoices := clip.voices() > 1
 
-	// What no longer fits the bar moves into the next one, as when writing.
-	spill(p, measIdx)
-	measure, idx := findElement(p, measIdx, vi, add[len(add)-1])
+	pasted := 0
+	var last model.Element
+	lastBar, lastVoice := measIdx, vi
+	touched := map[int]bool{}
+	for _, piece := range pieces {
+		// A fresh copy each time, so pasting twice does not give two
+		// references to the same notes — changing one would silently change
+		// the other.
+		add := make([]model.Element, len(piece.elements))
+		for j, el := range piece.elements {
+			add[j] = cloneElement(el)
+		}
+
+		bar := measIdx + piece.bar
+		voice := vi
+		if manyVoices {
+			voice = piece.voice
+		}
+		_, m, err := a.locateForWriting(partIdx, bar)
+		if err != nil {
+			break // nowhere left to put the rest of it
+		}
+		v, err := voiceForWriting(m, voice)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		// The first piece goes where the cursor is; every bar after it is a
+		// bar of the copy, and starts at the head of the bar. So does every
+		// line of music of a copy that has more than one — a copy like that
+		// is a copy of whole bars, and its lines have to start together or
+		// they are no longer the chords they were.
+		into := 0
+		if piece.bar == 0 && !manyVoices {
+			into = at
+		}
+		if into < 0 || into > len(v.Elements) {
+			into = len(v.Elements)
+		}
+		// Into the bar, not after its rest. See openEmptyBar: a bar holding
+		// nothing but its own bar of rest is an empty bar, and it is full, so
+		// pasting after the rest carried the music into the bar after it.
+		into = openEmptyBar(p, m, bar, into, voice)
+
+		// What is pasted takes the place of what was there, rather than
+		// shoving it along. Pasting a bar of a part over another bar should
+		// give a bar, not two bars' worth of music in one and everything
+		// after it moved; and what is pasted over is what was selected to
+		// paste over.
+		over := len(add)
+		if insert {
+			over = 0
+		}
+		if into+over > len(v.Elements) {
+			over = len(v.Elements) - into
+		}
+		tail := append([]model.Element{}, v.Elements[into+over:]...)
+		v.Elements = append(append(v.Elements[:into:into], add...), tail...)
+
+		pasted += len(add)
+		last, lastBar, lastVoice = add[len(add)-1], bar, voice
+		touched[voice] = true
+	}
+	if pasted == 0 {
+		http.Error(w, "there is nowhere to put it", http.StatusBadRequest)
+		return
+	}
+
+	// What no longer fits a bar moves into the next one, as when writing.
+	// Every line of music that was written to: a line overflows on its own,
+	// and the others are no more pushed along by it than the staff below is.
+	for voice := range maxVoices {
+		if touched[voice] {
+			spillVoice(p, measIdx, voice)
+		}
+	}
+	measure, idx := findElement(p, lastBar, lastVoice, last)
 	writeJSON(w, map[string]any{
-		"pasted": len(add), "measure": measure, "at": idx,
+		"pasted": pasted, "measure": measure, "at": idx,
+		"bars": bars(pieces), "voices": clip.voices(),
 	})
+}
+
+// bars is how many bars a copy was laid out over.
+func bars(pieces []clipPiece) int {
+	most := 0
+	for _, pc := range pieces {
+		if pc.bar > most {
+			most = pc.bar
+		}
+	}
+	return most + 1
 }
 
 // cloneElement copies an element deeply enough that editing the copy cannot
@@ -3377,24 +3509,47 @@ func singableBars(p *model.Part) [][]*model.Marks {
 	out := make([][]*model.Marks, 0, len(p.Measures))
 	for _, m := range p.Measures {
 		var bar []*model.Marks
-		if len(m.Voices) > 0 {
-			for _, el := range m.Voices[0].Elements {
-				mk := marksOfElement(el)
-				if mk == nil {
-					continue
-				}
-				switch el.(type) {
-				case *model.Note, *model.Chord:
-				default:
-					continue
-				}
-				if mk.TieStop && !mk.TieStart {
-					continue
-				}
-				bar = append(bar, mk)
+		// The first line of music in the bar that has anything to sing on.
+		//
+		// Not the first voice, which is not the same thing: a file can write
+		// a staff's music in its second voice and leave the first empty, and
+		// Bumpty Bump does exactly that from bar 26 on. Asked for the first
+		// voice alone, the words ran out four bars before the music did and
+		// everything typed past that point was quietly dropped — reported as
+		// "it did not continue writing the lyrics and worse, opening the
+		// dialog again I lost what I just wrote", which is what a syllable
+		// with no note to land on looks like.
+		//
+		// Where two voices really do share the staff the first of them still
+		// wins, because it is the first with notes in it.
+		for _, v := range m.Voices {
+			bar = singableIn(v)
+			if len(bar) > 0 {
+				break
 			}
 		}
 		out = append(out, bar)
+	}
+	return out
+}
+
+// singableIn is what a syllable can be written under in one line of music.
+func singableIn(v *model.Voice) []*model.Marks {
+	var out []*model.Marks
+	for _, el := range v.Elements {
+		mk := marksOfElement(el)
+		if mk == nil {
+			continue
+		}
+		switch el.(type) {
+		case *model.Note, *model.Chord:
+		default:
+			continue
+		}
+		if mk.TieStop && !mk.TieStart {
+			continue
+		}
+		out = append(out, mk)
 	}
 	return out
 }
@@ -4549,6 +4704,41 @@ func (a *App) handleTie(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	step, hasStep := 0, false
+	if v := q.Get("step"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			step, hasStep = n, true
+		}
+	}
+
+	// Which way the curve goes, where the engraver's answer is not the one
+	// wanted. Nothing is tied or untied by this: it is the tie already there,
+	// turned over. Said of the note the tie leaves — see model.Marks.TieDir —
+	// so a selection naming both ends settles on the first of them, which is
+	// what clicking a tie hands over.
+	if dir := q.Get("dir"); dir != "" {
+		want, ok := tieDirection(dir)
+		if !ok {
+			http.Error(w, "dir is up, down or auto", http.StatusBadRequest)
+			return
+		}
+		a.lock()
+		turned := 0
+		for _, t := range targets {
+			if setTieDir(t, step, hasStep, want) {
+				turned++
+			}
+		}
+		a.mu.Unlock()
+		if turned == 0 {
+			http.Error(w, "there is no tie there to turn over",
+				http.StatusBadRequest)
+			return
+		}
+		writeJSON(w, map[string]int{"changed": turned})
+		return
+	}
+
 	// A tie means "hold this note into the next one", so one note is enough
 	// to say it: the note it runs to is the one that follows, across the
 	// barline if that is where it is. Asking for both was asking the reader
@@ -4559,13 +4749,6 @@ func (a *App) handleTie(w http.ResponseWriter, r *http.Request) {
 			targets = append(targets, next)
 		}
 		a.mu.Unlock()
-	}
-
-	step, hasStep := 0, false
-	if v := q.Get("step"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil {
-			step, hasStep = n, true
-		}
 	}
 
 	if q.Get("tie") == "none" {
@@ -4720,6 +4903,48 @@ func setTie(t tieTarget, step int, hasStep, start, stop bool) bool {
 		}
 		n.TieStart = n.TieStart || start
 		n.TieStop = n.TieStop || stop
+		return true
+	}
+	return false
+}
+
+// tieDirection reads what was asked for.
+func tieDirection(s string) (model.Stem, bool) {
+	switch s {
+	case "up":
+		return model.StemUp, true
+	case "down":
+		return model.StemDown, true
+	case "auto":
+		return model.StemAuto, true
+	}
+	return model.StemAuto, false
+}
+
+// setTieDir turns a tie over, from one notehead or from the whole element.
+//
+// Only where a tie actually leaves from here, so that pressing the key with
+// the wrong thing picked says so rather than quietly marking a note nothing
+// is tied from. It reports whether it found one.
+func setTieDir(t tieTarget, step int, hasStep bool, dir model.Stem) bool {
+	ch, isChord := t.el.(*model.Chord)
+	if !isChord || !hasStep {
+		m := marksOfElement(t.el)
+		if m == nil || !m.TieStart {
+			return false
+		}
+		m.TieDir = dir
+		return true
+	}
+	clef := t.part.ClefAt(t.measure)
+	for _, n := range ch.Notes {
+		if engrave.StaffStep(clef, n.Pitch) != step {
+			continue
+		}
+		if !n.TieStart && !ch.TieStart {
+			return false
+		}
+		n.TieDir = dir
 		return true
 	}
 	return false
@@ -6244,30 +6469,44 @@ func (a *App) handleClearMeasure(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	partIdx, _ := strconv.Atoi(q.Get("part"))
 	measIdx, _ := strconv.Atoi(q.Get("measure"))
+	// to is the last bar to empty, for a run of them picked up together.
+	// Absent, or before the first, it is the one bar.
+	to := measIdx
+	if v := q.Get("to"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > to {
+			to = n
+		}
+	}
 
 	a.lock()
 	defer a.mu.Unlock()
 
-	_, m, err := a.locate(partIdx, measIdx)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-	removed := 0
-	for _, v := range m.Voices {
-		if v == nil {
-			continue
+	removed, bars := 0, 0
+	for i := measIdx; i <= to; i++ {
+		_, m, err := a.locate(partIdx, i)
+		if err != nil {
+			if i == measIdx {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			break // the run ran off the end of the staff
 		}
-		removed += len(v.Elements)
-		v.Elements = nil
+		for _, v := range m.Voices {
+			if v == nil {
+				continue
+			}
+			removed += len(v.Elements)
+			v.Elements = nil
+		}
+		// One empty voice to write into, so the bar can be typed in again.
+		if len(m.Voices) == 0 {
+			m.Voices = []*model.Voice{{}}
+		} else {
+			m.Voices = m.Voices[:1]
+		}
+		bars++
 	}
-	// One empty voice to write into, so the bar can be typed in again.
-	if len(m.Voices) == 0 {
-		m.Voices = []*model.Voice{{}}
-	} else {
-		m.Voices = m.Voices[:1]
-	}
-	writeJSON(w, map[string]any{"status": "ok", "removed": removed})
+	writeJSON(w, map[string]any{"status": "ok", "removed": removed, "bars": bars})
 }
 
 // relengthWholeBarRests makes every bar of silence as long as its bar.

@@ -357,6 +357,9 @@ type marksDoc struct {
 	Symbols           []symbolRef `json:"symbols,omitempty"`
 	TieStart          bool        `json:"tieStart,omitempty"`
 	TieStop           bool        `json:"tieStop,omitempty"`
+	// TieDir is which way the tie leaving this element was told to arc.
+	// Only ever set alongside tieStart, which is the note it belongs to.
+	TieDir string `json:"tieDir,omitempty"`
 	// Clef and Key are a change written in the middle of a bar, which
 	// happens where a hand drops into the bass for a phrase or a scene
 	// turns at a double bar inside the measure. They belong to the
@@ -817,6 +820,7 @@ func encodeMarks(m *model.Marks) *marksDoc {
 	}
 	out := &marksDoc{
 		TieStart: m.TieStart, TieStop: m.TieStop,
+		TieDir:    stemNames[m.TieDir],
 		SlurStart: slurEnds(m.SlurStart), SlurStop: slurEnds(m.SlurStop),
 		Stem:    stemNames[m.Stem],
 		Dynamic: m.Dynamic.String(),
@@ -1242,6 +1246,7 @@ func decodeMarks(md *marksDoc, m *model.Marks) {
 		return
 	}
 	m.TieStart, m.TieStop = md.TieStart, md.TieStop
+	m.TieDir = stemValues[md.TieDir]
 	m.SlurStart, m.SlurStop = int(md.SlurStart), int(md.SlurStop)
 	if md.Clef != "" {
 		if c, ok := clefValues[md.Clef]; ok {

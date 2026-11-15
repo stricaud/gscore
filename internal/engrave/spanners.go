@@ -1051,6 +1051,18 @@ func (e *engraver) closeTie(t *openSpan, arrives, y float64) {
 	e.drawTieOrSlur(t, arrives, y, tieLift, false, true)
 }
 
+// tieSide is which way a tie arcs: what was asked for where anything was,
+// and otherwise the answer the engraver worked out. See model.Marks.TieDir.
+func tieSide(want model.Stem, auto bool) bool {
+	switch want {
+	case model.StemUp:
+		return true
+	case model.StemDown:
+		return false
+	}
+	return auto
+}
+
 // tiedHead is one notehead of an element, which way its tie arcs, and
 // whether a tie begins or ends on it.
 type tiedHead struct {
@@ -1077,7 +1089,7 @@ type tiedHead struct {
 func (e *engraver) tiedHeads(p *placed, m *model.Marks) []tiedHead {
 	if p.note != nil {
 		return []tiedHead{{
-			step: p.step, above: e.curveAbove(p),
+			step: p.step, above: tieSide(m.TieDir, e.curveAbove(p)),
 			start: m.TieStart, stop: m.TieStop,
 		}}
 	}
@@ -1092,6 +1104,11 @@ func (e *engraver) tiedHeads(p *placed, m *model.Marks) []tiedHead {
 		if e.sharedStaff {
 			above = e.curveAbove(p)
 		}
+		// Said of the chord, or of this notehead alone: a chord is tied
+		// notehead by notehead, so one of its curves can be turned over
+		// while the others stay where the fan puts them.
+		above = tieSide(m.TieDir, above)
+		above = tieSide(n.TieDir, above)
 		out = append(out, tiedHead{
 			step: step, above: above,
 			// The chord's own mark covers every notehead; a notehead's own

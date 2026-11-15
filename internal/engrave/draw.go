@@ -295,7 +295,7 @@ func (e *engraver) drawMeasure(part *model.Part, b measureBox, x, end float64, s
 			// room for both, so there is somewhere to put it.
 			e.lay.Glyphs = append(e.lay.Glyphs, Glyph{
 				Name: name,
-				X:    x - e.accidentalLead(v.el) - w - e.opt.Spacings.ClefAfter,
+				X:    x - e.accidentalLead(e.clef, v.el) - w - e.opt.Spacings.ClefAfter,
 				Y:    e.y + stepY(clefRefStep[e.clef]),
 				Size: clefChangeSize,
 			})
@@ -320,7 +320,7 @@ func (e *engraver) drawMeasure(part *model.Part, b measureBox, x, end float64, s
 			lead := e.keyLead(e.clef, from, *m.Key)
 			e.key = *m.Key
 			sp := e.opt.Spacings
-			at := x - e.accidentalLead(v.el) - lead + sp.ClefAfter
+			at := x - e.accidentalLead(e.clef, v.el) - lead + sp.ClefAfter
 			for _, step := range naturals {
 				e.lay.Glyphs = append(e.lay.Glyphs, Glyph{
 					Name: "accidentalNatural", X: at,
@@ -420,6 +420,9 @@ func (e *engraver) drawMeasure(part *model.Part, b measureBox, x, end float64, s
 	// the stem, and all of them used to work it out again from the note
 	// alone — which gave a different answer from the beam.
 	e.setStemDirections(items, part.Time)
+	// And where every accidental in the bar goes, column by column, before
+	// any of them is drawn. See planAccidentals.
+	e.planAccidentals(items)
 
 	// Noteheads first, then stems and beams, which need the whole group.
 	for i, p := range items {
@@ -489,6 +492,7 @@ func (e *engraver) drawMeasure(part *model.Part, b measureBox, x, end float64, s
 		TimeChange:  b.m.Time != nil,
 		Fifths:      part.KeyAt(b.index).Fifths,
 		Full:        barIsFull(part, b),
+		FullVoices:  fullVoicesOf(part, b),
 		Ahead:       b.ahead,
 	}
 	for _, p := range items {
@@ -618,14 +622,38 @@ func soleRest(items []*placed) *placed {
 // allows, which is a different question from whether it looks busy: a bar of
 // rest is drawn as one small glyph and is as full as a bar can be.
 func barIsFull(part *model.Part, b measureBox) bool {
+	return len(fullVoicesOf(part, b)) > 0
+}
+
+// fullVoicesOf lists the lines of music in a bar that are as long as the
+// meter allows, in voice order.
+//
+// Every line and not only the first. A file can write a staff's music in its
+// second voice and leave the first empty, and Bumpty Bump does from bar 26
+// on: asked for the first voice alone, a bar filled to the brim reported
+// itself as having room, so the writing point never moved over the barline
+// and a fifth quarter went into a bar of four. Reported as "entering the
+// last note should have moved to the next bar. Why it didn't?"
+//
+// One line being full says the bar is full, which is what a click in the
+// white space after it has to know. Which lines they are is a different
+// question, and the one that decides where the next note goes — see the
+// editor's carryCaretOn.
+func fullVoicesOf(part *model.Part, b measureBox) []int {
 	if b.ahead || len(b.m.Voices) == 0 {
-		return false
+		return nil
 	}
 	bar := part.TimeAt(b.index).BarDuration()
 	if bar.IsZero() {
-		return false
+		return nil
 	}
-	return b.m.Voices[0].Duration().Cmp(bar) >= 0
+	var out []int
+	for i, v := range b.m.Voices {
+		if v != nil && v.Duration().Cmp(bar) >= 0 {
+			out = append(out, i)
+		}
+	}
+	return out
 }
 
 // drawSignatureChange writes a new key or meter in the middle of the music.
@@ -1086,6 +1114,247 @@ func restClear(p *placed, items []*placed, dir int) int {
 	return int(want)
 }
 
+/*
+ * Where a chord's accidentals go.
+ *
+ * To the left of the chord, in files: the first nearest the noteheads and
+ * each one after it further out. Two signs a second or a third apart cannot
+ * stand one above the other — a sharp is nearly three spaces tall — so set
+ * in one file they overlap and come out as a single black mark. Reported
+ * from a chord of a natural over a sharp: "in this situation I have a
+ * collision", with a page of printed music showing the two staggered.
+ */
+
+const (
+	// accidentalAir is the room left above and below a sign, so that two in
+	// the same file are seen to be two.
+	accidentalAir = 0.15
+	// accidentalFileGap is the room between one file of accidentals and the
+	// next.
+	accidentalFileGap = 0.16
+)
+
+// accidentalFiles says which file each of a chord's accidentals stands in,
+// counting from nought at the file nearest the noteheads. A note with no
+// sign of its own gets -1.
+//
+// From the top note down, each sign taking the nearest file it fits in.
+// That is the order Gould gives and the order the eye reads a chord in, and
+// it keeps the topmost sign — the one over the note a reader is following —
+// closest to the music.
+func accidentalFiles(notes []*model.Note, steps []int) []int {
+	out := make([]int, len(notes))
+	for i := range out {
+		out[i] = -1
+	}
+	var order []int
+	for i, n := range notes {
+		if smufl.AccidentalGlyph(n.Accidental) != "" {
+			order = append(order, i)
+		}
+	}
+	if len(order) < 2 {
+		for _, i := range order {
+			out[i] = 0
+		}
+		return out
+	}
+	sort.SliceStable(order, func(a, b int) bool {
+		return steps[order[a]] > steps[order[b]]
+	})
+
+	type span struct{ top, bottom float64 }
+	var files [][]span
+	for _, i := range order {
+		up, down := glyphReach(smufl.AccidentalGlyph(notes[i].Accidental))
+		y := stepY(float64(steps[i]))
+		mine := span{top: y - up - accidentalAir, bottom: y + down + accidentalAir}
+		k := 0
+		for ; k < len(files); k++ {
+			room := true
+			for _, other := range files[k] {
+				if mine.top < other.bottom && other.top < mine.bottom {
+					room = false
+					break
+				}
+			}
+			if room {
+				break
+			}
+		}
+		if k == len(files) {
+			files = append(files, nil)
+		}
+		files[k] = append(files[k], mine)
+		out[i] = k
+	}
+	return out
+}
+
+// accidentalShifts is how far left each file of accidentals is drawn from
+// the one nearest the chord, given how wide each sign is.
+func accidentalShifts(files []int, width func(int) float64) []float64 {
+	most := -1
+	for _, k := range files {
+		if k > most {
+			most = k
+		}
+	}
+	if most < 0 {
+		return nil
+	}
+	widest := make([]float64, most+1)
+	for i, k := range files {
+		if k < 0 {
+			continue
+		}
+		if w := width(i); w > widest[k] {
+			widest[k] = w
+		}
+	}
+	out := make([]float64, most+1)
+	for k := 1; k <= most; k++ {
+		out[k] = out[k-1] + widest[k-1] + accidentalFileGap
+	}
+	return out
+}
+
+// accidentalAt is where one note's sign is drawn: the x its file is measured
+// from, and how far left of that its own file stands.
+type accidentalAt struct{ left, shift float64 }
+
+// planAccidentals works out where every sign in a bar goes, before any of
+// them is drawn.
+//
+// By the column and not by the chord. What a reader sees as a chord is every
+// note struck at once, however many lines of music they are written on — two
+// voices of a piano part share one set of files, as they share one stem
+// column — and a sign placed knowing only its own chord is a sign placed
+// against half of what is there. Reported from a staff whose two voices each
+// carried an accidental at the same moment: "in this situation I have a
+// collision".
+func (e *engraver) planAccidentals(items []*placed) {
+	e.accSpots = nil
+
+	type group struct {
+		at    model.Duration
+		left  float64
+		notes []*model.Note
+		steps []int
+	}
+	var groups []*group
+	for _, p := range items {
+		notes, steps := e.signedNotes(p)
+		if len(notes) == 0 {
+			continue
+		}
+		// By the moment they sound at, not by where they are drawn. Two
+		// voices a second apart are placed a notehead apart across the
+		// stem — that is how a reader sees there are two — so grouping by
+		// the column's x put each of them in a file of its own and left
+		// them exactly where they had collided.
+		var g *group
+		for _, c := range groups {
+			if c.at.Cmp(p.start) == 0 {
+				g = c
+				break
+			}
+		}
+		if g == nil {
+			g = &group{at: p.start, left: math.Inf(1)}
+			groups = append(groups, g)
+		}
+		if l := e.headsLeft(p); l < g.left {
+			g.left = l
+		}
+		g.notes = append(g.notes, notes...)
+		g.steps = append(g.steps, steps...)
+	}
+
+	for _, g := range groups {
+		files := accidentalFiles(g.notes, g.steps)
+		shifts := accidentalShifts(files, func(i int) float64 {
+			return e.accidentalWidth(g.notes[i])
+		})
+		for i, n := range g.notes {
+			k := files[i]
+			if k < 0 {
+				continue
+			}
+			shift := 0.0
+			if k > 0 {
+				shift = shifts[k]
+			}
+			if e.accSpots == nil {
+				e.accSpots = map[*model.Note]accidentalAt{}
+			}
+			e.accSpots[n] = accidentalAt{left: g.left, shift: shift}
+		}
+	}
+}
+
+// signedNotes is the notes of an element that carry an accidental, with the
+// staff step each one sits at.
+func (e *engraver) signedNotes(p *placed) ([]*model.Note, []int) {
+	var notes []*model.Note
+	switch {
+	case p.note != nil:
+		notes = []*model.Note{p.note}
+	case p.chord != nil:
+		notes = p.chord.Notes
+	default:
+		return nil, nil
+	}
+	var out []*model.Note
+	var steps []int
+	for _, n := range notes {
+		if smufl.AccidentalGlyph(n.Accidental) == "" {
+			continue
+		}
+		out = append(out, n)
+		steps = append(steps, e.noteStep(p.clef, n))
+	}
+	return out, steps
+}
+
+// headsLeft is the left edge of an element's noteheads, which for a chord
+// takes in the head that stepped across the stem.
+func (e *engraver) headsLeft(p *placed) float64 {
+	if p.chord == nil {
+		return p.x
+	}
+	head := smufl.NoteheadGlyph(p.value)
+	if len(p.chord.Notes) > 0 {
+		head = smufl.NoteheadGlyphOf(p.value, p.chord.Notes[0].Head)
+	}
+	if e.stemUp(p) {
+		return p.x
+	}
+	steps := make([]int, len(p.chord.Notes))
+	for i, n := range p.chord.Notes {
+		steps[i] = e.noteStep(p.clef, n)
+	}
+	for _, sh := range displacedHeads(steps, false) {
+		if sh {
+			return p.x - e.adv(head)
+		}
+	}
+	return p.x
+}
+
+// accidentalWidth is how wide a note's sign is drawn, brackets and all.
+func (e *engraver) accidentalWidth(n *model.Note) float64 {
+	g := smufl.AccidentalGlyph(n.Accidental)
+	if g == "" {
+		return 0
+	}
+	w := e.adv(g)
+	if n.Parens {
+		w += e.adv("accidentalParensLeft") + e.adv("accidentalParensRight")
+	}
+	return w
+}
+
 // drawAccidental writes a note's sign in front of it, in brackets where the
 // note asks for them.
 //
@@ -1097,6 +1366,12 @@ func (e *engraver) drawAccidental(n *model.Note, at, y float64) {
 	g := smufl.AccidentalGlyph(n.Accidental)
 	if g == "" {
 		return
+	}
+	// Where the column settled it, where the column was asked. See
+	// planAccidentals; a grace note's signs are not in it and keep the
+	// place the caller worked out.
+	if spot, ok := e.accSpots[n]; ok {
+		at = spot.left - spot.shift
 	}
 	size := e.glyphSize()
 	x := at - e.opt.Spacings.AccidentalToNote - e.adv(g)
@@ -1190,9 +1465,10 @@ func (e *engraver) drawChordHeads(p *placed) {
 			}
 		}
 		// Clear of the whole chord, the stepped-out head included. The
-		// accidentals of a chord stand in a column of their own, so they
-		// all move together or the lowest of them is printed on the
-		// notehead that stepped left.
+		// accidentals of a chord stand in files of their own, worked out
+		// for the whole column before anything is drawn, so they all move
+		// together or the lowest of them is printed on the notehead that
+		// stepped left. See planAccidentals.
 		e.drawAccidental(n, leftmost, e.y+stepY(float64(at)))
 		// Every notehead carries the chord's own ref, not just the first.
 		// A chord is one element: selecting it must light all of it up, and
@@ -1542,16 +1818,21 @@ func (e *engraver) setStemDirections(items []*placed, t model.TimeSignature) {
 	// takes them down, however high or low either happens to sit. That is
 	// what tells a reader which note belongs to which line, and it is the
 	// whole reason two voices can share a staff at all.
-	multi := false
+	// More than one line of music, which is the question — not whether
+	// something is numbered as a second voice. A bar whose music is all in
+	// the second voice with nothing in the first is one line of music
+	// however it is numbered, and treating it as two turned every stem in
+	// it down by number and sent its ties to the stem side with them. Bumpty
+	// Bump is written that way from bar 26 on, and its bar 27 has a tie
+	// drawn under four notes that all stem down.
+	seen := map[int]bool{}
 	for _, p := range items {
-		if p.voice > 0 {
-			multi = true
-			break
-		}
+		seen[p.voice] = true
 	}
+	multi := len(seen) > 1
 	// Kept for the bar, because the stems are not the only thing this
-	// settles: which side a tie or a slur falls on turns on it too. See
-	// curveAbove.
+	// settles: which side a tie or a slur falls on turns on it too, and
+	// where a rest goes. See curveAbove and restClear.
 	e.sharedStaff = multi
 
 	// Which voice is actually the upper one.

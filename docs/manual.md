@@ -161,6 +161,27 @@ bar is short on purpose.
 bar is left short and bar *one* becomes the first full bar, so the numbering
 matches a published edition.
 
+#### Picking bars up
+
+The band that appears above a bar when you move over it picks the whole bar
+up. **Shift-click another band** and every bar between the two comes with it,
+however far apart they are and across as many systems as it takes. Then
+<kbd>⌘C</kbd> copies the passage, <kbd>⌘X</kbd> cuts it and
+<kbd>Backspace</kbd> empties it.
+
+Music picked up with a barline in it keeps the barline. Paste it anywhere and
+it goes back down as bars: the first bar of the copy into the bar you are on,
+the second into the next, and so on, each taking the place of what was there.
+That holds for notes picked up across a barline too — half of one bar and half
+of the next land as half of one bar and half of the next, not as a heap in
+one. A run inside a single bar is a run of notes and still lands as one.
+
+Music picked up from **two voices** keeps them apart in the same way: each
+line of the copy goes back to a line of its own, so a bar of a piano part
+pastes as the bar it was rather than as both hands in the upper voice. A copy
+of one line still goes wherever the pen is, which is how a phrase is moved
+from one voice to the other.
+
 ### Tuplets
 
 <kbd>Ctrl</kbd>/<kbd>⌘</kbd> plus <kbd>2</kbd>–<kbd>9</kbd> makes a duplet
@@ -211,6 +232,7 @@ Most have a single key. All are in <span class="menu-path">Edit</span> or
 | Slur | <kbd>S</kbd> or <kbd>;</kbd> |
 | Beam together, or break the beam | <kbd>b</kbd> |
 | Stem up / down | <kbd>u</kbd> / <kbd>d</kbd> |
+| A tie above / below — click the tie first | <kbd>u</kbd> / <kbd>d</kbd> |
 | Accent | <kbd>!</kbd> |
 | Marcato | <kbd>^</kbd> |
 | Staccato | <kbd>,</kbd> |
@@ -226,6 +248,13 @@ Also on the menus: dynamics from `pppp` to `fff`; octave lines (8va, 8vb,
 15ma, 15mb); tremolos of one to four slashes, two-note tremolos, and an
 unmeasured buzz roll; first- and second-time repeat endings; barlines single,
 double, final and repeat.
+
+<p class="tip"><b>Turning a tie over.</b> A tie goes on the side away from the
+stems, which is right nearly always. Click the curve itself and press
+<kbd>u</kbd> or <kbd>d</kbd> to say otherwise, or
+<span class="menu-path">Edit → Stem → Automatic</span> to hand it back to the
+engraver. On a chord it is one curve at a time: the notehead you clicked turns
+and the others stay. Where you put it is saved with the score.</p>
 
 Everything written outside the staff is placed against an outline of what is
 already there, working outwards in the order engraving puts them in — trills
@@ -332,10 +361,14 @@ of the bar after them. It is punctuation rather than a word, so `<4>Folks` and
 `<4> Folks` are the same thing, and anything between angle brackets that is not
 a number is just words.
 
-Two limits worth knowing: the words go under the **first voice** of a staff,
-and a verse is one block for the whole staff — there is no "lyrics from here",
-which is what the markers are instead. Give more syllables than there are notes
-and Gscore writes as many as fit and tells you how many it could not.
+Two things worth knowing. Bar by bar, the words go under the **first voice
+that has notes in it** — so a staff whose music is written in its second
+voice, with the first left empty, is sung all the same. And a verse is one
+block for the whole staff: there is no "lyrics from here", which is what the
+markers are instead. Opening the dialog puts the caret at the end of what is
+already there, so pressing <kbd>l</kbd> and typing carries the verse on. Give
+more syllables than there are notes and Gscore writes as many as fit and tells
+you how many it could not.
 
 ### Symbols nobody's font has
 
@@ -344,6 +377,18 @@ editor with the staff lines showing, so you can see where your mark will sit.
 Place the result on a note like any other articulation. It travels inside a
 `.gscore` file attached to its note, so it is still a musical mark when it
 arrives somewhere else rather than a floating picture.
+
+<span class="menu-path">Insert → Symbol → Use a picture…</span> is the other
+door, for a device or a logo that was never a drawing: the picture is used as
+it is — an SVG keeps its outlines, a photograph keeps its colours — and how
+large it prints is settled by dragging a corner afterwards.
+
+<span class="menu-path">Insert → Symbol → From the clipboard</span> is that
+again without the trip through a file. Copy a picture anywhere, and it goes
+straight in at the cursor. It is not named: a picture pasted in is one you are
+placing rather than filing, so Gscore gives it a UUID and you pick it out of
+the palette by its picture. Where the window cannot read the clipboard by
+itself it asks you to press <kbd>⌘V</kbd>, and takes that paste instead.
 
 Symbols can be imported from another `.gscore` and shared as one. Whatever is
 in your symbols folder is available to every score.

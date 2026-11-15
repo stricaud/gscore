@@ -17,6 +17,7 @@ import (
 	"image/png"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -245,4 +246,73 @@ func TestASymbolIsThereWhenTheFileIsNamedOnTheCommandLine(t *testing.T) {
 		}
 	}
 	t.Error("the symbol is not in the drawing")
+}
+
+/*
+ * A picture off the clipboard, which nobody has named.
+ *
+ * Saving something copied out of another program to a file so that it can
+ * be chosen from a file box is two steps that exist only because nothing
+ * took it from the clipboard. Asked for as "so I do not have to go through
+ * an on-disc image all the time" — and with it, a name made up rather than
+ * asked for, because stopping to invent one is the step that makes the trip
+ * through the disk feel short by comparison.
+ */
+
+func TestAPastedPictureNamesItself(t *testing.T) {
+	h := newHarness(t)
+	out := h.postBody("/api/symbolpicture?auto=1", colourPNG(40, 20))
+
+	name, _ := out["name"].(string)
+	if name == "" {
+		t.Fatal("the symbol came back with no name")
+	}
+	// A version 4 UUID: eight-four-four-four-twelve, with the version and
+	// the variant written in.
+	uuid := regexp.MustCompile(
+		`^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`)
+	if !uuid.MatchString(name) {
+		t.Errorf("it named itself %q, which is not a UUID", name)
+	}
+	if _, ok := h.app.symbols.Lookup(name); !ok {
+		t.Error("the symbol was not registered under the name it answered with")
+	}
+}
+
+// Two pastes are two symbols: a name that collided would take the first
+// one's picture away.
+func TestTwoPastedPicturesAreTwoSymbols(t *testing.T) {
+	h := newHarness(t)
+	one, _ := h.postBody("/api/symbolpicture?auto=1", colourPNG(40, 20))["name"].(string)
+	two, _ := h.postBody("/api/symbolpicture?auto=1", colourPNG(30, 30))["name"].(string)
+	if one == "" || two == "" {
+		t.Fatal("a paste came back with no name")
+	}
+	if one == two {
+		t.Fatalf("both pastes were called %q", one)
+	}
+	for _, name := range []string{one, two} {
+		if _, ok := h.app.symbols.Lookup(name); !ok {
+			t.Errorf("%s is not in the registry", name)
+		}
+	}
+}
+
+// A name given is still the name used: nothing here takes the naming away
+// from somebody who has one in mind.
+func TestANameGivenBeatsTheMadeUpOne(t *testing.T) {
+	h := newHarness(t)
+	out := h.postBody("/api/symbolpicture?auto=1&name=device", colourPNG(40, 20))
+	if name, _ := out["name"].(string); name != "device" {
+		t.Errorf("it was registered as %q", name)
+	}
+}
+
+// And without auto a picture with no name is still an error, because then
+// it is an omission rather than a choice.
+func TestAPictureWithNoNameIsStillRefused(t *testing.T) {
+	h := newHarness(t)
+	if out := h.postBodyFails("/api/symbolpicture", colourPNG(40, 20)); !strings.Contains(out, "name") {
+		t.Errorf("said %q", out)
+	}
 }

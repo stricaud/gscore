@@ -259,3 +259,190 @@ func TestATieBetweenNotesStandingCloseIsStillDrawn(t *testing.T) {
 		t.Errorf("squeezed, the tie came out %.2f spaces wide", w)
 	}
 }
+
+/*
+ * Which way a tie arcs, and saying so by hand.
+ *
+ * Away from the stems where the staff carries one line of music. The
+ * question is whether it carries one, and that is not the same question as
+ * whether anything is numbered as a second voice: a bar whose music is all
+ * in the second voice with nothing in the first is one line of music however
+ * it is numbered. Read as two, every stem in it turned down by number and
+ * the ties went to the stem side with them — reported from bar 27 of Bumpty
+ * Bump, which is written that way from the repeat onward: "in this situation
+ * I want to tie above, not below".
+ */
+
+// inSecondVoice is one bar whose music is all in the second voice, with an
+// empty first voice in front of it, which is how some files are written.
+func inSecondVoice(notes ...*model.Note) *model.Score {
+	els := make([]model.Element, 0, len(notes))
+	for _, n := range notes {
+		els = append(els, n)
+	}
+	return &model.Score{
+		Tempo: model.Tempo{BPM: 120, Unit: model.Duration{Num: 1, Den: 4}},
+		Parts: []*model.Part{{
+			Clef: model.Treble,
+			Time: model.TimeSignature{Beats: 4, BeatValue: 4},
+			Measures: []*model.Measure{{
+				Voices:       []*model.Voice{{}, {Elements: els}},
+				RightBarline: model.BarFinal,
+			}},
+		}},
+	}
+}
+
+func TestMusicAloneInTheSecondVoiceIsOneLineOfMusic(t *testing.T) {
+	// High notes, which on a staff of their own stem down and so tie over.
+	held := tiedTestNote(model.StepD, 5)
+	held.TieStart = true
+	stops := tiedTestNote(model.StepD, 5)
+	stops.TieStop = true
+	score := inSecondVoice(tiedTestNote(model.StepD, 5),
+		tiedTestNote(model.StepE, 5), held, stops)
+
+	lay := Engrave(score, DefaultOptions())
+	if len(lay.Curves) != 1 {
+		t.Fatalf("%d curves drawn, want the one tie", len(lay.Curves))
+	}
+	tie := lay.Curves[0]
+	if tie.CY >= (tie.Y1+tie.Y2)/2 {
+		t.Errorf("the tie arcs downward, onto the stems: ends %.2f..%.2f, "+
+			"arch %.2f", tie.Y1, tie.Y2, tie.CY)
+	}
+}
+
+// And whichever way the engraver would have put it, it can be said by hand.
+func TestATieGoesWhereItIsTold(t *testing.T) {
+	arcs := func(dir model.Stem) Curve {
+		t.Helper()
+		held := tiedTestNote(model.StepD, 5)
+		held.TieStart, held.TieDir = true, dir
+		stops := tiedTestNote(model.StepD, 5)
+		stops.TieStop = true
+		lay := Engrave(tieTestBar(held, stops,
+			tiedTestNote(model.StepE, 5), tiedTestNote(model.StepF, 5)),
+			DefaultOptions())
+		if len(lay.Curves) != 1 {
+			t.Fatalf("%d curves drawn, want the one tie", len(lay.Curves))
+		}
+		return lay.Curves[0]
+	}
+
+	up := arcs(model.StemUp)
+	if up.CY >= (up.Y1+up.Y2)/2 {
+		t.Errorf("told up, the tie arcs down: ends %.2f..%.2f, arch %.2f",
+			up.Y1, up.Y2, up.CY)
+	}
+	down := arcs(model.StemDown)
+	if down.CY <= (down.Y1+down.Y2)/2 {
+		t.Errorf("told down, the tie arcs up: ends %.2f..%.2f, arch %.2f",
+			down.Y1, down.Y2, down.CY)
+	}
+	// And left alone, it is wherever the engraver puts it — which is one of
+	// the two, and the point is that saying so changes it.
+	auto := arcs(model.StemAuto)
+	if (auto.CY < (auto.Y1+auto.Y2)/2) != (up.CY < (up.Y1+up.Y2)/2) &&
+		(auto.CY < (auto.Y1+auto.Y2)/2) != (down.CY < (down.Y1+down.Y2)/2) {
+		t.Errorf("left alone the tie went a third way: arch %.2f", auto.CY)
+	}
+}
+
+// One notehead of a chord at a time, because a chord is tied notehead by
+// notehead and the others keep the way they were drawn.
+func TestOneOfAChordsTiesCanBeTurnedOver(t *testing.T) {
+	lower := tiedTestNote(model.StepC, 4)
+	upper := tiedTestNote(model.StepE, 4)
+	lower.TieStart, upper.TieStart = true, true
+	// The lower notehead's tie fans downward on its own; told up, it goes up.
+	lower.TieDir = model.StemUp
+
+	chord := &model.Chord{
+		Notes: []*model.Note{lower, upper},
+		Dur:   model.Duration{Num: 1, Den: 4},
+	}
+	after := &model.Chord{
+		Notes: []*model.Note{tiedTestNote(model.StepC, 4), tiedTestNote(model.StepE, 4)},
+		Dur:   model.Duration{Num: 1, Den: 4},
+	}
+	after.Notes[0].TieStop, after.Notes[1].TieStop = true, true
+
+	p := &model.Part{
+		Clef: model.Treble,
+		Time: model.TimeSignature{Beats: 4, BeatValue: 4},
+		Measures: []*model.Measure{{
+			Voices: []*model.Voice{{Elements: []model.Element{
+				chord, after, tiedTestNote(model.StepG, 4), tiedTestNote(model.StepG, 4),
+			}}},
+			RightBarline: model.BarFinal,
+		}},
+	}
+	lay := Engrave(&model.Score{
+		Tempo: model.Tempo{BPM: 120, Unit: model.Duration{Num: 1, Den: 4}},
+		Parts: []*model.Part{p},
+	}, DefaultOptions())
+
+	if len(lay.Curves) != 2 {
+		t.Fatalf("%d curves drawn, want one for each notehead", len(lay.Curves))
+	}
+	// The upper notehead's tie fans up on its own and the lower one's fans
+	// down; the lower one has been told up, so both arc up now.
+	for _, c := range lay.Curves {
+		if c.CY >= (c.Y1+c.Y2)/2 {
+			t.Errorf("a tie still arcs downward: ends %.2f..%.2f, arch %.2f",
+				c.Y1, c.Y2, c.CY)
+		}
+	}
+}
+
+// And saying it of one notehead says nothing about the others.
+func TestTurningOneOfAChordsTiesLeavesTheRest(t *testing.T) {
+	make2 := func(dir model.Stem) []Curve {
+		lower := tiedTestNote(model.StepC, 4)
+		upper := tiedTestNote(model.StepE, 4)
+		lower.TieStart, upper.TieStart = true, true
+		lower.TieDir = dir
+		chord := &model.Chord{
+			Notes: []*model.Note{lower, upper},
+			Dur:   model.Duration{Num: 1, Den: 4},
+		}
+		after := &model.Chord{
+			Notes: []*model.Note{tiedTestNote(model.StepC, 4), tiedTestNote(model.StepE, 4)},
+			Dur:   model.Duration{Num: 1, Den: 4},
+		}
+		after.Notes[0].TieStop, after.Notes[1].TieStop = true, true
+		p := &model.Part{
+			Clef: model.Treble,
+			Time: model.TimeSignature{Beats: 4, BeatValue: 4},
+			Measures: []*model.Measure{{
+				Voices: []*model.Voice{{Elements: []model.Element{
+					chord, after, tiedTestNote(model.StepG, 4), tiedTestNote(model.StepG, 4),
+				}}},
+				RightBarline: model.BarFinal,
+			}},
+		}
+		lay := Engrave(&model.Score{
+			Tempo: model.Tempo{BPM: 120, Unit: model.Duration{Num: 1, Den: 4}},
+			Parts: []*model.Part{p},
+		}, DefaultOptions())
+		return lay.Curves
+	}
+
+	plain, turned := make2(model.StemAuto), make2(model.StemUp)
+	if len(plain) != 2 || len(turned) != 2 {
+		t.Fatalf("%d curves plain and %d turned, want two of each",
+			len(plain), len(turned))
+	}
+	up := func(c Curve) bool { return c.CY < (c.Y1+c.Y2)/2 }
+	// Left alone, the two fan apart: one up and one down.
+	if up(plain[0]) == up(plain[1]) {
+		t.Fatalf("the chord's two ties do not fan apart on their own")
+	}
+	// The one that was already up is where it was.
+	for i := range plain {
+		if up(plain[i]) && !up(turned[i]) {
+			t.Error("turning the other notehead's tie took this one with it")
+		}
+	}
+}

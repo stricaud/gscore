@@ -472,10 +472,15 @@ async function dotSelection() {
     status(durationName(state.tool.duration, state.tool.dots));
     return;
   }
+  // The note itself, not where the caret is standing. Dotting the note that
+  // fills a bar carries the caret into the next one — see below — and a
+  // second dot aimed at the caret would then land in that bar instead of on
+  // the note it was meant for.
+  const aim = aimedAt(sel);
   const p = new URLSearchParams({
-    part: String(sel.part), measure: String(sel.measure), at: String(sel.at),
+    part: String(aim.part), measure: String(aim.measure), at: String(aim.at),
   });
-  withVoice(p, sel.voice);
+  withVoice(p, aim.voice);
   const res = await fetch("/api/dot?" + p.toString(), { method: "POST" });
   if (!res.ok) {
     status("Could not dot that: " + (await res.text()).trim());
@@ -483,8 +488,36 @@ async function dotSelection() {
   }
   const d = await res.json();
   await refreshScore();
+  // A dot is a note getting longer, and the note that gets longer is usually
+  // the last one of the bar — so this is one of the two ways a bar fills.
+  // Writing already carried the caret over the barline when it did; dotting
+  // did not, so the caret sat inside a bar with no room left in it and the
+  // next note written went in beside the barline. Reported from bar 46 of
+  // Bumpty Bump: "entering the last note should have moved to the next bar.
+  // Why it didn't?" — the last note was a dotted quarter.
+  carryCaretOn(sel);
   markSelection();
   status(d.dots > 0 ? "Dotted — now " + d.dur : "Dot removed — now " + d.dur);
+}
+
+// aimedAt spells where a picked-up note is now, for the commands that name a
+// place in a bar rather than the note itself.
+//
+// The caret and the note part company as soon as a bar fills: the caret goes
+// on to the next bar, which is where the next note goes, and the note stays
+// where it was. Everything that looks up "the note picked up" by counting
+// along from the caret finds the wrong one after that.
+function aimedAt(sel) {
+  if (sel.ref !== null && sel.ref !== undefined) {
+    for (const h of state.hits) {
+      const el = (h.elements || []).find((e) => e.ref === sel.ref);
+      if (el) {
+        return { part: h.part, measure: h.measure,
+                 at: el.index + 1, voice: el.voice || 0 };
+      }
+    }
+  }
+  return { part: sel.part, measure: sel.measure, at: sel.at, voice: sel.voice };
 }
 
 // durationName is what a value is called, for saying so.
@@ -1540,6 +1573,7 @@ async function action(name) {
     case "arpeggio-down": await setArpeggio("down"); break;
     case "arpeggio-none": await setArpeggio("none"); break;
     case "symbol-picture": await symbolPictureDialog(); break;
+    case "symbol-paste": await symbolFromClipboard(); break;
     case "grace-add": await addGraceNote(); break;
     case "grace": await setGrace("slashed"); break;
     case "grace-appoggiatura": await setGrace("appoggiatura"); break;
@@ -5214,13 +5248,7 @@ function elementAt(hit, x, y) {
   let best = null;
   let bestDist = Infinity;
   for (const el of hit.elements || []) {
-    // Horizontally within the notehead with a little slack; vertically within
-    // about a staff space of the element, which for a chord means anywhere
-    // between its lowest and highest notehead.
-    const dx = x < el.x ? el.x - x : Math.max(0, x - (el.x + el.width));
-    const top = Math.min(el.y, el.y2 ?? el.y);
-    const bottom = Math.max(el.y, el.y2 ?? el.y);
-    const dy = y < top ? top - y : Math.max(0, y - bottom);
+    const [dx, dy] = awayFromElement(el, x, y);
     if (dx > 0.6 || dy > 1.2) continue;
 
     const d = dx * dx + dy * dy;
@@ -5230,6 +5258,18 @@ function elementAt(hit, x, y) {
     }
   }
   return best;
+}
+
+// awayFromElement is how far a point is from an element, horizontally and
+// vertically: within the notehead with a little slack across, and within
+// about a staff space of it down the page — which for a chord means
+// anywhere between its lowest and highest notehead.
+function awayFromElement(el, x, y) {
+  const dx = x < el.x ? el.x - x : Math.max(0, x - (el.x + el.width));
+  const top = Math.min(el.y, el.y2 ?? el.y);
+  const bottom = Math.max(el.y, el.y2 ?? el.y);
+  const dy = y < top ? top - y : Math.max(0, y - bottom);
+  return [dx, dy];
 }
 
 // setupStripHover shows the band under the pointer.
@@ -5347,10 +5387,18 @@ function setupCanvasClicks() {
     const x = (e.clientX - r.left) / state.zoom;
     const y = (e.clientY - r.top) / state.zoom;
 
-    // The band over a bar picks up the whole bar.
+    // The band over a bar picks up the whole bar, and with shift every bar
+    // between it and the one already picked up. One bar at a time was the
+    // only thing it could say, and a passage is almost never one bar.
     const strip = stripAt(x, y);
     if (strip) {
-      selectMeasure(state.selection?.part ?? 0, strip.measure);
+      const part = state.selection?.part ?? 0;
+      const anchor = state.barAnchor;
+      if (e.shiftKey && anchor && anchor.part === part) {
+        selectMeasure(part, anchor.measure, strip.measure);
+      } else {
+        selectMeasure(part, strip.measure);
+      }
       return;
     }
 
@@ -5454,12 +5502,20 @@ function setupCanvasClicks() {
     // before the staff they are drawn above — but never in front of a
     // notehead. A curve ends on the two notes it joins and passes over the
     // ones between, and every one of those clicks belongs to its note.
-    if (!hit || !elementAt(hit, x, y)) {
-      const arc = arcAt(x, y);
-      if (arc) {
-        selectArc(arc);
-        return;
-      }
+    //
+    // A tie between two neighbours is the exception, because there is no
+    // air round it to aim at: the whole curve lies in the gap between two
+    // noteheads a notehead apart, inside the reach of both, so under the
+    // rule above it could never be picked at all — and a tie that cannot be
+    // picked cannot be turned over or taken away. Whichever is nearer wins,
+    // for a tie. A slur keeps the plain rule: it is drawn in open air and
+    // what it passes over belongs to the music, not to the curve.
+    const under = hit && elementAt(hit, x, y);
+    const arc = arcAt(x, y);
+    if (arc && (!under || (arc.kind === "tie" &&
+        awayFromArc(arc, x, y) < Math.hypot(...awayFromElement(under, x, y))))) {
+      selectArc(arc);
+      return;
     }
     if (!hit) {
       clearSelection();
@@ -6020,22 +6076,39 @@ function selectTuplet(t) {
 // This is what a key or a meter needs: "from this bar on" is a thing you say
 // about a bar, and there was no way to say it except by finding a note in the
 // bar and selecting that instead.
-function selectMeasure(part, measure) {
+function selectMeasure(part, measure, to) {
   state.multi = [];
   state.anchor = state.focus = null;
+  const first = Math.min(measure, to ?? measure);
+  const last = Math.max(measure, to ?? measure);
   // bar says the whole measure is what is picked up, not a place in it.
   // Copying needs to know: a bar has no ref of its own, and without this
   // "copy" found nothing selected and said so, which is the one thing
   // somebody who has just clicked a bar knows to be untrue.
-  state.selection = { part, measure, at: 0, step: 0, ref: null, bar: true };
+  //
+  // barTo is the last of a run of them, and the same bar where only one was
+  // picked up — so everything that reads a bar selection reads a run of one
+  // rather than having two cases to know about.
+  state.selection = { part, measure: first, at: 0, step: 0, ref: null,
+                      bar: true, barTo: last };
+  // Where a run grows from. A plain click sets it; shift-clicking either
+  // side of it takes in the bars between, which is how shift already
+  // extends a selection of notes.
+  if (to === undefined) state.barAnchor = { part, measure };
   markSelection();
-  const hit = state.hits.find((h) => h.part === part && h.measure === measure);
+  if (last > first) {
+    const n = last - first + 1;
+    status(`Bars ${barNumberOf(first)}\u2013${barNumberOf(last)} ` +
+      `\u00b7 ${n} bars picked up`);
+    return;
+  }
+  const hit = state.hits.find((h) => h.part === part && h.measure === first);
   const has = [];
   if (hit?.keyChange) has.push("a key change");
   if (hit?.timeChange) has.push("a meter change");
-  status(`Bar ${barNumberOf(measure)}` +
+  status(`Bar ${barNumberOf(first)}` +
     (has.length ? ` — ${has.join(" and ")} here` : "") +
-    " · Score ▸ Key or Time applies from here");
+    " · Shift-click another to take in the bars between");
 }
 
 // select picks up an existing element, so the next command acts on it.
@@ -7267,6 +7340,7 @@ async function deleteSelected() {
   if (sel && sel.bar) {
     const p = new URLSearchParams({
       part: String(sel.part), measure: String(sel.measure),
+      to: String(sel.barTo ?? sel.measure),
     });
     const res = await fetch("/api/clearmeasure?" + p.toString(),
                             { method: "POST" });
@@ -7276,9 +7350,11 @@ async function deleteSelected() {
     }
     const d = await res.json().catch(() => ({}));
     await refreshScore();
-    status(d.removed
-      ? `Bar ${barNumberOf(sel.measure)} emptied — ${d.removed} removed`
-      : `Bar ${barNumberOf(sel.measure)} was already empty`);
+    const which = (sel.barTo ?? sel.measure) > sel.measure
+      ? `Bars ${barNumberOf(sel.measure)}\u2013${barNumberOf(sel.barTo)}`
+      : `Bar ${barNumberOf(sel.measure)}`;
+    status(d.removed ? `${which} emptied — ${d.removed} removed`
+                     : `${which} was already empty`);
     return;
   }
 
@@ -7408,9 +7484,14 @@ function markSelection() {
   // up — and then Delete emptied whichever it was. Shown, there is nothing
   // to wonder about.
   if (sel.bar) {
-    const hit = state.hits.find(
-      (h) => h.part === sel.part && h.measure === sel.measure);
-    if (hit) {
+    // One box per bar, not one box round the lot: a run of bars can turn
+    // the corner at the end of a system, and a single rectangle round the
+    // first and the last would be a rectangle round the whole page.
+    let drew = false;
+    for (let i = sel.measure; i <= (sel.barTo ?? sel.measure); i++) {
+      const hit = state.hits.find(
+        (h) => h.part === sel.part && h.measure === i);
+      if (!hit) continue;
       let top = hit.staffTop - 1.6;
       let bottom = hit.staffTop + staffHeightOf(hit) + 1.6;
       // Round the music, not only round the staff: a run climbing above the
@@ -7424,8 +7505,9 @@ function markSelection() {
       svg.insertBefore(
         selectionRect(hit.x0, top, hit.x1 - hit.x0, bottom - top, z),
         svg.firstChild);
-      return;
+      drew = true;
     }
+    if (drew) return;
   }
 
   if (sel.hairpin) {
@@ -7808,8 +7890,20 @@ async function mark(endpoint, params, said) {
 function carryCaretOn(sel) {
   const hit = state.hits.find(
     (h) => h.part === sel.part && h.measure === sel.measure);
-  if (!hit || !hit.full) return;
-  if (sel.at < (hit.elements || []).length) return; // not at the end of it
+  if (!hit) return;
+  // The line being written on, not the bar around it. On a staff two voices
+  // share, one can be full while the other has three beats left in it, and
+  // it is the one the pen is on that decides where the next note goes.
+  const voice = sel.voice || 0;
+  const full = hit.fullVoices
+    ? hit.fullVoices.includes(voice)
+    : hit.full && voice === 0;
+  if (!full) return;
+  // Not at the end of that line. Counted in its own elements: a bar holding
+  // two voices holds both their notes, and measuring the caret of one
+  // against the whole bar said it was somewhere in the middle.
+  const mine = (hit.elements || []).filter((el) => (el.voice || 0) === voice);
+  if (sel.at < mine.length) return;
   const next = state.hits.find(
     (h) => h.part === sel.part && h.measure === sel.measure + 1);
   if (!next) return; // nothing after it yet; the server will make one
@@ -8347,12 +8441,49 @@ async function setSelectionDuration(value, label) {
       at: first.index + 1, step: 0, ref: first.ref,
     };
   }
+  // Making a note longer is the other way a bar fills. See dotSelection.
+  if (state.selection) carryCaretOn(state.selection);
   markSelection();
 }
 
-const setStem = (dir) =>
-  mark("stem", { stem: dir },
-       dir === "auto" ? "Stem left to the engraver" : "Stem " + dir);
+// setStem points the stems of what is picked up — or, where what is picked
+// up is a tie, turns the tie over.
+//
+// The same two keys for both, because they are the same gesture: here is a
+// thing the engraver placed for you, and here is you overruling it. A tie
+// has no stem of its own to point, so there is nothing for the keys to mean
+// on one, and a tie drawn the wrong way round is the commonest thing on a
+// page somebody wants to say "no, the other way" about. Asked for as "I
+// also want to type u or d and change it myself like stems".
+async function setStem(dir) {
+  const arc = state.selection?.arc;
+  if (arc && arc.kind === "tie" && !state.multi.length) {
+    return setTieDirection(arc, dir);
+  }
+  return mark("stem", { stem: dir },
+              dir === "auto" ? "Stem left to the engraver" : "Stem " + dir);
+}
+
+// setTieDirection turns over the tie that was clicked.
+//
+// Named by the note it leaves, as the engraver names it, and by which
+// notehead of a chord where it is one curve of several.
+async function setTieDirection(arc, dir) {
+  const from = refTarget(arc.from);
+  if (!from) {
+    status("Could not find that tie any more");
+    return null;
+  }
+  const p = new URLSearchParams({ sel: from, dir, step: String(arc.step) });
+  const res = await fetch("/api/tie?" + p.toString(), { method: "POST" });
+  if (!res.ok) {
+    status("Could not turn it over: " + (await res.text()).trim());
+    return null;
+  }
+  await refreshScore();
+  status(dir === "auto" ? "Tie left to the engraver" : "Tie " + dir);
+  return true;
+}
 
 const setDynamic = (d) =>
   mark("dynamic", { dynamic: d }, d === "none" ? "Dynamic removed" : d);
@@ -11290,7 +11421,16 @@ async function lyricsDialog() {
     };
     dlg.addEventListener("close", done);
     dlg.showModal();
-    setTimeout(() => text.focus(), 0);
+    // The caret at the end of what is already there, so that opening the
+    // box and typing carries the verse on. A textarea focused without
+    // being told puts the caret at the front of its text, which turns
+    // "press l and keep writing" into words typed in front of the ones
+    // already sung.
+    setTimeout(() => {
+      text.focus();
+      text.setSelectionRange(text.value.length, text.value.length);
+      text.scrollTop = text.scrollHeight;
+    }, 0);
   });
   staff.onchange = null;
   verse.onchange = null;
@@ -11812,6 +11952,97 @@ async function afterSymbolPicture(d) {
   await openPalette();
   status(`${d.name} is ready — pick it from the palette, ` +
          "then drag a corner to size it");
+}
+
+/*
+ * A picture off the clipboard, used as a symbol.
+ *
+ * The other door needs a file: something copied out of another program has
+ * to be saved to the disk first and then chosen from a box, which is two
+ * steps that exist only because nobody wrote this one. Asked for as "so I
+ * do not have to go through an on-disc image all the time".
+ *
+ * It is not named. A picture pasted in is a picture somebody is in the
+ * middle of placing, and stopping to invent a name for it is the thing that
+ * makes the trip through the disk feel short by comparison — so the server
+ * makes a UUID and the palette shows the picture, which is what anybody
+ * actually picks it by.
+ */
+
+async function symbolFromClipboard() {
+  const picture = await clipboardPicture();
+  if (picture) {
+    await useClipboardPicture(picture);
+    return;
+  }
+  // Nothing could be read. Reading the clipboard outright is a permission
+  // the browser may refuse and the native window may not offer at all, but
+  // a paste the person asks for themselves carries the same picture — so
+  // the next one is taken as the answer to this.
+  state.pastingSymbol = true;
+  status("Press " + shortcutText("Mod+v", true) + " to paste the picture in");
+}
+
+// clipboardPicture is the picture on the clipboard, where it can be read.
+//
+// Null for every way it can fail — no such interface, permission refused,
+// nothing on the clipboard, nothing on it that is a picture — because the
+// caller does the same thing in all of them.
+async function clipboardPicture() {
+  try {
+    if (!navigator.clipboard || !navigator.clipboard.read) return null;
+    for (const item of await navigator.clipboard.read()) {
+      const type = (item.types || []).find((t) => t.startsWith("image/"));
+      if (type) return await item.getType(type);
+    }
+  } catch {
+    // Refused, or there is nothing there. Either way there is nothing to
+    // be had this way.
+  }
+  return null;
+}
+
+// pictureInPaste is the picture carried by a paste, where it carries one.
+function pictureInPaste(e) {
+  for (const item of e.clipboardData?.items || []) {
+    if (item.kind === "file" && (item.type || "").startsWith("image/")) {
+      const file = item.getAsFile();
+      if (file) return file;
+    }
+  }
+  return null;
+}
+
+// useClipboardPicture registers it and puts it in.
+//
+// Straight into the score where the cursor is standing, because this is on
+// the Insert menu and the whole of what was asked for is fewer steps: a
+// picture pasted in is a picture somebody is placing, not one they are
+// filing. Where there is nowhere to put it the palette opens instead, as it
+// does for a picture off the disk, and it can be put in from there.
+async function useClipboardPicture(blob) {
+  if (!blob.size) {
+    status("There is no picture on the clipboard");
+    return;
+  }
+  const res = await fetch("/api/symbolpicture?auto=1", {
+    method: "POST", body: await blob.arrayBuffer(),
+  });
+  if (!res.ok) {
+    status("Could not use that picture: " + (await res.text()).trim());
+    return;
+  }
+  const d = await res.json();
+  if (!d || !d.name) return;
+  await loadInfo();
+  if (!state.selection) {
+    await openPalette();
+    status("The picture is in the palette — click the bar to put it in, " +
+           "then pick it");
+    return;
+  }
+  await insertSymbol(d.name);
+  status("Pasted in — drag a corner to size it");
 }
 
 // pickArtwork asks for a picture and puts it into the score.
@@ -17830,9 +18061,9 @@ const KEY_BINDINGS = [
     label: "Beam the selected notes together — on one note, break the beam before it",
     run: () => action("beam-here") },
   { id: "stem-up", menu: "stem-up", keys: "u", group: "Marks",
-    label: "Stem up", run: () => action("stem-up") },
+    label: "Stem up, or a tie above", run: () => action("stem-up") },
   { id: "stem-down", menu: "stem-down", keys: "d", group: "Marks",
-    label: "Stem down", run: () => action("stem-down") },
+    label: "Stem down, or a tie below", run: () => action("stem-down") },
   { id: "repeat-bar", menu: "repeat-bar", keys: "r", group: "Marks",
     label: "Repeat the bar before", run: () => action("repeat-bar") },
   { id: "insert-text", menu: "insert-text", keys: "t", group: "Marks",
@@ -18707,6 +18938,55 @@ function setupKeys() {
   window.addEventListener("blur", lettingGo);
 }
 
+// setupClipboard makes the system's own copy, cut and paste reach the music.
+//
+// The three are bound as Mod+c, Mod+x and Mod+v along with everything else,
+// and in a browser that is the whole story. A native window is not a browser.
+// A web view answers those keys itself, as the editing commands they are
+// everywhere else on the system, and tells the page about them as copy, cut
+// and paste events rather than as keystrokes — so bound to the keystroke
+// alone the three commands did nothing at all in the window most people run
+// gscore in.
+//
+// Both, and never twice. A keystroke the page gets to see is stopped where it
+// is handled — see the end of setupKeys — so the editing command behind it
+// never runs and no event follows it. Exactly one of the two arrives.
+function setupClipboard() {
+  // The same two questions the keystrokes ask: words in a box are the
+  // browser's business, and a dialog has its own keys.
+  const forTheMusic = (e) =>
+    !(e.target && e.target.matches && e.target.matches("input, textarea")) &&
+    !document.querySelector("dialog[open]");
+
+  for (const [event, run] of [
+    ["copy", copySelection],
+    ["cut", cutSelection],
+    ["paste", pasteClipboard],
+  ]) {
+    document.addEventListener(event, (e) => {
+      if (!forTheMusic(e)) return;
+      // A picture, where one was asked for: Insert ▸ Symbol ▸ From the
+      // clipboard arms this when it cannot read the clipboard itself. One
+      // paste only, so the keys go back to meaning music straight after.
+      if (event === "paste" && state.pastingSymbol) {
+        state.pastingSymbol = false;
+        const picture = pictureInPaste(e);
+        if (picture) {
+          e.preventDefault();
+          void useClipboardPicture(picture);
+          return;
+        }
+        status("There is no picture on the clipboard");
+      }
+      // Nothing of ours goes on the system clipboard and nothing is read off
+      // it: what is copied is music, which gscore holds itself. Stopping the
+      // event is what keeps the web view from also copying the page.
+      e.preventDefault();
+      void run();
+    });
+  }
+}
+
 /* ---------- moving, copying and pasting ---------- */
 
 // nudge moves what is selected up or down the staff.
@@ -19295,12 +19575,18 @@ function selectionTargets() {
   const sel = state.selection;
   if (!sel) return null;
   if (sel.bar) {
-    // A whole bar: everything in it, in the order it is played.
-    const hit = state.hits.find(
-      (h) => h.part === sel.part && h.measure === sel.measure);
-    const els = hit?.elements || [];
-    if (!els.length) return null;
-    return els.map((el) => selOf(sel.part, sel.measure, el.index, el.voice)).join(",");
+    // Whole bars: everything in each, in the order it is played, bar after
+    // bar — so what is copied carries its barlines with it and comes back
+    // out as bars. See clipboard.breaks.
+    const out = [];
+    for (let i = sel.measure; i <= (sel.barTo ?? sel.measure); i++) {
+      const hit = state.hits.find((h) => h.part === sel.part && h.measure === i);
+      for (const el of hit?.elements || []) {
+        out.push(selOf(sel.part, i, el.index, el.voice));
+      }
+    }
+    if (!out.length) return null;
+    return out.join(",");
   }
   // Where the note is drawn, rather than where the caret is: after a bar
   // fills they are different bars. See selectedElement.
@@ -19408,6 +19694,7 @@ async function main() {
   setupMenus();
   setupFileInput();
   setupKeys();
+  setupClipboard();
   setupZoomGestures();
   setupRangeClicks();
   setupKeyMapClicks();
@@ -20998,6 +21285,12 @@ const MENU_DRAWINGS = {
     '<path d="M8.4 16 18 4"/><path d="M15.6 16 6 4"/>',
   copy: '<rect x="9" y="9" width="11" height="12" rx="2"/>' +
     '<path d="M15 6V5a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h1"/>',
+  // A clipboard with a picture on it: the board and its clip say where the
+  // thing is coming from, and the hill and the sun inside say what it is.
+  "symbol-paste": '<rect x="5" y="4.5" width="14" height="17" rx="2"/>' +
+    '<path d="M9.5 4.5V3.6a2.4 2.4 0 0 1 5 0v.9z" fill="currentColor"/>' +
+    '<path d="M8 17.5l3.2-4 2.3 2.6 1.6-1.8 2.1 3.2z" fill="currentColor"/>' +
+    '<circle cx="15.6" cy="9.6" r="1.5"/>',
   paste: '<path d="M9 4H7a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2h-2"/>' +
     '<rect x="9" y="2.5" width="6" height="4" rx="1"/>',
   // The key it is on, with what it does to what is under it.

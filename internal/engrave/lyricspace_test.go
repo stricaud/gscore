@@ -11,6 +11,7 @@
 package engrave
 
 import (
+	"math"
 	"strings"
 	"testing"
 
@@ -36,11 +37,16 @@ func sung(words ...string) *model.Score {
 			Dur:   model.Duration{Num: 1, Den: 8},
 		}
 		if w != "" {
-			kind := model.SyllableSingle
+			kind, held := model.SyllableSingle, false
+			if strings.HasSuffix(w, "_") {
+				w, held = strings.TrimSuffix(w, "_"), true
+			}
 			if strings.HasSuffix(w, "-") {
 				w, kind = strings.TrimSuffix(w, "-"), model.SyllableBegin
 			}
-			n.Lyrics = []model.Lyric{{Text: w, Verse: 1, Syllabic: kind}}
+			n.Lyrics = []model.Lyric{{
+				Text: w, Verse: 1, Syllabic: kind, Extend: held,
+			}}
 		}
 		els = append(els, n)
 	}
@@ -209,5 +215,145 @@ func TestAHyphenIsGivenRoomToStandIn(t *testing.T) {
 	if split.Width <= plain.Width {
 		t.Errorf("a hyphenated pair is %.2f wide and a plain one %.2f; "+
 			"the hyphen asked for no room", split.Width, plain.Width)
+	}
+}
+
+/*
+ * The line that carries a held syllable.
+ *
+ * "days; ______" in the Altes runs from the word, over the barline, across
+ * the whole of the note it is tied into, and stops where the sound stops.
+ * It used to be drawn with the word, inside that word's own column and no
+ * further, so the line was as long as a notehead's share of a bar however
+ * long the syllable was actually held. Nothing about a column knows how long
+ * a note is held, which is why this is a spanner. See extendAt.
+ */
+
+// extenders are the lines ruled under the words: horizontal, and sitting a
+// hair under a verse's own baseline.
+func extenders(lay *Layout) []Line {
+	var out []Line
+	for _, l := range lay.Lines {
+		if l.Y1 != l.Y2 {
+			continue
+		}
+		for _, t := range syllables(lay) {
+			if math.Abs(l.Y1-(t.Y+extendDrop)) < 0.01 {
+				out = append(out, l)
+				break
+			}
+		}
+	}
+	return out
+}
+
+// heldOverABarline is one syllable sung on a note that is tied into the next
+// bar, and a bar of plain notes after it to stop against.
+func heldOverABarline() *model.Score {
+	bar := func(els ...model.Element) *model.Measure {
+		return &model.Measure{Voices: []*model.Voice{{Elements: els}}}
+	}
+	whole := func() *model.Note {
+		return &model.Note{
+			Pitch: model.Pitch{Step: model.StepB, Octave: 4},
+			Dur:   model.Duration{Num: 1, Den: 1},
+		}
+	}
+	sings, held, after := whole(), whole(), whole()
+	sings.Lyrics = []model.Lyric{{
+		Text: "days;", Verse: 1, Syllabic: model.SyllableSingle, Extend: true,
+	}}
+	sings.TieStart, held.TieStop = true, true
+	after.Lyrics = []model.Lyric{{
+		Text: "Here's", Verse: 1, Syllabic: model.SyllableSingle,
+	}}
+
+	last := bar(after)
+	last.RightBarline = model.BarFinal
+	return &model.Score{
+		Tempo: model.Tempo{BPM: 120, Unit: model.Duration{Num: 1, Den: 4}},
+		Parts: []*model.Part{{
+			Clef:     model.Treble,
+			Time:     model.TimeSignature{Beats: 4, BeatValue: 4},
+			Measures: []*model.Measure{bar(sings), bar(held), last},
+		}},
+	}
+}
+
+func TestAHeldSyllableRunsAcrossTheNoteItIsHeldOn(t *testing.T) {
+	lay := Engrave(heldOverABarline(), DefaultOptions())
+
+	lines := extenders(lay)
+	if len(lines) != 1 {
+		t.Fatalf("%d lines ruled under the words, want 1", len(lines))
+	}
+	line := lines[0]
+
+	var word, next Text
+	for _, s := range syllables(lay) {
+		switch s.S {
+		case "days;":
+			word = s
+		case "Here's":
+			next = s
+		}
+	}
+	if word.S == "" || next.S == "" {
+		t.Fatal("the words are not on the page")
+	}
+
+	// Clear of the word it belongs to, at both ends.
+	if left := line.X1 - (word.X + textWidth(word.S, lyricSize)/2); left <= 0 {
+		t.Errorf("the line starts %.2f spaces inside %q", -left, word.S)
+	}
+	if right := (next.X - textWidth(next.S, lyricSize)/2) - line.X2; right <= 0 {
+		t.Errorf("the line runs %.2f spaces into %q", -right, next.S)
+	}
+
+	// And over the barline: the note is tied into the bar after it, so that
+	// is how long the singer is on this syllable.
+	if len(lay.Barlines) == 0 {
+		t.Fatal("no barlines in the layout")
+	}
+	first := lay.Barlines[0].X
+	if line.X2 <= first {
+		t.Errorf("the line stops at %.2f and the barline is at %.2f: it "+
+			"ends where the bar does rather than where the sound does",
+			line.X2, first)
+	}
+}
+
+// And stops where the sound stops, not where the next word starts. The
+// syllable is held for as long as it is sung and no longer.
+func TestAHeldSyllableStopsWhereTheSoundStops(t *testing.T) {
+	lay := Engrave(heldOverABarline(), DefaultOptions())
+	lines := extenders(lay)
+	if len(lines) != 1 {
+		t.Fatalf("%d lines ruled under the words, want 1", len(lines))
+	}
+	if len(lay.Barlines) < 2 {
+		t.Fatalf("%d barlines, want the two between three bars", len(lay.Barlines))
+	}
+	// The tie ends with the second bar, so the line does too.
+	if second := lay.Barlines[1].X; lines[0].X2 > second {
+		t.Errorf("the line runs to %.2f, past the end of the sound at %.2f",
+			lines[0].X2, second)
+	}
+}
+
+// A syllable held on a note of its own has only that note's column to run
+// in, so the column has to be given room for it. Without it the line came
+// out shorter than it was worth drawing and the hold vanished off the page
+// — which is what happened to every extender in the MusicXML suite.
+func TestAHeldSyllableIsGivenRoomToRunIn(t *testing.T) {
+	plain := Engrave(sung("dusk", "y"), DefaultOptions())
+	held := Engrave(sung("dusk_", "y"), DefaultOptions())
+	if held.Width <= plain.Width {
+		t.Errorf("a held syllable is %.2f wide and a plain one %.2f; "+
+			"the line asked for no room", held.Width, plain.Width)
+	}
+	if len(extenders(held)) != 1 {
+		t.Errorf("%d lines ruled under a held syllable, want 1",
+			len(extenders(held)))
 	}
 }

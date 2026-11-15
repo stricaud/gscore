@@ -3239,17 +3239,9 @@ func (a *App) handleLyrics(w http.ResponseWriter, r *http.Request) {
 	bars := singableBars(p)
 	sung := flatten(bars)
 
-	// Every note of this verse starts clear, so retyping the words replaces
+	// The staff starts clear of this verse, so retyping the words replaces
 	// them rather than leaving the tail of a longer version behind.
-	for _, mk := range sung {
-		out := mk.Lyrics[:0]
-		for _, ly := range mk.Lyrics {
-			if ly.Verse != verse {
-				out = append(out, ly)
-			}
-		}
-		mk.Lyrics = out
-	}
+	clearVerse(p, verse)
 
 	// Where the next syllable goes: a bar, and how far into it. A bar is
 	// left behind when it is used up, and a bar with nothing to sing on is
@@ -3350,6 +3342,36 @@ func singableNotes(p *model.Part) []*model.Marks {
 	return flatten(singableBars(p))
 }
 
+// clearVerse takes a verse off a staff, everywhere on it.
+//
+// Words are only ever written on the notes a syllable can be sung on, but they
+// are taken off everything: a rest, the far side of a tie, a second voice. A
+// verse written by an older release, or by a file from another program, can
+// have left one somewhere this one would not put it, and a syllable nothing
+// clears is a syllable nothing can remove — it is not in the box when the
+// verse is read back, so retyping the words leaves it behind on the page.
+// Reported as a held-note line that stayed after the _ that drew it was taken
+// out of the words.
+func clearVerse(p *model.Part, verse int) {
+	for _, m := range p.Measures {
+		for _, v := range m.Voices {
+			for _, el := range v.Elements {
+				mk := marksOfElement(el)
+				if mk == nil || len(mk.Lyrics) == 0 {
+					continue
+				}
+				out := mk.Lyrics[:0]
+				for _, ly := range mk.Lyrics {
+					if ly.Verse != verse {
+						out = append(out, ly)
+					}
+				}
+				mk.Lyrics = out
+			}
+		}
+	}
+}
+
 // lyricPiece is one thing a typed verse is made of: a syllable to sing, or a
 // run of bars to leave alone.
 type lyricPiece struct {
@@ -3401,31 +3423,42 @@ func splitLyrics(text string) []lyricPiece {
 func syllablesOf(text string) []lyricPiece {
 	var out []model.Lyric
 	for _, word := range strings.Fields(text) {
-		if word == "_" {
-			// Held over: the syllable before it keeps sounding.
+		if strings.Trim(word, "_") == "" {
+			// A _ of its own: the syllable before it is held, and held over
+			// a note of its own — the next one, which gets no word. That is
+			// a melisma, one syllable sung over several separate notes.
 			if len(out) > 0 {
 				out[len(out)-1].Extend = true
 			}
 			out = append(out, model.Lyric{Syllabic: model.SyllableSingle, Extend: true})
 			continue
 		}
-		parts := strings.Split(word, "-")
-		if len(parts) == 1 {
+		// A _ written onto the end of a word holds that word where it is,
+		// over the note it is already on and whatever that note is tied to.
+		// It takes no note of its own: "days;_" is sung on one note, held.
+		held := strings.HasSuffix(word, "_")
+		word = strings.TrimRight(word, "_")
+		was := len(out)
+		if parts := strings.Split(word, "-"); len(parts) == 1 {
 			out = append(out, model.Lyric{Text: word, Syllabic: model.SyllableSingle})
-			continue
+		} else {
+			for i, piece := range parts {
+				if piece == "" {
+					continue // "Glo--ri" is a typo, not an empty syllable
+				}
+				kind := model.SyllableMiddle
+				switch i {
+				case 0:
+					kind = model.SyllableBegin
+				case len(parts) - 1:
+					kind = model.SyllableEnd
+				}
+				out = append(out, model.Lyric{Text: piece, Syllabic: kind})
+			}
 		}
-		for i, piece := range parts {
-			if piece == "" {
-				continue // "Glo--ri" is a typo, not an empty syllable
-			}
-			kind := model.SyllableMiddle
-			switch i {
-			case 0:
-				kind = model.SyllableBegin
-			case len(parts) - 1:
-				kind = model.SyllableEnd
-			}
-			out = append(out, model.Lyric{Text: piece, Syllabic: kind})
+		// The last syllable of the word is the one that is held.
+		if held && len(out) > was {
+			out[len(out)-1].Extend = true
 		}
 	}
 	pieces := make([]lyricPiece, len(out))
@@ -3454,42 +3487,63 @@ func (a *App) handleGetLyrics(w http.ResponseWriter, r *http.Request) {
 	p := a.score.Parts[partIdx]
 
 	bars := singableBars(p)
-	var b strings.Builder
+
+	// The verse in reading order first, with the bar each syllable sings in.
+	// In a list rather than written as it is walked, because writing a
+	// syllable needs the one after it: see the hold below.
+	type sungAt struct {
+		bar int
+		ly  model.Lyric
+	}
+	var words []sungAt
 	verses := 0
-	// The bar the last syllable went in, so the bars jumped over on the way
-	// to this one can be written back as the marker that would jump them.
-	// Without this a verse that starts after an introduction would come back
-	// with nothing to say so, and saving it again would drag the whole verse
-	// to bar 1.
-	last := -1
 	for bi, bar := range bars {
 		for _, mk := range bar {
 			for _, ly := range mk.Lyrics {
 				if ly.Verse > verses {
 					verses = ly.Verse
 				}
-				if ly.Verse != verse {
-					continue
-				}
-				if gap := barsJumped(bars, last, bi); gap > 0 {
-					if b.Len() > 0 {
-						b.WriteByte(' ')
-					}
-					fmt.Fprintf(&b, "<%d>", gap)
-				}
-				last = bi
-				if ly.Text == "" {
-					b.WriteString(" _")
-					continue
-				}
-				if b.Len() > 0 && !endsHyphenated(b.String()) {
-					b.WriteByte(' ')
-				}
-				b.WriteString(ly.Text)
-				if ly.NeedsHyphen() {
-					b.WriteByte('-')
+				if ly.Verse == verse {
+					words = append(words, sungAt{bi, ly})
 				}
 			}
+		}
+	}
+
+	var b strings.Builder
+	// The bar the last syllable went in, so the bars jumped over on the way
+	// to this one can be written back as the marker that would jump them.
+	// Without this a verse that starts after an introduction would come back
+	// with nothing to say so, and saving it again would drag the whole verse
+	// to bar 1.
+	last := -1
+	for i, w := range words {
+		ly := w.ly
+		if gap := barsJumped(bars, last, w.bar); gap > 0 {
+			if b.Len() > 0 {
+				b.WriteByte(' ')
+			}
+			fmt.Fprintf(&b, "<%d>", gap)
+		}
+		last = w.bar
+		if ly.Text == "" {
+			b.WriteString(" _")
+			continue
+		}
+		if b.Len() > 0 && !endsHyphenated(b.String()) {
+			b.WriteByte(' ')
+		}
+		b.WriteString(ly.Text)
+		if ly.NeedsHyphen() {
+			b.WriteByte('-')
+		}
+		// Held on the note it is sung on, written onto the end of the word
+		// it holds. Unless the hold is already said by a _ standing on the
+		// next note: that _ holds this word over that note, and writing one
+		// here as well would be the same thing said twice — and typed back
+		// in, it would be two holds where one was meant.
+		if ly.Extend && (i+1 >= len(words) || words[i+1].ly.Text != "") {
+			b.WriteByte('_')
 		}
 	}
 	writeJSON(w, map[string]any{

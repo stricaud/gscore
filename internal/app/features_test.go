@@ -771,6 +771,191 @@ func TestABarOfRestsNeedsNoMarker(t *testing.T) {
 	}
 }
 
+/*
+ * Retyping a verse replaces every bit of it that is on the staff.
+ *
+ * Reported from the page: a _ in the words draws the long line that carries a
+ * held syllable over the notes it is held across, and taking the _ back out
+ * of the words left the line exactly where it was. The syllable it belongs to
+ * had come to rest somewhere a syllable is never handed out to — the far side
+ * of a tie — so nothing cleared it, and because the verse is read back off
+ * the notes it can be written on, nothing showed it either: the box came back
+ * without it and there was no way to type it away.
+ *
+ * Words go only where they can be sung. They come off everywhere.
+ */
+
+// strand puts a syllable of a verse somewhere the words are never handed out
+// to, the way an older release or an imported file can leave one.
+func strand(mk *model.Marks, verse int) {
+	mk.Lyrics = append(mk.Lyrics, model.Lyric{Verse: verse, Extend: true})
+}
+
+func TestRetypingAVerseClearsItFromTheWholeStaff(t *testing.T) {
+	h := newHarness(t)
+	h.note(0, 0, 4, "half")
+	h.note(0, 0, 4, "half")
+	h.post("/api/insert?part=0&measure=1&at=-1&step=4&dur=whole&kind=rest")
+	h.note(0, 2, 4, "whole")
+	h.post("/api/lyrics?part=0&verse=1&text=" + url.QueryEscape("days; _ Here's"))
+
+	p := h.app.score.Parts[0]
+
+	// The far side of a tie: one sound, so the pair takes one syllable and
+	// the second half of it is not a note anybody writes on.
+	first := p.Measures[0].Voices[0].Elements[0].(*model.Note)
+	second := p.Measures[0].Voices[0].Elements[1].(*model.Note)
+	first.TieStart, second.TieStop = true, true
+	strand(&second.Marks, 1)
+
+	// A rest, which nobody sings on.
+	strand(marksOfElement(p.Measures[1].Voices[0].Elements[0]), 1)
+
+	// And a voice under the one that sings.
+	under := &model.Note{
+		Pitch: model.Pitch{Step: model.StepG, Octave: 3},
+		Dur:   model.Duration{Num: 1, Den: 1},
+	}
+	strand(&under.Marks, 1)
+	p.Measures[2].Voices = append(p.Measures[2].Voices,
+		&model.Voice{Elements: []model.Element{under}})
+
+	// The same verse again, with no _ in it this time.
+	h.post("/api/lyrics?part=0&verse=1&text=" + url.QueryEscape("days; Here's"))
+
+	for mi, m := range p.Measures {
+		for vi, v := range m.Voices {
+			for _, el := range v.Elements {
+				mk := marksOfElement(el)
+				if mk == nil {
+					continue
+				}
+				for _, ly := range mk.Lyrics {
+					if ly.Verse == 1 && ly.Text == "" {
+						t.Errorf("bar %d voice %d still carries a held-note "+
+							"line the words no longer ask for", mi+1, vi+1)
+					}
+				}
+			}
+		}
+	}
+}
+
+// A verse of its own is nobody else's business: clearing one leaves the
+// others on the staff, wherever they sit.
+func TestClearingAVerseLeavesTheOtherVersesAlone(t *testing.T) {
+	h := newHarness(t)
+	h.note(0, 0, 4, "whole")
+	h.post("/api/lyrics?part=0&verse=1&text=one")
+	h.post("/api/lyrics?part=0&verse=2&text=two")
+
+	rest := &model.Rest{Dur: model.Duration{Num: 1, Den: 1}}
+	strand(&rest.Marks, 2)
+	p := h.app.score.Parts[0]
+	p.Measures[0].Voices[0].Elements = append(p.Measures[0].Voices[0].Elements, rest)
+
+	h.post("/api/lyrics?part=0&verse=1&text=ONE")
+
+	if got := syllablesUnder(h, 1); got[0] != "ONE" {
+		t.Errorf("verse 1 sings %q, want ONE", got)
+	}
+	if got := syllablesUnder(h, 2); got[0] != "two" {
+		t.Errorf("verse 2 sings %q, want two", got)
+	}
+	if len(rest.Lyrics) != 1 {
+		t.Errorf("verse 1 took verse 2's syllable off the rest with it")
+	}
+}
+
+/*
+ * Holding a syllable: the _ and where it is written.
+ *
+ * Written onto the end of a word it holds that word where it already is —
+ * over its own note and whatever that note is tied to — and takes no note of
+ * its own. "days;_" is sung on one note, held for as long as it lasts.
+ *
+ * Standing on its own it is the other thing: a note with no word on it that
+ * the syllable before carries on over. That is a melisma, one syllable sung
+ * across several separate notes, and it needs a note of its own to say which
+ * ones they are.
+ */
+
+// lyricsOn is every syllable of a verse with how it is marked, note by note.
+func lyricsOn(h *harness, verse int) []model.Lyric {
+	var out []model.Lyric
+	for _, mk := range singableNotes(h.app.score.Parts[0]) {
+		for _, ly := range mk.Lyrics {
+			if ly.Verse == verse {
+				out = append(out, ly)
+			}
+		}
+	}
+	return out
+}
+
+func TestAWordIsHeldWhereItIs(t *testing.T) {
+	h := newHarness(t)
+	for i := 0; i < 3; i++ {
+		h.note(0, 0, 4, "quarter")
+	}
+	h.post("/api/lyrics?part=0&verse=1&text=" + url.QueryEscape("one two_ three"))
+
+	got := lyricsOn(h, 1)
+	if len(got) != 3 {
+		t.Fatalf("%d syllables written, want the three that were typed", len(got))
+	}
+	for i, want := range []string{"one", "two", "three"} {
+		if got[i].Text != want {
+			t.Fatalf("sang %q where %q was typed", got[i].Text, want)
+		}
+	}
+	if !got[1].Extend {
+		t.Error(`"two_" is not held`)
+	}
+	if got[0].Extend || got[2].Extend {
+		t.Error("the _ was taken as holding a word it was not written on")
+	}
+}
+
+// A _ of its own still takes a note, because that note is what it is for.
+func TestALoneUnderscoreTakesANoteOfItsOwn(t *testing.T) {
+	h := newHarness(t)
+	for i := 0; i < 3; i++ {
+		h.note(0, 0, 4, "quarter")
+	}
+	h.post("/api/lyrics?part=0&verse=1&text=" + url.QueryEscape("one _ three"))
+
+	got := lyricsOn(h, 1)
+	if len(got) != 3 || got[1].Text != "" || !got[1].Extend {
+		t.Fatalf("wrote %+v, want one, a wordless held note, three", got)
+	}
+	if !got[0].Extend {
+		t.Error(`the _ did not hold "one" over the note it took`)
+	}
+}
+
+// Both kinds come back as they were typed.
+func TestHoldingAWordComesBackAsItWasTyped(t *testing.T) {
+	h := newHarness(t)
+	for i := 0; i < 4; i++ {
+		h.note(0, 0, 4, "quarter")
+	}
+	for _, want := range []string{
+		"days;_ Here's their new",
+		"days; _ Here's their",
+		"cre-a-tion_ now",
+	} {
+		h.post("/api/lyrics?part=0&verse=1&text=" + url.QueryEscape(want))
+		var got struct{ Text string }
+		if err := json.Unmarshal([]byte(h.get("/api/getlyrics?part=0&verse=1")), &got); err != nil {
+			t.Fatal(err)
+		}
+		if got.Text != want {
+			t.Errorf("typed %q and got %q back", want, got.Text)
+		}
+	}
+}
+
 // Words that land past the end say so rather than disappearing.
 func TestWordsPastTheEndOfTheStaffSaySo(t *testing.T) {
 	h := newHarness(t)

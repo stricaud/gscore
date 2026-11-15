@@ -431,6 +431,10 @@ func (e *engraver) drawMeasure(part *model.Part, b measureBox, x, end float64, s
 			e.drawDynamic(m, p, b.index)
 			e.spanAt(m, p, b.index)
 			e.slurAt(part, m, p, b.index)
+			// Before the words: the line a syllable before this one is
+			// still being held on ends where this element's own word
+			// begins, so it has to be settled first.
+			e.extendAt(m, p)
 			e.drawLyrics(m, p, items[i+1:])
 			e.drawTexts(m, p, b.index)
 			// How the note is played: a bend, a mute, a harmonic. The
@@ -2689,7 +2693,10 @@ func (e *engraver) drawTexts(m *model.Marks, p *placed, measure int) {
 //
 // The syllable is centred on the notehead it is sung on, and a word broken
 // across notes carries a hyphen to the next one — without it "Glo-ri-a" reads
-// as three words. A held syllable draws the line that says to keep singing it.
+// as three words. The line that says to keep singing a held syllable is not
+// here: it runs for as long as the sound does, which is over the barline and
+// off the end of a system as readily as not, so it is a spanner. See
+// extendAt.
 //
 // after is the rest of the bar, so a hyphen can be put in the gap between two
 // words rather than at a guess from the column's width. See hyphenAt.
@@ -2703,7 +2710,7 @@ func (e *engraver) drawLyrics(m *model.Marks, p *placed, after []*placed) {
 		if verse < 1 {
 			verse = 1
 		}
-		y := e.y + e.staffH() + lyricDrop + float64(verse-1)*lyricLine
+		y := e.lyricY(verse)
 		if ly.Text != "" {
 			e.lay.Texts = append(e.lay.Texts, Text{
 				S: ly.Text, X: x, Y: y, Size: lyricSize, Anchor: "middle",
@@ -2716,14 +2723,104 @@ func (e *engraver) drawLyrics(m *model.Marks, p *placed, after []*placed) {
 				Size: lyricSize, Anchor: "middle",
 			})
 		}
-		if ly.Extend && p.width > 1 {
-			e.lay.Lines = append(e.lay.Lines, Line{
-				X1: x + float64(len(ly.Text))*lyricSize*0.3, Y1: y + 0.25,
-				X2: x + p.width*0.9, Y2: y + 0.25,
-				Thickness: e.opt.Defaults.StaffLineThickness,
-			})
+	}
+}
+
+// lyricY is the baseline a verse is written on.
+func (e *engraver) lyricY(verse int) float64 {
+	return e.y + e.staffH() + lyricDrop + float64(verse-1)*lyricLine
+}
+
+/*
+ * The line that carries a held syllable.
+ *
+ * It says keep singing this one, and it runs for exactly as long as the
+ * singer is on it: to the end of the sound, over a tie and over the barline
+ * the tie crosses, stopping where the note stops. "days; ______" in the
+ * Altes runs from the word across the whole bar the note is tied into and
+ * ends before the rest.
+ *
+ * Which is why it is a spanner and not something drawn with the word. It was
+ * drawn with the word, inside its own column and no further, so a syllable
+ * held over a tied whole note got a line as long as a whole note's column
+ * and the rest of the sound carried nothing. Nothing about a column knows
+ * how long a note is held.
+ */
+
+// extendAt carries the line that holds a syllable: it closes the ones that
+// have run out and opens one for every syllable written as held.
+//
+// Called on every element with marks, rests included, because what ends the
+// line is the next thing to be sung or not sung — the line stops at the end
+// of the sound whatever comes after it.
+func (e *engraver) extendAt(m *model.Marks, p *placed) {
+	open := e.staffSpans(e.partIndex, p.voice)
+	x := p.x + noteheadWidth(p.value)/2
+	// The far edge of this column, which is where the sound in it ends.
+	right := p.x + p.width
+
+	// What is already running either goes on through this element or stops
+	// at it. It goes on when this is the rest of the same sound: a note tied
+	// back to the one the syllable was sung on. Anything else — another
+	// note, a rest, the end of the music — is the sound finishing.
+	for _, verse := range sortedVerses(open.extends) {
+		ex := open.extends[verse]
+		if ex.holding && m.TieStop {
+			ex.holding = m.TieStart
+			ex.limit = right
+			continue
+		}
+		e.drawExtender(ex, math.Min(ex.limit, e.lyricLeft(m, x, verse)-extendAir))
+		delete(open.extends, verse)
+	}
+
+	for _, ly := range m.Lyrics {
+		if !ly.Extend {
+			continue
+		}
+		verse := ly.Verse
+		if verse < 1 {
+			verse = 1
+		}
+		y := e.lyricY(verse) + extendDrop
+		if open.extends == nil {
+			open.extends = map[int]*openSpan{}
+		}
+		open.extends[verse] = &openSpan{
+			x:       x + textWidth(ly.Text, lyricSize)/2 + extendAir,
+			y:       y,
+			rel:     y - e.y,
+			holding: m.TieStart,
+			limit:   right,
 		}
 	}
+}
+
+// lyricLeft is the left edge of what an element has written under it in a
+// verse, which is where a line running towards it has to stop. A note with
+// no word of its own stops the line at its notehead.
+func (e *engraver) lyricLeft(m *model.Marks, x float64, verse int) float64 {
+	for _, ly := range m.Lyrics {
+		at := ly.Verse
+		if at < 1 {
+			at = 1
+		}
+		if at == verse && ly.Text != "" {
+			return x - textWidth(ly.Text, lyricSize)/2
+		}
+	}
+	return x
+}
+
+// drawExtender rules the line, if there is a line's worth of room for it.
+func (e *engraver) drawExtender(ex *openSpan, to float64) {
+	if to-ex.x < extendLeast {
+		return
+	}
+	e.lay.Lines = append(e.lay.Lines, Line{
+		X1: ex.x, Y1: ex.y, X2: to, Y2: ex.y,
+		Thickness: e.opt.Defaults.StaffLineThickness,
+	})
 }
 
 // hyphenAt is where the hyphen between two halves of a word goes: the middle

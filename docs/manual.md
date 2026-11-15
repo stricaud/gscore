@@ -277,13 +277,39 @@ two notes of the second. Three pieces of punctuation do the work:
 | | |
 |---|---|
 | `-` | breaks a word across notes — `dusk-y` |
-| `_` | holds the syllable before it over another note — `A-men_ _` |
+| `_` | holds a syllable — see below |
 | `<>`, `<4>` | leave bars alone — see below |
 
 Reopening the dialog brings the verse back **as you typed it**, so you correct
 a verse rather than writing it again. Set the verse number to 2 and type again
 for a second verse; it stacks underneath. Applying replaces that verse
-outright, so you never find the tail of a longer version left behind.
+outright, so you never find the tail of a longer version left behind — on the
+whole staff, not only on the notes a syllable can land on.
+
+#### Holding a syllable
+
+Write `_` onto the end of a word and the word is held where it already is,
+with the long line that tells the singer to stay on it. The line runs for as
+long as the sound does — over a tie, and over the barline the tie crosses —
+and stops where the note stops:
+
+```
+Dance at night and sleep a-way the days;_ Here's their new cre-a-tion,
+```
+
+<figure class="shot">
+<img src="images/lyrics-held.png" alt="Four bars. The word &ldquo;days;&rdquo;
+sits under a whole note tied across the barline into a dotted half, and a long
+line runs from the word across the tied note, stopping before the rest that
+follows.">
+<figcaption><b><code>days;_</code>.</b> One syllable on one note, held: the
+line runs from the word to the end of the sound and no further.</figcaption>
+</figure>
+
+A `_` standing **on its own** is the other thing. It takes a note of its own —
+one with no word on it — and carries the syllable before it over that note as
+well. That is a melisma, one syllable sung across several separate notes, and
+the lone `_` is how you say which ones: `A-men_ _ _` is three notes on `men`.
 
 #### Bars nobody sings in
 

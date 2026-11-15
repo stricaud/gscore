@@ -905,6 +905,23 @@ const (
 	hyphenAir = 0.3
 	// lyricSize is the type size words are set at, in staff spaces.
 	lyricSize = 1.75
+	// extendDrop is how far under a verse's baseline the line of a held
+	// syllable is ruled, extendAir the room left between that line and the
+	// words at either end of it, and extendLeast the shortest one worth
+	// drawing — under that it reads as a mark on the word rather than as a
+	// line running away from it.
+	extendDrop  = 0.25
+	extendAir   = 0.4
+	extendLeast = 1.0
+	// extendRoom is what a column asks for in the spacing when the syllable
+	// in it is held there and nowhere else. A little more than extendLeast,
+	// so that a system squeezed for width still has a line somebody can see
+	// rather than one that falls under the length worth drawing and is lost.
+	//
+	// Asked for only where the note is not tied onward: a syllable held over
+	// a tie has the whole of the sound to run through and wants nothing of
+	// its own column.
+	extendRoom = 1.4
 )
 
 // clefPitchOffset converts a pitch's diatonic index into a staff step, where
@@ -1339,6 +1356,11 @@ type openSpans struct {
 	// sounding — so one curve for the chord would be one curve short for
 	// every note but the first.
 	ties map[int]*openSpan
+	// extends are the lines running out from a held syllable, keyed by the
+	// verse each one belongs to. One per verse, because the verses are
+	// separate lines of words and the same note can hold a syllable of one
+	// while another is still handing them out.
+	extends map[int]*openSpan
 }
 
 // openSpan is a spanner that has started and not yet finished.
@@ -1422,6 +1444,16 @@ type openSpan struct {
 	// without this the continuation was drawn from the height the curve left
 	// the previous system at, which is one stroke down the length of the page.
 	rel float64
+
+	// holding says the sound a held syllable is sung on has not finished:
+	// the note it was sung on is tied onward, so the line keeps running.
+	// Cleared when the chain of ties ends, and then the line stops at the
+	// end of the sound rather than at whatever comes next.
+	holding bool
+	// limit is where that sound ends, which is the right-hand edge of the
+	// last column it occupies. The line never runs past it — a syllable is
+	// held for as long as it is sung and not until the next one begins.
+	limit float64
 }
 
 // slot is one element's horizontal allocation within a measure.
@@ -3179,6 +3211,13 @@ func (e *engraver) measureBox(p *model.Part, m *model.Measure, index int) measur
 			if hyphenAfter(*col) {
 				gap = math.Max(gap, textWidth("-", lyricSize)+2*hyphenAir)
 			}
+			// And a syllable held on a note of its own has a line to run,
+			// which needs somewhere to run in. Without the room the line
+			// came out shorter than it was worth drawing and the hold
+			// vanished off the page.
+			if heldHere(*col) {
+				gap = math.Max(gap, extendRoom+2*extendAir)
+			}
 			need := (words[i]+next)/2 + gap
 			col.width = math.Max(col.width, need)
 			least = math.Max(least, need)
@@ -4583,6 +4622,23 @@ func hyphenAfter(col slot) bool {
 		}
 		for _, ly := range mk.Lyrics {
 			if ly.NeedsHyphen() {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// heldHere says a column holds a syllable whose line has only this column to
+// run in: it is held, and the note is not tied onward into the next one.
+func heldHere(col slot) bool {
+	for _, v := range col.elems {
+		mk := marksOfElement(v.el)
+		if mk == nil || mk.TieStart {
+			continue
+		}
+		for _, ly := range mk.Lyrics {
+			if ly.Extend {
 				return true
 			}
 		}

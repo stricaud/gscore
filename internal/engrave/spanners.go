@@ -87,6 +87,11 @@ func (e *engraver) carriedCurves() bool {
 				return true
 			}
 		}
+		for _, ex := range open.extends {
+			if ex.x < 0 {
+				return true
+			}
+		}
 	}
 	return false
 }
@@ -325,6 +330,30 @@ func (e *engraver) breakSpansOf(open *openSpans, right float64) {
 		e.drawTieOrSlur(t, right, t.y, tieLift, false, false)
 		t.x = -1
 	}
+	// A held syllable's line runs to the margin only if the sound it belongs
+	// to carries on past it. Where the sound finished on this system the
+	// line finished with it, and there is nothing to pick up again.
+	for _, verse := range sortedVerses(open.extends) {
+		ex := open.extends[verse]
+		if ex.holding {
+			e.drawExtender(ex, right)
+			ex.x = -1
+			continue
+		}
+		e.drawExtender(ex, math.Min(right, ex.limit))
+		delete(open.extends, verse)
+	}
+}
+
+// sortedVerses lists the verses holding a syllable, top line of words first.
+// In order because this draws: see breakSpans.
+func sortedVerses(ex map[int]*openSpan) []int {
+	out := make([]int, 0, len(ex))
+	for verse := range ex {
+		out = append(out, verse)
+	}
+	sort.Ints(out)
+	return out
 }
 
 // sortedSteps lists a tie map's noteheads from the bottom of the staff up.
@@ -372,6 +401,16 @@ func (e *engraver) resumeSpansOf(open *openSpans, left float64) {
 		if t.x < 0 {
 			t.x = left
 			t.y = e.y + t.rel
+		}
+	}
+	for _, ex := range open.extends {
+		if ex.x < 0 {
+			ex.x = left
+			ex.y = e.y + ex.rel
+			// Where the sound ends is not known again until the next note
+			// of it is placed on this system, and until then nothing may
+			// cut the line short.
+			ex.limit = math.Inf(1)
 		}
 	}
 }

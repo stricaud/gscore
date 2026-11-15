@@ -157,9 +157,10 @@ back.
   like and what counts as out of range.
 - **Lyrics…** (<kbd>l</kbd>) — type the verse the way you would write it:
   `Folks in dusk-y "Hah-lum", Nev-er sad nor sol-emn,`. Syllables are handed
-  to the notes in order, hyphens break a word across notes, and `<4>` leaves
-  four bars with no words in them. Rests are passed over without being asked,
-  so a voice that rests through an introduction needs nothing.
+  to the notes in order, hyphens break a word across notes, `days;_` holds a
+  syllable for as long as its note sounds, and `<4>` leaves four bars with no
+  words in them. Rests are passed over without being asked, so a voice that
+  rests through an introduction needs nothing.
 - **Write as tablature…** — turn a staff into tab. **Chord builder…** gives
   you a fretboard to click fingerings onto.
 - **Show fingering** (<kbd>F2</kbd>) — for flute, see below.

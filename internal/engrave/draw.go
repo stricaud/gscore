@@ -514,7 +514,16 @@ func (e *engraver) drawMeasure(part *model.Part, b measureBox, x, end float64, s
 				steps = append(steps, e.noteStep(p.clef, n))
 				alters = append(alters, n.Pitch.Alter)
 			}
-		case p.rest == nil:
+		case p.rest != nil:
+			// Where the rest actually is. It used to be recorded at the
+			// middle of the staff whatever was drawn, which was the same
+			// place until rests began moving out of each other's way — and
+			// then a rest the engraver had put above the staff could not be
+			// clicked at all, the place that answered for it being four
+			// spaces below the ink. See restClear.
+			y = e.y + stepY(restBaseStep(p)+float64(p.restShift+p.rest.Lift))
+			y2 = y
+		default:
 			kind = "symbol"
 		}
 		// Against the bar's real length, which is the model's one answer to

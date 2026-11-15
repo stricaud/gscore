@@ -2913,3 +2913,33 @@ func TestNudgingARunLeavesItsRestsAlone(t *testing.T) {
 		t.Errorf("the rest in the middle of the run moved by %d", lift)
 	}
 }
+
+// A rest is deleted by picking it, whichever voice it is in.
+//
+// Reported from a score with a stray whole rest left in the first voice of a
+// bar whose music is in the second: "it must be by just clicking regardless
+// of the voice and hitting backspace". What the click picks is what the
+// delete takes — the voice comes with the selection rather than from
+// whichever line of music was last being written.
+func TestARestIsDeletedFromWhicheverVoiceItIsIn(t *testing.T) {
+	h := newHarness(t)
+	// The music in the second voice, a stray rest in the first.
+	h.post("/api/insert?part=0&measure=0&at=-1&step=4&dur=whole&kind=rest")
+	h.post("/api/insert?part=0&measure=0&at=-1&voice=1&step=0&dur=whole&kind=note")
+
+	h.post("/api/delete?sel=0:0:0/0")
+
+	m := h.app.score.Parts[0].Measures[0]
+	for _, el := range m.Voices[0].Elements {
+		if _, ok := el.(*model.Rest); ok {
+			t.Error("the rest is still in the first voice")
+		}
+	}
+	if len(m.Voices) < 2 || len(m.Voices[1].Elements) != 1 {
+		t.Fatalf("the second voice came out with %d elements",
+			len(m.Voices[1].Elements))
+	}
+	if _, ok := m.Voices[1].Elements[0].(*model.Note); !ok {
+		t.Error("deleting the first voice's rest took the second voice's note")
+	}
+}

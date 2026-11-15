@@ -165,3 +165,39 @@ func TestARestGoesWhereItHasBeenPut(t *testing.T) {
 			"at %.2f)", now, want, was)
 	}
 }
+
+// And the place a click lands on moves with it.
+//
+// Where a rest can be picked is recorded in the layout, for the editor to
+// look up. It was recorded at the middle of the staff whatever was drawn,
+// which was the same place while rests never moved — and then a rest the
+// engraver had put above the staff could not be clicked at all, because the
+// place that answered for it was four spaces below the ink. Reported as a
+// stray rest that could not be deleted.
+func TestARestIsClickableWhereItIsDrawn(t *testing.T) {
+	score := twoVoices(
+		[]model.Element{restTestRest(), restTestNote(model.StepG, 5),
+			restTestNote(model.StepG, 5), restTestNote(model.StepG, 5)},
+		[]model.Element{restTestNote(model.StepD, 4), restTestNote(model.StepD, 4),
+			restTestNote(model.StepD, 4), restTestNote(model.StepD, 4)},
+	)
+	lay := Engrave(score, DefaultOptions())
+
+	rests := restsDrawn(lay)
+	if len(rests) != 1 {
+		t.Fatalf("%d rests drawn, want the one", len(rests))
+	}
+	var found *ElementPos
+	for i, el := range lay.Hits[0].Elements {
+		if el.Kind == "rest" {
+			found = &lay.Hits[0].Elements[i]
+		}
+	}
+	if found == nil {
+		t.Fatal("the layout says there is nothing to click where the rest is")
+	}
+	if found.Y != rests[0].Y {
+		t.Errorf("the rest is drawn at %.2f and answers to a click at %.2f",
+			rests[0].Y, found.Y)
+	}
+}

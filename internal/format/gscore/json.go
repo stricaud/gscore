@@ -195,6 +195,10 @@ type cursorDoc struct {
 	Measure int `json:"measure"`
 	At      int `json:"at"`
 	Step    int `json:"step"`
+	// Which line of the staff, counted from zero. Left out where it is the
+	// first, which is what every file written before voices were reached
+	// already meant.
+	Voice int `json:"voice,omitempty"`
 }
 
 type groupDoc struct {
@@ -998,6 +1002,7 @@ func decodeScore(doc *scoreDoc) (*model.Score, error) {
 	if c := doc.Cursor; c != nil {
 		s.Cursor = &model.Cursor{
 			Part: c.Part, Measure: c.Measure, At: c.At, Step: c.Step,
+			Voice: c.Voice,
 		}
 	}
 	s.Cover, s.Stamp = artFromDoc(doc.Cover), artFromDoc(doc.Stamp)
@@ -1439,7 +1444,10 @@ func cursorToDoc(c *model.Cursor) *cursorDoc {
 	if c == nil {
 		return nil
 	}
-	return &cursorDoc{Part: c.Part, Measure: c.Measure, At: c.At, Step: c.Step}
+	return &cursorDoc{
+		Part: c.Part, Measure: c.Measure, At: c.At, Step: c.Step,
+		Voice: c.Voice,
+	}
 }
 
 // spanDoc is one run of a header field, as it is written to a file.

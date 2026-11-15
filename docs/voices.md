@@ -126,8 +126,13 @@ the third thing in the second voice of bar 4 — and the commands that take a
 plain cursor position instead were reading the first voice whatever they were
 told. A score that writes its music in a second voice with the first left
 empty brought it out: symbols, dynamics, ties, clefs, transposition,
-tuplets, grace notes, tremolos, rests and how long a bar lasts were all
-answered about the wrong line. Every one of them is tested now.</p>
+tuplets, grace notes, tremolos, rests, words written beside a note, the
+size of a placed symbol, frets, and how long a bar lasts were all answered
+about the wrong line. The remembered cursor carries its voice too, so a
+score written that way opens with the pen on the line the music is on
+rather than on the empty one above it. Every one of them is tested now,
+and a test reads the routes out of the source so that a new one cannot
+quietly join them.</p>
 
 ## What carries it
 

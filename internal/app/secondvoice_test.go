@@ -106,6 +106,81 @@ func TestAMarkGoesOnTheLineItWasAimedAt(t *testing.T) {
 	}
 }
 
+// Words written beside a note go beside that note.
+//
+// A staff whose music is written in the second voice with the first left
+// empty refused every text outright — "the bar is empty" — because the
+// words were aimed at the first line, which has nothing in it to write
+// them beside. Typing CHORUS over a chorus did nothing at all.
+func TestWordsGoBesideTheNoteTheyWereAimedAt(t *testing.T) {
+	h := newHarness(t)
+	for i := 0; i < 2; i++ {
+		h.post("/api/insert?part=0&measure=0&at=-1&voice=1&step=2&dur=half&kind=note")
+	}
+	h.app.score.Parts[0].Measures[0].Voices[0].Elements = nil
+
+	h.post("/api/text?part=0&measure=0&at=1&voice=1&text=CHORUS&style=expression")
+
+	n := h.app.score.Parts[0].Measures[0].Voices[1].Elements[0].(*model.Note)
+	if len(n.Texts) != 1 || n.Texts[0].Text != "CHORUS" {
+		t.Errorf("the second voice's note carries %v, want CHORUS", n.Texts)
+	}
+}
+
+// And the one that was picked up is the one that changes, on its own line.
+func TestWordsOnTheSecondVoiceCanBeTakenAwayAgain(t *testing.T) {
+	h := newHarness(t)
+	twoLineBar(h, 0)
+	h.post("/api/text?part=0&measure=0&at=1&voice=1&text=CHORUS&style=expression")
+
+	h.post("/api/text?part=0&measure=0&at=1&voice=1&text=&index=0")
+
+	n := h.app.score.Parts[0].Measures[0].Voices[1].Elements[0].(*model.Note)
+	if len(n.Texts) != 0 {
+		t.Errorf("the words stayed: %v", n.Texts)
+	}
+}
+
+// A symbol is made larger on the line it stands on.
+func TestASymbolIsResizedOnTheLineItStandsOn(t *testing.T) {
+	h := newHarness(t)
+	twoLineBar(h, 0)
+	h.postBody("/api/symbolpicture?name=device", colourPNG(20, 20))
+	h.post("/api/insertsymbol?part=0&measure=0&at=1&voice=1&name=device&attach=1")
+
+	h.post("/api/symbolscale?part=0&measure=0&at=1&voice=1&name=device&scale=2")
+
+	n := h.app.score.Parts[0].Measures[0].Voices[1].Elements[0].(*model.Note)
+	if len(n.Symbols) != 1 || n.Symbols[0].Scale != 2 {
+		t.Errorf("the second voice's symbol is at %v, want 2", n.Symbols)
+	}
+}
+
+// The cursor remembers which line it was left on.
+//
+// Where it did not, a score whose music is in the second voice opened with
+// the pen on the empty first line, and the first thing typed started a
+// second line of music under the one already there.
+func TestTheCursorRemembersItsLine(t *testing.T) {
+	h := newHarness(t)
+	twoLineBar(h, 0)
+
+	h.post("/api/cursor?part=0&measure=0&at=2&step=4&voice=1")
+
+	if c := h.app.score.Cursor; c == nil || c.Voice != 1 {
+		t.Errorf("the cursor came back on voice %v", c)
+	}
+	var info struct {
+		Cursor struct{ Voice int } `json:"cursor"`
+	}
+	if err := json.Unmarshal([]byte(h.get("/api/info")), &info); err != nil {
+		t.Fatal(err)
+	}
+	if info.Cursor.Voice != 1 {
+		t.Errorf("the editor is told to open on voice %d", info.Cursor.Voice)
+	}
+}
+
 // Transposing a selection moves the notes selected, not the ones at those
 // places in the first voice.
 func TestTransposingASelectionMovesTheLineItNames(t *testing.T) {

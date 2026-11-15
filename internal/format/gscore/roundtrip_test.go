@@ -121,7 +121,11 @@ func TestRoundTripKeepsEverything(t *testing.T) {
 // without it, opening a piece means finding your place again every time.
 func TestRoundTripKeepsTheCursor(t *testing.T) {
 	s := model.NewScore()
-	s.Cursor = &model.Cursor{Part: 0, Measure: 3, At: 2, Step: 6}
+	// The line it was left on as well as the bar: a staff whose music is
+	// written in the second voice opens with the pen on the empty first
+	// line without it, so the first thing typed starts a second line of
+	// music under the one already there.
+	s.Cursor = &model.Cursor{Part: 0, Measure: 3, At: 2, Step: 6, Voice: 1}
 
 	var buf bytes.Buffer
 	if err := Write(&buf, s, nil); err != nil {

@@ -5179,6 +5179,7 @@ func (a *App) handleCursor(w http.ResponseWriter, r *http.Request) {
 	}
 	a.score.Cursor = &model.Cursor{
 		Part: part, Measure: num("measure"), At: num("at"), Step: num("step"),
+		Voice: voiceParam(q),
 	}
 	writeJSON(w, map[string]any{"status": "ok"})
 }

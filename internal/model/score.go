@@ -1094,6 +1094,15 @@ type Cursor struct {
 	// Step is the staff position the next note would be written at, counted
 	// in half spaces from the bottom line.
 	Step int
+	// Voice is which line of the staff it stands on, counted from zero.
+	//
+	// A staff and a bar are not enough where two lines share a staff, and a
+	// score whose music is written in the second voice with the first left
+	// empty opened with the cursor on the empty line — so the first thing
+	// typed went into a line nobody can see rather than onto the end of the
+	// music. Nought for every score written before this was kept, which is
+	// the first line and what they all meant.
+	Voice int
 }
 
 // ViewState is how a score was last being looked at.

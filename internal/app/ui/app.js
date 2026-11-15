@@ -2803,8 +2803,15 @@ function placeCursorOnOpen() {
   if (!c) return;
   state.selection = {
     part: c.part, measure: c.measure, at: c.at, step: c.step, ref: null,
+    voice: c.voice || 0,
     replace: false,
   };
+  // The pen goes to the line the cursor was left on, so that the first
+  // thing typed carries on the music rather than starting a second line
+  // under it. A score on the first line is the usual one and setVoice says
+  // nothing; a score opening on a second line says so, which is the one
+  // time somebody needs telling.
+  setVoice(c.voice || 0);
   markSelection();
   scrollSelectionIntoView();
 }
@@ -2826,6 +2833,7 @@ function rememberCursor() {
       part: String(sel.part), measure: String(sel.measure),
       at: String(sel.at), step: String(sel.step ?? 0),
     });
+    withVoice(q, sel.voice);
     void fetch("/api/cursor?" + q.toString(), { method: "POST" })
       .catch(() => { /* where the cursor is is not worth an error */ });
   }, 500);
@@ -12233,6 +12241,10 @@ async function textDialog() {
     part: String(sel.part), measure: String(sel.measure), at: String(sel.at),
     text: words, style: pick.value, placement: $("#tm-place").value,
   });
+  // The words go beside the note that was clicked, which is on the line it
+  // is on. Left out, a staff whose music is written in the second voice
+  // with the first left empty refused every text with "the bar is empty".
+  withVoice(p, sel.voice);
   // Plain words need no runs, and leaving them out keeps a score nobody
   // formatted as small and as readable as it was.
   if (answer !== "remove" && runs.some((r) => r.bold || r.italic || r.colour ||
@@ -14634,6 +14646,7 @@ async function moveToString(dir) {
     part: String(sel.part), measure: String(sel.measure),
     at: String(sel.index), move: dir,
   });
+  withVoice(p, sel.voice);
   const res = await fetch("/api/restring?" + p, { method: "POST" });
   if (!res.ok) {
     status((await res.text()).trim());
@@ -14684,6 +14697,8 @@ async function typeFret(digit) {
     // was no way to put one in between two others.
     p.set("at", String(sel.at));
   }
+  // The line being written, the same as a note typed on a staff of pitches.
+  withVoice(p);
   const res = await fetch("/api/fret?" + p, { method: "POST" });
   if (!res.ok) {
     // A two-digit fret that does not exist is almost always a first digit
@@ -17969,6 +17984,7 @@ async function scaleSymbol(by) {
     at: String(pickedSymbol.index + 1), name: pickedSymbol.name,
     by: by.toFixed(4),
   });
+  withVoice(p, pickedSymbol.voice);
   const res = await fetch("/api/symbolscale?" + p, { method: "POST" });
   if (!res.ok) {
     status("Could not resize it: " + (await res.text()).trim());
@@ -17990,6 +18006,7 @@ async function setSymbolScale(scale) {
     at: String(pickedSymbol.index + 1), name: pickedSymbol.name,
     scale: scale.toFixed(4),
   });
+  withVoice(p, pickedSymbol.voice);
   const res = await fetch("/api/symbolscale?" + p, { method: "POST" });
   if (!res.ok) {
     status("Could not resize it: " + (await res.text()).trim());
@@ -23560,6 +23577,7 @@ async function doConsoleStep(step) {
         part: String(sel.part), measure: String(sel.measure),
         at: String(sel.at), dynamic: step.name,
       });
+      withVoice(q, sel.voice);
       const res = await fetch("/api/dynamic?" + q, { method: "POST" });
       return res.ok ? "" : (await res.text()).trim();
     }

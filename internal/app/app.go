@@ -1019,6 +1019,7 @@ type cursorInfo struct {
 	Measure int `json:"measure"`
 	At      int `json:"at"`
 	Step    int `json:"step"`
+	Voice   int `json:"voice,omitempty"`
 }
 
 // tempoInfo is one metronome mark as the interface needs it.
@@ -1723,7 +1724,10 @@ func writeJSON(w http.ResponseWriter, v any) {
 // is the difference between an editor and a viewer.
 func (a *App) cursorInfo() cursorInfo {
 	if c := a.score.Cursor; c != nil && c.Part < len(a.score.Parts) {
-		return cursorInfo{Part: c.Part, Measure: c.Measure, At: c.At, Step: c.Step}
+		return cursorInfo{
+			Part: c.Part, Measure: c.Measure, At: c.At, Step: c.Step,
+			Voice: c.Voice,
+		}
 	}
 	if len(a.score.Parts) == 0 || len(a.score.Parts[0].Measures) == 0 {
 		return cursorInfo{}

@@ -143,7 +143,9 @@ func (a *App) makeGrace(q url.Values) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	v := m.Voices[0]
+	// The line of music the selection names: a grace note leans on the note
+	// it was written against, which is a note of that line.
+	v := lineOf(m, targets[0].voice)
 
 	// The note they lean on: the one after the last of them. A grace note
 	// is written before what it ornaments, so there has to be something
@@ -277,7 +279,7 @@ func (a *App) addGrace(q url.Values) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	v := m.Voices[0]
+	v := lineOf(m, t.voice)
 	if t.index < 0 || t.index >= len(v.Elements) {
 		return 0, editError("there is no note there")
 	}

@@ -7122,6 +7122,7 @@ async function deleteSelected() {
       part: String(pickedSymbol.part), measure: String(pickedSymbol.measure),
       at: String(pickedSymbol.index + 1), name: pickedSymbol.name,
     });
+    withVoice(p, pickedSymbol.voice);
     const res = await fetch("/api/removesymbol?" + p, { method: "POST" });
     if (!res.ok) {
       status("Could not remove it: " + (await res.text()).trim());
@@ -7298,6 +7299,7 @@ async function deleteSelected() {
       part: String(t.part), measure: String(t.measure),
       at: String(state.selection.at), text: "", index: String(t.index),
     });
+    withVoice(p, state.selection.voice);
     const res = await fetch("/api/text?" + p.toString(), { method: "POST" });
     if (!res.ok) {
       status("Could not remove it: " + (await res.text()).trim());
@@ -8377,6 +8379,7 @@ async function setTuplet(n) {
     part: String(sel.part), measure: String(sel.measure),
     at: String(sel.at), n: String(n),
   });
+  withVoice(p, sel.voice);
   if (state.multi.length > 1) {
     // In order, because the group opens on the first and closes on the last.
     p.set("sel", orderedSelection()
@@ -8938,6 +8941,10 @@ async function insertSymbol(name) {
     at: String(sel.at),
     attach: "1",
   });
+  // Which line of music: a symbol put on a note of the second voice
+  // belongs to that note, and a request that does not say which line is
+  // answered about the first.
+  withVoice(p, sel.voice);
   const res = await fetch("/api/insertsymbol?" + p.toString(), { method: "POST" });
   if (!res.ok) {
     status("Could not insert: " + (await res.text()).trim());
@@ -9114,6 +9121,7 @@ async function splitMeasure() {
   const q = new URLSearchParams({
     part: String(sel.part), measure: String(sel.measure), at: String(sel.at),
   });
+  withVoice(q, sel.voice);
   const res = await fetch("/api/splitmeasure?" + q.toString(), { method: "POST" });
   if (!res.ok) {
     status("Could not put a barline there: " + (await res.text()).trim());
@@ -12130,6 +12138,7 @@ async function markChord(params, said) {
     part: String(sel.part), measure: String(sel.measure), at: String(at),
     ...params,
   });
+  withVoice(p, sel.voice);
   const res = await fetch("/api/chordsymbol?" + p.toString(), { method: "POST" });
   if (!res.ok) {
     status("Could not write it: " + (await res.text()).trim());
@@ -12703,6 +12712,9 @@ async function setClefDialog(part, at) {
     at: String(spot), clef: v,
   });
   const sel = state.selection;
+  // Which line of music, for the bars where the cursor is all there is to
+  // go on: a clef written mid-bar is written on a note.
+  withVoice(p, sel?.voice);
   if (sel && sel.ref !== null && sel.ref !== undefined) {
     const target = refTarget(sel.ref);
     if (target) p.set("sel", target);
@@ -14535,6 +14547,7 @@ async function writeFretChord(part) {
     part: String(sel.part), measure: String(sel.measure), at: String(sel.at),
     frets: shapeText(), dur: state.tool.duration,
   });
+  withVoice(p, sel.voice);
   if (state.tool.dots) p.set("dots", String(state.tool.dots));
   const res = await fetch("/api/fretchord?" + p, { method: "POST" });
   if (!res.ok) {
@@ -17707,6 +17720,7 @@ function setupSymbolDragging() {
       at: String(d.where.index + 1), name: d.name,
       dx: dx.toFixed(3), dy: dy.toFixed(3),
     });
+    withVoice(p, d.where.voice);
     const res = await fetch("/api/movesymbol?" + p.toString(), { method: "POST" });
     if (!res.ok) {
       status("Could not move it: " + (await res.text()).trim());
@@ -17999,6 +18013,7 @@ async function nudgeSymbol(dx, dy) {
     at: String(pickedSymbol.index + 1), name: pickedSymbol.name,
     dx: dx.toFixed(3), dy: dy.toFixed(3),
   });
+  withVoice(p, pickedSymbol.voice);
   const res = await fetch("/api/movesymbol?" + p, { method: "POST" });
   if (!res.ok) {
     status("Could not move it: " + (await res.text()).trim());

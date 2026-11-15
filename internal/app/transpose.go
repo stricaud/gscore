@@ -265,14 +265,19 @@ func (a *App) handleTranspose(w http.ResponseWriter, r *http.Request) {
 		}
 		for _, tg := range targets {
 			p, m, err := a.locate(tg.part, tg.measure)
-			if err != nil || len(m.Voices) == 0 || m.Voices[0] == nil {
+			if err != nil || len(m.Voices) == 0 {
 				continue // a stale selection is not worth failing over
 			}
 			if !transposable(p) {
 				skipped++
 				continue
 			}
-			v := m.Voices[0]
+			// The line of music the selection names. Read off the first
+			// voice whatever the selection said, moving a phrase written
+			// in a staff's second voice moved whatever stood at those
+			// places in its first — a different phrase, and the one that
+			// was already right.
+			v := lineOf(m, tg.voice)
 			if tg.index < 0 || tg.index >= len(v.Elements) {
 				continue
 			}

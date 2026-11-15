@@ -113,6 +113,22 @@ it is saved with the score. Nothing else about a rest can be moved, so the
 arrows mean this and nothing else — and for a run of music with rests in it
 the arrows move the notes and leave the silences where they are.</p>
 
+## Which line a command means
+
+Every command that changes music names a place: a staff, a bar, and how far
+into it. On a shared staff it names the **line of music** as well, and that
+is not a hint — a symbol put on a note of the second voice belongs to that
+note, and a tie from one runs to the next note of that line.
+
+<p class="tip"><b>This was wrong in a dozen places and is now swept.</b> The
+editor names the line through its selection grammar — <code>0:3:1/2</code> is
+the third thing in the second voice of bar 4 — and the commands that take a
+plain cursor position instead were reading the first voice whatever they were
+told. A score that writes its music in a second voice with the first left
+empty brought it out: symbols, dynamics, ties, clefs, transposition,
+tuplets, grace notes, tremolos, rests and how long a bar lasts were all
+answered about the wrong line. Every one of them is tested now.</p>
+
 ## What carries it
 
 A second voice is only worth writing if it survives the journey. It does:

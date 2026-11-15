@@ -1470,7 +1470,11 @@ func (a *App) notesOf(q url.Values) ([]keyedNote, error) {
 	if err != nil {
 		return nil, err
 	}
-	v := m.Voices[0]
+	// The line of music the request names. See lineOf: a request that says
+	// where without saying which line means the first, which is what it
+	// always meant — but one that says which has to be obeyed, or the
+	// command lands on somebody else's note.
+	v := lineOf(m, voiceParam(q))
 	if len(v.Elements) == 0 {
 		return nil, editError("the bar is empty")
 	}
@@ -1726,7 +1730,7 @@ func (a *App) markAt(q url.Values) (*model.Marks, error) {
 	if err != nil {
 		return nil, err
 	}
-	v := m.Voices[0]
+	v := lineOf(m, voiceParam(q))
 	if len(v.Elements) == 0 {
 		return nil, editError("the bar is empty")
 	}
@@ -2834,10 +2838,11 @@ func (a *App) restsOf(q url.Values) []*model.Rest {
 	if err != nil || len(m.Voices) == 0 {
 		return nil
 	}
-	if n := len(m.Voices[0].Elements); index <= 0 || index > n {
+	voice := voiceParam(q)
+	if n := len(lineOf(m, voice).Elements); index <= 0 || index > n {
 		index = n
 	}
-	at(part, measure, 0, index-1)
+	at(part, measure, voice, index-1)
 	return out
 }
 
@@ -4795,6 +4800,12 @@ type tieTarget struct {
 	el      model.Element
 	measure int
 	index   int
+	// voice is the line of music it stands on, so that the note a tie runs
+	// to is looked for in the same line. A tie joins two notes of one line;
+	// looked for in the first voice whatever line the note was on, a tie
+	// from a staff whose music is written in its second voice found the
+	// wrong note or none.
+	voice int
 }
 
 // tieTargets resolves the selection to elements, in reading order.
@@ -4803,11 +4814,11 @@ func (a *App) tieTargets(q url.Values) ([]tieTarget, error) {
 	defer a.mu.Unlock()
 
 	var out []tieTarget
-	add := func(p *model.Part, el model.Element, measure, index int) {
+	add := func(p *model.Part, el model.Element, measure, index, voice int) {
 		switch el.(type) {
 		case *model.Note, *model.Chord:
 			out = append(out, tieTarget{
-				part: p, el: el, measure: measure, index: index,
+				part: p, el: el, measure: measure, index: index, voice: voice,
 			})
 		}
 	}
@@ -4826,7 +4837,7 @@ func (a *App) tieTargets(q url.Values) ([]tieTarget, error) {
 			if t.index < 0 || t.index >= len(v.Elements) {
 				continue
 			}
-			add(p, v.Elements[t.index], t.measure, t.index)
+			add(p, v.Elements[t.index], t.measure, t.index, t.voice)
 		}
 		if len(out) == 0 {
 			return nil, editError("there is no note in the selection")
@@ -4844,14 +4855,15 @@ func (a *App) tieTargets(q url.Values) ([]tieTarget, error) {
 	if lerr != nil {
 		return nil, lerr
 	}
-	v := m.Voices[0]
+	vi := voiceParam(q)
+	v := lineOf(m, vi)
 	if len(v.Elements) == 0 {
 		return nil, editError("the bar is empty")
 	}
 	if at <= 0 || at > len(v.Elements) {
 		at = len(v.Elements)
 	}
-	add(p, v.Elements[at-1], measIdx, at-1)
+	add(p, v.Elements[at-1], measIdx, at-1, vi)
 	if len(out) == 0 {
 		return nil, editError("that is not a note")
 	}
@@ -4868,11 +4880,15 @@ func (a *App) noteAfter(t tieTarget) (tieTarget, bool) {
 			index = 0
 			continue
 		}
-		els := p.Measures[m].Voices[0].Elements
+		// The same line of music this one is on. A tie joins two notes of
+		// one line, and the note after a note in the second voice is the
+		// next note of the second voice.
+		els := lineOf(p.Measures[m], t.voice).Elements
 		for ; index < len(els); index++ {
 			switch els[index].(type) {
 			case *model.Note, *model.Chord:
-				return tieTarget{part: p, el: els[index], measure: m, index: index}, true
+				return tieTarget{part: p, el: els[index], measure: m,
+					index: index, voice: t.voice}, true
 			}
 		}
 		index = 0
@@ -5357,7 +5373,9 @@ func drawBackSpill(p *model.Part, measIdx int, sorted []target, n int) ([]target
 	if from == nil || into == nil || len(from.Voices) == 0 || len(into.Voices) == 0 {
 		return sorted, measIdx, nil
 	}
-	head, tail := from.Voices[0], into.Voices[0]
+	// The line of music the selection is on: these are its own notes
+	// spilled over a barline, and they went over in their own line.
+	head, tail := lineOf(from, sorted[0].voice), lineOf(into, sorted[0].voice)
 	if head == nil || tail == nil {
 		return sorted, measIdx, nil
 	}
@@ -5593,7 +5611,7 @@ func (a *App) handleTuplet(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	v := m.Voices[0]
+	v := lineOf(m, voiceParam(q))
 	if len(v.Elements) == 0 {
 		http.Error(w, "the bar is empty", http.StatusBadRequest)
 		return
@@ -5966,7 +5984,7 @@ func (a *App) pairTremolo(q url.Values, strokes int, buzz bool) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	v := m.Voices[0]
+	v := lineOf(m, voiceParam(q))
 	if at <= 0 || at > len(v.Elements) {
 		at = len(v.Elements)
 	}
@@ -6320,7 +6338,10 @@ func (a *App) handleSplitMeasure(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	v := m.Voices[0]
+	// Where the cursor is counted in the line of music it is on. The split
+	// itself is a bar-level thing and cuts every staff and every voice at
+	// the same moment; this only works out which moment that is.
+	v := lineOf(m, voiceParam(q))
 	if at <= 0 || at >= len(v.Elements) {
 		http.Error(w, "put the cursor where the bar should end", http.StatusBadRequest)
 		return

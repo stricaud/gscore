@@ -1950,7 +1950,24 @@ func (p *Part) MeasureContent(i int) *Voice {
 			return src
 		}
 	}
-	return m.Voices[0]
+	// The line of music that fills the bar, not the first line.
+	//
+	// They are the same thing nearly always and not always: a file can
+	// write a staff's music in its second voice and leave the first empty,
+	// and then the first says the bar lasts no time at all. How long a bar
+	// lasts is what the cursor steps by and what the hit regions are
+	// measured against — see MeasureDuration — so a bar read as empty is a
+	// bar nothing can be aimed at.
+	longest := m.Voices[0]
+	for _, v := range m.Voices[1:] {
+		if v == nil {
+			continue
+		}
+		if longest == nil || v.Duration().Cmp(longest.Duration()) > 0 {
+			longest = v
+		}
+	}
+	return longest
 }
 
 // MeasureDuration is how long a bar lasts, across the whole score.

@@ -47,7 +47,7 @@ func (a *App) handleClef(w http.ResponseWriter, r *http.Request) {
 
 	// Where the cursor is. A selection names the element it is on; without
 	// one the bar is enough, and the change goes at its head.
-	part, measure, index := 0, 0, 0
+	part, measure, index, voice := 0, 0, 0, 0
 	if sel := q.Get("sel"); sel != "" {
 		targets, err := parseTargets(sel)
 		if err != nil {
@@ -55,10 +55,11 @@ func (a *App) handleClef(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		t := targets[0]
-		part, measure, index = t.part, t.measure, t.index
+		part, measure, index, voice = t.part, t.measure, t.index, t.voice
 	} else {
 		part, _ = strconv.Atoi(q.Get("part"))
 		measure, _ = strconv.Atoi(q.Get("measure"))
+		voice = voiceParam(q)
 		// "at" counts the elements written so far, so the element the
 		// cursor is on is the one before it.
 		if at, err := strconv.Atoi(q.Get("at")); err == nil && at > 0 {
@@ -77,10 +78,13 @@ func (a *App) handleClef(w http.ResponseWriter, r *http.Request) {
 	if index < 0 {
 		index = 0
 	}
-	if len(m.Voices) == 0 || len(m.Voices[0].Elements) == 0 {
+	// The line of music the cursor is on. A clef written mid-bar is written
+	// on a note, and which note is a question about the line it is in.
+	line := lineOf(m, voice)
+	if len(line.Elements) == 0 {
 		index = 0
-	} else if index >= len(m.Voices[0].Elements) {
-		index = len(m.Voices[0].Elements) - 1
+	} else if index >= len(line.Elements) {
+		index = len(line.Elements) - 1
 	}
 
 	if want == "none" {
@@ -88,8 +92,13 @@ func (a *App) handleClef(w http.ResponseWriter, r *http.Request) {
 		if m.Clef != nil {
 			m.Clef, gone = nil, true
 		}
-		if len(m.Voices) > 0 {
-			for _, el := range m.Voices[0].Elements {
+		// Every line of music in the bar: taking a clef away takes away
+		// the one that is there, whichever line somebody wrote it on.
+		for _, v := range m.Voices {
+			if v == nil {
+				continue
+			}
+			for _, el := range v.Elements {
 				if mk := marksOfElement(el); mk != nil && mk.Clef != nil {
 					mk.Clef, gone = nil, true
 				}
@@ -120,21 +129,21 @@ func (a *App) handleClef(w http.ResponseWriter, r *http.Request) {
 	if index == 0 {
 		// At the head of a bar the sign is drawn at the barline, which is
 		// where a reader looks for it.
-		if a.clefInForce(p, measure, 0) == clef {
+		if a.clefInForce(p, measure, voice, 0) == clef {
 			m.Clef = nil
 		} else {
 			c := clef
 			m.Clef = &c
 		}
 	} else {
-		el := m.Voices[0].Elements[index]
+		el := line.Elements[index]
 		mk := marksOfElement(el)
 		if mk == nil {
 			http.Error(w, "a clef cannot be written on that",
 				http.StatusBadRequest)
 			return
 		}
-		if a.clefInForce(p, measure, index) == clef {
+		if a.clefInForce(p, measure, voice, index) == clef {
 			mk.Clef = nil
 		} else {
 			c := clef
@@ -147,7 +156,7 @@ func (a *App) handleClef(w http.ResponseWriter, r *http.Request) {
 
 // clefInForce is what the staff is read in just before this spot: its own
 // clef, and then every change written before it.
-func (a *App) clefInForce(p *model.Part, measure, index int) model.Clef {
+func (a *App) clefInForce(p *model.Part, measure, voice, index int) model.Clef {
 	c := p.Clef
 	for i := 0; i <= measure && i < len(p.Measures); i++ {
 		m := p.Measures[i]
@@ -157,7 +166,7 @@ func (a *App) clefInForce(p *model.Part, measure, index int) model.Clef {
 		if len(m.Voices) == 0 {
 			continue
 		}
-		for j, el := range m.Voices[0].Elements {
+		for j, el := range lineOf(m, voice).Elements {
 			if i == measure && j >= index {
 				break
 			}

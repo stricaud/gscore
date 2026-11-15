@@ -226,7 +226,10 @@ func (a *App) handleInsertSymbol(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	v := m.Voices[0]
+	// The line of music the request names: a symbol put on a note of the
+	// second voice belongs to that note, and looked for in the first it
+	// landed on whatever happened to stand at the same place in it.
+	v := lineOf(m, voiceParam(q))
 	mark := model.SymbolMark{Name: name, Placement: placement}
 
 	// Attached to the note just placed when there is one, so that a symbol
@@ -519,7 +522,7 @@ func (a *App) handleRemoveSymbol(w http.ResponseWriter, r *http.Request) {
 
 		a.lock()
 		defer a.mu.Unlock()
-		v := a.score.Parts[partIdx].Measures[measIdx].Voices[0]
+		v := lineOf(a.score.Parts[partIdx].Measures[measIdx], voiceParam(q))
 		v.Elements = append(v.Elements[:at-1], v.Elements[at:]...)
 		writeJSON(w, map[string]any{"status": "ok", "removed": 1})
 		return
@@ -580,7 +583,7 @@ func (a *App) loneSymbolAt(q url.Values) (*model.SymbolElement, bool) {
 	if len(m.Voices) == 0 {
 		return nil, false
 	}
-	v := m.Voices[0]
+	v := lineOf(m, voiceParam(q))
 	if at <= 0 || at > len(v.Elements) {
 		return nil, false
 	}

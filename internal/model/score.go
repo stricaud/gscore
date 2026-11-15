@@ -1510,6 +1510,17 @@ type MeasureNumbering struct {
 	// Boxed draws a rectangle round each number, the way a rehearsal mark
 	// is boxed.
 	Boxed bool
+
+	// NotOverSymbols leaves the number off a bar that carries a symbol
+	// above the staff.
+	//
+	// A symbol put over a bar is drawn where the number goes, and the two
+	// are printed through each other. Which of them to keep is not
+	// something a program can decide: a chord diagram is the thing a
+	// reader is looking at there and the number is only a way of finding
+	// the bar, and in a score being rehearsed it is the other way round.
+	// So it is asked.
+	NotOverSymbols bool `json:",omitempty"`
 }
 
 // Comment is a note about the music, written by somebody working on it.

@@ -390,8 +390,23 @@ placing rather than filing, so Gscore gives it a UUID and you pick it out of
 the palette by its picture. Where the window cannot read the clipboard by
 itself it asks you to press <kbd>⌘V</kbd>, and takes that paste instead.
 
+Click a symbol on the page to pick it up: the arrow keys move it and the
+corner handles resize it. While it is picked up Gscore draws **guides** — a
+dashed box round every other symbol that is the same size as it, and a dashed
+line wherever it lines up with one, by their tops, their bottoms, their
+middles or their edges. The status line says the same thing in words. Nothing
+snaps and nothing moves on its own: the guides tell you what is true, and the
+keys are what change it.
+
 Symbols can be imported from another `.gscore` and shared as one. Whatever is
 in your symbols folder is available to every score.
+
+<p class="tip"><b>A symbol and a bar number want the same paper.</b> Both go
+above the staff at the head of the bar, so a diagram over bar 13 has the
+numeral 13 printed through it. <span class="menu-path">Score → Bar
+numbering…</span> has <b>Not over a bar with a symbol on it</b> for scores
+where the symbol is what the reader is looking at. It is off by default,
+because in a score being rehearsed the number is the thing.</p>
 
 ## Staves and parts
 

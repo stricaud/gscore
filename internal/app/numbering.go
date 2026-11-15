@@ -42,6 +42,8 @@ import (
 type numberingState struct {
 	Every int  `json:"every"`
 	Boxed bool `json:"boxed"`
+	// NotOverSymbols leaves the number off a bar that carries a symbol.
+	NotOverSymbols bool `json:"notOverSymbols"`
 	// Restarts are the bars where the count begins again, by bar index,
 	// and the number each begins at.
 	//
@@ -97,6 +99,9 @@ func (a *App) numberingSet(w http.ResponseWriter, r *http.Request) {
 	if v, ok := q["boxed"]; ok && len(v) > 0 {
 		into.Boxed = v[0] == "1" || v[0] == "true"
 	}
+	if v, ok := q["notoversymbols"]; ok && len(v) > 0 {
+		into.NotOverSymbols = v[0] == "1" || v[0] == "true"
+	}
 
 	// A restart, which belongs to a bar rather than to the score.
 	if v, ok := q["at"]; ok && len(v) > 0 {
@@ -144,10 +149,11 @@ func (a *App) writeNumbering(w http.ResponseWriter) {
 		num, of = sh.Numbering, sh.Name
 	}
 	out := numberingState{
-		Every:    num.Every,
-		Boxed:    num.Boxed,
-		Of:       of,
-		Restarts: map[string]int{},
+		Every:          num.Every,
+		Boxed:          num.Boxed,
+		NotOverSymbols: num.NotOverSymbols,
+		Of:             of,
+		Restarts:       map[string]int{},
 	}
 	for i := 0; i < a.score.MeasureCount(); i++ {
 		for _, p := range a.score.Parts {

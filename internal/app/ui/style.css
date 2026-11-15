@@ -3164,3 +3164,23 @@ dialog.wide { max-width: min(96vw, 1100px); }
   stroke: var(--accent, #3b7dd8);
   stroke-width: 1.2;
 }
+
+/* The guides shown while a symbol is picked up: a line where it is in
+   line with another, and a box round each one it is the same size as.
+   Both come and go with the selection and neither prints. */
+#canvas-wrap .symbol-guide {
+  stroke: var(--accent, #3b7dd8);
+  stroke-width: 1;
+  stroke-dasharray: 4 3;
+  opacity: .75;
+  pointer-events: none;
+}
+
+#canvas-wrap .symbol-twin {
+  fill: none;
+  stroke: var(--accent, #3b7dd8);
+  stroke-width: 1;
+  stroke-dasharray: 2 2;
+  opacity: .5;
+  pointer-events: none;
+}

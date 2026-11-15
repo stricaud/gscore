@@ -9770,6 +9770,7 @@ async function numberingDialog() {
   const dlg = $("#numbering");
   const every = $("#numbering-every");
   const boxed = $("#numbering-boxed");
+  const overSymbols = $("#numbering-symbols");
   const at = $("#numbering-at");
   const number = $("#numbering-number");
   const list = $("#numbering-list");
@@ -9777,6 +9778,7 @@ async function numberingDialog() {
   const show = (d) => {
     every.value = String(d.every || 0);
     boxed.checked = !!d.boxed;
+    if (overSymbols) overSymbols.checked = !!d.notOverSymbols;
     const bars = Object.keys(d.restarts || {})
       .map(Number).sort((a, b) => a - b);
     list.innerHTML = "";
@@ -9818,6 +9820,10 @@ async function numberingDialog() {
   // what they do is only visible on the page behind the window.
   every.onchange = () => void send({ every: every.value });
   boxed.onchange = () => void send({ boxed: boxed.checked ? "1" : "0" });
+  if (overSymbols) {
+    overSymbols.onchange = () => void send(
+      { notoversymbols: overSymbols.checked ? "1" : "0" });
+  }
 
   const res = await fetch("/api/numbering");
   if (!res.ok) {
@@ -17608,7 +17614,7 @@ function setupSymbolDragging() {
     pickSymbol({ ...where, name: img.dataset.symbol });
     img.setPointerCapture(e.pointerId);
     img.classList.add("dragging");
-    status("Moving " + dragging.name);
+    status(withGuides("Moving " + symbolLabel(dragging.name)));
   });
 
   // Where a pointer is, in the drawing's own coordinates: the handles and
@@ -17688,7 +17694,11 @@ function setupSymbolDragging() {
     const dx = (e.clientX - d.startX) / state.zoom;
     const dy = (e.clientY - d.startY) / state.zoom;
     if (Math.abs(dx) < 0.05 && Math.abs(dy) < 0.05) {
-      status("Ready");
+      // Picked up and not moved, which is a click. It used to go quiet,
+      // which is the one moment there is something worth saying: this is
+      // when somebody is looking at the thing and asking whether it
+      // matches the one over there. See drawSymbolGuides.
+      status(withGuides("Picked up " + symbolLabel(d.name)));
       return;
     }
 
@@ -17704,7 +17714,7 @@ function setupSymbolDragging() {
       return;
     }
     await refreshScore();
-    status("Moved " + d.name);
+    status(withGuides("Moved " + symbolLabel(d.name)));
   };
   wrap.addEventListener("pointerup", drop);
   wrap.addEventListener("pointercancel", drop);
@@ -17745,6 +17755,7 @@ function markPickedSymbol() {
     if (mine) on = img;
   });
   drawSymbolHandles(on);
+  drawSymbolGuides(on);
 }
 
 // drawSymbolHandles puts a square at each corner of the picked symbol.
@@ -17787,6 +17798,147 @@ function drawSymbolHandles(img) {
   }
 }
 
+/*
+ * How the picked symbol stands against the others.
+ *
+ * Two questions somebody placing a second copy of a symbol asks and cannot
+ * answer by looking: is it the same size as the one over there, and is it in
+ * line with it. At the size these are drawn both are a difference of a pixel
+ * or two — invisible while you are working and perfectly visible on the
+ * printed page, which is the worst way round. Asked for as "is there a way
+ * to visualize if there is a size match with the left symbol? and if they
+ * are aligned?".
+ *
+ * Shown and not enforced: nothing is snapped and nothing moves on its own.
+ * The guides say what is true at this moment, and the arrow keys are still
+ * what changes it.
+ */
+
+// symbolGuideNear is how close counts as in line, in staff spaces, and
+// symbolSizeNear how near in size counts as the same. A fiftieth of the
+// height is under a pixel on screen and under a printer's dot on paper.
+const symbolGuideNear = 0.15;
+const symbolSizeNear = 0.02;
+
+function drawSymbolGuides(img) {
+  const svg = currentSVG();
+  if (!svg) return;
+  svg.querySelectorAll(".symbol-guide, .symbol-twin").forEach((n) => n.remove());
+  if (!img) return;
+
+  const mine = boxOf(img);
+  if (!mine) return;
+  const near = symbolGuideNear * state.zoom;
+
+  const line = (x1, y1, x2, y2) => {
+    const l = document.createElementNS("http://www.w3.org/2000/svg", "line");
+    l.setAttribute("class", "symbol-guide");
+    l.setAttribute("x1", String(x1));
+    l.setAttribute("y1", String(y1));
+    l.setAttribute("x2", String(x2));
+    l.setAttribute("y2", String(y2));
+    svg.appendChild(l);
+  };
+
+  let twins = 0;
+  const said = new Set();
+  for (const other of svg.querySelectorAll("[data-symbol]")) {
+    if (other === img) continue;
+    const b = boxOf(other);
+    if (!b) continue;
+
+    // The same size, which for a drawing is one number: it keeps its
+    // proportions, so the height says it.
+    if (Math.abs(b.height - mine.height) <= mine.height * symbolSizeNear) {
+      twins++;
+      const box = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+      box.setAttribute("class", "symbol-twin");
+      box.setAttribute("x", String(b.x - 2));
+      box.setAttribute("y", String(b.y - 2));
+      box.setAttribute("width", String(b.width + 4));
+      box.setAttribute("height", String(b.height + 4));
+      svg.appendChild(box);
+    }
+
+    // In line. Down the page: a shared top, bottom or middle, drawn as a
+    // line running between the two. Across it: the same, turned.
+    for (const [a, c, what] of [
+      [mine.y, b.y, "tops"],
+      [mine.y + mine.height, b.y + b.height, "bottoms"],
+      [mine.y + mine.height / 2, b.y + b.height / 2, "middles"],
+    ]) {
+      if (Math.abs(a - c) > near) continue;
+      line(Math.min(mine.x, b.x) - 6, a,
+           Math.max(mine.x + mine.width, b.x + b.width) + 6, a);
+      said.add(what);
+    }
+    for (const [a, c, what] of [
+      [mine.x, b.x, "left edges"],
+      [mine.x + mine.width, b.x + b.width, "right edges"],
+      [mine.x + mine.width / 2, b.x + b.width / 2, "centres"],
+    ]) {
+      if (Math.abs(a - c) > near) continue;
+      line(a, Math.min(mine.y, b.y) - 6,
+           a, Math.max(mine.y + mine.height, b.y + b.height) + 6);
+      said.add(what);
+    }
+  }
+
+  symbolGuideText = guideWords(twins, [...said]);
+}
+
+// symbolGuideText is what the guides are showing, in words, for whoever
+// says something about the symbol next. Said rather than shouted: the
+// click, the drag and the arrow keys each have their own message, and this
+// belongs on the end of whichever of them has just happened.
+let symbolGuideText = "";
+
+// withGuides puts that on the end of a message about the picked symbol.
+function withGuides(said) {
+  return symbolGuideText ? said + " — " + symbolGuideText : said;
+}
+
+// boxOf is a drawn thing's box, or null where it has not been laid out yet.
+function boxOf(el) {
+  try {
+    const b = el.getBBox();
+    return b && b.width > 0 && b.height > 0 ? b : null;
+  } catch (_) {
+    return null;
+  }
+}
+
+// guideWords says in words what the guides are showing, for anybody who
+// would rather read it than count dashed lines.
+function guideWords(twins, lined) {
+  const parts = [];
+  if (twins > 0) {
+    parts.push(twins === 1 ? "same size as one other"
+                           : `same size as ${twins} others`);
+  }
+  if (lined.length) parts.push("in line by " + listOf(lined));
+  return parts.join(", ");
+}
+
+// listOf reads a handful of things out as English does: commas between and
+// "and" before the last. "tops and bottoms and middles" is a list written
+// by a program.
+function listOf(words) {
+  if (words.length < 2) return words.join("");
+  return words.slice(0, -1).join(", ") + " and " + words[words.length - 1];
+}
+
+// symbolLabel is a symbol's name as it should be read.
+//
+// A pasted symbol is named by a UUID — see Insert ▸ Symbol ▸ From the
+// clipboard — and thirty-six characters of hexadecimal in a sentence is
+// not a name anybody reads. The first group is enough to tell one from
+// another, which is all the message is for.
+function symbolLabel(name) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
+    .test(name) ? name.slice(0, 8) + "\u2026" : name;
+}
+
 // scaleSymbol makes the picked symbol larger or smaller.
 //
 // By a step of what it is now rather than to a size, so that the same press
@@ -17811,7 +17963,7 @@ async function scaleSymbol(by) {
   const d = await res.json().catch(() => ({}));
   await refreshScore();
   markPickedSymbol();
-  status(`${pickedSymbol.name} at ${Math.round((d.scale || 1) * 100)}%`);
+  status(withGuides(`${symbolLabel(pickedSymbol.name)} at ${Math.round((d.scale || 1) * 100)}%`));
   return true;
 }
 
@@ -17854,7 +18006,7 @@ async function nudgeSymbol(dx, dy) {
   }
   await refreshScore();
   markPickedSymbol();
-  status(`Moved ${pickedSymbol.name}`);
+  status(withGuides(`Moved ${symbolLabel(pickedSymbol.name)}`));
   return true;
 }
 

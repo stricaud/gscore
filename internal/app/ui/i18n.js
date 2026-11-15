@@ -270,6 +270,7 @@ const MESSAGES = {
   // words over the first bar are "Indication de tempo", below.
   "Beat marks": "Marques de temps",
   "Metronome click": "Clic du métronome",
+  "Not over a bar with a symbol on it": "Pas sur une mesure portant un symbole",
   "Note colours…": "Couleurs des notes…",
   "Note colours": "Couleurs des notes",
   "Colour the noteheads": "Colorer les têtes de note",

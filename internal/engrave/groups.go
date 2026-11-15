@@ -798,6 +798,12 @@ func (e *engraver) numberedAt(mi, start int) (int, bool) {
 	if e.score != nil && e.markerText(mi) != "" {
 		return 0, false
 	}
+	// Nor one that carries a symbol over the staff, where the score has
+	// asked for that. The symbol is drawn where the number goes and the two
+	// are printed through each other. See MeasureNumbering.NotOverSymbols.
+	if e.score != nil && e.score.Numbering.NotOverSymbols && e.symbolOver(mi) {
+		return 0, false
+	}
 	n := e.barNumber(mi)
 	if n <= 1 {
 		return 0, false // bar one needs no telling
@@ -1045,6 +1051,40 @@ func (e *engraver) drawMeasureNumbers(columns []float64, start, end int) {
 			write(n, columns[mi-start])
 		}
 	}
+}
+
+// symbolOver says a bar carries a symbol drawn above the staff, on any of
+// the score's staves: that is where the bar number goes.
+func (e *engraver) symbolOver(mi int) bool {
+	above := func(p model.Placement) bool { return p != model.PlacementBelow }
+	for _, part := range e.score.Parts {
+		if mi >= len(part.Measures) {
+			continue
+		}
+		for _, v := range part.Measures[mi].Voices {
+			if v == nil {
+				continue
+			}
+			for _, el := range v.Elements {
+				if se, ok := el.(*model.SymbolElement); ok {
+					if above(se.Symbol.Placement) {
+						return true
+					}
+					continue
+				}
+				mk := marksOf(el)
+				if mk == nil {
+					continue
+				}
+				for _, sm := range mk.Symbols {
+					if above(sm.Placement) {
+						return true
+					}
+				}
+			}
+		}
+	}
+	return false
 }
 
 // numberEvery is how often this score asks for a bar number, or zero where

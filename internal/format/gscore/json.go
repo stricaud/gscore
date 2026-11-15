@@ -154,6 +154,8 @@ type cueDoc struct {
 type numberingDoc struct {
 	Every int  `json:"every,omitempty"`
 	Boxed bool `json:"boxed,omitempty"`
+	// NotOverSymbols leaves the number off a bar that carries a symbol.
+	NotOverSymbols bool `json:"notOverSymbols,omitempty"`
 }
 
 // How the score was last being looked at. See model.ViewState.
@@ -608,6 +610,7 @@ func encodeScore(s *model.Score) *scoreDoc {
 	if s.Numbering != (model.MeasureNumbering{}) {
 		doc.Numbering = &numberingDoc{
 			Every: s.Numbering.Every, Boxed: s.Numbering.Boxed,
+			NotOverSymbols: s.Numbering.NotOverSymbols,
 		}
 	}
 	if v := s.View; v != nil {
@@ -653,6 +656,7 @@ func encodeScore(s *model.Score) *scoreDoc {
 		if sh.Numbering != (model.MeasureNumbering{}) {
 			d.Numbering = &numberingDoc{
 				Every: sh.Numbering.Every, Boxed: sh.Numbering.Boxed,
+				NotOverSymbols: sh.Numbering.NotOverSymbols,
 			}
 		}
 		doc.Sheets = append(doc.Sheets, d)
@@ -1033,6 +1037,7 @@ func decodeScore(doc *scoreDoc) (*model.Score, error) {
 		if d.Numbering != nil {
 			sh.Numbering = model.MeasureNumbering{
 				Every: d.Numbering.Every, Boxed: d.Numbering.Boxed,
+				NotOverSymbols: d.Numbering.NotOverSymbols,
 			}
 		}
 		s.Sheets = append(s.Sheets, sh)
@@ -1040,6 +1045,7 @@ func decodeScore(doc *scoreDoc) (*model.Score, error) {
 	if doc.Numbering != nil {
 		s.Numbering = model.MeasureNumbering{
 			Every: doc.Numbering.Every, Boxed: doc.Numbering.Boxed,
+			NotOverSymbols: doc.Numbering.NotOverSymbols,
 		}
 	}
 	if v := doc.View; v != nil {

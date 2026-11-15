@@ -17,6 +17,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -3197,6 +3198,20 @@ func cloneMarks(m model.Marks) model.Marks {
 //	Glo-ri-a in ex-cel-sis De-o
 //	A-men_ _
 //
+// And angle brackets leave bars alone, which is what makes the block of text
+// work for a song that is not sung from the first bar to the last: <> is one
+// bar with no words and <5> is five of them. Without it the words could only
+// ever start at bar 1 and run without a break, so a verse that comes in after
+// a four-bar introduction — which is most of them — could not be typed at
+// all.
+//
+//	<4> Folks in dusk-y "Hah-lum", <2> Ne-ver sad nor sol-emn,
+//
+// A marker means exactly what it counts: <5> is five bars nobody sings in,
+// and the words start again at the top of the bar after them. Bars that have
+// nothing to sing on anyway — a bar of rests — are passed over without being
+// asked for, so they are not what the markers are for.
+//
 // Rests take no words. A syllable landing on a tied note goes on the note the
 // syllable is actually sung on, which is the first of the tie.
 func (a *App) handleLyrics(w http.ResponseWriter, r *http.Request) {
@@ -3220,8 +3235,9 @@ func (a *App) handleLyrics(w http.ResponseWriter, r *http.Request) {
 	}
 	p := a.score.Parts[partIdx]
 
-	syllables := splitLyrics(q.Get("text"))
-	sung := singableNotes(p)
+	pieces := splitLyrics(q.Get("text"))
+	bars := singableBars(p)
+	sung := flatten(bars)
 
 	// Every note of this verse starts clear, so retyping the words replaces
 	// them rather than leaving the tail of a longer version behind.
@@ -3235,62 +3251,154 @@ func (a *App) handleLyrics(w http.ResponseWriter, r *http.Request) {
 		mk.Lyrics = out
 	}
 
-	n := len(syllables)
-	if n > len(sung) {
-		n = len(sung)
-	}
-	for i := 0; i < n; i++ {
-		s := syllables[i]
-		s.Verse = verse
-		sung[i].Lyrics = append(sung[i].Lyrics, s)
+	// Where the next syllable goes: a bar, and how far into it. A bar is
+	// left behind when it is used up, and a bar with nothing to sing on is
+	// used up before it starts — which is how a bar of rests is passed over
+	// without anybody asking for it.
+	bar, pos, set, words := 0, 0, 0, 0
+	for _, pc := range pieces {
+		if pc.Skip > 0 {
+			// Whatever is left of the bar in hand gets no words, and nor do
+			// the bars counted off after it. Counted in bars and not in
+			// notes, because bars are what somebody reads off the page.
+			if pos > 0 {
+				bar++
+				pos = 0
+			}
+			bar += pc.Skip
+			continue
+		}
+		words++
+		for bar < len(bars) && pos >= len(bars[bar]) {
+			bar++
+			pos = 0
+		}
+		if bar >= len(bars) {
+			continue // past the end: counted, and said below
+		}
+		ly := pc.Lyric
+		ly.Verse = verse
+		bars[bar][pos].Lyrics = append(bars[bar][pos].Lyrics, ly)
+		pos++
+		set++
 	}
 
-	resp := map[string]any{"set": n, "notes": len(sung), "syllables": len(syllables)}
-	if len(syllables) > len(sung) {
+	resp := map[string]any{"set": set, "notes": len(sung), "syllables": words}
+	switch {
+	case words > 0 && set == 0 && len(bars) > 0:
+		resp["warning"] = fmt.Sprintf(
+			"the words begin past the end of a staff of %d bars", len(bars))
+	case words > set:
 		resp["warning"] = fmt.Sprintf(
 			"there are %d syllables and only %d notes to sing them on",
-			len(syllables), len(sung))
+			words, set)
 	}
 	writeJSON(w, resp)
 }
 
-// singableNotes lists the marks of everything in a part that a syllable can be
-// written under, in reading order.
+// singableBars lists what a syllable can be written under, bar by bar: one
+// entry per bar of the part, in reading order, holding the marks of the
+// notes in it that can take a word.
+//
+// By the bar rather than as one long list, because the words are placed by
+// the bar: <3> is three bars and has to count the bars that have nothing in
+// them as readily as the ones that are full. A bar with nothing to sing on
+// is an empty entry and not a missing one.
 //
 // Rests are left out, and so is the far side of a tie: a tied pair is one
 // sound and gets one syllable.
-func singableNotes(p *model.Part) []*model.Marks {
-	var out []*model.Marks
+func singableBars(p *model.Part) [][]*model.Marks {
+	out := make([][]*model.Marks, 0, len(p.Measures))
 	for _, m := range p.Measures {
-		if len(m.Voices) == 0 {
-			continue
+		var bar []*model.Marks
+		if len(m.Voices) > 0 {
+			for _, el := range m.Voices[0].Elements {
+				mk := marksOfElement(el)
+				if mk == nil {
+					continue
+				}
+				switch el.(type) {
+				case *model.Note, *model.Chord:
+				default:
+					continue
+				}
+				if mk.TieStop && !mk.TieStart {
+					continue
+				}
+				bar = append(bar, mk)
+			}
 		}
-		for _, el := range m.Voices[0].Elements {
-			mk := marksOfElement(el)
-			if mk == nil {
-				continue
-			}
-			switch el.(type) {
-			case *model.Note, *model.Chord:
-			default:
-				continue
-			}
-			if mk.TieStop && !mk.TieStart {
-				continue
-			}
-			out = append(out, mk)
-		}
+		out = append(out, bar)
 	}
 	return out
 }
 
-// splitLyrics turns a typed verse into syllables.
+// flatten is every singable note of a part in reading order, for the things
+// that do not care which bar a note is in: counting them, and clearing a
+// verse off all of them.
+func flatten(bars [][]*model.Marks) []*model.Marks {
+	var out []*model.Marks
+	for _, bar := range bars {
+		out = append(out, bar...)
+	}
+	return out
+}
+
+// singableNotes is the same list, for a caller that has not asked for the
+// bars.
+func singableNotes(p *model.Part) []*model.Marks {
+	return flatten(singableBars(p))
+}
+
+// lyricPiece is one thing a typed verse is made of: a syllable to sing, or a
+// run of bars to leave alone.
+type lyricPiece struct {
+	Lyric model.Lyric
+	Skip  int // bars with no words; 0 for a syllable
+}
+
+// barSkip matches the markers that leave bars alone: <> for one bar and <4>
+// for four of them. Spaces inside are allowed because somebody will type
+// them. Anything else between angle brackets is not a marker and stays as
+// the words it is.
+var barSkip = regexp.MustCompile(`<\s*([0-9]*)\s*>`)
+
+// splitLyrics turns a typed verse into the pieces it is made of.
 //
 // A hyphen inside a word splits it and marks the halves as joined, so the
 // engraver can draw the hyphen between them. An underscore on its own holds
 // the previous syllable over another note. Line breaks are nothing more than
 // spaces: a verse laid out over several lines is still one verse.
-func splitLyrics(text string) []model.Lyric {
+//
+// A marker is read wherever it falls and not only between spaces, so
+// "<4>Folks" and "<4> Folks" are the same thing: the angle brackets are
+// punctuation and not a word, and nobody should have to remember to put a
+// space after them.
+func splitLyrics(text string) []lyricPiece {
+	var out []lyricPiece
+	for {
+		at := barSkip.FindStringSubmatchIndex(text)
+		if at == nil {
+			return append(out, syllablesOf(text)...)
+		}
+		out = append(out, syllablesOf(text[:at[0]])...)
+		// <> on its own is one bar, which is the common case and the one
+		// worth not having to write a 1 for.
+		bars := 1
+		if digits := text[at[2]:at[3]]; digits != "" {
+			bars, _ = strconv.Atoi(digits)
+		}
+		// <0> asks for nothing and gets it, rather than being an error over
+		// something that cannot have been meant.
+		if bars > 0 {
+			out = append(out, lyricPiece{Skip: bars})
+		}
+		text = text[at[1]:]
+	}
+}
+
+// syllablesOf is the words themselves, with no markers left in them.
+func syllablesOf(text string) []lyricPiece {
 	var out []model.Lyric
 	for _, word := range strings.Fields(text) {
 		if word == "_" {
@@ -3320,7 +3428,11 @@ func splitLyrics(text string) []model.Lyric {
 			out = append(out, model.Lyric{Text: piece, Syllabic: kind})
 		}
 	}
-	return out
+	pieces := make([]lyricPiece, len(out))
+	for i, ly := range out {
+		pieces[i] = lyricPiece{Lyric: ly}
+	}
+	return pieces
 }
 
 // handleGetLyrics gives back a verse as typed, so it can be edited rather than
@@ -3341,33 +3453,70 @@ func (a *App) handleGetLyrics(w http.ResponseWriter, r *http.Request) {
 	}
 	p := a.score.Parts[partIdx]
 
+	bars := singableBars(p)
 	var b strings.Builder
 	verses := 0
-	for _, mk := range singableNotes(p) {
-		for _, ly := range mk.Lyrics {
-			if ly.Verse > verses {
-				verses = ly.Verse
-			}
-			if ly.Verse != verse {
-				continue
-			}
-			if ly.Text == "" {
-				b.WriteString(" _")
-				continue
-			}
-			if b.Len() > 0 && !endsHyphenated(b.String()) {
-				b.WriteByte(' ')
-			}
-			b.WriteString(ly.Text)
-			if ly.NeedsHyphen() {
-				b.WriteByte('-')
+	// The bar the last syllable went in, so the bars jumped over on the way
+	// to this one can be written back as the marker that would jump them.
+	// Without this a verse that starts after an introduction would come back
+	// with nothing to say so, and saving it again would drag the whole verse
+	// to bar 1.
+	last := -1
+	for bi, bar := range bars {
+		for _, mk := range bar {
+			for _, ly := range mk.Lyrics {
+				if ly.Verse > verses {
+					verses = ly.Verse
+				}
+				if ly.Verse != verse {
+					continue
+				}
+				if gap := barsJumped(bars, last, bi); gap > 0 {
+					if b.Len() > 0 {
+						b.WriteByte(' ')
+					}
+					fmt.Fprintf(&b, "<%d>", gap)
+				}
+				last = bi
+				if ly.Text == "" {
+					b.WriteString(" _")
+					continue
+				}
+				if b.Len() > 0 && !endsHyphenated(b.String()) {
+					b.WriteByte(' ')
+				}
+				b.WriteString(ly.Text)
+				if ly.NeedsHyphen() {
+					b.WriteByte('-')
+				}
 			}
 		}
 	}
 	writeJSON(w, map[string]any{
 		"text": b.String(), "verse": verse, "verses": verses,
-		"notes": len(singableNotes(p)),
+		"notes": len(flatten(bars)), "bars": len(bars),
 	})
+}
+
+// barsJumped counts the bars between the one a verse last sang in and the one
+// it sings in next, for writing the verse back out as it would be typed.
+//
+// Nothing is counted where the bars in between had nothing to sing on: those
+// are passed over without a marker when the words are handed out, so a marker
+// written for them would be a marker that moved the words the next time the
+// verse was saved. It is the gap somebody had to ask for that is written
+// back, and not every gap.
+func barsJumped(bars [][]*model.Marks, last, now int) int {
+	gap := now - last - 1
+	if gap <= 0 {
+		return 0
+	}
+	for i := last + 1; i < now; i++ {
+		if len(bars[i]) > 0 {
+			return gap
+		}
+	}
+	return 0
 }
 
 func endsHyphenated(s string) bool { return strings.HasSuffix(s, "-") }

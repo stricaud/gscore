@@ -627,6 +627,197 @@ func TestLyricsAsAVerse(t *testing.T) {
 	}
 }
 
+/*
+ * Words that do not start at bar 1.
+ *
+ * A song is hardly ever sung from the first bar to the last. There is an
+ * introduction, there are the bars where nobody sings, and a block of text
+ * handed out from the first note had no way of saying so. Asked for as "I
+ * want to start not at bar 1, and some bars can be skipped", with the
+ * markers suggested along with it: <> for a bar and <5> for five.
+ *
+ * The music is the snippet that came with the request:
+ *
+ *	Folks in dusk-y "Hah-lum",   Nev-er sad nor sol-emn,
+ */
+
+// fourBarsOfFolks writes the music those words go under, starting at the bar
+// it is given: two bars of four quarters and two of a quarter and a half,
+// which is six notes to a line and twelve in all.
+func fourBarsOfFolks(h *harness, first int) {
+	for bar := first; bar < first+4; bar += 2 {
+		for i := 0; i < 4; i++ {
+			h.note(0, bar, 2+i, "quarter")
+		}
+		h.note(0, bar+1, 4, "quarter")
+		h.note(0, bar+1, 2, "half")
+	}
+}
+
+// syllablesUnder is what each bar of a staff sings, bar by bar.
+func syllablesUnder(h *harness, verse int) []string {
+	var out []string
+	for _, bar := range singableBars(h.app.score.Parts[0]) {
+		var words []string
+		for _, mk := range bar {
+			for _, ly := range mk.Lyrics {
+				if ly.Verse == verse {
+					words = append(words, ly.Text)
+				}
+			}
+		}
+		out = append(out, strings.Join(words, " "))
+	}
+	return out
+}
+
+// <4> at the head of a verse is four bars with no words in them.
+func TestLyricsCanStartAfterAnIntroduction(t *testing.T) {
+	h := newHarness(t)
+	for i := 0; i < 4; i++ { // four bars of introduction
+		h.note(0, i, 4, "whole")
+	}
+	fourBarsOfFolks(h, 4)
+	h.post("/api/lyrics?part=0&verse=1&text=" +
+		url.QueryEscape(`<4> Folks in dusk-y "Hah-lum", Nev-er sad nor sol-emn,`))
+
+	want := []string{"", "", "", "",
+		"Folks in dusk y", `"Hah lum",`, "Nev er sad nor", "sol emn,"}
+	got := syllablesUnder(h, 1)
+	if len(got) != len(want) {
+		t.Fatalf("got %d bars, want %d: %q", len(got), len(want), got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("bar %d sings %q, want %q", i+1, got[i], want[i])
+		}
+	}
+}
+
+// And a marker in the middle is that many bars nobody sings in, with the
+// words starting again at the top of the bar after them.
+func TestLyricsCanLeaveBarsOutInTheMiddle(t *testing.T) {
+	h := newHarness(t)
+	for i := 0; i < 8; i++ {
+		h.note(0, i, 4, "whole")
+	}
+	h.post("/api/lyrics?part=0&verse=1&text=" +
+		url.QueryEscape("one <2> two three"))
+
+	got := syllablesUnder(h, 1)
+	want := []string{"one", "", "", "two", "three", "", "", ""}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("bar %d sings %q, want %q", i+1, got[i], want[i])
+		}
+	}
+}
+
+// <> with nothing in it is one bar, which is the case worth not having to
+// write a number for.
+func TestAnEmptyMarkerIsOneBar(t *testing.T) {
+	h := newHarness(t)
+	for i := 0; i < 3; i++ {
+		h.note(0, i, 4, "whole")
+	}
+	h.post("/api/lyrics?part=0&verse=1&text=" + url.QueryEscape("<> one two"))
+	if got := syllablesUnder(h, 1); got[0] != "" || got[1] != "one" || got[2] != "two" {
+		t.Errorf("sang %q, want the words to start in bar 2", got)
+	}
+}
+
+// The markers come back with the verse, or correcting one word would drag
+// the whole verse to bar 1 the next time it was saved.
+func TestTheMarkersComeBackWithTheVerse(t *testing.T) {
+	h := newHarness(t)
+	for i := 0; i < 4; i++ {
+		h.note(0, i, 4, "whole")
+	}
+	fourBarsOfFolks(h, 4)
+	typed := `<4> Folks in dusk-y "Hah-lum", Nev-er sad nor sol-emn,`
+	h.post("/api/lyrics?part=0&verse=1&text=" + url.QueryEscape(typed))
+
+	var d struct{ Text string }
+	if err := json.Unmarshal([]byte(h.get("/api/getlyrics?part=0&verse=1")), &d); err != nil {
+		t.Fatalf("getlyrics: %v", err)
+	}
+	if d.Text != typed {
+		t.Errorf("came back as %q, want %q", d.Text, typed)
+	}
+	// And saving what came back leaves the words exactly where they were.
+	before := syllablesUnder(h, 1)
+	h.post("/api/lyrics?part=0&verse=1&text=" + url.QueryEscape(d.Text))
+	if after := syllablesUnder(h, 1); !slicesEqual(before, after) {
+		t.Errorf("saving what came back moved the words:\n%q\n%q", before, after)
+	}
+}
+
+// A bar with nothing to sing on is passed over without being asked for, so
+// it is not written back as a marker — one written for it would move the
+// words a bar further on every time the verse was saved.
+func TestABarOfRestsNeedsNoMarker(t *testing.T) {
+	h := newHarness(t)
+	h.note(0, 0, 4, "whole")
+	h.post("/api/insert?part=0&measure=1&at=-1&step=4&dur=whole&kind=rest")
+	h.note(0, 2, 4, "whole")
+	h.post("/api/lyrics?part=0&verse=1&text=" + url.QueryEscape("one two"))
+
+	got := syllablesUnder(h, 1)
+	if got[0] != "one" || got[2] != "two" {
+		t.Fatalf("sang %q, want the bar of rests passed over", got)
+	}
+	if out := h.get("/api/getlyrics?part=0&verse=1"); strings.Contains(out, "<") {
+		t.Errorf("a marker was written for a bar nobody had to ask to skip: %s", out)
+	}
+}
+
+// Words that land past the end say so rather than disappearing.
+func TestWordsPastTheEndOfTheStaffSaySo(t *testing.T) {
+	h := newHarness(t)
+	h.note(0, 0, 4, "whole")
+	out := h.post("/api/lyrics?part=0&verse=1&text=" + url.QueryEscape("<9> one"))
+	if w, _ := out["warning"].(string); !strings.Contains(w, "past the end") {
+		t.Errorf("said %q", w)
+	}
+}
+
+// Angle brackets that are not a marker are words. Nobody sings them, but
+// nobody should lose them either.
+func TestSomethingThatIsNotAMarkerIsWords(t *testing.T) {
+	var words []string
+	for _, pc := range splitLyrics("a <b> c") {
+		if pc.Skip > 0 {
+			t.Fatal("<b> was read as a marker")
+		}
+		words = append(words, pc.Lyric.Text)
+	}
+	if strings.Join(words, " ") != "a <b> c" {
+		t.Errorf("got %q", words)
+	}
+}
+
+// A marker is punctuation and not a word, so it needs no space around it.
+func TestAMarkerNeedsNoSpaceAroundIt(t *testing.T) {
+	for _, text := range []string{"<4>Folks", "<4> Folks", "< 4 >Folks"} {
+		got := splitLyrics(text)
+		if len(got) != 2 || got[0].Skip != 4 || got[1].Lyric.Text != "Folks" {
+			t.Errorf("%q read as %+v", text, got)
+		}
+	}
+}
+
+func slicesEqual(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
 // A drum staff writes drums, and they play as drums.
 func TestPercussionWritesAndPlays(t *testing.T) {
 	h := newHarness(t)

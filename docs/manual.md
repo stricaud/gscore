@@ -251,8 +251,65 @@ the mark is repeated over the top staff of each bracketed family, because a
 cellist at the foot of a twenty-stave page cannot read a letter eighteen
 staves up.
 
-**Lyrics** (<kbd>l</kbd>): type the verse as you would write it. Syllables go
-to the notes in order, one each; hyphens break a word across notes.
+### Lyrics
+
+<span class="menu-path">Staff → Lyrics…</span> (<kbd>l</kbd>) takes the whole
+verse as one block of text rather than syllable by syllable. You type it as
+you would write it and it is handed out to the notes in order, one syllable
+each. Rests are passed over, and a tied pair is one sound and takes one
+syllable.
+
+<figure class="shot">
+<img src="images/lyrics-folks.png" alt="Four bars of melody. Under them the
+words &ldquo;Folks in dusk-y &lsquo;Hah-lum&rsquo;, Nev-er sad nor
+sol-emn,&rdquo;, one syllable to a note, with a hyphen between the halves of
+each broken word.">
+<figcaption><b>One line of text, twelve notes.</b> Typed as
+<code>Folks in dusk-y "Hah-lum", Nev-er sad nor sol-emn,</code> — the hyphens
+are the only thing you have to think about, and the quotes and the comma ride
+along with the syllables they belong to.</figcaption>
+</figure>
+
+Count the syllables against the notes and you have the whole of the rule:
+`Folks`, `in`, `dusk-`, `y` fill the first bar, and `"Hah-` and `lum",` are the
+two notes of the second. Three pieces of punctuation do the work:
+
+| | |
+|---|---|
+| `-` | breaks a word across notes — `dusk-y` |
+| `_` | holds the syllable before it over another note — `A-men_ _` |
+| `<>`, `<4>` | leave bars alone — see below |
+
+Reopening the dialog brings the verse back **as you typed it**, so you correct
+a verse rather than writing it again. Set the verse number to 2 and type again
+for a second verse; it stacks underneath. Applying replaces that verse
+outright, so you never find the tail of a longer version left behind.
+
+#### Bars nobody sings in
+
+Most of the time you need nothing for this. The words begin at the first note
+there is to sing, so if the voice **rests** through an introduction the verse
+already starts in the right bar, and a bar of rests in the middle is passed
+over without being asked.
+
+The markers are for the other case: bars that *have* notes on this staff and
+should carry no words — a staff that doubles an instrumental line, a refrain
+somebody else sings, a second verse that comes in later than the first. `<>`
+is one such bar and `<4>` is four:
+
+```
+<4> Folks in dusk-y "Hah-lum", <8> Nev-er sad nor sol-emn,
+```
+
+A marker counts exactly the bars it says, and the words start again at the top
+of the bar after them. It is punctuation rather than a word, so `<4>Folks` and
+`<4> Folks` are the same thing, and anything between angle brackets that is not
+a number is just words.
+
+Two limits worth knowing: the words go under the **first voice** of a staff,
+and a verse is one block for the whole staff — there is no "lyrics from here",
+which is what the markers are instead. Give more syllables than there are notes
+and Gscore writes as many as fit and tells you how many it could not.
 
 ### Symbols nobody's font has
 

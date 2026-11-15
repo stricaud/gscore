@@ -11,6 +11,7 @@
 package engrave
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stricaud/gscore/internal/model"
@@ -24,7 +25,9 @@ import (
 // black word across the system, which is what "the lyrics are overlapping"
 // looks like.
 
-// sung builds one bar of eighth notes with a syllable under each.
+// sung builds one bar of eighth notes with a syllable under each. A word
+// written with a trailing "-" is half of one, and carries a hyphen to the
+// note after it.
 func sung(words ...string) *model.Score {
 	var els []model.Element
 	for _, w := range words {
@@ -33,7 +36,11 @@ func sung(words ...string) *model.Score {
 			Dur:   model.Duration{Num: 1, Den: 8},
 		}
 		if w != "" {
-			n.Lyrics = []model.Lyric{{Text: w, Verse: 1}}
+			kind := model.SyllableSingle
+			if strings.HasSuffix(w, "-") {
+				w, kind = strings.TrimSuffix(w, "-"), model.SyllableBegin
+			}
+			n.Lyrics = []model.Lyric{{Text: w, Verse: 1, Syllabic: kind}}
 		}
 		els = append(els, n)
 	}
@@ -116,5 +123,91 @@ func TestWordsAreInTheMinimumWidthToo(t *testing.T) {
 		if gap < 0 {
 			t.Errorf("squeezed, %q and %q overlap by %.2f spaces", prev.S, here.S, -gap)
 		}
+	}
+}
+
+/*
+ * The hyphen between the halves of a word.
+ *
+ * It belongs in the gap between the two syllables, with air on both sides,
+ * so that it reads as joining them rather than as part of either. It used
+ * to be put at a fixed fraction of the column's width, which knows how far
+ * away the next note is and nothing about the words: a syllable is centred
+ * on its notehead, so a long one reaches further from the same place, and
+ * "dusk-" had its hyphen printed over the k. Reported, from the engraved
+ * page, as "the - is overlapping the char before".
+ */
+
+// hyphens are the hyphens drawn between syllables, left to right.
+func hyphens(lay *Layout) []Text {
+	var out []Text
+	for _, t := range lay.Texts {
+		if t.S == "-" && t.Size == lyricSize {
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
+// The words of the snippet this was reported from, with the long syllable
+// that showed it up.
+func TestAHyphenStandsBetweenTheHalvesOfAWord(t *testing.T) {
+	score := sung("Folks", "in", "dusk-", "y", "Hah-", "lum", "sol-", "emn")
+	lay := Engrave(score, DefaultOptions())
+
+	// The words, which are everything drawn down there that is not one of
+	// the hyphens being measured.
+	var words []Text
+	for _, t := range syllables(lay) {
+		if t.S != "-" {
+			words = append(words, t)
+		}
+	}
+	marks := hyphens(lay)
+	if len(marks) != 3 {
+		t.Fatalf("%d hyphens drawn, want 3", len(marks))
+	}
+	// Each hyphen against the words either side of it.
+	for _, h := range marks {
+		var before, after *Text
+		for i := range words {
+			if words[i].X < h.X {
+				before = &words[i]
+			} else if after == nil {
+				after = &words[i]
+			}
+		}
+		if before == nil || after == nil {
+			t.Fatalf("a hyphen at %.2f with no word on both sides", h.X)
+		}
+		half := textWidth("-", lyricSize) / 2
+		left := (h.X - half) -
+			(before.X + textWidth(before.S, lyricSize)/2)
+		right := (after.X - textWidth(after.S, lyricSize)/2) - (h.X + half)
+		if left < 0 {
+			t.Errorf("the hyphen after %q is printed over it by %.2f spaces",
+				before.S, -left)
+		}
+		if right < 0 {
+			t.Errorf("the hyphen before %q is printed over it by %.2f spaces",
+				after.S, -right)
+		}
+		// And between them rather than hard against one of them: the air
+		// on the two sides is within a hair of being the same.
+		if d := left - right; d > 0.2 || d < -0.2 {
+			t.Errorf("the hyphen between %q and %q has %.2f of air on one "+
+				"side and %.2f on the other", before.S, after.S, left, right)
+		}
+	}
+}
+
+// The room for it is booked when the bar is spaced, or there is nowhere to
+// put it that is not on top of a word.
+func TestAHyphenIsGivenRoomToStandIn(t *testing.T) {
+	plain := Engrave(sung("dusk", "y"), DefaultOptions())
+	split := Engrave(sung("dusk-", "y"), DefaultOptions())
+	if split.Width <= plain.Width {
+		t.Errorf("a hyphenated pair is %.2f wide and a plain one %.2f; "+
+			"the hyphen asked for no room", split.Width, plain.Width)
 	}
 }

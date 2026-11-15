@@ -424,14 +424,14 @@ func (e *engraver) drawMeasure(part *model.Part, b measureBox, x, end float64, s
 		e.drawLoneSymbol(p)
 	}
 	e.drawStemsAndBeams(items, part.Time)
-	for _, p := range items {
+	for i, p := range items {
 		if m := p.marks(); m != nil {
 			e.articMeasure = b.index
 			e.drawArticulations(m, p.x+noteheadWidth(p.value)/2, p.lo, p.hi, e.stemUp(p), p.index)
 			e.drawDynamic(m, p, b.index)
 			e.spanAt(m, p, b.index)
 			e.slurAt(part, m, p, b.index)
-			e.drawLyrics(m, p)
+			e.drawLyrics(m, p, items[i+1:])
 			e.drawTexts(m, p, b.index)
 			// How the note is played: a bend, a mute, a harmonic. The
 			// hammer-ons and the slides are not here — they need the
@@ -2690,7 +2690,10 @@ func (e *engraver) drawTexts(m *model.Marks, p *placed, measure int) {
 // The syllable is centred on the notehead it is sung on, and a word broken
 // across notes carries a hyphen to the next one — without it "Glo-ri-a" reads
 // as three words. A held syllable draws the line that says to keep singing it.
-func (e *engraver) drawLyrics(m *model.Marks, p *placed) {
+//
+// after is the rest of the bar, so a hyphen can be put in the gap between two
+// words rather than at a guess from the column's width. See hyphenAt.
+func (e *engraver) drawLyrics(m *model.Marks, p *placed, after []*placed) {
 	if len(m.Lyrics) == 0 {
 		return
 	}
@@ -2706,11 +2709,11 @@ func (e *engraver) drawLyrics(m *model.Marks, p *placed) {
 				S: ly.Text, X: x, Y: y, Size: lyricSize, Anchor: "middle",
 			})
 		}
-		// A hyphen between the halves of a word, drawn midway to the next
-		// note rather than hard against this one.
+		// A hyphen between the halves of a word, in the gap between them.
 		if ly.NeedsHyphen() {
 			e.lay.Texts = append(e.lay.Texts, Text{
-				S: "-", X: x + p.width*0.55, Y: y, Size: lyricSize, Anchor: "middle",
+				S: "-", X: hyphenAt(x, ly.Text, p, after, verse), Y: y,
+				Size: lyricSize, Anchor: "middle",
 			})
 		}
 		if ly.Extend && p.width > 1 {
@@ -2721,6 +2724,63 @@ func (e *engraver) drawLyrics(m *model.Marks, p *placed) {
 			})
 		}
 	}
+}
+
+// hyphenAt is where the hyphen between two halves of a word goes: the middle
+// of the gap between the word's two halves.
+//
+// It used to be put at a fixed fraction of the column's width, which knows
+// how far away the next note is and nothing at all about the words. A
+// syllable is centred on its notehead, so a long one reaches further out
+// than a short one from the same place — and "dusk-" reached past the
+// fraction and had its hyphen printed over the k. Reported as "the - is
+// overlapping the char before".
+//
+// Both edges are wanted, not just the one that was wrong: pushed clear of
+// the syllable behind it with nothing watching the other side, the hyphen
+// would land on the syllable in front instead, which is the same fault
+// facing the other way.
+//
+// The syllable that follows is looked for in the rest of the bar. Where the
+// word is broken over a barline there is nothing to find, and the old guess
+// is as good as anything: nothing is drawn between here and the barline, so
+// there is room for it.
+func hyphenAt(x float64, text string, p *placed, after []*placed, verse int) float64 {
+	right := x + textWidth(text, lyricSize)/2
+	at := x + p.width*0.55
+	if left, ok := nextSyllableLeft(after, verse); ok && left > right {
+		at = (right + left) / 2
+	}
+	// Never over the syllable it belongs to, whatever the gap works out at:
+	// a hyphen crowding the word in front of it is untidy, and one printed
+	// through the word behind it is unreadable.
+	if least := right + hyphenAir + textWidth("-", lyricSize)/2; at < least {
+		at = least
+	}
+	return at
+}
+
+// nextSyllableLeft is the left-hand edge of the next word of a verse, and
+// whether there is one in what it was given.
+func nextSyllableLeft(after []*placed, verse int) (float64, bool) {
+	for _, q := range after {
+		m := q.marks()
+		if m == nil {
+			continue
+		}
+		for _, ly := range m.Lyrics {
+			at := ly.Verse
+			if at < 1 {
+				at = 1
+			}
+			if at != verse || ly.Text == "" {
+				continue
+			}
+			mid := q.x + noteheadWidth(q.value)/2
+			return mid - textWidth(ly.Text, lyricSize)/2, true
+		}
+	}
+	return 0, false
 }
 
 func (e *engraver) drawArticulations(m *model.Marks, x float64, lo, hi int, stemUp bool, ref int) {

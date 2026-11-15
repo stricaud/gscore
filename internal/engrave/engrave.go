@@ -899,6 +899,10 @@ const (
 	// lyricGap is the room left between one syllable and the next, which is
 	// also where the hyphen of a split word goes.
 	lyricGap = 0.7
+	// hyphenAir is the room left on each side of that hyphen, so that it
+	// reads as standing between the two halves of the word rather than as
+	// part of either of them.
+	hyphenAir = 0.3
 	// lyricSize is the type size words are set at, in staff spaces.
 	lyricSize = 1.75
 )
@@ -3165,7 +3169,17 @@ func (e *engraver) measureBox(p *model.Part, m *model.Measure, index int) measur
 			if i+1 < len(words) {
 				next = words[i+1]
 			}
-			need := (words[i]+next)/2 + lyricGap
+			// A word broken across two notes has a hyphen between its
+			// halves, and the hyphen needs somewhere to be. Spaced by the
+			// plain gap, which is barely wider than the hyphen itself,
+			// there was nowhere to put it that was not on top of one
+			// syllable or the other — so it was drawn hard against the
+			// second one. See hyphenAt.
+			gap := lyricGap
+			if hyphenAfter(*col) {
+				gap = math.Max(gap, textWidth("-", lyricSize)+2*hyphenAir)
+			}
+			need := (words[i]+next)/2 + gap
 			col.width = math.Max(col.width, need)
 			least = math.Max(least, need)
 		}
@@ -4557,6 +4571,23 @@ func lyricRoom(col slot) float64 {
 		}
 	}
 	return out
+}
+
+// hyphenAfter says whether anything sung in this column is half of a word,
+// and so has a hyphen to put between it and the syllable that follows.
+func hyphenAfter(col slot) bool {
+	for _, v := range col.elems {
+		mk := marksOfElement(v.el)
+		if mk == nil {
+			continue
+		}
+		for _, ly := range mk.Lyrics {
+			if ly.NeedsHyphen() {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // marksOfElement is what a note, a chord or a rest carries.

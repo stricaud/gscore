@@ -142,8 +142,8 @@ function pickBars(before, ...args) {
                   hits: [], barAnchor: null, ...before };
   const said = [];
   const fn = new Function("state", "markSelection", "status", "barNumberOf",
-    grab("selectMeasure") + "\nreturn selectMeasure;")(
-      state, () => {}, (m) => said.push(m), (n) => n + 1);
+    "modKeyName", grab("selectMeasure") + "\nreturn selectMeasure;")(
+      state, () => {}, (m) => said.push(m), (n) => n + 1, () => "Ctrl");
   fn(...args);
   return { state, said };
 }

@@ -3103,13 +3103,19 @@ type clipboard struct {
 }
 
 // clipAt is where one copied element stood: which bar of the copy, counting
-// from nought at the first, and which line of music of that bar.
-type clipAt struct{ bar, voice int }
+// from nought at the first, which line of music of that bar, and which
+// staff, counting from nought at the top staff copied.
+//
+// The staff, because bars picked up on two staves are two staves of music:
+// the bass under its treble. Flattened, a bar of each came back as two bars
+// of one staff, end to end — "when I paste it pastes on the different
+// staves position from our selection".
+type clipAt struct{ bar, voice, staff int }
 
-// clipPiece is one line of music of one bar of a copy.
+// clipPiece is one line of music of one bar of one staff of a copy.
 type clipPiece struct {
-	bar, voice int
-	elements   []model.Element
+	bar, voice, staff int
+	elements          []model.Element
 }
 
 // pieces is what was copied, cut back into the bars and the lines of music
@@ -3126,7 +3132,7 @@ func (c *clipboard) pieces() []clipPiece {
 		if !seen {
 			j = len(out)
 			at[w] = j
-			out = append(out, clipPiece{bar: w.bar, voice: w.voice})
+			out = append(out, clipPiece{bar: w.bar, voice: w.voice, staff: w.staff})
 		}
 		out[j].elements = append(out[j].elements, el)
 	}
@@ -3160,10 +3166,36 @@ func (a *App) handleCopy(w http.ResponseWriter, r *http.Request) {
 	a.lock()
 	defer a.mu.Unlock()
 
+	// The shape of the copy: which bar of it each bar of the score becomes,
+	// and which staff of it each staff. Bars are numbered by their order,
+	// not their distance — bars 1, 3 and 5 picked up one at a time are
+	// three bars of the copy and land as neighbours. Staves keep their
+	// distance, so the two staves of a piano stay the two staves of a
+	// piano.
+	//
+	// The order the bars were picked up in does not matter: a copy of two
+	// staves comes bar by bar down one staff and then bar by bar down the
+	// next, and counting barlines crossed in that order would have made
+	// four bars of two.
+	barSlot := map[int]int{}
+	top := -1
+	for _, t := range targets {
+		barSlot[t.measure] = 0
+		if top < 0 || t.part < top {
+			top = t.part
+		}
+	}
+	measures := make([]int, 0, len(barSlot))
+	for m := range barSlot {
+		measures = append(measures, m)
+	}
+	sort.Ints(measures)
+	for i, m := range measures {
+		barSlot[m] = i
+	}
+
 	var out []model.Element
 	var where []clipAt
-	bar := 0
-	last := [2]int{-1, -1} // the staff and bar the one before came from
 	for _, t := range targets {
 		_, m, err := a.locate(t.part, t.measure)
 		if err != nil {
@@ -3174,14 +3206,10 @@ func (a *App) handleCopy(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		// A barline crossed is a barline remembered, and so is the line of
-		// music each note stood on. See clipboard.where.
-		here := [2]int{t.part, t.measure}
-		if last[1] >= 0 && here != last {
-			bar++
-		}
-		last = here
+		// music each note stood on and the staff. See clipboard.where.
 		out = append(out, cloneElement(v.Elements[t.index]))
-		where = append(where, clipAt{bar: bar, voice: t.voice})
+		where = append(where, clipAt{
+			bar: barSlot[t.measure], voice: t.voice, staff: t.part - top})
 	}
 	if len(out) == 0 {
 		http.Error(w, "there is nothing there to copy", http.StatusBadRequest)
@@ -3190,7 +3218,7 @@ func (a *App) handleCopy(w http.ResponseWriter, r *http.Request) {
 	clip := clipboard{elements: out, where: where}
 	*a.clipboard() = clip
 	writeJSON(w, map[string]int{
-		"copied": len(out), "bars": bar + 1, "voices": clip.voices()})
+		"copied": len(out), "bars": bars(clip.pieces()), "voices": clip.voices()})
 }
 
 // handlePaste puts the copy back at the cursor.
@@ -3225,8 +3253,7 @@ func (a *App) handlePaste(w http.ResponseWriter, r *http.Request) {
 	// measure" — on the one bar of the piece a reader is most likely to aim
 	// at, the empty one at the end, and on the staff just added under the
 	// one being copied from.
-	p, _, err := a.locateForWriting(partIdx, measIdx)
-	if err != nil {
+	if _, _, err := a.locateForWriting(partIdx, measIdx); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -3248,8 +3275,13 @@ func (a *App) handlePaste(w http.ResponseWriter, r *http.Request) {
 
 	pasted := 0
 	var last model.Element
+	var lastPart *model.Part
 	lastBar, lastVoice := measIdx, vi
-	touched := map[int]bool{}
+	// Every line of every staff that was written to, and the staff itself,
+	// for the spill afterwards.
+	type line struct{ part, voice int }
+	touched := map[line]bool{}
+	parts := map[int]*model.Part{}
 	for _, piece := range pieces {
 		// A fresh copy each time, so pasting twice does not give two
 		// references to the same notes — changing one would silently change
@@ -3264,10 +3296,16 @@ func (a *App) handlePaste(w http.ResponseWriter, r *http.Request) {
 		if manyVoices {
 			voice = piece.voice
 		}
-		_, m, err := a.locateForWriting(partIdx, bar)
+		// Each staff of the copy to the staff that far below the cursor's.
+		// A copy of two staves pasted on the bottom staff has nowhere to
+		// put its second: that staff is left out and the first still
+		// lands, rather than nothing landing at all.
+		part := partIdx + piece.staff
+		p, m, err := a.locateForWriting(part, bar)
 		if err != nil {
-			break // nowhere left to put the rest of it
+			continue // nowhere to put this piece
 		}
+		parts[part] = p
 		v, err := voiceForWriting(m, voice)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
@@ -3306,8 +3344,8 @@ func (a *App) handlePaste(w http.ResponseWriter, r *http.Request) {
 		v.Elements = append(append(v.Elements[:into:into], add...), tail...)
 
 		pasted += len(add)
-		last, lastBar, lastVoice = add[len(add)-1], bar, voice
-		touched[voice] = true
+		last, lastPart, lastBar, lastVoice = add[len(add)-1], p, bar, voice
+		touched[line{part, voice}] = true
 	}
 	if pasted == 0 {
 		http.Error(w, "there is nowhere to put it", http.StatusBadRequest)
@@ -3317,12 +3355,14 @@ func (a *App) handlePaste(w http.ResponseWriter, r *http.Request) {
 	// What no longer fits a bar moves into the next one, as when writing.
 	// Every line of music that was written to: a line overflows on its own,
 	// and the others are no more pushed along by it than the staff below is.
-	for voice := range maxVoices {
-		if touched[voice] {
-			spillVoice(p, measIdx, voice)
+	for part, p := range parts {
+		for voice := range maxVoices {
+			if touched[line{part, voice}] {
+				spillVoice(p, measIdx, voice)
+			}
 		}
 	}
-	measure, idx := findElement(p, lastBar, lastVoice, last)
+	measure, idx := findElement(lastPart, lastBar, lastVoice, last)
 	writeJSON(w, map[string]any{
 		"pasted": pasted, "measure": measure, "at": idx,
 		"bars": bars(pieces), "voices": clip.voices(),

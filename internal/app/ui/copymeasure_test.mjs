@@ -36,7 +36,8 @@ function targets(selection, multi = []) {
     }],
   };
   const body = grab("selOf") + "\n" + grab("orderedSelection") + "\n" +
-    grab("selectedElement") + "\n" + grab("selectionTargets") + "\n" +
+    grab("selectedElement") + "\n" + grab("selectedBars") + "\n" +
+    grab("selectionTargets") + "\n" +
     grab("measureTargets") + "\nreturn () => selectionTargets() || measureTargets();";
   return new Function("state", body)(state)();
 }

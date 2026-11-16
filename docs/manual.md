@@ -164,10 +164,18 @@ matches a published edition.
 #### Picking bars up
 
 The band that appears above a bar when you move over it picks the whole bar
-up. **Shift-click another band** and every bar between the two comes with it,
-however far apart they are and across as many systems as it takes. Then
-<kbd>⌘C</kbd> copies the passage, <kbd>⌘X</kbd> cuts it and
-<kbd>Backspace</kbd> empties it.
+up, every voice of it. **Shift-click another band** and every bar between the
+two comes with it, however far apart they are and across as many systems as it
+takes. **⌘-click a bar** (Ctrl-click on Windows and Linux), on its band or on
+the music itself, and that one bar joins the selection without the bars
+between; ⌘-click it again to put it down. The bar the cursor is standing in
+counts as picked up, so you can start from wherever you are. Bars on the
+staff below can be added the same way, which is how both hands of a piano
+passage are picked up together. Then <kbd>⌘C</kbd> copies the passage,
+<kbd>⌘X</kbd> cuts it and <kbd>Backspace</kbd> empties it. Bars picked up one
+at a time paste back as neighbours, bars 1, 3 and 5 landing as three bars in
+a row, and bars from two staves paste back onto two staves, the lower one
+under wherever you paste.
 
 Music picked up with a barline in it keeps the barline. Paste it anywhere and
 it goes back down as bars: the first bar of the copy into the bar you are on,

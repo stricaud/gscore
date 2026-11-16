@@ -336,3 +336,75 @@ func TestACopySaysHowManyLinesItHolds(t *testing.T) {
 		t.Errorf("a copy across two lines says %v lines", two["voices"])
 	}
 }
+
+// Bars picked up on two staves paste as two staves.
+//
+// The clipboard laid every bar of a copy end to end down the one staff the
+// cursor was on, so a bar of treble and the bar of bass under it came back
+// as two bars of treble. Reported as "when I paste it pastes on the
+// different staves position from our selection".
+func TestBarsOfTwoStavesPasteAsTwoStaves(t *testing.T) {
+	h := newHarness(t)
+	h.post("/api/addstaff?instrument=piano&clef=bass")
+	for m := 0; m < 2; m++ {
+		for i := 0; i < 4; i++ {
+			h.note(0, m, 6+m*2+i, "quarter")
+			h.note(1, m, m*2+i, "quarter")
+		}
+	}
+	// Bar by bar down the top staff and then down the one below, which is
+	// the order a set of bars is spelt in.
+	d := h.post("/api/copy?sel=0:0:0,0:0:1,0:0:2,0:0:3,0:1:0,0:1:1,0:1:2,0:1:3," +
+		"1:0:0,1:0:1,1:0:2,1:0:3,1:1:0,1:1:1,1:1:2,1:1:3")
+	if got := d["bars"]; got != float64(2) {
+		t.Errorf("two bars on two staves copied as %v bars", got)
+	}
+	h.post("/api/paste?part=0&measure=2&at=0")
+
+	for part := 0; part < 2; part++ {
+		for m := 0; m < 2; m++ {
+			ms := h.app.score.Parts[part].Measures
+			if len(ms) <= m+2 {
+				t.Fatalf("staff %d has %d bars after the paste", part+1, len(ms))
+			}
+			var got []string
+			for _, el := range ms[m+2].Voices[0].Elements {
+				if n, ok := el.(*model.Note); ok {
+					got = append(got, n.Pitch.String())
+				}
+			}
+			var want []string
+			for _, el := range ms[m].Voices[0].Elements {
+				if n, ok := el.(*model.Note); ok {
+					want = append(want, n.Pitch.String())
+				}
+			}
+			if strings.Join(got, " ") != strings.Join(want, " ") {
+				t.Errorf("staff %d bar %d: copied %v and got %v", part+1, m+1, want, got)
+			}
+		}
+	}
+}
+
+// A copy of two staves pasted on the bottom staff has nowhere to put its
+// second staff; the first still lands.
+func TestAStaffWithNothingUnderItTakesWhatFits(t *testing.T) {
+	h := newHarness(t)
+	h.post("/api/addstaff?instrument=piano&clef=bass")
+	for i := 0; i < 4; i++ {
+		h.note(0, 0, 6+i, "quarter")
+		h.note(1, 0, i, "quarter")
+	}
+	h.post("/api/copy?sel=0:0:0,0:0:1,0:0:2,0:0:3,1:0:0,1:0:1,1:0:2,1:0:3")
+	d := h.post("/api/paste?part=1&measure=1&at=0")
+	if got := d["pasted"]; got != float64(4) {
+		t.Errorf("pasted %v notes onto the bottom staff, wanted the 4 of the top staff of the copy", got)
+	}
+	bass := h.app.score.Parts[1].Measures
+	if len(bass) < 2 || len(bass[1].Voices[0].Elements) != 4 {
+		t.Fatalf("the bottom staff's second bar is not the four notes of the copy's top staff")
+	}
+	if n := bass[1].Voices[0].Elements[0].(*model.Note); n.Pitch.String() != h.app.score.Parts[0].Measures[0].Voices[0].Elements[0].(*model.Note).Pitch.String() {
+		t.Errorf("the bottom staff got %s, not the top staff's first note", n.Pitch.String())
+	}
+}

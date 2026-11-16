@@ -5369,11 +5369,29 @@ function setupStripHover() {
 
 function setupCanvasClicks() {
   $("#canvas").addEventListener("click", async (e) => {
-    // A modified click is a pan gesture, and the click that ends a drag is
-    // not a click at all.
-    if (e.ctrlKey || e.metaKey || panned) return;
+    // The click that ends a drag is not a click at all.
+    if (panned) return;
     if (suppressClick) {
       suppressClick = false;
+      return;
+    }
+    // Ctrl or Command held and the pointer not moved: a pan that went
+    // nowhere, which means the click. It adds the bar under it to the
+    // bars picked up, so a passage is put together one bar at a time —
+    // the band over the bar or the bar itself, whichever was pointed at.
+    if (e.ctrlKey || e.metaKey) {
+      const svg = currentSVG();
+      if (!svg) return;
+      const r = svg.getBoundingClientRect();
+      const x = (e.clientX - r.left) / state.zoom;
+      const y = (e.clientY - r.top) / state.zoom;
+      const strip = stripAt(x, y);
+      if (strip) {
+        toggleMeasure(state.selection?.part ?? 0, strip.measure);
+        return;
+      }
+      const hit = hitAt(x, y);
+      if (hit) toggleMeasure(hit.part, hit.measure);
       return;
     }
 
@@ -6116,7 +6134,99 @@ function selectMeasure(part, measure, to) {
   if (hit?.timeChange) has.push("a meter change");
   status(`Bar ${barNumberOf(first)}` +
     (has.length ? ` — ${has.join(" and ")} here` : "") +
-    " · Shift-click another to take in the bars between");
+    " · Shift-click another to take in the bars between, " +
+    modKeyName() + "-click to add one");
+}
+
+// selectedBars is every bar a bar selection holds, as the staff it is on
+// and the bar, staff by staff and in order along each.
+//
+// A run is two numbers, the first bar and the last, on one staff; a set
+// made by adding bars one at a time is a list, may lie on several staves,
+// and the bars between two of them are not in it. Everything that reads a
+// bar selection reads it through this, so a copy of bars 1, 3 and 5 is
+// three bars and not five.
+function selectedBars(sel) {
+  if (!sel || !sel.bar) return [];
+  if (sel.bars) return sel.bars.map((b) => ({ part: b.part, measure: b.measure }));
+  const out = [];
+  for (let i = sel.measure; i <= (sel.barTo ?? sel.measure); i++) {
+    out.push({ part: sel.part, measure: i });
+  }
+  return out;
+}
+
+// barRuns is a bar selection as runs of neighbouring bars on one staff,
+// for the commands that take a first bar and a last.
+function barRuns(sel) {
+  const runs = [];
+  for (const b of selectedBars(sel)) {
+    const last = runs[runs.length - 1];
+    if (last && b.part === last.part && b.measure === last.to + 1) last.to = b.measure;
+    else runs.push({ part: b.part, from: b.measure, to: b.measure });
+  }
+  return runs;
+}
+
+// toggleMeasure adds a bar to the bars picked up, or takes it back out.
+//
+// Ctrl or Command with a click, the way files are added to a selection
+// one at a time. Shift-click takes in every bar between two on one staff;
+// this takes in the one bar, on whichever staff it is, so the bars of a
+// passage that are wanted can be picked up without the ones that are not,
+// and the bass can be picked up under its treble.
+//
+// What is in hand to begin with is the bars picked up by their bands, or
+// the bar the cursor is standing in: standing in a bar with nothing picked
+// up is being in that bar, and Copy already takes it as the bar. Starting
+// afresh from it instead threw the bar away on the first click — "it
+// removes my current selection and selects the next one". A note in hand
+// is not a bar, and the click is the first bar of a new set.
+function toggleMeasure(part, measure) {
+  const sel = state.selection;
+  let bars = selectedBars(sel);
+  const standing = sel && !sel.bar && !state.multi.length &&
+    (sel.ref === null || sel.ref === undefined) && !sel.hairpin && !sel.arc;
+  if (!bars.length && standing) bars = [{ part: sel.part, measure: sel.measure }];
+  if (!bars.length) {
+    selectMeasure(part, measure);
+    return;
+  }
+  const i = bars.findIndex((b) => b.part === part && b.measure === measure);
+  if (i >= 0) bars.splice(i, 1);
+  else bars.push({ part, measure });
+  bars.sort((a, b) => a.part - b.part || a.measure - b.measure);
+  if (!bars.length) {
+    clearSelection();
+    status(`Bar ${barNumberOf(measure)} put down`);
+    return;
+  }
+  state.multi = [];
+  state.anchor = state.focus = null;
+  if (!sel.bar) state.barAnchor = { part: bars[0].part, measure: bars[0].measure };
+  // part, measure and barTo still bound the set, for everything that only
+  // needs to know where it starts — pasting over it, a key change from it
+  // on. The top staff and the first bar, which is where a paste lands.
+  const first = bars[0];
+  state.selection = {
+    part: first.part, measure: first.measure, at: 0, step: 0, ref: null,
+    bar: true, barTo: Math.max(...bars.map((b) => b.measure)), bars,
+  };
+  markSelection();
+  const staves = new Set(bars.map((b) => b.part)).size;
+  const which = [...new Set(bars.map((b) => barNumberOf(b.measure)))].join(", ");
+  const on = staves > 1 ? ` on ${staves} staves` : "";
+  status(i >= 0
+    ? `Bar ${barNumberOf(measure)} put down \u00b7 bars ${which}${on} picked up`
+    : (bars.length === 1
+        ? `Bar ${which} picked up`
+        : `Bars ${which}${on} \u00b7 ${bars.length} bars picked up`));
+}
+
+// modKeyName is the key that adds to a selection, as it is read on this
+// machine: Command on a Mac, Ctrl everywhere else.
+function modKeyName() {
+  return navigator.platform.startsWith("Mac") ? "\u2318" : "Ctrl";
 }
 
 // select picks up an existing element, so the next command acts on it.
@@ -7348,23 +7458,33 @@ async function deleteSelected() {
   // through to "nothing selected to delete" — which is the one thing
   // somebody who has just clicked a bar knows to be untrue.
   if (sel && sel.bar) {
-    const p = new URLSearchParams({
-      part: String(sel.part), measure: String(sel.measure),
-      to: String(sel.barTo ?? sel.measure),
-    });
-    const res = await fetch("/api/clearmeasure?" + p.toString(),
-                            { method: "POST" });
-    if (!res.ok) {
-      status("Could not empty it: " + (await res.text()).trim());
-      return;
+    // One request a run: the server empties from a bar to a bar, and a
+    // set put together one bar at a time may have bars between that were
+    // not picked up.
+    let removed = 0;
+    for (const run of barRuns(sel)) {
+      const p = new URLSearchParams({
+        part: String(run.part), measure: String(run.from),
+        to: String(run.to),
+      });
+      const res = await fetch("/api/clearmeasure?" + p.toString(),
+                              { method: "POST" });
+      if (!res.ok) {
+        status("Could not empty it: " + (await res.text()).trim());
+        return;
+      }
+      const d = await res.json().catch(() => ({}));
+      removed += d.removed || 0;
     }
-    const d = await res.json().catch(() => ({}));
     await refreshScore();
-    const which = (sel.barTo ?? sel.measure) > sel.measure
-      ? `Bars ${barNumberOf(sel.measure)}\u2013${barNumberOf(sel.barTo)}`
-      : `Bar ${barNumberOf(sel.measure)}`;
-    status(d.removed ? `${which} emptied — ${d.removed} removed`
-                     : `${which} was already empty`);
+    const bars = selectedBars(sel);
+    const which = bars.length === 1
+      ? `Bar ${barNumberOf(bars[0].measure)}`
+      : (sel.bars
+          ? `Bars ${[...new Set(bars.map((b) => barNumberOf(b.measure)))].join(", ")}`
+          : `Bars ${barNumberOf(sel.measure)}\u2013${barNumberOf(sel.barTo)}`);
+    status(removed ? `${which} emptied — ${removed} removed`
+                   : `${which} ${bars.length === 1 ? "was" : "were"} already empty`);
     return;
   }
 
@@ -7498,9 +7618,9 @@ function markSelection() {
     // the corner at the end of a system, and a single rectangle round the
     // first and the last would be a rectangle round the whole page.
     let drew = false;
-    for (let i = sel.measure; i <= (sel.barTo ?? sel.measure); i++) {
+    for (const b of selectedBars(sel)) {
       const hit = state.hits.find(
-        (h) => h.part === sel.part && h.measure === i);
+        (h) => h.part === b.part && h.measure === b.measure);
       if (!hit) continue;
       let top = hit.staffTop - 1.6;
       let bottom = hit.staffTop + staffHeightOf(hit) + 1.6;
@@ -19763,10 +19883,10 @@ function selectionTargets() {
     // bar — so what is copied carries its barlines with it and comes back
     // out as bars. See clipboard.breaks.
     const out = [];
-    for (let i = sel.measure; i <= (sel.barTo ?? sel.measure); i++) {
-      const hit = state.hits.find((h) => h.part === sel.part && h.measure === i);
+    for (const b of selectedBars(sel)) {
+      const hit = state.hits.find((h) => h.part === b.part && h.measure === b.measure);
       for (const el of hit?.elements || []) {
-        out.push(selOf(sel.part, i, el.index, el.voice));
+        out.push(selOf(b.part, b.measure, el.index, el.voice));
       }
     }
     if (!out.length) return null;

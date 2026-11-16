@@ -502,6 +502,13 @@ type Marks struct {
 	// Dynamic is a volume marking written at this point in the music.
 	Dynamic Dynamic
 
+	// DynamicText is the marking as written, when it is not one of the
+	// standard ones: "mp-f", "più f", "p subito". Dynamic is then how loud
+	// it sounds, which the person who wrote it was asked for — a player can
+	// read "mp-f" and nothing else can. Empty, the marking is Dynamic
+	// written as itself. Never set without a Dynamic to sound as.
+	DynamicText string
+
 	// Hairpin is a crescendo or diminuendo opening or closing here. Unlike a
 	// Dynamic, which is an instant, this covers the stretch between the note
 	// it starts on and the one it stops on.

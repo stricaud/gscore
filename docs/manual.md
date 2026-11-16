@@ -257,6 +257,15 @@ Also on the menus: dynamics from `pppp` to `fff`; octave lines (8va, 8vb,
 unmeasured buzz roll; first- and second-time repeat endings; barlines single,
 double, final and repeat.
 
+**A dynamic written by hand.** <span class="menu-path">Insert → Dynamic →
+Written by hand…</span> takes a marking the menu does not have, `mp-f` or
+`più f` or `p subito`, and sets it in the same font as the others: the
+letters p, m, f, r, s, z and n come out as dynamic glyphs and any other word
+in italics beside them. A player cannot read `mp-f`, so the dialog asks how
+loud it is played and offers the last marking it finds in the words. Click
+the marking to see what it plays as; double-click it to change it, which
+works on the standard dynamics too.
+
 <p class="tip"><b>Turning a tie over.</b> A tie goes on the side away from the
 stems, which is right nearly always. Click the curve itself and press
 <kbd>u</kbd> or <kbd>d</kbd> to say otherwise, or

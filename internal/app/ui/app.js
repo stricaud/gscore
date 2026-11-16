@@ -1479,6 +1479,7 @@ async function action(name) {
     case "dyn-ff": await setDynamic("ff"); break;
     case "dyn-fff": await setDynamic("fff"); break;
     case "dyn-none": await setDynamic("none"); break;
+    case "dyn-custom": await customDynamicDialog(); break;
 
     case "artic-none": await setArticulation(""); break;
     case "artic-staccato": await setArticulation("staccato"); break;
@@ -5368,6 +5369,26 @@ function setupStripHover() {
 }
 
 function setupCanvasClicks() {
+  // A double click on a dynamic opens it for changing: the dialog that
+  // writes one by hand, filled in with what is there. One click picks it
+  // up and says what it plays as; two is the way to change it, as it is
+  // for a chord symbol or a word.
+  $("#canvas").addEventListener("dblclick", async (e) => {
+    if (e.ctrlKey || e.metaKey || e.shiftKey || e.button !== 0) return;
+    const svg = currentSVG();
+    if (!svg) return;
+    const r = svg.getBoundingClientRect();
+    const x = (e.clientX - r.left) / state.zoom;
+    const y = (e.clientY - r.top) / state.zoom;
+    const dyn = dynamicAt(x, y);
+    if (!dyn) return;
+    e.preventDefault();
+    // Whatever the browser picked up on the second click.
+    window.getSelection()?.removeAllRanges();
+    selectDynamic(dyn);
+    await customDynamicDialog();
+  });
+
   $("#canvas").addEventListener("click", async (e) => {
     // The click that ends a drag is not a click at all.
     if (panned) return;
@@ -5914,10 +5935,85 @@ function selectDynamic(d) {
   state.anchor = state.focus = null;
   state.selection = {
     part: d.part, measure: d.measure, ref: d.ref,
-    at: 0, step: 0, dynamic: d.name,
+    at: 0, step: 0, dynamic: d.name, plays: d.plays || null,
   };
   markSelection();
-  status(`${d.name} \u2014 press Backspace to take it away`);
+  // One written by hand says how it sounds, since the letters cannot.
+  const sounds = d.plays ? ` (played as ${d.plays})` : "";
+  status(`${d.name}${sounds} \u2014 press Backspace to take it away`);
+}
+
+// dynamicLevelOf guesses how loud a dynamic written by hand is played,
+// from the last standard marking in it: "mp-f" is a swell to f, "p subito"
+// is p. Nothing recognisable is nothing, and the dialog keeps what it had.
+function dynamicLevelOf(text) {
+  const known = ["pppp", "ppp", "pp", "p", "mp", "mf", "f", "ff", "fff", "ffff",
+                 "sfz", "sf", "fp", "rfz", "niente", "n"];
+  let found = "";
+  for (const word of String(text).split(/[\s\-\/]+/)) {
+    if (known.includes(word)) found = word === "n" ? "niente" : word;
+  }
+  return found;
+}
+
+// customDynamicDialog writes a dynamic the menu does not have.
+//
+// "mp-f" on the first note of a swell, "più f", "p subito": markings every
+// score has and no menu can list. They are set in the dynamics font, as
+// the others are, and because a player cannot read them the dialog asks
+// how loud they sound. The music then plays as it should whatever is
+// written over it.
+async function customDynamicDialog() {
+  if (!state.selection) {
+    status("Click a note first");
+    return;
+  }
+  const dlg = $("#dyntext");
+  const text = $("#dyntext-text"), plays = $("#dyntext-plays");
+  // Opening on the marking picked up, so a marking can be changed as well
+  // as written.
+  const sel = state.selection;
+  const on = sel.dynamic
+    ? (state.dynamics || []).find(
+        (x) => x.part === sel.part && x.measure === sel.measure && x.ref === sel.ref)
+    : null;
+  text.value = on ? on.name : "";
+  plays.value = (on && (on.plays || on.name)) || dynamicLevelOf(text.value) || "mf";
+  // The level follows the words as they are typed, until it is chosen by
+  // hand: typing "mp-f" offers f without being asked.
+  let chosen = false;
+  const follow = () => {
+    if (chosen) return;
+    const guess = dynamicLevelOf(text.value);
+    if (guess) plays.value = guess;
+  };
+  const choose = () => { chosen = true; };
+  text.addEventListener("input", follow);
+  plays.addEventListener("change", choose);
+
+  const answer = await new Promise((resolve) => {
+    const done = () => {
+      dlg.removeEventListener("close", done);
+      resolve(dlg.returnValue);
+    };
+    dlg.addEventListener("close", done);
+    dlg.showModal();
+    text.focus();
+    text.select();
+  });
+  text.removeEventListener("input", follow);
+  plays.removeEventListener("change", choose);
+  if (answer !== "ok") {
+    status("Ready");
+    return;
+  }
+  const written = text.value.trim();
+  if (!written) {
+    status("Nothing was written");
+    return;
+  }
+  await mark("dynamic", { dynamic: plays.value, text: written },
+             `${written} \u2014 played as ${plays.value}`);
 }
 
 // selectChordSymbol picks up a chord written over the music.
@@ -18726,6 +18822,7 @@ const MENU_ICONS = {
   "dyn-f": "\ue522",               // dynamicForte
   "dyn-ff": "\ue52f",              // dynamicFF
   "dyn-fff": "\ue530",             // dynamicFFF
+  "dyn-custom": "\ue540",          // dynamicMessaDiVoce: the swell nobody can spell
 
   // Lines over a stretch of music.
   "hairpin-cresc": "\ue53e",       // dynamicCrescendoHairpin

@@ -273,7 +273,11 @@ func buildPart(s *model.Score, p *model.Part, id string, index, divisions int) x
 				// A dynamic is a direction, written immediately before the
 				// note it applies to. The order is the meaning.
 				if d := dynamicOf(el); d != model.DynamicNone {
-					dir := buildDynamic(d)
+					text := ""
+					if mk := marksOf(el); mk != nil {
+						text = mk.DynamicText
+					}
+					dir := buildDynamic(d, text)
 					xm.add(measureItem{Direction: &dir})
 				}
 				// A clef written in the middle of a bar: the sign goes
@@ -486,9 +490,16 @@ func octaveSize(amount int) int {
 	return 8
 }
 
-func buildDynamic(d model.Dynamic) direction {
+// buildDynamic writes a dynamic as a direction. One written by hand goes
+// out as the words it was written as, with the sound element saying how
+// loud it is played — which is all another program can do with it either.
+func buildDynamic(d model.Dynamic, text string) direction {
 	dyn := &dynamics{}
-	dyn.set(d)
+	if text != "" {
+		dyn.Other = text
+	} else {
+		dyn.set(d)
+	}
 	return direction{
 		Placement: "below",
 		Types:     []directionType{{Dynamics: dyn}},

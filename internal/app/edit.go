@@ -1521,6 +1521,11 @@ func (a *App) handleDynamic(w http.ResponseWriter, r *http.Request) {
 	}
 	q := r.URL.Query()
 	name := q.Get("dynamic")
+	// text is the marking as written when it is not a standard one — "mp-f"
+	// — with dynamic saying how loud it is played. A marking nothing can
+	// read is a marking nothing can play, so the text is refused without
+	// a dynamic to sound as.
+	text := strings.TrimSpace(q.Get("text"))
 
 	var d model.Dynamic
 	if name != "" && name != "none" {
@@ -1531,6 +1536,14 @@ func (a *App) handleDynamic(w http.ResponseWriter, r *http.Request) {
 		}
 		d = v
 	}
+	if text != "" && d == model.DynamicNone {
+		http.Error(w, "say how loud "+text+" is played", http.StatusBadRequest)
+		return
+	}
+	// The standard marking written out as itself is the standard marking.
+	if text == d.String() {
+		text = ""
+	}
 	marks, err := a.marksOf(q)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -1538,6 +1551,7 @@ func (a *App) handleDynamic(w http.ResponseWriter, r *http.Request) {
 	}
 	for _, m := range marks {
 		m.Dynamic = d
+		m.DynamicText = text
 	}
 	writeJSON(w, map[string]int{"changed": len(marks)})
 }
@@ -6917,11 +6931,14 @@ type noteContents struct {
 	Accidental    string   `json:"accidental,omitempty"`
 	Articulations []string `json:"articulations,omitempty"`
 	Dynamic       string   `json:"dynamic,omitempty"`
-	Stem          string   `json:"stem,omitempty"`
-	Lyrics        []string `json:"lyrics,omitempty"`
-	Text          []string `json:"text,omitempty"`
-	ChordSymbol   string   `json:"chordSymbol,omitempty"`
-	Fingering     []string `json:"fingering,omitempty"`
+	// DynamicText is a dynamic written by hand, "mp-f", with Dynamic then
+	// saying how loud it is played.
+	DynamicText string   `json:"dynamicText,omitempty"`
+	Stem        string   `json:"stem,omitempty"`
+	Lyrics      []string `json:"lyrics,omitempty"`
+	Text        []string `json:"text,omitempty"`
+	ChordSymbol string   `json:"chordSymbol,omitempty"`
+	Fingering   []string `json:"fingering,omitempty"`
 
 	// Where a mark begins and ends. A script looking for unslurred
 	// phrases wants the ends, not a slur object.
@@ -7294,6 +7311,7 @@ func readMarks(n *noteContents, m *model.Marks) {
 	}
 	if m.Dynamic != model.DynamicNone {
 		n.Dynamic = m.Dynamic.String()
+		n.DynamicText = m.DynamicText
 	}
 	if m.Stem != model.StemAuto {
 		n.Stem = m.Stem.String()

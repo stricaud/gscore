@@ -268,6 +268,7 @@
           <button data-action="dyn-f"><span>f</span><kbd>Forte</kbd></button>
           <button data-action="dyn-ff"><span>ff</span><kbd>Fortissimo</kbd></button>
           <button data-action="dyn-fff"><span>fff</span><kbd>Fortississimo</kbd></button>
+          <button data-action="dyn-custom"><span>Written by hand…</span><kbd>mp-f</kbd></button>
           <hr>
           <button data-action="dyn-none"><span>No dynamic</span></button>
         </div>
@@ -1215,6 +1216,44 @@
 </dialog>
 
 <!-- A stretch of bars, said in numbers instead of dragged over. -->
+<!-- A dynamic written by hand.
+
+     "mp-f", "più f", "p subito": markings the menu does not have, set in
+     the same font as the ones it does. A player cannot read them, so the
+     dialog asks how loud they are played and the music sounds as said. -->
+<dialog id="dyntext">
+  <h2>Dynamic written by hand</h2>
+  <form method="dialog" id="dyntext-form">
+    <label for="dyntext-text">Marking</label>
+    <input type="text" id="dyntext-text" autocomplete="off" placeholder="mp-f"
+           spellcheck="false" required>
+    <p class="small">The letters p, m, f, r, s, z and n are set in the
+       dynamics font; any other word is set in italics beside them.</p>
+    <label class="tempo-bar" for="dyntext-plays">Played as
+      <select id="dyntext-plays">
+        <option value="pppp">pppp</option>
+        <option value="ppp">ppp</option>
+        <option value="pp">pp</option>
+        <option value="p">p</option>
+        <option value="mp">mp</option>
+        <option value="mf">mf</option>
+        <option value="f">f</option>
+        <option value="ff">ff</option>
+        <option value="fff">fff</option>
+        <option value="ffff">ffff</option>
+        <option value="sfz">sfz</option>
+        <option value="sf">sf</option>
+        <option value="fp">fp</option>
+        <option value="rfz">rfz</option>
+        <option value="niente">niente</option>
+      </select></label>
+    <div class="ask-buttons">
+      <button value="ok" type="submit" class="primary">Write</button>
+      <button value="cancel" type="submit" formnovalidate>Cancel</button>
+    </div>
+  </form>
+</dialog>
+
 <dialog id="region">
   <h2>Pick up bars</h2>
   <p class="small">One staff at a time: a slur or a crescendo over three

@@ -484,8 +484,13 @@ type DynamicPos struct {
 	Y      float64 `json:"y"`
 	Width  float64 `json:"width"`
 	Height float64 `json:"height"`
-	// Name is the dynamic as the editor spells it, "ff" and the like.
+	// Name is the dynamic as the editor spells it, "ff" and the like — or
+	// as it was written by hand, "mp-f".
 	Name string `json:"name"`
+	// Plays is how loud a marking written by hand sounds, as the editor
+	// spells the dynamics. Empty for a standard marking, which sounds as
+	// it reads.
+	Plays string `json:"plays,omitempty"`
 }
 
 // ArticulationPos is one articulation's box on the page.

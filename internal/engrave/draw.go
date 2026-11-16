@@ -2835,31 +2835,124 @@ func (e *engraver) drawDynamic(m *model.Marks, p *placed, measure int) {
 	if m.Dynamic == model.DynamicNone {
 		return
 	}
-	name := smufl.DynamicGlyph(m.Dynamic)
-	if name == "" {
-		return
+	// What is drawn: the one glyph of a standard marking, or the pieces of
+	// one written by hand.
+	var pieces []dynamicPiece
+	shown, plays := m.Dynamic.String(), ""
+	if m.DynamicText != "" {
+		pieces = dynamicPieces(m.DynamicText)
+		shown, plays = m.DynamicText, m.Dynamic.String()
+	} else {
+		name := smufl.DynamicGlyph(m.Dynamic)
+		if name == "" {
+			return
+		}
+		pieces = []dynamicPiece{{glyph: name, width: smufl.Advance(name)}}
+	}
+	w := 0.0
+	for _, pc := range pieces {
+		w += pc.width
 	}
 	// Below the staff, clear of whatever is under this stretch of it: the
 	// stems that point down, the ledger lines, the words. Where that is
 	// cannot be known yet, so the dynamic waits for the staff to finish.
-	x := p.x + noteheadWidth(p.value)/2 - smufl.Advance(name)/2
-	w := smufl.Advance(name)
+	x := p.x + noteheadWidth(p.value)/2 - w/2
 	e.wait(waitingMark{
 		x0: x, x1: x + w, height: 1.4, gap: 1.2, below: true, rank: rankDynamic,
 		draw: func(y float64) {
 			// place gives the top of the band; a dynamic is drawn from its
 			// baseline, which sits near the bottom of its own letters.
-			e.lay.Glyphs = append(e.lay.Glyphs, Glyph{Name: name, X: x, Y: y + 1.0})
+			at := x
+			for _, pc := range pieces {
+				switch {
+				case pc.glyph != "":
+					e.lay.Glyphs = append(e.lay.Glyphs, Glyph{Name: pc.glyph, X: at, Y: y + 1.0})
+				case pc.text != "":
+					e.lay.Texts = append(e.lay.Texts, Text{
+						S: pc.text, X: at, Y: y + 1.0, Size: dynamicTextSize,
+						Anchor: "start", Italic: true, Bold: true,
+					})
+				}
+				at += pc.width
+			}
 			// Where it ended up, so the editor can let it be clicked. Only
 			// now is that known: until the staff is finished there is no
 			// saying how far down this stretch of music pushed it.
 			e.lay.Dynamics = append(e.lay.Dynamics, DynamicPos{
 				Part: e.partIndex, Measure: measure, Ref: p.index,
 				X: x, Y: y, Width: w, Height: 1.4,
-				Name: m.Dynamic.String(),
+				Name: shown, Plays: plays,
 			})
 		},
 	})
+}
+
+// dynamicTextSize is the size a word in a dynamic written by hand is set
+// at: "più" and "subito" beside the letters, matched by eye to the height
+// of the dynamic glyphs.
+const dynamicTextSize = 1.5
+
+// dynamicPiece is one piece of a dynamic written by hand: a glyph, a word
+// set in type, or the gap of a space.
+type dynamicPiece struct {
+	glyph, text string
+	width       float64
+}
+
+// dynamicLetters is the glyph for each letter the dynamics font has.
+var dynamicLetters = map[rune]string{
+	'p': "dynamicPiano", 'm': "dynamicMezzo", 'f': "dynamicForte",
+	'r': "dynamicRinforzando", 's': "dynamicSforzando", 'z': "dynamicZ",
+	'n': "dynamicNiente",
+}
+
+// dynamicPieces sets a dynamic written by hand in the same font as the
+// standard ones, so that "mp-f" reads as a dynamic and not as a word in
+// italics beside the others.
+//
+// Word by word: a word made only of the letters the dynamics font has — p,
+// m, f, r, s, z, n — is set as those glyphs, one each, which is how
+// SMuFL means them to be combined; any other word, "più" or "subito", is a
+// word and is set in type. A hyphen is the font's own separator and a
+// space is a gap.
+func dynamicPieces(s string) []dynamicPiece {
+	var out []dynamicPiece
+	word := func(w string) {
+		if w == "" {
+			return
+		}
+		all := true
+		for _, r := range w {
+			if _, ok := dynamicLetters[r]; !ok {
+				all = false
+				break
+			}
+		}
+		if !all {
+			out = append(out, dynamicPiece{text: w, width: textWidth(w, dynamicTextSize)})
+			return
+		}
+		for _, r := range w {
+			name := dynamicLetters[r]
+			out = append(out, dynamicPiece{glyph: name, width: smufl.Advance(name)})
+		}
+	}
+	start := 0
+	for i, r := range s {
+		if r != ' ' && r != '-' {
+			continue
+		}
+		word(s[start:i])
+		if r == '-' {
+			name := "dynamicCombinedSeparatorHyphen"
+			out = append(out, dynamicPiece{glyph: name, width: smufl.Advance(name)})
+		} else {
+			out = append(out, dynamicPiece{width: 0.5})
+		}
+		start = i + 1
+	}
+	word(s[start:])
+	return out
 }
 
 // textWasDrawn says where a block of words ended up, so that the editor can

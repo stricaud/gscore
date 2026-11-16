@@ -449,6 +449,9 @@ type dynamics struct {
 	FP   *empty `xml:"fp,omitempty"`
 	RFZ  *empty `xml:"rfz,omitempty"`
 	N    *empty `xml:"n,omitempty"`
+	// Other is a dynamic written by hand, which the standard has a place
+	// for by that name.
+	Other string `xml:"other-dynamics,omitempty"`
 }
 
 // set marks the one element a dynamic corresponds to.

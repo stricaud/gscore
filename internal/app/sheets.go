@@ -225,7 +225,7 @@ func writeCue(out *model.Score, sh model.Sheet, cue model.Cue, from *model.Score
 					// lyrics or chord symbols: they belong to whoever is
 					// playing it, and printed here they read as
 					// instructions to the person holding this page.
-					m.Dynamic = model.DynamicNone
+					m.Dynamic, m.DynamicText = model.DynamicNone, ""
 					m.Lyrics, m.Texts, m.Chord = nil, nil, nil
 					m.Hairpin = nil
 				}

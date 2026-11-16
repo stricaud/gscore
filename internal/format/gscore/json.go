@@ -386,6 +386,7 @@ type marksDoc struct {
 	Tuplet       *tupletDoc  `json:"tuplet,omitempty"`
 	Stem         string      `json:"stem,omitempty"`
 	Dynamic      string      `json:"dynamic,omitempty"`
+	DynamicText  string      `json:"dynamicText,omitempty"`
 	Hairpin      *hairpinDoc `json:"hairpin,omitempty"`
 	Octave       *octaveDoc  `json:"octave,omitempty"`
 	Trill        *trillDoc   `json:"trill,omitempty"`
@@ -830,8 +831,9 @@ func encodeMarks(m *model.Marks) *marksDoc {
 		TieStart: m.TieStart, TieStop: m.TieStop,
 		TieDir:    stemNames[m.TieDir],
 		SlurStart: slurEnds(m.SlurStart), SlurStop: slurEnds(m.SlurStop),
-		Stem:    stemNames[m.Stem],
-		Dynamic: m.Dynamic.String(),
+		Stem:        stemNames[m.Stem],
+		Dynamic:     m.Dynamic.String(),
+		DynamicText: m.DynamicText,
 	}
 	if m.Clef != nil {
 		out.Clef = clefNames[*m.Clef]
@@ -1287,6 +1289,7 @@ func decodeMarks(md *marksDoc, m *model.Marks) {
 	m.Stem = stemValues[md.Stem]
 	if d, ok := model.DynamicFromName(md.Dynamic); ok {
 		m.Dynamic = d
+		m.DynamicText = md.DynamicText
 	}
 	for i, a := range md.Articulations {
 		v, ok := articValues[a]

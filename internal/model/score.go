@@ -1264,6 +1264,16 @@ type Score struct {
 	// score says about itself to somebody deciding whether to open it.
 	Description string
 
+	// Reference is where this score came from: the address of the page it
+	// was downloaded from, the edition it was copied out of, the catalogue
+	// number of the manuscript. Usually a URL, and kept as whatever was
+	// typed.
+	//
+	// It is in the file for the same reason the tags are: a score that is
+	// copied or sent on should still say where to find the original, and
+	// a shelf of scores wants to show it. Not printed on the page.
+	Reference string
+
 	// Tags are what this piece is, in the words whoever keeps it would
 	// look for it by: "advent", "flute duet", "grade 3", "to learn".
 	//

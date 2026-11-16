@@ -1403,6 +1403,13 @@
     <label class="about-wide" for="score-about-description"><span>Description</span>
       <textarea id="score-about-description" rows="3"
         placeholder="A few words about this piece"></textarea></label>
+    <!-- Where the score came from: the page it was downloaded from, the
+         edition it was copied out of. A link where it is one, so the
+         original is a click away. -->
+    <label class="about-wide" for="score-about-reference"><span>Reference</span>
+      <input type="url" id="score-about-reference" autocomplete="off"
+        placeholder="https://… where this score came from"></label>
+    <div id="score-about-reference-link" class="small"></div>
     <label class="about-wide" for="score-about-tags"><span>Tags</span>
       <input type="text" id="score-about-tags" autocomplete="off"
         placeholder="advent, flute duet, grade 3"></label>

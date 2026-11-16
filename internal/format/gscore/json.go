@@ -73,6 +73,9 @@ type scoreDoc struct {
 	// at a shelf of them. Not printed on the page; the subtitle is the
 	// one that is.
 	Description string `json:"description,omitempty"`
+	// Reference is where the score came from, usually a URL. See
+	// model.Score.Reference.
+	Reference string `json:"reference,omitempty"`
 	// Tags are what this piece is, in the words whoever keeps it would
 	// look for it by. In the file, so that a score carries its own
 	// description wherever it is copied to.
@@ -609,6 +612,7 @@ func encodeScore(s *model.Score) *scoreDoc {
 		doc.MarkerStyle = s.Markers.String()
 	}
 	doc.Description = s.Description
+	doc.Reference = s.Reference
 	if len(s.Tags) > 0 {
 		doc.Tags = append([]string(nil), s.Tags...)
 	}
@@ -1016,6 +1020,7 @@ func decodeScore(doc *scoreDoc) (*model.Score, error) {
 	}
 
 	s.Description = doc.Description
+	s.Reference = doc.Reference
 	if len(doc.Tags) > 0 {
 		s.Tags = append([]string(nil), doc.Tags...)
 	}

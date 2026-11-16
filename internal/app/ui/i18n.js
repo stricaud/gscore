@@ -465,6 +465,8 @@ const MESSAGES = {
   // the page — a French song prints "Paroles de…" opposite "Musique de…".
   "Lyricist": "Paroles",
   "Copyright": "Droits",
+  "Reference": "Référence",
+  "https://… where this score came from": "https://… d’où vient cette partition",
   "Tempo": "Tempo",
   // The words and the metronome mark over the first bar — "Andante
   // (♩ = 58)" — as against the arrows over the beats, which the View menu

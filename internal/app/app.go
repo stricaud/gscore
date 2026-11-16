@@ -980,6 +980,7 @@ type info struct {
 	// The window shows both and a shelf built from the files sorts by
 	// them.
 	Description string     `json:"description"`
+	Reference   string     `json:"reference"`
 	Tags        []string   `json:"tags"`
 	Tempo       int        `json:"tempo"`
 	Parts       []partInfo `json:"parts"`
@@ -1141,6 +1142,7 @@ func (a *App) handleInfo(w http.ResponseWriter, r *http.Request) {
 		Copyright:    a.score.Identity.Copyright,
 		Tags:         append([]string{}, a.score.Tags...),
 		Description:  a.score.Description,
+		Reference:    a.score.Reference,
 		Tempo:        a.score.Tempo.BPM,
 	}
 	for _, sec := range a.score.Sections() {

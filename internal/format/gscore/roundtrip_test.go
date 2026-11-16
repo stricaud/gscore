@@ -1095,3 +1095,30 @@ func TestATiesDirectionSurvivesTheFile(t *testing.T) {
 		t.Errorf("the tie came back %v, want down", back.TieDir)
 	}
 }
+
+// Where a score came from travels with it, like its tags, and a score that
+// never said writes nothing.
+func TestTheReferenceSurvivesARoundTrip(t *testing.T) {
+	s := model.NewScore()
+	s.Reference = "https://musescore.com/user/1/scores/2"
+
+	var b bytes.Buffer
+	if err := Write(&b, s, nil); err != nil {
+		t.Fatalf("writing: %v", err)
+	}
+	back, _, err := Read(bytes.NewReader(b.Bytes()))
+	if err != nil {
+		t.Fatalf("reading: %v", err)
+	}
+	if back.Reference != s.Reference {
+		t.Errorf("the reference came back as %q", back.Reference)
+	}
+
+	b.Reset()
+	if err := Write(&b, model.NewScore(), nil); err != nil {
+		t.Fatalf("writing: %v", err)
+	}
+	if bytes.Contains(b.Bytes(), []byte("\"reference\"")) {
+		t.Error("a score with no reference wrote one anyway")
+	}
+}

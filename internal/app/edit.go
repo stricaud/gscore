@@ -2319,6 +2319,9 @@ func (a *App) handleHeader(w http.ResponseWriter, r *http.Request) {
 	if q.Has("description") {
 		a.score.Description = q.Get("description")
 	}
+	if q.Has("reference") {
+		a.score.Reference = strings.TrimSpace(q.Get("reference"))
+	}
 	if q.Has("tags") {
 		a.score.Tags = parseTags(q.Get("tags"))
 	}
@@ -5557,15 +5560,29 @@ func tupletFromSelection(p *model.Part, measIdx int, targets []target, n int) (n
 			return 0, 0, freed, editError("part of that selection is already in a tuplet")
 		}
 	}
-	if len(sorted) > n {
+	normal = tupletNormal(n)
+	first, last := sorted[0].index, sorted[len(sorted)-1].index
+	before := spanOf(v.Elements[first : last+1])
+
+	// A group of n is n of some value — three eighths, three quarters —
+	// and the notes need not be n in number to be that: a quarter and an
+	// eighth are three eighths, and read as a triplet they are the whole
+	// of one. So where the notes already add up to n of a value that can
+	// be written, the group is made of them as they are. Counting heads
+	// instead padded that quarter and eighth with a third member, a rest
+	// nobody wrote, and the figure over them meant something else.
+	//
+	// Where they do not — two quarters asked for as a triplet — the
+	// group is filled out to n with rests the size of the first note,
+	// which is what a group written out by hand would hold, and more
+	// notes than n cannot be a group of n at all.
+	unit := before.Scale(1, n).Reduced()
+	_, _, whole := unit.Written()
+	if !whole && len(sorted) > n {
 		return 0, 0, freed, editError(fmt.Sprintf(
 			"%d notes are selected, which is more than a group of %d",
 			len(sorted), n))
 	}
-
-	normal = tupletNormal(n)
-	first, last := sorted[0].index, sorted[len(sorted)-1].index
-	before := spanOf(v.Elements[first : last+1])
 
 	// The notehead the padding members take: the first one's, which is what
 	// a group written out by hand would use.
@@ -5587,15 +5604,18 @@ func tupletFromSelection(p *model.Part, measIdx int, targets []target, n int) (n
 		}
 	}
 
-	extra := make([]model.Element, 0, n-len(sorted))
-	for i := len(sorted); i < n; i++ {
-		each := pad.Scale(normal, n).Reduced()
-		rest := &model.Rest{Dur: each}
-		rest.Marks.Tuplet = &model.Tuplet{Actual: n, Normal: normal}
-		extra = append(extra, rest)
-		after = after.Add(each)
+	var extra []model.Element
+	members = len(sorted)
+	if !whole {
+		for i := len(sorted); i < n; i++ {
+			each := pad.Scale(normal, n).Reduced()
+			rest := &model.Rest{Dur: each}
+			rest.Marks.Tuplet = &model.Tuplet{Actual: n, Normal: normal}
+			extra = append(extra, rest)
+			after = after.Add(each)
+		}
+		members = n
 	}
-	members = n
 
 	// What the group gives back. A duplet — two in the time of three — takes
 	// more time than it was given rather than less, and then there is

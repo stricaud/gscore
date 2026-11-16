@@ -759,6 +759,9 @@ func describeScore(s *model.Score) {
 		fmt.Printf("description %s\n",
 			strings.Join(strings.Fields(s.Description), " "))
 	}
+	if s.Reference != "" {
+		fmt.Printf("reference %s\n", s.Reference)
+	}
 	if len(s.Tags) > 0 {
 		// One line, comma separated, the way they were typed — so that a
 		// shelf built from a directory of scores can read them straight

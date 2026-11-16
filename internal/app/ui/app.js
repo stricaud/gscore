@@ -11340,6 +11340,9 @@ async function setHeaderDialog() {
   showArtwork(i);
   field("copyright", i.copyright);
   field("description", i.description);
+  field("reference", i.reference);
+  showReferenceLink();
+  $("#score-about-reference").oninput = showReferenceLink;
   field("tags", (i.tags || []).join(", "));
 
   // What gscore will make of the tag line, shown as it is typed.
@@ -11391,6 +11394,7 @@ async function setHeaderDialog() {
   const p = new URLSearchParams({
     copyright: $("#score-about-copyright").value,
     description: $("#score-about-description").value,
+    reference: $("#score-about-reference").value,
     tags: tags.value,
   });
   for (const name of ["title", "subtitle", "composer", "arranger", "lyricist"]) {
@@ -11410,6 +11414,23 @@ async function setHeaderDialog() {
   }
   await refreshScore();
   status("Saved what this score is");
+}
+
+// showReferenceLink puts a link under the reference box when what is in
+// it is a web address, so the original is a click away. Anything else —
+// an edition, a shelf mark — is words, and words get no link.
+function showReferenceLink() {
+  const box = $("#score-about-reference-link");
+  if (!box) return;
+  const ref = ($("#score-about-reference").value || "").trim();
+  box.textContent = "";
+  if (!/^https?:\/\//i.test(ref)) return;
+  const a = document.createElement("a");
+  a.href = ref;
+  a.target = "_blank";
+  a.rel = "noopener";
+  a.textContent = "Open " + ref;
+  box.appendChild(a);
 }
 
 // The meters worth a button. Everything else is typed, which is what the

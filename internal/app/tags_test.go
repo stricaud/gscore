@@ -70,3 +70,25 @@ func TestTagsAreSetAndReportedBack(t *testing.T) {
 		t.Errorf("the tags survived being cleared: %v", got)
 	}
 }
+
+// Where the score came from is kept with it, and the window can set it.
+func TestTheReferenceIsSetAndReportedBack(t *testing.T) {
+	h := newHarness(t)
+	h.post("/api/header?reference=" + url.QueryEscape(" https://musescore.com/user/1/scores/2 "))
+
+	if got := h.app.score.Reference; got != "https://musescore.com/user/1/scores/2" {
+		t.Fatalf("the reference is %q", got)
+	}
+	if info := h.get("/api/info"); !strings.Contains(info, "musescore.com/user/1/scores/2") {
+		t.Error("the reference is not in what the editor is told")
+	}
+	// Only what is sent is changed.
+	h.post("/api/header?title=" + url.QueryEscape("Noel"))
+	if got := h.app.score.Reference; got == "" {
+		t.Error("setting the title wiped the reference")
+	}
+	h.post("/api/header?reference=")
+	if got := h.app.score.Reference; got != "" {
+		t.Errorf("the reference survived being cleared: %q", got)
+	}
+}

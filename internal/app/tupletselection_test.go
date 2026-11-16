@@ -463,3 +463,51 @@ func TestARunThatStillWouldNotFitIsRefused(t *testing.T) {
 		t.Errorf("the first bar now holds %d notes, want 4", n)
 	}
 }
+
+// A quarter and an eighth are three eighths, and read as a triplet they are
+// the whole of one: the group is made of the two notes as they are, with
+// nothing added. Counting heads padded them with a rest nobody wrote.
+func TestAQuarterAndAnEighthAreAWholeTriplet(t *testing.T) {
+	h := newHarness(t)
+	h.post("/api/insert?part=0&measure=0&at=-1&step=4&dur=quarter&kind=note")
+	h.post("/api/insert?part=0&measure=0&at=-1&step=5&dur=eighth&kind=note")
+	d := h.post("/api/tuplet?part=0&measure=0&at=1&n=3&sel=0:0:0,0:0:1")
+	if got, want := d["members"], 2.0; got != want {
+		t.Errorf("the group has %v members, want %v", got, want)
+	}
+	got := spell(t, h, 0, 0)
+	// The group, and after it the eighth the triplet gave back, which is
+	// not part of the group.
+	want := []string{
+		"note6 1/6 3:2 start",
+		"note0 1/12 3:2 stop",
+		"rest 1/8",
+	}
+	if fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Errorf("the bar holds %v, want %v", got, want)
+	}
+}
+
+// Mixed values that add up to the group are a group, however many of them
+// there are: an eighth, two sixteenths and an eighth are three eighths.
+func TestMoreNotesThanTheGroupCountsAreAGroupWhenTheyAddUp(t *testing.T) {
+	h := newHarness(t)
+	for _, in := range []string{"4&dur=eighth", "5&dur=sixteenth", "6&dur=sixteenth", "7&dur=eighth"} {
+		h.post("/api/insert?part=0&measure=0&at=-1&step=" + in + "&kind=note")
+	}
+	d := h.post("/api/tuplet?part=0&measure=0&at=1&n=3&sel=0:0:0,0:0:1,0:0:2,0:0:3")
+	if got, want := d["members"], 4.0; got != want {
+		t.Errorf("the group has %v members, want %v", got, want)
+	}
+	got := spell(t, h, 0, 0)
+	want := []string{
+		"note6 1/12 3:2 start",
+		"note0 1/24 3:2",
+		"note1 1/24 3:2",
+		"note2 1/12 3:2 stop",
+		"rest 1/8",
+	}
+	if fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Errorf("the bar holds %v, want %v", got, want)
+	}
+}

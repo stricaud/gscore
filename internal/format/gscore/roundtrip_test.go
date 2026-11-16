@@ -26,7 +26,7 @@ func TestRoundTripKeepsEverything(t *testing.T) {
 	n.Hairpin = &model.Hairpin{Kind: model.Crescendo, Start: true}
 	n.Octave = &model.OctaveShift{Amount: 1, Start: true}
 	n.Lyrics = []model.Lyric{{Text: "Glo", Verse: 1, Syllabic: model.SyllableBegin}}
-	n.Trill = &model.Trill{Start: true}
+	n.Trill = &model.Trill{Start: true, Accidental: model.Flat}
 	n.Arpeggio = &model.Arpeggio{Down: true}
 	n.Break = model.BreathComma
 	n.Fingering = []string{"1-2", "4"}
@@ -84,8 +84,8 @@ func TestRoundTripKeepsEverything(t *testing.T) {
 	if first.Octave == nil || first.Octave.Amount != 1 {
 		t.Error("the octave line did not survive")
 	}
-	if first.Trill == nil || !first.Trill.Start {
-		t.Error("the trill did not survive")
+	if first.Trill == nil || !first.Trill.Start || first.Trill.Accidental != model.Flat {
+		t.Error("the trill, or the flat over it, did not survive")
 	}
 	if len(first.Lyrics) != 1 || first.Lyrics[0].Text != "Glo" ||
 		first.Lyrics[0].Syllabic != model.SyllableBegin {

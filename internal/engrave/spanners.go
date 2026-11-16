@@ -209,7 +209,7 @@ func (e *engraver) spanAt(m *model.Marks, p *placed, measure int) {
 
 	if tr := m.Trill; tr != nil {
 		if tr.Start && open.trill == nil {
-			open.trill = &openSpan{x: x - 0.5}
+			open.trill = &openSpan{x: x - 0.5, accidental: tr.Accidental}
 		}
 		if tr.Stop && open.trill != nil {
 			e.drawTrill(open.trill, x+noteheadWidth(p.value)/2, true)
@@ -1466,6 +1466,20 @@ func (e *engraver) archOver(x0, x1, y1, y2, cy, dir float64) (float64, float64) 
 	return want, at
 }
 
+// The accidental before a "tr": a teeny glyph, as LilyPond sets it, lifted
+// so that it sits level with the top of the letters.
+const (
+	trillAccidentalScale = 0.6
+	trillAccidentalSize  = 4 * trillAccidentalScale
+	trillAccidentalRaise = 0.65
+)
+
+var trillAccidentalGlyph = map[model.Accidental]string{
+	model.Sharp: "accidentalSharp", model.Flat: "accidentalFlat",
+	model.Natural: "accidentalNatural", model.DoubleSharp: "accidentalDoubleSharp",
+	model.DoubleFlat: "accidentalDoubleFlat",
+}
+
 // drawTrill writes "tr" and the wavy line that holds it.
 //
 // A trill over one note is the ornament alone; over a stretch of music it is
@@ -1488,6 +1502,16 @@ func (e *engraver) drawTrill(t *openSpan, to float64, complete bool) {
 			y := edge - 0.4
 			x := from
 			if first {
+				// The accidental of the upper note, where there is one,
+				// is written small and raised before the "tr", as the
+				// Henle and LilyPond trills of Op. 111 have it.
+				if g := trillAccidentalGlyph[t.accidental]; g != "" {
+					e.lay.Glyphs = append(e.lay.Glyphs, Glyph{
+						Name: g, X: x, Y: y - trillAccidentalRaise,
+						Size: trillAccidentalSize,
+					})
+					x += smufl.Advance(g)*trillAccidentalScale + 0.1
+				}
 				e.lay.Glyphs = append(e.lay.Glyphs, Glyph{
 					Name: "ornamentTrill", X: x, Y: y,
 				})

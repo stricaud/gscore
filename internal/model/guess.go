@@ -143,6 +143,17 @@ var guessAliases = []struct {
 	{"timbales", "drum.timpani"},
 	{"timpani", "drum.timpani"},
 	{"pauken", "drum.timpani"},
+	// The kit, under the names a chart or a band gives it. After the
+	// single drums, so that "bass drum" is still a bass drum and not a
+	// kit with the word "drum" in it.
+	{"drum set", "drum.group.set"},
+	{"drumset", "drum.group.set"},
+	{"drum kit", "drum.group.set"},
+	{"drumkit", "drum.group.set"},
+	{"drums", "drum.group.set"},
+	{"batterie", "drum.group.set"},
+	{"schlagzeug", "drum.group.set"},
+	{"bateria", "drum.group.set"},
 	{"tam-tam", "metal.tamtam"},
 	{"tamtam", "metal.tamtam"},
 	{"cymbales", "metal.cymbal.crash"},

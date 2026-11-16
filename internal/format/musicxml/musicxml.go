@@ -709,7 +709,10 @@ type breathElem struct {
 
 // ornaments is what is written over a note rather than done to it.
 type ornaments struct {
-	Trill    *empty     `xml:"trill-mark,omitempty"`
+	Trill *empty `xml:"trill-mark,omitempty"`
+	// AccMarks are the accidentals written over the ornaments before them:
+	// the flat of a trill with the upper note flattened.
+	AccMarks []string   `xml:"accidental-mark,omitempty"`
 	WavyLine []spanElem `xml:"wavy-line,omitempty"`
 	Turn     *empty     `xml:"turn,omitempty"`
 	TurnInv  *empty     `xml:"inverted-turn,omitempty"`
@@ -820,7 +823,17 @@ type pitch struct {
 type barline struct {
 	Location string     `xml:"location,attr,omitempty"`
 	BarStyle string     `xml:"bar-style,omitempty"`
+	Ending   *endingTag `xml:"ending,omitempty"`
 	Repeat   *repeatTag `xml:"repeat,omitempty"`
+}
+
+// endingTag is one end of a volta bracket: "start" on the left of the bar
+// it opens, "stop" or "discontinue" on the right of the bar it closes, the
+// latter for a last ending drawn without its hook. Number is the times
+// through it covers, "1" or "1, 2".
+type endingTag struct {
+	Number string `xml:"number,attr"`
+	Type   string `xml:"type,attr"`
 }
 
 type repeatTag struct {

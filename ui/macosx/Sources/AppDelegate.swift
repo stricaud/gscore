@@ -199,8 +199,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate,
     /// sent to the editor by name.
     @objc func runCommand(_ sender: NSMenuItem) {
         guard let name = sender.representedObject as? String else { return }
+        // Cut, Copy and Paste belong to whatever has the focus. In a box
+        // of words — the chat prompt, a title, a search — that is the
+        // words, and the web view does the editing itself, as it would
+        // in a browser; on the score it is the music, which the editor
+        // does. Sent to the editor either way, the words could not be
+        // pasted into at all: ⌘V in the chat prompt pasted bars.
+        if let sel = AppDelegate.editingSelectors[name] {
+            web.evaluateJavaScript(
+                "!!(document.activeElement && document.activeElement.matches('input, textarea'))"
+            ) { result, _ in
+                if (result as? Bool) == true {
+                    NSApp.sendAction(sel, to: nil, from: nil)
+                } else {
+                    self.run(name)
+                }
+            }
+            return
+        }
         run(name)
     }
+
+    /// The system's own editing actions, by the editor command that
+    /// stands in for each on the score.
+    private static let editingSelectors: [String: Selector] = [
+        "cut": #selector(NSText.cut(_:)),
+        "copy": #selector(NSText.copy(_:)),
+        "paste": #selector(NSText.paste(_:)),
+    ]
 
     private func run(_ command: String) {
         guard ready else { return }

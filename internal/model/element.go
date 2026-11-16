@@ -910,6 +910,11 @@ type Hairpin struct {
 // is nothing to extend it over.
 type Trill struct {
 	Start, Stop bool
+
+	// Accidental is written small before the "tr" where the upper note of
+	// the shake is not the one the key gives: the flat over the long trills
+	// of the Arietta of Op. 111 says to trill with E flat, not E.
+	Accidental Accidental
 }
 
 // Tremolo is a note repeated for its whole written length, written as

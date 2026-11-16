@@ -524,6 +524,7 @@ func (a *App) APIRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/soundfont/presets", a.handleSoundfontPresets)
 	mux.HandleFunc("/api/soundfont/collection", a.handleZanderjaz)
 	mux.HandleFunc("/api/settings", a.handleSettings)
+	a.assistantRoutes(mux)
 	mux.HandleFunc("/api/recent", a.handleRecent)
 	mux.HandleFunc("/api/play/start", a.handleLiveStart)
 	mux.HandleFunc("/api/play/chunk", a.handleLiveChunk)
@@ -979,9 +980,12 @@ type info struct {
 	// and Tags are what it is in the words it would be looked for by.
 	// The window shows both and a shelf built from the files sorts by
 	// them.
-	Description string     `json:"description"`
-	Reference   string     `json:"reference"`
-	Tags        []string   `json:"tags"`
+	Description string   `json:"description"`
+	Reference   string   `json:"reference"`
+	Tags        []string `json:"tags"`
+	// AIAssistant says the assistant exists in this run of the program,
+	// so the window shows the chat and its settings. See assistant.go.
+	AIAssistant bool       `json:"aiAssistant,omitempty"`
 	Tempo       int        `json:"tempo"`
 	Parts       []partInfo `json:"parts"`
 	// Groups are the runs of staves drawn as belonging together, which is
@@ -1143,6 +1147,7 @@ func (a *App) handleInfo(w http.ResponseWriter, r *http.Request) {
 		Tags:         append([]string{}, a.score.Tags...),
 		Description:  a.score.Description,
 		Reference:    a.score.Reference,
+		AIAssistant:  assistantOn,
 		Tempo:        a.score.Tempo.BPM,
 	}
 	for _, sec := range a.score.Sections() {

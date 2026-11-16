@@ -85,38 +85,46 @@ func (a *App) undoable(h http.HandlerFunc) http.HandlerFunc {
 		if rec.code < 200 || rec.code >= 300 {
 			return // nothing happened, so there is nothing to take back
 		}
-		// The one place every edit passes through, and it already knows
-		// whether the edit took: an edit that can be undone is an edit that
-		// is not on disk.
-		a.unsaved = true
-
-		// Which notes print an accidental, worked out again.
-		//
-		// Here for the same reason the line above is here: it is the one
-		// place every edit passes through. Nearly any edit can change the
-		// answer — a pitch, a key signature, a bar inserted, a note
-		// deleted, a staff added to a brace — and the handlers that can
-		// do those things are most of them. A list of the ones that need
-		// it would be a list that falls out of date the first time
-		// somebody adds a handler, and the symptom would be a sharp that
-		// should have gone and did not.
-		//
-		// It is cheap, it reads the music and writes nothing but the
-		// signs, and running it twice says the same thing, so there is
-		// nothing to be gained by being clever about when.
-		a.score.SpellAccidentals()
-		// Inside a script, every edit belongs to the one the person asked
-		// for and is taken back with it.
-		if a.batchDepth > 0 {
-			return
-		}
-		a.undoStack = append(a.undoStack, before)
-		if len(a.undoStack) > undoDepth {
-			a.undoStack = a.undoStack[len(a.undoStack)-undoDepth:]
-		}
-		// A new edit is a new branch: what was undone cannot be redone now.
-		a.redoStack = nil
+		a.recordEdit(before)
 	}
+}
+
+// recordEdit is the bookkeeping after an edit that went through. The
+// caller holds the lock. Its own method so that a handler that cannot be
+// wrapped — one that streams its answer, and so has sent its status
+// before the edit is made — can do the same. See handleAssistantCompose.
+func (a *App) recordEdit(before snapshot) {
+	// The one place every edit passes through, and it already knows
+	// whether the edit took: an edit that can be undone is an edit that
+	// is not on disk.
+	a.unsaved = true
+
+	// Which notes print an accidental, worked out again.
+	//
+	// Here for the same reason the line above is here: it is the one
+	// place every edit passes through. Nearly any edit can change the
+	// answer — a pitch, a key signature, a bar inserted, a note
+	// deleted, a staff added to a brace — and the handlers that can
+	// do those things are most of them. A list of the ones that need
+	// it would be a list that falls out of date the first time
+	// somebody adds a handler, and the symptom would be a sharp that
+	// should have gone and did not.
+	//
+	// It is cheap, it reads the music and writes nothing but the
+	// signs, and running it twice says the same thing, so there is
+	// nothing to be gained by being clever about when.
+	a.score.SpellAccidentals()
+	// Inside a script, every edit belongs to the one the person asked
+	// for and is taken back with it.
+	if a.batchDepth > 0 {
+		return
+	}
+	a.undoStack = append(a.undoStack, before)
+	if len(a.undoStack) > undoDepth {
+		a.undoStack = a.undoStack[len(a.undoStack)-undoDepth:]
+	}
+	// A new edit is a new branch: what was undone cannot be redone now.
+	a.redoStack = nil
 }
 
 // statusWriter remembers what a handler answered, so the wrapper can tell a

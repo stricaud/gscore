@@ -471,6 +471,46 @@ kbd {
 #toolbox { border-right: 1px solid var(--line); }
 #inspector { border-left: 1px solid var(--line); }
 
+/* ---- the chat prompt ----
+   A fourth column, there only while it is open: the score gives up the
+   room and takes it back when the chat is put away. */
+#chat {
+  display: none;
+  background: var(--panel);
+  border-left: 1px solid var(--line);
+  padding: 10px 8px;
+  min-width: 0;
+  overflow: hidden;
+  flex-direction: column;
+  gap: 6px;
+}
+body.chat #chat { display: flex; }
+body.chat #main {
+  grid-template-columns:
+    calc(164px * var(--ui-scale)) 1fr calc(232px * var(--ui-scale)) calc(300px * var(--ui-scale));
+}
+#chat-log { flex: 1; overflow-y: auto; min-height: 0; font-size: calc(12px * var(--ui-scale)); }
+#chat-log .chat-you { margin: 6px 0 2px; color: var(--muted); }
+#chat-log .chat-them { margin: 0 0 6px; white-space: pre-wrap; }
+#chat-log .chat-err { margin: 0 0 6px; color: #b02020; white-space: pre-wrap; }
+#chat-log .chat-wait { margin: 0 0 6px; color: var(--muted); font-style: italic; }
+#chat-prompt { width: 100%; box-sizing: border-box; resize: vertical; font: inherit; }
+
+/* The assistant's settings: a label and its field on each row, the fields
+   as wide as the dialog allows, so the four of them read as a form and not
+   as a sentence that wrapped. */
+.ai-grid {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 8px 10px;
+  align-items: center;
+  margin: 8px 0;
+}
+.ai-grid > label { white-space: nowrap; }
+.ai-grid > input, .ai-grid > select { width: 100%; box-sizing: border-box; min-width: 0; }
+.ai-row { display: flex; gap: 6px; min-width: 0; }
+.ai-row > select { flex: 1; min-width: 0; }
+
 .tool-group, .insp-group { margin-bottom: 16px; }
 
 .tool-label, .insp-label {

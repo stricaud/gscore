@@ -467,6 +467,11 @@ func (e *exporter) noteText(n *model.Note, d model.Duration) string {
 // and which octave it is in.
 func (e *exporter) pitchText(n *model.Note) string {
 	var b strings.Builder
+	// A bracketed accidental is a courtesy one, and the standard's word
+	// for it goes in front of the note.
+	if n.Parens {
+		b.WriteString("!courtesy!")
+	}
 	k := accKey{Step: n.Pitch.Step, Octave: n.Pitch.Octave}
 	// What this file has already said about this note of the staff.
 	inferred, seen := e.acc[k]
@@ -570,10 +575,55 @@ func (e *exporter) graceText(g *model.GraceGroup) string {
 
 func decorationsText(m *model.Marks) string {
 	var b strings.Builder
-	for _, a := range m.Articulations {
-		if name := articulationName(a); name != "" {
+	for i, a := range m.Articulations {
+		name := articulationName(a)
+		// A fermata under the note has a name of its own.
+		if a == model.Fermata && i < len(m.ArticulationPlace) && m.ArticulationPlace[i] == model.PlacementBelow {
+			name = "invertedfermata"
+		}
+		if name != "" {
 			b.WriteString("!" + name + "!")
 		}
+	}
+	// The marks of the standard that are marks of their own in gscore:
+	// see applyStandardDecoration, which reads them back.
+	if m.Arpeggio != nil {
+		b.WriteString("!arpeggio!")
+	}
+	switch m.Break {
+	case model.BreathComma:
+		b.WriteString("!breath!")
+	case model.BreathTick:
+		b.WriteString("!shortphrase!")
+	case model.Caesura, model.CaesuraCurved:
+		b.WriteString("!longphrase!")
+	}
+	if m.Pedal != nil {
+		if m.Pedal.Start {
+			b.WriteString("!ped!")
+		}
+		if m.Pedal.Stop {
+			b.WriteString("!ped-up!")
+		}
+	}
+	if o := m.Octave; o != nil {
+		name := map[int]string{1: "8va", -1: "8vb", 2: "15ma", -2: "15mb"}[o.Amount]
+		if name != "" {
+			if o.Start {
+				b.WriteString("!" + name + "(!")
+			}
+			if o.Stop {
+				b.WriteString("!" + name + ")!")
+			}
+		}
+	}
+	for _, f := range m.Fingering {
+		if len(f) == 1 && f[0] >= '0' && f[0] <= '5' {
+			b.WriteString("!" + f + "!")
+		}
+	}
+	if t := m.Tremolo; t != nil && !t.Start && !t.Stop && t.Strokes >= 1 && t.Strokes <= 4 {
+		b.WriteString("!trem" + strconv.Itoa(t.Strokes) + "!")
 	}
 	if name := dynamicName(m.Dynamic); name != "" {
 		b.WriteString("!" + name + "!")
@@ -738,6 +788,20 @@ var (
 	articulationNames = invert(decorationArticulations)
 	dynamicNames      = invertDynamics(decorationDynamics)
 )
+
+// The ornaments go out under the standard's plainest names, whatever
+// the longest alias the reader knows is — and the same name every time,
+// which an inverted map, read in whatever order Go deals it, does not
+// promise where two names are as long as each other.
+func init() {
+	for a, name := range map[model.Articulation]string{
+		model.Mordent: "mordent", model.ShortTrill: "uppermordent",
+		model.Turn: "turn", model.TurnInverted: "invertedturn",
+		model.Staccatissimo: "staccatissimo",
+	} {
+		articulationNames[a] = name
+	}
+}
 
 func articulationName(a model.Articulation) string { return articulationNames[a] }
 func dynamicName(d model.Dynamic) string {

@@ -401,6 +401,7 @@ func convert(doc *scorePartwise, lg *log) (*model.Score, error) {
 			from := numberedFrom(xm, len(parts[0].Measures), &counted)
 			for i, p := range parts {
 				ms[i].RightBarline = convertBarline(barline)
+				ms[i].Ending = endingOf(opening, barline)
 				if from != nil {
 					n := *from
 					ms[i].NumberFrom = &n
@@ -741,6 +742,50 @@ func joinBarlines(closing, opening model.BarlineStyle) model.BarlineStyle {
 	// more important of the two. Rare enough to leave alone rather than
 	// guess at.
 	return closing
+}
+
+// endingOf is the volta bracket a bar is under, from the ending written on
+// either of its barlines: it opens on the left-hand one and closes on the
+// right-hand one, and a bracket one bar long is on both.
+func endingOf(opening, closing *barline) *model.Ending {
+	var out *model.Ending
+	take := func(b *barline) {
+		if b == nil || b.Ending == nil {
+			return
+		}
+		if out == nil {
+			out = &model.Ending{}
+		}
+		if len(out.Numbers) == 0 {
+			out.Numbers = endingNumbers(b.Ending.Number)
+		}
+		switch strings.ToLower(b.Ending.Type) {
+		case "start":
+			out.Start = true
+		case "stop":
+			out.Stop = true
+		case "discontinue":
+			out.Stop = true
+			out.Open = true
+		}
+	}
+	take(opening)
+	take(closing)
+	return out
+}
+
+// endingNumbers reads the times through a bracket covers: "1", "1, 2" and
+// "1,2" all mean what they say.
+func endingNumbers(s string) []int {
+	var out []int
+	for _, f := range strings.FieldsFunc(s, func(r rune) bool {
+		return r < '0' || r > '9'
+	}) {
+		if n, err := strconv.Atoi(f); err == nil {
+			out = append(out, n)
+		}
+	}
+	return out
 }
 
 func convertBarline(b *barline) model.BarlineStyle {
@@ -1942,6 +1987,13 @@ func applyOrnaments(n *model.Marks, o *ornaments) {
 	}
 	if o.Trill != nil {
 		n.Trill.Start = true
+		// The accidental over the "tr": which upper note to shake with.
+		for _, a := range o.AccMarks {
+			if acc, ok := accidentalValues[strings.TrimSpace(a)]; ok {
+				n.Trill.Accidental = acc
+				break
+			}
+		}
 	}
 	for _, w := range o.WavyLine {
 		switch strings.ToLower(w.Type) {

@@ -485,6 +485,8 @@ type tremoloDoc struct {
 type trillDoc struct {
 	Start bool `json:"start,omitempty"`
 	Stop  bool `json:"stop,omitempty"`
+	// Acc is the accidental written before the "tr", named as a note's is.
+	Acc string `json:"acc,omitempty"`
 }
 
 type lyricDoc struct {
@@ -916,7 +918,8 @@ func encodeMarks(m *model.Marks) *marksDoc {
 	}
 	out.Small = m.Small
 	if m.Trill != nil {
-		out.Trill = &trillDoc{Start: m.Trill.Start, Stop: m.Trill.Stop}
+		out.Trill = &trillDoc{Start: m.Trill.Start, Stop: m.Trill.Stop,
+			Acc: accNames[m.Trill.Accidental]}
 	}
 	if m.Tremolo != nil {
 		out.Tremolo = &tremoloDoc{
@@ -1348,7 +1351,8 @@ func decodeMarks(md *marksDoc, m *model.Marks) {
 		m.Tremolo = &model.Tremolo{Strokes: tm.Strokes, Buzz: tm.Buzz}
 	}
 	if tr := md.Trill; tr != nil {
-		m.Trill = &model.Trill{Start: tr.Start, Stop: tr.Stop}
+		m.Trill = &model.Trill{Start: tr.Start, Stop: tr.Stop,
+			Accidental: accValues[tr.Acc]}
 	}
 	if ad := md.Arpeggio; ad != nil {
 		m.Arpeggio = &model.Arpeggio{Down: ad.Down}

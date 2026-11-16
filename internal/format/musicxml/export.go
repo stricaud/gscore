@@ -165,6 +165,14 @@ func buildPart(s *model.Score, p *model.Part, id string, index, divisions int) x
 	for mi, m := range p.Measures {
 		xm := xmlMeasure{Number: strconv.Itoa(mi + 1)}
 
+		// A volta bracket opens on the left of its first bar, on the
+		// barline the repeat before it may already have put there.
+		if m.Ending != nil && m.Ending.Start {
+			if opening == nil {
+				opening = &barline{Location: "left"}
+			}
+			opening.Ending = &endingTag{Number: endingNumber(m.Ending), Type: "start"}
+		}
 		if opening != nil {
 			xm.add(measureItem{Barline: opening})
 			opening = nil
@@ -323,7 +331,18 @@ func buildPart(s *model.Score, p *model.Part, id string, index, divisions int) x
 				}
 			}
 		}
-		if b := buildBarline(m.RightBarline); b != nil {
+		b := buildBarline(m.RightBarline)
+		if m.Ending != nil && m.Ending.Stop {
+			if b == nil {
+				b = &barline{Location: "right"}
+			}
+			kind := "stop"
+			if m.Ending.Open {
+				kind = "discontinue"
+			}
+			b.Ending = &endingTag{Number: endingNumber(m.Ending), Type: kind}
+		}
+		if b != nil {
 			xm.add(measureItem{Barline: b})
 		}
 		// And what it opens goes at the head of the next one.
@@ -745,6 +764,9 @@ func applyMarks(out *xmlNote, m *model.Marks) {
 		if t.Start {
 			orn.Trill = &empty{}
 			anyOrn = true
+			if name, ok := accidentalNames[t.Accidental]; ok {
+				orn.AccMarks = []string{name}
+			}
 		}
 		// The wavy line that carries it on, where it lasts past the note
 		// it begins on.
@@ -785,6 +807,16 @@ func applyMarks(out *xmlNote, m *model.Marks) {
 	if used {
 		out.Notations = &notations
 	}
+}
+
+// endingNumber spells the times through a bracket covers as the file does:
+// "1", or "1, 2".
+func endingNumber(e *model.Ending) string {
+	parts := make([]string, 0, len(e.Numbers))
+	for _, n := range e.Numbers {
+		parts = append(parts, strconv.Itoa(n))
+	}
+	return strings.Join(parts, ", ")
 }
 
 // buildBarline is what closes the measure it is written on.

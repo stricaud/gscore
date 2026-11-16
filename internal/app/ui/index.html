@@ -221,6 +221,10 @@
       <button data-action="piano-mode"><span>Piano mode</span><kbd>⌘P</kbd><kbd id="piano-tick"></kbd></button>
       <button data-action="type-music"><span>Type the music</span><kbd>⌘K</kbd><kbd id="type-tick"></kbd></button>
       <button data-action="console"><span>Script console…</span></button>
+      <!-- A box beside the score for asking a language model for bars.
+           Only there at all when gscore was started with AI_ASSISTANT=1;
+           see assistant.go. -->
+      <button data-action="chat-prompt" data-needs-assistant hidden><span>Chat prompt</span><kbd id="chat-tick"></kbd></button>
       <hr>
       <button data-action="insert-note"><span>Note</span></button>
       <button data-action="insert-rest"><span>Rest</span></button>
@@ -770,6 +774,22 @@
          or drop one here.</p>
     </div>
   </main>
+
+  <!-- The chat prompt: what was asked and what came of it, and a box to
+       ask in. Toggled from Insert > Chat prompt; see toggleChat. -->
+  <aside id="chat" data-needs-assistant hidden>
+    <div class="insp-label">Assistant</div>
+    <p class="small">Ask for bars and they are written into the score at the
+       cursor: "write the next 4 bars for all the instruments", "one swingy
+       bar where the trumpet leads".</p>
+    <div id="chat-log" aria-live="polite"></div>
+    <textarea id="chat-prompt" rows="4"
+      placeholder="Write me the next 4 bars from here for all the instruments"></textarea>
+    <div class="tempo-bar">
+      <button type="button" id="chat-send" class="primary">Write</button>
+      <button type="button" id="chat-settings">Settings…</button>
+    </div>
+  </aside>
 
   <aside id="inspector">
     <div class="insp-group">
@@ -1832,6 +1852,36 @@
        wrong one is heard where it is made rather than three bars later. It uses
        the editor’s own voices and not the soundfont, so that it answers at once;
        turn it off to write in silence.</p>
+    <div id="setting-assistant" data-needs-assistant hidden>
+      <hr>
+      <h3 class="small">Assistant</h3>
+      <p class="small">The model that writes music when asked in the chat
+         prompt, and where it is. The key is kept in gscore’s own settings
+         on this machine and sent to nobody but the service.</p>
+      <div class="ai-grid">
+        <label for="setting-ai-provider">Service</label>
+        <select id="setting-ai-provider">
+          <option value="openai">OpenAI</option>
+          <option value="anthropic">Anthropic</option>
+          <option value="mistral">Mistral</option>
+          <option value="local">Local model</option>
+        </select>
+        <label for="setting-ai-url">Address</label>
+        <input type="url" id="setting-ai-url" autocomplete="off"
+          placeholder="http://localhost:11434/v1">
+        <label for="setting-ai-key">API key</label>
+        <input type="password" id="setting-ai-key" autocomplete="off">
+        <label for="setting-ai-pick">Model</label>
+        <div class="ai-row">
+          <select id="setting-ai-pick"></select>
+          <button type="button" id="setting-ai-list">List models</button>
+        </div>
+        <label for="setting-ai-model" class="small">or type one</label>
+        <input type="text" id="setting-ai-model" autocomplete="off"
+          placeholder="a model the list does not show">
+      </div>
+      <div class="small" id="setting-ai-status"></div>
+    </div>
     <div class="ask-buttons">
       <button value="ok" type="submit" class="primary">Done</button>
     </div>

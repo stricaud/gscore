@@ -131,7 +131,12 @@ type settings struct {
 	// read and edited by a person: "C" says which note it is and 0 does
 	// not. Missing letters fall back to the built-in palette, so a file
 	// naming one colour changes one colour.
-	ColourNotes bool              `json:"colourNotes,omitempty"`
+	ColourNotes bool `json:"colourNotes,omitempty"`
+
+	// Assistant is the model that writes music on request, and where it
+	// is. Only read when gscore is started with AI_ASSISTANT=1; see
+	// assistant.go.
+	Assistant   assistantSettings `json:"assistant,omitempty"`
 	NoteColours map[string]string `json:"noteColours,omitempty"`
 
 	// UIScale is how big the interface is drawn, where one is the size it

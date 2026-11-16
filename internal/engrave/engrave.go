@@ -1419,6 +1419,8 @@ type openSpan struct {
 	measure int
 	amount  int    // octaves, for an octave line
 	label   string // what is written over an octave line
+	// accidental is written small before the "tr" of a trill.
+	accidental model.Accidental
 	// row is the line this hairpin shares with whatever it meets, where it
 	// meets anything. Zero is a hairpin standing on its own.
 	row int

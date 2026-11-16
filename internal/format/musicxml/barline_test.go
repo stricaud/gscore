@@ -162,3 +162,74 @@ func TestAClosingAndAnOpeningRepeatBecomeOneSign(t *testing.T) {
 		}
 	}
 }
+
+// A volta bracket is written on the barlines: it opens on the left of its
+// first bar and closes on the right of its last, with the times through it
+// covers on both. It was not read at all, so the first and second endings of
+// a repeated theme came back as plain bars and the music played them both.
+func TestVoltaBracketsSurviveTheRoundTrip(t *testing.T) {
+	s := threeBars(model.BarRepeatEnd)
+	p := s.Parts[0]
+	p.Measures[1].Ending = &model.Ending{Numbers: []int{1}, Start: true, Stop: true}
+	p.Measures[2].Ending = &model.Ending{Numbers: []int{2, 3}, Start: true, Stop: true, Open: true}
+
+	var out bytes.Buffer
+	if err := Export(&out, s); err != nil {
+		t.Fatal(err)
+	}
+	xml := out.String()
+	for _, want := range []string{
+		`<ending number="1" type="start">`, `<ending number="1" type="stop">`,
+		`<ending number="2, 3" type="start">`, `<ending number="2, 3" type="discontinue">`,
+	} {
+		if !strings.Contains(xml, want) {
+			t.Errorf("the file has no %s", want)
+		}
+	}
+
+	back, err := Import(strings.NewReader(xml))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ms := back.Parts[0].Measures
+	if ms[0].Ending != nil {
+		t.Errorf("the first bar is under a bracket: %+v", ms[0].Ending)
+	}
+	if e := ms[1].Ending; e == nil || !e.Start || !e.Stop || e.Open || e.Label() != "1." {
+		t.Errorf("the first ending came back as %+v", e)
+	}
+	if e := ms[2].Ending; e == nil || !e.Start || !e.Stop || !e.Open || e.Label() != "2., 3." {
+		t.Errorf("the last ending came back as %+v", e)
+	}
+	if ms[1].RightBarline != model.BarRepeatEnd {
+		t.Errorf("the repeat was lost under the bracket: %v", ms[1].RightBarline)
+	}
+}
+
+// The flat before the "tr" of the Arietta's long trills says to shake with
+// E flat. MusicXML writes it as an accidental-mark after the trill-mark.
+func TestATrillKeepsTheAccidentalOverIt(t *testing.T) {
+	s := threeBars(model.BarSingle)
+	first := s.Parts[0].Measures[0].Voices[0].Elements[0].(*model.Note)
+	first.Marks.Trill = &model.Trill{Start: true, Accidental: model.Flat}
+	last := s.Parts[0].Measures[1].Voices[0].Elements[0].(*model.Note)
+	last.Marks.Trill = &model.Trill{Stop: true}
+
+	var out bytes.Buffer
+	if err := Export(&out, s); err != nil {
+		t.Fatal(err)
+	}
+	xml := out.String()
+	tr, acc := strings.Index(xml, "<trill-mark>"), strings.Index(xml, "<accidental-mark>flat</accidental-mark>")
+	if tr < 0 || acc < tr {
+		t.Errorf("the flat is not written after the trill-mark:\n%s", xml)
+	}
+	back, err := Import(bytes.NewReader(out.Bytes()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := back.Parts[0].Measures[0].Voices[0].Elements[0].(*model.Note).Marks.Trill
+	if got == nil || !got.Start || got.Accidental != model.Flat {
+		t.Errorf("the trill came back as %+v", got)
+	}
+}

@@ -324,6 +324,13 @@ type parser struct {
 	tiedAlter map[tieKey]openTie
 	time      model.TimeSignature
 	clef      model.Clef
+	// openHat says the next note on a drum staff is the open hi-hat:
+	// the !open! decoration, which is the one thing a position alone
+	// cannot say. See drumNote.
+	openHat bool
+	// parensNext says the next note's accidental is a courtesy one, in
+	// brackets: !courtesy! and !editorial!.
+	parensNext bool
 
 	parts []*model.Part
 	byID  map[string]*model.Part
@@ -1597,6 +1604,21 @@ func (p *parser) applyPending(m *model.Marks) {
 	if p.pending.Tremolo != nil {
 		m.Tremolo = p.pending.Tremolo
 	}
+	if p.pending.Arpeggio != nil {
+		m.Arpeggio = p.pending.Arpeggio
+	}
+	if p.pending.Break != model.NoBreath {
+		m.Break = p.pending.Break
+	}
+	if p.pending.Pedal != nil {
+		m.Pedal = p.pending.Pedal
+	}
+	m.Fingering = append(m.Fingering, p.pending.Fingering...)
+	for i, a := range p.pending.Articulations {
+		if i < len(p.pending.ArticulationPlace) && p.pending.ArticulationPlace[i] != model.PlacementAuto {
+			m.PlaceArticulation(a, p.pending.ArticulationPlace[i])
+		}
+	}
 	if p.pending.SlurStop > 0 {
 		m.SlurStop = 1
 	}
@@ -1741,7 +1763,11 @@ func (p *parser) music(line string) error {
 			}
 		case c == '.':
 			sc.next()
-			p.pending.AddArticulation(model.Staccato)
+			// ".(" is a dotted slur, which is a slur: the dot is not a
+			// staccato on the note after it.
+			if sc.peek() != '(' {
+				p.pending.AddArticulation(model.Staccato)
+			}
 		case c == 'u':
 			sc.next()
 			p.pending.AddArticulation(model.UpBow)
@@ -1755,8 +1781,9 @@ func (p *parser) music(line string) error {
 			sc.next()
 			p.pending.AddArticulation(model.Accent)
 		case c == 'M':
+			// The standard's M: a lower mordent, not a marcato.
 			sc.next()
-			p.pending.AddArticulation(model.Marcato)
+			p.pending.AddArticulation(model.Mordent)
 		case c == '"':
 			if err := p.quoted(sc); err != nil {
 				return err
@@ -1890,6 +1917,11 @@ var decorationArticulations = map[string]model.Articulation{
 	">": model.Accent, "accent": model.Accent, "emphasis": model.Accent,
 	"^": model.Marcato, "marcato": model.Marcato,
 	".": model.Staccato, "staccato": model.Staccato,
+	"staccatissimo": model.Staccatissimo, "wedge": model.Staccatissimo,
+	"mordent": model.Mordent, "lowermordent": model.Mordent,
+	"uppermordent": model.ShortTrill, "pralltriller": model.ShortTrill,
+	"turn": model.Turn, "roll": model.Turn,
+	"invertedturn": model.TurnInverted, "reverseturn": model.TurnInverted,
 	"fermata": model.Fermata, "H": model.Fermata,
 	"tenuto":  model.Tenuto,
 	"upbow":   model.UpBow,
@@ -1902,6 +1934,8 @@ var decorationArticulations = map[string]model.Articulation{
 // These used to arrive as loose symbols; they are part of the music now, so
 // they export, round-trip and sound.
 var decorationDynamics = map[string]model.Dynamic{
+	"sfp": model.FortePiano, "sfpp": model.FortePiano, "sffz": model.SForzando,
+	"fz": model.SForzato, "rf": model.Rinforzando,
 	"pppp": model.PPPP, "ppp": model.PPP, "pp": model.PP, "p": model.Piano,
 	"mp": model.MP, "mf": model.MF,
 	"f": model.Forte, "ff": model.FF, "fff": model.FFF, "ffff": model.FFFF,
@@ -1975,15 +2009,15 @@ var decorationSymbols = map[string]string{
 	"diminuendo(": "dynamicDiminuendoHairpin", "diminuendo)": "dynamicDiminuendoHairpin",
 	"<(": "dynamicCrescendoHairpin", "<)": "dynamicCrescendoHairpin",
 	">(": "dynamicDiminuendoHairpin", ">)": "dynamicDiminuendoHairpin",
-	"trill": "ornamentTrill", "turn": "ornamentTurn",
-	"mordent": "ornamentMordent", "lowermordent": "ornamentMordent",
-	"uppermordent": "ornamentShortTrill", "pralltriller": "ornamentShortTrill",
-	"breath":          "breathMarkComma",
-	"arpeggio":        "arpeggiatoUp",
-	"invertedfermata": "fermataBelow",
-	"shortphrase":     "caesuraShort",
-	"longphrase":      "caesura",
-	"trem1":           "tremolo1", "trem2": "tremolo2", "trem3": "tremolo3",
+	"trill":         "ornamentTrill",
+	"turnx":         "ornamentTurnSlash",
+	"invertedturnx": "ornamentTurnInverted",
+	"slide":         "ornamentPrecompSlide",
+	"+":             "brassMuteClosed", "plus": "brassMuteClosed",
+	"open":  "brassMuteOpen",
+	"snap":  "pluckedSnapPizzicatoAbove",
+	"thumb": "stringsThumbPosition",
+	"trem1": "tremolo1", "trem2": "tremolo2", "trem3": "tremolo3",
 }
 
 // opensPlusDecoration reports whether the + under the scanner opens a
@@ -2136,6 +2170,81 @@ func (p *parser) note(what string) {
 // !...! form uses, so that both spellings take the same path through the
 // parser. H, L, M, u and v have cases of their own further up because they
 // were there first.
+// applyStandardDecoration reads the decorations of the ABC standard that
+// are marks of their own in gscore rather than a glyph: the arpeggio, the
+// breath marks, the pedal, the octave lines, the fingerings, the single-
+// note tremolos, the courtesy accidental, and the fermata under the note.
+// The standard's list is what abcm2ps draws, and what a model asked for
+// ABC will write.
+func (p *parser) applyStandardDecoration(name string) bool {
+	switch name {
+	case "arpeggio":
+		p.pending.Arpeggio = &model.Arpeggio{}
+	case "breath":
+		p.pending.Break = model.BreathComma
+	case "shortphrase":
+		p.pending.Break = model.BreathTick
+	case "mediumphrase", "longphrase":
+		p.pending.Break = model.Caesura
+	case "ped":
+		pedalOf(&p.pending).Start = true
+	case "ped-up":
+		pedalOf(&p.pending).Stop = true
+	case "8va(", "8vb(", "15ma(", "15mb(":
+		// The letters under the line are what is printed, as they are
+		// in gscore, so the line is a mark and the notes stay.
+		p.pending.Octave = &model.OctaveShift{Amount: octaveAmounts[name], Start: true}
+	case "8va)", "8vb)", "15ma)", "15mb)":
+		if p.pending.Octave != nil {
+			p.pending.Octave.Stop = true
+		} else {
+			p.pending.Octave = &model.OctaveShift{Amount: octaveAmounts[name], Stop: true}
+		}
+	case "0", "1", "2", "3", "4", "5":
+		p.pending.Fingering = append(p.pending.Fingering, name)
+	case "trem1", "trem2", "trem3", "trem4":
+		p.pending.Tremolo = &model.Tremolo{Strokes: int(name[4] - '0')}
+	case "courtesy", "editorial":
+		p.parensNext = true
+	case "invertedfermata":
+		p.pending.AddArticulation(model.Fermata)
+		p.pending.PlaceArticulation(model.Fermata, model.PlacementBelow)
+	default:
+		return false
+	}
+	return true
+}
+
+// octaveAmounts is how far each octave line moves the sound, in octaves.
+var octaveAmounts = map[string]int{
+	"8va(": 1, "8va)": 1, "8vb(": -1, "8vb)": -1,
+	"15ma(": 2, "15ma)": 2, "15mb(": -2, "15mb)": -2,
+}
+
+// pedalOf is the pedal mark among the pending marks, made where there is
+// none.
+func pedalOf(m *model.Marks) *model.PedalMark {
+	if m.Pedal == nil {
+		m.Pedal = &model.PedalMark{}
+	}
+	return m.Pedal
+}
+
+// accidentalFor is the sign that says an alteration.
+func accidentalFor(alter int) model.Accidental {
+	switch {
+	case alter >= 2:
+		return model.DoubleSharp
+	case alter == 1:
+		return model.Sharp
+	case alter == -1:
+		return model.Flat
+	case alter <= -2:
+		return model.DoubleFlat
+	}
+	return model.Natural
+}
+
 var legacyDecorationNames = map[byte]string{
 	'~': "roll",
 	'T': "trill",
@@ -2183,6 +2292,9 @@ func flatten(s string) string {
 // applyDecoration attaches a decoration, named as the !...! form names it, to
 // the next element.
 func (p *parser) applyDecoration(name string) {
+	if p.applyStandardDecoration(name) {
+		return
+	}
 	// A direction acts on the bar, so it is written there rather than on the
 	// note that happens to follow it.
 	if sign, ok := jumpDecorations[name]; ok {
@@ -2244,6 +2356,10 @@ func (p *parser) applyDecoration(name string) {
 		p.pending.Hairpin = &model.Hairpin{
 			Kind: h.kind, Start: h.start, Stop: !h.start,
 		}
+		return
+	}
+	if name == "open" && p.onDrums() {
+		p.openHat = true
 		return
 	}
 	symbol := name
@@ -2723,7 +2839,57 @@ octaveMarks:
 	// notehead and not to the chord: closing it on the chord drew a tie
 	// from every notehead in it, including the ones that never had one.
 	n.TieStop = endsTie
+	if p.parensNext {
+		// A courtesy accidental: in brackets, and a reminder rather than
+		// an instruction, so it is written whether the key needs it or not.
+		n.Parens, p.parensNext = true, false
+		if n.Accidental == model.NoAccidental {
+			n.Accidental = accidentalFor(n.Pitch.Alter)
+		}
+	}
+	if p.onDrums() {
+		p.drumNote(n)
+	}
 	return n, nil
+}
+
+// onDrums says whether the notes being read are on a drum staff: the
+// voice's own clef where it has one, the tune's otherwise.
+func (p *parser) onDrums() bool {
+	if p.cur != nil {
+		return p.cur.Clef == model.Percussion
+	}
+	return p.clef == model.Percussion
+}
+
+// drumNote reads a note on a drum staff as the drum written at that
+// position, which is what the position means there: the middle line is
+// the snare, the space above the staff is the hi-hat, and the head says
+// which — a cross for a cymbal, a circled cross for an open hi-hat.
+//
+// ABC has no way of its own to say a drum, so the note is written by
+// where it sits, as gscore's own kit lays the drums out. Without this a
+// drum voice came in as pitches with round heads, which played as notes
+// and looked like nothing a drummer reads. The open hi-hat shares its
+// position with the closed one and is told apart by !open! before it.
+func (p *parser) drumNote(n *model.Note) {
+	open := p.openHat
+	p.openHat = false
+	// The middle line is the fourth step up and the index of middle C.
+	step := n.Pitch.DiatonicIndex() + 4
+	drum, ok := model.PercussionFor(step)
+	if !ok {
+		return
+	}
+	if open {
+		for _, d := range model.PercussionAt(step) {
+			if d.Head == model.HeadCircleX {
+				drum = d
+			}
+		}
+	}
+	n.Head, n.Percussion = drum.Head, drum.Key
+	n.Pitch.Alter, n.Accidental = 0, model.NoAccidental
 }
 
 func (p *parser) chord(sc *scanner) error {
@@ -2744,7 +2910,9 @@ func (p *parser) chord(sc *scanner) error {
 			continue
 		case c == '.':
 			sc.next()
-			p.pending.AddArticulation(model.Staccato)
+			if sc.peek() != '(' {
+				p.pending.AddArticulation(model.Staccato)
+			}
 			continue
 		case legacyDecorationNames[c] != "":
 			// "[F.d]" and "[B.g]" out of Anon2.abc: the mark goes in front of

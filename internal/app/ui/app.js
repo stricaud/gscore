@@ -1338,6 +1338,7 @@ async function action(name) {
     case "part-setup": await partSetupDialog(); break;
     case "make-parts": await makeParts(); break;
     case "console": await openConsole(); break;
+    case "chat-prompt": toggleChat(); break;
     case "note-input":
       setMouseWrites(!state.mouseWrites);
       break;
@@ -2595,6 +2596,9 @@ async function loadInfo() {
   $$("[data-needs-instruments]").forEach((el) => (el.hidden = !canSound()));
   // And the things that need a disk with the person's own files on it.
   $$("[data-needs-files]").forEach((el) => (el.hidden = !i.local));
+  // And the assistant, which exists only when gscore was started with it.
+  $$("[data-needs-assistant]").forEach((el) => (el.hidden = !i.aiAssistant));
+  if (!i.aiAssistant) document.body.classList.remove("chat");
   if (i.local) void loadRecent();
   // And the scripts in the plugins folder, read once when the window opens:
   // the folder is the person's and nothing in the page changes it, so there
@@ -9475,6 +9479,7 @@ async function settingsDialog() {
   const now = await (await fetch("/api/settings")).json().catch(() => ({}));
   pdf.checked = now.scorePDF !== false;
   if (hear) hear.checked = now.entrySound !== false;
+  const ai = (state.info || {}).aiAssistant ? await loadAssistantSettings() : null;
 
   if (langBox) {
     langBox.innerHTML = "";
@@ -9514,6 +9519,7 @@ async function settingsDialog() {
     state.entrySound = hear.checked;
   }
   await fetch("/api/settings?" + p.toString(), { method: "POST" });
+  if (ai) await saveAssistantSettings();
   if (want !== languageChoice()) {
     await chooseLanguage(want);
     return;
@@ -9521,6 +9527,266 @@ async function settingsDialog() {
   status(pdf.checked
     ? "Saved scores will carry a PDF — rename one .pdf to read it anywhere"
     : "Saved scores will hold the music only");
+}
+
+/*
+ * The assistant
+ *
+ * A box beside the score that asks a language model for bars. The words go
+ * to the server with the score, and the bars come back written in; the
+ * window only shows what was asked and what the server said about it.
+ */
+
+// toggleChat opens or puts away the chat prompt.
+function toggleChat() {
+  const on = document.body.classList.toggle("chat");
+  const tick = $("#chat-tick");
+  if (tick) tick.textContent = on ? "✓" : "";
+  if (on) $("#chat-prompt").focus();
+}
+
+// chatSay adds a line to the log: what was asked, what was answered, or
+// what went wrong.
+function chatSay(kind, text) {
+  const log = $("#chat-log");
+  const p = document.createElement("p");
+  p.className = "chat-" + kind;
+  p.textContent = text;
+  log.append(p);
+  log.scrollTop = log.scrollHeight;
+  return p;
+}
+
+// chatBusy is the request on its way, so it can be stopped.
+let chatBusy = null;
+
+// chatHistory is what has been asked, oldest first, for bringing back with
+// the arrow keys the way a shell does. Kept in the browser's store so it
+// is there next time the window opens; if that store is not there it is
+// kept for the session.
+let chatHistory = [];
+let chatAt = 0; // where the arrows are in it; history.length is the box
+try {
+  chatHistory = JSON.parse(localStorage.getItem("gscore.chat") || "[]");
+  if (!Array.isArray(chatHistory)) chatHistory = [];
+} catch (_) { /* no store, or nothing in it */ }
+chatAt = chatHistory.length;
+
+function rememberAsked(prompt) {
+  if (chatHistory[chatHistory.length - 1] !== prompt) chatHistory.push(prompt);
+  if (chatHistory.length > 50) chatHistory = chatHistory.slice(-50);
+  chatAt = chatHistory.length;
+  try { localStorage.setItem("gscore.chat", JSON.stringify(chatHistory)); } catch (_) { /* no store */ }
+}
+
+// chatRecall moves through what was asked: up is earlier, down is later,
+// and past the latest is the empty box again. Only from the first line of
+// the box going up and the last going down, so the arrows still move
+// through a long request being written.
+function chatRecall(box, dir) {
+  const before = box.value.slice(0, box.selectionStart);
+  const after = box.value.slice(box.selectionEnd);
+  if (dir < 0 && before.includes("\n")) return false;
+  if (dir > 0 && after.includes("\n")) return false;
+  const at = chatAt + dir;
+  if (at < 0 || at > chatHistory.length) return false;
+  chatAt = at;
+  box.value = at === chatHistory.length ? "" : chatHistory[at];
+  box.selectionStart = box.selectionEnd = box.value.length;
+  return true;
+}
+
+// chatProgress is what the log says while the answer arrives: the time,
+// and how much music has come — the bars go onto the page as they do.
+function chatProgress(wait, began, p) {
+  const secs = Math.round((Date.now() - began) / 1000);
+  let said = `${t("Writing…")} ${secs}s`;
+  if (p && p.bars > 0) {
+    said += ` · ${p.bars} ${p.bars === 1 ? t("bar") : t("bars")}`;
+    if (p.voices > 1) said += ` × ${p.voices} ${t("voices")}`;
+    if (p.placed) said += ` · ${t("on the page")}`;
+  } else if (p && (p.chars > 0 || p.thinking)) {
+    said += ` · ${t("thinking it over")}`;
+  }
+  if (p && p.prose) said += `\n${p.prose}`;
+  // Where the reasoning has got to, for a model that shows it: the end
+  // of it, which is what is being thought now.
+  else if (p && p.thinking && !(p.bars > 0)) said += `\n${p.thinking}`;
+  wait.textContent = said;
+}
+
+// askAssistant sends what is in the box and reports what came of it.
+//
+// A model takes its time — a minute for a few bars of a band, more for
+// fifty — so while it does the log counts the seconds and says how much
+// has arrived, the bars appear on the page as they come, and the Write
+// button is a Stop button. Stopping ends the request on the server too,
+// which ends its request to the service and takes the half-written bars
+// off the page.
+async function askAssistant() {
+  if (chatBusy) {
+    chatBusy.abort();
+    return;
+  }
+  const box = $("#chat-prompt");
+  const prompt = box.value.trim();
+  if (!prompt) return;
+  const send = $("#chat-send");
+  chatSay("you", prompt);
+  rememberAsked(prompt);
+  box.value = "";
+  const wait = chatSay("wait", t("Writing…"));
+  const began = Date.now();
+  let latest = null;
+  const clock = setInterval(() => chatProgress(wait, began, latest), 1000);
+  chatBusy = new AbortController();
+  send.textContent = t("Stop");
+  status("Asking the assistant…");
+  let redrawn = 0;
+  try {
+    const res = await fetch("/api/assistant/compose?" + new URLSearchParams({ prompt }),
+      { method: "POST", signal: chatBusy.signal });
+    if (!res.ok) {
+      chatSay("err", (await res.text()).trim());
+      status("The assistant could not write that");
+      return;
+    }
+    // A line at a time as they come: progress, then done or error.
+    let done = null, failed = null;
+    for await (const line of readLines(res.body)) {
+      let msg;
+      try { msg = JSON.parse(line); } catch (_) { continue; }
+      if (msg.progress) {
+        latest = msg.progress;
+        chatProgress(wait, began, latest);
+        // The page shows what has been put on it so far.
+        if (latest.placed && latest.placed !== redrawn) {
+          redrawn = latest.placed;
+          void refreshScore();
+        }
+      }
+      if (msg.done) done = msg.done;
+      if (msg.error) failed = msg.error;
+    }
+    if (failed || !done) {
+      chatSay("err", failed || t("The assistant answered with nothing"));
+      status("The assistant could not write that");
+      if (redrawn) await refreshScore();
+      return;
+    }
+    let said = done.whole
+      ? `${t("Rewrote the score:")} ${done.bars} ${done.bars === 1 ? t("bar") : t("bars")}`
+      : `${t("Wrote")} ${done.bars} ${done.bars === 1 ? t("bar") : t("bars")} ${t("from bar")} ${done.at}`;
+    chatSay("them", (done.prose ? done.prose + "\n" : "") + said + ".");
+    await refreshScore();
+    status(said);
+  } catch (e) {
+    chatSay("err", e.name === "AbortError" ? t("Stopped.") : String(e));
+    status("The assistant was stopped");
+    if (redrawn) await refreshScore();
+  } finally {
+    clearInterval(clock);
+    wait.remove();
+    chatBusy = null;
+    send.textContent = t("Write");
+  }
+}
+
+// readLines reads a stream as the lines it holds, as they arrive.
+async function* readLines(body) {
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  let rest = "";
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    rest += decoder.decode(value, { stream: true });
+    const lines = rest.split("\n");
+    rest = lines.pop();
+    for (const line of lines) if (line.trim()) yield line;
+  }
+  if (rest.trim()) yield rest;
+}
+
+// loadAssistantSettings fills the settings dialog's assistant section.
+async function loadAssistantSettings() {
+  const s = await (await fetch("/api/assistant/settings")).json().catch(() => null);
+  if (!s) return null;
+  $("#setting-ai-provider").value = s.provider || "local";
+  $("#setting-ai-url").value = s.baseURL || "";
+  $("#setting-ai-key").value = s.apiKey || "";
+  $("#setting-ai-model").value = "";
+  // The list holds what is known: the model in use, until the service
+  // has been asked for the rest.
+  fillAssistantPick(s.model ? [s.model] : [], s.model || "");
+  $("#setting-ai-status").textContent = "";
+  showAssistantDefault(s.defaults || {});
+  $("#setting-ai-provider").onchange = () => showAssistantDefault(s.defaults || {});
+  $("#setting-ai-list").onclick = listAssistantModels;
+  // Picking from the list is the choice; typing a name overrides it.
+  $("#setting-ai-pick").onchange = () => { $("#setting-ai-model").value = ""; };
+  return s;
+}
+
+// fillAssistantPick puts models in the list, with one of them chosen.
+function fillAssistantPick(models, chosen) {
+  const pick = $("#setting-ai-pick");
+  pick.innerHTML = "";
+  if (!models.length) {
+    const o = document.createElement("option");
+    o.value = "";
+    o.textContent = t("(the service's default)");
+    pick.append(o);
+  }
+  for (const m of models) {
+    const o = document.createElement("option");
+    o.value = m;
+    o.textContent = m;
+    pick.append(o);
+  }
+  pick.value = models.includes(chosen) ? chosen : (models[0] || "");
+}
+
+// showAssistantDefault puts the service's own address in the box as a
+// hint, so an empty address says what it means.
+function showAssistantDefault(defaults) {
+  const url = $("#setting-ai-url");
+  url.placeholder = defaults[$("#setting-ai-provider").value] || "";
+}
+
+function assistantForm() {
+  const typed = $("#setting-ai-model").value.trim();
+  return {
+    provider: $("#setting-ai-provider").value,
+    baseURL: $("#setting-ai-url").value.trim(),
+    apiKey: $("#setting-ai-key").value.trim(),
+    model: typed || $("#setting-ai-pick").value,
+  };
+}
+
+async function saveAssistantSettings() {
+  await fetch("/api/assistant/settings?" + new URLSearchParams(assistantForm()),
+    { method: "POST" });
+}
+
+// listAssistantModels asks the service what it has, with what is typed
+// rather than what is saved, so a key can be tried before it is kept.
+async function listAssistantModels() {
+  const out = $("#setting-ai-status");
+  out.textContent = t("Asking…");
+  const f = assistantForm();
+  delete f.model;
+  const res = await fetch("/api/assistant/models?" + new URLSearchParams(f));
+  if (!res.ok) {
+    out.textContent = (await res.text()).trim();
+    return;
+  }
+  const { models } = await res.json();
+  // The whole list, with the model in use still chosen if it is in it.
+  fillAssistantPick(models, assistantForm().model);
+  out.textContent = models.length
+    ? `${models.length} ${t("models listed")}`
+    : t("The service listed no models");
 }
 
 // chooseLanguage puts the interface into a language and keeps the choice.
@@ -20127,6 +20393,7 @@ async function main() {
   setupMelodyClicks();
   setupTypeBar();
   setupConsole();
+  setupChat();
   setupScriptResult();
   setupPartDialog();
   setupScoreSetupDialog();
@@ -21882,6 +22149,9 @@ const MENU_DRAWINGS = {
     '<circle cx="8.5" cy="7.5" r="2.2"/><path d="M10.7 7.5V2.5"/>',
   "console": '<rect x="2.5" y="4.5" width="19" height="15" rx="2"/>' +
     '<path d="M6.5 9.5 9.5 12l-3 2.5"/><path d="M12 15h5.5"/>',
+  /* A speech bubble: the chat prompt is a conversation. */
+  "chat-prompt": '<path d="M4 5.5h16v10H10l-4.5 4v-4H4z"/>' +
+    '<path d="M8 9h8M8 12h5"/>',
   /* The score and the parts it is printed as. The score is a stack of
    * staves braced together; a part is one page with a staff on it; making
    * them is the score with the pages coming off it. */
@@ -24640,6 +24910,22 @@ function consoleSay(text, bad) {
   if (!out) return;
   out.textContent = text;
   out.className = bad ? "console-bad" : "";
+}
+
+// setupChat wires the chat prompt's buttons. Enter sends; a newline is
+// Shift-Enter, as it is in every chat box.
+function setupChat() {
+  $("#chat-send")?.addEventListener("click", () => void askAssistant());
+  $("#chat-settings")?.addEventListener("click", () => void settingsDialog());
+  $("#chat-prompt")?.addEventListener("keydown", (ev) => {
+    if (ev.key === "Enter" && !ev.shiftKey) {
+      ev.preventDefault();
+      void askAssistant();
+    } else if (ev.key === "ArrowUp" || ev.key === "ArrowDown") {
+      // What was asked before, the way a shell brings it back.
+      if (chatRecall(ev.target, ev.key === "ArrowUp" ? -1 : 1)) ev.preventDefault();
+    }
+  });
 }
 
 function setupConsole() {

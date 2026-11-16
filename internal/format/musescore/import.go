@@ -17,6 +17,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"sort"
 	"strconv"
 	"strings"
@@ -346,7 +347,11 @@ type document struct {
 	// title and the rest come from the text frame at the head of the score,
 	// which is what is actually printed. The metaTags are the fallback: they
 	// are often left at "Untitled score" while the page says otherwise.
-	title, subtitle, composer string
+	title, subtitle, composer, lyricist string
+	// chordNames is the file's own chord list, by the number MuseScore 1
+	// and 2 wrote a chord symbol's extension as — "7", "m7b5" — which
+	// without it is a number and nothing else.
+	chordNames map[string]string
 	// tempoSet says the speed the piece starts at has been read, so that a
 	// later marking is a change rather than the opening tempo again.
 	tempoSet bool
@@ -373,6 +378,10 @@ type msPart struct {
 	// bars alone put it in the treble.
 	staffClefs  []string
 	staffGroups []string
+	// staffLines is how many lines each staff is ruled with, where it says.
+	staffLines []int
+	// hidden says the part is not shown in the score: MuseScore's <show>.
+	hidden bool
 
 	// tuning is the open strings of a fretted instrument, in the order the
 	// file lists them — lowest first — and frets is how many it has. A part
@@ -504,8 +513,10 @@ func (r *reader) read(data []byte) (*document, error) {
 
 func (r *reader) museScore(doc *document) error {
 	return r.children(func(e xml.StartElement) error {
+		// MuseScore 1 wrote the parts and staves straight under the root,
+		// with no <Score> around them.
 		if e.Name.Local != "Score" {
-			return r.dec.Skip()
+			return r.scoreElement(doc, e)
 		}
 		return r.score(doc)
 	})
@@ -513,6 +524,14 @@ func (r *reader) museScore(doc *document) error {
 
 func (r *reader) score(doc *document) error {
 	return r.children(func(e xml.StartElement) error {
+		return r.scoreElement(doc, e)
+	})
+}
+
+// scoreElement reads one thing a score holds: its metadata, a part, a
+// staff of music, or the chord list.
+func (r *reader) scoreElement(doc *document, e xml.StartElement) error {
+	{
 		switch e.Name.Local {
 		case "metaTag":
 			v, err := r.text()
@@ -525,6 +544,8 @@ func (r *reader) score(doc *document) error {
 			return r.part(doc)
 		case "Staff":
 			return r.staff(doc, numbered(attr(e, "id"), &doc.nextMusicStaff))
+		case "ChordList":
+			return r.chordList(doc)
 		default:
 			// A nested <Score> is a linked part: the same music printed on
 			// its own, which gscore makes from the score instead. Everything
@@ -532,6 +553,30 @@ func (r *reader) score(doc *document) error {
 			// MuseScore shows the file rather than what is in it.
 			return r.dec.Skip()
 		}
+	}
+}
+
+// chordList reads the names of the chord symbols a MuseScore 1 or 2 file
+// writes by number. See document.chordNames.
+func (r *reader) chordList(doc *document) error {
+	return r.children(func(e xml.StartElement) error {
+		if e.Name.Local != "chord" {
+			return r.dec.Skip()
+		}
+		id := attr(e, "id")
+		return r.children(func(c xml.StartElement) error {
+			if c.Name.Local != "name" {
+				return r.dec.Skip()
+			}
+			name, err := r.text()
+			if id != "" && name != "" {
+				if doc.chordNames == nil {
+					doc.chordNames = map[string]string{}
+				}
+				doc.chordNames[id] = name
+			}
+			return err
+		})
 	})
 }
 
@@ -559,10 +604,15 @@ func (r *reader) part(doc *document) error {
 		switch e.Name.Local {
 		case "Staff":
 			id := numbered(attr(e, "id"), &doc.nextPartStaff)
-			clef, group, err := r.partStaff(p)
+			clef, group, lines, err := r.partStaff(p)
 			p.staffIDs = append(p.staffIDs, id)
 			p.staffClefs = append(p.staffClefs, clef)
 			p.staffGroups = append(p.staffGroups, group)
+			p.staffLines = append(p.staffLines, lines)
+			return err
+		case "show":
+			n, err := r.number()
+			p.hidden = n == 0
 			return err
 		case "trackName":
 			s, err := r.text()
@@ -586,7 +636,7 @@ func (r *reader) part(doc *document) error {
 	return nil
 }
 
-func (r *reader) partStaff(p *msPart) (clef, group string, err error) {
+func (r *reader) partStaff(p *msPart) (clef, group string, lines int, err error) {
 	err = r.children(func(e xml.StartElement) error {
 		switch e.Name.Local {
 		case "bracket":
@@ -606,12 +656,31 @@ func (r *reader) partStaff(p *msPart) (clef, group string, err error) {
 			return err
 		case "StaffType":
 			group = attr(e, "group")
-			return r.dec.Skip()
+			// How many lines the staff is ruled with, said only where it
+			// is not five: one for a snare, three for a small kit.
+			return r.children(func(c xml.StartElement) error {
+				if c.Name.Local != "lines" {
+					return r.dec.Skip()
+				}
+				n, err := r.number()
+				lines = n
+				return err
+			})
+		case "cleflist":
+			// MuseScore 1 numbered its clefs and listed them by tick.
+			return r.children(func(c xml.StartElement) error {
+				if c.Name.Local == "clef" && attr(c, "tick") == "0" {
+					if n, err := strconv.Atoi(attr(c, "idx")); err == nil && n >= 0 && n < len(oldClefs) {
+						clef = oldClefs[n]
+					}
+				}
+				return r.dec.Skip()
+			})
 		default:
 			return r.dec.Skip()
 		}
 	})
-	return clef, group, err
+	return clef, group, lines, err
 }
 
 // stringData reads how a fretted instrument is tuned.
@@ -988,6 +1057,10 @@ func (r *reader) frame(doc *document, st *msStaff) error {
 			if doc.composer == "" {
 				doc.composer = body
 			}
+		case "lyricist", "poet":
+			if doc.lyricist == "" {
+				doc.lyricist = body
+			}
 		}
 		return nil
 	})
@@ -1158,8 +1231,13 @@ func (r *reader) measure(doc *document, st *msStaff) error {
 					return r.dec.Skip()
 				}
 				v, err := r.text()
-				if v == "section" {
+				switch v {
+				case "section":
 					m.EndsSection = true
+				case "line", "page":
+					// A page break is a line break too: a new page starts
+					// a new line of music.
+					m.SystemBreak = true
 				}
 				return err
 			})
@@ -1368,6 +1446,9 @@ type voiceState struct {
 	chordSym *model.ChordSymbol
 	texts    []model.TextMark
 	grace    *model.GraceGroup
+	// dynamicText is the dynamic as written, where that is not the name
+	// of the one it sounds as. See model.Marks.DynamicText.
+	dynamicText string
 
 	tuplet   *model.Tuplet
 	opens    bool // the next element opens the tuplet
@@ -1448,7 +1529,18 @@ func (r *reader) voiceElement(doc *document, st *msStaff, vs *voiceState, e xml.
 		vs.artics = append(vs.artics, model.Fermata)
 		return r.dec.Skip()
 	case "Harmony":
-		return r.harmony(vs)
+		return r.harmony(doc, vs)
+	case "Breath":
+		return r.breath(st, vs)
+	case "InstrumentChange":
+		// "To Flute": the words are what the player reads.
+		return r.staffText(vs)
+	case "PlayTechAnnotation", "Sticking":
+		return r.staffText(vs)
+	case "Symbol":
+		return r.symbol(func(sm model.SymbolMark) {
+			vs.markNext(func(m *model.Marks) { m.Symbols = append(m.Symbols, sm) })
+		})
 	case "RehearsalMark":
 		// Its own <text>, not everything inside it: read whole, a rehearsal
 		// mark came out as the file's internal id for it.
@@ -1460,10 +1552,14 @@ func (r *reader) voiceElement(doc *document, st *msStaff, vs *voiceState, e xml.
 			vs.m.Marker = s
 		}
 		return nil
-	case "StaffText", "SystemText", "Expression":
+	case "StaffText", "SystemText", "Expression", "Text":
+		// <Text> is MuseScore 1's staff text.
 		return r.staffText(vs)
 	case "BarLine":
-		return r.barLine(vs.m)
+		return r.barLine(st, vs)
+	case "RepeatMeasure":
+		// MuseScore 2 wrote the sign inside the voice.
+		return r.measureRepeat(vs)
 	case "Spanner":
 		return r.spanner(st, vs, attr(e, "type"))
 	case "HairPin", "Ottava", "Volta", "Pedal", "TextLine", "Trill",
@@ -1484,8 +1580,8 @@ func (r *reader) voiceElement(doc *document, st *msStaff, vs *voiceState, e xml.
 	case "MeasureRepeat":
 		return r.measureRepeat(vs)
 	case "location", "eid", "lid", "linkedMain", "linked", "track", "voice",
-		"Beam", "beam", "LayoutBreak", "Image", "Symbol", "irregular",
-		"visible", "Ambitus", "FretDiagram", "InstrumentChange", "Marker",
+		"Beam", "beam", "LayoutBreak", "Image", "irregular",
+		"visible", "Ambitus", "FretDiagram", "Marker",
 		"Jump", "StaffTypeChange", "noOffset", "stretch", "Segment",
 		"vspacerUp", "vspacerDown", "vspacerFixed", "measureNumberMode",
 		"MeasureNumber", "SystemDivider", "Spacer":
@@ -1521,6 +1617,9 @@ func (r *reader) clef(st *msStaff, vs *voiceState) error {
 	})
 	if err != nil {
 		return err
+	}
+	if n, err := strconv.Atoi(name); err == nil && n >= 0 && n < len(oldClefs) {
+		name = oldClefs[n] // MuseScore 1 numbered them
 	}
 	k, ok := clefKinds[name]
 	if !ok {
@@ -1569,6 +1668,7 @@ func (r *reader) clef(st *msStaff, vs *voiceState) error {
 func (r *reader) keySig(m *model.Measure) error {
 	concert, written := 0, 0
 	haveConcert, haveWritten := false, false
+	mode := ""
 	err := r.children(func(c xml.StartElement) error {
 		switch c.Name.Local {
 		case "concertKey":
@@ -1585,6 +1685,13 @@ func (r *reader) keySig(m *model.Measure) error {
 			n, err := r.number()
 			written, haveWritten = n, true
 			return err
+		case "mode":
+			s, err := r.text()
+			mode = s
+			return err
+		case "custom":
+			r.report("a custom key signature is drawn as the nearest ordinary one")
+			return r.dec.Skip()
 		default:
 			return r.dec.Skip()
 		}
@@ -1604,8 +1711,18 @@ func (r *reader) keySig(m *model.Measure) error {
 		return nil
 	}
 	k := model.KeySignature{Fifths: fifths, Mode: model.Major}
+	if md, ok := keyModes[mode]; ok {
+		k.Mode = md
+	}
 	m.Key = &k
 	return nil
+}
+
+// keyModes are the modes a key signature can name, as MuseScore spells them.
+var keyModes = map[string]model.Mode{
+	"major": model.Major, "ionian": model.Major, "minor": model.Minor,
+	"aeolian": model.Minor, "dorian": model.Dorian, "phrygian": model.Phrygian,
+	"lydian": model.Lydian, "mixolydian": model.Mixolydian, "locrian": model.Locrian,
 }
 
 func (r *reader) timeSig(m *model.Measure) error {
@@ -1729,27 +1846,170 @@ func dropMusicSymbols(s string) string {
 }
 
 func (r *reader) dynamic(vs *voiceState) error {
-	sub := ""
+	sub, text, velocity := "", "", 0
 	err := r.children(func(c xml.StartElement) error {
-		if c.Name.Local == "subtype" {
+		switch c.Name.Local {
+		case "subtype":
 			s, err := r.text()
 			sub = s
 			return err
+		case "text":
+			// Written as symbols: <sym>dynamicPiano</sym> is the p.
+			s, err := r.symText(dynamicLetters)
+			text = s
+			return err
+		case "velocity":
+			n, err := r.number()
+			velocity = n
+			return err
+		default:
+			return r.dec.Skip()
 		}
-		return r.dec.Skip()
 	})
 	if err != nil {
 		return err
 	}
 	d, ok := dynamicFor(sub)
 	if !ok {
-		if sub != "" && sub != "other-dynamics" {
-			r.report("the dynamic %q is not one gscore knows", sub)
+		// "other-dynamics" is anything that is not plainly one of the
+		// standard marks: "più f", "mp-f", "p subito", or a standard one
+		// somebody retyped. The words are kept as written, and what it
+		// sounds as comes from a standard mark among the words, or from
+		// the velocity MuseScore plays it at.
+		d, ok = dynamicInWords(text)
+		if !ok && velocity > 0 {
+			d, ok = dynamicNearVelocity(velocity)
 		}
-		return nil
+		if !ok {
+			// One letter — m, r, s, z — is a piece of a dynamic from
+			// MuseScore 4's palette, with no loudness of its own.
+			if sub != "" && sub != "other-dynamics" && len(sub) > 1 {
+				r.report("the dynamic %q is not one gscore knows", sub)
+			}
+			return nil
+		}
+		if text != "" && text != d.String() {
+			vs.dynamicText = text
+		}
 	}
 	vs.dynamic = d
 	return nil
+}
+
+// dynamicInWords finds the standard mark among the words of one that is
+// not standard as a whole: the f of "più f", the mp of "mp-f".
+func dynamicInWords(text string) (model.Dynamic, bool) {
+	for _, w := range strings.FieldsFunc(text, func(c rune) bool {
+		return c == ' ' || c == '-' || c == '/' || c == ',' || c == '(' || c == ')'
+	}) {
+		if d, ok := dynamicFor(w); ok {
+			return d, true
+		}
+	}
+	return model.DynamicNone, false
+}
+
+// dynamicNearVelocity is the standard mark that sounds nearest a velocity.
+func dynamicNearVelocity(v int) (model.Dynamic, bool) {
+	best, dist := model.DynamicNone, 1<<30
+	for d := model.PPPP; d <= model.FFFF; d++ {
+		if n := d.Velocity() - v; n*n < dist {
+			best, dist = d, n*n
+		}
+	}
+	return best, best != model.DynamicNone
+}
+
+// symText reads a text element whose music symbols are spelled out by a
+// table, so that a dynamic written as <sym> elements comes out as letters.
+func (r *reader) symText(letters map[string]string) (string, error) {
+	var buf strings.Builder
+	depth := 0
+	for {
+		tok, err := r.dec.Token()
+		if err != nil {
+			return "", err
+		}
+		switch t := tok.(type) {
+		case xml.CharData:
+			buf.Write(t)
+		case xml.StartElement:
+			if t.Name.Local == "sym" {
+				name, err := r.text()
+				if err != nil {
+					return "", err
+				}
+				buf.WriteString(letters[strings.TrimSpace(name)])
+				continue
+			}
+			depth++
+		case xml.EndElement:
+			if depth == 0 {
+				return strings.TrimSpace(buf.String()), nil
+			}
+			depth--
+		}
+	}
+}
+
+// breath reads a breath mark or a caesura, which MuseScore writes after the
+// note it follows — so it goes on the last note read, in whichever voice.
+func (r *reader) breath(st *msStaff, vs *voiceState) error {
+	b := model.NoBreath
+	err := r.children(func(c xml.StartElement) error {
+		switch c.Name.Local {
+		case "symbol":
+			s, err := r.text()
+			if k, ok := breathGlyphs[s]; ok {
+				b = k
+			} else if s != "" {
+				r.report("the %q breath mark is drawn as a comma", s)
+				b = model.BreathComma
+			}
+			return err
+		case "subtype":
+			n, err := r.number()
+			if n >= 0 && n < len(oldBreaths) {
+				b = oldBreaths[n]
+			}
+			return err
+		default:
+			return r.dec.Skip()
+		}
+	})
+	if err != nil || b == model.NoBreath {
+		return err
+	}
+	el := vs.last
+	if el == nil {
+		el = st.lastEl
+	}
+	if m := marksOf(el); m != nil {
+		m.Break = b
+		return nil
+	}
+	// Nothing before it yet: a breath written at the head of the music
+	// belongs to whatever comes first.
+	vs.markNext(func(m *model.Marks) { m.Break = b })
+	return nil
+}
+
+// symbol reads a <Symbol>, which MuseScore names by its SMuFL glyph, and
+// hands it on as a mark.
+func (r *reader) symbol(keep func(model.SymbolMark)) error {
+	name := ""
+	err := r.children(func(c xml.StartElement) error {
+		if c.Name.Local == "name" {
+			s, err := r.text()
+			name = s
+			return err
+		}
+		return r.dec.Skip()
+	})
+	if err == nil && name != "" {
+		keep(model.SymbolMark{Name: name})
+	}
+	return err
 }
 
 // innerText reads the <text> of an element that also carries bookkeeping —
@@ -1782,7 +2042,7 @@ func (r *reader) staffText(vs *voiceState) error {
 
 // harmony reads a chord symbol. Its root is a tonal pitch class rather than a
 // letter, so it is spelled through the same table the notes use.
-func (r *reader) harmony(vs *voiceState) error {
+func (r *reader) harmony(doc *document, vs *voiceState) error {
 	root, bass := 0, 0
 	haveRoot, haveBass := false, false
 	name, text := "", ""
@@ -1806,6 +2066,14 @@ func (r *reader) harmony(vs *voiceState) error {
 		case "name":
 			s, err := r.text()
 			name = s
+			return err
+		case "extension":
+			// MuseScore 1 and 2 wrote the quality as a number into the
+			// file's own chord list, which is what gives it a name.
+			s, err := r.text()
+			if n, ok := doc.chordNames[strings.TrimSpace(s)]; ok && name == "" {
+				name = n
+			}
 			return err
 		case "text":
 			s, err := r.text()
@@ -1852,7 +2120,8 @@ func tpcName(tpc int) string {
 	return s
 }
 
-func (r *reader) barLine(m *model.Measure) error {
+func (r *reader) barLine(st *msStaff, vs *voiceState) error {
+	m := vs.m
 	sub := ""
 	err := r.children(func(c xml.StartElement) error {
 		if c.Name.Local == "subtype" {
@@ -1871,12 +2140,55 @@ func (r *reader) barLine(m *model.Measure) error {
 	case model.BarRepeatEnd, model.BarRepeatStart, model.BarRepeatBoth:
 		return nil
 	}
+	// A repeat written as a barline rather than as the bar's own
+	// <startRepeat> or <endRepeat>, which is how a repeat barline that
+	// somebody placed by hand is written.
+	switch sub {
+	case "start-repeat":
+		return r.barLineRepeat(st, vs, model.BarRepeatStart)
+	case "end-repeat":
+		m.RightBarline = model.BarRepeatEnd
+		return nil
+	case "end-start-repeat":
+		m.RightBarline = model.BarRepeatBoth
+		return nil
+	}
+	if n, err := strconv.Atoi(sub); err == nil && n >= 0 && n < len(oldBarlines) {
+		sub = oldBarlines[n] // MuseScore 1 numbered them
+		switch sub {
+		case "start-repeat":
+			return r.barLineRepeat(st, vs, model.BarRepeatStart)
+		case "end-repeat":
+			m.RightBarline = model.BarRepeatEnd
+			return nil
+		case "end-start-repeat":
+			m.RightBarline = model.BarRepeatBoth
+			return nil
+		}
+	}
 	style, ok := barlineStyles[sub]
 	if !ok {
 		r.report("the %q barline is drawn as a plain one", sub)
 		return nil
 	}
 	m.RightBarline = style
+	return nil
+}
+
+// barLineRepeat opens a repeat written as a barline. It is drawn on the
+// left of this bar, which is the right of the one before — see the same
+// in measure.
+func (r *reader) barLineRepeat(st *msStaff, vs *voiceState, style model.BarlineStyle) error {
+	if n := len(st.measures); n > 0 && len(vs.v.Elements) == 0 {
+		prev := st.measures[n-1]
+		if prev.RightBarline == model.BarRepeatEnd {
+			prev.RightBarline = model.BarRepeatBoth
+		} else {
+			prev.RightBarline = style
+		}
+	} else {
+		vs.m.RightBarline = style
+	}
 	return nil
 }
 
@@ -1915,6 +2227,7 @@ func (r *reader) measureRepeat(vs *voiceState) error {
 func (r *reader) spanner(st *msStaff, vs *voiceState, kind string) error {
 	start, stop := false, false
 	sub, label := "", ""
+	lineVisible := true
 	err := r.children(func(c xml.StartElement) error {
 		switch c.Name.Local {
 		case "next":
@@ -1924,13 +2237,18 @@ func (r *reader) spanner(st *msStaff, vs *voiceState, kind string) error {
 			stop = true
 			return r.dec.Skip()
 		case "Slur", "Tie", "HairPin", "Ottava", "Volta", "Pedal", "TextLine",
-			"Trill", "Glissando", "LetRing", "PalmMute", "Vibrato":
+			"Trill", "Glissando", "LetRing", "PalmMute", "Vibrato",
+			"GradualTempoChange":
 			start = true
 			return r.children(func(g xml.StartElement) error {
 				switch g.Name.Local {
 				case "subtype":
 					s, err := r.text()
 					sub = s
+					return err
+				case "lineVisible":
+					n, err := r.number()
+					lineVisible = n != 0
 					return err
 				case "beginText", "endings":
 					s, err := r.text()
@@ -1984,13 +2302,57 @@ func (r *reader) spanner(st *msStaff, vs *voiceState, kind string) error {
 		})
 	case "Volta":
 		volta(vs.m, label, start, stop)
-	case "Tie":
-		// A tie belongs to a notehead and is read there; one out here is a
+	case "GradualTempoChange":
+		// "rit.", "accel.", "rall.": a line whose words are what matter.
+		if start && label != "" {
+			vs.texts = append(vs.texts, model.TextMark{Text: label, Style: model.TextTempo})
+		}
+	case "Pedal":
+		// The old form — "Ped." and a star, no line — is a pedal line
+		// whose line is not drawn.
+		text := !lineVisible
+		if start {
+			vs.markNext(func(m *model.Marks) { pedalMark(m).Start = true; pedalMark(m).Text = text })
+		}
+		if stop {
+			vs.markNext(func(m *model.Marks) { pedalMark(m).Stop = true })
+		}
+	case "TextLine":
+		// The line is not drawn; the words it begins with are what it
+		// says — "rit.", "accel.", "poco a poco".
+		if start && label != "" {
+			vs.texts = append(vs.texts, model.TextMark{Text: label})
+		}
+	case "LetRing", "PalmMute", "Vibrato":
+		if start {
+			t := techniqueSpanners[kind]
+			if strings.Contains(sub, "Wide") {
+				t = model.WideVibrato
+			}
+			vs.markNext(func(m *model.Marks) { m.Techniques = append(m.Techniques, t) })
+		}
+	case "Tie", "Glissando":
+		// Both belong to a notehead and are read there; one out here is a
 		// stray and means nothing on its own.
 	default:
 		r.report("a %s spanner is not read", kind)
 	}
 	return nil
+}
+
+// pedalMark is the pedal mark on an element, made where there is none.
+//
+// A pedal that stops on the note another starts on is one mark that says
+// both — and that is the change of pedal, the notch in the line. See
+// model.PedalMark.
+func pedalMark(m *model.Marks) *model.PedalMark {
+	if m.Pedal == nil {
+		m.Pedal = &model.PedalMark{}
+	}
+	if m.Pedal.Start && m.Pedal.Stop {
+		m.Pedal.Change = true
+	}
+	return m.Pedal
 }
 
 // msSpan is a long mark opened in a MuseScore 1 or 2 file and waiting for
@@ -1999,6 +2361,7 @@ type msSpan struct {
 	kind  string
 	sub   string
 	label string
+	line  bool          // the pedal's line is drawn, rather than "Ped." and a star
 	at    model.Element // the last note read when it opened
 }
 
@@ -2036,7 +2399,7 @@ func (r *reader) oldSpan(st *msStaff, e xml.StartElement) (func(*voiceState), er
 		return nil, nil
 	}
 
-	sp := &msSpan{kind: e.Name.Local, at: st.lastEl}
+	sp := &msSpan{kind: e.Name.Local, at: st.lastEl, line: true}
 	err := r.children(func(c xml.StartElement) error {
 		switch c.Name.Local {
 		case "subtype":
@@ -2055,6 +2418,10 @@ func (r *reader) oldSpan(st *msStaff, e xml.StartElement) (func(*voiceState), er
 			if sp.label == "" {
 				sp.label = s
 			}
+			return err
+		case "lineVisible":
+			n, err := r.number()
+			sp.line = n != 0
 			return err
 		default:
 			return r.dec.Skip()
@@ -2093,6 +2460,19 @@ func (r *reader) openSpan(st *msStaff, vs *voiceState, sp *msSpan) {
 		})
 	case "Volta":
 		volta(vs.m, sp.label, true, false)
+	case "Pedal":
+		text := !sp.line
+		vs.markNext(func(m *model.Marks) { pedalMark(m).Start = true; pedalMark(m).Text = text })
+	case "TextLine":
+		if sp.label != "" {
+			vs.texts = append(vs.texts, model.TextMark{Text: sp.label})
+		}
+	case "LetRing", "PalmMute", "Vibrato":
+		t := techniqueSpanners[sp.kind]
+		if strings.Contains(sp.sub, "Wide") {
+			t = model.WideVibrato
+		}
+		vs.markNext(func(m *model.Marks) { m.Techniques = append(m.Techniques, t) })
 	default:
 		r.report("a %s spanner is not read", sp.kind)
 	}
@@ -2122,6 +2502,8 @@ func (r *reader) closeSpan(st *msStaff, vs *voiceState, id string) {
 		// Nothing was written between the two ends, so the note the
 		// opening is still waiting for carries the closing as well.
 		switch sp.kind {
+		case "Pedal":
+			vs.markNext(func(m *model.Marks) { pedalMark(m).Stop = true })
 		case "HairPin":
 			if vs.hairpin != nil {
 				vs.hairpin.Stop = true
@@ -2141,6 +2523,8 @@ func (r *reader) closeSpan(st *msStaff, vs *voiceState, id string) {
 		return
 	}
 	switch sp.kind {
+	case "Pedal":
+		pedalMark(marks).Stop = true
 	case "HairPin":
 		if marks.Hairpin == nil {
 			marks.Hairpin = &model.Hairpin{Kind: hairpinKind(sp.sub)}
@@ -2267,6 +2651,8 @@ func (r *reader) endTuplet(vs *voiceState) {
 func (r *reader) rest(vs *voiceState) error {
 	kind, dots := "", 0
 	var whole model.Duration
+	ch := &chordData{} // for the marks a rest can carry
+	hidden, lift := false, 0
 	err := r.children(func(c xml.StartElement) error {
 		switch c.Name.Local {
 		case "durationType":
@@ -2297,6 +2683,31 @@ func (r *reader) rest(vs *voiceState) error {
 			}
 			whole = parseFraction(s)
 			return nil
+		case "Articulation":
+			// MuseScore 2 wrote a fermata over a rest here.
+			return r.articulation(ch)
+		case "small":
+			ch.marks.Small = true
+			return r.dec.Skip()
+		case "visible":
+			n, err := r.number()
+			hidden = n == 0
+			return err
+		case "staffMove":
+			n, err := r.number()
+			ch.marks.Cross = model.CrossStaff(n)
+			return err
+		case "offset":
+			// Where somebody moved it, in staff spaces downward; a lift
+			// is counted in steps upward.
+			if y, err := strconv.ParseFloat(attr(c, "y"), 64); err == nil {
+				lift = int(math.Round(-2 * y))
+			}
+			return r.dec.Skip()
+		case "Symbol":
+			return r.symbol(func(sm model.SymbolMark) {
+				ch.marks.Symbols = append(ch.marks.Symbols, sm)
+			})
 		default:
 			return r.dec.Skip()
 		}
@@ -2308,7 +2719,7 @@ func (r *reader) rest(vs *voiceState) error {
 	if !ok {
 		return nil
 	}
-	rest := &model.Rest{Dur: dur}
+	rest := &model.Rest{Dur: dur, Hidden: hidden, Lift: lift, Marks: ch.marks}
 	vs.attach(&rest.Marks)
 	vs.add(rest)
 	return nil
@@ -2327,6 +2738,66 @@ type chordData struct {
 	grace   bool
 	slashed bool
 	tremolo *model.Tremolo
+}
+
+// arpeggio reads the wavy line before a chord. MuseScore numbers its kinds:
+// 0 plain, 1 and 4 upward, 2 and 5 downward, 3 a bracket — which says the
+// chord is not rolled, so it is not an arpeggio at all.
+func (r *reader) arpeggio(m *model.Marks) error {
+	sub := "0"
+	err := r.children(func(c xml.StartElement) error {
+		if c.Name.Local == "subtype" {
+			s, err := r.text()
+			sub = s
+			return err
+		}
+		return r.dec.Skip()
+	})
+	if err != nil || sub == "3" {
+		return err
+	}
+	m.Arpeggio = &model.Arpeggio{Down: sub == "2" || sub == "5"}
+	return nil
+}
+
+// chordLine reads a fall, doit, plop or scoop, drawn as the glyph a brass
+// part writes it with, just to the right of the notehead.
+func (r *reader) chordLine(m *model.Marks) error {
+	sub := ""
+	err := r.children(func(c xml.StartElement) error {
+		if c.Name.Local == "subtype" {
+			s, err := r.text()
+			sub = s
+			return err
+		}
+		return r.dec.Skip()
+	})
+	if err != nil {
+		return err
+	}
+	if g, ok := chordLineGlyphs[sub]; ok {
+		m.Symbols = append(m.Symbols, model.SymbolMark{Name: g, OffsetX: 1.4})
+	}
+	return nil
+}
+
+// foldNoteMarks gathers onto a chord what MuseScore writes on its notes
+// and gscore keeps on the chord: the fingering, which is read in the order
+// MuseScore writes the notes — lowest first, which is the order a pianist
+// reads a fingering in — and a slide, a symbol or a cue-size mark on any
+// of them.
+func foldNoteMarks(c *model.Chord) {
+	for _, n := range c.Notes {
+		c.Marks.Fingering = append(c.Marks.Fingering, n.Marks.Fingering...)
+		n.Marks.Fingering = nil
+		if n.Marks.Glissando != nil && c.Marks.Glissando == nil {
+			c.Marks.Glissando = n.Marks.Glissando
+		}
+		n.Marks.Glissando = nil
+		c.Marks.Symbols = append(c.Marks.Symbols, n.Marks.Symbols...)
+		n.Marks.Symbols = nil
+		c.Marks.Small = c.Marks.Small || n.Marks.Small
+	}
 }
 
 func (r *reader) chord(st *msStaff, vs *voiceState) error {
@@ -2414,8 +2885,17 @@ func (r *reader) chord(st *msStaff, vs *voiceState) error {
 			return r.dec.Skip()
 		case "Tremolo", "TremoloSingleChord", "TremoloTwoChord":
 			return r.tremolo(ch, c)
-		case "Arpeggio", "ChordLine":
-			return r.unhandled("chord", c)
+		case "Arpeggio":
+			return r.arpeggio(&ch.marks)
+		case "ChordLine":
+			return r.chordLine(&ch.marks)
+		case "small":
+			ch.marks.Small = true
+			return r.dec.Skip()
+		case "staffMove":
+			n, err := r.number()
+			ch.marks.Cross = model.CrossStaff(n)
+			return err
 		default:
 			return r.dec.Skip()
 		}
@@ -2470,6 +2950,9 @@ func (r *reader) chord(st *msStaff, vs *voiceState) error {
 			n.Dur = dur
 		}
 		el, marks = c, &c.Marks
+	}
+	if c, ok := el.(*model.Chord); ok {
+		foldNoteMarks(c)
 	}
 	marks.Stem = ch.stem
 	marks.Beam = ch.beam
@@ -2590,8 +3073,11 @@ func (r *reader) noteElement(st *msStaff, ch *chordData) error {
 			}
 			return nil
 		case "Spanner":
-			if attr(c, "type") == "Tie" {
+			switch attr(c, "type") {
+			case "Tie":
 				return r.tieSpanner(n)
+			case "Glissando":
+				return r.glissando(n)
 			}
 			return r.dec.Skip()
 		case "Tie":
@@ -2603,9 +3089,18 @@ func (r *reader) noteElement(st *msStaff, ch *chordData) error {
 				return err
 			}
 			if s != "" {
-				n.Texts = append(n.Texts, model.TextMark{Text: s})
+				n.Marks.Fingering = append(n.Marks.Fingering, s)
 			}
 			return nil
+		case "small":
+			n.Marks.Small = true
+			return r.dec.Skip()
+		case "Symbol":
+			return r.symbol(func(sm model.SymbolMark) {
+				n.Marks.Symbols = append(n.Marks.Symbols, sm)
+			})
+		case "ChordLine":
+			return r.chordLine(&n.Marks)
 		default:
 			return r.dec.Skip()
 		}
@@ -2641,11 +3136,17 @@ func (r *reader) noteElement(st *msStaff, ch *chordData) error {
 }
 
 func (r *reader) accidental(n *model.Note) error {
-	sub := ""
+	sub, bracket := "", 0
 	err := r.children(func(c xml.StartElement) error {
-		if c.Name.Local == "subtype" {
+		switch c.Name.Local {
+		case "subtype":
 			s, err := r.text()
 			sub = s
+			return err
+		case "bracket":
+			// 1 is parentheses and 2 square brackets: a courtesy either way.
+			v, err := r.number()
+			bracket = v
 			return err
 		}
 		return r.dec.Skip()
@@ -2654,7 +3155,11 @@ func (r *reader) accidental(n *model.Note) error {
 		return err
 	}
 	if a, ok := accidentals[sub]; ok {
+		// What MuseScore printed, which is what the file says: kept as
+		// written rather than worked out again. See model.Note.Forced.
 		n.Accidental = a
+		n.Forced = true
+		n.Parens = n.Parens || bracket > 0
 	} else if sub != "" {
 		r.report("the %q accidental is not one gscore draws", sub)
 	}
@@ -2665,7 +3170,23 @@ func (r *reader) tieSpanner(n *model.Note) error {
 	start, stop := false, false
 	err := r.children(func(c xml.StartElement) error {
 		switch c.Name.Local {
-		case "next", "Tie":
+		case "Tie":
+			start = true
+			// Which way it arcs, where somebody has said.
+			return r.children(func(g xml.StartElement) error {
+				if g.Name.Local != "up" {
+					return r.dec.Skip()
+				}
+				s, err := r.text()
+				switch s {
+				case "up":
+					n.TieDir, n.Marks.TieDir = model.StemUp, model.StemUp
+				case "down":
+					n.TieDir, n.Marks.TieDir = model.StemDown, model.StemDown
+				}
+				return err
+			})
+		case "next":
 			start = true
 		case "prev":
 			stop = true
@@ -2677,6 +3198,49 @@ func (r *reader) tieSpanner(n *model.Note) error {
 	}
 	n.TieStart = n.TieStart || start
 	n.TieStop = n.TieStop || stop
+	return nil
+}
+
+// glissando reads the slide a note begins or ends, written on the note as
+// a tie is.
+func (r *reader) glissando(n *model.Note) error {
+	start, stop := false, false
+	sub, text := "", ""
+	err := r.children(func(c xml.StartElement) error {
+		switch c.Name.Local {
+		case "next":
+			start = true
+		case "prev":
+			stop = true
+		case "Glissando":
+			start = true
+			return r.children(func(g xml.StartElement) error {
+				switch g.Name.Local {
+				case "subtype":
+					s, err := r.text()
+					sub = s
+					return err
+				case "text":
+					s, err := r.text()
+					text = s
+					return err
+				}
+				return r.dec.Skip()
+			})
+		}
+		return r.dec.Skip()
+	})
+	if err != nil {
+		return err
+	}
+	if n.Marks.Glissando == nil {
+		n.Marks.Glissando = &model.Glissando{}
+	}
+	g := n.Marks.Glissando
+	g.Start, g.Stop = g.Start || start, g.Stop || stop
+	if start {
+		g.Wavy, g.Text = sub == "1", text
+	}
 	return nil
 }
 
@@ -2693,12 +3257,32 @@ func (r *reader) articulation(ch *chordData) error {
 	if err != nil {
 		return err
 	}
+	place := placementOf(sub)
+	if pair, ok := twoArticulations[sub]; ok {
+		addArticulation(&ch.marks, pair[0], place)
+		addArticulation(&ch.marks, pair[1], place)
+		return nil
+	}
 	if a, ok := articulations[sub]; ok {
-		ch.marks.AddArticulation(a)
+		addArticulation(&ch.marks, a, place)
 		return nil
 	}
 	if a, ok := ornaments[sub]; ok {
-		ch.marks.AddArticulation(a)
+		addArticulation(&ch.marks, a, place)
+		return nil
+	}
+	if a, ok := oldOrnaments[sub]; ok {
+		addArticulation(&ch.marks, a, place)
+		return nil
+	}
+	if g, ok := markGlyphs[sub]; ok {
+		ch.marks.Symbols = append(ch.marks.Symbols, model.SymbolMark{Name: g, Placement: place})
+		return nil
+	}
+	// MuseScore 3 and 4 name every mark by its SMuFL glyph, so whatever
+	// is left is drawn as the glyph it names.
+	if isGlyphName(sub) {
+		ch.marks.Symbols = append(ch.marks.Symbols, model.SymbolMark{Name: sub, Placement: place})
 		return nil
 	}
 	// An ornament written on the note rather than as a spanner is a trill on
@@ -2719,6 +3303,50 @@ func (r *reader) articulation(ch *chordData) error {
 //
 // MuseScore names them by their SMuFL glyph, which is what they are, so the
 // table is short and does not have to be guessed at.
+// placementOf is which side of the note a mark's name says it is on:
+// MuseScore 3 and 4 name them articStaccatoAbove and articStaccatoBelow.
+func placementOf(name string) model.Placement {
+	switch {
+	case strings.HasSuffix(name, "Above"):
+		return model.PlacementAbove
+	case strings.HasSuffix(name, "Below"):
+		return model.PlacementBelow
+	}
+	return model.PlacementAuto
+}
+
+// addArticulation adds a mark and where it goes, keeping the two lists in
+// step. See model.Marks.ArticulationPlace.
+func addArticulation(m *model.Marks, a model.Articulation, place model.Placement) {
+	for _, have := range m.Articulations {
+		if have == a {
+			return
+		}
+	}
+	m.Articulations = append(m.Articulations, a)
+	if place != model.PlacementAuto {
+		for len(m.ArticulationPlace) < len(m.Articulations)-1 {
+			m.ArticulationPlace = append(m.ArticulationPlace, model.PlacementAuto)
+		}
+		m.ArticulationPlace = append(m.ArticulationPlace, place)
+	}
+}
+
+// isGlyphName says whether a mark's name is a SMuFL glyph name — a lower
+// camel-case word like brassMuteClosed — rather than a word of MuseScore's
+// own.
+func isGlyphName(s string) bool {
+	if s == "" || s[0] < 'a' || s[0] > 'z' {
+		return false
+	}
+	for _, c := range s {
+		if c >= 'A' && c <= 'Z' {
+			return true
+		}
+	}
+	return false
+}
+
 var ornaments = map[string]model.Articulation{
 	"ornamentMordent":      model.Mordent,
 	"ornamentShortTrill":   model.ShortTrill,
@@ -2729,6 +3357,7 @@ var ornaments = map[string]model.Articulation{
 
 func (r *reader) lyrics(ch *chordData) error {
 	verse, syll, text := 1, "", ""
+	held := false
 	err := r.children(func(c xml.StartElement) error {
 		switch c.Name.Local {
 		case "no":
@@ -2743,6 +3372,27 @@ func (r *reader) lyrics(ch *chordData) error {
 			s, err := r.text()
 			text = s
 			return err
+		case "html-data":
+			// MuseScore 1 wrote the words as a page of HTML.
+			s, err := r.text()
+			if text == "" {
+				text = s
+			}
+			return err
+		case "ticks", "ticks_f":
+			// How long the syllable is held past its own note: a melisma.
+			// Written as a count of ticks, and from 3.1 as a fraction of
+			// a whole note as well.
+			s, err := r.text()
+			if err != nil {
+				return err
+			}
+			if strings.Contains(s, "/") {
+				held = held || parseFraction(s).Num > 0
+			} else if n, err := strconv.Atoi(strings.TrimSpace(s)); err == nil {
+				held = held || n > 0
+			}
+			return nil
 		default:
 			return r.dec.Skip()
 		}
@@ -2750,7 +3400,7 @@ func (r *reader) lyrics(ch *chordData) error {
 	if err != nil || text == "" {
 		return err
 	}
-	l := model.Lyric{Text: text, Verse: verse}
+	l := model.Lyric{Text: text, Verse: verse, Extend: held}
 	switch syll {
 	case "begin":
 		l.Syllabic = model.SyllableBegin
@@ -2856,7 +3506,8 @@ func (vs *voiceState) attach(m *model.Marks) {
 
 	if vs.dynamic != model.DynamicNone {
 		m.Dynamic = vs.dynamic
-		vs.dynamic = model.DynamicNone
+		m.DynamicText = vs.dynamicText
+		vs.dynamic, vs.dynamicText = model.DynamicNone, ""
 	}
 	for _, a := range vs.artics {
 		m.AddArticulation(a)
@@ -2919,6 +3570,15 @@ func mergeMarks(note, chord model.Marks) model.Marks {
 	out.TieStart = out.TieStart || note.TieStart
 	out.TieStop = out.TieStop || note.TieStop
 	out.Texts = append(out.Texts, note.Texts...)
+	out.Fingering = append(out.Fingering, note.Fingering...)
+	out.Symbols = append(out.Symbols, note.Symbols...)
+	if out.Glissando == nil {
+		out.Glissando = note.Glissando
+	}
+	out.Small = out.Small || note.Small
+	if out.TieDir == model.StemAuto {
+		out.TieDir = note.TieDir
+	}
 	return out
 }
 
@@ -2940,6 +3600,8 @@ func (doc *document) assemble(r *reader) (*model.Score, error) {
 	s.Identity.Subtitle = firstOf(doc.subtitle, doc.meta["subtitle"])
 	s.Identity.Composer = firstOf(doc.composer, doc.meta["composer"])
 	s.Identity.Copyright = doc.meta["copyright"]
+	s.Identity.Lyricist = firstOf(doc.lyricist, doc.meta["lyricist"], doc.meta["poet"])
+	s.Identity.Arranger = firstOf(doc.meta["arranger"])
 
 	// A MuseScore part can be printed on more than one staff — a piano is two
 	// — while a gscore part is one staff. So each staff becomes a part, and
@@ -2953,7 +3615,17 @@ func (doc *document) assemble(r *reader) (*model.Score, error) {
 				continue
 			}
 			used[id] = true
-			s.Parts = append(s.Parts, toPart(p, st, i))
+			part := toPart(p, st, i)
+			// MuseScore keeps what sounds under the treble clef with an 8
+			// under it, and gscore what is written. A tenor's part, read
+			// as it arrived, hung an octave below its staff on ledger
+			// lines. See model.Part.WriteAnOctaveUp.
+			if part.Clef == model.Treble8vb && part.WriteAnOctaveUp() {
+				r.report("a staff that changes out of the treble clef with " +
+					"an 8 under it is written an octave up throughout, where " +
+					"gscore moves the whole staff")
+			}
+			s.Parts = append(s.Parts, part)
 		}
 		if len(s.Parts)-first > 1 {
 			s.Groups = append(s.Groups, model.StaffGroup{
@@ -3046,6 +3718,10 @@ func toPart(p *msPart, st *msStaff, index int) *model.Part {
 		out.Name = p.name
 	}
 	out.Sound = p.sound
+	out.Hidden = p.hidden
+	if index < len(p.staffLines) && p.staffLines[index] > 0 && p.staffLines[index] != 5 {
+		out.StaffLines = p.staffLines[index]
+	}
 	if p.hasProg {
 		out.Instrument = model.Instrument(p.program)
 	} else if prog, ok := model.SoundProgram(p.sound); ok {

@@ -455,6 +455,10 @@ func convert(doc *scorePartwise, lg *log) (*model.Score, error) {
 			}
 		}
 
+		for _, p := range parts {
+			writeAnOctaveUp(p, lg)
+		}
+
 		if staves > 1 {
 			// The brace, and barlines running down through the gap: what
 			// makes two staves read as one instrument rather than two.
@@ -645,6 +649,34 @@ func convertClef(c *clef, lg *log) model.Clef {
 			"treble clef", c.Sign)
 	}
 	return model.Treble
+}
+
+// writeAnOctaveUp moves a staff written in the treble clef with an 8 under
+// it up to where it is written.
+//
+// The file keeps what sounds; gscore keeps what is written, and under this
+// clef the two are an octave apart. The men of "La Mer" sing their first
+// note on the D below middle C and read it as the D above — which is the
+// whole purpose of the sign. Left at sounding pitch the line was drawn an
+// octave low, hanging off the bottom of the staff on ledger lines and down
+// through the words. See model.Part.WriteAnOctaveUp.
+func writeAnOctaveUp(p *model.Part, lg *log) {
+	if p.Clef != model.Treble8vb {
+		for _, m := range p.Measures {
+			if m.Clef != nil && *m.Clef == model.Treble8vb {
+				lg.say("a staff that changes into the treble clef with an " +
+					"8 under it partway through is written where it sounds " +
+					"from there on, an octave low")
+				return
+			}
+		}
+		return
+	}
+	if p.WriteAnOctaveUp() {
+		lg.say("a staff that changes out of the treble clef with an 8 " +
+			"under it is written an octave up throughout, where gscore " +
+			"moves the whole staff")
+	}
 }
 
 // convertTempo is the speed a direction sets, if it sets one.

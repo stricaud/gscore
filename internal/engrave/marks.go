@@ -84,8 +84,15 @@ func (e *engraver) drawArpeggio(p *placed, a *model.Arpeggio) {
 		return
 	}
 	// Left of the leftmost notehead, which for a chord with a note pushed
-	// across the stem is not the column.
-	x := p.x - arpeggioGap - e.adv("arpeggiato")
+	// across the stem is not the column — and left of the accidentals,
+	// which stand between the line and the noteheads. Drawn at the
+	// noteheads' own distance it ran straight through a flat, and a flat
+	// with a wavy line down it is hard to see as either.
+	var el model.Element = p.chord
+	if p.note != nil {
+		el = p.note
+	}
+	x := p.x - e.accidentalLead(p.clef, el) - arpeggioGap - e.adv("arpeggiato")
 	if p.chord != nil && e.displacedLeft(p) {
 		x -= e.headW(p.value)
 	}

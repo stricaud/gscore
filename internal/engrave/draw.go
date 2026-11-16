@@ -447,7 +447,7 @@ func (e *engraver) drawMeasure(part *model.Part, b measureBox, x, end float64, s
 			// Before the words: the line a syllable before this one is
 			// still being held on ends where this element's own word
 			// begins, so it has to be settled first.
-			e.extendAt(m, p)
+			e.extendAt(part, m, p, b.index)
 			e.drawLyrics(m, p, items[i+1:])
 			e.drawTexts(m, p, b.index)
 			// How the note is played: a bend, a mute, a harmonic. The
@@ -3195,12 +3195,14 @@ func (e *engraver) drawLyrics(m *model.Marks, p *placed, after []*placed) {
 		}
 		y := e.lyricY(verse)
 		if ly.Text != "" {
+			e.noteWordText(len(e.lay.Texts))
 			e.lay.Texts = append(e.lay.Texts, Text{
 				S: ly.Text, X: x, Y: y, Size: lyricSize, Anchor: "middle",
 			})
 		}
 		// A hyphen between the halves of a word, in the gap between them.
 		if ly.NeedsHyphen() {
+			e.noteWordText(len(e.lay.Texts))
 			e.lay.Texts = append(e.lay.Texts, Text{
 				S: "-", X: hyphenAt(x, ly.Text, p, after, verse), Y: y,
 				Size: lyricSize, Anchor: "middle",
@@ -3223,6 +3225,14 @@ func (e *engraver) lyricY(verse int) float64 {
  * Altes runs from the word across the whole bar the note is tied into and
  * ends before the rest.
  *
+ * And on through every note after it that has no word of its own, which
+ * is what a melisma is: "plui ____ e" in "La Mer" sings the one syllable
+ * over four notes and the line runs under all of them, up to the word that
+ * follows. The line used to stop at the second note — the sound of the
+ * first had ended, and nothing asked what the second was sung on — so a
+ * melisma got a line the length of one note and the rest of it carried
+ * nothing.
+ *
  * Which is why it is a spanner and not something drawn with the word. It was
  * drawn with the word, inside its own column and no further, so a syllable
  * held over a tied whole note got a line as long as a whole note's column
@@ -3234,9 +3244,10 @@ func (e *engraver) lyricY(verse int) float64 {
 // have run out and opens one for every syllable written as held.
 //
 // Called on every element with marks, rests included, because what ends the
-// line is the next thing to be sung or not sung — the line stops at the end
-// of the sound whatever comes after it.
-func (e *engraver) extendAt(m *model.Marks, p *placed) {
+// line is the next thing sung on another syllable or not sung at all — a
+// word, or a rest. A note with no word of its own is sung on the syllable
+// still running, and the line goes on under it.
+func (e *engraver) extendAt(part *model.Part, m *model.Marks, p *placed, measure int) {
 	// Held for the staff and not for one of its lines of music — see
 	// allVoices, which ties are kept this way for the same reason. A note
 	// held across a barline can arrive written in a different voice from
@@ -3258,6 +3269,7 @@ func (e *engraver) extendAt(m *model.Marks, p *placed) {
 		ex := open.extends[verse]
 		if ex.holding && m.TieStop {
 			ex.holding = m.TieStart
+			ex.melisma = e.melismaGoesOn(part, measure, p, verse)
 			ex.limit = right
 			// And the line follows the sound into whatever voice it is
 			// written in now, so that what ends it is the next thing in
@@ -3272,7 +3284,16 @@ func (e *engraver) extendAt(m *model.Marks, p *placed) {
 		if ex.voice != p.voice {
 			continue
 		}
-		e.drawExtender(ex, math.Min(ex.limit, e.lyricLeft(m, x, verse)-extendAir))
+		// A note with nothing of its own to sing is sung on the syllable
+		// still running: the line goes on under it, to the end of its
+		// sound.
+		if (p.note != nil || p.chord != nil) && !sings(m, verse) {
+			ex.holding = m.TieStart
+			ex.melisma = e.melismaGoesOn(part, measure, p, verse)
+			ex.limit = right
+			continue
+		}
+		e.drawExtender(ex, math.Min(ex.limit, e.lyricLeft(m, x, p.x, verse)-extendAir))
 		delete(open.extends, verse)
 	}
 
@@ -3284,25 +3305,77 @@ func (e *engraver) extendAt(m *model.Marks, p *placed) {
 		if verse < 1 {
 			verse = 1
 		}
-		y := e.lyricY(verse) + extendDrop
 		if open.extends == nil {
 			open.extends = map[int]*openSpan{}
 		}
+		// A held mark with no word under it is how some files say where
+		// a melisma ends: it is the running line's own last note, not the
+		// start of another line.
+		if _, running := open.extends[verse]; running && ly.Text == "" {
+			continue
+		}
+		y := e.lyricY(verse) + extendDrop
 		open.extends[verse] = &openSpan{
 			x:       x + textWidth(ly.Text, lyricSize)/2 + extendAir,
 			y:       y,
 			rel:     y - e.y,
 			holding: m.TieStart,
+			melisma: e.melismaGoesOn(part, measure, p, verse),
 			limit:   right,
 			voice:   p.voice,
 		}
 	}
 }
 
+// sings says whether an element carries a word of its own in a verse.
+func sings(m *model.Marks, verse int) bool {
+	for _, ly := range m.Lyrics {
+		at := ly.Verse
+		if at < 1 {
+			at = 1
+		}
+		if at == verse && ly.Text != "" {
+			return true
+		}
+	}
+	return false
+}
+
+// melismaGoesOn says whether the syllable sung on an element is sung on the
+// next note of its voice too: there is one, and it has no word of its own
+// in the verse. A rest, a word, or the end of the music is the end of the
+// syllable.
+//
+// Looked up ahead of time rather than found out when that note is placed,
+// because the one place it matters before then is a line break: a line
+// that is to go on under the next system is drawn to the margin and picked
+// up again, and one that is not stops where its sound did.
+func (e *engraver) melismaGoesOn(part *model.Part, measure int, p *placed, verse int) bool {
+	at := p.order + 1
+	for mi := measure; mi < len(part.Measures); mi++ {
+		m := part.Measures[mi]
+		if p.voice < len(m.Voices) {
+			for _, el := range m.Voices[p.voice].Elements[min(at, len(m.Voices[p.voice].Elements)):] {
+				switch el := el.(type) {
+				case *model.Note:
+					return !sings(&el.Marks, verse)
+				case *model.Chord:
+					return !sings(&el.Marks, verse)
+				case *model.Rest:
+					return false
+				}
+			}
+		}
+		at = 0
+	}
+	return false
+}
+
 // lyricLeft is the left edge of what an element has written under it in a
-// verse, which is where a line running towards it has to stop. A note with
-// no word of its own stops the line at its notehead.
-func (e *engraver) lyricLeft(m *model.Marks, x float64, verse int) float64 {
+// verse, which is where a line running towards it has to stop. An element
+// with no word of its own — a rest, which is the end of the syllable —
+// stops the line at its own left edge, which is left.
+func (e *engraver) lyricLeft(m *model.Marks, x, left float64, verse int) float64 {
 	for _, ly := range m.Lyrics {
 		at := ly.Verse
 		if at < 1 {
@@ -3312,7 +3385,7 @@ func (e *engraver) lyricLeft(m *model.Marks, x float64, verse int) float64 {
 			return x - textWidth(ly.Text, lyricSize)/2
 		}
 	}
-	return x
+	return left
 }
 
 // drawExtender rules the line, if there is a line's worth of room for it.
@@ -3320,6 +3393,7 @@ func (e *engraver) drawExtender(ex *openSpan, to float64) {
 	if to-ex.x < extendLeast {
 		return
 	}
+	e.noteWordLine(len(e.lay.Lines))
 	e.lay.Lines = append(e.lay.Lines, Line{
 		X1: ex.x, Y1: ex.y, X2: to, Y2: ex.y,
 		Thickness: e.opt.Defaults.StaffLineThickness,

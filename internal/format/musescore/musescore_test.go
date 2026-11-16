@@ -431,7 +431,7 @@ func TestWhatCannotBeReadIsReported(t *testing.T) {
 	doc := strings.Replace(sample,
 		`<Rest><durationType>eighth</durationType></Rest>`,
 		`<Rest><durationType>eighth</durationType></Rest>
-		 <Spanner type="Vibrato"><Vibrato><subtype>guitarVibrato</subtype></Vibrato>
+		 <Spanner type="NoteLine"><NoteLine><subtype>0</subtype></NoteLine>
 		   <next><location><measures>1</measures></location></next></Spanner>`, 1)
 
 	s, err := Import(strings.NewReader(doc))
@@ -444,7 +444,7 @@ func TestWhatCannotBeReadIsReported(t *testing.T) {
 	}
 	found := false
 	for _, d := range p.Details() {
-		if strings.Contains(d, "Vibrato") {
+		if strings.Contains(d, "NoteLine") {
 			found = true
 		}
 	}

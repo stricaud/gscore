@@ -331,11 +331,12 @@ func (e *engraver) breakSpansOf(open *openSpans, right float64) {
 		t.x = -1
 	}
 	// A held syllable's line runs to the margin only if the sound it belongs
-	// to carries on past it. Where the sound finished on this system the
-	// line finished with it, and there is nothing to pick up again.
+	// to carries on past it, or the next note is sung on the same syllable.
+	// Where the syllable finished on this system the line finished with it,
+	// and there is nothing to pick up again.
 	for _, verse := range sortedVerses(open.extends) {
 		ex := open.extends[verse]
-		if ex.holding {
+		if ex.holding || ex.melisma {
 			e.drawExtender(ex, right)
 			ex.x = -1
 			continue

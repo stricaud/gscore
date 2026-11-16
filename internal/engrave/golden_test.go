@@ -26,6 +26,7 @@ import (
 	"github.com/stricaud/gscore/internal/model"
 
 	_ "github.com/stricaud/gscore/internal/format/abc"
+	_ "github.com/stricaud/gscore/internal/format/gscore"
 	_ "github.com/stricaud/gscore/internal/format/musicxml"
 )
 
@@ -65,6 +66,11 @@ func corpus(t *testing.T) map[string]string {
 		{"samples", "../../samples/*.abc"},
 		{"abc", "../format/abc/testdata/*.abc"},
 		{"suite", "../format/musicxml/testdata/suite/*.musicxml"},
+		// Whole scores, as people write them: Bumpty Bump is a song with
+		// a piano part, two voices on one staff, lyrics held across the
+		// voices, chord symbols and repeats, which no sample exercises
+		// together. Public domain, so it can live here.
+		{"scores", "testdata/scores/*.gscore"},
 	}
 	for _, g := range groups {
 		files, err := filepath.Glob(g.glob)

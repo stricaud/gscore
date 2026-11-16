@@ -1279,6 +1279,20 @@ type engraver struct {
 	// slurCurve is which of lay.Curves are slurs, so they can be left out
 	// of that outline.
 	slurCurve map[int]bool
+	// wordText and wordLine are which of lay.Texts and lay.Lines are the
+	// words under the staff — the syllables, their hyphens and the lines
+	// that hold a syllable on — so slurs can be placed without them.
+	//
+	// A slur under the notes was fitted against everything in its column,
+	// and the syllable under its own first note is in that column: the
+	// curve set off from the lyric line and climbed back up to the
+	// notehead it ended on, while every other end — on a note with no
+	// word of its own — stayed where it belonged. "La Mer", every slur of
+	// it, each one beginning under the words and ending at a note. The
+	// words are not in the slur's way: they are set below the staff at a
+	// fixed drop, and nothing a slur does moves them.
+	wordText map[int]bool
+	wordLine map[int]bool
 	// headingTop is where the heading of the movement about to be drawn
 	// began, so that the system records its territory as starting there and
 	// the page is cut above the heading rather than below it.
@@ -1478,6 +1492,12 @@ type openSpan struct {
 	// Cleared when the chain of ties ends, and then the line stops at the
 	// end of the sound rather than at whatever comes next.
 	holding bool
+	// melisma says the syllable goes on past this sound into the next: the
+	// note after this one in the same voice has no word of its own, so it
+	// is sung on this syllable too and the line runs on under it. Known
+	// ahead of time, because a line break has to decide whether to carry
+	// the line to the margin before that note is placed.
+	melisma bool
 	// limit is where that sound ends, which is the right-hand edge of the
 	// last column it occupies. The line never runs past it — a syllable is
 	// held for as long as it is sung and not until the next one begins.

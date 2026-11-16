@@ -235,7 +235,7 @@ func (e *engraver) staffOutline() *skyline {
 	// whether the slurs are in them.
 	e.addSince(e.staffSky, e.staffSkyAt)
 	e.addSince(e.staffInk, e.staffSkyAt)
-	e.addSinceExcept(e.staffMusic, e.staffSkyAt, e.slurCurve)
+	e.addSinceExcept(e.staffMusic, e.staffSkyAt, e.slurCurve, e.wordText, e.wordLine)
 	e.staffSkyAt = e.marked()
 	return e.staffSky
 }
@@ -247,8 +247,9 @@ func (e *engraver) staffInkline() *skyline {
 	return e.staffInk
 }
 
-// slurInkline is that outline again with the slurs taken out of it, which
-// is what a slur is placed against. See the staffMusic field.
+// slurInkline is that outline again with the slurs and the words taken out
+// of it, which is what a slur is placed against. See the staffMusic and
+// wordText fields.
 func (e *engraver) slurInkline() *skyline {
 	e.staffOutline()
 	return e.staffMusic
@@ -261,6 +262,22 @@ func (e *engraver) noteSlur(at int) {
 		e.slurCurve = map[int]bool{}
 	}
 	e.slurCurve[at] = true
+}
+
+// noteWordText records that a text is one of the words under the staff,
+// and noteWordLine that a line is, so that outline can leave them out too.
+func (e *engraver) noteWordText(at int) {
+	if e.wordText == nil {
+		e.wordText = map[int]bool{}
+	}
+	e.wordText[at] = true
+}
+
+func (e *engraver) noteWordLine(at int) {
+	if e.wordLine == nil {
+		e.wordLine = map[int]bool{}
+	}
+	e.wordLine[at] = true
 }
 
 // curveSteps is how many pieces a slur is measured in.
@@ -298,17 +315,21 @@ func addCurve(s *skyline, c Curve) {
 
 // addSince registers everything drawn since a mark on an outline.
 func (e *engraver) addSince(s *skyline, from mark) {
-	e.addSinceExcept(s, from, nil)
+	e.addSinceExcept(s, from, nil, nil, nil)
 }
 
-// addSinceExcept is the same, leaving out the curves named in skip.
-func (e *engraver) addSinceExcept(s *skyline, from mark, skip map[int]bool) {
+// addSinceExcept is the same, leaving out the curves, texts and lines named
+// in the three skip sets.
+func (e *engraver) addSinceExcept(s *skyline, from mark, skip, skipText, skipLine map[int]bool) {
 	for _, g := range e.lay.Glyphs[from.glyphs:] {
 		up, down := glyphHeight(g)
 		w := glyphWidth(g)
 		s.add(g.X, g.X+w, g.Y-up, g.Y+down)
 	}
-	for _, l := range e.lay.Lines[from.lines:] {
+	for i, l := range e.lay.Lines[from.lines:] {
+		if skipLine != nil && skipLine[from.lines+i] {
+			continue // the line holding a syllable on
+		}
 		s.add(l.X1, l.X2, math.Min(l.Y1, l.Y2), math.Max(l.Y1, l.Y2))
 	}
 	for _, q := range e.lay.Quads[from.quads:] {
@@ -329,7 +350,10 @@ func (e *engraver) addSinceExcept(s *skyline, from mark, skip map[int]bool) {
 		}
 		addCurve(s, c)
 	}
-	for _, t := range e.lay.Texts[from.texts:] {
+	for i, t := range e.lay.Texts[from.texts:] {
+		if skipText != nil && skipText[from.texts+i] {
+			continue // a syllable, or the hyphen between two
+		}
 		w := textWidth(t.S, t.Size)
 		x := t.X
 		switch t.Anchor {

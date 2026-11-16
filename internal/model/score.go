@@ -721,6 +721,53 @@ func (s *Score) MusicOf(i int) *Part {
 // it alone: bars added to it would be bars nobody reads.
 func (p *Part) Mirrors() bool { return p != nil && p.MirrorOf != nil }
 
+// WriteAnOctaveUp moves a staff that arrived at sounding pitch under the
+// treble clef with an 8 under it to where it is written.
+//
+// Most files keep what sounds under that clef; gscore keeps what is
+// written — see Treble8vb — and the two are an octave apart. Left at
+// sounding pitch the line is drawn an octave low, hanging off the bottom
+// of the staff on ledger lines, and every note of it is wrong by the only
+// amount that matters.
+//
+// Every note, chord and grace note goes up an octave, and the octave goes
+// into Transpose rather than being lost, so what is played is what the
+// file had. The whole staff moves, since the octave is the staff's and
+// not a bar's. It reports whether some bar changes out of the clef, which
+// is a staff the caller may want to say something about: those bars are
+// written an octave up too.
+func (p *Part) WriteAnOctaveUp() (leaves bool) {
+	p.Transpose.OctaveChange--
+	for _, m := range p.Measures {
+		if m.Clef != nil && *m.Clef != Treble8vb {
+			leaves = true
+		}
+		for _, v := range m.Voices {
+			for _, el := range v.Elements {
+				var mk *Marks
+				switch e := el.(type) {
+				case *Note:
+					e.Pitch.Octave++
+					mk = &e.Marks
+				case *Chord:
+					for _, n := range e.Notes {
+						n.Pitch.Octave++
+					}
+					mk = &e.Marks
+				case *Rest:
+					mk = &e.Marks
+				}
+				if mk != nil && mk.Grace != nil {
+					for _, n := range mk.Grace.Notes {
+						n.Pitch.Octave++
+					}
+				}
+			}
+		}
+	}
+	return leaves
+}
+
 // MusicIndex is the staff that holds the music for staff i.
 func (s *Score) MusicIndex(i int) int {
 	if s == nil || i < 0 || i >= len(s.Parts) {

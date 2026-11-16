@@ -151,6 +151,17 @@ func buildPart(s *model.Score, p *model.Part, id string, index, divisions int) x
 	// file.
 	marks := s.RehearsalMarks(nil)
 
+	// The treble clef with an 8 under it is the one clef that carries an
+	// octave in its sign, and MusicXML writes the notes under it where
+	// they sound. gscore keeps what is written — see model.Treble8vb — so
+	// the octave the clef puts in the sound is taken out of the writing
+	// here, as the reading put it in. A tenor's middle C goes back out as
+	// the C below it, which is the one that will be read as middle C.
+	octaves := 0
+	if p.Clef == model.Treble8vb {
+		octaves = -1
+	}
+
 	for mi, m := range p.Measures {
 		xm := xmlMeasure{Number: strconv.Itoa(mi + 1)}
 
@@ -300,7 +311,7 @@ func buildPart(s *model.Score, p *model.Part, id string, index, divisions int) x
 					d := dir
 					xm.add(measureItem{Direction: &d})
 				}
-				for _, n := range buildElement(el, divisions) {
+				for _, n := range buildElement(el, divisions, octaves) {
 					note := n
 					// Which line of the staff this is. Written on every
 					// note, including the first voice's: a file that
@@ -550,10 +561,12 @@ func buildTempo(t model.Tempo) direction {
 	}
 }
 
-func buildElement(el model.Element, divisions int) []xmlNote {
+// shift is how many octaves the pitches are moved on the way out: the
+// octave a Treble8vb staff keeps in its clef rather than in its notes.
+func buildElement(el model.Element, divisions, shift int) []xmlNote {
 	switch e := el.(type) {
 	case *model.Note:
-		return []xmlNote{buildNote(e, divisions, false)}
+		return []xmlNote{buildNote(e, divisions, shift, false)}
 	case *model.Rest:
 		return []xmlNote{buildRest(e, divisions)}
 	case *model.Chord:
@@ -561,7 +574,7 @@ func buildElement(el model.Element, divisions int) []xmlNote {
 		for i, n := range e.Notes {
 			// Every note of a chord after the first carries <chord/>, which is
 			// how MusicXML says "sounds with the previous note".
-			note := buildNote(n, divisions, i > 0)
+			note := buildNote(n, divisions, shift, i > 0)
 			note.Duration = durationIn(e.Dur, divisions)
 			applyMarks(&note, &e.Marks)
 			out = append(out, note)
@@ -571,13 +584,13 @@ func buildElement(el model.Element, divisions int) []xmlNote {
 	return nil
 }
 
-func buildNote(n *model.Note, divisions int, inChord bool) xmlNote {
+func buildNote(n *model.Note, divisions, shift int, inChord bool) xmlNote {
 	out := xmlNote{
 		Duration: durationIn(n.Dur, divisions),
 		Voice:    "1",
 		Pitch: &pitch{
 			Step:   n.Pitch.Step.String(),
-			Octave: n.Pitch.Octave,
+			Octave: n.Pitch.Octave + shift,
 		},
 	}
 	if n.Pitch.Alter != 0 {

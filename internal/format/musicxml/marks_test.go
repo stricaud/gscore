@@ -274,6 +274,15 @@ var theFeatures = []feature{{
 				if me.Clef != nil {
 					n++
 				}
+				// A clef written between the notes of a bar is a mark on
+				// the note it precedes.
+				for _, v := range me.Voices {
+					for _, el := range v.Elements {
+						if mk := marksOf(el); mk != nil && mk.Clef != nil {
+							n++
+						}
+					}
+				}
 			}
 		}
 		return n
@@ -310,9 +319,8 @@ var shortOf = map[string]map[string]int{
 	"13b-KeySignatures-ChurchModes.musicxml":       {"key changes": 3},
 	"13c-KeySignatures-NonTraditional.musicxml":    {"key changes": 1},
 	"13e-KeySignatures-MidMeasure-Change.musicxml": {"key changes": 1},
-	"34b-Colors.musicxml":                          {"key changes": 2, "clef changes": 3},
+	"34b-Colors.musicxml":                          {"key changes": 2},
 	"34c-Font-Size.musicxml":                       {"key changes": 2},
-	"42b-MultiVoice-MidMeasureClefChange.musicxml": {"clef changes": 3},
 	"46j-EmptyMeasure.musicxml":                    {"meter changes": 2},
 
 	// Seventeen clefs, of which gscore draws five. MusicXML writes a clef

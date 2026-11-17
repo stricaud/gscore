@@ -208,10 +208,19 @@ func (e *engraver) spanAt(m *model.Marks, p *placed, measure int) {
 	}
 
 	if tr := m.Trill; tr != nil {
+		// Both ends on one note while a trill is open is the old trill
+		// ending here and a new one beginning here — the Arietta's long
+		// trill starts again on the same D with a flat over it — and not
+		// a shake on this note alone inside the trill it is part of.
+		wasOpen := open.trill != nil
+		if tr.Start && tr.Stop && wasOpen {
+			e.drawTrill(open.trill, x-0.8, true)
+			open.trill = nil
+		}
 		if tr.Start && open.trill == nil {
 			open.trill = &openSpan{x: x - 0.5, accidental: tr.Accidental}
 		}
-		if tr.Stop && open.trill != nil {
+		if tr.Stop && open.trill != nil && !(tr.Start && wasOpen) {
 			e.drawTrill(open.trill, x+noteheadWidth(p.value)/2, true)
 			open.trill = nil
 		}
@@ -498,6 +507,11 @@ func (e *engraver) drawOctave(o *openSpan, to float64, complete bool) {
 	t := e.opt.Defaults.StaffLineThickness * 1.1
 	above := o.amount > 0
 	label := o.label
+	// Where it begins, taken now: the drawing below runs once the staff is
+	// finished, and by then a line that reaches the margin has been marked
+	// as broken, with its x set to -1 for the next system to pick up. Read
+	// then, every label and every carried line began at the left margin.
+	from := o.x
 
 	// The sign and its line run over a stretch of music and have to clear
 	// all of it — the notes on their ledger lines above all, since an
@@ -508,7 +522,7 @@ func (e *engraver) drawOctave(o *openSpan, to float64, complete bool) {
 		// thing over a passage that is already high, and half a space from
 		// the words under it — "sempre più rinforzando" at bar 149 of
 		// Danse Macabre — read as part of them.
-		x0: o.x, x1: to, height: octaveBand, gap: 0.9,
+		x0: from, x1: to, height: octaveBand, gap: 0.9,
 		below: !above, rank: rankOctave,
 		draw: func(edge float64) {
 			// place gives the edge nearest the staff; the line sits at the
@@ -517,7 +531,7 @@ func (e *engraver) drawOctave(o *openSpan, to float64, complete bool) {
 			if !above {
 				y = edge + 1.6
 			}
-			x := o.x
+			x := from
 			if label != "" {
 				e.lay.Texts = append(e.lay.Texts, Text{
 					S: label, X: x, Y: y + 0.4, Size: 1.9,

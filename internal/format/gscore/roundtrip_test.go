@@ -59,6 +59,13 @@ func TestRoundTripKeepsEverything(t *testing.T) {
 			BPM: 72, Unit: model.Duration{Num: 3, Den: 8}, Text: "Slower",
 		},
 	})
+	bass := model.Bass
+	p.Measures[1].Clef = &bass
+	// The end of an octave line, which says nothing but that it ends.
+	p.Measures[1].Voices[0].Elements = append(p.Measures[1].Voices[0].Elements,
+		&model.Note{Pitch: model.Pitch{Step: model.StepA, Octave: 5},
+			Dur:   model.Duration{Num: 1, Den: 4},
+			Marks: model.Marks{Octave: &model.OctaveShift{Stop: true}}})
 
 	var buf bytes.Buffer
 	if err := Write(&buf, s, nil); err != nil {
@@ -96,6 +103,14 @@ func TestRoundTripKeepsEverything(t *testing.T) {
 	}
 
 	m := bp.Measures[1]
+	if m.Clef == nil || *m.Clef != model.Bass {
+		t.Error("the clef at the head of the second bar did not survive")
+	}
+	if els := m.Voices[0].Elements; len(els) == 0 {
+		t.Error("the second bar lost its note")
+	} else if o := els[len(els)-1].(*model.Note).Octave; o == nil || !o.Stop {
+		t.Error("the end of the octave line did not survive")
+	}
 	if m.Key == nil || m.Key.Fifths != -3 {
 		t.Errorf("the key change did not survive: %+v", m.Key)
 	}

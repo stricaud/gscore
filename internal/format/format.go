@@ -121,7 +121,6 @@ var otherPrograms = map[string]string{
 	".sgu":    "Band-in-a-Box",
 	".mgu":    "Band-in-a-Box",
 	".ove":    "Overture",
-	".ly":     "LilyPond",
 	// Guitar Pro 3 to 5 are read — see internal/format/guitarpro. The two
 	// after them write a compressed container the reader does not open,
 	// and both export the older format as well as MusicXML.

@@ -209,11 +209,27 @@ func main() {
 
 	switch {
 	case *convert != "":
-		if err := convertTo(score, *convert, !*noPDF); err != nil {
-			fmt.Fprintf(os.Stderr, "gscore: %v\n", err)
-			os.Exit(1)
+		// A file holding several scores — the movements of a LilyPond
+		// sonata, a book of tunes — is written as one file each, numbered
+		// after the name asked for: sonata-1.gscore, sonata-2.gscore.
+		targets := map[*model.Score]string{score: *convert}
+		order := []*model.Score{score}
+		if len(scores) > 1 {
+			ext := filepath.Ext(*convert)
+			stem := strings.TrimSuffix(*convert, ext)
+			targets, order = map[*model.Score]string{}, nil
+			for i, s := range scores {
+				targets[s] = fmt.Sprintf("%s-%d%s", stem, i+1, ext)
+				order = append(order, s)
+			}
 		}
-		fmt.Printf("wrote %s\n", *convert)
+		for _, s := range order {
+			if err := convertTo(s, targets[s], !*noPDF); err != nil {
+				fmt.Fprintf(os.Stderr, "gscore: %v\n", err)
+				os.Exit(1)
+			}
+			fmt.Printf("wrote %s\n", targets[s])
+		}
 	case *out != "":
 		if err := renderFile(score, symbolsIn(path), *out, *strip, *space, *landscape,
 			*fontURL, *scriptURL, *soundFont, *audioURL, *bands, !*noPlay); err != nil {

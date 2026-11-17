@@ -421,3 +421,54 @@ Bearbeitet von: Rainer Marwan (2025)</credit-words></credit>
 			s.Identity.Composer, want)
 	}
 }
+
+// A clef written between the notes of a bar changes the clef from the next
+// note on. It was read as the bar's own clef — the last one written won —
+// so the left hand of the Arietta, which turns to the treble clef in the
+// middle of bar 121, had the whole bar in one clef and its first chord was
+// drawn eight ledger lines under the staff.
+func TestAClefWrittenBetweenNotesChangesFromThatNote(t *testing.T) {
+	const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<score-partwise version="4.0">
+  <part-list><score-part id="P1"><part-name>left</part-name></score-part></part-list>
+  <part id="P1">
+    <measure number="1">
+      <attributes><divisions>1</divisions><clef><sign>F</sign><line>4</line></clef></attributes>
+      <note><pitch><step>G</step><octave>2</octave></pitch><duration>2</duration><type>half</type></note>
+      <attributes><clef><sign>G</sign><line>2</line></clef></attributes>
+      <note><pitch><step>C</step><octave>5</octave></pitch><duration>2</duration><type>half</type></note>
+    </measure>
+    <measure number="2">
+      <note><pitch><step>C</step><octave>5</octave></pitch><duration>4</duration><type>whole</type></note>
+    </measure>
+  </part>
+</score-partwise>`
+	s, err := Import(strings.NewReader(xml))
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := s.Parts[0]
+	if p.Clef != model.Bass {
+		t.Errorf("the part starts in %v, not the bass clef", p.Clef)
+	}
+	m := p.Measures[0]
+	if m.Clef != nil {
+		t.Errorf("the first bar starts in a clef of its own, %v", *m.Clef)
+	}
+	els := m.Voices[0].Elements
+	if len(els) != 2 {
+		t.Fatalf("the first bar has %d elements, not two", len(els))
+	}
+	if c := els[0].(*model.Note).Marks.Clef; c != nil {
+		t.Errorf("the first note changes clef to %v", *c)
+	}
+	if c := els[1].(*model.Note).Marks.Clef; c == nil || *c != model.Treble {
+		t.Errorf("the second note does not change to the treble clef: %v", c)
+	}
+	if p.Measures[1].Clef != nil {
+		t.Errorf("the second bar restates the clef")
+	}
+	if got := p.ClefAt(1); got != model.Treble {
+		t.Errorf("the second bar is in %v, not the treble clef it was left in", got)
+	}
+}

@@ -5385,12 +5385,23 @@ function setupCanvasClicks() {
     const x = (e.clientX - r.left) / state.zoom;
     const y = (e.clientY - r.top) / state.zoom;
     const dyn = dynamicAt(x, y);
-    if (!dyn) return;
-    e.preventDefault();
-    // Whatever the browser picked up on the second click.
-    window.getSelection()?.removeAllRanges();
-    selectDynamic(dyn);
-    await customDynamicDialog();
+    if (dyn) {
+      e.preventDefault();
+      // Whatever the browser picked up on the second click.
+      window.getSelection()?.removeAllRanges();
+      selectDynamic(dyn);
+      await customDynamicDialog();
+      return;
+    }
+    // A tempo marking opens the dialog that changes it, the way a dynamic
+    // does: one click picks it up, two say "edit this".
+    const tempo = tempoMarkAt(x, y);
+    if (tempo) {
+      e.preventDefault();
+      window.getSelection()?.removeAllRanges();
+      selectTempo(tempo);
+      await setTempoDialog();
+    }
   });
 
   $("#canvas").addEventListener("click", async (e) => {

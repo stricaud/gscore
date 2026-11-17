@@ -261,9 +261,22 @@ func convert(doc *scorePartwise, lg *log) (*model.Score, error) {
 				time  *model.TimeSignature
 				clef  *model.Clef
 				lines int
+				// midClef is a clef written between the notes of the
+				// bar, which the bar after this one starts in.
+				midClef *model.Clef
 			}
 			chg := make([]change, staves)
+			// Which staves have had a note so far: a clef that follows
+			// one on its staff is a change partway through the bar, while
+			// the second staff's own clef, written after the first
+			// staff's notes and a backup, is still that staff's first.
+			seenNote := make([]bool, staves+1)
 			for _, it := range xm.Content {
+				if it.Note != nil {
+					if st := staffOf(it.Note.Staff); st <= staves {
+						seenNote[st] = true
+					}
+				}
 				a := it.Attributes
 				if a == nil {
 					continue
@@ -300,6 +313,14 @@ func convert(doc *scorePartwise, lg *log) (*model.Score, error) {
 							continue
 						}
 						c := convertClef(&a.Clefs[ci], lg)
+						if seenNote[staff] {
+							// Written after notes, the clef changes
+							// partway through the bar: it goes on the
+							// note it precedes (see convertMeasure),
+							// and only the bar after starts in it.
+							chg[i].midClef = &c
+							continue
+						}
 						chg[i].clef = &c
 					}
 					// How the staff is ruled, which is a property of the
@@ -444,6 +465,9 @@ func convert(doc *scorePartwise, lg *log) (*model.Score, error) {
 						v := *c
 						ms[i].Clef = &v
 					}
+					st.clef = *c
+				}
+				if c := chg[i].midClef; c != nil {
 					st.clef = *c
 				}
 				// How many lines the staff is ruled with belongs to the
@@ -1177,8 +1201,25 @@ func convertMeasure(xm xmlMeasure, divisions, staves int, lg *log) []*model.Meas
 	// The chord symbol last written, waiting for its note.
 	var harmony *model.ChordSymbol
 
+	seenNote := map[int]bool{}
 	for _, it := range xm.Content {
 		switch {
+		case it.Attributes != nil:
+			// A clef written between the notes of a bar changes the clef
+			// from the next note on: a mark on that note rather than a
+			// property of the bar. One written before any note is the
+			// bar's own, and was read with the bar's other changes.
+			for ci := range it.Attributes.Clefs {
+				if !seenNote[staffOf(it.Attributes.Clefs[ci].Number)] {
+					continue
+				}
+				c := convertClef(&it.Attributes.Clefs[ci], lg)
+				queue(it.Attributes.Clefs[ci].Number, cursor, func(m *model.Marks) {
+					v := c
+					m.Clef = &v
+				})
+			}
+
 		case it.Harmony != nil:
 			h := convertHarmony(it.Harmony)
 			switch {
@@ -1278,6 +1319,7 @@ func convertMeasure(xm xmlMeasure, divisions, staves int, lg *log) []*model.Meas
 			}
 
 		case it.Note != nil:
+			seenNote[staffOf(it.Note.Staff)] = true
 			xn := *it.Note
 			if xn.Grace != nil {
 				// Held until the note it leans on turns up, and filed with

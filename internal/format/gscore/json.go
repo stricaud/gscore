@@ -263,8 +263,13 @@ type measureDoc struct {
 
 	// A key or meter written here changes it from this bar on; absent means
 	// no change, which is not the same as a change to C major.
-	Fifths  *int   `json:"fifths,omitempty"`
-	Mode    string `json:"mode,omitempty"`
+	Fifths *int   `json:"fifths,omitempty"`
+	Mode   string `json:"mode,omitempty"`
+	// Clef is a change of clef at the head of the bar, drawn at the
+	// barline. It was not written at all, so a clef set on a bar — by the
+	// clef window, or read from a file that writes it there — was lost
+	// the first time the score was saved.
+	Clef    string `json:"clef,omitempty"`
 	Beats   int    `json:"beats,omitempty"`
 	Beat    int    `json:"beatValue,omitempty"`
 	TimeSym string `json:"timeSymbol,omitempty"`
@@ -723,6 +728,9 @@ func encodeScore(s *model.Score) *scoreDoc {
 				f := m.Key.Fifths
 				md.Fifths, md.Mode = &f, modeNames[m.Key.Mode]
 			}
+			if m.Clef != nil {
+				md.Clef = clefNames[*m.Clef]
+			}
 			if m.Time != nil {
 				md.Beats, md.Beat = m.Time.Beats, m.Time.BeatValue
 				md.TimeSym = timeSymNames[m.Time.Symbol]
@@ -1128,6 +1136,11 @@ func decodeScore(doc *scoreDoc) (*model.Score, error) {
 			if md.Fifths != nil {
 				m.Key = &model.KeySignature{Fifths: *md.Fifths, Mode: modeValues[md.Mode]}
 			}
+			if md.Clef != "" {
+				if c, ok := clefValues[md.Clef]; ok {
+					m.Clef = &c
+				}
+			}
 			if md.Beat > 0 {
 				m.Time = &model.TimeSignature{
 					Beats: md.Beats, BeatValue: md.Beat,
@@ -1344,7 +1357,10 @@ func decodeMarks(md *marksDoc, m *model.Marks) {
 			Kind: kind, Start: h.Start, Stop: h.Stop, Alone: h.Alone,
 		}
 	}
-	if o := md.Octave; o != nil && o.Amount != 0 {
+	// The end of an octave line carries no amount, only its stop: read
+	// only when the amount was set, every line lost its end on the first
+	// save and ran on to the end of the piece.
+	if o := md.Octave; o != nil && (o.Amount != 0 || o.Start || o.Stop) {
 		m.Octave = &model.OctaveShift{Amount: o.Amount, Start: o.Start, Stop: o.Stop}
 	}
 	if tm := md.Tremolo; tm != nil {

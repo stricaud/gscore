@@ -6,7 +6,7 @@ abc/boite-musique.abc ce670b05b3bd5c03 514
 abc/decoration.abc c8f4673a8e66ca93 31
 abc/pitch.abc 376aa6d8311eb1d1 227
 abc/sunshine.abc 7702bcad8c455962 136
-samples/altes-10e-solo.abc 7c6c5b80afd77721 9777
+samples/altes-10e-solo.abc 785b5dd18306ec25 9785
 samples/boite-musique.abc ce670b05b3bd5c03 514
 scores/Bumpty-Bump.gscore 59ea7e0a67800f6e 2969
 suite/01a-Pitches-Pitches.musicxml 5177aba21f65c2bd 548
@@ -102,8 +102,8 @@ suite/33i-Ties-NotEnded.musicxml a363b50287cb7375 27
 suite/33j-Beams-Tremolos.musicxml 884665f7d6f0a131 69
 suite/33k-Tie-Types.musicxml f67c3747d827d831 63
 suite/34a-Print-Object-Spanners.musicxml e461b0d5f64c8180 164
-suite/34b-Colors.musicxml 2375273030fa7736 306
-suite/34c-Font-Size.musicxml b85e6c1d5ae9d219 178
+suite/34b-Colors.musicxml bd7e928db1ea4f89 307
+suite/34c-Font-Size.musicxml 3583ecaf601d06f5 176
 suite/34d-Note-Attributes.musicxml bfd944a4f0e17b9c 91
 suite/41a-MultiParts-Partorder.musicxml 0a41d2450719365f 59
 suite/41b-MultiParts-MoreThan10.musicxml ff04d12184c7f26b 202
@@ -119,7 +119,7 @@ suite/41j-PartNameDisplay-Multiple-DisplayText-Children.musicxml d15f880bbc29f36
 suite/41k-PartName-Print.musicxml a71518ffdaffa1ed 16
 suite/41l-GroupNameDisplay-Override.musicxml 54a3d4d4630780e5 58
 suite/42a-MultiVoice-TwoVoicesOnStaff-Lyrics.musicxml 79fa66fbb718f9f2 66
-suite/42b-MultiVoice-MidMeasureClefChange.musicxml 0ba779c8ce01937d 110
+suite/42b-MultiVoice-MidMeasureClefChange.musicxml 50087744b61586b6 109
 suite/43a-PianoStaff.musicxml b265204262c59e9b 25
 suite/43b-MultiStaff-DifferentKeys.musicxml 82a9936fef99b726 27
 suite/43c-MultiStaff-DifferentKeysAfterBackup.musicxml 82a9936fef99b726 27
@@ -129,7 +129,7 @@ suite/43f-MultiStaff-Lyrics.musicxml 9309273ed7194e9f 79
 suite/43g-MultiStaff-PartSymbol.musicxml d6f510fd5a1de77e 61
 suite/43h-MultiStaff-Chords.musicxml 2bdb5e249f5268b5 177
 suite/43i-MultiStaff-StaffChange-SingleVoice.musicxml 906163695fdd1dc1 44
-suite/43j-MultiStaff-TimeSignatureAfterBackup.musicxml 8998bc96a4d7412e 35
+suite/43j-MultiStaff-TimeSignatureAfterBackup.musicxml 34bd5b4bc9bac7aa 36
 suite/45a-SimpleRepeat.musicxml d6492c2bf3032aaa 17
 suite/45b-RepeatWithAlternatives.musicxml 2840f0545bd01d4c 28
 suite/45c-RepeatMultipleTimes.musicxml 2a10ee23ef9c9a75 35
@@ -146,7 +146,7 @@ suite/45j-SimpleRepeat-Start.musicxml d6492c2bf3032aaa 17
 suite/45k-Repeats-Chords-FiguredBass.musicxml 13d9ad11a36f14ee 30
 suite/46a-Barlines.musicxml 2f397e676dbdfc96 37
 suite/46b-MidmeasureBarline.musicxml 8e840b163857d84f 19
-suite/46c-Midmeasure-Clef.musicxml 376602c4fd3ff60c 34
+suite/46c-Midmeasure-Clef.musicxml 08292dda804740ce 36
 suite/46d-PickupMeasure-ImplicitMeasures.musicxml d53e5175ae427771 31
 suite/46e-PickupMeasure-SecondVoiceStartsLater.musicxml 45fc544a336085e5 22
 suite/46f-IncompleteMeasures.musicxml 9715b8d1a6bf0f4d 38
@@ -190,4 +190,4 @@ suite/75a-AccordionRegistrations.musicxml 59d39dd645605562 78
 suite/75b-Accordion.invalid.musicxml 46cfccdd1b3d0682 27
 suite/99a-Sibelius5-IgnoreBeaming.musicxml e07006c9d7fe6c40 51
 suite/99b-Lyrics-BeamsMelismata-IgnoreBeams.musicxml 56293b119e35f747 114
-suite/99c-Wavy-Lines-No-Numbers.musicxml 3c483f05d9a6222f 26
+suite/99c-Wavy-Lines-No-Numbers.musicxml 5016f248bc3091ec 29

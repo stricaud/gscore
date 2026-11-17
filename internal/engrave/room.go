@@ -119,15 +119,23 @@ func roomAbove(lay *Layout) map[int]need {
 		if sys.Staff <= 0 {
 			continue
 		}
-		// Everything drawn between this system's top and the next one's
-		// belongs to this one: that is what the gap between them is for.
+		// Everything drawn nearer this system than its neighbours belongs
+		// to it. The gap between two systems is split down the middle:
+		// a mark the first pass put a little above the room reserved for
+		// this system — an octave line over a trill over high notes — is
+		// this system's, and counted as the one above's it was never
+		// reserved for, so at the head of a page it fell off the top.
+		begin := sys.Top
+		if i > 0 {
+			begin = (lay.Systems[i-1].Bottom + sys.Top) / 2
+		}
 		end := math.Inf(1)
 		if i+1 < len(lay.Systems) {
-			end = lay.Systems[i+1].Top
+			end = (sys.Bottom + lay.Systems[i+1].Top) / 2
 		}
 		highest, lowest := sys.Staff, sys.Staff
 		note := func(top, bottom float64) {
-			if bottom < sys.Top || top >= end {
+			if bottom < begin || top >= end {
 				return // something belonging to a neighbour
 			}
 			if top < highest {

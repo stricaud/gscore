@@ -649,14 +649,23 @@ func (e *engraver) voltaEnd(parts []*model.Part, columns []float64, start, mi in
 func (e *engraver) drawVoltasAt(parts []*model.Part, columns []float64, start, from, to int, y float64) {
 	t := e.opt.Defaults.StaffLineThickness * 1.4
 	depth := e.voltaHook()
+	// The bar a bracket is being closed at, for the box that records it.
+	closeMeasure := from
 
 	var open *model.Ending
 	openX := 0.0
+	openAt := 0
 
 	closeAt := func(x float64, hook bool) {
 		if open == nil {
 			return
 		}
+		// Where it was drawn, so that it can be pointed at: the bracket,
+		// its hook and the number under the line.
+		e.lay.Endings = append(e.lay.Endings, EndingPos{
+			Measure: openAt, To: closeMeasure, Text: open.Label(),
+			X: openX, Y: y, Width: x - openX, Height: depth,
+		})
 		e.lay.Lines = append(e.lay.Lines,
 			Line{X1: openX, Y1: y, X2: x, Y2: y, Thickness: t},
 			Line{X1: openX, Y1: y, X2: openX, Y2: y + depth, Thickness: t})
@@ -696,18 +705,22 @@ func (e *engraver) drawVoltasAt(parts []*model.Part, columns []float64, start, f
 			// two met three spaces inside the second ending and the
 			// repeat sign sat under the first ending's bracket.
 			if mi > from {
+				closeMeasure = mi - 1
 				closeAt(e.voltaEnd(parts, columns, start, mi-1), true)
 			} else {
+				closeMeasure = mi
 				closeAt(columns[mi-start], false)
 			}
-			open, openX = ending, columns[mi-start]
+			open, openX, openAt = ending, columns[mi-start], mi
 		}
 		if ending.Stop {
+			closeMeasure = mi
 			closeAt(e.voltaEnd(parts, columns, start, mi), true)
 		}
 	}
 	// A bracket still open at the end of the run is cut where the run
 	// ends and has no closing hook; the next system opens one again.
+	closeMeasure = to - 1
 	closeAt(e.voltaEnd(parts, columns, start, to-1), false)
 }
 

@@ -317,6 +317,17 @@ type Layout struct {
 	// and asking the window to remove it.
 	Markers []MarkerPos `json:"markers"`
 
+	// Signs are where the segno, the coda, Fine and To Coda were drawn, and
+	// the D.C. and D.S. directions at the end of their bars: everything
+	// that sends the player somewhere. Boxed for the reason the letters
+	// are — a click is how somebody says "this one", and a direction that
+	// cannot be pointed at cannot be taken away.
+	Signs []SignPos `json:"signs"`
+
+	// Endings are the volta brackets, one box per bracket drawn, so the
+	// bracket can be picked up and taken away by clicking it.
+	Endings []EndingPos `json:"endings"`
+
 	// TextMarks are where the words written on a note ended up, so a click
 	// on them reaches them.
 	//
@@ -526,6 +537,32 @@ type MarkerPos struct {
 	Width  float64 `json:"width"`
 	Height float64 `json:"height"`
 	Text   string  `json:"text"`
+}
+
+// SignPos is where a sign or a direction was drawn, and which it is.
+type SignPos struct {
+	Measure int `json:"measure"`
+	// Kind is "sign" for the segno, the coda, Fine and To Coda, which are
+	// written at the head of their bar, and "jump" for D.C. and D.S. and
+	// their al Fine and al Coda forms, written at its end.
+	Kind   string  `json:"kind"`
+	Text   string  `json:"text"`
+	X      float64 `json:"x"`
+	Y      float64 `json:"y"`
+	Width  float64 `json:"width"`
+	Height float64 `json:"height"`
+}
+
+// EndingPos is where one volta bracket was drawn: the bars it covers and
+// the number in it.
+type EndingPos struct {
+	Measure int     `json:"measure"`
+	To      int     `json:"to"`
+	Text    string  `json:"text"`
+	X       float64 `json:"x"`
+	Y       float64 `json:"y"`
+	Width   float64 `json:"width"`
+	Height  float64 `json:"height"`
 }
 
 // TextPos is where one text mark was drawn, and what it says.

@@ -52,6 +52,8 @@ func (a *App) handleHits(w http.ResponseWriter, r *http.Request) {
 		"dynamics":      lay.Dynamics,
 		"textMarks":     lay.TextMarks,
 		"markers":       lay.Markers,
+		"signs":         lay.Signs,
+		"endings":       lay.Endings,
 		"articulations": lay.Articulations,
 		"chords":        lay.Chords,
 		"tempos":        lay.Tempos,

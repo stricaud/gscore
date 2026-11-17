@@ -665,7 +665,14 @@ func (e *engraver) drawMarkRow(m *model.Measure, tempo *model.Tempo,
 			e.lay.Glyphs = append(e.lay.Glyphs, Glyph{
 				Name: g, X: x, Y: row - 1.6, Size: signSize,
 			})
-			x += smufl.Advance(g)*signSize/4 + afterMark
+			w := smufl.Advance(g) * signSize / 4
+			// The sign stands on its baseline and reaches most of its
+			// size above it.
+			e.lay.Signs = append(e.lay.Signs, SignPos{
+				Measure: mi, Kind: "sign", Text: m.Sign.String(),
+				X: x, Y: row - 1.6 - signSize*0.75, Width: w, Height: signSize,
+			})
+			x += w + afterMark
 		}
 		if label := m.Sign.Label(); label != "" {
 			e.lay.Texts = append(e.lay.Texts, Text{
@@ -674,7 +681,12 @@ func (e *engraver) drawMarkRow(m *model.Measure, tempo *model.Tempo,
 			})
 			// Bold italic, which is what it is set in: the tempo that
 			// follows it on this row is placed after it.
-			x += boldItalicWidth(label, jumpTextSize) + afterMark
+			w := boldItalicWidth(label, jumpTextSize)
+			e.lay.Signs = append(e.lay.Signs, SignPos{
+				Measure: mi, Kind: "sign", Text: label,
+				X: x, Y: row - 0.6 - jumpTextSize*0.8, Width: w, Height: jumpTextSize,
+			})
+			x += w + afterMark
 		}
 	}
 
@@ -692,9 +704,16 @@ func (e *engraver) drawMarkRow(m *model.Measure, tempo *model.Tempo,
 	// says to go back before playing the bar it is in.
 	if m != nil && m.Jump != nil {
 		if mi-start+1 < len(columns) {
+			label := m.Jump.Label()
+			right := columns[mi-start+1] - 0.4
 			e.lay.Texts = append(e.lay.Texts, Text{
-				S: m.Jump.Label(), X: columns[mi-start+1] - 0.4, Y: row - 0.6,
+				S: label, X: right, Y: row - 0.6,
 				Size: jumpTextSize, Anchor: "end", Bold: true, Italic: true,
+			})
+			w := boldItalicWidth(label, jumpTextSize)
+			e.lay.Signs = append(e.lay.Signs, SignPos{
+				Measure: mi, Kind: "jump", Text: label,
+				X: right - w, Y: row - 0.6 - jumpTextSize*0.8, Width: w, Height: jumpTextSize,
 			})
 		}
 	}

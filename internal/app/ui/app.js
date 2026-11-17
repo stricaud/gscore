@@ -4845,6 +4845,8 @@ async function loadHits() {
   state.dynamics = d.dynamics || [];
   state.textMarks = d.textMarks || [];
   state.markers = d.markers || [];
+  state.signs = d.signs || [];
+  state.endings = d.endings || [];
   state.articulations = d.articulations || [];
   state.chordMarks = d.chords || [];
   state.tempos = d.tempos || [];
@@ -4926,6 +4928,30 @@ function markerAt(x, y) {
     if (x >= m.x - 0.4 && x <= m.x + m.width + 0.4 &&
         y >= m.y - 0.4 && y <= m.y + m.height + 0.4) {
       return m;
+    }
+  }
+  return null;
+}
+
+// signAt finds the sign or the direction a click landed on: a segno, a
+// coda, Fine, To Coda, or a D.C. or D.S. at the end of its bar.
+function signAt(x, y) {
+  for (const s of state.signs || []) {
+    if (x >= s.x - 0.4 && x <= s.x + s.width + 0.4 &&
+        y >= s.y - 0.4 && y <= s.y + s.height + 0.4) {
+      return s;
+    }
+  }
+  return null;
+}
+
+// endingAt finds the volta bracket a click landed on: its line, its hook,
+// or the number under it.
+function endingAt(x, y) {
+  for (const v of state.endings || []) {
+    if (x >= v.x - 0.4 && x <= v.x + v.width + 0.4 &&
+        y >= v.y - 0.6 && y <= v.y + v.height + 0.6) {
+      return v;
     }
   }
   return null;
@@ -5541,6 +5567,20 @@ function setupCanvasClicks() {
       return;
     }
 
+    // The signs and the directions share that row, and the brackets are
+    // just under it. Picked up to be taken away: a D.C. nobody could point
+    // at was a D.C. nobody could remove.
+    const sign = signAt(x, y);
+    if (sign) {
+      selectSign(sign);
+      return;
+    }
+    const volta = endingAt(x, y);
+    if (volta) {
+      selectEnding(volta);
+      return;
+    }
+
     // The rehearsal marks are in the row above everything.
     const letter = markerAt(x, y);
     if (letter) {
@@ -6131,6 +6171,33 @@ function selectMarker(m) {
   markSelection();
   status(`Mark ${m.text} at bar ${barNumberOf(m.measure)} — press Enter to ` +
          `change it, Backspace to take it away`);
+}
+
+// selectSign picks up a sign or a direction written over a bar.
+//
+// What is selected is the sign and not the bar: Backspace takes it away
+// and leaves the music alone.
+function selectSign(s) {
+  state.multi = [];
+  state.anchor = state.focus = null;
+  state.selection = {
+    part: 0, measure: s.measure, ref: null, at: 0, step: 0, sign: s,
+  };
+  markSelection();
+  status(`${s.text} at bar ${barNumberOf(s.measure)} — Backspace to take it away`);
+}
+
+// selectEnding picks up a volta bracket.
+function selectEnding(v) {
+  state.multi = [];
+  state.anchor = state.focus = null;
+  state.selection = {
+    part: 0, measure: v.measure, ref: null, at: 0, step: 0, ending: v,
+  };
+  markSelection();
+  const span = v.measure === v.to ? `bar ${barNumberOf(v.measure)}`
+                                  : `bars ${barNumberOf(v.measure)}–${barNumberOf(v.to)}`;
+  status(`Ending ${v.text} over ${span} — Backspace to take it away`);
 }
 
 // selectTextMark picks up the words written on a note.
@@ -7537,6 +7604,35 @@ async function deleteSelected() {
   // A rehearsal mark was picked up by clicking it, so it is the letter
   // that goes and the bar stays. The marks after it move up the sequence
   // by themselves, which is what makes them worth keeping as places.
+  // A sign or a direction was picked up by clicking it: that is what goes.
+  if (state.selection?.sign && !state.multi.length) {
+    const s = state.selection.sign;
+    const what = s.kind === "jump" ? "jump" : "sign";
+    const res = await fetch(
+      `/api/jump?measure=${s.measure}&${what}=none`, { method: "POST" });
+    if (!res.ok) {
+      status("Could not remove it: " + (await res.text()).trim());
+      return;
+    }
+    if (state.selection) state.selection.sign = null;
+    await refreshScore();
+    status(`${s.text} removed`);
+    return;
+  }
+  // And a volta bracket, over every bar it covered.
+  if (state.selection?.ending && !state.multi.length) {
+    const v = state.selection.ending;
+    const res = await fetch(
+      `/api/ending?measure=${v.measure}&to=${v.to}&ending=none`, { method: "POST" });
+    if (!res.ok) {
+      status("Could not remove it: " + (await res.text()).trim());
+      return;
+    }
+    if (state.selection) state.selection.ending = null;
+    await refreshScore();
+    status(`Ending ${v.text} removed`);
+    return;
+  }
   if (state.selection?.marker && !state.multi.length) {
     const m = state.selection.marker;
     const res = await fetch(
@@ -7859,6 +7955,29 @@ function markSelection() {
     if (g) {
       svg.insertBefore(
         selectionRect(g.x - 0.3, g.y - 0.7, g.width + 0.6, 1.4, z),
+        svg.firstChild);
+      return;
+    }
+  }
+
+  if (sel.sign) {
+    const s = (state.signs || []).find(
+      (x) => x.measure === sel.sign.measure && x.kind === sel.sign.kind &&
+             x.text === sel.sign.text);
+    if (s) {
+      svg.insertBefore(
+        selectionRect(s.x - 0.4, s.y - 0.4, s.width + 0.8, s.height + 0.8, z),
+        svg.firstChild);
+      return;
+    }
+  }
+
+  if (sel.ending) {
+    const v = (state.endings || []).find(
+      (x) => x.measure === sel.ending.measure && x.to === sel.ending.to);
+    if (v) {
+      svg.insertBefore(
+        selectionRect(v.x - 0.4, v.y - 0.6, v.width + 0.8, v.height + 1.2, z),
         svg.firstChild);
       return;
     }
@@ -8216,6 +8335,7 @@ function pickedNotes() {
   if (sel.bar) return false;
   return !(sel.arc || sel.hairpin || sel.tremolo || sel.tuplet || sel.dynamic ||
     sel.chordSymbol || sel.textMark || sel.marker || sel.articulation ||
+    sel.sign || sel.ending ||
     (sel.tempo !== undefined && sel.tempo !== null));
 }
 

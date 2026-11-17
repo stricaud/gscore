@@ -331,20 +331,33 @@ func (ctx *context) build(mv *movement) *model.Score {
 	// it and how the Allegro of Op. 111 reads for bars at a time.
 	own := make([][]*event, len(mv.staves))
 	for i, stream := range streams {
+		// A slur reaching over a staff change would open in one staff's
+		// voice and close in another's, and never be drawn: it is cut at
+		// the change, closed on the last note before it and opened
+		// again on the first note after.
+		reach := map[int]*slurReach{}
 		for _, e := range eventsIn(stream) {
-			if e.staff == "" || e.staff == names[i] {
-				own[i] = append(own[i], e)
-				continue
+			to := i
+			if e.staff != "" && e.staff != names[i] {
+				if j, ok := index[e.staff]; ok {
+					to = j
+				} else {
+					b.ctx.lg.say(`\change Staff = "%s" names a staff that is not there`, e.staff)
+				}
 			}
-			j, ok := index[e.staff]
-			if !ok {
-				b.ctx.lg.say(`\change Staff = "%s" names a staff that is not there`, e.staff)
-				own[i] = append(own[i], e)
-				continue
+			placed := e
+			if to != i {
+				moved := *e
+				moved.voice += 10 * (i + 1)
+				placed = &moved
 			}
-			moved := *e
-			moved.voice += 10 * (i + 1)
-			own[j] = append(own[j], &moved)
+			r := reach[e.voice]
+			if r == nil {
+				r = &slurReach{staff: to}
+				reach[e.voice] = r
+			}
+			r.cross(placed, to)
+			own[to] = append(own[to], placed)
 		}
 	}
 	for i, st := range mv.staves {
@@ -482,6 +495,43 @@ func (b *builder) timeOf(t [2]int) model.TimeSignature {
 		}
 	}
 	return ts
+}
+
+// slurReach is where a voice's open slurs are, as it moves between staves.
+type slurReach struct {
+	staff          int
+	slurs, phrases int
+	last           *event
+}
+
+// cross takes the voice's next event, placed on staff to; a slur still open
+// from another staff is closed on the event before and opened on this one.
+func (r *slurReach) cross(e *event, to int) {
+	n := e.note
+	if to != r.staff && r.last != nil && (r.slurs > 0 || r.phrases > 0) {
+		before, here := *r.last.note, *e.note
+		if r.slurs > 0 {
+			before.slurStop, here.slurStart = true, true
+		}
+		if r.phrases > 0 {
+			before.phraseStop, here.phraseStart = true, true
+		}
+		r.last.note, e.note = &before, &here
+	}
+	r.staff = to
+	if n.slurStop && r.slurs > 0 {
+		r.slurs--
+	}
+	if n.slurStart {
+		r.slurs++
+	}
+	if n.phraseStop && r.phrases > 0 {
+		r.phrases--
+	}
+	if n.phraseStart {
+		r.phrases++
+	}
+	r.last = e
 }
 
 // part builds one staff.

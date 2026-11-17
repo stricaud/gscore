@@ -341,6 +341,29 @@ func TestAPianoHasTwoStavesAndAVoiceMayMoveBetweenThem(t *testing.T) {
 	}
 }
 
+func TestASlurOverAStaffChangeIsCutAtTheChange(t *testing.T) {
+	// The Arietta of Op. 111 sends four notes of a phrase to the left
+	// hand and closes the phrase back on the right: one slur on each
+	// staff, since a slur is a voice's and the voice is on two staves.
+	s := clean(t, `\score { \new PianoStaff << \new Staff = "right" { r8 \change Staff = "left" f8\( d \change Staff = "right" g' e\) c''8( \change Staff = "left" c'8) } \new Staff = "left" { \clef bass c1 } >> }`)
+	right := voiceOf(t, s, 0, 0, 0)
+	left := voiceOf(t, s, 1, 0, 1)
+	if got := spelled(left); got != "F3/1/8 D3/1/8 C4/1/8" {
+		t.Fatalf("the left hand's moved voice is %q", got)
+	}
+	ln := func(i int) *model.Note { return left.Elements[i].(*model.Note) }
+	rn := func(i int) *model.Note { return right.Elements[i].(*model.Note) }
+	if ln(0).SlurStart != 1 || ln(1).SlurStop != 1 {
+		t.Errorf("the phrase's left-hand part is not slurred: %d %d", ln(0).SlurStart, ln(1).SlurStop)
+	}
+	if rn(1).SlurStart != 1 || rn(2).SlurStop != 1 {
+		t.Errorf("the phrase's right-hand part is not slurred: %d %d", rn(1).SlurStart, rn(2).SlurStop)
+	}
+	if rn(3).SlurStart != 1 || rn(3).SlurStop != 1 || ln(2).SlurStart != 1 || ln(2).SlurStop != 1 {
+		t.Errorf("the slur that leaves for the left hand is wrong")
+	}
+}
+
 func TestWordsUnderTheNotes(t *testing.T) {
 	s := clean(t, `<< \new Voice = "m" { c'4 d' e' f' | g'2 g' } \new Lyrics \lyricsto "m" { Twin -- kle star __ _ high } >>`)
 	v := voiceOf(t, s, 0, 0, 0)

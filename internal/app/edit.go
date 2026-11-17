@@ -340,12 +340,17 @@ func (a *App) handleInsert(w http.ResponseWriter, r *http.Request) {
 	// is the opposite of what was asked for. Only a note somebody pointed at
 	// is replaced; writing at the cursor still writes.
 	if q.Get("replace") == "1" && at < len(v.Elements) {
-		old := v.Elements[at]
-		v.Elements[at] = el
+		was := v.Duration()
+		// A member of a tuplet is written over as a member: see
+		// writeOverMember. Anything else is simply the new note where the
+		// old one stood.
+		if !writeOverMember(v, at, el) {
+			v.Elements[at] = el
+		}
 		// A longer note than the one it replaced still has to go somewhere,
 		// so the bar is settled the same way as after an insert. A shorter
 		// one simply leaves the bar short, which is the writer's business.
-		if el.Duration().Cmp(old.Duration()) > 0 {
+		if v.Duration().Cmp(was) > 0 {
 			spill(p, measIdx)
 		}
 		part, idx := findElement(p, measIdx, vi, el)
@@ -388,6 +393,95 @@ func (a *App) handleInsert(w http.ResponseWriter, r *http.Request) {
 	}
 	addSounding(out, p, el)
 	writeJSON(w, out)
+}
+
+// writeOverMember writes a note over one member of a tuplet, keeping it a
+// member, and says whether that is what happened.
+//
+// A triplet asked for on a quarter is three eighths, the first the note
+// and two rests to be written over. Writing a quarter over the first of
+// them is the ordinary way to get the quarter-and-eighth triplet every
+// swing bass line is made of — and it put a plain quarter in the group's
+// place, with the figure gone from it and the two rests still there after
+// it, so the bar came out an eighth over and the triplet could not be had
+// at all. The rests could not be taken away either, since a group losing a
+// member stops being a group.
+//
+// The value typed is a written value, read against the group's figure the
+// way its members are: a quarter in a triplet lasts a sixth. The note takes
+// the member's place in the group and swallows the rests that follow it in
+// the group for as long as it lasts, which is what writing over a rest
+// means. A shorter note than the member leaves what is over as a rest
+// inside the group, so the group still adds up to its figure and the rest
+// is there to be written over in its turn.
+func writeOverMember(v *model.Voice, at int, el model.Element) bool {
+	old := v.Elements[at]
+	mk := marksOfElement(old)
+	if mk == nil || mk.Tuplet == nil {
+		return false
+	}
+	actual, normal, ok := mk.Tuplet.Ratio()
+	if !ok {
+		return false
+	}
+	nmk := marksOfElement(el)
+	if nmk == nil {
+		return false
+	}
+	group := *mk.Tuplet
+	nmk.Tuplet = &model.Tuplet{
+		Hidden: group.Hidden, Actual: actual, Normal: normal,
+		Start: group.Start, Stop: group.Stop,
+	}
+	written := el.Duration()
+	setDuration(el, written.Scale(normal, actual).Reduced())
+	v.Elements[at] = el
+
+	switch need := el.Duration().Sub(old.Duration()).Reduced(); {
+	case need.Cmp(model.Duration{Num: 0, Den: 1}) > 0:
+		// Longer: the rests after it in the group are what it is written
+		// over. A note after it is somebody's music and stays; the group
+		// is then longer than its figure says, which is the writer's
+		// business the same as an overfull bar is.
+		end := at + 1
+		for end < len(v.Elements) && need.Cmp(model.Duration{Num: 0, Den: 1}) > 0 {
+			r, isRest := v.Elements[end].(*model.Rest)
+			if !isRest || r.Marks.Tuplet == nil {
+				break
+			}
+			a, n, ok := r.Marks.Tuplet.Ratio()
+			if !ok || a != actual || n != normal || r.Dur.Cmp(need) > 0 {
+				break
+			}
+			need = need.Sub(r.Dur).Reduced()
+			if r.Marks.Tuplet.Stop {
+				nmk.Tuplet.Stop = true
+			}
+			end++
+		}
+		v.Elements = append(v.Elements[:at+1], v.Elements[end:]...)
+	case need.Cmp(model.Duration{Num: 0, Den: 1}) < 0:
+		// Shorter: what is over stays in the group as rests, spelled as
+		// the group spells things.
+		over := old.Duration().Sub(el.Duration()).Scale(actual, normal).Reduced()
+		rests, left := restsFor(over)
+		if len(rests) == 0 || !left.IsZero() {
+			break
+		}
+		for _, r := range rests {
+			setDuration(r, r.Duration().Scale(normal, actual).Reduced())
+			marksOfElement(r).Tuplet = &model.Tuplet{
+				Hidden: group.Hidden, Actual: actual, Normal: normal,
+			}
+		}
+		if group.Stop {
+			nmk.Tuplet.Stop = false
+			marksOfElement(rests[len(rests)-1]).Tuplet.Stop = true
+		}
+		tail := append([]model.Element{}, v.Elements[at+1:]...)
+		v.Elements = append(append(v.Elements[:at+1:at+1], rests...), tail...)
+	}
+	return true
 }
 
 // addSounding says what the element just written sounds like, so that the
@@ -5373,6 +5467,29 @@ func restsGivenBack(freed model.Duration, actual, normal int) []model.Element {
 	return inside
 }
 
+// tupletWhole says whether notes adding up to span are already a group of
+// n: n of some value a notehead can write. A quarter and an eighth are
+// three eighths, and so a triplet with nothing missing from it.
+func tupletWhole(n int, span model.Duration) bool {
+	_, _, ok := span.Scale(1, n).Reduced().Written()
+	return ok
+}
+
+// tupletPadding is the time a group of n asked for on members notes adding
+// up to span still has to be given: nothing where the notes are already n
+// of a value, and otherwise one member the size of the first note for each
+// that is missing, which is what a group written out by hand would hold.
+func tupletPadding(n, members int, span, first model.Duration) model.Duration {
+	pad := model.Duration{Num: 0, Den: 1}
+	if tupletWhole(n, span) {
+		return pad
+	}
+	for i := members; i < n; i++ {
+		pad = pad.Add(first)
+	}
+	return pad
+}
+
 // tupletFromSelection reads a run of notes already written as a group of n.
 //
 // This is the other half of the operation, and the one somebody reaches for
@@ -5403,10 +5520,15 @@ func restsGivenBack(freed model.Duration, actual, normal int) []model.Element {
 // Anything else is left exactly as it was, for the caller to refuse: a
 // tuplet across a barline is not a thing notation can write, and moving
 // somebody's music about to make one would be worse than saying no.
-func drawBackSpill(p *model.Part, measIdx int, sorted []target, n int) ([]target, int, error) {
+//
+// What comes back is also how much time came home with the stragglers,
+// which the caller leaves out of what the group gives back: that time was
+// never in this bar, and a rest for it is a rest in the bar after.
+func drawBackSpill(p *model.Part, measIdx int, sorted []target, n int) ([]target, int, model.Duration, error) {
+	brought := model.Duration{Num: 0, Den: 1}
 	home := sorted[0].measure
 	if home < 0 || home >= len(p.Measures) {
-		return sorted, measIdx, editError("the selection is not in this score any more")
+		return sorted, measIdx, brought, editError("the selection is not in this score any more")
 	}
 	var spilled []target
 	for _, t := range sorted {
@@ -5415,27 +5537,27 @@ func drawBackSpill(p *model.Part, measIdx int, sorted []target, n int) ([]target
 			if len(spilled) > 0 {
 				// Back in the first bar after leaving it, which is not a
 				// run at all.
-				return sorted, measIdx, nil
+				return sorted, measIdx, brought, nil
 			}
 		case home + 1:
 			spilled = append(spilled, t)
 		default:
-			return sorted, measIdx, nil
+			return sorted, measIdx, brought, nil
 		}
 	}
 	if len(spilled) == 0 {
-		return sorted, home, nil
+		return sorted, home, brought, nil
 	}
 
 	from, into := p.Measures[home], p.Measures[home+1]
 	if from == nil || into == nil || len(from.Voices) == 0 || len(into.Voices) == 0 {
-		return sorted, measIdx, nil
+		return sorted, measIdx, brought, nil
 	}
 	// The line of music the selection is on: these are its own notes
 	// spilled over a barline, and they went over in their own line.
 	head, tail := lineOf(from, sorted[0].voice), lineOf(into, sorted[0].voice)
 	if head == nil || tail == nil {
-		return sorted, measIdx, nil
+		return sorted, measIdx, brought, nil
 	}
 
 	// The stragglers have to be the start of the bar they are in, and what
@@ -5443,13 +5565,13 @@ func drawBackSpill(p *model.Part, measIdx int, sorted []target, n int) ([]target
 	// is not one run of notes with a barline through it.
 	for i, t := range spilled {
 		if t.index != i {
-			return sorted, measIdx, nil
+			return sorted, measIdx, brought, nil
 		}
 	}
 	kept := sorted[:len(sorted)-len(spilled)]
 	for i, t := range kept {
 		if t.index != len(head.Elements)-len(kept)+i {
-			return sorted, measIdx, nil
+			return sorted, measIdx, brought, nil
 		}
 	}
 
@@ -5461,15 +5583,15 @@ func drawBackSpill(p *model.Part, measIdx int, sorted []target, n int) ([]target
 		group = group.Add(head.Elements[t.index].Duration())
 	}
 	for _, t := range spilled {
-		group = group.Add(tail.Elements[t.index].Duration())
+		brought = brought.Add(tail.Elements[t.index].Duration())
 	}
-	pad := model.Duration{Num: 0, Den: 1}
-	if len(sorted) < n {
-		first := head.Elements[kept[0].index].Duration()
-		for i := len(sorted); i < n; i++ {
-			pad = pad.Add(first)
-		}
-	}
+	group = group.Add(brought)
+	// Padded by the same rule tupletFromSelection pads by, or the two
+	// disagree about how long the group is. Counting heads here padded a
+	// quarter and an eighth — three eighths already, the whole of a
+	// triplet — with a third quarter nobody wrote, found that the group
+	// did not fit, and refused the one case this exists for.
+	pad := tupletPadding(n, len(sorted), group, head.Elements[kept[0].index].Duration())
 	after := group.Add(pad).Scale(normal, n).Reduced()
 
 	before := model.Duration{Num: 0, Den: 1}
@@ -5480,7 +5602,7 @@ func drawBackSpill(p *model.Part, measIdx int, sorted []target, n int) ([]target
 		before = before.Add(el.Duration())
 	}
 	if before.Add(after).Cmp(p.TimeAt(home).BarDuration()) > 0 {
-		return sorted, measIdx, nil
+		return sorted, measIdx, model.Duration{Num: 0, Den: 1}, nil
 	}
 
 	// Home they come, in the order they were written.
@@ -5495,7 +5617,7 @@ func drawBackSpill(p *model.Part, measIdx int, sorted []target, n int) ([]target
 	for i := len(head.Elements) - len(sorted); i < len(head.Elements); i++ {
 		out = append(out, target{part: sorted[0].part, measure: home, index: i})
 	}
-	return out, home, nil
+	return out, home, brought.Reduced(), nil
 }
 
 func tupletFromSelection(p *model.Part, measIdx int, targets []target, n int) (normal, members int, freed model.Duration, err error) {
@@ -5522,7 +5644,8 @@ func tupletFromSelection(p *model.Part, measIdx int, targets []target, n int) (n
 	// and asking for the triplet brings it home, which is what the asking
 	// meant. Refusing it, which is what this did, left somebody with three
 	// notes across a barline and no way to say what they are.
-	sorted, measIdx, err = drawBackSpill(p, measIdx, sorted, n)
+	var brought model.Duration
+	sorted, measIdx, brought, err = drawBackSpill(p, measIdx, sorted, n)
 	if err != nil {
 		return 0, 0, freed, err
 	}
@@ -5576,8 +5699,7 @@ func tupletFromSelection(p *model.Part, measIdx int, targets []target, n int) (n
 	// group is filled out to n with rests the size of the first note,
 	// which is what a group written out by hand would hold, and more
 	// notes than n cannot be a group of n at all.
-	unit := before.Scale(1, n).Reduced()
-	_, _, whole := unit.Written()
+	whole := tupletWhole(n, before)
 	if !whole && len(sorted) > n {
 		return 0, 0, freed, editError(fmt.Sprintf(
 			"%d notes are selected, which is more than a group of %d",
@@ -5630,8 +5752,14 @@ func tupletFromSelection(p *model.Part, measIdx int, targets []target, n int) (n
 	// grouped some notes, is the program correcting them again. Reported
 	// as "it adds rests that are not written in the score", which is
 	// exactly what it was.
-	if before.Cmp(after) > 0 {
-		freed = before.Sub(after).Reduced()
+	//
+	// Measured against the room the group had in this bar, which is less
+	// than the notes add up to when some of them were just brought back
+	// over the barline: an eighth that was in the next bar gave this one
+	// nothing, and a rest in its name went into the next bar in its place.
+	room := before.Sub(brought)
+	if room.Cmp(after) > 0 {
+		freed = room.Sub(after).Reduced()
 		if TrackBarlines() {
 			extra = append(extra, restsGivenBack(freed, n, normal)...)
 		}

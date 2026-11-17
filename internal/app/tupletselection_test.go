@@ -511,3 +511,47 @@ func TestMoreNotesThanTheGroupCountsAreAGroupWhenTheyAddUp(t *testing.T) {
 		t.Errorf("the bar holds %v, want %v", got, want)
 	}
 }
+
+// A quarter at the end of a full bar and the eighth that went over the
+// barline after it are three eighths, and a triplet of them is the quarter
+// they have room for.
+//
+// Reported from a swing bass line: the bar is full, the eighth that
+// finishes the last beat's triplet has nowhere to go but the next bar, and
+// picking up the two to make the triplet was refused with "a tuplet is
+// made out of one bar of one staff". The run that spilled was padded to
+// three members by counting heads — a third quarter nobody wrote — and then
+// found not to fit, where reading it as a group with nothing missing fits
+// exactly.
+func TestAQuarterAndItsSpilledEighthComeHomeAsATriplet(t *testing.T) {
+	h := newHarness(t)
+	for i := 0; i < 4; i++ {
+		h.post("/api/insert?part=0&measure=0&at=-1&step=4&dur=quarter&kind=note")
+	}
+	h.post("/api/insert?part=0&measure=0&at=-1&step=5&dur=eighth&kind=note")
+	if n := len(h.elements(0, 1)); n != 1 {
+		t.Fatalf("%d notes went into the second bar, want 1", n)
+	}
+
+	d := h.post("/api/tuplet?part=0&measure=0&at=4&n=3&sel=0:0:3,0:1:0")
+	if d["measure"] != float64(0) {
+		t.Errorf("the group was made in bar %v, want the first", d["measure"])
+	}
+	got := spell(t, h, 0, 0)
+	want := []string{
+		"note6 1/4", "note6 1/4", "note6 1/4",
+		"note6 1/6 3:2 start", "note0 1/12 3:2 stop",
+	}
+	if fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Errorf("the first bar holds %v, want %v", got, want)
+	}
+	// The eighth was never in the first bar, so bringing it home gives
+	// nothing back: a rest in its name went into the second bar, in front
+	// of whatever was written there.
+	if got := d["freed"]; got != "0/1" {
+		t.Errorf("%v was given back, want nothing", got)
+	}
+	if els := h.elements(0, 1); len(els) != 0 {
+		t.Errorf("the second bar holds %v, want nothing", spell(t, h, 0, 1))
+	}
+}

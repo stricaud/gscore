@@ -111,6 +111,10 @@ type Line struct {
 	// Dash is the length of the dashes, in staff spaces, for the broken lines
 	// that octave signs are drawn with. Zero is a solid line.
 	Dash float64
+	// Colour is a CSS colour the line is drawn in, where it is not the ink
+	// of the score: the stem of a hidden note the editor shows in grey.
+	// Empty is the ordinary black. See Glyph.Colour.
+	Colour string `json:"colour,omitempty"`
 }
 
 // Text is a word on the page, sized in staff spaces.
@@ -863,6 +867,11 @@ type Options struct {
 	// to come, so a short bar there is short on purpose — a pickup, or the
 	// last bar of a piece — and is printed as what it is.
 	RoomToWrite bool
+
+	// ShowHidden draws the notes and rests that are hidden, in grey, so
+	// that the editor can show what is there to be picked up. A printed
+	// page leaves them out, which is what hiding one means.
+	ShowHidden bool
 
 	// WriteAhead draws one empty bar past the end of the music, so there is
 	// somewhere to click to carry on writing.
@@ -2811,22 +2820,25 @@ func (e *engraver) drawTempoAt(t model.Tempo, x, y float64) float64 {
 	if bpm > 0 {
 		// The note is the real glyph, not the letter it looks like: a
 		// metronome mark written as "J = 140" is a program that gave up.
-		glyph, dots := metronomeGlyph(t.Unit)
-		e.lay.Glyphs = append(e.lay.Glyphs, Glyph{
-			Name: glyph, X: at, Y: y, Size: 4,
-		})
-		at += smufl.Advance(glyph)
-		for i := 0; i < dots; i++ {
-			e.lay.Glyphs = append(e.lay.Glyphs, Glyph{
-				Name: "metAugmentationDot", X: at, Y: y, Size: 4,
+		//
+		// One beat equalling another is drawn as two notes with the equals
+		// sign between them and no number: the number is the same on both
+		// sides, which is what the mark says. See model.Tempo.From.
+		if !t.From.IsZero() {
+			at += e.drawMetronomeNote(t.From, at, y)
+			e.lay.Texts = append(e.lay.Texts, Text{
+				S: "=", X: at + 0.45, Y: y, Size: 2.0, Anchor: "start",
 			})
-			at += smufl.Advance("metAugmentationDot") + 0.1
+			at += 0.45 + textWidth("=", 2.0) + 0.45
 		}
-		label := "= " + itoa(bpm)
-		e.lay.Texts = append(e.lay.Texts, Text{
-			S: label, X: at + 0.45, Y: y, Size: 2.0, Anchor: "start",
-		})
-		at += 0.45 + textWidth(label, 2.0)
+		at += e.drawMetronomeNote(t.Unit, at, y)
+		if t.From.IsZero() {
+			label := "= " + itoa(bpm)
+			e.lay.Texts = append(e.lay.Texts, Text{
+				S: label, X: at + 0.45, Y: y, Size: 2.0, Anchor: "start",
+			})
+			at += 0.45 + textWidth(label, 2.0)
+		}
 		if t.Parens {
 			at += 0.2
 			e.lay.Texts = append(e.lay.Texts, Text{
@@ -2834,6 +2846,29 @@ func (e *engraver) drawTempoAt(t model.Tempo, x, y float64) float64 {
 			})
 			at += textWidth(")", 2.0)
 		}
+	}
+	return at - x
+}
+
+// drawMetronomeNote draws the note of a metronome mark, dots and all, and
+// says how wide it came out.
+func (e *engraver) drawMetronomeNote(d model.Duration, x, y float64) float64 {
+	at := x
+	glyph, dots := metronomeGlyph(d)
+	e.lay.Glyphs = append(e.lay.Glyphs, Glyph{
+		Name: glyph, X: at, Y: y, Size: 4,
+	})
+	at += smufl.Advance(glyph)
+	// The dot is the one a note carries, not the metronome dot of the
+	// font, which is drawn for a small mark and came out as a speck hard
+	// against the notehead at this size: "♩ = ♩." read as "♩ = ♩". A gap
+	// before it, as after a notehead on the staff.
+	for i := 0; i < dots; i++ {
+		at += metronomeDotGap
+		e.lay.Glyphs = append(e.lay.Glyphs, Glyph{
+			Name: "augmentationDot", X: at, Y: y, Size: 4,
+		})
+		at += smufl.Advance("augmentationDot")
 	}
 	return at - x
 }
@@ -2848,13 +2883,21 @@ func (e *engraver) noteTempoBox(measure int, t model.Tempo, x, y, w float64) {
 		if label != "" {
 			label += " "
 		}
-		label += "= " + itoa(t.BPM)
+		if !t.From.IsZero() {
+			label += t.From.String() + " = " + t.Unit.String()
+		} else {
+			label += "= " + itoa(t.BPM)
+		}
 	}
 	e.lay.Tempos = append(e.lay.Tempos, TempoPos{
 		Measure: measure, X: x, Y: y - 1.6, Width: w, Height: 2.2,
 		Label: label,
 	})
 }
+
+// metronomeDotGap is the air between a metronome mark's note and its dot,
+// in staff spaces.
+const metronomeDotGap = 0.3
 
 // tempoTextGap is the air between the words of a tempo marking and the note
 // of the metronome mark after them, in staff spaces.
@@ -2867,6 +2910,8 @@ func metronomeGlyph(d model.Duration) (string, int) {
 		return "metNoteQuarterUp", 0
 	}
 	switch v {
+	case model.DoubleWhole:
+		return "metNoteDoubleWhole", dots
 	case model.Whole:
 		return "metNoteWhole", dots
 	case model.Half:
@@ -2875,6 +2920,10 @@ func metronomeGlyph(d model.Duration) (string, int) {
 		return "metNote8thUp", dots
 	case model.Sixteenth:
 		return "metNote16thUp", dots
+	case model.ThirtySecond:
+		return "metNote32ndUp", dots
+	case model.SixtyFourth:
+		return "metNote64thUp", dots
 	}
 	return "metNoteQuarterUp", dots
 }

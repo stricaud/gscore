@@ -224,6 +224,9 @@ type tempoDoc struct {
 	// score plays the slowing once and never again.
 	ToBPM    int `json:"toBpm,omitempty"`
 	OverBars int `json:"overBars,omitempty"`
+	// From is the beat on the left of a mark written as one beat equalling
+	// another, in place of the number. See model.Tempo.From.
+	From string `json:"from,omitempty"`
 }
 
 type partDoc struct {
@@ -412,6 +415,8 @@ type marksDoc struct {
 	Glissando *glissDoc    `json:"glissando,omitempty"`
 	Pedal     *pedalDoc    `json:"pedal,omitempty"`
 	Small     bool         `json:"small,omitempty"`
+	// Hidden keeps the note off the printed page. See model.Marks.Hidden.
+	Hidden bool `json:"hidden,omitempty"`
 }
 
 type arpeggioDoc struct {
@@ -577,6 +582,26 @@ func durString(d model.Duration) string {
 	return fmt.Sprintf("%d/%d", r.Num, r.Den)
 }
 
+// fromString and parseFrom are durString and parseDur for a beat that is
+// usually not there: nothing is written for none, and nothing read is none.
+func fromString(d model.Duration) string {
+	if d.IsZero() {
+		return ""
+	}
+	return durString(d)
+}
+
+func parseFrom(s string) model.Duration {
+	if s == "" {
+		return model.Duration{}
+	}
+	d, err := parseDur(s)
+	if err != nil {
+		return model.Duration{}
+	}
+	return d
+}
+
 func parseDur(s string) (model.Duration, error) {
 	var num, den int
 	if _, err := fmt.Sscanf(s, "%d/%d", &num, &den); err != nil || den == 0 {
@@ -607,6 +632,7 @@ func encodeScore(s *model.Score) *scoreDoc {
 			BPM: s.Tempo.BPM, Unit: durString(s.Tempo.Unit), Text: s.Tempo.Text,
 			Silent: s.Tempo.Silent,
 			ToBPM:  s.Tempo.ToBPM, OverBars: s.Tempo.OverBars,
+			From: fromString(s.Tempo.From),
 		},
 	}
 	for _, g := range s.Groups {
@@ -740,6 +766,7 @@ func encodeScore(s *model.Score) *scoreDoc {
 					BPM: m.Tempo.BPM, Unit: durString(m.Tempo.Unit),
 					Text: m.Tempo.Text, Silent: m.Tempo.Silent,
 					ToBPM: m.Tempo.ToBPM, OverBars: m.Tempo.OverBars,
+					From: fromString(m.Tempo.From),
 				}
 			}
 			if m.Ending != nil {
@@ -838,7 +865,7 @@ func encodeMarks(m *model.Marks) *marksDoc {
 		m.Arpeggio == nil && m.Break == model.NoBreath &&
 		len(m.Fingering) == 0 && m.Glissando == nil && m.Pedal == nil &&
 		m.Clef == nil && m.Key == nil && m.Grace == nil &&
-		!m.Small {
+		!m.Small && !m.Hidden {
 		return nil
 	}
 	out := &marksDoc{
@@ -925,6 +952,7 @@ func encodeMarks(m *model.Marks) *marksDoc {
 		}
 	}
 	out.Small = m.Small
+	out.Hidden = m.Hidden
 	if m.Trill != nil {
 		out.Trill = &trillDoc{Start: m.Trill.Start, Stop: m.Trill.Stop,
 			Acc: accNames[m.Trill.Accidental]}
@@ -1015,6 +1043,7 @@ func decodeScore(doc *scoreDoc) (*model.Score, error) {
 		BPM: bpm, Unit: unit, Text: doc.Tempo.Text,
 		Silent: doc.Tempo.Silent,
 		ToBPM:  doc.Tempo.ToBPM, OverBars: doc.Tempo.OverBars,
+		From: parseFrom(doc.Tempo.From),
 	}
 	if c := doc.Cursor; c != nil {
 		s.Cursor = &model.Cursor{
@@ -1158,6 +1187,7 @@ func decodeScore(doc *scoreDoc) (*model.Score, error) {
 					BPM: td.BPM, Unit: unit, Text: td.Text,
 					Silent: td.Silent,
 					ToBPM:  td.ToBPM, OverBars: td.OverBars,
+					From: parseFrom(td.From),
 				}
 			}
 			if md.Ending != nil {
@@ -1391,6 +1421,7 @@ func decodeMarks(md *marksDoc, m *model.Marks) {
 		}
 	}
 	m.Small = md.Small
+	m.Hidden = md.Hidden
 	if b, ok := model.BeamFromName(md.Beam); ok {
 		m.Beam = b
 	}

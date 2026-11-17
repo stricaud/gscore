@@ -593,6 +593,16 @@ type Marks struct {
 	// is drawn from and never on the score itself, where somebody else's
 	// line already stands on its own staff at full size.
 	Small bool
+
+	// Hidden keeps the element off the printed page. It keeps its room and
+	// its time — the bar still adds up and still plays — and prints
+	// nothing, which is how a page is made to show what a printed original
+	// shows where the arithmetic wants something the original never wrote.
+	// The editor draws it grey, so it can be found and picked up again.
+	//
+	// A rest has a flag of its own, Rest.Hidden, from before this one; it
+	// means the same and is the one a rest answers to.
+	Hidden bool
 }
 
 // Arpeggio is the wavy line in front of a chord that says to roll it.

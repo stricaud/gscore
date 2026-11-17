@@ -1455,10 +1455,28 @@ async function action(name) {
     case "tremolo-buzz": await setTremolo(0, true); break;
     case "tremolo-none": await setTremolo(0, false); break;
 
+    case "repeat-bars": await setRepeatBarline("both"); break;
+    case "repeat-open": await setRepeatBarline("open"); break;
+    case "repeat-close": await setRepeatBarline("close"); break;
+
     case "ending-1": await setEnding("1"); break;
     case "ending-2": await setEnding("2"); break;
     case "ending-12": await setEnding("1,2"); break;
     case "ending-none": await setEnding(""); break;
+
+    case "sign-segno": await setJump({ sign: "segno" }, "Segno"); break;
+    case "sign-coda": await setJump({ sign: "coda" }, "Coda"); break;
+    case "sign-fine": await setJump({ sign: "fine" }, "Fine"); break;
+    case "sign-tocoda": await setJump({ sign: "tocoda" }, "To Coda"); break;
+    case "sign-none": await setJump({ sign: "none" }, "No sign"); break;
+
+    case "jump-dc": await setJump({ jump: "dc" }, "D.C."); break;
+    case "jump-dc-fine": await setJump({ jump: "dc-fine" }, "D.C. al Fine"); break;
+    case "jump-dc-coda": await setJump({ jump: "dc-coda" }, "D.C. al Coda"); break;
+    case "jump-ds": await setJump({ jump: "ds" }, "D.S."); break;
+    case "jump-ds-fine": await setJump({ jump: "ds-fine" }, "D.S. al Fine"); break;
+    case "jump-ds-coda": await setJump({ jump: "ds-coda" }, "D.S. al Coda"); break;
+    case "jump-none": await setJump({ jump: "none" }, "No direction"); break;
 
     case "bar-single": await setBarline("single"); break;
     case "bar-double": await setBarline("double"); break;
@@ -1469,6 +1487,8 @@ async function action(name) {
     case "stem-up": await setStem("up"); break;
     case "stem-down": await setStem("down"); break;
     case "stem-auto": await setStem("auto"); break;
+
+    case "hidden": await toggleHidden(); break;
 
     case "dyn-pppp": await setDynamic("pppp"); break;
     case "dyn-ppp": await setDynamic("ppp"); break;
@@ -5401,6 +5421,16 @@ function setupCanvasClicks() {
       window.getSelection()?.removeAllRanges();
       selectTempo(tempo);
       await setTempoDialog();
+      return;
+    }
+    // And a chord symbol, which Enter opened and a double click did not:
+    // the one gesture everybody tries first on a thing they want to change.
+    const chord = chordSymbolAt(x, y);
+    if (chord) {
+      e.preventDefault();
+      window.getSelection()?.removeAllRanges();
+      selectChordSymbol(chord);
+      await chordSymbolDialog();
     }
   });
 
@@ -8340,6 +8370,56 @@ const setOctave = (amount, said) =>
   mark("octave", { octave: amount }, said);
 
 // setEnding puts a volta bracket over the selected measures, on every staff.
+// setRepeatBarline writes the repeat signs round the bars that are picked
+// up: open in front of the first, close after the last, or both.
+//
+// The other door to the same barline is clicking it, which offers every
+// kind of line there is. This one is for somebody who has picked up the
+// passage and wants it repeated, which is how the question is usually put.
+// A line that already closes a repeat and is asked to open one as well
+// becomes the one sign that does both, rather than losing the first.
+async function setRepeatBarline(which) {
+  const sel = state.selection;
+  if (!sel) {
+    status("Click a bar first");
+    return;
+  }
+  let first = sel.measure, last = sel.measure;
+  for (const m of state.multi) {
+    first = Math.min(first, m.measure);
+    last = Math.max(last, m.measure);
+  }
+  const lines = [];
+  if (which !== "close") {
+    // The line in front of the first bar is the one closing the bar before
+    // it. In front of bar one there is no line: the piece begins there, and
+    // a repeat goes back to the beginning without being told.
+    if (first > 0) lines.push({ measure: first - 1, style: "repeat-start" });
+  }
+  if (which !== "open") lines.push({ measure: last, style: "repeat-end" });
+  if (lines.length === 0) {
+    status("The piece begins here — a repeat goes back to the start without an open repeat");
+    return;
+  }
+  for (const line of lines) {
+    const p = new URLSearchParams({
+      part: String(sel.part), measure: String(line.measure), style: line.style, join: "1",
+    });
+    const res = await fetch("/api/barline?" + p.toString(), { method: "POST" });
+    if (!res.ok) {
+      status("Could not write it: " + (await res.text()).trim());
+      return;
+    }
+  }
+  await refreshScore();
+  markSelection();
+  const span = first === last ? `bar ${barNumberOf(first)}`
+                              : `bars ${barNumberOf(first)}–${barNumberOf(last)}`;
+  status(which === "open" ? `Repeat opens at ${span}`
+       : which === "close" ? `Repeat closes after ${span}`
+       : `Repeat round ${span}`);
+}
+
 async function setEnding(numbers) {
   const sel = state.selection;
   if (!sel) {
@@ -8704,6 +8784,20 @@ async function setStem(dir) {
   }
   return mark("stem", { stem: dir },
               dir === "auto" ? "Stem left to the engraver" : "Stem " + dir);
+}
+
+// toggleHidden takes what is picked up off the page, or puts it back.
+//
+// An invisible note or rest keeps its room and its time — the bar still
+// adds up and still plays — and prints nothing, which is how a bar is left
+// looking as the printed original has it where the arithmetic wants a
+// rest the original never wrote. In the editor it is drawn grey, so it can
+// be found again and picked up. The server says which way it went.
+async function toggleHidden() {
+  const d = await mark("hidden", { hidden: "toggle" }, "");
+  if (!d) return;
+  status(d.hidden ? "Invisible — it keeps its room and prints nothing"
+                  : "Visible again");
 }
 
 // setTieDirection turns over the tie that was clicked.
@@ -11247,6 +11341,20 @@ async function setTempoDialog() {
     $("#tempo-text").value = here.text;
     $("#tempo-dotted").checked = !!here.dotted;
     $("#tempo-parens").checked = !!here.parens;
+    // One beat equalling another only means something where there is a
+    // beat before: not at bar one. The left-hand beat opens on the one in
+    // force before this bar, which is nearly always the one meant, and the
+    // right-hand on the beat this bar is counted in.
+    $("#tempo-from-row").hidden = at === 1;
+    $("#tempo-from").checked = at > 1 && !!here.from;
+    if (here.from) {
+      setBeat($("#tempo-from-beat"), here.from, !!here.fromDotted);
+    } else if (at > 1) {
+      const before = tempoAtBar(at - 2);
+      setBeat($("#tempo-from-beat"), before.unit, !!before.dotted);
+    }
+    setBeat($("#tempo-to-beat"), here.unit, !!here.dotted);
+    fromChanged();
     $$('#tempo-notes input[name="tempo-unit"]').forEach(
       (r) => (r.checked = r.value === here.unit),
     );
@@ -11254,6 +11362,27 @@ async function setTempoDialog() {
     // or not anybody chose it.
     $("#tempo-remove").hidden = at === 1 || !here.written;
   };
+  // A beat is one of the popup's entries: the note's name, with a dot
+  // after it for a dotted one.
+  const setBeat = (sel, unit, dotted) => {
+    const want = unit + (dotted ? "." : "");
+    if ([...sel.options].some((o) => o.value === want)) sel.value = want;
+  };
+  const beatOf = (sel) => ({
+    unit: sel.value.replace(/\.$/, ""), dotted: sel.value.endsWith("."),
+  });
+  // With one beat equalling another, the two popups say which beats and
+  // the number follows from them, so the note picker and the number are
+  // put away rather than left saying something else.
+  const fromChanged = () => {
+    const on = $("#tempo-from").checked;
+    $("#tempo-bpm").disabled = on;
+    $("#tempo-dotted").disabled = on;
+    $$('#tempo-notes input[name="tempo-unit"]').forEach((r) => (r.disabled = on));
+    $("#tempo-from-beat").disabled = !on;
+    $("#tempo-to-beat").disabled = !on;
+  };
+  $("#tempo-from").onchange = fromChanged;
   measure.oninput = describe;
   describe();
 
@@ -11273,18 +11402,29 @@ async function setTempoDialog() {
   const q = new URLSearchParams();
   if (bar > 0) q.set("measure", String(bar));
 
+  const carries = bar > 0 && $("#tempo-from").checked;
   if (answer === "remove") {
     q.set("remove", "1");
   } else {
     const bpm = parseInt($("#tempo-bpm").value, 10);
-    if (!Number.isFinite(bpm) || bpm < 10 || bpm > 400) {
+    if (carries) {
+      // One beat equals another: the two popups say which, and the number
+      // follows from the speed in force, which the server has.
+      const from = beatOf($("#tempo-from-beat"));
+      const to = beatOf($("#tempo-to-beat"));
+      q.set("from", from.unit);
+      if (from.dotted) q.set("fromdotted", "1");
+      q.set("unit", to.unit);
+      if (to.dotted) q.set("dotted", "1");
+    } else if (!Number.isFinite(bpm) || bpm < 10 || bpm > 400) {
       status("A tempo is between 10 and 400 beats a minute");
       return;
+    } else {
+      q.set("bpm", String(bpm));
+      const unit = $$('#tempo-notes input[name="tempo-unit"]').find((r) => r.checked);
+      q.set("unit", unit ? unit.value : "quarter");
+      if ($("#tempo-dotted").checked) q.set("dotted", "1");
     }
-    const unit = $$('#tempo-notes input[name="tempo-unit"]').find((r) => r.checked);
-    q.set("bpm", String(bpm));
-    q.set("unit", unit ? unit.value : "quarter");
-    if ($("#tempo-dotted").checked) q.set("dotted", "1");
     if ($("#tempo-parens").checked) q.set("parens", "1");
     q.set("text", $("#tempo-text").value.trim());
   }
@@ -11298,6 +11438,12 @@ async function setTempoDialog() {
   await refreshScore();
   if (answer === "remove") {
     status(`Bar ${bar + 1} carries on at the tempo before it`);
+    return;
+  }
+  if (carries) {
+    const said = (sel) => sel.options[sel.selectedIndex]?.text.toLowerCase() || "";
+    status(`Bar ${bar + 1}: ${said($("#tempo-from-beat"))} = ` +
+           `${said($("#tempo-to-beat"))}, ${d.bpm ?? ""} to the new beat`);
     return;
   }
   status(bar === 0 ? `${d.bpm ?? ""} bpm` : `Bar ${bar + 1}: ${d.bpm ?? ""} bpm`);
@@ -11317,6 +11463,7 @@ function tempoAtBar(bar) {
       dotted: !!state.info?.tempoDotted,
       text: state.info?.tempoText || "",
       parens: !!state.info?.tempoParens,
+      from: state.info?.tempoFrom || "",
       written: true,
     };
   }
@@ -11332,7 +11479,10 @@ function tempoAtBar(bar) {
     const c = changes[String(i)];
     if (c) best = c;
   }
-  return { ...best, text: "", written: false };
+  // The mark in force is what the number and the beat are taken from;
+  // that it was written as one beat equalling another is its own
+  // business, not this bar's.
+  return { ...best, text: "", from: "", written: false };
 }
 
 /* ---------- the header's rich text ---------- */
@@ -12282,14 +12432,21 @@ async function chordSymbolDialog() {
     frets.value = suggested;
   };
 
-  const draw = () => {
+  // Drawn into the page rather than loaded as an image, so the music font
+  // the page has reaches it: in an image the sharp of C#7 was a box. The
+  // answers can come back out of order, so the last one asked for wins.
+  let asked = 0;
+  const draw = async () => {
     const p = new URLSearchParams({ chord: name.value.trim(), space: "13" });
     if (!useName.checked) p.set("name", "0");
     if (useFrame.checked && frets.value.trim() !== "") {
       p.set("frame", frets.value.trim());
     }
-    image.src = "/api/chordpreview?" + p.toString();
     frets.disabled = !useFrame.checked;
+    const mine = ++asked;
+    const res = await fetch("/api/chordpreview?" + p.toString());
+    if (!res.ok || mine !== asked) return;
+    image.innerHTML = await res.text();
     $("#chord-frets-label").style.opacity = useFrame.checked ? "" : ".5";
   };
   // A moment behind the typing: a request a keystroke is a request a
@@ -12666,9 +12823,13 @@ async function markChord(params, said) {
     status("Could not write it: " + (await res.text()).trim());
     return;
   }
+  const d = await res.json().catch(() => ({}));
   await refreshScore();
   markSelection();
-  status(said);
+  // A second chord over a rest split the rest in two, so that each chord
+  // has its own place: worth saying, since the bar now looks different.
+  status(d.split ? `${said} — the rest was split in two, this chord over the second half`
+                 : said);
 }
 
 // chordAt is what is written over the selection already — the name and the
@@ -19107,6 +19268,22 @@ const MENU_ICONS = {
   "bar-heavy-light": "\ue033",     // barlineReverseFinal
   "bar-open": "\ue040",            // repeatLeft
   "bar-close": "\ue041",           // repeatRight
+  // The repeat signs, the places a direction sends the player to, and the
+  // directions themselves. A direction's picture is its own sign, and
+  // what it stops at after it: a D.C. that ends at the Fine carries the
+  // final barline, one that goes on to the coda carries the coda.
+  "repeat-bars": "\ue042",         // repeatRightLeft
+  "repeat-open": "\ue040",         // repeatLeft
+  "repeat-close": "\ue041",        // repeatRight
+  "sign-segno": "\ue047",          // segno
+  "sign-coda": "\ue048",           // coda
+  "sign-fine": "\ue032",           // barlineFinal
+  "jump-dc": "\ue046",             // daCapo
+  "jump-dc-fine": "\ue046\ue032", // daCapo barlineFinal
+  "jump-dc-coda": "\ue046\ue048", // daCapo coda
+  "jump-ds": "\ue045",             // dalSegno
+  "jump-ds-fine": "\ue045\ue032", // dalSegno barlineFinal
+  "jump-ds-coda": "\ue045\ue048", // dalSegno coda
   "repeat-bar": "\ue500",          // repeat1Bar
   "repeat-2bars": "\ue501",        // repeat2Bars
 
@@ -22083,6 +22260,12 @@ const MENU_DRAWINGS = {
   "tremolo-none": REMOVE_MARK,
   "repeat-none": REMOVE_MARK,
   "ending-none": REMOVE_MARK,
+  "sign-none": REMOVE_MARK,
+  "jump-none": REMOVE_MARK,
+  // To Coda: the way on to the coda sign, an arrow with the circle it
+  // reaches.
+  "sign-tocoda": '<path d="M3.5 12h9"/><path d="M9.5 8.5 13 12l-3.5 3.5"/>' +
+                 '<circle cx="18.5" cy="12" r="3.2"/>',
   "group-none": REMOVE_MARK,
   "fingering-off": REMOVE_MARK,
   "tab-none": REMOVE_MARK,
@@ -22137,6 +22320,9 @@ const MENU_DRAWINGS = {
    * about a mark written on one, so there is no glyph for them: a beam is
    * drawn between two stems and the font has stems and beams only as part
    * of whole notes. Two stems and what happens between them. */
+  // Something taken off the page: a note, dashed.
+  "hidden": '<circle cx="9" cy="16" r="3" stroke-dasharray="2 1.5"/>' +
+    '<path d="M12 16V5" stroke-dasharray="2 1.5"/>',
   "stem-auto": '<circle cx="6" cy="16.5" r="2.6"/><path d="M8.6 16.5V5"/>' +
     '<circle cx="18" cy="7.5" r="2.6"/><path d="M15.4 7.5V19"/>',
   "beam-join": '<path d="M6 17V6.5M18 17V8.5"/><path d="M5 7.5l14-2v3l-14 2z"/>',

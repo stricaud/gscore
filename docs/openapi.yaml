@@ -1667,6 +1667,38 @@ paths:
         "200": { $ref: "#/components/responses/Changed" }
         "400": { $ref: "#/components/responses/Error" }
 
+  /api/hidden:
+    post:
+      tags: [marks]
+      summary: Take what is picked up off the page, or put it back
+      description: >
+        A hidden note or rest keeps its room and its time, so the bar still
+        adds up and still plays, and prints nothing. The editor draws it
+        grey so it can be found and picked up again.
+      parameters:
+        - $ref: "#/components/parameters/part"
+        - $ref: "#/components/parameters/measure"
+        - $ref: "#/components/parameters/at"
+        - $ref: "#/components/parameters/sel"
+        - name: hidden
+          in: query
+          schema: { type: string, enum: ["0", "1", "toggle"] }
+          description: >
+            1 hides, 0 shows. toggle, or nothing, turns the selection over:
+            hidden unless every part of it is hidden already, in which case
+            all of it comes back. The answer says which, as "hidden".
+      responses:
+        "200":
+          description: How many elements changed, and whether they are now hidden.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  changed: { type: integer }
+                  hidden: { type: boolean }
+        "400": { $ref: "#/components/responses/Error" }
+
   /api/articulation:
     post:
       tags: [marks]

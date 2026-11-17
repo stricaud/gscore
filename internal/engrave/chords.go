@@ -537,6 +537,8 @@ func accidentalGlyphFor(s string) string {
 		return "accidentalDoubleFlat"
 	case "##", "x", "♯♯":
 		return "accidentalDoubleSharp"
+	case "=", "♮":
+		return "accidentalNatural"
 	}
 	return "accidentalNatural"
 }

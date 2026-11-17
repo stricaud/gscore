@@ -80,9 +80,9 @@ suite/24f-GraceNote-Slur.musicxml 4c8aaecae2739d6a 19
 suite/24g-GraceNote-Dynamics.musicxml 7c37b3e3f2263baa 25
 suite/24h-GraceNote-Simultaneous.musicxml 9596a43122f88b90 76
 suite/31a-Directions.musicxml 5eceb5775347af7d 328
-suite/31b-Directions-Order.musicxml 99d2a7fc0ca517e1 20
-suite/31c-MetronomeMarks.musicxml 9f21934a01c9df61 41
-suite/31d-Directions-Compounds.musicxml 72284f725629ab54 99
+suite/31b-Directions-Order.musicxml 2228e720e63fef99 22
+suite/31c-MetronomeMarks.musicxml 35aae31b13ea74c2 51
+suite/31d-Directions-Compounds.musicxml 91bd27b253fa3840 99
 suite/31f-Direction-Multiline-Compounds.musicxml f2c03037ed55ca9d 17
 suite/32a-Notations.musicxml 5e9a8ddff3d5347a 491
 suite/32b-Articulations-Texts.musicxml 16b3f7fd721669ec 23

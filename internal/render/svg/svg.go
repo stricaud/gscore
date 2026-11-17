@@ -203,8 +203,12 @@ func Render(w io.Writer, lay *engrave.Layout, opt Options) error {
 		if ln.Dash > 0 {
 			dash = fmt.Sprintf(` stroke-dasharray="%.2f %.2f"`, ln.Dash*s, ln.Dash*s*0.8)
 		}
-		fmt.Fprintf(&b, `<line x1="%.2f" y1="%.2f" x2="%.2f" y2="%.2f" stroke-width="%.2f"%s/>`+"\n",
-			ln.X1*s, ln.Y1*s, ln.X2*s, ln.Y2*s, ln.Thickness*s, dash)
+		colour := ""
+		if ln.Colour != "" {
+			colour = fmt.Sprintf(` stroke="%s"`, ln.Colour)
+		}
+		fmt.Fprintf(&b, `<line x1="%.2f" y1="%.2f" x2="%.2f" y2="%.2f" stroke-width="%.2f"%s%s/>`+"\n",
+			ln.X1*s, ln.Y1*s, ln.X2*s, ln.Y2*s, ln.Thickness*s, dash, colour)
 	}
 
 	for _, q := range lay.Quads {

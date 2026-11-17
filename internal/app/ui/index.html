@@ -94,6 +94,11 @@
       <button data-action="cut"><span>Cut</span><kbd>⌘X</kbd></button>
       <button data-action="copy"><span>Copy</span><kbd>⌘C</kbd></button>
       <button data-action="paste"><span>Paste</span><kbd>⌘V</kbd></button>
+      <!-- Whatever is picked up, taken off the page or put back. It keeps
+           its room and its time; the page shows what the original showed,
+           which is sometimes nothing where the arithmetic wants a rest.
+           The editor draws it grey so it can be found and picked up. -->
+      <button data-action="hidden"><span>Invisible</span><kbd>Keeps its room, prints nothing</kbd></button>
       <button data-action="delete"><span>Delete</span><kbd>⌫</kbd></button>
       <hr>
       <!-- Go to bar is in the Bar menu, with the rest of them. -->
@@ -367,14 +372,42 @@
         </div>
       </div>
 
+      <!-- Everything that sends the player somewhere other than the next
+           bar, in one place. The repeat barlines were only to be had by
+           clicking the barline, the endings were a submenu of their own,
+           and the signs and the directions lived in the symbol palette
+           — three doors to one subject, none of them marked, and the
+           question "how do I write a D.C." had no answer a menu gave.
+
+           A repeat is a barline, and the barline is between two bars, so
+           these say it from the bar that is picked up: open means the
+           line in front of it, close the line after it. The endings, the
+           signs and the directions are written on the bar itself. -->
       <div class="submenu">
-        <button class="submenu-title"><span>Repeat ending</span><kbd>▸</kbd></button>
+        <button class="submenu-title"><span>Repeat</span><kbd>▸</kbd></button>
         <div class="menu-items">
+          <button data-action="repeat-bars"><span>Repeat the bars picked up</span></button>
+          <button data-action="repeat-open"><span>Open a repeat before this bar</span></button>
+          <button data-action="repeat-close"><span>Close a repeat after this bar</span></button>
+          <hr>
           <button data-action="ending-1"><span>First time</span></button>
           <button data-action="ending-2"><span>Second time</span></button>
           <button data-action="ending-12"><span>First and second time</span></button>
-          <hr>
           <button data-action="ending-none"><span>No ending</span></button>
+          <hr>
+          <button data-action="sign-segno"><span>Segno</span></button>
+          <button data-action="sign-coda"><span>Coda</span></button>
+          <button data-action="sign-fine"><span>Fine</span></button>
+          <button data-action="sign-tocoda"><span>To Coda</span></button>
+          <button data-action="sign-none"><span>No sign here</span></button>
+          <hr>
+          <button data-action="jump-dc"><span>D.C. — back to the beginning</span></button>
+          <button data-action="jump-dc-fine"><span>D.C. al Fine</span></button>
+          <button data-action="jump-dc-coda"><span>D.C. al Coda</span></button>
+          <button data-action="jump-ds"><span>D.S. — back to the sign</span></button>
+          <button data-action="jump-ds-fine"><span>D.S. al Fine</span></button>
+          <button data-action="jump-ds-coda"><span>D.S. al Coda</span></button>
+          <button data-action="jump-none"><span>No direction here</span></button>
         </div>
       </div>
 
@@ -1722,8 +1755,47 @@
         <span class="eq">=</span>
         <input type="number" id="tempo-bpm" min="10" max="400" step="1" value="120">
       </div>
+      <!-- One beat equalling another, where the meter changes: the
+           "♩ = ♩." over the bar where 4/4 turns into 12/8 says the pulse
+           carries on and only the subdivision changes. Both beats are
+           chosen here, the one before on the left and the new one on the
+           right, and the number is worked out from them rather than
+           typed — the old beat's speed, counted in the new beat — so the
+           note picker and the number above are put away while this is on.
+           Words rather than noteheads, because a native popup draws its
+           entries in the system font and the music font never reaches it. -->
+      <div class="tempo-from" id="tempo-from-row">
+        <label><input type="checkbox" id="tempo-from">
+          <span>One beat equals another, no number</span></label>
+        <select id="tempo-from-beat">
+          <option value="whole">Whole</option>
+          <option value="whole.">Dotted whole</option>
+          <option value="half">Half</option>
+          <option value="half.">Dotted half</option>
+          <option value="quarter">Quarter</option>
+          <option value="quarter.">Dotted quarter</option>
+          <option value="eighth">Eighth</option>
+          <option value="eighth.">Dotted eighth</option>
+          <option value="sixteenth">Sixteenth</option>
+          <option value="sixteenth.">Dotted sixteenth</option>
+        </select>
+        <span class="eq">=</span>
+        <select id="tempo-to-beat">
+          <option value="whole">Whole</option>
+          <option value="whole.">Dotted whole</option>
+          <option value="half">Half</option>
+          <option value="half.">Dotted half</option>
+          <option value="quarter">Quarter</option>
+          <option value="quarter.">Dotted quarter</option>
+          <option value="eighth">Eighth</option>
+          <option value="eighth.">Dotted eighth</option>
+          <option value="sixteenth">Sixteenth</option>
+          <option value="sixteenth.">Dotted sixteenth</option>
+        </select>
+      </div>
       <!-- "Allegro moderato (♩ = 116)" is how a score writes a metronome
-           mark that follows a word, and how Altes writes his. -->
+           mark that follows a word, and how Altes writes his. The same
+           brackets go round one beat equalling another. -->
       <label class="tempo-parens"><input type="checkbox" id="tempo-parens">
         <span>In parentheses &#x2014; <span class="music">&#xECA5;</span> = 116
           becomes (<span class="music">&#xECA5;</span> = 116)</span></label>
@@ -2320,7 +2392,12 @@
     <label for="chord-name">Chord</label>
     <input type="text" id="chord-name" autocomplete="off" placeholder="Am7"
            spellcheck="false">
-    <div id="chord-preview"><img id="chord-image" alt="How it will look"></div>
+    <!-- The picture is put into the page rather than loaded as an image.
+         An image is a document of its own and the page's fonts do not
+         reach into it, so the sharp of C#7 — a glyph of the music font —
+         came out as the box a missing character gets. In the page it is
+         drawn with the same font as the score. -->
+    <div id="chord-preview"><div id="chord-image"></div></div>
     <div id="chord-opts">
       <label><input type="checkbox" id="chord-show-name" checked> Name</label>
       <label><input type="checkbox" id="chord-show-frame"> Diagram</label>

@@ -842,6 +842,7 @@ body.native #menubar { padding-left: 12px; }
   background: #fff;
 }
 #chord-image { max-height: 160px; max-width: 100%; }
+#chord-image svg { max-height: 160px; max-width: 100%; display: block; }
 #chord-opts { display: flex; gap: 18px; margin: 4px 0 10px; }
 #chord-opts label { display: flex; align-items: center; gap: 6px; }
 #chord-form .small { margin: 4px 0 10px; }
@@ -1945,7 +1946,7 @@ body.piano-mode .menu-items button > kbd[data-lent] {
 
 /* Brackets round the metronome mark. Its own row under the picker, not
    squeezed beside the dotted box, because the two say different things. */
-.tempo-parens {
+.tempo-parens, .tempo-from {
   grid-column: 1 / -1;
   display: flex;
   align-items: center;
@@ -1956,7 +1957,14 @@ body.piano-mode .menu-items button > kbd[data-lent] {
   padding-left: 6px;
   cursor: pointer;
 }
-.tempo-parens .music { font-family: Bravura, serif; font-size: calc(16px * var(--ui-scale)); }
+/* Not at bar one: there is no beat before the first to equal. The flex
+   display above would otherwise win over the attribute. */
+.tempo-from[hidden] { display: none; }
+.tempo-from { flex-wrap: wrap; }
+.tempo-from label { display: flex; align-items: center; gap: 6px; cursor: pointer; }
+.tempo-from select { font-size: calc(12px * var(--ui-scale)); }
+.tempo-from .eq { font-size: calc(16px * var(--ui-scale)); }
+.tempo-parens .music, .tempo-from .music { font-family: Bravura, serif; font-size: calc(16px * var(--ui-scale)); }
 
 /* Air between the note picker and the words that go in front of it. They
    were hard against each other, which read as one control. */

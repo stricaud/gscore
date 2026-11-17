@@ -551,16 +551,20 @@ func buildTime(t model.TimeSignature) *time {
 }
 
 func buildTempo(t model.Tempo) direction {
-	unit, dots, ok := t.Unit.Written()
-	name := "quarter"
-	if ok {
-		if n, found := typeNames[unit]; found {
-			name = n
-		}
+	m := &metronome{}
+	if t.Parens {
+		m.Parentheses = "yes"
 	}
-	m := &metronome{BeatUnit: name, PerMin: strconv.Itoa(t.BPM)}
-	if dots > 0 {
-		m.Dot = &empty{}
+	// One beat equalling another is the two beats and no number; see
+	// model.Tempo.From. Otherwise the beat and the number.
+	if !t.From.IsZero() {
+		m.Items = append(m.Items, metroUnit(t.From)...)
+		m.Items = append(m.Items, metroUnit(t.Unit)...)
+	} else {
+		m.Items = append(m.Items, metroUnit(t.Unit)...)
+		m.Items = append(m.Items, metroItem{
+			XMLName: xml.Name{Local: "per-minute"}, Text: strconv.Itoa(t.BPM),
+		})
 	}
 	// A sound element carries the tempo in quarter notes per minute, which is
 	// what a player reads; the metronome mark is what gets printed.
@@ -578,6 +582,23 @@ func buildTempo(t model.Tempo) direction {
 		Types:     []directionType{dt},
 		Sound:     &sound{Tempo: qpm},
 	}
+}
+
+// metroUnit spells one beat of a metronome mark: the note, and a dot for
+// each it carries.
+func metroUnit(d model.Duration) []metroItem {
+	unit, dots, ok := d.Written()
+	name := "quarter"
+	if ok {
+		if n, found := typeNames[unit]; found {
+			name = n
+		}
+	}
+	out := []metroItem{{XMLName: xml.Name{Local: "beat-unit"}, Text: name}}
+	for i := 0; i < dots; i++ {
+		out = append(out, metroItem{XMLName: xml.Name{Local: "beat-unit-dot"}})
+	}
+	return out
 }
 
 // shift is how many octaves the pitches are moved on the way out: the

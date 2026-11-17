@@ -531,17 +531,72 @@ func (d *dynamics) get() model.Dynamic {
 	return model.DynamicNone
 }
 
+// metronome is read and written as its children in order, because the
+// order is the meaning: a beat-unit followed by per-minute is "♩ = 120",
+// and a beat-unit followed by another is "♩ = ♩.", one beat equalling the
+// next, with the dots belonging to whichever unit they come after. Named
+// fields could not tell which of two beat-units a dot was on.
 type metronome struct {
-	BeatUnit string `xml:"beat-unit"`
-	Dot      *empty `xml:"beat-unit-dot,omitempty"`
+	// Parentheses puts the whole mark in brackets: "(♩ = 116)", which
+	// is how a mark after a word is nearly always printed.
+	Parentheses string      `xml:"parentheses,attr,omitempty"`
+	Items       []metroItem `xml:",any"`
+}
 
-	// Text, not a number, because the standard says so: per-minute is a text
-	// element exactly so that a score can be marked "ca. 76", "c. 120" or
-	// "92-96" the way an engraver would write it. Read as an int it is a
-	// parse error and the whole score is refused over a tempo marking that
-	// could perfectly well have been rounded — which is how a Satie with
-	// "ca. 76" over the first bar became a file gscore would not open.
-	PerMin string `xml:"per-minute"`
+type metroItem struct {
+	XMLName xml.Name
+	Text    string `xml:",chardata"`
+}
+
+// units is the one or two beats the mark names, each with its dots.
+func (m *metronome) units() []model.Duration {
+	var out []model.Duration
+	var base []model.Duration
+	var dots []int
+	for _, it := range m.Items {
+		switch it.XMLName.Local {
+		case "beat-unit":
+			v, ok := typeValues[strings.TrimSpace(it.Text)]
+			if !ok {
+				v = model.Quarter
+			}
+			base = append(base, v.Duration())
+			dots = append(dots, 0)
+		case "beat-unit-dot":
+			if n := len(dots); n > 0 {
+				dots[n-1]++
+			}
+		}
+	}
+	for i, b := range base {
+		// Each dot adds half of what the one before it added: two dots
+		// are seven quarters of the note, not nine.
+		d := b
+		add := b
+		for j := 0; j < dots[i]; j++ {
+			add = add.Scale(1, 2)
+			d = d.Add(add)
+		}
+		out = append(out, d.Reduced())
+	}
+	return out
+}
+
+// perMinute is the number, as text.
+//
+// Text, not a number, because the standard says so: per-minute is a text
+// element exactly so that a score can be marked "ca. 76", "c. 120" or
+// "92-96" the way an engraver would write it. Read as an int it is a
+// parse error and the whole score is refused over a tempo marking that
+// could perfectly well have been rounded — which is how a Satie with
+// "ca. 76" over the first bar became a file gscore would not open.
+func (m *metronome) perMinute() string {
+	for _, it := range m.Items {
+		if it.XMLName.Local == "per-minute" {
+			return it.Text
+		}
+	}
+	return ""
 }
 
 // bpm is the number in a per-minute marking, or 0 if there is not one.
@@ -552,8 +607,9 @@ type metronome struct {
 // the caller reads that as no metronome mark, which is what it is.
 func (m *metronome) bpm() int {
 	n := 0
-	for i := 0; i < len(m.PerMin); i++ {
-		c := m.PerMin[i]
+	perMin := m.perMinute()
+	for i := 0; i < len(perMin); i++ {
+		c := perMin[i]
 		if c < '0' || c > '9' {
 			if n > 0 {
 				break

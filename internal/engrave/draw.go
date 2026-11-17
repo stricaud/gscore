@@ -1003,9 +1003,49 @@ func (e *engraver) curveAbove(p *placed) bool {
 	return !e.stemUp(p)
 }
 
+// hidden says the element is kept off the printed page. See
+// model.Marks.Hidden and model.Rest.Hidden.
+func (p *placed) hidden() bool {
+	switch {
+	case p.rest != nil:
+		return p.rest.Hidden || p.rest.Marks.Hidden
+	case p.note != nil:
+		return p.note.Marks.Hidden
+	case p.chord != nil:
+		return p.chord.Marks.Hidden
+	}
+	return false
+}
+
+// hiddenColour is the grey the editor draws a hidden element in: there,
+// and plainly not ink.
+const hiddenColour = "#b0b0b0"
+
+// greyFrom colours everything drawn since the given counts as hidden.
+func (e *engraver) greyFrom(glyphs, lines int) {
+	for i := glyphs; i < len(e.lay.Glyphs); i++ {
+		e.lay.Glyphs[i].Colour = hiddenColour
+	}
+	for i := lines; i < len(e.lay.Lines); i++ {
+		e.lay.Lines[i].Colour = hiddenColour
+	}
+}
+
 // drawHeads draws an element's noteheads, at whatever size that element is
 // written at: full size for the music, smaller for a cue. See cue.go.
+//
+// A hidden element keeps its room and prints nothing. The editor asks to
+// see it all the same, in grey, so it can be found and picked up.
 func (e *engraver) drawHeads(part *model.Part, p *placed) {
+	if p.hidden() && !e.opt.ShowHidden {
+		return
+	}
+	glyphs, lines := len(e.lay.Glyphs), len(e.lay.Lines)
+	defer func() {
+		if p.hidden() {
+			e.greyFrom(glyphs, lines)
+		}
+	}()
 	// The notehead, its accidental, its dots and its ledger lines all go
 	// on the other staff together. Moving the whole drawing rather than
 	// each of them is what keeps them from coming apart: a ledger line
@@ -1042,9 +1082,6 @@ func (e *engraver) onCrossStaff(p *placed, fn func()) {
 }
 
 func (e *engraver) drawRestAt(p *placed) {
-	if p.rest.Hidden {
-		return
-	}
 	value, dots := p.value, p.dots
 	if p.fullBar {
 		// A silent bar, whatever its length. See placed.fullBar.
@@ -1296,6 +1333,10 @@ func (e *engraver) planAccidentals(items []*placed) {
 // signedNotes is the notes of an element that carry an accidental, with the
 // staff step each one sits at.
 func (e *engraver) signedNotes(p *placed) ([]*model.Note, []int) {
+	// A hidden note's accidental goes with it.
+	if p.hidden() && !e.opt.ShowHidden {
+		return nil, nil
+	}
 	var notes []*model.Note
 	switch {
 	case p.note != nil:
@@ -1997,12 +2038,21 @@ func (e *engraver) drawStemsAndBeams(items []*placed, t model.TimeSignature) {
 		if p.rest != nil || p.symbol != nil || inGroup[p] {
 			continue
 		}
+		// A hidden note has no stem on the page, and a grey one in the
+		// editor, like its head. See drawHeads.
+		if p.hidden() && !e.opt.ShowHidden {
+			continue
+		}
+		glyphs, lines := len(e.lay.Glyphs), len(e.lay.Lines)
 		// On the staff it is drawn on, which for a note written across
 		// is the one next door: a stem left behind on the home staff is
 		// a stem joined to nothing.
 		e.onCrossStaff(p, func() {
 			e.drawingAt(p.scaleOf(), func() { e.drawSingleStem(p) })
 		})
+		if p.hidden() {
+			e.greyFrom(glyphs, lines)
+		}
 	}
 	for _, g := range groups {
 		// A group is beamed together, so it is drawn at one size: the

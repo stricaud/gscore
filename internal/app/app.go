@@ -254,6 +254,10 @@ func NewBook(scores []*model.Score, filename string) *App {
 	// What is printed is engraved from options of its own and keeps the
 	// tight spacing.
 	eo.RoomToWrite = true
+	// And a note or a rest somebody has hidden is still there to be
+	// picked up, so the editor draws it, in grey. The printed page does
+	// not.
+	eo.ShowHidden = true
 
 	reg := symbol.NewRegistry()
 	ro.Symbols = reg
@@ -617,6 +621,7 @@ func (a *App) APIRoutes(mux *http.ServeMux) {
 		"/api/slur":             a.handleSlur,
 		"/api/tie":              a.handleTie,
 		"/api/stem":             a.handleStem,
+		"/api/hidden":           a.handleHidden,
 		"/api/dot":              a.handleDot,
 		"/api/duration":         a.handleDuration,
 		"/api/tuplet":           a.handleTuplet,
@@ -1005,6 +1010,10 @@ type info struct {
 	TempoDotted bool   `json:"tempoDotted,omitempty"`
 	TempoText   string `json:"tempoText,omitempty"`
 	TempoParens bool   `json:"tempoParens,omitempty"`
+	// The beat on the left of a mark written as one beat equalling
+	// another; empty for a mark with a number. See model.Tempo.From.
+	TempoFrom       string `json:"tempoFrom,omitempty"`
+	TempoFromDotted bool   `json:"tempoFromDotted,omitempty"`
 
 	// TempoChanges are the speeds written partway through, keyed by the bar
 	// they start at. Bar zero is the score's own, which is why it is not
@@ -1034,6 +1043,9 @@ type tempoInfo struct {
 	Dotted bool   `json:"dotted,omitempty"`
 	Text   string `json:"text,omitempty"`
 	Parens bool   `json:"parens,omitempty"`
+	// See model.Tempo.From.
+	From       string `json:"from,omitempty"`
+	FromDotted bool   `json:"fromDotted,omitempty"`
 }
 
 // movementInfo is one movement of a score, as the editor sees it.
@@ -1182,6 +1194,9 @@ func (a *App) handleInfo(w http.ResponseWriter, r *http.Request) {
 	out.TempoUnit, out.TempoDotted = beatName(a.score.Tempo.Unit)
 	out.TempoText = a.score.Tempo.Text
 	out.TempoParens = a.score.Tempo.Parens
+	if !a.score.Tempo.From.IsZero() {
+		out.TempoFrom, out.TempoFromDotted = beatName(a.score.Tempo.From)
+	}
 	for i := 0; i < a.score.MeasureCount(); i++ {
 		t := a.score.TempoChangeAt(i)
 		if t == nil || i == 0 {
@@ -1191,10 +1206,14 @@ func (a *App) handleInfo(w http.ResponseWriter, r *http.Request) {
 		if out.TempoChanges == nil {
 			out.TempoChanges = map[string]tempoInfo{}
 		}
-		out.TempoChanges[strconv.Itoa(i)] = tempoInfo{
+		ti := tempoInfo{
 			BPM: t.BPM, Unit: unit, Dotted: dotted, Text: t.Text,
 			Parens: t.Parens,
 		}
+		if !t.From.IsZero() {
+			ti.From, ti.FromDotted = beatName(t.From)
+		}
+		out.TempoChanges[strconv.Itoa(i)] = ti
 	}
 	for _, i := range format.Importers() {
 		out.Formats = append(out.Formats, i.Name())

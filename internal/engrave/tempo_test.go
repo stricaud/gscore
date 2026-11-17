@@ -77,15 +77,17 @@ func TestATempoChangeIsWrittenOverItsBar(t *testing.T) {
 	// be half the speed.
 	glyphs := map[string]int{}
 	for _, g := range lay.Glyphs {
-		if strings.HasPrefix(g.Name, "met") {
+		if strings.HasPrefix(g.Name, "met") || g.Name == "augmentationDot" {
 			glyphs[g.Name]++
 		}
 	}
 	if glyphs["metNoteQuarterUp"] < 2 {
 		t.Errorf("the beat is drawn as %v; the head mark and the change both need one", glyphs)
 	}
-	if glyphs["metAugmentationDot"] != 1 {
-		t.Errorf("the dot on the beat was drawn %d times", glyphs["metAugmentationDot"])
+	// The dot is the ordinary one a note carries: the font's own metronome
+	// dot is drawn for a small mark and is a speck at this size.
+	if glyphs["augmentationDot"] != 1 {
+		t.Errorf("the dot on the beat was drawn %d times", glyphs["augmentationDot"])
 	}
 
 	// It belongs over the bar it starts at, which is on a later system than

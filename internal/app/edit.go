@@ -332,6 +332,20 @@ func (a *App) handleInsert(w http.ResponseWriter, r *http.Request) {
 
 	at = openEmptyBar(p, m, measIdx, at, vi)
 
+	// A whole rest written into an empty bar is the bar's rest, however
+	// long the bar is. That is what the sign means on the page — a
+	// semibreve rest alone in a bar is a silent bar in any meter — and
+	// what somebody typing one into a bar of 12/8 asked for. Taken
+	// literally it was two thirds of the bar, drawn at the left with a
+	// third of a bar of nothing after it, and read as "why is it not
+	// centred". A rest that is not a semibreve means its own length.
+	if r, isRest := el.(*model.Rest); isRest && len(v.Elements) == 0 &&
+		r.Dur.Cmp(model.Duration{Num: 1, Den: 1}) == 0 && TrackBarlines() {
+		if bar := p.TimeAt(measIdx).BarDuration(); !bar.IsZero() {
+			r.Dur = bar
+		}
+	}
+
 	// Writing over what is picked up rather than in front of it.
 	//
 	// Clicking a note and typing is correcting it, not adding to it: the bar
@@ -955,6 +969,19 @@ func (a *App) handleBarline(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	// A repeat asked for on a line that already carries the other half of
+	// one is the sign that does both: a close repeat on a line that opens
+	// one, or the other way round, is dots on both sides of it and not the
+	// loss of whichever was there first. Only when asked, since clicking
+	// the line and choosing a kind means that kind.
+	if q.Get("join") == "1" {
+		for _, p := range a.score.Parts {
+			if measIdx < len(p.Measures) {
+				style = joinRepeat(p.Measures[measIdx].RightBarline, style)
+				break
+			}
+		}
+	}
 	// A barline runs down the whole system. Changing it on one staff and not
 	// the others would draw a repeat that only one player is asked to take.
 	for _, p := range a.score.Parts {
@@ -963,6 +990,18 @@ func (a *App) handleBarline(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, map[string]string{"status": "ok"})
+}
+
+// joinRepeat is the one sign that both closes a repeat and opens the next,
+// where a line that does one of those is asked to do the other.
+func joinRepeat(was, want model.BarlineStyle) model.BarlineStyle {
+	switch {
+	case want == model.BarRepeatStart && (was == model.BarRepeatEnd || was == model.BarRepeatBoth):
+		return model.BarRepeatBoth
+	case want == model.BarRepeatEnd && (was == model.BarRepeatStart || was == model.BarRepeatBoth):
+		return model.BarRepeatBoth
+	}
+	return want
 }
 
 // handleDelete removes one element.
@@ -1605,6 +1644,136 @@ func (a *App) handleStem(w http.ResponseWriter, r *http.Request) {
 		m.Stem = stem
 	}
 	writeJSON(w, map[string]int{"changed": len(marks)})
+}
+
+// handleHidden takes what is picked up off the page, or puts it back.
+// See model.Marks.Hidden.
+//
+// A hidden note or rest keeps its room and its time: the bar still adds
+// up and still plays, and the page shows what the printed original showed,
+// which is sometimes nothing where the arithmetic wants something the
+// original never wrote. The editor draws it grey so it can be found again;
+// see engrave.Options.ShowHidden.
+//
+// One command, a toggle: "hidden" as 1 or 0 says which way, and "toggle"
+// — or nothing — turns the selection over, hiding it unless every part of
+// it is hidden already, in which case all of it comes back. The answer
+// says which happened.
+func (a *App) handleHidden(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST required", http.StatusMethodNotAllowed)
+		return
+	}
+	q := r.URL.Query()
+	els := a.elementsOf(q)
+	if len(els) == 0 {
+		http.Error(w, "nothing is picked up to hide", http.StatusBadRequest)
+		return
+	}
+	a.lock()
+	defer a.mu.Unlock()
+
+	hidden := true
+	switch q.Get("hidden") {
+	case "1":
+	case "0":
+		hidden = false
+	default:
+		// Every one of them hidden already: they come back. Otherwise
+		// the ones that show are hidden and the rest stay hidden.
+		allHidden := true
+		for _, el := range els {
+			if !elementHidden(el) {
+				allHidden = false
+				break
+			}
+		}
+		hidden = !allHidden
+	}
+	changed := 0
+	for _, el := range els {
+		if setElementHidden(el, hidden) {
+			changed++
+		}
+	}
+	writeJSON(w, map[string]any{"changed": changed, "hidden": hidden})
+}
+
+// elementHidden says whether an element is kept off the page.
+func elementHidden(el model.Element) bool {
+	if r, ok := el.(*model.Rest); ok && r.Hidden {
+		return true
+	}
+	mk := marksOfElement(el)
+	return mk != nil && mk.Hidden
+}
+
+// setElementHidden hides an element or shows it, and says whether it is a
+// kind that can be. A rest keeps its own flag, which is the one older
+// files carry; see model.Rest.Hidden.
+func setElementHidden(el model.Element, hidden bool) bool {
+	if r, ok := el.(*model.Rest); ok {
+		r.Hidden = hidden
+		r.Marks.Hidden = false
+		return true
+	}
+	mk := marksOfElement(el)
+	if mk == nil {
+		return false
+	}
+	mk.Hidden = hidden
+	return true
+}
+
+// elementsOf is the elements the request names: those of a selection, or
+// the one at the cursor. restsOf's question, asked about everything.
+func (a *App) elementsOf(q url.Values) []model.Element {
+	a.lock()
+	defer a.mu.Unlock()
+
+	var out []model.Element
+	at := func(part, measure, voice, index int) {
+		_, m, err := a.locate(part, measure)
+		if err != nil {
+			return // a stale selection is not worth failing over
+		}
+		v := lineOf(m, voice)
+		if index < 0 || index >= len(v.Elements) {
+			return
+		}
+		out = append(out, v.Elements[index])
+	}
+
+	if sel := q.Get("sel"); sel != "" {
+		targets, err := parseTargets(sel)
+		if err != nil {
+			return nil
+		}
+		for _, t := range targets {
+			if t.isGrace() {
+				continue
+			}
+			at(t.part, t.measure, t.voice, t.index)
+		}
+		return out
+	}
+
+	part, _ := strconv.Atoi(q.Get("part"))
+	measure, _ := strconv.Atoi(q.Get("measure"))
+	index, err := strconv.Atoi(q.Get("at"))
+	if err != nil {
+		index = -1
+	}
+	_, m, err := a.locate(part, measure)
+	if err != nil || len(m.Voices) == 0 {
+		return nil
+	}
+	voice := voiceParam(q)
+	if n := len(lineOf(m, voice).Elements); index <= 0 || index > n {
+		index = n
+	}
+	at(part, measure, voice, index-1)
+	return out
 }
 
 // handleDynamic writes, or removes, a dynamic at the cursor.
@@ -2281,13 +2450,6 @@ func (a *App) handleTempo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	bpm, err := strconv.Atoi(q.Get("bpm"))
-	if err != nil || bpm < 10 || bpm > 400 {
-		http.Error(w, "a tempo is between 10 and 400 beats a minute",
-			http.StatusBadRequest)
-		return
-	}
-
 	// The beat the number counts. A tempo of 120 means nothing without it.
 	unit := model.Duration{Num: 1, Den: 4}
 	if v := q.Get("unit"); v != "" {
@@ -2302,13 +2464,57 @@ func (a *App) handleTempo(w http.ResponseWriter, r *http.Request) {
 		unit = unit.Scale(3, 2)
 	}
 
+	a.lock()
+	defer a.mu.Unlock()
+
+	// One beat equalling another, in place of a number: "♩ = ♩." where
+	// 4/4 turns into 12/8. The beat on the left is the one the speed
+	// before this bar was counted in — "before" asks for exactly that —
+	// or any beat named outright. The number follows from it: the old
+	// beat's speed, counted in the new beat. See model.Tempo.From.
+	var from model.Duration
+	if v := q.Get("from"); v != "" {
+		if v == "before" {
+			if bar == 0 {
+				http.Error(w, "there is no speed before the first bar to carry on from",
+					http.StatusBadRequest)
+				return
+			}
+			from = a.score.TempoAt(bar - 1).Unit
+		} else {
+			d, ok := durationNames[v]
+			if !ok {
+				http.Error(w, "unknown beat unit "+v, http.StatusBadRequest)
+				return
+			}
+			from = d
+			if q.Get("fromdotted") == "1" {
+				from = from.Scale(3, 2)
+			}
+		}
+		if from.IsZero() {
+			from = model.Duration{Num: 1, Den: 4}
+		}
+	}
+
+	bpm, err := strconv.Atoi(q.Get("bpm"))
+	if err != nil && !from.IsZero() && bar > 0 {
+		// No number asked for: the one that keeps the old beat's speed.
+		was := a.score.TempoAt(bar - 1)
+		bpm = int(float64(was.BPM)*was.Unit.Float()/from.Float() + 0.5)
+		err = nil
+	}
+	if err != nil || bpm < 10 || bpm > 400 {
+		http.Error(w, "a tempo is between 10 and 400 beats a minute",
+			http.StatusBadRequest)
+		return
+	}
+
 	t := model.Tempo{
-		BPM: bpm, Unit: unit, Text: q.Get("text"),
+		BPM: bpm, Unit: unit, From: from, Text: q.Get("text"),
 		Parens: q.Get("parens") == "1",
 	}
 
-	a.lock()
-	defer a.mu.Unlock()
 	if bar == 0 {
 		a.score.Tempo = t
 		// A change written over bar one would print the same marking twice.
@@ -4376,11 +4582,89 @@ func (a *App) handleChordSymbol(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]any{"status": "ok", "chord": ""})
 		return
 	}
+	// A second chord over a rest that already carries one is a change of
+	// harmony partway through the rest, and the rest is split so there is
+	// somewhere for it to go. See splitRestForChord.
+	if q.Get("sel") == "" {
+		split, err := a.splitRestForChord(q, sym)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if split {
+			writeJSON(w, map[string]any{
+				"status": "ok", "chord": sym.String(), "split": true,
+			})
+			return
+		}
+	}
 	// One note carries it, not every note of a selection: a chord symbol
 	// marks where the harmony changes, and repeating it on each note of the
 	// bar would say it changes on every one.
 	marks[0].Chord = sym
 	writeJSON(w, map[string]any{"status": "ok", "chord": sym.String()})
+}
+
+// splitRestForChord writes a chord symbol halfway through a rest that
+// already carries a different one, by dividing the rest in two, and says
+// whether it did.
+//
+// A chord symbol marks where the harmony changes, and it hangs on whatever
+// is sounding there. A bar of rest in a chart has two chords over it as
+// often as one — D7 for two beats, C#7 for the next two — and with the
+// whole bar one rest there was one place to hang a symbol, so the second
+// chord written over the bar replaced the first. Reported as "it replaces
+// it instead of adding it".
+//
+// Halving the rest gives the second chord its own place and says, in the
+// music, where the change falls: a whole rest with D7 becomes two half
+// rests, D7 over the first and C#7 over the second, which is what the
+// bar means and what a player counts. Each half keeps the first symbol,
+// so a third chord on the second half halves that again.
+//
+// Only a rest whose half is a length a rest can be written at — a bar of
+// 5/4 does not halve — and only a plain one: a member of a tuplet is
+// divided by the tuplet's arithmetic, not by this. Anything else falls
+// through to writing the symbol where it was aimed, which is what the
+// same name typed twice over means as well: changing the fingering of the
+// chord that is there is not a second chord.
+func (a *App) splitRestForChord(q url.Values, sym *model.ChordSymbol) (bool, error) {
+	partIdx, _ := strconv.Atoi(q.Get("part"))
+	measIdx, _ := strconv.Atoi(q.Get("measure"))
+	at, err := strconv.Atoi(q.Get("at"))
+	if err != nil {
+		at = -1
+	}
+
+	a.lock()
+	defer a.mu.Unlock()
+
+	_, m, err := a.locate(partIdx, measIdx)
+	if err != nil {
+		return false, err
+	}
+	v := lineOf(m, voiceParam(q))
+	if len(v.Elements) == 0 {
+		return false, nil
+	}
+	if at <= 0 || at > len(v.Elements) {
+		at = len(v.Elements)
+	}
+	r, isRest := v.Elements[at-1].(*model.Rest)
+	if !isRest || r.Chord == nil || r.Chord.String() == sym.String() ||
+		r.Marks.Tuplet != nil || r.Hidden {
+		return false, nil
+	}
+	half := r.Dur.Scale(1, 2).Reduced()
+	if _, _, ok := half.Written(); !ok {
+		return false, nil
+	}
+	second := &model.Rest{Dur: half}
+	second.Chord = sym
+	r.Dur = half
+	tail := append([]model.Element{}, v.Elements[at:]...)
+	v.Elements = append(append(v.Elements[:at:at], second), tail...)
+	return true, nil
 }
 
 // parseChordSymbol takes a chord name apart.
@@ -4391,12 +4675,13 @@ func parseChordSymbol(s string) *model.ChordSymbol {
 	root, rest := "", s
 	if len(s) > 0 && s[0] >= 'A' && s[0] <= 'G' {
 		root, rest = s[:1], s[1:]
-		// The accidental belongs to the root, however it was typed.
-		for len(rest) > 0 && (rest[0] == '#' || rest[0] == 'b') {
+		// The accidental belongs to the root, however it was typed: # and
+		// b as on a typewriter, = for a natural, or the signs themselves.
+		for len(rest) > 0 && (rest[0] == '#' || rest[0] == 'b' || rest[0] == '=') {
 			root += rest[:1]
 			rest = rest[1:]
 		}
-		for _, sign := range []string{"♯", "♭"} {
+		for _, sign := range []string{"♯", "♭", "♮"} {
 			for strings.HasPrefix(rest, sign) {
 				root += rest[:len(sign)]
 				rest = rest[len(sign):]
@@ -7502,7 +7787,9 @@ func barNumberAt(numbers []int, at int) int {
 // tempoText is a tempo as it is written: the word, the mark, or both.
 func tempoText(t model.Tempo) string {
 	mark := ""
-	if t.BPM > 0 {
+	if t.BPM > 0 && !t.From.IsZero() {
+		mark = t.From.String() + " = " + t.Unit.String()
+	} else if t.BPM > 0 {
 		mark = t.Unit.String() + " = " + strconv.Itoa(t.BPM)
 	}
 	switch {

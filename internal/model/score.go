@@ -268,6 +268,16 @@ type Tempo struct {
 	ToBPM    int `json:",omitempty"`
 	OverBars int `json:",omitempty"`
 
+	// From is the beat the previous speed was counted in, where this mark
+	// is written as one beat equalling another rather than as a number:
+	// the "♩ = ♩." over the bar where 4/4 turns into 12/8, which says the
+	// pulse carries on and only the subdivision changes.
+	//
+	// The speed is still BPM in Unit, so playing it needs nothing new; From
+	// is what is printed on the left of the equals sign in place of the
+	// number on the right. Zero is an ordinary mark with a number.
+	From Duration `json:",omitempty"`
+
 	// Silent keeps the number off the page while still playing at it.
 	//
 	// "Allegro Moderato" over a bar is an instruction to a player and a
@@ -1063,6 +1073,10 @@ func (t Tempo) changedBy(c Tempo) Tempo {
 	if c.BPM > 0 {
 		t.BPM, t.Unit = c.BPM, c.Unit
 	}
+	// How the mark is written — as a number or as the beat before equalling
+	// the new one — belongs to this mark and not to the speed it started
+	// from, so it is taken from the new one even when that says "a number".
+	t.From = c.From
 	// A gradual change belongs to the mark that opened it and not to the
 	// speed it started from, so it is taken from the new mark whatever it
 	// says — including the nought that says this one is not one.

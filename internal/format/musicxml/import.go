@@ -518,6 +518,11 @@ func convert(doc *scorePartwise, lg *log) (*model.Score, error) {
 	inForce := s.Tempo
 	for i, at := range bars {
 		t := tempoAt[at]
+		// One beat equalling another names no number of its own: it is
+		// the speed in force, counted in the new beat. See convertTempo.
+		if t.BPM <= 0 && !t.From.IsZero() && inForce.BPM > 0 {
+			t.BPM = int(float64(inForce.BPM)*inForce.Unit.Float()/t.From.Float() + 0.5)
+		}
 		if i == 0 && at == 0 {
 			s.Tempo = t
 			inForce = t
@@ -718,16 +723,17 @@ func writeAnOctaveUp(p *model.Part, lg *log) {
 func convertTempo(d direction) (model.Tempo, bool) {
 	text := d.words()
 	if m := d.metronome(); m != nil {
-		if bpm := m.bpm(); bpm > 0 {
-			v, ok := typeValues[m.BeatUnit]
-			if !ok {
-				v = model.Quarter
-			}
-			unit := v.Duration()
-			if m.Dot != nil {
-				unit = unit.Scale(3, 2)
-			}
-			return model.Tempo{BPM: bpm, Unit: unit, Text: text}, true
+		units := m.units()
+		parens := m.Parentheses == "yes"
+		if bpm := m.bpm(); bpm > 0 && len(units) > 0 {
+			return model.Tempo{BPM: bpm, Unit: units[0], Text: text, Parens: parens}, true
+		}
+		// One beat equalling another, with no number: "♩ = ♩." where the
+		// meter changes. The number is the speed in force before, counted
+		// in the new beat, and the caller works it out once it knows what
+		// that speed was; a nought here says so. See model.Tempo.From.
+		if len(units) >= 2 {
+			return model.Tempo{From: units[0], Unit: units[1], Text: text, Parens: parens}, true
 		}
 	}
 	// No mark to print, but a speed to play at. Quarter notes per minute

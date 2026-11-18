@@ -87,3 +87,58 @@ func TestAFlagStandsClearOfAHeadAtItsOwnHeight(t *testing.T) {
 			far, afterFlag)
 	}
 }
+
+// flagGapOnStaff is the air after every flag on the staff it is drawn on,
+// in a layout that may hold several systems: a head on the system below is
+// not the next note.
+func flagGapsOnStaff(lay *Layout) []float64 {
+	glyphs := append([]Glyph(nil), lay.Glyphs...)
+	sort.Slice(glyphs, func(i, j int) bool { return glyphs[i].X < glyphs[j].X })
+	var out []float64
+	for i, g := range glyphs {
+		if !has(g.Name, "flag") {
+			continue
+		}
+		for _, next := range glyphs[i+1:] {
+			dy := next.Y - g.Y
+			if has(next.Name, "notehead") && next.X > g.X && dy > -2 && dy < 10 {
+				out = append(out, next.X-(g.X+glyphWidth(g)))
+				break
+			}
+		}
+	}
+	return out
+}
+
+// A line pressed below the width its music asked for used to press every
+// column by the same factor, the room booked for a flag with the rest — so
+// the collision came back on any full line. The floor is ink, not air, and
+// a pressed line keeps it. Reported as "the F as eighth note still has its
+// flag colliding, this is back".
+func TestAPressedLineKeepsTheAirAfterAFlag(t *testing.T) {
+	// Three bars of the same figure on one staff, so that lines of one, two
+	// and three bars are all tried, some pulled out and some pressed in.
+	s := flaggedBeforeAHeadAtItsHeight(model.StepF, 4)
+	for i := 0; i < 2; i++ {
+		more := flaggedBeforeAHeadAtItsHeight(model.StepF, 4)
+		s.Parts[0].Measures = append(s.Parts[0].Measures, more.Parts[0].Measures[0])
+	}
+	want := afterFlag + flagClear
+	for lw := 30.0; lw <= 90; lw += 4 {
+		opt := DefaultOptions()
+		opt.Mode = Paginated
+		opt.LineWidth = lw
+		lay := Engrave(s, opt)
+		gaps := flagGapsOnStaff(lay)
+		if len(gaps) != 3 {
+			t.Fatalf("line width %.0f: %d flags measured, want 3", lw, len(gaps))
+		}
+		for _, g := range gaps {
+			if g < want-0.01 {
+				t.Errorf("line width %.0f: a flag clears the next head by %.2f, want %.2f",
+					lw, g, want)
+				break
+			}
+		}
+	}
+}

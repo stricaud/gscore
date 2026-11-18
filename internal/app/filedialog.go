@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -543,7 +544,8 @@ func (a *App) suggestedBase() string {
 //
 //	what=tune   the tune on screen            (the default)
 //	what=book   every tune in the file, one after another
-//	what=parts  the full score, then each staff alone
+//	what=parts  the full score, then each staff alone — or only the ones
+//	            named by parts= and score=, see chosenParts
 //
 // The same three choices the print view offers, because they are the same
 // question: a tune book is a book and a piece for several players is a score
@@ -645,7 +647,10 @@ func (a *App) renderPDF(w io.Writer, r *http.Request) error {
 			secs = append(secs, fit(sc, eopt, popt))
 		}
 	case "parts":
-		secs = append(secs, fit(score, eopt, popt))
+		choice := chosenParts(q)
+		if choice.score {
+			secs = append(secs, fit(score, eopt, popt))
+		}
 		if len(score.Parts) > 1 {
 			// The parts go upright whichever way the score went. A score of
 			// many staves is turned on its side because that is what holds
@@ -656,7 +661,10 @@ func (a *App) renderPDF(w io.Writer, r *http.Request) error {
 			if part.PageWidth > part.PageHeight {
 				part.PageWidth, part.PageHeight = part.PageHeight, part.PageWidth
 			}
-			for _, p := range score.Parts {
+			for i, p := range score.Parts {
+				if !choice.wants(i) {
+					continue
+				}
 				o := eopt
 				// One staff on its own needs no name beside it: the subtitle
 				// says whose part it is, and a label on every system of a
@@ -673,7 +681,63 @@ func (a *App) renderPDF(w io.Writer, r *http.Request) error {
 	default:
 		secs = append(secs, fit(score, eopt, popt))
 	}
+	if len(secs) == 0 {
+		// Everything was left out. An empty PDF would be written and
+		// opened and looked at before anybody understood what happened;
+		// a sentence is quicker.
+		return errors.New("nothing was chosen to export: tick the score or at least one part")
+	}
 	return gpdf.RenderSections(w, secs)
+}
+
+// partChoice is which of a score's documents an export of the parts
+// asked for: whether the full score is among them, and which staves.
+//
+// Everything, unless the request says otherwise. A piece for eleven players
+// is a score and eleven parts, and somebody who needs the second violin's
+// copy to send to the second violin does not want the other eleven
+// documents in the same file — so the request may name the staves it
+// wants, by their place in the score, and may leave the score itself out.
+//
+//	parts=0,2   the first and third staves, and no other
+//	score=0     without the full score in front of them
+type partChoice struct {
+	score bool
+	parts map[int]bool // nil means every one of them
+}
+
+// chosenParts reads the choice out of a request's query.
+func chosenParts(q url.Values) partChoice {
+	c := partChoice{score: q.Get("score") != "0"}
+	if v := strings.TrimSpace(q.Get("parts")); v != "" {
+		c.parts = map[int]bool{}
+		for _, f := range strings.Split(v, ",") {
+			if i, err := strconv.Atoi(strings.TrimSpace(f)); err == nil && i >= 0 {
+				c.parts[i] = true
+			}
+		}
+	}
+	return c
+}
+
+// wants says whether the staff at this index of the score goes in.
+func (c partChoice) wants(i int) bool {
+	return c.parts == nil || c.parts[i]
+}
+
+// wantsAny says whether a part made of several of the score's staves goes
+// in: it does if any staff it prints was asked for, because asking for the
+// flute and getting the sheet the flute is printed on is getting the flute.
+func (c partChoice) wantsAny(staves []int) bool {
+	if c.parts == nil {
+		return true
+	}
+	for _, i := range staves {
+		if c.parts[i] {
+			return true
+		}
+	}
+	return false
 }
 
 func (a *App) suggestedName() string {

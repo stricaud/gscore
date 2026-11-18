@@ -1357,6 +1357,14 @@ body.fullscreen #canvas-wrap { padding: 10px; }
 .choices span { display: flex; flex-direction: column; gap: 1px; }
 .choices b { font-weight: 600; }
 .choices em { font-style: normal; font-size: calc(11px * var(--ui-scale)); color: var(--muted); }
+/* The staves to print, indented under "Score and parts" as what belongs to
+   it. Tighter than the choices above: these are a checklist, not three
+   decisions with a sentence each. */
+#print-parts-pick { margin: 0 0 6px 30px; display: flex; flex-direction: column; gap: 0; }
+#print-parts-pick label { padding: 3px 9px; align-items: center; }
+#print-parts-pick .pick-all { display: flex; gap: 6px; padding: 2px 9px 6px; }
+#print-parts-pick .pick-all button { font-size: calc(11px * var(--ui-scale)); padding: 2px 10px; }
+#print-pick-parts { max-height: 40vh; overflow-y: auto; }
 
 /* Recording the score. Wider than the other dialogs because the instrument
    review is a table, and a table of staves against what will play them is

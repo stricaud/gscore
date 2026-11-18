@@ -1010,6 +1010,9 @@ type info struct {
 	TempoDotted bool   `json:"tempoDotted,omitempty"`
 	TempoText   string `json:"tempoText,omitempty"`
 	TempoParens bool   `json:"tempoParens,omitempty"`
+	// TempoSilent says the speed is played and not printed: the words
+	// alone stand over the first bar. See model.Tempo.Silent.
+	TempoSilent bool `json:"tempoSilent,omitempty"`
 	// The beat on the left of a mark written as one beat equalling
 	// another; empty for a mark with a number. See model.Tempo.From.
 	TempoFrom       string `json:"tempoFrom,omitempty"`
@@ -1043,6 +1046,7 @@ type tempoInfo struct {
 	Dotted bool   `json:"dotted,omitempty"`
 	Text   string `json:"text,omitempty"`
 	Parens bool   `json:"parens,omitempty"`
+	Silent bool   `json:"silent,omitempty"`
 	// See model.Tempo.From.
 	From       string `json:"from,omitempty"`
 	FromDotted bool   `json:"fromDotted,omitempty"`
@@ -1194,6 +1198,7 @@ func (a *App) handleInfo(w http.ResponseWriter, r *http.Request) {
 	out.TempoUnit, out.TempoDotted = beatName(a.score.Tempo.Unit)
 	out.TempoText = a.score.Tempo.Text
 	out.TempoParens = a.score.Tempo.Parens
+	out.TempoSilent = a.score.Tempo.Silent
 	if !a.score.Tempo.From.IsZero() {
 		out.TempoFrom, out.TempoFromDotted = beatName(a.score.Tempo.From)
 	}
@@ -1209,6 +1214,7 @@ func (a *App) handleInfo(w http.ResponseWriter, r *http.Request) {
 		ti := tempoInfo{
 			BPM: t.BPM, Unit: unit, Dotted: dotted, Text: t.Text,
 			Parens: t.Parens,
+			Silent: t.Silent,
 		}
 		if !t.From.IsZero() {
 			ti.From, ti.FromDotted = beatName(t.From)
@@ -1468,7 +1474,8 @@ func (a *App) handleLayout(w http.ResponseWriter, r *http.Request) {
 //
 //	what=tune   the tune on screen            (the default)
 //	what=book   every tune in the file, one after another
-//	what=parts  the full score, then each staff alone on its own page
+//	what=parts  the full score, then each staff alone on its own page —
+//	            or only those named by parts= and score=, see chosenParts
 //
 // There is no PDF writer here and there does not need to be one: every system
 // this runs on prints to PDF from the print dialog, which is also where the
@@ -1508,13 +1515,21 @@ func (a *App) handlePrint(w http.ResponseWriter, r *http.Request) {
 			sections = append(sections, section{score: sc, names: true})
 		}
 	case "parts":
-		sections = append(sections, section{score: score, names: true})
+		// Or only some of them. The same choice the PDF takes, read the
+		// same way; see chosenParts.
+		choice := chosenParts(r.URL.Query())
+		if choice.score {
+			sections = append(sections, section{score: score, names: true})
+		}
 		// The parts the score carries, where somebody has made them: those
 		// are the documents that were named, sized and laid out for the
 		// stands, and printing a staff apiece instead would be printing
 		// something nobody asked for.
 		if len(score.Sheets) > 0 {
 			for i, sh := range score.Sheets {
+				if !choice.wantsAny(sh.Staves) {
+					continue
+				}
 				sections = append(sections, section{
 					heading: sh.Name, score: sheetOf(score, i),
 				})
@@ -1524,7 +1539,10 @@ func (a *App) handlePrint(w http.ResponseWriter, r *http.Request) {
 		// A score with none: a staff apiece, which is the best guess there
 		// is and what this did before parts existed.
 		if len(score.Parts) > 1 {
-			for _, p := range score.Parts {
+			for i, p := range score.Parts {
+				if !choice.wants(i) {
+					continue
+				}
 				sections = append(sections, section{heading: partLabel(p), score: onePart(score, p)})
 			}
 		}

@@ -224,11 +224,15 @@ func TestTheFigureOverABeamedGroupIsNotAsWideAsTheGroup(t *testing.T) {
 func TestTheFigureClearsTheBeamOfAWideRun(t *testing.T) {
 	score := model.NewScore()
 	v := score.Parts[0].Measures[0].Voices[0]
-	// Seventeen thirty-seconds climbing two octaves, beamed as one group.
+	// Seventeen thirty-seconds climbing two octaves, beamed as one group:
+	// seventeen in the time of eight, so each sounds for an eight-
+	// seventeenth of a thirty-second. (Written as 1/48 — a thirty-second
+	// of a triplet, not of a 17:8 — the notes had no written value, were
+	// never beamed, and the test passed over an unbeamed run.)
 	for i := 0; i < 17; i++ {
 		n := &model.Note{
 			Pitch: model.PitchFromDiatonicIndex(-7 + i),
-			Dur:   model.Duration{Num: 1, Den: 48},
+			Dur:   model.Duration{Num: 1, Den: 68},
 		}
 		n.Marks.Tuplet = &model.Tuplet{
 			Actual: 17, Normal: 8, Start: i == 0, Stop: i == 16,
@@ -237,32 +241,91 @@ func TestTheFigureClearsTheBeamOfAWideRun(t *testing.T) {
 	}
 
 	lay := Engrave(score, DefaultOptions())
+	figureClearsBeams(t, lay, "17")
+}
+
+// figureClearsBeams fails the test unless the figure written over a group
+// of stems-up notes sits above every beam that passes under it.
+//
+// The beams are the parallelograms in the layout — a beam is a quad, not a
+// line, so that its ends finish flush with the stems. An earlier version of
+// this looked for thick lines and, finding none, passed whatever was drawn.
+func figureClearsBeams(t *testing.T, lay *Layout, s string) {
+	t.Helper()
 	var figure *Text
 	for i := range lay.Texts {
-		if lay.Texts[i].S == "17" {
+		if lay.Texts[i].S == s {
 			figure = &lay.Texts[i]
 		}
 	}
 	if figure == nil {
 		t.Fatal("no figure was written over the group")
 	}
-
-	// The beams are the thick level lines across the run. The figure must
-	// be clear of every one of them that is under it.
-	th := DefaultOptions().Defaults.BeamThickness
-	for _, l := range lay.Lines {
-		if math.Abs(l.Thickness-th) > 1e-6 {
-			continue // a stem or a staff line, not a beam
+	if len(lay.Quads) == 0 {
+		t.Fatal("the group was not beamed, so this tests nothing")
+	}
+	for _, q := range lay.Quads {
+		top, ok := beamTopAt(q, figure.X)
+		if !ok {
+			continue // not under the figure
 		}
-		lo, hi := math.Min(l.X1, l.X2), math.Max(l.X1, l.X2)
-		if figure.X < lo || figure.X > hi {
-			continue
-		}
-		top := math.Min(l.Y1, l.Y2) - th/2
 		if figure.Y > top {
 			t.Errorf("the figure's baseline is at %.2f, which is %.2f into "+
 				"a beam whose top edge is %.2f", figure.Y, figure.Y-top, top)
-			break
+			return
 		}
 	}
+}
+
+// beamTopAt is the top edge of a beam at an x along it, read off its
+// corners: the upper corner at each end, and a straight line between.
+func beamTopAt(q Quad, x float64) (float64, bool) {
+	x0, x1 := math.Inf(1), math.Inf(-1)
+	for _, v := range q.X {
+		x0, x1 = math.Min(x0, v), math.Max(x1, v)
+	}
+	if x < x0 || x > x1 || x1 == x0 {
+		return 0, false
+	}
+	left, right := math.Inf(1), math.Inf(1)
+	for i := range q.X {
+		if q.X[i] == x0 {
+			left = math.Min(left, q.Y[i])
+		}
+		if q.X[i] == x1 {
+			right = math.Min(right, q.Y[i])
+		}
+	}
+	return left + (right-left)*(x-x0)/(x1-x0), true
+}
+
+// And of the beam of a group it does not begin.
+//
+// A beat of an eighth and then four thirty-seconds in the time of three is
+// beamed as one group, and the quadruplet starts at its second note. The
+// beam was recorded by the group's first note and looked up by the
+// tuplet's, so the figure never found it and was written where a plain
+// stem's length would put it — which, under three beams, is inside them.
+// Reported as "I cannot see the number (I can select it)".
+func TestTheFigureClearsTheBeamOfAGroupItDoesNotBegin(t *testing.T) {
+	score := model.NewScore()
+	v := score.Parts[0].Measures[0].Voices[0]
+	v.Elements = append(v.Elements, &model.Note{
+		Pitch: model.Pitch{Step: model.StepA, Octave: 4},
+		Dur:   model.Duration{Num: 1, Den: 8},
+	})
+	steps := []model.Step{model.StepF, model.StepC, model.StepE, model.StepC}
+	for i, st := range steps {
+		n := &model.Note{
+			Pitch: model.Pitch{Step: st, Octave: 4},
+			Dur:   model.Duration{Num: 3, Den: 128}, // a 32nd, four to three
+		}
+		n.Marks.Tuplet = &model.Tuplet{
+			Actual: 4, Normal: 3, Start: i == 0, Stop: i == 3,
+		}
+		v.Elements = append(v.Elements, n)
+	}
+
+	lay := Engrave(score, DefaultOptions())
+	figureClearsBeams(t, lay, "4")
 }

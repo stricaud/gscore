@@ -237,6 +237,8 @@ const MESSAGES = {
   "Import from a .gscore…": "Importer depuis un .gscore…",
   "In brackets": "Entre parenthèses",
   "In parentheses": "Entre parenthèses",
+  "Play at this speed, but print only the text — no = 116 on the page":
+    "Jouer à cette vitesse, mais n’imprimer que le texte — pas de = 116 sur la page",
   "Invisible": "Invisible",
   "Keeps its room, prints nothing": "Garde sa place, n’imprime rien",
   "One beat equals another, no number": "Un temps en vaut un autre, sans nombre",
@@ -458,6 +460,11 @@ const MESSAGES = {
   "Set the instruments": "Attribuer les instruments",
   "Make the staves": "Créer les portées",
   "Score and parts": "Conducteur et parties",
+  "The full score, then each staff alone, for the players. Untick what you do not need — one part, to send to its player.":
+    "Le conducteur, puis chaque portée seule, pour les musiciens. Décochez ce dont vous n’avez pas besoin — une seule partie, à envoyer à son musicien.",
+  "Full score": "Conducteur",
+  "All": "Tout",
+  "None": "Rien",
   "Engraving…": "Gravure…",
   "Find and replace…": "Rechercher et remplacer…",
   "Nothing found.": "Aucun résultat.",

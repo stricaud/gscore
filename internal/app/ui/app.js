@@ -2910,6 +2910,7 @@ async function exportPDF() {
   if (!choice) return;
 
   const q = new URLSearchParams({ as: "pdf", what: choice.what });
+  partsQuery(choice).forEach(([k, v]) => q.set(k, v));
   if (choice.landscape) q.set("orientation", "landscape");
   if (!choice.pageNumbers) q.set("pagenumbers", "0");
   if (choice.multiRests) q.set("multirest", "1");
@@ -11461,6 +11462,7 @@ async function setTempoDialog() {
     $("#tempo-text").value = here.text;
     $("#tempo-dotted").checked = !!here.dotted;
     $("#tempo-parens").checked = !!here.parens;
+    $("#tempo-silent").checked = !!here.silent;
     // One beat equalling another only means something where there is a
     // beat before: not at bar one. The left-hand beat opens on the one in
     // force before this bar, which is nearly always the one meant, and the
@@ -11546,6 +11548,7 @@ async function setTempoDialog() {
       if ($("#tempo-dotted").checked) q.set("dotted", "1");
     }
     if ($("#tempo-parens").checked) q.set("parens", "1");
+    if ($("#tempo-silent").checked) q.set("silent", "1");
     q.set("text", $("#tempo-text").value.trim());
   }
 
@@ -11583,6 +11586,7 @@ function tempoAtBar(bar) {
       dotted: !!state.info?.tempoDotted,
       text: state.info?.tempoText || "",
       parens: !!state.info?.tempoParens,
+      silent: !!state.info?.tempoSilent,
       from: state.info?.tempoFrom || "",
       written: true,
     };
@@ -11594,6 +11598,7 @@ function tempoAtBar(bar) {
     dotted: !!state.info?.tempoDotted,
     text: state.info?.tempoText || "",
     parens: !!state.info?.tempoParens,
+    silent: !!state.info?.tempoSilent,
   };
   for (let i = 1; i <= bar; i++) {
     const c = changes[String(i)];
@@ -15841,7 +15846,9 @@ async function printScore() {
   const choice = await askPrint(many, parts, "Print", "Print");
   if (!choice) return;
 
-  const path = "/print?what=" + encodeURIComponent(choice.what) +
+  const picked = partsQuery(choice)
+    .map(([k, v]) => "&" + k + "=" + encodeURIComponent(v)).join("");
+  const path = "/print?what=" + encodeURIComponent(choice.what) + picked +
     (choice.multiRests ? "&multirest=1" : "") +
     (choice.concert ? "&concert=1" : "");
 
@@ -15854,7 +15861,7 @@ async function printScore() {
     // to the paper, so the panel's preview is the sheet that comes out.
     if (window.gscoreNativePrint && window.webkit?.messageHandlers?.gscore) {
       window.webkit.messageHandlers.gscore.postMessage("print:/api/pdf?what=" +
-        encodeURIComponent(choice.what) +
+        encodeURIComponent(choice.what) + picked +
         (choice.multiRests ? "&multirest=1" : "") +
         (choice.concert ? "&concert=1" : "") +
         (choice.cover === false ? "&cover=0" : ""));
@@ -15905,6 +15912,58 @@ function nativePDFPrint() {
             window.gscoreNativePrint && window.webkit?.messageHandlers?.gscore);
 }
 
+// partsQuery is what the dialog's choice of staves adds to a request, as
+// pairs — nothing at all when everything was left ticked, which is the
+// common case and the one older servers understand.
+function partsQuery(choice) {
+  const out = [];
+  if (!choice || choice.what !== "parts") return out;
+  if (choice.score === false) out.push(["score", "0"]);
+  if (Array.isArray(choice.parts)) out.push(["parts", choice.parts.join(",")]);
+  return out;
+}
+
+// partPickName is a staff as the checklist names it: what it is called,
+// else what plays it — the same words the margin of its part will carry.
+function partPickName(p, i) {
+  return (p && (p.name || p.instrument)) || `Staff ${i + 1}`;
+}
+
+// fillPartPick lists the score's staves under "Score and parts", every one
+// ticked: the whole set is still the default, and the list is there for
+// the time one player's copy is all that is wanted.
+function fillPartPick() {
+  const box = $("#print-pick-parts");
+  if (!box) return;
+  box.textContent = "";
+  (state.info?.parts || []).forEach((p, i) => {
+    const label = document.createElement("label");
+    const tick = document.createElement("input");
+    tick.type = "checkbox";
+    tick.checked = true;
+    tick.dataset.part = String(i);
+    const text = document.createElement("span");
+    const name = document.createElement("b");
+    name.textContent = partPickName(p, i);
+    text.appendChild(name);
+    label.appendChild(tick);
+    label.appendChild(text);
+    box.appendChild(label);
+  });
+  $("#print-pick-score").checked = true;
+}
+
+// partPickChoice reads the checklist back: whether the score is in, and
+// which staves — null for all of them, so the request can say nothing.
+function partPickChoice() {
+  const ticks = $$("#print-pick-parts input");
+  const on = ticks.filter((c) => c.checked).map((c) => Number(c.dataset.part));
+  return {
+    score: $("#print-pick-score").checked,
+    parts: on.length === ticks.length ? null : on,
+  };
+}
+
 // askPrint shows the choices that apply to this file and nothing else.
 //
 // It answers with an object rather than a string because the paper is a
@@ -15938,16 +15997,49 @@ function askPrint(many, parts, title, verb, paper) {
   $("#print-cover-row").hidden = !hasCover;
   if (hasCover) $("#print-cover").checked = true;
 
+  // Which staves, once "Score and parts" is the answer. The list unfolds
+  // under that choice and folds away under the others, and the button
+  // goes grey while nothing in it is ticked: a document of nothing is
+  // not something to let anybody ask for.
+  const whatIs = () => {
+    const r = $$('#print-what input[name="what"]').find((x) => x.checked);
+    return r ? r.value : "tune";
+  };
+  const settle = () => {
+    const picking = parts && whatIs() === "parts";
+    $("#print-parts-pick").hidden = !picking;
+    const c = partPickChoice();
+    dlg.querySelector(".primary").disabled =
+      picking && !c.score && Array.isArray(c.parts) && c.parts.length === 0;
+  };
+  const tickAll = (on) => {
+    $("#print-pick-score").checked = on;
+    $$("#print-pick-parts input").forEach((c) => (c.checked = on));
+    settle();
+  };
+  if (parts) fillPartPick();
+  $("#print-what").onchange = settle;
+  $("#print-pick-every").onclick = () => tickAll(true);
+  $("#print-pick-none").onclick = () => tickAll(false);
+  settle();
+
   return new Promise((resolve) => {
     const done = () => {
       dlg.removeEventListener("close", done);
+      dlg.querySelector(".primary").disabled = false;
       if (dlg.returnValue !== "ok") {
         resolve(null);
         return;
       }
       const picked = $$('#print-what input[name="what"]').find((r) => r.checked);
+      const pick = picked && picked.value === "parts" && parts
+        ? partPickChoice() : { score: true, parts: null };
       resolve({
         what: picked ? picked.value : "tune",
+        // The staves wanted, where "Score and parts" was the answer:
+        // whether the full score is among them, and which — null for all.
+        score: pick.score,
+        parts: pick.parts,
         landscape: paper && $("#print-landscape").checked,
         pageNumbers: !paper || $("#print-numbers").checked,
         multiRests: $("#print-multirest").checked,

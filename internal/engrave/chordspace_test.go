@@ -35,7 +35,7 @@ import (
 // right is where a piece of a symbol ends.
 func right(p chordPiece) float64 {
 	if p.glyph != "" {
-		return p.x + accidentalAdvance(p.glyph)
+		return p.x + glyphAdvance(p.glyph, p.size)
 	}
 	return p.x + chordTextWidth(p.text, p.size)
 }

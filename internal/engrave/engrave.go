@@ -1604,6 +1604,10 @@ type slot struct {
 	// not air for the next note's accidental to tuck into. See columnInk.
 	flag  float64
 	width float64 // how wide the column is
+	// least is the width the column cannot go below: the flag's ink, the
+	// words under it, the narrowest a note is ever set. A system pressed
+	// into a line is pressed only in what is above this. See squeezeOf.
+	least float64
 }
 
 // measureBox is a measure with its computed widths.
@@ -3387,6 +3391,7 @@ func (e *engraver) measureBox(p *model.Part, m *model.Measure, index int) measur
 		// the sharp, which is drawn backwards from its own notehead, was
 		// printed through the notehead before it.
 		col.lead += tuck
+		col.least = least
 		box.ideal += col.lead + col.width
 		// The minimum keeps the whole of what the accidentals asked for.
 		// A system squeezed for room has to open the gap rather than
@@ -3427,6 +3432,7 @@ func (e *engraver) measureBox(p *model.Part, m *model.Measure, index int) measur
 		}
 		if short := names[i] + chordSymbolGap - have; short > 0 {
 			box.slots[j-1].width += short
+			box.slots[j-1].least += short
 			box.ideal += short
 			box.minimum += short
 		}

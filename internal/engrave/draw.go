@@ -64,8 +64,12 @@ type placed struct {
 	clef  model.Clef
 	value model.NoteValue
 	dots  int
-	start model.Duration // position from the start of the measure
-	width float64
+	// dotsEnd is where the last of its dots finishes, once they are drawn:
+	// the right edge a tie leaving this note has to clear. Zero until the
+	// dots are drawn, and for a note with none.
+	dotsEnd float64
+	start   model.Duration // position from the start of the measure
+	width   float64
 
 	// fullBar says this rest is the whole of its bar's silence.
 	//
@@ -254,9 +258,19 @@ func (e *engraver) drawMeasure(part *model.Part, b measureBox, x, end float64, s
 	// because this is the only place that knows where a column ended up.
 	var anchors []beatAnchor
 
+	// How much of each column's slack a pressed line keeps. One, unless
+	// the line is pressed below the width the music asked for.
+	k := squeezeOf(b.slots, stretch)
 	items := make([]*placed, 0, len(b.slots))
 	for i := range b.slots {
 		s := &b.slots[i]
+		// The column's drawn width. Pulled out, it stretches with the
+		// line; pressed in, it keeps its floor and gives up only what is
+		// above it. See squeezeOf.
+		width := s.width * stretch
+		if stretch < 1 {
+			width = s.least + (s.width-s.least)*k
+		}
 		x += s.lead * stretch
 		if e.collectBeats {
 			anchors = append(anchors, beatAnchor{at: s.at, x: x})
@@ -347,14 +361,14 @@ func (e *engraver) drawMeasure(part *model.Part, b measureBox, x, end float64, s
 		col := make([]*placed, 0, len(s.elems))
 		for _, v := range s.elems {
 			p := e.placedOf(e.clef, v.el, s.at)
-			p.x, p.index, p.width = x, v.index, s.width*stretch
+			p.x, p.index, p.width = x, v.index, width
 			p.voice, p.order = v.voice, v.order
 			items = append(items, p)
 			col = append(col, p)
 		}
 		e.separateColumn(col)
 
-		x += s.width * stretch
+		x += width
 	}
 	if len(b.slots) == 0 {
 		x += sp.NoteBase * 2 * stretch
@@ -705,6 +719,42 @@ func (e *engraver) drawSignatureChange(part *model.Part, b measureBox, x float64
 	return x
 }
 
+// squeezeOf says how much of its slack each column of a bar keeps when the
+// line it is on is pressed in: 1 for all of it, 0 for none.
+//
+// A line pressed below the width its music asked for used to press every
+// column by the same factor, and a column's floor went down with the rest.
+// The floor is not air: it is the ink of a flag, or the words under the
+// note, and it does not get any narrower when the line does. So the eighth
+// note's flag, given its room when the line was measured, was drawn across
+// the next notehead once the line was pressed — the collision the room was
+// booked against, back again on any full line. Reported as "the F as
+// eighth note still has its flag colliding, this is back".
+//
+// What the bar comes to is the same as it was: the columns together still
+// take stretch times what they asked for, so the barline stays where the
+// system put it. Only the share-out changes — the floors are kept whole and
+// what is left is divided among the columns in proportion to the slack each
+// has above its floor. Where there is not even room for the floors, every
+// column stands at its floor and the bar runs a little long, which is what
+// breakAt's own minimum is meant to prevent.
+func squeezeOf(slots []slot, stretch float64) float64 {
+	if stretch >= 1 {
+		return 1
+	}
+	asked, floors := 0.0, 0.0
+	for _, s := range slots {
+		asked += s.width
+		floors += s.least
+	}
+	slack := asked - floors
+	if slack <= 0 {
+		return 0
+	}
+	k := (asked*stretch - floors) / slack
+	return math.Max(0, math.Min(1, k))
+}
+
 // drawMeasureRepeat draws the sign that stands for the bar before.
 func (e *engraver) drawMeasureRepeat(b measureBox, left, right float64) {
 	name := "repeat1Bar"
@@ -758,11 +808,15 @@ const (
 // in Gould and in every published score.
 func (e *engraver) drawTuplets(items []*placed, t model.TimeSignature) {
 	// Which notes the beamer joined, so a beamed group can be told from one
-	// that only looks like it.
-	beam := map[*placed]int{}
-	for i, g := range beamGroups(items, t) {
+	// that only looks like it. Each note names the first of its group,
+	// which is also the note the beam was recorded under: a tuplet that
+	// begins partway along a beam — an eighth and then four thirty-seconds
+	// in the time of three, beamed as one beat — has to find that beam by
+	// the group's head and not by its own first note.
+	beam := map[*placed]*placed{}
+	for _, g := range beamGroups(items, t) {
 		for _, p := range g {
-			beam[p] = i + 1
+			beam[p] = g[0]
 		}
 	}
 
@@ -785,7 +839,7 @@ func (e *engraver) drawTuplets(items []*placed, t model.TimeSignature) {
 }
 
 // drawTuplet writes one group's figure and, where it is wanted, its bracket.
-func (e *engraver) drawTuplet(group []*placed, tp *model.Tuplet, beam map[*placed]int) {
+func (e *engraver) drawTuplet(group []*placed, tp *model.Tuplet, beam map[*placed]*placed) {
 	if tp.Hidden {
 		// Counted, not written: the notes keep their tuplet time and
 		// nothing is drawn over them. See model.Tuplet.
@@ -825,7 +879,14 @@ func (e *engraver) drawTuplet(group []*placed, tp *model.Tuplet, beam map[*place
 	// Outwards only. A group whose beam sits where a stem's length would
 	// put it keeps the figure exactly where it had it, so this moves
 	// nothing that was not already wrong.
-	if b, ok := e.beamed[first]; ok {
+	//
+	// By the head of the beam group, which is where the beam was recorded
+	// — the tuplet's own first note only where the two are the same. Looked
+	// up by the tuplet's note, a quadruplet of thirty-seconds that
+	// followed an eighth under one beam never found its beam, and the 4
+	// was written where a plain stem would have put it: inside the three
+	// beams, where it could be clicked on and not seen.
+	if b, ok := e.beamed[beam[first]]; ok {
 		half := textWidth(strconv.Itoa(tp.Actual), tupletNumberSize)/2 + tupletNumberGap
 		edge := math.Min(b.at(cx-half), b.at(cx+half))
 		if !up {
@@ -902,9 +963,9 @@ func (b beamRun) at(x float64) float64 {
 
 // oneBeam says whether the whole group is joined by a single beam, which is
 // what makes a bracket unnecessary.
-func oneBeam(group []*placed, beam map[*placed]int) bool {
+func oneBeam(group []*placed, beam map[*placed]*placed) bool {
 	g := beam[group[0]]
-	if g == 0 {
+	if g == nil {
 		return false
 	}
 	for _, p := range group[1:] {
@@ -1436,7 +1497,7 @@ func (e *engraver) drawNoteHead(p *placed) {
 	y := e.y + stepY(float64(p.step))
 	if e.tab != nil && e.fretNumber(n, p.x+e.headW(p.value)/2, y, p.index) {
 		e.lay.Refs[p.index] = RefPos{X: p.x, Y: y, Staff: e.y}
-		e.drawDots(p.x+e.adv(head)+e.dotGap(e.stemUp(p)),
+		p.dotsEnd = e.drawDots(p.x+e.adv(head)+e.dotGap(e.stemUp(p)),
 			float64(p.step), p.dots)
 		return
 	}
@@ -1446,7 +1507,7 @@ func (e *engraver) drawNoteHead(p *placed) {
 	})
 	e.lay.Refs[p.index] = RefPos{X: p.x, Y: y, Staff: e.y}
 	e.ledgerLines(p.x, e.adv(head), p.step)
-	e.drawDots(p.x+e.adv(head)+e.dotGap(e.stemUp(p)), float64(p.step), p.dots)
+	p.dotsEnd = e.drawDots(p.x+e.adv(head)+e.dotGap(e.stemUp(p)), float64(p.step), p.dots)
 }
 
 func (e *engraver) drawChordHeads(p *placed) {
@@ -1567,7 +1628,7 @@ func (e *engraver) drawChordDots(p *placed, steps []int, shifted []bool, head st
 	}
 	x := right + e.dotGap(up)
 	for _, ds := range chordDotSteps(steps) {
-		e.dotsAt(x, float64(ds), p.dots)
+		p.dotsEnd = math.Max(p.dotsEnd, e.dotsAt(x, float64(ds), p.dots))
 	}
 }
 
@@ -2820,33 +2881,39 @@ func (e *engraver) separateLedgers() {
 	}
 }
 
-func (e *engraver) drawDots(x, step float64, dots int) {
+func (e *engraver) drawDots(x, step float64, dots int) float64 {
 	// A dot never sits on a line, so one that would moves up into the space.
 	ds := step
 	if int(ds)%2 == 0 {
 		ds++
 	}
-	e.dotsAt(x, ds, dots)
+	return e.dotsAt(x, ds, dots)
 }
 
 // dotsAt draws a note's dots at the step given, without asking whether that
 // step is a line: a chord works out where each of its dots goes before any
 // of them is drawn, because they have to keep out of each other's way.
-func (e *engraver) dotsAt(x, ds float64, dots int) {
+//
+// It answers with where the last dot finishes, so that a tie leaving the
+// note can set out from there rather than through the dots.
+func (e *engraver) dotsAt(x, ds float64, dots int) float64 {
 	if dots <= 0 {
-		return
+		return 0
 	}
+	end := 0.0
 	for i := 0; i < dots; i++ {
 		e.lay.Glyphs = append(e.lay.Glyphs, Glyph{
 			Name: "augmentationDot", X: x, Y: e.y + stepY(ds),
 			Size: e.glyphSize(),
 		})
+		end = x + e.adv("augmentationDot")
 		// Past the dot just drawn, then the gap. Advancing by the gap alone
 		// left each dot after the first sitting on top of the one before it,
 		// by the width of a dot less the gap — which a double-dotted note
 		// showed as a single fat blot.
 		x += e.drawnDotStep()
 	}
+	return end
 }
 
 // dotStep is the distance from one dot to the next: the dot itself, then the

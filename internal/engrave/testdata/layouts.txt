@@ -2,13 +2,13 @@
 # drawing, and how many marks are on the page. Written by
 #     go test ./internal/engrave -run Golden -update
 # A diff here is a change in the engraver. Read it before committing.
-abc/boite-musique.abc ce670b05b3bd5c03 514
+abc/boite-musique.abc 3127898a97d198d5 514
 abc/decoration.abc c8f4673a8e66ca93 31
 abc/pitch.abc 376aa6d8311eb1d1 227
 abc/sunshine.abc 7702bcad8c455962 136
-samples/altes-10e-solo.abc fee8e092004a1cd9 9785
-samples/boite-musique.abc ce670b05b3bd5c03 514
-scores/Bumpty-Bump.gscore a111688609689778 2969
+samples/altes-10e-solo.abc 4a29bd909ad3e825 9785
+samples/boite-musique.abc 3127898a97d198d5 514
+scores/Bumpty-Bump.gscore ad04273c51a0512d 2969
 suite/01a-Pitches-Pitches.musicxml 5177aba21f65c2bd 548
 suite/01b-Pitches-Intervals.musicxml 6f4787733f66de48 405
 suite/01c-Pitches-NoVoiceElement.musicxml e4827d8a899bf0f3 14
@@ -23,10 +23,10 @@ suite/02c-Rests-MultiMeasureRests.musicxml 63aa0920c6f03aa0 92
 suite/02d-Rests-Multimeasure-TimeSignatures.musicxml 8a1d83c4fecd8af2 35
 suite/02e-Rests-NoType.musicxml d82aa6caca464f13 35
 suite/02f-Rests-Placement.musicxml 78e03cb655da609f 39
-suite/03a-Rhythm-Durations.musicxml a09678cf81975dd4 164
+suite/03a-Rhythm-Durations.musicxml 8b578a3de60be9ee 164
 suite/03b-Rhythm-Backup.musicxml cab71fe356bef636 24
 suite/03c-Rhythm-DivisionChange.musicxml 716bbc345b77f87f 27
-suite/03d-Rhythm-DottedDurations-Factors.musicxml 59d2a35008bc4b61 86
+suite/03d-Rhythm-DottedDurations-Factors.musicxml fabe867cfddaf56a 86
 suite/03e-Rhythm-No-Divisions.musicxml d15f880bbc29f364 13
 suite/03e-Rhythm-SecondaryBeamBreaks.musicxml 50805d432f7765d9 85
 suite/03f-Rhythm-Forward.musicxml e178c5e40d312d30 21
@@ -61,7 +61,7 @@ suite/21f-Chord-ElementInBetween.musicxml 6a0d72b4f24b0ed9 18
 suite/21g-Chords-Tremolos.musicxml 7b22bd699c00a288 55
 suite/21h-Chord-Accidentals.musicxml 7fed94ed52309ef6 18
 suite/21i-Chord-DifferentVoices.musicxml c14c789fd9c21932 17
-suite/22a-Noteheads.musicxml 3467aa14464a3d91 367
+suite/22a-Noteheads.musicxml e1af7f3b31fb82c4 367
 suite/22b-Staff-Notestyles.musicxml decf6a77a0724839 76
 suite/22c-Noteheads-Chords.musicxml c74831b8f48e22a7 63
 suite/22d-Parenthesized-Noteheads.musicxml 1d925069707e7fdf 25
@@ -90,7 +90,7 @@ suite/32c-MultipleNotationChildren.musicxml 84a7e2a79376d90c 23
 suite/32d-Arpeggio.musicxml 1a0d29ed7ea26be1 90
 suite/32e-Arpeggios-Cross.musicxml bcbfd1d0aa7d3e24 104
 suite/32e-Fermatas.musicxml 15cd5cd78b6f3854 38
-suite/33a-Spanners.musicxml b7fcaf5018e50041 232
+suite/33a-Spanners.musicxml de9f5eeefe120661 232
 suite/33b-Spanners-Tie.musicxml a71e569764d7aadc 15
 suite/33c-Spanners-Slurs.musicxml 89567fece8a00eca 45
 suite/33d-Spanners-OctaveShifts.musicxml 88b47d65189b57d6 53
@@ -103,7 +103,7 @@ suite/33j-Beams-Tremolos.musicxml 8b05666073754eac 69
 suite/33k-Tie-Types.musicxml b457bca72c4025c9 63
 suite/34a-Print-Object-Spanners.musicxml e461b0d5f64c8180 164
 suite/34b-Colors.musicxml 0dce3896e54a1e97 307
-suite/34c-Font-Size.musicxml 3583ecaf601d06f5 176
+suite/34c-Font-Size.musicxml 941c496d55f7cadd 176
 suite/34d-Note-Attributes.musicxml bfd944a4f0e17b9c 91
 suite/41a-MultiParts-Partorder.musicxml 0a41d2450719365f 59
 suite/41b-MultiParts-MoreThan10.musicxml ff04d12184c7f26b 202
@@ -173,11 +173,11 @@ suite/61i-Lyrics-Chords.musicxml 4ade91e4f49305b1 17
 suite/61j-Lyrics-Elisions.musicxml 919b0846de9bcb1a 22
 suite/61k-Lyrics-SpannersExtenders.musicxml 4180b187221eabc1 44
 suite/71a-Chordnames.musicxml d53a8c515512620f 44
-suite/71b-Chordnames-Kinds.musicxml 528ceefbf1e9e37c 210
+suite/71b-Chordnames-Kinds.musicxml ad53189f0b189e24 212
 suite/71c-ChordsFrets.musicxml 252d493616761f46 43
 suite/71d-ChordsFrets-Multistaff.musicxml 7ad6cc72dadf231c 64
 suite/71e-TabStaves.musicxml 88f63001bc3d7895 414
-suite/71f-AllChordTypes.musicxml 3921a2b2be8b4579 267
+suite/71f-AllChordTypes.musicxml 81d0c4d7cb6588f4 269
 suite/71g-MultipleChordnames.musicxml 46a96846b1d85a08 18
 suite/72a-TransposingInstruments.musicxml cf896d06fdc73f2e 87
 suite/72b-TransposingInstruments-Full.musicxml 34d1b6a0c71a52bc 141

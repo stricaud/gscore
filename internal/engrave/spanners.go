@@ -1025,6 +1025,14 @@ func (e *engraver) slurAt(part *model.Part, m *model.Marks, p *placed, measure i
 	// The two ends of a tie are beside the noteheads and not under them: it
 	// leaves the first note and arrives at the second. See tieGap.
 	leaves, arrives := p.x+noteheadWidth(p.value)+tieGap, p.x-tieGap
+	// And beside the dots, not through them. A dotted note's dot is part
+	// of the note, and a tie that set out from the notehead ran straight
+	// through it: four tied dotted half notes read as four dots strung on
+	// their own curves. The dots were drawn before this, so where they
+	// finish is known. Reported as "the tie should start after the dot".
+	if p.dotsEnd > 0 {
+		leaves = math.Max(leaves, p.dotsEnd+tieGap)
+	}
 
 	for _, h := range e.tiedHeads(p, m) {
 		if h.stop {

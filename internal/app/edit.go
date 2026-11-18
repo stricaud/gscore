@@ -2515,6 +2515,10 @@ func (a *App) handleTempo(w http.ResponseWriter, r *http.Request) {
 	t := model.Tempo{
 		BPM: bpm, Unit: unit, From: from, Text: q.Get("text"),
 		Parens: q.Get("parens") == "1",
+		// Played at, not printed: the words alone go on the page. What a
+		// score that says "Slowly" and nothing else wants, when it is to
+		// be played back at a speed all the same. See model.Tempo.Silent.
+		Silent: q.Get("silent") == "1",
 	}
 
 	if bar == 0 {
@@ -3818,6 +3822,17 @@ func (a *App) handleLyrics(w http.ResponseWriter, r *http.Request) {
 	// used up before it starts — which is how a bar of rests is passed over
 	// without anybody asking for it.
 	bar, pos, set, words := 0, 0, 0, 0
+	// settle moves on to the next note there is to sing, across barlines.
+	settle := func() {
+		for bar < len(bars) && pos >= len(bars[bar]) {
+			bar++
+			pos = 0
+		}
+	}
+	// last is the note the previous syllable went on, and held whether
+	// that syllable was written to be held — "mine._".
+	var last *model.Marks
+	held := false
 	for _, pc := range pieces {
 		if pc.Skip > 0 {
 			// Whatever is left of the bar in hand gets no words, and nor do
@@ -3831,16 +3846,34 @@ func (a *App) handleLyrics(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		words++
-		for bar < len(bars) && pos >= len(bars[bar]) {
-			bar++
-			pos = 0
+		// A held syllable is sung through the slur that leaves its note.
+		// "mine._" over an A slurred to an F is sung on both, and the next
+		// word waits for the note after the slur: put on the F, "Ba" was
+		// sung under a curve that says there is nothing new to sing there.
+		// A tie needs nothing here, since a tied-to note is not among the
+		// notes to sing at all; a slur joins different pitches and is.
+		//
+		// Only a word moves on. A "_" standing by itself names the slurred
+		// note — it is how a melisma over separate notes is written — and
+		// has to land on it.
+		if held && last != nil && pc.Lyric.Text != "" {
+			for depth := last.SlurStart; depth > 0; {
+				settle()
+				if bar >= len(bars) {
+					break
+				}
+				depth -= bars[bar][pos].SlurStop
+				pos++
+			}
 		}
+		settle()
 		if bar >= len(bars) {
 			continue // past the end: counted, and said below
 		}
 		ly := pc.Lyric
 		ly.Verse = verse
 		bars[bar][pos].Lyrics = append(bars[bar][pos].Lyrics, ly)
+		last, held = bars[bar][pos], ly.Extend
 		pos++
 		set++
 	}
@@ -6221,15 +6254,20 @@ func tupletBounds(v *model.Voice, idx int) (first, last int, ok bool) {
 		return 0, 0, false
 	}
 	first, last = idx, idx
+	// Back to the group's start — and no further. The element asked
+	// about may itself be the start, and the one before it may be the
+	// last note of another group: walked past, a quadruplet freed by its
+	// first note took the quadruplet before it apart as well.
 	for first > 0 {
+		if m := marksOfElement(v.Elements[first]); m != nil &&
+			m.Tuplet != nil && m.Tuplet.Start {
+			break
+		}
 		m := marksOfElement(v.Elements[first-1])
 		if m == nil || m.Tuplet == nil {
 			break
 		}
 		first--
-		if m.Tuplet.Start {
-			break
-		}
 	}
 	for last+1 < len(v.Elements) {
 		m := marksOfElement(v.Elements[last])

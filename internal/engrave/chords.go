@@ -12,6 +12,7 @@ package engrave
 
 import (
 	"math"
+	"strings"
 
 	"github.com/stricaud/gscore/internal/smufl"
 
@@ -376,23 +377,36 @@ var accidentalInk = map[string][2]float64{
 // so set at one size the sharp of "F♯7" would tower over the flat of "B♭7"
 // in the bar beside it.
 func accidentalSize(glyph string) float64 {
+	return accidentalSizeAt(glyph, chordSize)
+}
+
+// accidentalSizeAt is the same beside type of another size: the smaller
+// signs of a quality, where the flat of "7♭9" stands as tall as the 7.
+func accidentalSizeAt(glyph string, typeSize float64) float64 {
 	ink, ok := accidentalInk[glyph]
 	if !ok {
-		return chordAccidentalHeight * chordCapHeight * chordSize
+		return chordAccidentalHeight * chordCapHeight * typeSize
 	}
 	height := ink[0] - ink[1] // the ink, in spaces at natural size
-	return chordAccidentalHeight * chordCapHeight * chordSize / height * 4
+	return chordAccidentalHeight * chordCapHeight * typeSize / height * 4
 }
 
 // accidentalRise is how far above the baseline it is drawn about, so that
 // its ink finishes level with the top of the capital before it.
 func accidentalRise(glyph string) float64 {
-	top := chordCapHeight * chordSize
+	return accidentalRiseAt(glyph, chordSize, 0)
+}
+
+// accidentalRiseAt is the same for type of another size whose own baseline
+// sits `baseline` above the symbol's: the sign's ink finishes level with the
+// top of that type.
+func accidentalRiseAt(glyph string, typeSize, baseline float64) float64 {
+	top := baseline + chordCapHeight*typeSize
 	ink, ok := accidentalInk[glyph]
 	if !ok {
-		return chordSize * 0.28
+		return baseline + typeSize*0.28
 	}
-	return top - ink[0]*accidentalSize(glyph)/4
+	return top - ink[0]*accidentalSizeAt(glyph, typeSize)/4
 }
 
 // accidentalAdvance is how far it moves the pen along: the font's own width
@@ -403,7 +417,12 @@ func accidentalRise(glyph string) float64 {
 // instead, as seven tenths of the type size, the sign stood too far from the
 // letter it belongs to and the quality after it further still.
 func accidentalAdvance(glyph string) float64 {
-	return smufl.Advance(glyph) * accidentalSize(glyph) / 4
+	return glyphAdvance(glyph, accidentalSize(glyph))
+}
+
+// glyphAdvance is how far a glyph set at a size moves the pen along.
+func glyphAdvance(glyph string, size float64) float64 {
+	return smufl.Advance(glyph) * size / 4
 }
 
 // chordPieceGap is the air between one piece of a symbol and the next, as a
@@ -460,16 +479,36 @@ func chordPieces(c *model.ChordSymbol) ([]chordPiece, float64) {
 		if len(out) > 0 {
 			x += chordPieceGap * chordSize
 		}
-		out = append(out, chordPiece{
-			// Raised so that its top is the root's top: set higher, the
-			// smaller type floated above the letter it belongs to and the
-			// eye had three different heights to follow along a line of
-			// chords.
-			text: c.Quality, x: x,
-			dy:   chordCapHeight * (chordSize - chordQualitySize),
-			size: chordQualitySize,
-		})
-		x += chordTextWidth(c.Quality, chordQualitySize)
+		// Raised so that its top is the root's top: set higher, the
+		// smaller type floated above the letter it belongs to and the
+		// eye had three different heights to follow along a line of
+		// chords.
+		baseline := chordCapHeight * (chordSize - chordQualitySize)
+		// The altered notes are signs too. "7b5(b9)" is typed with the
+		// letter b because that is what a keyboard has, and printed with
+		// the letter b it reads as two words; the flat before the 5 and
+		// the 9 is the same sign as the one after the root, set at the
+		// quality's size.
+		for i, part := range qualityParts(c.Quality) {
+			if part.glyph == "" {
+				out = append(out, chordPiece{
+					text: part.text, x: x, dy: baseline, size: chordQualitySize,
+				})
+				x += chordTextWidth(part.text, chordQualitySize)
+				continue
+			}
+			if i > 0 {
+				x += chordPieceGap * chordSize
+			}
+			size := accidentalSizeAt(part.glyph, chordQualitySize)
+			out = append(out, chordPiece{
+				glyph: part.glyph, x: x,
+				dy:   accidentalRiseAt(part.glyph, chordQualitySize, baseline),
+				size: size,
+			})
+			x += glyphAdvance(part.glyph, size)
+			x += chordPieceGap * chordSize
+		}
 	}
 	if c.Bass != "" {
 		bass, bacc := splitRoot(c.Bass)
@@ -511,6 +550,48 @@ func (e *engraver) drawChordSymbol(c *model.ChordSymbol, x, y float64) {
 	if c.Frame != nil {
 		e.drawChordFrame(c.Frame, x, y-chordSize-frameRise)
 	}
+}
+
+// qualityPart is a stretch of a quality: text, or the sign of an altered
+// note.
+type qualityPart struct {
+	text  string
+	glyph string
+}
+
+// qualityParts divides a quality into its text and its signs.
+//
+// A sign is a b, #, ♭ or ♯ written immediately before a number — the ♭5 of
+// "m7b5", the ♯11 of "maj7#11", the ♭9 inside the brackets of "13(b9)".
+// Nothing else is one: the b of "sub" or an "add" has no number after it,
+// and the root's own accidental was taken off before the quality began.
+func qualityParts(q string) []qualityPart {
+	var out []qualityPart
+	var text strings.Builder
+	flush := func() {
+		if text.Len() > 0 {
+			out = append(out, qualityPart{text: text.String()})
+			text.Reset()
+		}
+	}
+	r := []rune(q)
+	for i := 0; i < len(r); i++ {
+		glyph := ""
+		switch r[i] {
+		case 'b', '♭':
+			glyph = "accidentalFlat"
+		case '#', '♯':
+			glyph = "accidentalSharp"
+		}
+		if glyph != "" && i+1 < len(r) && r[i+1] >= '1' && r[i+1] <= '9' {
+			flush()
+			out = append(out, qualityPart{glyph: glyph})
+			continue
+		}
+		text.WriteRune(r[i])
+	}
+	flush()
+	return out
 }
 
 // splitRoot separates a root's letter from its accidental, so the accidental

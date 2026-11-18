@@ -1799,6 +1799,13 @@
       <label class="tempo-parens"><input type="checkbox" id="tempo-parens">
         <span>In parentheses &#x2014; <span class="music">&#xECA5;</span> = 116
           becomes (<span class="music">&#xECA5;</span> = 116)</span></label>
+      <!-- The speed without the mark. Most published scores print only the
+           word — "Slowly", "Allegro" — and the number is the editor's
+           business when it plays the piece. Keeping the speed and leaving
+           the mark off is how the page stays as its author wrote it. -->
+      <label class="tempo-parens"><input type="checkbox" id="tempo-silent">
+        <span>Play at this speed, but print only the text &#x2014; no
+          <span class="music">&#xECA5;</span> = 116 on the page</span></label>
     </fieldset>
     <label for="tempo-text">Optional text expression</label>
     <input type="text" id="tempo-text" autocomplete="off"
@@ -1864,7 +1871,21 @@
       <label id="print-book-row" hidden><input type="radio" name="what" value="book">
         <span><b>Every tune in the file</b><em>Each one starting on its own page.</em></span></label>
       <label id="print-parts-row" hidden><input type="radio" name="what" value="parts">
-        <span><b>Score and parts</b><em>The full score, then each staff alone, for the players.</em></span></label>
+        <span><b>Score and parts</b><em>The full score, then each staff alone, for the players.
+          Untick what you do not need — one part, to send to its player.</em></span></label>
+      <!-- Which of them. Shown only once "Score and parts" is chosen: a list
+           of eleven instruments under a choice nobody has made yet is a
+           dialog twice as tall for everybody who wanted the score alone.
+           The staves are filled in from the score when the dialog opens. -->
+      <div id="print-parts-pick" hidden>
+        <div class="pick-all">
+          <button type="button" id="print-pick-every">All</button>
+          <button type="button" id="print-pick-none">None</button>
+        </div>
+        <label><input type="checkbox" id="print-pick-score" checked>
+          <span><b>Full score</b></span></label>
+        <div id="print-pick-parts"></div>
+      </div>
     </div>
     <!-- Not in the paper section below: this is about the music rather than
          about the sheet, and it is wanted as much when printing, where the

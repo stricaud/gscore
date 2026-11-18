@@ -3671,6 +3671,19 @@ func (e *engraver) accidentalLeadOf(clef model.Clef, notes []*model.Note) float6
 // clear the next note, not to stand apart from it.
 const afterFlag = 0.2
 
+// flagClear is the further air left after a flag when the next notehead
+// stands at the flag's own height.
+//
+// A flag is a curl hanging from the top of the stem, and most of what
+// follows it is nowhere near: the next head is higher than the curl, or well
+// below it, and afterFlag is all the room its tail needs. A head at the
+// height of the tail is the other case — an eighth on the bottom line of
+// the treble staff followed by the note a step above it, whose head sits
+// exactly where the curl comes down — and there the thin end of the flag
+// read as touching the head. Reported as "the first eighth note's flag
+// collides with the second note".
+const flagClear = 0.4
+
 // flagAt names one element of a measure: which line of the staff it is
 // written in, and where it stands in that line.
 type flagAt struct{ voice, order int }
@@ -3698,6 +3711,7 @@ type flagAt struct{ voice, order int }
 func (e *engraver) flagRoom(p *model.Part, m *model.Measure, index int) map[flagAt]float64 {
 	var items []*placed
 	var where []flagAt
+	var ends []model.Duration
 	for vi, voice := range m.Voices {
 		if voice == nil {
 			continue
@@ -3709,6 +3723,7 @@ func (e *engraver) flagRoom(p *model.Part, m *model.Measure, index int) map[flag
 			items = append(items, pl)
 			where = append(where, flagAt{voice: vi, order: i})
 			at = at.Add(el.Duration())
+			ends = append(ends, at)
 		}
 	}
 	if len(items) == 0 {
@@ -3737,10 +3752,47 @@ func (e *engraver) flagRoom(p *model.Part, m *model.Measure, index int) map[flag
 		}
 		// Measured from where drawSingleStem puts the flag, so that the
 		// room reserved and the ink drawn are the same measurement.
-		out[where[i]] = noteheadWidth(it.value) - e.opt.Defaults.StemThickness/2 +
+		room := noteheadWidth(it.value) - e.opt.Defaults.StemThickness/2 +
 			smufl.Advance(g) + afterFlag
+		if e.flagMeetsNextHead(items, ends, i, g) {
+			room += flagClear
+		}
+		out[where[i]] = room
 	}
 	return out
+}
+
+// flagMeetsNextHead says whether the flag of an up-stemmed note comes down
+// to the height of a notehead in the column after it, on any voice.
+//
+// The flag hangs from the stem's tip — a stem's length above the top of
+// the note, or the middle line if that is further — down by as much as the
+// glyph reaches below its origin. A head in the next column whose span
+// overlaps that reach is a head the tail of the flag is drawn beside, and
+// it wants more air than a head the flag passes above. See flagClear.
+func (e *engraver) flagMeetsNextHead(items []*placed, ends []model.Duration, i int, flag string) bool {
+	it := items[i]
+	box, ok := smufl.BBox(flag)
+	if !ok {
+		return false
+	}
+	// In staff steps, half a space each: the tip, and how far down the
+	// curl reaches from it.
+	tip := math.Max(float64(it.hi)+stemLength*2, middleStep)
+	low := tip + box.Bottom*2 // Bottom is below the origin, so negative
+	for j, other := range items {
+		if j == i || other.start.Cmp(ends[i]) != 0 {
+			continue
+		}
+		if other.note == nil && other.chord == nil {
+			continue
+		}
+		// A head is a space tall: a step either side of its centre.
+		if float64(other.hi)+1 >= low && float64(other.lo)-1 <= tip {
+			return true
+		}
+	}
+	return false
 }
 
 // elementWidth is the proportional spacing rule that replaces the fixed

@@ -688,6 +688,7 @@ dialog {
   padding: 20px 24px;
 }
 dialog::backdrop { background: rgba(0,0,0,.4); }
+#sign-side-form > label { display: block; margin: 6px 0; }
 dialog h2 { margin: 0 0 4px; }
 dialog p { margin: 6px 0; }
 dialog button {

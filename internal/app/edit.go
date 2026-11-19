@@ -3054,7 +3054,21 @@ func (a *App) handleJump(w http.ResponseWriter, r *http.Request) {
 		}
 		jump, setJump = j, true
 	}
-	if !setSign && !setJump {
+	// Which end of the bar the sign is written at: "left" is its head,
+	// "right" its end. It can be asked for on its own, which is what a
+	// double click on a sign already on the page does.
+	atEnd, setSide := false, false
+	switch side := q.Get("side"); side {
+	case "":
+	case "left", "head", "start":
+		setSide = true
+	case "right", "end":
+		atEnd, setSide = true, true
+	default:
+		http.Error(w, "the side is left or right, not "+side, http.StatusBadRequest)
+		return
+	}
+	if !setSign && !setJump && !setSide {
 		http.Error(w, "say which sign or direction to write", http.StatusBadRequest)
 		return
 	}
@@ -3072,6 +3086,9 @@ func (a *App) handleJump(w http.ResponseWriter, r *http.Request) {
 		}
 		if setJump {
 			p.Measures[at].Jump = jump
+		}
+		if setSide {
+			p.Measures[at].SignAtEnd = atEnd
 		}
 		changed++
 	}
@@ -3839,6 +3856,7 @@ func (a *App) handleLyrics(w http.ResponseWriter, r *http.Request) {
 	pieces := splitLyrics(q.Get("text"))
 	bars := singableBars(p)
 	sung := flatten(bars)
+	spans := slurSpans(p)
 
 	// The staff starts clear of this verse, so retyping the words replaces
 	// them rather than leaving the tail of a longer version behind.
@@ -3883,13 +3901,19 @@ func (a *App) handleLyrics(w http.ResponseWriter, r *http.Request) {
 		// Only a word moves on. A "_" standing by itself names the slurred
 		// note — it is how a melisma over separate notes is written — and
 		// has to land on it.
+		//
+		// How far the slur reaches was measured over the whole line of
+		// music, and not by looking for its end among the notes that take
+		// words: a slur can end on the far side of a tie, which is not one
+		// of them. Hunting for that end here ran past it, on through two
+		// bars, to the end of some other slur — and the words came back
+		// two bars late with a <2> in them nobody typed.
 		if held && last != nil && pc.Lyric.Text != "" {
-			for depth := last.SlurStart; depth > 0; {
+			for n := spans[last]; n > 0; n-- {
 				settle()
 				if bar >= len(bars) {
 					break
 				}
-				depth -= bars[bar][pos].SlurStop
 				pos++
 			}
 		}
@@ -3933,28 +3957,91 @@ func singableBars(p *model.Part) [][]*model.Marks {
 	out := make([][]*model.Marks, 0, len(p.Measures))
 	for _, m := range p.Measures {
 		var bar []*model.Marks
-		// The first line of music in the bar that has anything to sing on.
-		//
-		// Not the first voice, which is not the same thing: a file can write
-		// a staff's music in its second voice and leave the first empty, and
-		// Bumpty Bump does exactly that from bar 26 on. Asked for the first
-		// voice alone, the words ran out four bars before the music did and
-		// everything typed past that point was quietly dropped — reported as
-		// "it did not continue writing the lyrics and worse, opening the
-		// dialog again I lost what I just wrote", which is what a syllable
-		// with no note to land on looks like.
-		//
-		// Where two voices really do share the staff the first of them still
-		// wins, because it is the first with notes in it.
-		for _, v := range m.Voices {
+		if v := sungVoice(m); v != nil {
 			bar = singableIn(v)
-			if len(bar) > 0 {
-				break
-			}
 		}
 		out = append(out, bar)
 	}
 	return out
+}
+
+// sungVoice is the line of music in a bar that the words go under: the
+// first with anything to sing on, or nil when there is none.
+//
+// Not the first voice, which is not the same thing: a file can write a
+// staff's music in its second voice and leave the first empty, and Bumpty
+// Bump does exactly that from bar 26 on. Asked for the first voice alone,
+// the words ran out four bars before the music did and everything typed
+// past that point was quietly dropped — reported as "it did not continue
+// writing the lyrics and worse, opening the dialog again I lost what I just
+// wrote", which is what a syllable with no note to land on looks like.
+//
+// Where two voices really do share the staff the first of them still wins,
+// because it is the first with notes in it.
+func sungVoice(m *model.Measure) *model.Voice {
+	for _, v := range m.Voices {
+		if len(singableIn(v)) > 0 {
+			return v
+		}
+	}
+	return nil
+}
+
+// slurSpans measures the slur that leaves each note a word can be sung on:
+// how many of the notes that take words lie under it, the one it ends on
+// included. It is what a held syllable is carried over.
+//
+// Measured over everything in the line of music and not over the singable
+// notes alone, because a slur can end on something that is not one of them
+// — the far side of a tie, as in "do;" on an F sharp slurred to an A that
+// is tied over — and only the notes under it are counted. A slur that is
+// never closed measures nothing: better a word on the note after it than
+// every word that follows thrown off the end of the staff.
+func slurSpans(p *model.Part) map[*model.Marks]int {
+	spans := map[*model.Marks]int{}
+	// The slurs still open, oldest first: the note each left and how many
+	// singable notes have passed under it so far.
+	type open struct {
+		from  *model.Marks
+		under int
+	}
+	var opened []open
+	for _, m := range p.Measures {
+		v := sungVoice(m)
+		if v == nil {
+			continue
+		}
+		for _, el := range v.Elements {
+			mk := marksOfElement(el)
+			if mk == nil {
+				continue
+			}
+			sings := false
+			switch el.(type) {
+			case *model.Note, *model.Chord:
+				sings = !(mk.TieStop && !mk.TieStart)
+			}
+			if sings {
+				for i := range opened {
+					opened[i].under++
+				}
+			}
+			// Slurs close innermost first, which is the one opened last.
+			for n := mk.SlurStop; n > 0 && len(opened) > 0; n-- {
+				last := opened[len(opened)-1]
+				opened = opened[:len(opened)-1]
+				if _, done := spans[last.from]; !done {
+					spans[last.from] = last.under
+				}
+			}
+			if sings {
+				for n := mk.SlurStart; n > 0; n-- {
+					opened = append(opened, open{from: mk})
+				}
+			}
+		}
+	}
+	return spans
 }
 
 // singableIn is what a syllable can be written under in one line of music.
@@ -4140,16 +4227,28 @@ func (a *App) handleGetLyrics(w http.ResponseWriter, r *http.Request) {
 	p := a.score.Parts[partIdx]
 
 	bars := singableBars(p)
+	spans := slurSpans(p)
 
-	// The verse in reading order first, with the bar each syllable sings in.
-	// In a list rather than written as it is walked, because writing a
-	// syllable needs the one after it: see the hold below.
+	// The verse in reading order first, with the bar each syllable sings in
+	// and the bar its hold reaches: the one holding the last note under its
+	// slur, which is its own bar when it is not held or not slurred. In a
+	// list rather than written as it is walked, because writing a syllable
+	// needs the one after it: see the hold below.
 	type sungAt struct {
-		bar int
-		ly  model.Lyric
+		bar, reach int
+		ly         model.Lyric
 	}
 	var words []sungAt
 	verses := 0
+	// The bar of every singable note in order, for finding the bar a slur
+	// reaches from how many notes it covers.
+	var barOf []int
+	for bi, bar := range bars {
+		for range bar {
+			barOf = append(barOf, bi)
+		}
+	}
+	at := 0
 	for bi, bar := range bars {
 		for _, mk := range bar {
 			for _, ly := range mk.Lyrics {
@@ -4157,18 +4256,25 @@ func (a *App) handleGetLyrics(w http.ResponseWriter, r *http.Request) {
 					verses = ly.Verse
 				}
 				if ly.Verse == verse {
-					words = append(words, sungAt{bi, ly})
+					reach := bi
+					if n := spans[mk]; ly.Extend && n > 0 && at+n < len(barOf) {
+						reach = barOf[at+n]
+					}
+					words = append(words, sungAt{bi, reach, ly})
 				}
 			}
+			at++
 		}
 	}
 
 	var b strings.Builder
-	// The bar the last syllable went in, so the bars jumped over on the way
+	// The bar the last syllable reached, so the bars jumped over on the way
 	// to this one can be written back as the marker that would jump them.
 	// Without this a verse that starts after an introduction would come back
 	// with nothing to say so, and saving it again would drag the whole verse
-	// to bar 1.
+	// to bar 1. Bars a held syllable was sung across, under its slur, were
+	// not jumped: the hold takes the words over them again by itself, and a
+	// marker for them as well would jump them twice.
 	last := -1
 	for i, w := range words {
 		ly := w.ly
@@ -4178,7 +4284,7 @@ func (a *App) handleGetLyrics(w http.ResponseWriter, r *http.Request) {
 			}
 			fmt.Fprintf(&b, "<%d>", gap)
 		}
-		last = w.bar
+		last = w.reach
 		if ly.Text == "" {
 			b.WriteString(" _")
 			continue

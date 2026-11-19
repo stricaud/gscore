@@ -3129,6 +3129,13 @@ paths:
           schema:
             type: string
             enum: [none, dc, dc-fine, dc-coda, ds, ds-fine, ds-coda]
+        - name: side
+          in: query
+          description: >-
+            Which end of the bar the sign is written at: left is its head,
+            right its end, against the barline. Can be sent on its own to
+            move a sign already there.
+          schema: { type: string, enum: [left, right] }
       responses:
         "200": { $ref: "#/components/responses/Changed" }
         "400": { $ref: "#/components/responses/Error" }

@@ -657,36 +657,30 @@ func (e *engraver) repeatMarkers(parts []*model.Part, columns []float64, start, 
 // direction at the end of the bar, all on one line.
 func (e *engraver) drawMarkRow(m *model.Measure, tempo *model.Tempo,
 	columns []float64, mi, start int, x, row float64) {
+	// The right edge of the bar, where the direction is written and where
+	// a sign goes when it was asked to: just inside the barline.
+	right, hasRight := 0.0, mi-start+1 < len(columns)
+	if hasRight {
+		right = columns[mi-start+1] - 0.4
+	}
 	if m != nil {
 		if text := e.markerText(mi); text != "" {
 			x = e.drawRehearsalMarkAt(text, x, row, mi, false) + afterMark
 		}
-		if g := m.Sign.Glyph(); g != "" {
-			e.lay.Glyphs = append(e.lay.Glyphs, Glyph{
-				Name: g, X: x, Y: row - 1.6, Size: signSize,
-			})
-			w := smufl.Advance(g) * signSize / 4
-			// The sign stands on its baseline and reaches most of its
-			// size above it.
-			e.lay.Signs = append(e.lay.Signs, SignPos{
-				Measure: mi, Kind: "sign", Text: m.Sign.String(),
-				X: x, Y: row - 1.6 - signSize*0.75, Width: w, Height: signSize,
-			})
-			x += w + afterMark
-		}
-		if label := m.Sign.Label(); label != "" {
-			e.lay.Texts = append(e.lay.Texts, Text{
-				S: label, X: x, Y: row - 0.6, Size: jumpTextSize,
-				Anchor: "start", Bold: true, Italic: true,
-			})
-			// Bold italic, which is what it is set in: the tempo that
-			// follows it on this row is placed after it.
-			w := boldItalicWidth(label, jumpTextSize)
-			e.lay.Signs = append(e.lay.Signs, SignPos{
-				Measure: mi, Kind: "sign", Text: label,
-				X: x, Y: row - 0.6 - jumpTextSize*0.8, Width: w, Height: jumpTextSize,
-			})
-			x += w + afterMark
+		switch {
+		case m.Sign == model.NoSign:
+		case m.SignAtEnd && hasRight:
+			// At the end of the bar, ending where the direction begins
+			// when there is one: "To Coda" is read on the way out of the
+			// bar, and some copies set it against the barline for that
+			// reason. Whichever side, it is a choice somebody made.
+			end := right
+			if m.Jump != nil {
+				end -= boldItalicWidth(m.Jump.Label(), jumpTextSize) + afterMark
+			}
+			e.drawSignAt(m, mi, end-e.signWidth(m), row, true)
+		default:
+			x = e.drawSignAt(m, mi, x, row, false) + afterMark
 		}
 	}
 
@@ -703,9 +697,8 @@ func (e *engraver) drawMarkRow(m *model.Measure, tempo *model.Tempo,
 	// where the player reaches it: a D.C. printed at the head of its bar
 	// says to go back before playing the bar it is in.
 	if m != nil && m.Jump != nil {
-		if mi-start+1 < len(columns) {
+		if hasRight {
 			label := m.Jump.Label()
-			right := columns[mi-start+1] - 0.4
 			e.lay.Texts = append(e.lay.Texts, Text{
 				S: label, X: right, Y: row - 0.6,
 				Size: jumpTextSize, Anchor: "end", Bold: true, Italic: true,
@@ -717,6 +710,63 @@ func (e *engraver) drawMarkRow(m *model.Measure, tempo *model.Tempo,
 			})
 		}
 	}
+}
+
+// signWidth is how much of the row a bar's sign takes: the symbol, the
+// words, and the air between them when it has both — "To Coda" is the coda
+// sign and then the words.
+func (e *engraver) signWidth(m *model.Measure) float64 {
+	w := 0.0
+	if g := m.Sign.Glyph(); g != "" {
+		w += smufl.Advance(g) * signSize / 4
+	}
+	if label := m.Sign.Label(); label != "" {
+		if w > 0 {
+			w += afterMark
+		}
+		w += boldItalicWidth(label, jumpTextSize)
+	}
+	return w
+}
+
+// drawSignAt writes a bar's sign from x along the row and returns where it
+// ends. The symbol first, then the words, each with a box the editor can
+// find it by; atEnd is passed on in the box, so that the dialog that moves
+// the sign can say which side it is on now.
+func (e *engraver) drawSignAt(m *model.Measure, mi int, x, row float64, atEnd bool) float64 {
+	if g := m.Sign.Glyph(); g != "" {
+		e.lay.Glyphs = append(e.lay.Glyphs, Glyph{
+			Name: g, X: x, Y: row - 1.6, Size: signSize,
+		})
+		w := smufl.Advance(g) * signSize / 4
+		// The sign stands on its baseline and reaches most of its size
+		// above it.
+		e.lay.Signs = append(e.lay.Signs, SignPos{
+			Measure: mi, Kind: "sign", Text: m.Sign.String(),
+			X: x, Y: row - 1.6 - signSize*0.75, Width: w, Height: signSize,
+			AtEnd: atEnd,
+		})
+		x += w
+		if m.Sign.Label() != "" {
+			x += afterMark
+		}
+	}
+	if label := m.Sign.Label(); label != "" {
+		e.lay.Texts = append(e.lay.Texts, Text{
+			S: label, X: x, Y: row - 0.6, Size: jumpTextSize,
+			Anchor: "start", Bold: true, Italic: true,
+		})
+		// Bold italic, which is what it is set in: the tempo that follows
+		// it on this row is placed after it.
+		w := boldItalicWidth(label, jumpTextSize)
+		e.lay.Signs = append(e.lay.Signs, SignPos{
+			Measure: mi, Kind: "sign", Text: label,
+			X: x, Y: row - 0.6 - jumpTextSize*0.8, Width: w, Height: jumpTextSize,
+			AtEnd: atEnd,
+		})
+		x += w
+	}
+	return x
 }
 
 // drawRehearsalMark writes one boxed letter and returns where it ends.

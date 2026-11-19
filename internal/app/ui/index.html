@@ -1246,6 +1246,28 @@
 </dialog>
 
 <!-- The bar before the first bar. -->
+<!-- Which end of its bar a sign is written at.
+
+     A segno or a coda sign is looked for at the head of its bar. A To Coda
+     is where the music is left, and many a printed copy sets it at the end
+     of the bar, against the barline the player goes out through. Opened by
+     a double click on the sign, which is the gesture everybody tries on a
+     thing they want to change. -->
+<dialog id="sign-side">
+  <h2>Where the sign goes</h2>
+  <p class="small" id="sign-side-what">The sign at this bar.</p>
+  <form method="dialog" id="sign-side-form">
+    <label><input type="radio" name="sign-side" value="left" checked>
+      <span>Left — at the head of the bar</span></label>
+    <label><input type="radio" name="sign-side" value="right">
+      <span>Right — at the end of the bar</span></label>
+    <div class="ask-buttons">
+      <button value="ok" type="submit" class="primary">Move</button>
+      <button value="cancel" type="submit" formnovalidate>Cancel</button>
+    </div>
+  </form>
+</dialog>
+
 <dialog id="pickup">
   <h2>Pickup bar</h2>
   <p class="small">A piece that begins before the first beat. The bar is left

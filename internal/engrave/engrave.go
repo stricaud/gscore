@@ -551,6 +551,9 @@ type SignPos struct {
 	Y      float64 `json:"y"`
 	Width  float64 `json:"width"`
 	Height float64 `json:"height"`
+	// AtEnd is true for a sign written at the end of its bar rather than
+	// its head, so that the dialog that moves it can show where it is.
+	AtEnd bool `json:"atEnd,omitempty"`
 }
 
 // EndingPos is where one volta bracket was drawn: the bars it covers and

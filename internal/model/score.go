@@ -561,6 +561,15 @@ type Measure struct {
 	// places the directions below refer to.
 	Sign Sign
 
+	// SignAtEnd writes the sign at the end of its bar instead of the head.
+	//
+	// A segno and a coda sign mark the bar they stand over, and the head is
+	// where they are looked for. A To Coda is read differently: it is where
+	// the music is left, and many a printed copy sets it at the end of the
+	// bar, against the barline the player leaves through. The side is a
+	// choice and not a rule, so it is written down here and not worked out.
+	SignAtEnd bool
+
 	// SystemBreak starts a new line of music at this bar.
 	//
 	// The engraver fits as many bars to a line as will go, which is right

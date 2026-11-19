@@ -305,6 +305,8 @@ type measureDoc struct {
 	// constants ever changes.
 	Sign string `json:"sign,omitempty"`
 	Jump string `json:"jump,omitempty"`
+	// SignAtEnd sets the sign at the end of its bar rather than its head.
+	SignAtEnd bool `json:"signAtEnd,omitempty"`
 }
 
 type endingDoc struct {
@@ -781,6 +783,7 @@ func encodeScore(s *model.Score) *scoreDoc {
 			md.SystemBreak = m.SystemBreak
 			if m.Sign != model.NoSign {
 				md.Sign = m.Sign.String()
+				md.SignAtEnd = m.SignAtEnd
 			}
 			if m.Jump != nil {
 				md.Jump = m.Jump.Name()
@@ -1202,6 +1205,7 @@ func decodeScore(doc *scoreDoc) (*model.Score, error) {
 			m.SystemBreak = md.SystemBreak
 			if sign, ok := model.SignFromName(md.Sign); ok {
 				m.Sign = sign
+				m.SignAtEnd = md.SignAtEnd
 			}
 			if jump, ok := model.JumpFromName(md.Jump); ok {
 				m.Jump = jump

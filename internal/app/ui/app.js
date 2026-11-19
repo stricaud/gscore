@@ -5458,6 +5458,17 @@ function setupCanvasClicks() {
       window.getSelection()?.removeAllRanges();
       selectChordSymbol(chord);
       await chordSymbolDialog();
+      return;
+    }
+    // A sign — the segno, the coda, Fine, To Coda — opens the dialog that
+    // says which end of its bar it is written at. A direction is always
+    // at the end, so there is nothing to ask about one.
+    const sign = signAt(x, y);
+    if (sign && sign.kind === "sign") {
+      e.preventDefault();
+      window.getSelection()?.removeAllRanges();
+      selectSign(sign);
+      await signSideDialog(sign);
     }
   });
 
@@ -8688,6 +8699,40 @@ async function setJump(what, label) {
   const none = what.sign === "none" || what.jump === "none";
   status(none ? `Cleared at bar ${barNumberOf(sel.measure)}`
               : `${label.split(" \u2014 ")[0]} at bar ${barNumberOf(sel.measure)}`);
+}
+
+// signSideDialog asks which end of its bar a sign is written at, and moves
+// it there. The segno and the coda sign are read at the head of a bar; a To
+// Coda is where the music is left, and is as often set at the end of the
+// bar, against the barline. Either is right somewhere, so it is asked.
+async function signSideDialog(s) {
+  const dlg = $("#sign-side");
+  const names = { segno: "Segno", coda: "Coda", tocoda: "To Coda" };
+  const name = names[s.text] || s.text;
+  $("#sign-side-what").textContent = `${name} at bar ${barNumberOf(s.measure)}.`;
+  const now = s.atEnd ? "right" : "left";
+  $$('#sign-side-form input[name="sign-side"]').forEach(
+    (r) => (r.checked = r.value === now),
+  );
+  const answer = await new Promise((resolve) => {
+    const done = () => {
+      dlg.removeEventListener("close", done);
+      resolve(dlg.returnValue);
+    };
+    dlg.addEventListener("close", done);
+    dlg.showModal();
+  });
+  if (answer !== "ok") return;
+  const side = $('#sign-side-form input[name="sign-side"]:checked')?.value || "left";
+  if (side === now) return;
+  const res = await fetch(`/api/jump?measure=${s.measure}&side=${side}`,
+                          { method: "POST" });
+  if (!res.ok) {
+    status("Could not move it: " + (await res.text()).trim());
+    return;
+  }
+  await refreshScore();
+  status(`${name} at the ${side === "right" ? "end" : "head"} of bar ${barNumberOf(s.measure)}`);
 }
 
 // A slur arcs over a passage and a tie joins neighbours, so both want a range

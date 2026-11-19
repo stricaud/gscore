@@ -20181,13 +20181,17 @@ async function chordAtCursor() {
     status("There is no note to add to");
     return;
   }
-  // Two noteheads cannot share a line: there is one place on the staff for
-  // that note and something is already on it. The server refuses this too,
-  // but saying which note it is here is the difference between knowing what
-  // happened and being told no.
-  if ((el.steps || []).includes(sel.step ?? 0)) {
+  // Two noteheads cannot share a line, unless an accidental tells them
+  // apart: an F beside an F sharp is an altered unison, and the page sets
+  // the two side by side. So a step that is taken is refused here only
+  // when no accidental is picked — the server says no to the same pitch
+  // twice either way, but saying which note it is here, and what would
+  // make it two notes, is the difference between knowing what happened
+  // and being told no.
+  if ((el.steps || []).includes(sel.step ?? 0) && state.tool.accidental === "none") {
     status(`There is already a ${pitchAtCursor()} in that chord — ` +
-           `move the cursor to another line first`);
+           `pick an accidental to put a second one beside it, ` +
+           `or move the cursor to another line`);
     return;
   }
   await addPitch(hit, el, sel.step ?? 0);

@@ -241,6 +241,34 @@ func (sp *speller) measure(p *Part, bar int) {
 			for _, n := range el.Notes {
 				sp.spell(n)
 			}
+			sp.alteredUnisons(el)
+		}
+	}
+}
+
+// alteredUnisons writes both signs of two notes of a chord that stand on
+// one step and differ in pitch: an F and an F sharp written together.
+//
+// Each was spelled on its own above, and the one the key already spells
+// was left bare, as any note is. Beside the other it says nothing: two
+// heads on one line with a single sharp between them do not say which is
+// which. So both are written, whatever the key — the natural on the F, the
+// sharp on the F sharp — which is how every edition sets them.
+func (sp *speller) alteredUnisons(ch *Chord) {
+	for i, a := range ch.Notes {
+		for _, b := range ch.Notes[i+1:] {
+			if a.Pitch.Step != b.Pitch.Step || a.Pitch.Octave != b.Pitch.Octave ||
+				a.Pitch.Alter == b.Pitch.Alter {
+				continue
+			}
+			for _, n := range []*Note{a, b} {
+				if n.Parens {
+					continue
+				}
+				if sign := accidentalFor(n.Pitch.Alter); sign != NoAccidental {
+					n.Accidental = sign
+				}
+			}
 		}
 	}
 }

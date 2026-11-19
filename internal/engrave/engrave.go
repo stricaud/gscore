@@ -3946,13 +3946,22 @@ func chordStepOut(el model.Element) float64 {
 	if !ok || len(ch.Notes) < 2 {
 		return 0
 	}
-	steps := make([]int, len(ch.Notes))
+	type head struct{ step, pitch int }
+	heads := make([]head, len(ch.Notes))
 	for i, n := range ch.Notes {
-		steps[i] = n.Pitch.Octave*7 + int(n.Pitch.Step)
+		heads[i] = head{n.Pitch.Octave*7 + int(n.Pitch.Step), n.Pitch.MIDI()}
 	}
-	sort.Ints(steps)
-	for i := 1; i < len(steps); i++ {
-		if steps[i]-steps[i-1] != 1 {
+	sort.Slice(heads, func(a, b int) bool {
+		if heads[a].step != heads[b].step {
+			return heads[a].step < heads[b].step
+		}
+		return heads[a].pitch < heads[b].pitch
+	})
+	for i := 1; i < len(heads); i++ {
+		// A second, or two notes on one step told apart by their
+		// accidentals, which is set like a second. See displacedHeads.
+		apart := heads[i].step - heads[i-1].step
+		if apart != 1 && !(apart == 0 && heads[i].pitch != heads[i-1].pitch) {
 			continue
 		}
 		v, _, ok := ch.Duration().Written()

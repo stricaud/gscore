@@ -1257,8 +1257,18 @@ func accidentalFiles(notes []*model.Note, steps []int) []int {
 		}
 		return out
 	}
+	// Highest first, so that the top accidental takes the file next to
+	// the chord and the others step out from it. Two on the same step —
+	// the natural and the sharp of an altered unison — cannot share a
+	// file; the higher-pitched note's goes first, because its head is the
+	// one on the right, and the signs then read in the same order as the
+	// heads: natural, sharp, F, F sharp. See displacedHeads.
 	sort.SliceStable(order, func(a, b int) bool {
-		return steps[order[a]] > steps[order[b]]
+		sa, sb := steps[order[a]], steps[order[b]]
+		if sa != sb {
+			return sa > sb
+		}
+		return notes[order[a]].Pitch.MIDI() > notes[order[b]].Pitch.MIDI()
 	})
 
 	type span struct{ top, bottom float64 }
@@ -1436,7 +1446,7 @@ func (e *engraver) headsLeft(p *placed) float64 {
 	for i, n := range p.chord.Notes {
 		steps[i] = e.noteStep(p.clef, n)
 	}
-	for _, sh := range displacedHeads(steps, false) {
+	for _, sh := range displacedHeads(steps, chordPitches(p.chord), false) {
 		if sh {
 			return p.x - e.adv(head)
 		}
@@ -1522,7 +1532,7 @@ func (e *engraver) drawChordHeads(p *placed) {
 	for i, n := range ch.Notes {
 		steps[i] = e.noteStep(p.clef, n)
 	}
-	shifted := displacedHeads(steps, up)
+	shifted := displacedHeads(steps, chordPitches(ch), up)
 
 	// Which side a displaced notehead steps to: across the stem, and the
 	// stem is on the far side of the chord from where it points.
@@ -3871,10 +3881,25 @@ const ornamentHeight = 1.1
 // moved the middle note and the top one both — so the top two ended up in
 // the same column a second apart, which is the one thing the rule exists to
 // prevent. A cluster of a third note has to come back to the first column.
-func displacedHeads(steps []int, up bool) []bool {
+//
+// pitches, where given, tell two heads on the same step apart: an F and an
+// F sharp written in one chord stand on one line and are two notes, and
+// they are set the way a second is — the lower-pitched note on the left,
+// the other across the stem, so that both can be seen and each accidental
+// can stand before its own head. (The 1966 MPA guide draws these on two
+// diagonal stems meeting in one; nobody has for decades, and Gould sets
+// them side by side like this.) Two heads of the same pitch stay one on top
+// of the other, as they always did: that is a unison doubled, not two notes.
+func displacedHeads(steps []int, pitches []int, up bool) []bool {
 	out := make([]bool, len(steps))
 	if len(steps) < 2 {
 		return out
+	}
+	pitchOf := func(i int) int {
+		if pitches == nil {
+			return 0
+		}
+		return pitches[i]
 	}
 	// Read from the stem outwards: up the chord for a stem that points up,
 	// down it for one that points down.
@@ -3883,20 +3908,35 @@ func displacedHeads(steps []int, up bool) []bool {
 		order[i] = i
 	}
 	sort.SliceStable(order, func(a, b int) bool {
+		sa, sb := steps[order[a]], steps[order[b]]
+		pa, pb := pitchOf(order[a]), pitchOf(order[b])
 		if up {
-			return steps[order[a]] < steps[order[b]]
+			return sa < sb || (sa == sb && pa < pb)
 		}
-		return steps[order[a]] > steps[order[b]]
+		return sa > sb || (sa == sb && pa > pb)
 	})
 
 	prev := steps[order[0]]
+	prevPitch := pitchOf(order[0])
 	prevShifted := false
 	for _, i := range order[1:] {
 		// A second from the note before it, and only if that one stayed:
 		// two moved notes in a row would land in the same column again.
-		shift := abs(steps[i]-prev) == 1 && !prevShifted
+		apart := abs(steps[i] - prev)
+		touching := apart == 1 || (apart == 0 && pitchOf(i) != prevPitch)
+		shift := touching && !prevShifted
 		out[i] = shift
-		prev, prevShifted = steps[i], shift
+		prev, prevPitch, prevShifted = steps[i], pitchOf(i), shift
+	}
+	return out
+}
+
+// chordPitches is each note of a chord as a number that orders them by
+// pitch, for telling two heads on one step apart. See displacedHeads.
+func chordPitches(ch *model.Chord) []int {
+	out := make([]int, len(ch.Notes))
+	for i, n := range ch.Notes {
+		out[i] = n.Pitch.MIDI()
 	}
 	return out
 }

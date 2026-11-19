@@ -142,7 +142,7 @@ func (e *engraver) displacedLeft(p *placed) bool {
 	for i, n := range p.chord.Notes {
 		steps[i] = e.noteStep(p.clef, n)
 	}
-	for _, sh := range displacedHeads(steps, false) {
+	for _, sh := range displacedHeads(steps, chordPitches(p.chord), false) {
 		if sh {
 			return true
 		}

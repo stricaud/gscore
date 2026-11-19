@@ -865,10 +865,31 @@ func (a *App) handleAddPitch(w http.ResponseWriter, r *http.Request) {
 	add := &model.Note{Pitch: pitch, Dur: v.Elements[index].Duration(),
 		Accidental: acc, Forced: chosen}
 
+	// A note already on that step. The same pitch twice is refused: a
+	// chord has one place for it. A different pitch on the same step — an
+	// F beside an F sharp — is an altered unison, which the page sets
+	// side by side, and it goes in; the speller then writes both signs,
+	// whatever the key, since two heads on one line with a single sharp
+	// between them do not say which is which.
+	//
+	// Refused by name, with the sign the key gives it: in A major the C on
+	// that line is a C sharp already, so asking for a sharp there is asking
+	// for the same note again, and "the same pitch twice" left somebody
+	// who had picked an accidental wondering which one it wanted.
+	samePitch := func(n *model.Note) bool {
+		return n.Pitch.Step == pitch.Step && n.Pitch.Octave == pitch.Octave &&
+			n.Pitch.Alter == pitch.Alter
+	}
+	refuse := func(n *model.Note) {
+		http.Error(w, fmt.Sprintf("the chord already holds %s — a second note on "+
+			"that line needs a different accidental", n.Pitch.String()),
+			http.StatusBadRequest)
+	}
+
 	switch e := v.Elements[index].(type) {
 	case *model.Note:
-		if e.Pitch.Step == pitch.Step && e.Pitch.Octave == pitch.Octave {
-			http.Error(w, "a chord cannot hold the same pitch twice", http.StatusBadRequest)
+		if samePitch(e) {
+			refuse(e)
 			return
 		}
 		// The marks belong to the sound, not to one of its noteheads, so
@@ -881,8 +902,8 @@ func (a *App) handleAddPitch(w http.ResponseWriter, r *http.Request) {
 		v.Elements[index] = ch
 	case *model.Chord:
 		for _, n := range e.Notes {
-			if n.Pitch.Step == pitch.Step && n.Pitch.Octave == pitch.Octave {
-				http.Error(w, "a chord cannot hold the same pitch twice", http.StatusBadRequest)
+			if samePitch(n) {
+				refuse(n)
 				return
 			}
 		}
@@ -929,7 +950,13 @@ func topNotehead(el model.Element) (model.Pitch, bool) {
 // order the engraver's second-interval rule assumes.
 func sortChord(c *model.Chord) {
 	sort.SliceStable(c.Notes, func(i, j int) bool {
-		return c.Notes[i].Pitch.DiatonicIndex() < c.Notes[j].Pitch.DiatonicIndex()
+		// By step, and on one step by pitch, so that the F of an altered
+		// unison comes before its F sharp.
+		a, b := c.Notes[i].Pitch, c.Notes[j].Pitch
+		if a.DiatonicIndex() != b.DiatonicIndex() {
+			return a.DiatonicIndex() < b.DiatonicIndex()
+		}
+		return a.MIDI() < b.MIDI()
 	})
 }
 

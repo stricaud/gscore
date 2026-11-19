@@ -352,6 +352,13 @@ type pitchDoc struct {
 	Forced     bool   `json:"accidentalForced,omitempty"`
 	Head       string `json:"notehead,omitempty"`
 	Percussion int    `json:"percussion,omitempty"`
+	// A chord is tied notehead by notehead: a tie on one note of it, and
+	// which way that tie was turned, belong to the note and not the chord.
+	// Left out of the file, a chord saved with its top note held came back
+	// with nothing tied, and a tie turned over came back the way it was.
+	TieStart bool   `json:"tieStart,omitempty"`
+	TieStop  bool   `json:"tieStop,omitempty"`
+	TieDir   string `json:"tieDir,omitempty"`
 }
 
 type symbolRef struct {
@@ -830,6 +837,8 @@ func encodeElement(el model.Element) elemDoc {
 				Alter: n.Pitch.Alter, Acc: accNames[n.Accidental],
 				Parens: n.Parens, Forced: n.Forced,
 				Head: headNames[n.Head], Percussion: n.Percussion,
+				TieStart: n.TieStart, TieStop: n.TieStop,
+				TieDir: stemNames[n.TieDir],
 			})
 		}
 		return d
@@ -1276,11 +1285,14 @@ func decodeElement(ed elemDoc) (model.Element, error) {
 	case "chord":
 		c := &model.Chord{Dur: dur}
 		for _, pd := range ed.Notes {
-			c.Notes = append(c.Notes, &model.Note{
+			n := &model.Note{
 				Pitch: decodePitch(pd), Dur: dur, Accidental: accValues[pd.Acc],
 				Parens: pd.Parens, Forced: pd.Forced,
 				Head: headValues[pd.Head], Percussion: pd.Percussion,
-			})
+			}
+			n.TieStart, n.TieStop = pd.TieStart, pd.TieStop
+			n.TieDir = stemValues[pd.TieDir]
+			c.Notes = append(c.Notes, n)
 		}
 		decodeMarks(ed.Marks, &c.Marks)
 		return c, nil

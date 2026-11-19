@@ -99,9 +99,17 @@ func TestASignAskedForAtTheEndSitsAgainstTheBarline(t *testing.T) {
 			t.Errorf("the box of %q says it is at the end when it is at the head", s.Text)
 		}
 	}
-	// The symbol stays in front of the words, with air between them.
+	// At the end the words lead and the symbol follows — "To Coda" and
+	// then the sign, as the printed copies that set it there have it —
+	// with air between them. At the head it is the other way about.
+	if end[0].Text != "To Coda" || end[1].Text != "tocoda" {
+		t.Errorf("at the end the pieces are %q then %q, want the words then the sign", end[0].Text, end[1].Text)
+	}
 	if end[0].X+end[0].Width >= end[1].X {
-		t.Errorf("the coda sign ends at %.2f and the words begin at %.2f", end[0].X+end[0].Width, end[1].X)
+		t.Errorf("the words end at %.2f and the coda sign begins at %.2f", end[0].X+end[0].Width, end[1].X)
+	}
+	if head[0].Text != "tocoda" || head[1].Text != "To Coda" {
+		t.Errorf("at the head the pieces are %q then %q, want the sign then the words", head[0].Text, head[1].Text)
 	}
 }
 

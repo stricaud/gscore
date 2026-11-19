@@ -730,11 +730,17 @@ func (e *engraver) signWidth(m *model.Measure) float64 {
 }
 
 // drawSignAt writes a bar's sign from x along the row and returns where it
-// ends. The symbol first, then the words, each with a box the editor can
-// find it by; atEnd is passed on in the box, so that the dialog that moves
-// the sign can say which side it is on now.
+// ends, each piece with a box the editor can find it by.
+//
+// At the head of a bar the symbol comes first and the words after it. At
+// the end the order turns round — "To Coda" and then the sign — which is
+// how the printed copies that set it there have it: the words lead the eye
+// out of the bar and the sign is what it lands on. atEnd is passed on in
+// the boxes as well, so that the dialog that moves the sign can say which
+// side it is on now.
 func (e *engraver) drawSignAt(m *model.Measure, mi int, x, row float64, atEnd bool) float64 {
-	if g := m.Sign.Glyph(); g != "" {
+	g, label := m.Sign.Glyph(), m.Sign.Label()
+	symbol := func() {
 		e.lay.Glyphs = append(e.lay.Glyphs, Glyph{
 			Name: g, X: x, Y: row - 1.6, Size: signSize,
 		})
@@ -747,11 +753,8 @@ func (e *engraver) drawSignAt(m *model.Measure, mi int, x, row float64, atEnd bo
 			AtEnd: atEnd,
 		})
 		x += w
-		if m.Sign.Label() != "" {
-			x += afterMark
-		}
 	}
-	if label := m.Sign.Label(); label != "" {
+	words := func() {
 		e.lay.Texts = append(e.lay.Texts, Text{
 			S: label, X: x, Y: row - 0.6, Size: jumpTextSize,
 			Anchor: "start", Bold: true, Italic: true,
@@ -765,6 +768,19 @@ func (e *engraver) drawSignAt(m *model.Measure, mi int, x, row float64, atEnd bo
 			AtEnd: atEnd,
 		})
 		x += w
+	}
+	first, second := symbol, words
+	if atEnd {
+		first, second = words, symbol
+	}
+	if g != "" && label != "" {
+		first()
+		x += afterMark
+		second()
+	} else if g != "" {
+		symbol()
+	} else if label != "" {
+		words()
 	}
 	return x
 }

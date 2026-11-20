@@ -125,7 +125,7 @@ func pickFile() (string, error) {
 		script := `Add-Type -AssemblyName System.Windows.Forms;` +
 			`$d = New-Object System.Windows.Forms.OpenFileDialog;` +
 			`$d.InitialDirectory = '` + powershellQuote(ScoresDir()) + `';` +
-			`$d.Filter = 'Scores|*.abc;*.mscz;*.mscx;*.musicxml;*.xml;*.mxl;*.gscore;*.nwctxt;*.nwc;*.mus;*.musx;*.gmn;*.ly;*.dorico;*.tab;*.btab;*.txt;*.gp3;*.gp4;*.gp5|All files|*.*';` +
+			`$d.Filter = 'Scores|*.abc;*.mscz;*.mscx;*.musicxml;*.xml;*.mxl;*.gscore;*.nwctxt;*.nwc;*.mus;*.musx;*.gmn;*.ly;*.dorico;*.tab;*.btab;*.txt;*.gp3;*.gp4;*.gp5;*.png;*.jpg;*.jpeg|All files|*.*';` +
 			`if ($d.ShowDialog() -eq 'OK') { $d.FileName }`
 		out, err := exec.Command("powershell", "-NoProfile", "-Command", script).Output()
 		if err != nil {

@@ -22,6 +22,11 @@
     <div class="menu-items">
       <button data-action="new"><span>New score…</span><kbd>N</kbd></button>
       <button data-action="open"><span>Open score…</span><kbd>O</kbd></button>
+      <!-- Pictures of pages — scans and photographs — read into a score by
+           the page reader, a separate program; see Settings. The addresses
+           are fetched by the machine the editor runs on, which is why the
+           entry goes with the files. -->
+      <button data-action="open-web" data-needs-files><span>Open pages from the web…</span></button>
       <!-- The files opened before, on the machine they are on. Served to a
            browser there is no such machine and the paths would be somebody
            else's, so the whole submenu goes. Its items are built when the
@@ -933,7 +938,7 @@
   <span id="version"></span>
 </div>
 
-<input type="file" id="file-input" accept=".abc,.mscz,.mscx,.musicxml,.xml,.mxl,.gscore,.nwctxt,.nwc,.mus,.musx,.gmn,.pdf" hidden>
+<input type="file" id="file-input" accept=".abc,.mscz,.mscx,.musicxml,.xml,.mxl,.gscore,.nwctxt,.nwc,.mus,.musx,.gmn,.pdf,.png,.jpg,.jpeg" multiple hidden>
 <!-- A soundfont off the disk, for the page: there is no file panel to open,
      so the browser's own picker does it. -->
 <input type="file" id="sf2-input" accept=".sf2,.SF2" hidden>
@@ -1263,6 +1268,22 @@
      saved and the password asked for when it is opened again. A locked
      file carries no PDF in front of it: nothing of the piece is readable
      without the word. -->
+<dialog id="openweb">
+  <h2>Open pages from the web</h2>
+  <p class="small">The addresses of the pictures of the pages, one to a line
+     and in the order they are read. They are fetched and read by the page
+     reader into one score, which takes a while: about a minute a page on a
+     processor.</p>
+  <form method="dialog" id="openweb-form">
+    <textarea id="openweb-urls" rows="5" spellcheck="false"
+      placeholder="https://example.org/sheet-music-1.jpg&#10;https://example.org/sheet-music-2.jpg"></textarea>
+    <div class="ask-buttons">
+      <button value="ok" type="submit" class="primary">Read</button>
+      <button value="cancel" type="submit" formnovalidate>Cancel</button>
+    </div>
+  </form>
+</dialog>
+
 <dialog id="protect">
   <h2>Protect with a password</h2>
   <p class="small" id="protect-what">The score is saved locked under this
@@ -2037,6 +2058,24 @@
        wrong one is heard where it is made rather than three bars later. It uses
        the editor’s own voices and not the soundfont, so that it answers at once;
        turn it off to write in silence.</p>
+    <hr>
+    <h3 class="small">Reading scanned pages</h3>
+    <p class="small">A photographed or scanned page — a PNG or a JPEG — is read
+       by homr, a separate program gscore runs for you. With uv installed it is
+       fetched the first time it is needed. Choose the graphics card when there
+       is an NVIDIA one, or give the command yourself.</p>
+    <div class="ai-grid">
+      <label for="setting-scan">Run it on</label>
+      <select id="setting-scan">
+        <option value="cpu">The processor</option>
+        <option value="cuda">An NVIDIA graphics card</option>
+        <option value="custom">A command of my own</option>
+      </select>
+      <label for="setting-scan-command" id="setting-scan-command-label">Command</label>
+      <input type="text" id="setting-scan-command" autocomplete="off" spellcheck="false"
+        placeholder="uvx --from 'homr[cpu]' homr">
+    </div>
+    <div class="small" id="setting-scan-status"></div>
     <div id="setting-assistant" data-needs-assistant hidden>
       <hr>
       <h3 class="small">Assistant</h3>

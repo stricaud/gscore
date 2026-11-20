@@ -1241,6 +1241,9 @@ async function action(name) {
     case "open":
       await openScore();
       break;
+    case "open-web":
+      await openWebDialog();
+      break;
     case "save-pdf":
       await exportPDF();
       break;
@@ -9836,9 +9839,27 @@ async function settingsDialog() {
   const pdf = $("#setting-score-pdf");
   const hear = $("#setting-entry-sound");
   const langBox = $("#setting-lang");
+  const scan = $("#setting-scan");
+  const scanCmd = $("#setting-scan-command");
   const now = await (await fetch("/api/settings")).json().catch(() => ({}));
   pdf.checked = now.scorePDF !== false;
   if (hear) hear.checked = now.entrySound !== false;
+  if (scan) {
+    // What reads scanned pages, and what was found to do it with.
+    scan.value = now.scanReader || "cpu";
+    scanCmd.value = now.scanCommand || "";
+    const ownCommand = () => {
+      const own = scan.value === "custom";
+      scanCmd.hidden = !own;
+      $("#setting-scan-command-label").hidden = !own;
+    };
+    ownCommand();
+    scan.onchange = ownCommand;
+    const eng = now.scanEngine || {};
+    $("#setting-scan-status").textContent = eng.command
+      ? `${t("Found")}: ${eng.command} (${eng.source})`
+      : eng.error || "";
+  }
   const ai = (state.info || {}).aiAssistant ? await loadAssistantSettings() : null;
 
   if (langBox) {
@@ -9877,6 +9898,12 @@ async function settingsDialog() {
     // keystroke and reading it back off the server each time would be a
     // request per note.
     state.entrySound = hear.checked;
+  }
+  if (scan) {
+    p.set("scanReader", scan.value);
+    // The command is kept while another choice is tried, so only what is
+    // typed under "a command of my own" is sent.
+    if (scan.value === "custom") p.set("scanCommand", scanCmd.value.trim());
   }
   await fetch("/api/settings?" + p.toString(), { method: "POST" });
   if (ai) await saveAssistantSettings();
@@ -16593,6 +16620,82 @@ async function openFile(file) {
   }
 }
 
+/* ---------- pictures of pages ---------- */
+
+// isScanName says a file is a picture of a page rather than a score.
+function isScanName(name) {
+  return /\.(png|jpe?g)$/i.test(name);
+}
+
+// openChosen opens what was picked or dropped: pictures of pages, however
+// many, go to the page reader as one score; anything else opens as a file,
+// the first of them.
+async function openChosen(files) {
+  if (!files.length) return false;
+  if (files.every((f) => isScanName(f.name))) return openScans(files);
+  return openFile(files[0]);
+}
+
+// openScans has pictures of pages read into one score, in the order given:
+// files from this machine, or addresses on the web the server fetches.
+// Reading takes a while, so the mascot works and the status says so.
+async function openScans(files, urls) {
+  const n = files ? files.length : urls.length;
+  const what = n === 1 ? (files ? files[0].name : urls[0]) : `${n} pages`;
+  status(`Reading ${what}…`);
+  busy(`Reading ${what}… a page takes a while`);
+  try {
+    let res;
+    if (files) {
+      const body = new FormData();
+      for (const f of files) body.append("page", f, f.name);
+      res = await fetch("/api/openscan", { method: "POST", body });
+    } else {
+      const p = new URLSearchParams();
+      for (const u of urls) p.append("url", u);
+      res = await fetch("/api/openscan?" + p.toString(), { method: "POST" });
+    }
+    if (!res.ok) {
+      status("Could not read the pages: " + (await res.text()).trim());
+      return false;
+    }
+    // The answer arrives when the reader finishes, behind the spaces that
+    // kept the line open; an error after that point is in the body.
+    const d = await res.json().catch(() => ({ error: "the answer could not be read" }));
+    if (d.error) {
+      status("Could not read the pages: " + d.error);
+      return false;
+    }
+    await reopen();
+    status(d.partial ? `Read ${what} — not all of it: ${d.partial}` : `Read ${what}`);
+    return true;
+  } finally {
+    idle();
+  }
+}
+
+// openWebDialog asks for the addresses of pages on the web, one to a line.
+async function openWebDialog() {
+  const dlg = $("#openweb");
+  const box = $("#openweb-urls");
+  const answer = await new Promise((resolve) => {
+    const done = () => {
+      dlg.removeEventListener("close", done);
+      resolve(dlg.returnValue);
+    };
+    dlg.addEventListener("close", done);
+    dlg.showModal();
+    box.focus();
+  });
+  if (answer !== "ok") return;
+  const urls = box.value.split(/\s+/).map((u) => u.trim()).filter((u) => u);
+  if (!urls.length) {
+    status("No addresses given");
+    return;
+  }
+  if (await openScans(null, urls)) box.value = "";
+}
+
 /* ---------- passwords ---------- */
 
 // askingPassword says a password is being asked for already, so that the
@@ -16743,7 +16846,7 @@ function freeTheFilePanels() {
 function setupFileInput() {
   freeTheFilePanels();
   $("#file-input").addEventListener("change", async (e) => {
-    await openFile(e.target.files[0]);
+    await openChosen([...e.target.files]);
     e.target.value = "";
   });
 
@@ -16764,8 +16867,8 @@ function setupFileInput() {
   window.addEventListener("dragover", (e) => e.preventDefault());
   window.addEventListener("drop", async (e) => {
     e.preventDefault();
-    const file = e.dataTransfer?.files?.[0];
-    if (file) await openFile(file);
+    const files = [...(e.dataTransfer?.files || [])];
+    if (files.length) await openChosen(files);
   });
 }
 
@@ -22630,6 +22733,9 @@ const typeBudget = 256;
 const REMOVE_MARK = '<circle cx="12" cy="12" r="8.5"/><path d="M6 18 18 6"/>';
 
 const MENU_DRAWINGS = {
+  // A globe: pages fetched from the web.
+  "open-web": '<circle cx="12" cy="12" r="8.5"/>' +
+    '<path d="M3.5 12h17M12 3.5c3.2 3 3.2 14 0 17M12 3.5c-3.2 3-3.2 14 0 17"/>',
   // A padlock: the score saved under a password.
   protect: '<rect x="5" y="11" width="14" height="10" rx="2"/>' +
     '<path d="M8 11V8a4 4 0 0 1 8 0v3"/>',

@@ -181,6 +181,12 @@ type settings struct {
 	// soundfont for playback will find the editor's own voices a poor
 	// imitation of it. So it is a checkbox, and it is remembered.
 	NoEntrySound bool `json:"noEntrySound,omitempty"`
+
+	// ScanReader is what the page reader runs on: empty or "cpu" for the
+	// processor, "cuda" for an NVIDIA card, or "custom" for the command in
+	// ScanCommand. See scanengine.go for how the choice is used.
+	ScanReader  string `json:"scanReader,omitempty"`
+	ScanCommand string `json:"scanCommand,omitempty"`
 }
 
 // noteLetters is the order the engraver indexes a palette in, which is
@@ -515,6 +521,21 @@ func (a *App) handleSettings(w http.ResponseWriter, r *http.Request) {
 		if v, ok := r.URL.Query()["entrySound"]; ok && len(v) > 0 {
 			s.NoEntrySound = v[0] == "0"
 		}
+		if v, ok := r.URL.Query()["scanReader"]; ok && len(v) > 0 {
+			switch v[0] {
+			case "cpu", "":
+				s.ScanReader = ""
+			case "cuda", "custom":
+				s.ScanReader = v[0]
+			default:
+				http.Error(w, "the page reader runs on cpu, cuda or a custom command",
+					http.StatusBadRequest)
+				return
+			}
+		}
+		if v, ok := r.URL.Query()["scanCommand"]; ok && len(v) > 0 {
+			s.ScanCommand = strings.TrimSpace(v[0])
+		}
 		if v, ok := r.URL.Query()["uiScale"]; ok && len(v) > 0 {
 			n, err := strconv.ParseFloat(v[0], 64)
 			if err != nil || n < uiScaleMin || n > uiScaleMax {
@@ -609,6 +630,9 @@ func (a *App) handleSettings(w http.ResponseWriter, r *http.Request) {
 		"scorePDF":         SaveScorePDF(),
 		"trackBarlines":    TrackBarlines(),
 		"entrySound":       EntrySound(),
+		"scanReader":       scanReaderChoice(loadSettings()),
+		"scanCommand":      loadSettings().ScanCommand,
+		"scanEngine":       scanEngineReport(),
 		"keys":             loadSettings().Keys,
 		"lang":             loadSettings().Lang,
 		"colourNotes":      loadSettings().ColourNotes,

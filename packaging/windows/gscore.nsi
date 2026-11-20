@@ -147,6 +147,18 @@ Section "Open .gscore files with Gscore" SecAssoc
 	System::Call 'shell32::SHChangeNotify(i 0x08000000, i 0, i 0, i 0)'
 SectionEnd
 
+; The page reader, where the build carries one: makensis -DOMR=<folder>.
+; A private Python and homr, which reads scanned pages; see
+; packaging/homr/build.sh. Its own section, so that somebody who will
+; never scan a page can leave the half gigabyte out.
+!ifdef OMR
+Section "Page reader for scanned music (homr)" SecOMR
+	SetOutPath "$INSTDIR\homr"
+	File /r "${OMR}\*.*"
+	SetOutPath "$INSTDIR"
+SectionEnd
+!endif
+
 Section "Desktop shortcut" SecDesktop
 	CreateShortCut "$DESKTOP\Gscore.lnk" "$INSTDIR\gscore.exe" "" \
 		"$INSTDIR\gscore.ico"
@@ -159,6 +171,10 @@ SectionEnd
 		"Double-clicking a .gscore file opens it in Gscore."
 	!insertmacro MUI_DESCRIPTION_TEXT ${SecDesktop} \
 		"A shortcut on the desktop."
+!ifdef OMR
+	!insertmacro MUI_DESCRIPTION_TEXT ${SecOMR} \
+		"homr, which reads photographed and scanned pages into scores. Nothing else to install."
+!endif
 !insertmacro MUI_FUNCTION_DESCRIPTION_END
 
 Section "Uninstall"
@@ -167,6 +183,8 @@ Section "Uninstall"
 	Delete "$INSTDIR\gscore.ico"
 	Delete "$INSTDIR\uninstall.exe"
 	RMDir /r "$INSTDIR\soundfonts"
+	; The page reader is ours too, where it was installed.
+	RMDir /r "$INSTDIR\homr"
 	; Not /r on the folder itself: anything else in there is somebody's, and
 	; an uninstaller that empties a directory it does not own is how scores
 	; get deleted.

@@ -593,6 +593,7 @@ func (a *App) APIRoutes(mux *http.ServeMux) {
 	// Opening something else. The edits before it belong to a score that is
 	// no longer here, so the history goes with it.
 	mux.HandleFunc("/api/new", a.handleNew)
+	mux.HandleFunc("/api/openscan", a.handleOpenScan)
 	mux.HandleFunc("/api/open", a.handleOpen)
 	mux.HandleFunc("/api/openpath", a.handleOpenPath)
 	mux.HandleFunc("/api/password", a.handlePassword)

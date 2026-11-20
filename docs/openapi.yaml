@@ -946,6 +946,53 @@ paths:
                     description: What in such a copy could not be read.
         "400": { $ref: "#/components/responses/Error" }
 
+  /api/openscan:
+    post:
+      tags: [files]
+      summary: Read pictures of pages as one score
+      description: |
+        Scanned or photographed pages, PNG or JPEG, read by the page reader
+        into one score in the order given: either the request's multipart
+        parts named `page`, or web addresses in `url=`, which are fetched
+        only by a server running on the machine the editor is used on.
+
+        The reader takes a while. The reply is opened at once and kept open
+        with spaces until the reader finishes, then carries the answer: an
+        object with `status: ok`, `pages` and `filename`, or with `error`
+        when the pages could not be read. Without a page reader, or with
+        pages that are not pictures, the request is refused outright. The
+        reader is chosen by `GSCORE_HOMR`, the settings, a copy beside the
+        binary, uv, or the PATH, in that order.
+      parameters:
+        - name: url
+          in: query
+          schema: { type: array, items: { type: string } }
+          style: form
+          explode: true
+      requestBody:
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                page: { type: array, items: { type: string, format: binary } }
+      responses:
+        "200":
+          description: The reader's answer, once it has finished.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string }
+                  filename: { type: string }
+                  pages: { type: integer }
+                  engine: { type: string }
+                  partial: { type: string }
+                  error: { type: string }
+        "400": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+
   /api/abc:
     post:
       tags: [write]
@@ -4798,6 +4845,15 @@ paths:
         - { name: scorePDF, in: query, schema: { type: string, enum: ["0", "1"] } }
         - { name: trackBarlines, in: query, schema: { type: string, enum: ["0", "1"] } }
         - { name: lang, in: query, schema: { type: string } }
+        - name: scanReader
+          in: query
+          schema: { type: string, enum: [cpu, cuda, custom] }
+          description: |
+            What the page reader (homr, which reads scanned and photographed
+            pages) runs on: the processor, an NVIDIA card, or the command in
+            `scanCommand`. The GET reports `scanReader`, `scanCommand` and
+            `scanEngine`, the command found and where, or its `error`.
+        - { name: scanCommand, in: query, schema: { type: string } }
         - name: uiScale
           in: query
           description: >-

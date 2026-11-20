@@ -71,7 +71,8 @@ notehead is a named glyph at a position good to six decimal places, so its
 pitch is how far it sits above the bottom staff line. That is subtraction,
 not recognition — on a file from LilyPond or MuseScore the notes that come
 out are the notes that went in. A PDF that was *scanned* is a photograph and
-cannot be read this way; it says so rather than guessing.
+cannot be read this way; it says so rather than guessing. A photograph is
+read another way, below.
 
 What is read: notes with their lengths, accidentals and dots, clefs, key and
 time signatures, rests, barlines. What is not, and has to be put back by
@@ -119,6 +120,29 @@ go run . samples/altes-10e-solo.abc          # opens the editor
 go run . -o out.pdf samples/the-entertainer.mxl
 sh web/build.sh                   # the site, including these documents
 ```
+
+### Reading a photographed or scanned page
+
+A PNG or a JPEG of a page — a scan, a phone photograph, a picture on a
+website — holds ink and no notes, and turning the one into the other is
+optical music recognition. gscore does not do it itself; it runs
+[homr](https://github.com/liebharc/homr), which does, as a separate program,
+and opens the MusicXML it writes. File ▸ Open takes pictures, several at
+once for several pages, and *Open pages from the web* takes their addresses,
+one to a line; the pages are read in order into one score. Expect a correct
+skeleton to correct rather than a finished engraving: homr reads notes,
+rests, voices, keys and meters well, and leaves lyrics, chord symbols and
+some marks to be put back.
+
+Where homr comes from, in the order gscore looks: `GSCORE_HOMR`, a command
+line such as `uvx --from 'homr[cuda]' homr`; the command typed in Settings;
+a copy shipped beside the binary, which the `-omr` downloads carry so that
+there is nothing else to install; [uv](https://docs.astral.sh/uv/), which
+fetches homr the first time it is needed, for the processor or for an NVIDIA
+card as Settings says; and `homr` on the PATH. The `-omr` packages are built
+by `packaging/homr/build.sh` and the Makefile's `OMR_SIDECAR`. homr is
+AGPL-3.0, unmodified, with its licence and source beside it in those
+packages.
 
 ## What changed, and why
 

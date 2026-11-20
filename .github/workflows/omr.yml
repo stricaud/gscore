@@ -1,0 +1,307 @@
+# Build the packages that carry the page reader, beside the ones the Release
+# workflow builds without it.
+#
+# The page reader is homr, which reads photographed and scanned pages of
+# music into scores. It is a Python program with a gigabyte of models and
+# runtime behind it, so gscore runs it as a separate process and the
+# ordinary packages leave it out: anybody with uv installed gets it fetched
+# on first use, and anybody else sets GSCORE_HOMR. These packages are for
+# everybody else again — the person who wants to open a scan and install
+# nothing — and carry a private Python, homr and its models beside the
+# binary, where internal/app/scanengine.go looks. packaging/homr/build.sh
+# builds that folder; the Makefile's OMR_SIDECAR puts it in the packages
+# and names them -omr:
+#
+#   macOS     Gscore-<v>-omr.dmg                   Apple Silicon reader
+#   Windows   gscore-<v>-windows-omr-setup.exe     the reader is a section
+#             gscore-<v>-windows-omr.zip
+#   Linux     gscore-<v>-linux-amd64-omr.tar.gz
+#
+# The reader is built on the platform it is for, since its packages are
+# compiled, which is why Windows has a job of its own on a Windows runner
+# while the installer is still put together on Linux as the Release
+# workflow does it. On a tag the packages are added to the release the
+# Release workflow publishes; dispatched by hand they are built and kept
+# as artifacts.
+#
+# homr is AGPL-3.0, unmodified and run as a separate process. Each package
+# carries its licence and its source archive in the reader's folder.
+
+name: OMR packages
+
+on:
+  push:
+    tags: ["v[0-9]*", "[0-9]*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: omr-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  # The homr to ship. packaging/homr/build.sh reads it; raise it here and
+  # in the script's default together.
+  HOMR_VERSION: "0.7.1"
+
+jobs:
+  # ── the version, as the Release workflow reads it ─────────────────────
+  check:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: The tag and the VERSION file have to agree
+        id: version
+        run: |
+          set -eu
+          version=$(tr -d ' \t\n\r' < VERSION)
+          test -n "$version" || { echo "the VERSION file is empty" >&2; exit 1; }
+          if [ "${GITHUB_REF_TYPE:-}" = tag ] && [ "${GITHUB_REF_NAME#v}" != "$version" ]; then
+            echo "tag $GITHUB_REF_NAME is not version $version" >&2
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+  # ── macOS: the disk image, with the reader for Apple Silicon ──────────
+  macos:
+    needs: check
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: astral-sh/setup-uv@v6
+      - uses: actions/cache@v4
+        with:
+          path: build/soundfonts
+          key: soundfonts-generaluser-gs-v1
+
+      - name: Build the page reader
+        # For the architecture of this runner, which is Apple Silicon. The
+        # binary in the image is still universal; an Intel Mac finds no
+        # reader beside it and falls back to uv or GSCORE_HOMR.
+        run: packaging/homr/build.sh build/homr-sidecar cpu
+
+      - name: Build the disk image around it
+        run: make dmg OMR_SIDECAR=build/homr-sidecar
+
+      - name: Check what was built
+        run: |
+          set -eu
+          v='${{ needs.check.outputs.version }}'
+          dmg="build/Gscore-$v-omr.dmg"
+          test -s "$dmg" || { echo "missing: $dmg" >&2; exit 1; }
+          hdiutil attach -quiet -nobrowse -readonly -mountpoint /tmp/dmg "$dmg"
+          app=/tmp/dmg/Gscore.app
+          test -x "$app/Contents/MacOS/gscore"
+          ls "$app/Contents/Resources/soundfonts/"*.sf2 >/dev/null
+          reader="$app/Contents/Resources/homr-arm64"
+          test -x "$reader/bin/homr"
+          test -f "$reader/LICENSE-homr.txt"
+          ls "$reader"/homr-*.tar.gz >/dev/null
+          # It runs from the image, and has its models: --init with
+          # nothing left to fetch says so and stops.
+          "$reader/bin/homr" --init --no-title 2>&1 | tail -1 | grep -q "Init finished"
+          hdiutil detach -quiet /tmp/dmg
+          echo "$dmg: $(du -h "$dmg" | cut -f1)"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-omr
+          path: build/*-omr.dmg
+          if-no-files-found: error
+
+  # ── Linux: the tarball, with the reader beside the binary ─────────────
+  linux:
+    needs: check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: astral-sh/setup-uv@v6
+      - uses: actions/cache@v4
+        with:
+          path: build/soundfonts
+          key: soundfonts-generaluser-gs-v1
+
+      - name: Build the page reader
+        run: packaging/homr/build.sh build/homr-sidecar cpu
+
+      - name: Build the tarball around it
+        run: make linux OMR_SIDECAR=build/homr-sidecar
+
+      - name: Check what was built
+        run: |
+          set -eu
+          v='${{ needs.check.outputs.version }}'
+          tgz="build/gscore-$v-linux-amd64-omr.tar.gz"
+          test -s "$tgz" || { echo "missing: $tgz" >&2; exit 1; }
+          mkdir -p /tmp/tgz && tar -xzf "$tgz" -C /tmp/tgz
+          dir=/tmp/tgz/gscore-$v-linux-amd64-omr
+          test -x "$dir/gscore"
+          test -x "$dir/homr/bin/homr"
+          test -f "$dir/homr/LICENSE-homr.txt"
+          "$dir/homr/bin/homr" --init --no-title 2>&1 | tail -1 | grep -q "Init finished"
+          got=$("$dir/gscore" --version)
+          [ "$got" = "gscore $v" ] || { echo "it says '$got'" >&2; exit 1; }
+          echo "$tgz: $(du -h "$tgz" | cut -f1)"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-omr
+          path: build/*-omr.tar.gz
+          if-no-files-found: error
+
+  # ── Windows: the reader, built where it runs ──────────────────────────
+  windows-reader:
+    needs: check
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+
+      - name: Build the page reader
+        shell: bash
+        run: packaging/homr/build.sh build/homr-sidecar cpu
+
+      - name: Check it runs
+        shell: pwsh
+        run: |
+          $out = & build\homr-sidecar\homr.cmd --init --no-title 2>&1 | Out-String
+          if ($out -notmatch "Init finished") { Write-Error "the reader did not start:`n$out"; exit 1 }
+          Get-ChildItem build\homr-sidecar | Select-Object Name
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-reader
+          path: build/homr-sidecar
+          retention-days: 1
+          if-no-files-found: error
+
+  # ── Windows: the installer and the zip, put together as always ────────
+  windows:
+    needs: [check, windows-reader]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Install the cross-compiler and NSIS
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends mingw-w64 nsis p7zip-full
+      - uses: actions/cache@v4
+        with:
+          path: build/soundfonts
+          key: soundfonts-generaluser-gs-v1
+      - uses: actions/download-artifact@v4
+        with:
+          name: windows-reader
+          path: build/homr-sidecar
+
+      - name: Build the installer and the zip around it
+        run: make windows OMR_SIDECAR=build/homr-sidecar
+
+      - name: Check what was built
+        run: |
+          set -eu
+          v='${{ needs.check.outputs.version }}'
+          setup="build/gscore-$v-windows-omr-setup.exe"
+          zip="build/gscore-$v-windows-omr.zip"
+          for f in "$setup" "$zip"; do
+            test -s "$f" || { echo "missing: $f" >&2; exit 1; }
+          done
+          unzip -l "$zip" > /tmp/zip.list
+          for want in windows/gscore.exe windows/homr/homr.cmd windows/homr/python/python.exe windows/homr/LICENSE-homr.txt; do
+            grep -q -- "$want" /tmp/zip.list || { echo "the zip has no $want" >&2; exit 1; }
+          done
+          7z l "$setup" > /tmp/setup.list
+          for want in gscore.exe homr.cmd python.exe .sf2; do
+            grep -q -- "$want" /tmp/setup.list || { echo "the installer has no $want" >&2; exit 1; }
+          done
+          echo "$setup: $(du -h "$setup" | cut -f1); $zip: $(du -h "$zip" | cut -f1)"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-omr
+          path: |
+            build/*-windows-omr-setup.exe
+            build/*-windows-omr.zip
+          if-no-files-found: error
+
+  # ── add them to the release, for a tag only ───────────────────────────
+  publish:
+    needs: [check, macos, linux, windows]
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+          pattern: "*-omr"
+
+      - name: Wait for the release
+        # The Release workflow makes it, from the same tag, when its own
+        # packages are built; these take longer, but not always.
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -eu
+          for i in $(seq 1 90); do
+            if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+              exit 0
+            fi
+            echo "no release $GITHUB_REF_NAME yet; waiting ($i)"
+            sleep 60
+          done
+          echo "the Release workflow published nothing for $GITHUB_REF_NAME" >&2
+          exit 1
+
+      - name: Add the packages, their checksums and a note
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          VERSION: ${{ needs.check.outputs.version }}
+        run: |
+          set -eu
+          ls -lh dist
+          gh release upload "$GITHUB_REF_NAME" dist/* --clobber
+
+          # The checksums go on the end of the release's own list, these
+          # names taken out first so that a re-run does not list them twice.
+          gh release download "$GITHUB_REF_NAME" -p SHA256SUMS -O /tmp/SHA256SUMS || : > /tmp/SHA256SUMS
+          grep -v -- '-omr' /tmp/SHA256SUMS > /tmp/sums || true
+          (cd dist && sha256sum \
+            "Gscore-$VERSION-omr.dmg" \
+            "gscore-$VERSION-windows-omr-setup.exe" \
+            "gscore-$VERSION-windows-omr.zip" \
+            "gscore-$VERSION-linux-amd64-omr.tar.gz") >> /tmp/sums
+          cp /tmp/sums dist/SHA256SUMS
+          gh release upload "$GITHUB_REF_NAME" dist/SHA256SUMS --clobber
+
+          gh release view "$GITHUB_REF_NAME" --json body -q .body > /tmp/notes.md
+          if ! grep -q '^## Reading scanned pages' /tmp/notes.md; then
+            {
+              echo
+              echo "## Reading scanned pages"
+              echo
+              echo "The \`-omr\` downloads carry [homr](https://github.com/liebharc/homr), which reads photographed and scanned pages (PNG, JPEG) into scores — File ▸ Open, or Open pages from the web. Nothing else to install; they are about half a gigabyte larger. The macOS reader is for Apple Silicon. The other downloads read scans too, through [uv](https://docs.astral.sh/uv/) when it is installed, or a command of your own in Settings. homr is AGPL-3.0; its licence and source are in the \`homr\` folder of each package."
+            } >> /tmp/notes.md
+            gh release edit "$GITHUB_REF_NAME" --notes-file /tmp/notes.md
+          fi
+          gh release view "$GITHUB_REF_NAME"

@@ -47,6 +47,9 @@ function load() {
     window: win,
     freeTheFilePanels() {},
     async openFile(file) { opened.push(file); return true; },
+    // What was dropped goes through the chooser, which sends pictures of
+    // pages to the reader and anything else to openFile.
+    async openChosen(files) { opened.push(...files); return true; },
   };
   const body = grab("setupFileInput") + "\nreturn { setupFileInput };";
   const api = new Function(...Object.keys(scope), body)(...Object.values(scope));

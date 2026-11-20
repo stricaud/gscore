@@ -44,6 +44,21 @@ BINARY  := gscore
 # --version all come from the line below, so they cannot disagree.
 VERSION := $(shell cat VERSION)
 BUILD   := build
+
+# OMR_SIDECAR names a folder built by packaging/homr/build.sh: homr, the
+# program that reads photographed and scanned pages, with a Python of its
+# own. Given, the dmg, windows and linux packages carry it beside the
+# binary, where internal/app/scanengine.go looks, and are named -omr so
+# that the packages without it keep their names. The omr workflow builds
+# both kinds.
+#
+#   packaging/homr/build.sh build/homr-sidecar
+#   make dmg OMR_SIDECAR=build/homr-sidecar
+OMR_SIDECAR ?=
+PKG_SUFFIX  := $(if $(OMR_SIDECAR),-omr,)
+# The folder is named by the architecture it was built for, since a
+# universal binary runs on two and a Python on one.
+OMR_ARCH    := $(shell uname -m | sed 's/x86_64/amd64/')
 LDFLAGS := -s -w -X github.com/stricaud/gscore/internal/version.Version=$(VERSION)
 
 # Windows insists on four numbers for a file version. A pre-release suffix
@@ -122,7 +137,7 @@ vet:
 # the menu bar this is Gscore, and in a terminal it is still gscore.
 APP_NAME := Gscore
 APP      := $(BUILD)/$(APP_NAME).app
-DMG      := $(BUILD)/$(APP_NAME)-$(VERSION).dmg
+DMG      := $(BUILD)/$(APP_NAME)-$(VERSION)$(PKG_SUFFIX).dmg
 MAC_ARCH := arm64 amd64
 MAC_MIN  := 13.0
 MAC_SRC  := $(wildcard ui/macosx/Sources/*.swift)
@@ -225,6 +240,13 @@ app: $(BUILD)/gscore.icns soundfonts
 	@# a syntax error nobody can trace back to a plist.
 	@sed -e 's/@VERSION@/$(VERSION)/g' -e 's/@MIN@/$(MAC_MIN)/g' \
 		ui/macosx/Info.plist.in > $(APP)/Contents/Info.plist
+	@# The page reader, where this build carries one: in Resources beside
+	@# the instruments, named by its architecture. See OMR_SIDECAR above.
+	@if [ -n "$(OMR_SIDECAR)" ]; then \
+		echo "  carrying the page reader from $(OMR_SIDECAR) as homr-$(OMR_ARCH)"; \
+		rm -rf "$(APP)/Contents/Resources/homr-$(OMR_ARCH)"; \
+		cp -R "$(OMR_SIDECAR)" "$(APP)/Contents/Resources/homr-$(OMR_ARCH)"; \
+	fi
 	@# Unsigned, the Finder will not open a downloaded bundle. An ad-hoc
 	@# signature is enough for a build you run yourself, and is what makes
 	@# the file associations register at all.
@@ -265,8 +287,8 @@ dmg: app
 WIN_DIR   := $(BUILD)/windows
 WIN_CC    := x86_64-w64-mingw32-gcc
 WIN_RES   := x86_64-w64-mingw32-windres
-WIN_ZIP   := $(BUILD)/$(BINARY)-$(VERSION)-windows.zip
-WIN_SETUP := $(BUILD)/$(BINARY)-$(VERSION)-windows-setup.exe
+WIN_ZIP   := $(BUILD)/$(BINARY)-$(VERSION)-windows$(PKG_SUFFIX).zip
+WIN_SETUP := $(BUILD)/$(BINARY)-$(VERSION)-windows$(PKG_SUFFIX)-setup.exe
 # Go links a .syso sitting in the main package's own directory into a Windows
 # build without being asked, and there is no flag to point it somewhere else.
 # So the icon and the version block are compiled to the repository root and
@@ -306,6 +328,13 @@ windows: soundfonts
 		cp "$$(make --no-print-directory print-$${name}_SF2)" $(WIN_DIR)/soundfonts/; \
 	done
 	@cp LICENSE $(WIN_DIR)/LICENSE.txt
+	@# The page reader, where this build carries one, as a folder beside
+	@# the executable; and never a stale one from the build before.
+	@rm -rf $(WIN_DIR)/homr
+	@if [ -n "$(OMR_SIDECAR)" ]; then \
+		echo "  carrying the page reader from $(OMR_SIDECAR)"; \
+		cp -R "$(OMR_SIDECAR)" $(WIN_DIR)/homr; \
+	fi
 	@rm -f $(WIN_ZIP)
 	@cd $(BUILD) && zip -qr $(notdir $(WIN_ZIP)) windows
 	@# And the same folder as a real installation: Program Files, the Start
@@ -315,6 +344,7 @@ windows: soundfonts
 	@makensis -V2 -DVERSION=$(VERSION) -DVERSION_DOTS=$(VERSION_DOTS) \
 		-DSRCDIR=$(CURDIR)/$(WIN_DIR) -DICON=$(CURDIR)/$(ICON_ICO) \
 		-DOUTFILE=$(CURDIR)/$(WIN_SETUP) \
+		$(if $(OMR_SIDECAR),-DOMR=$(CURDIR)/$(WIN_DIR)/homr) \
 		packaging/windows/gscore.nsi
 	@test -f $(WIN_SETUP)
 	@echo "built $(WIN_SETUP) ($$(du -h $(WIN_SETUP) | cut -f1))"
@@ -331,7 +361,7 @@ windows: soundfonts
 # WebKitGTK. The cost is that the interface opens in the default browser
 # rather than in a window of its own; a distribution that wants the window
 # builds the .deb on a machine with libwebkit2gtk-4.0-dev.
-LINUX_NAME := $(BINARY)-$(VERSION)-linux-amd64
+LINUX_NAME := $(BINARY)-$(VERSION)-linux-amd64$(PKG_SUFFIX)
 LINUX_DIR  := $(BUILD)/$(LINUX_NAME)
 TARBALL    := $(BUILD)/$(LINUX_NAME).tar.gz
 
@@ -348,6 +378,10 @@ linux: soundfonts
 	@cp packaging/linux/install.sh $(LINUX_DIR)/
 	@cp packaging/debian/gscore.desktop $(LINUX_DIR)/
 	@cp assets/icon/gscore.png $(LINUX_DIR)/
+	@if [ -n "$(OMR_SIDECAR)" ]; then \
+		echo "  carrying the page reader from $(OMR_SIDECAR)"; \
+		cp -R "$(OMR_SIDECAR)" $(LINUX_DIR)/homr; \
+	fi
 	@chmod 755 $(LINUX_DIR)/$(BINARY) $(LINUX_DIR)/install.sh
 	@# COPYFILE_DISABLE, or bsdtar on a Mac puts a ._ file beside every
 	@# entry and the archive arrives full of rubbish.

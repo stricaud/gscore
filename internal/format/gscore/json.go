@@ -472,6 +472,9 @@ type textDoc struct {
 	OffsetY   float64 `json:"offsetY,omitempty"`
 	Italic    bool    `json:"italic,omitempty"`
 	Bold      bool    `json:"bold,omitempty"`
+	// Align is where along the bar the words are set: left, centre or
+	// right, or nothing for beside the note. See model.TextAlign.
+	Align string `json:"align,omitempty"`
 	// Runs is how the words are set, where somebody has set them in
 	// anything. The words themselves stay in Text.
 	Runs []spanDoc `json:"runs,omitempty"`
@@ -484,6 +487,10 @@ type hairpinDoc struct {
 	// Alone says the wedge begins and ends on this element, which is not
 	// the same as carrying both ends: see model.Hairpin.
 	Alone bool `json:"alone,omitempty"`
+	// Words writes it as "cresc." or "dim." with a broken line, and
+	// Dashes how long that line is: see model.Hairpin.
+	Words  bool `json:"words,omitempty"`
+	Dashes int  `json:"dashes,omitempty"`
 }
 
 type octaveDoc struct {
@@ -935,7 +942,8 @@ func encodeMarks(m *model.Marks) *marksDoc {
 		out.Hairpin = &hairpinDoc{
 			Kind:  m.Hairpin.Kind.String(),
 			Start: m.Hairpin.Start, Stop: m.Hairpin.Stop,
-			Alone: m.Hairpin.Alone,
+			Alone: m.Hairpin.Alone, Words: m.Hairpin.Words,
+			Dashes: m.Hairpin.Dashes,
 		}
 	}
 	if m.Octave != nil {
@@ -999,7 +1007,8 @@ func encodeMarks(m *model.Marks) *marksDoc {
 			Placement: placementNames[t.Placement],
 			OffsetX:   t.OffsetX, OffsetY: t.OffsetY,
 			Italic: t.Italic, Bold: t.Bold,
-			Runs: spansToDoc(t.Runs),
+			Align: t.Align.String(),
+			Runs:  spansToDoc(t.Runs),
 		})
 	}
 	return out
@@ -1401,6 +1410,7 @@ func decodeMarks(md *marksDoc, m *model.Marks) {
 		}
 		m.Hairpin = &model.Hairpin{
 			Kind: kind, Start: h.Start, Stop: h.Stop, Alone: h.Alone,
+			Words: h.Words, Dashes: h.Dashes,
 		}
 	}
 	// The end of an octave line carries no amount, only its stop: read
@@ -1458,12 +1468,14 @@ func decodeMarks(md *marksDoc, m *model.Marks) {
 		// refused: a score from a later gscore should open with its
 		// words on the page, set simply, rather than not open.
 		style, _ := model.TextStyleFromName(t.Style)
+		align, _ := model.TextAlignFromName(t.Align)
 		m.Texts = append(m.Texts, model.TextMark{
 			Text: t.Text, Style: style,
 			Placement: placementValues[t.Placement],
 			OffsetX:   t.OffsetX, OffsetY: t.OffsetY,
 			Italic: t.Italic, Bold: t.Bold,
-			Runs: spansFromDoc(t.Runs),
+			Align: align,
+			Runs:  spansFromDoc(t.Runs),
 		})
 	}
 	for _, ly := range md.Lyrics {

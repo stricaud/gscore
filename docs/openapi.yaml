@@ -2041,7 +2041,24 @@ paths:
         - $ref: "#/components/parameters/sel"
         - name: hairpin
           in: query
-          schema: { type: string, enum: [none, cresc, crescendo, dim, diminuendo, decrescendo] }
+          schema:
+            type: string
+            enum: [none, cresc, crescendo, dim, diminuendo, decrescendo, cresc., dim.]
+          description: >-
+            "cresc." and "dim." write the marking as the word with a broken
+            line after it instead of a wedge; it is played the same way.
+        - name: words
+          in: query
+          description: 1 writes a crescendo or diminuendo as the word.
+          schema: { type: string, enum: ["1"] }
+        - name: dashes
+          in: query
+          description: >-
+            The broken line after the word: end runs it to where the
+            hairpin stops, none leaves the word alone, and a number is that
+            many dashes. On its own, with no hairpin, it changes the one
+            already written at the selection.
+          schema: { type: string }
       responses:
         "200": { $ref: "#/components/responses/Changed" }
         "400": { $ref: "#/components/responses/Error" }

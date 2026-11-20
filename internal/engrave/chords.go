@@ -444,6 +444,79 @@ type chordPiece struct {
 	size  float64
 }
 
+// chordRunGap is the air between two chords written in one symbol, in
+// staff spaces: wide enough to read as two names and not as one long one.
+const chordRunGap = 1.4
+
+// chordRun is the chords a symbol holds when it holds more than one, each
+// as a symbol of its own, or nil when it is the one chord it looks like.
+//
+// A bar of rests gives nowhere to hang a second chord, so somebody writes
+// the bar's chords into one symbol with spaces between — "G#7#5(b9)
+// G#7b5(b9) C#7" over a whole-bar rest — and the lot was set as the quality
+// of the first: one big G and then a line of small type, with the other two
+// roots lost in it. Reported as "with gscore this is confusing". A quality
+// is one word, so a space followed by a chord letter is where the next
+// chord starts.
+func chordRun(c *model.ChordSymbol) []*model.ChordSymbol {
+	if c.Text != "" || c.Frame != nil {
+		return nil
+	}
+	whole := c.Root + c.Quality
+	if c.Bass != "" {
+		whole += "/" + c.Bass
+	}
+	fields := strings.Fields(whole)
+	if len(fields) < 2 {
+		return nil
+	}
+	out := make([]*model.ChordSymbol, 0, len(fields))
+	for _, f := range fields {
+		root, quality, bass := splitChordName(f)
+		if root == "" {
+			// Not a chord: a word of the quality before it, "7 alt".
+			if len(out) == 0 {
+				return nil
+			}
+			last := out[len(out)-1]
+			if last.Bass != "" {
+				last.Bass += " " + f
+			} else {
+				last.Quality += " " + f
+			}
+			continue
+		}
+		out = append(out, &model.ChordSymbol{Root: root, Quality: quality, Bass: bass})
+	}
+	if len(out) < 2 {
+		return nil
+	}
+	return out
+}
+
+// splitChordName reads one chord as it is typed: the root with its sign,
+// the quality, and the bass after a slash. The root is empty where the
+// name does not start with a chord letter.
+func splitChordName(s string) (root, quality, bass string) {
+	if s == "" || s[0] < 'A' || s[0] > 'G' {
+		return "", s, ""
+	}
+	root, rest := s[:1], s[1:]
+	for len(rest) > 0 && (rest[0] == '#' || rest[0] == 'b') {
+		root, rest = root+rest[:1], rest[1:]
+	}
+	for _, sign := range []string{"♯", "♭"} {
+		for strings.HasPrefix(rest, sign) {
+			root, rest = root+sign, rest[len(sign):]
+		}
+	}
+	quality = rest
+	if i := strings.IndexByte(rest, '/'); i >= 0 {
+		quality, bass = rest[:i], rest[i+1:]
+	}
+	return root, quality, bass
+}
+
 // chordPieces lays a symbol out left to right, and says how wide it came to.
 func chordPieces(c *model.ChordSymbol) ([]chordPiece, float64) {
 	if c == nil {
@@ -452,6 +525,24 @@ func chordPieces(c *model.ChordSymbol) ([]chordPiece, float64) {
 	if c.Text != "" {
 		w := chordTextWidth(c.Text, chordSize)
 		return []chordPiece{{text: c.Text, size: chordSize}}, w
+	}
+	// Several chords in one symbol: each is set as the chord it is, one
+	// after another along the row.
+	if run := chordRun(c); run != nil {
+		var out []chordPiece
+		x := 0.0
+		for i, one := range run {
+			if i > 0 {
+				x += chordRunGap
+			}
+			pieces, w := chordPieces(one)
+			for _, p := range pieces {
+				p.x += x
+				out = append(out, p)
+			}
+			x += w
+		}
+		return out, x
 	}
 
 	var out []chordPiece

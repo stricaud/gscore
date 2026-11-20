@@ -30,7 +30,12 @@ import (
 // C engine drew straight to the screen inside realize_object() and so could
 // never beam across anything.
 type placed struct {
-	x     float64
+	x float64
+	// beatX is where its beat falls: the x of its column, which x starts
+	// as and leaves when the element is moved — a voice stepping aside, a
+	// bar of rest centred. What is read on the beat, a chord symbol, stays
+	// here.
+	beatX float64
 	index int
 	// voice is which line of music on this staff it belongs to. Zero for
 	// the only one, which is nearly always. It decides which way the stem
@@ -254,6 +259,10 @@ func (e *engraver) drawMeasure(part *model.Part, b measureBox, x, end float64, s
 	// at its head: the first beat belongs over the first note, not over the
 	// new key signature in front of it.
 	music := x
+	// Kept for the words set against the bar's edges rather than its notes.
+	// See drawTexts.
+	_, barRight := e.barlineRoom(b.m.RightBarline)
+	e.barLeft, e.barRight = music, e.barlineAt(end, barRight)
 	// The columns, for the row of beat marks over the staff. Collected here
 	// because this is the only place that knows where a column ended up.
 	var anchors []beatAnchor
@@ -262,6 +271,9 @@ func (e *engraver) drawMeasure(part *model.Part, b measureBox, x, end float64, s
 	// the line is pressed below the width the music asked for.
 	k := squeezeOf(b.slots, stretch)
 	items := make([]*placed, 0, len(b.slots))
+	// The columns as well, for setting the voices apart once the stems
+	// are known.
+	var cols [][]*placed
 	for i := range b.slots {
 		s := &b.slots[i]
 		// The column's drawn width. Pulled out, it stretches with the
@@ -362,11 +374,12 @@ func (e *engraver) drawMeasure(part *model.Part, b measureBox, x, end float64, s
 		for _, v := range s.elems {
 			p := e.placedOf(e.clef, v.el, s.at)
 			p.x, p.index, p.width = x, v.index, width
+			p.beatX = x
 			p.voice, p.order = v.voice, v.order
 			items = append(items, p)
 			col = append(col, p)
 		}
-		e.separateColumn(col)
+		cols = append(cols, col)
 
 		x += width
 	}
@@ -434,6 +447,12 @@ func (e *engraver) drawMeasure(part *model.Part, b measureBox, x, end float64, s
 	// the stem, and all of them used to work it out again from the note
 	// alone — which gave a different answer from the beam.
 	e.setStemDirections(items, part.Time)
+	// Then the voices that would be written on top of each other are set
+	// apart — after the stems, because a stem through the other voice's
+	// notehead is one of the ways that happens. See separateColumn.
+	for _, col := range cols {
+		e.separateColumn(col)
+	}
 	// And where every accidental in the bar goes, column by column, before
 	// any of them is drawn. See planAccidentals.
 	e.planAccidentals(items)
@@ -472,7 +491,17 @@ func (e *engraver) drawMeasure(part *model.Part, b measureBox, x, end float64, s
 			// After the beams and the articulations, so a breath taken over
 			// a high run is set clear of them rather than through them.
 			e.drawBreath(p, m.Break, x)
-			e.waitChord(m.Chord, p.x, b.index, p.index)
+			// A chord over a bar of rest is written where the bar begins,
+			// not over the rest: the rest was moved to the middle of the
+			// bar to look like a bar of rest, and the chord is read on the
+			// first beat, which is still where it was. Hung on the rest it
+			// started halfway along the bar and ran out through the barline
+			// — the room the bar had booked for it was at the front.
+			cx := p.x
+			if p.fullBar {
+				cx = p.beatX
+			}
+			e.waitChord(m.Chord, cx, b.index, p.index)
 		}
 	}
 
@@ -1982,24 +2011,9 @@ func (e *engraver) setStemDirections(items []*placed, t model.TimeSignature) {
 			if p.rest != nil {
 				continue
 			}
-			r, ok := lo[p.voice]
-			if !ok {
-				lo[p.voice] = [2]int{p.lo, p.hi}
-				continue
-			}
-			if p.lo < r[0] {
-				r[0] = p.lo
-			}
-			if p.hi > r[1] {
-				r[1] = p.hi
-			}
-			lo[p.voice] = r
+			widenReach(lo, p.voice, p.lo, p.hi)
 		}
-		if a, ok := lo[0]; ok {
-			if b, ok := lo[1]; ok && a[1] <= b[0] && a[0] < b[1] {
-				inverted = true
-			}
-		}
+		inverted = voicesInverted(lo)
 	}
 
 	byVoice := func(p *placed) int {
@@ -2056,6 +2070,36 @@ func (e *engraver) setStemDirections(items []*placed, t model.TimeSignature) {
 			}
 		}
 	}
+}
+
+// widenReach takes a note's steps into the lowest and highest its voice
+// reaches in the bar.
+func widenReach(reach map[int][2]int, voice, lo, hi int) {
+	r, ok := reach[voice]
+	if !ok {
+		reach[voice] = [2]int{lo, hi}
+		return
+	}
+	if lo < r[0] {
+		r[0] = lo
+	}
+	if hi > r[1] {
+		r[1] = hi
+	}
+	reach[voice] = r
+}
+
+// voicesInverted says whether the first voice of a bar lies wholly under
+// the second, from how far each reaches: the plain inversion that turns the
+// stems round. See setStemDirections, which spells out why touching is not
+// crossing and two voices on one note are not an inversion.
+func voicesInverted(reach map[int][2]int) bool {
+	a, ok := reach[0]
+	if !ok {
+		return false
+	}
+	b, ok := reach[1]
+	return ok && a[1] <= b[0] && a[0] < b[1]
 }
 
 // beamGroupUp is the one rule for which way a beamed group points.
@@ -3103,6 +3147,7 @@ func (e *engraver) textWasDrawn(t model.TextMark, p *placed, measure, index int,
 		Part: e.partIndex, Measure: measure, Ref: p.index, Index: index,
 		X: x, Y: top, Width: width, Height: height,
 		Text: t.Text, Style: t.Style.String(), Place: place, Runs: t.Runs,
+		Align: t.Align.String(),
 	})
 }
 
@@ -3212,13 +3257,26 @@ func (e *engraver) drawTexts(m *model.Marks, p *placed, measure int) {
 		// score rather than drawing it needs to know about any of this.
 		lines := markLines(t)
 
-		x := p.x + t.OffsetX
 		widest := 0.0
 		for _, line := range lines {
 			if w := spanLineWidth(line, textSize, look); w > widest {
 				widest = w
 			}
 		}
+		// Beside the note, or against the bar: at its head, over its
+		// middle, or ending at its barline. A "Fine" belongs at the end
+		// of its bar whichever note it was typed on, and a section's
+		// name over the middle of the bar it opens.
+		x := p.x
+		switch t.Align {
+		case model.AlignLeft:
+			x = e.barLeft
+		case model.AlignCentre:
+			x = (e.barLeft+e.barRight)/2 - widest/2
+		case model.AlignRight:
+			x = e.barRight - widest
+		}
+		x += t.OffsetX
 
 		if look.Place == model.PlacementBelow {
 			// Below the staff it joins the queue, for the same reason the
@@ -3952,15 +4010,30 @@ func chordPitches(ch *model.Chord) []int {
 //
 // A third apart or more they clear each other and nothing is done, which is
 // the common case and why most two-voice music looks untouched by this.
+//
+// Unless the stems are the wrong way about for where the voices sit. The
+// upper voice's stems go up and the lower's go down, by number, so where
+// the first voice dips under the second — the held E of a right hand under
+// the tune above it — its stem goes up through the other voice's notehead,
+// and the other's comes down through its own. A third apart or a sixth, it
+// makes no difference: the stem is three and a half spaces long and reaches
+// whatever is above. So those two are set apart too, the lower to the left
+// of the upper, which puts the two stems in one line with a head on either
+// side of it — how every printed copy writes a crossing. Reported from the
+// bar the right hand's tune came in on, a sixteenth over the held note:
+// "when I entered the 16th note in 2nd voice over the half that is in 1st
+// voice, I got a collision", and the stems had to be turned by hand.
 func (e *engraver) separateColumn(col []*placed) {
 	if len(col) < 2 {
 		return
 	}
-	// How high and how low each voice reaches at this moment. Rests have no
-	// notehead to clash with, and are spaced by drawRest instead.
+	// How high and how low each voice reaches at this moment, and which way
+	// its stems go. Rests have no notehead to clash with, and are spaced by
+	// drawRest instead.
 	type reach struct {
-		lo, hi int
-		ps     []*placed
+		lo, hi   int
+		up, down bool // a stem pointing that way
+		ps       []*placed
 	}
 	byVoice := map[int]*reach{}
 	var voices []int
@@ -3979,6 +4052,10 @@ func (e *engraver) separateColumn(col []*placed) {
 		}
 		if p.hi > r.hi {
 			r.hi = p.hi
+		}
+		if p.value > model.Whole {
+			r.up = r.up || p.stemDir > 0
+			r.down = r.down || p.stemDir < 0
 		}
 		r.ps = append(r.ps, p)
 	}
@@ -4012,13 +4089,36 @@ func (e *engraver) separateColumn(col []*placed) {
 	// higher on the staff.
 	for i := 1; i < len(voices); i++ {
 		above, below := byVoice[voices[i-1]], byVoice[voices[i]]
-		if above.lo-below.hi > 1 {
+		if voicesClear(above.lo-below.hi, below.up, above.down) {
 			continue
 		}
 		for _, p := range below.ps {
 			p.x -= noteheadWidth(p.value)
 		}
 	}
+}
+
+// stemSteps is how far a stem reaches from its notehead, in staff steps:
+// three and a half spaces, which is the length drawStem gives one.
+const stemSteps = 7
+
+// voicesClear says whether two voices sounding together can be written in
+// one column: apart is how many steps lie between the upper voice's lowest
+// note and the lower voice's highest, lowerUp whether the lower voice has a
+// stem pointing up into that gap, and upperDown whether the upper has one
+// pointing down into it.
+//
+// A third apart with the stems pointing away from each other is clear. A
+// second or a unison never is. And a stem that points into the gap crosses
+// the other voice's notehead unless the gap is longer than the stem.
+func voicesClear(apart int, lowerUp, upperDown bool) bool {
+	if apart <= 1 {
+		return false
+	}
+	if (lowerUp || upperDown) && apart <= stemSteps {
+		return false
+	}
+	return true
 }
 
 // pendingSystemText is a text for the whole system, waiting for the system

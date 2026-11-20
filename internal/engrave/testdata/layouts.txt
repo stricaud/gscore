@@ -6,9 +6,9 @@ abc/boite-musique.abc 3127898a97d198d5 514
 abc/decoration.abc c8f4673a8e66ca93 31
 abc/pitch.abc 376aa6d8311eb1d1 227
 abc/sunshine.abc 7702bcad8c455962 136
-samples/altes-10e-solo.abc 4a29bd909ad3e825 9785
+samples/altes-10e-solo.abc 05e94051d8b4892e 9785
 samples/boite-musique.abc 3127898a97d198d5 514
-scores/Bumpty-Bump.gscore ad04273c51a0512d 2969
+scores/Bumpty-Bump.gscore 0f501da2787b2b91 2969
 suite/01a-Pitches-Pitches.musicxml 5177aba21f65c2bd 548
 suite/01b-Pitches-Intervals.musicxml 6f4787733f66de48 405
 suite/01c-Pitches-NoVoiceElement.musicxml e4827d8a899bf0f3 14
@@ -173,9 +173,9 @@ suite/61i-Lyrics-Chords.musicxml 4ade91e4f49305b1 17
 suite/61j-Lyrics-Elisions.musicxml 919b0846de9bcb1a 22
 suite/61k-Lyrics-SpannersExtenders.musicxml 4180b187221eabc1 44
 suite/71a-Chordnames.musicxml d53a8c515512620f 44
-suite/71b-Chordnames-Kinds.musicxml ad53189f0b189e24 212
+suite/71b-Chordnames-Kinds.musicxml b6d50bbf6024d24c 212
 suite/71c-ChordsFrets.musicxml 252d493616761f46 43
-suite/71d-ChordsFrets-Multistaff.musicxml 7ad6cc72dadf231c 64
+suite/71d-ChordsFrets-Multistaff.musicxml 00543c3075717c5c 64
 suite/71e-TabStaves.musicxml 88f63001bc3d7895 414
 suite/71f-AllChordTypes.musicxml 81d0c4d7cb6588f4 269
 suite/71g-MultipleChordnames.musicxml 46a96846b1d85a08 18

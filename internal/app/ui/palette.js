@@ -161,6 +161,11 @@ const PALETTE = [
         needsRange: true },
       { g: "\uE53F", label: "Diminuendo", apply: "hairpin", value: "diminuendo",
         needsRange: true },
+      // The same two written as the word and a broken line.
+      { text: "cresc.", label: "cresc. — as a word", apply: "hairpin", value: "cresc.",
+        needsRange: true },
+      { text: "dim.", label: "dim. — as a word", apply: "hairpin", value: "dim.",
+        needsRange: true },
       { text: "—", label: "No hairpin", apply: "hairpin", value: "none" },
 
       { g: "\uE1FD", label: "Slur", apply: "slur", value: "on", needsRange: true },

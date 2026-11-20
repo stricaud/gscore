@@ -288,6 +288,8 @@
         <div class="menu-items">
           <button data-action="hairpin-cresc"><span>Crescendo</span><kbd>&lt;</kbd></button>
           <button data-action="hairpin-dim"><span>Diminuendo</span><kbd>&gt;</kbd></button>
+          <button data-action="hairpin-cresc-words"><span>cresc. — as a word</span></button>
+          <button data-action="hairpin-dim-words"><span>dim. — as a word</span></button>
           <button data-action="hairpin-none"><span>No hairpin</span></button>
           <hr>
           <button data-action="octave-8va"><span>8va — an octave up</span></button>
@@ -1253,6 +1255,27 @@
      of the bar, against the barline the player goes out through. Opened by
      a double click on the sign, which is the gesture everybody tries on a
      thing they want to change. -->
+<!-- The line after a "cresc." or "dim." written as words: to where the
+     marking stops, none, or so many dashes. Opened by a double click on
+     the word. -->
+<dialog id="hairpin-line">
+  <h2>The line after the word</h2>
+  <p class="small" id="hairpin-line-what">cresc.</p>
+  <form method="dialog" id="hairpin-line-form">
+    <label><input type="radio" name="hairpin-line" value="end" checked>
+      <span>To where it stops</span></label>
+    <label><input type="radio" name="hairpin-line" value="none">
+      <span>None — the word alone</span></label>
+    <label><input type="radio" name="hairpin-line" value="count">
+      <span>This many dashes</span>
+      <input type="number" id="hairpin-line-count" min="1" max="40" step="1" value="3"></label>
+    <div class="ask-buttons">
+      <button value="ok" type="submit" class="primary">Set</button>
+      <button value="cancel" type="submit" formnovalidate>Cancel</button>
+    </div>
+  </form>
+</dialog>
+
 <dialog id="sign-side">
   <h2>Where the sign goes</h2>
   <p class="small" id="sign-side-what">The sign at this bar.</p>
@@ -2567,6 +2590,16 @@
         <option value="">Wherever this kind goes</option>
         <option value="above">Over the staff</option>
         <option value="below">Under the staff</option>
+      </select></label>
+    <!-- Where along the bar. Beside the note it is written on is the
+         usual thing; a "Fine" goes at the end of its bar whichever note
+         it was typed on, and a section's name over the middle. -->
+    <label class="tempo-bar" for="tm-align">Along the bar
+      <select id="tm-align">
+        <option value="">Beside the note</option>
+        <option value="left">At the left of the bar</option>
+        <option value="centre">In the middle of the bar</option>
+        <option value="right">At the right of the bar</option>
       </select></label>
     <p class="small" id="tm-look"></p>
     <div class="ask-buttons">

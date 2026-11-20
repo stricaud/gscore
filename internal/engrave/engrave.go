@@ -392,6 +392,11 @@ type HairpinPos struct {
 	Width   float64 `json:"width"`
 	Height  float64 `json:"height"`
 	Kind    string  `json:"kind"`
+	// Words says it is written as the word and a broken line, and Dashes
+	// how long that line is — see model.Hairpin — so that the dialog that
+	// changes the line can show what it is.
+	Words  bool `json:"words,omitempty"`
+	Dashes int  `json:"dashes,omitempty"`
 }
 
 // SpanPos is one line drawn between two notes, in staff spaces: where it
@@ -595,6 +600,9 @@ type TextPos struct {
 	// Place is "above", "below", or empty where the kind of writing
 	// decides.
 	Place string `json:"place,omitempty"`
+	// Align is "left", "centre" or "right" along the bar, or empty for
+	// beside the note. See model.TextAlign.
+	Align string `json:"align,omitempty"`
 }
 
 // Hit is one measure's region on the page, in staff spaces.
@@ -1197,6 +1205,12 @@ type engraver struct {
 	// accSpots is where each note's accidental goes in the bar being drawn,
 	// worked out for every column of it at once. See planAccidentals.
 	accSpots map[*model.Note]accidentalAt
+	// barLeft and barRight are where the bar being drawn begins, after any
+	// clef or key written at its head, and where its barline stands: the
+	// edges a text mark is set against when it is aligned to the bar
+	// rather than to its note.
+	barLeft, barRight float64
+
 	// sharedStaff says the bar being drawn has more than one line of music
 	// on it, which changes what a stem is saying and so which side a tie or
 	// a slur falls on. Set by setStemDirections, which is where the question
@@ -1473,6 +1487,12 @@ type openSpan struct {
 	// row is the line this hairpin shares with whatever it meets, where it
 	// meets anything. Zero is a hairpin standing on its own.
 	row int
+	// words is a hairpin written as "cresc." or "dim." and a broken line,
+	// and carried says this piece of it continues from an earlier system,
+	// where the word was already written: the line goes on alone.
+	words   bool
+	carried bool
+	dashes  int
 
 	// y and above are where a slur or a tie left the note it started on,
 	// and which side of the music it arcs over.
@@ -1632,21 +1652,6 @@ type measureBox struct {
 	// case to bolt on afterwards.
 	change signatureChange
 	prefix float64
-
-	// chordOver is how far the bar's last chord symbol still reaches past
-	// its own barline, and chordInto how far into the bar its first symbol
-	// stands. A chord at the end of one bar and one at the head of the next
-	// are only as far apart as the barline between them, which is not far:
-	// "A7sus4" at the end of bar 44 printed through the "D" at the head of
-	// 45. Neither bar can see the other while it is being measured, so each
-	// leaves these two numbers behind and the bars are set apart afterwards.
-	//
-	// chordInto is negative when the bar has no chord at all, which is not
-	// the same as a chord standing at nothing: a bar with none imposes no
-	// constraint, a bar whose chord is on the downbeat imposes the whole of
-	// it.
-	chordOver float64
-	chordInto float64
 }
 
 // signatureChange is a new key or meter taking effect at a measure.
@@ -2158,22 +2163,6 @@ func (e *engraver) layout() {
 			b.minimum += w
 			rows = append(rows, b)
 		}
-		// A chord at the end of one bar and one at the head of the next:
-		// neither bar could see the other while it was measured, so they are
-		// set apart here, from what each left behind. What is missing goes to
-		// the last column of the earlier bar, which opens the gap before the
-		// barline rather than moving either chord off its own beat.
-		for mi := 0; mi+1 < len(rows); mi++ {
-			cur, next := &rows[mi], &rows[mi+1]
-			if cur.chordOver <= 0 || next.chordInto < 0 || len(cur.slots) == 0 {
-				continue
-			}
-			if short := cur.chordOver - next.prefix - next.chordInto; short > 0 {
-				cur.slots[len(cur.slots)-1].width += short
-				cur.ideal += short
-				cur.minimum += short
-			}
-		}
 		byPart[p] = rows
 		if mirrors[i] != nil {
 			// Back to where the score's own numbering had reached: the
@@ -2274,7 +2263,7 @@ func (e *engraver) layout() {
 	if maxMeasures == 0 {
 		// A part with no measures still has a clef and a key signature, and
 		// drawing just those is what the key signature picker asks for.
-		e.drawSystem(parts, boxes, widths, least, 0, 0, prefix, 0, true, false)
+		e.drawSystem(parts, boxes, widths, least, 0, 0, prefix, 0, 0, true, false)
 		// There is no next system, so the gap that separates them is just
 		// empty space under the staff.
 		e.y -= e.opt.Spacings.SystemGap
@@ -2300,10 +2289,19 @@ func (e *engraver) layout() {
 		if e.carriedCurves() {
 			carried = resumeRoom
 		}
-		n := e.breakAt(widths[start:], least[start:], prefix+carried)
+		// A coda begins a line of its own, set in from the margin: see
+		// codaIndentAt. The room it is set in by is room the line has not
+		// got for music.
+		indent := e.codaIndentAt(parts, start)
+		n := e.breakAt(widths[start:], least[start:], prefix+carried+indent)
 		// And never past the end of a movement: whatever follows a section
 		// break begins a system of its own, in the strip as on the page.
 		if to := e.sectionEnd(parts, start, maxMeasures); to-start < n {
+			n = to - start
+		}
+		// And never past a coda, which begins a line of its own on the
+		// page. See codaBefore.
+		if to := e.codaBefore(parts, start, maxMeasures); to-start < n {
 			n = to - start
 		}
 		// A line break the writer asked for. It may take bars off this
@@ -2317,7 +2315,7 @@ func (e *engraver) layout() {
 		}
 		end := start + n
 		last := end >= maxMeasures
-		e.drawSystem(parts, boxes, widths, least, start, end, prefix+carried, carried, last, forced)
+		e.drawSystem(parts, boxes, widths, least, start, end, prefix+carried, carried, indent, last, forced)
 		if last {
 			// The gap belongs between systems, not after the final one.
 			// Leaving it there pads every score with empty space, which is
@@ -2431,6 +2429,58 @@ func (e *engraver) breakBefore(parts []*model.Part, start, n int) int {
 		}
 	}
 	return start
+}
+
+// codaIndent is how far a line that begins at the coda is set in from the
+// margin, in staff spaces.
+const codaIndent = 8
+
+// codaBefore is the first bar after start that carries the coda sign, or n
+// where none does: a system beginning at start runs up to there and no
+// further, on the page.
+//
+// A coda is the tail of the piece, played after a jump from somewhere in
+// the middle, and the page says so by setting it apart: it begins a line
+// of its own, and the line is set in from the margin — see codaIndentAt.
+// Every printed copy does both; a coda that started partway along a line,
+// after the bar the player leaves from, was easy to miss and read as one
+// more bar. Reported as "when we have a coda, I want a clean break from the
+// previous bar to a new line and some left margin".
+//
+// A limit and not a break the writer asked for: the bars before it still
+// break into lines as they fit, and only the last of those lines is cut
+// short at the coda. Read as a forced break it dragged every bar from the
+// head of the piece onto one line, twenty of them, to end at the coda.
+//
+// On the page only. The strip is one unbroken line of music, which is the
+// point of it, and a coda does not break it.
+func (e *engraver) codaBefore(parts []*model.Part, start, n int) int {
+	if e.opt.Mode != Paginated {
+		return n
+	}
+	for mi := start + 1; mi < n; mi++ {
+		for _, p := range parts {
+			if mi < len(p.Measures) && p.Measures[mi].Sign == model.Coda {
+				return mi
+			}
+		}
+	}
+	return n
+}
+
+// codaIndentAt is the indent of the system beginning at a bar: the coda's,
+// where the bar carries the coda sign and the music is on pages, and
+// nothing otherwise. See codaBefore.
+func (e *engraver) codaIndentAt(parts []*model.Part, at int) float64 {
+	if at == 0 || e.opt.Mode != Paginated {
+		return 0
+	}
+	for _, p := range parts {
+		if at < len(p.Measures) && p.Measures[at].Sign == model.Coda {
+			return codaIndent
+		}
+	}
+	return 0
 }
 
 // opensSection says a bar is the first of a movement — the bar after one
@@ -3146,9 +3196,16 @@ func (e *engraver) keyLead(c model.Clef, from, to model.KeySignature) float64 {
 //
 // The rule is separateColumn's, asked at the one moment when the answer can
 // still be acted on: a third apart or more and two voices clear each other,
-// closer than that and one of them moves.
-func (e *engraver) voiceShift(clef model.Clef, col slot) float64 {
-	type reach struct{ lo, hi int }
+// closer than that and one of them moves — and so does one whose stem
+// would run through the other. The stems are not settled yet here, so they
+// are taken as setStemDirections will give them: up for the first voice
+// and down for the second, the other way about where the bar is inverted,
+// and as the score says where it says.
+func (e *engraver) voiceShift(clef model.Clef, col slot, inverted bool) float64 {
+	type reach struct {
+		lo, hi   int
+		up, down bool
+	}
 	byVoice := map[int]*reach{}
 	var voices []int
 	widest := 0.0
@@ -3162,15 +3219,26 @@ func (e *engraver) voiceShift(clef model.Clef, col slot) float64 {
 		}
 		r, ok := byVoice[v.voice]
 		if !ok {
-			byVoice[v.voice] = &reach{lo: pl.lo, hi: pl.hi}
+			r = &reach{lo: pl.lo, hi: pl.hi}
+			byVoice[v.voice] = r
 			voices = append(voices, v.voice)
-			continue
 		}
 		if pl.lo < r.lo {
 			r.lo = pl.lo
 		}
 		if pl.hi > r.hi {
 			r.hi = pl.hi
+		}
+		if pl.value > model.Whole {
+			up := v.voice%2 == 0
+			if inverted {
+				up = !up
+			}
+			if m := pl.marks(); m != nil && m.Stem != model.StemAuto {
+				up = m.Stem == model.StemUp
+			}
+			r.up = r.up || up
+			r.down = r.down || !up
 		}
 	}
 	if len(voices) < 2 {
@@ -3190,7 +3258,8 @@ func (e *engraver) voiceShift(clef model.Clef, col slot) float64 {
 		return voices[a] < voices[b]
 	})
 	for i := 1; i < len(voices); i++ {
-		if byVoice[voices[i-1]].lo-byVoice[voices[i]].hi <= 1 {
+		above, below := byVoice[voices[i-1]], byVoice[voices[i]]
+		if !voicesClear(above.lo-below.hi, below.up, above.down) {
 			return widest
 		}
 	}
@@ -3248,6 +3317,17 @@ func (e *engraver) measureBox(p *model.Part, m *model.Measure, index int) measur
 	sort.SliceStable(entries, func(i, j int) bool {
 		return entries[i].at.Cmp(entries[j].at) < 0
 	})
+	// Whether the bar's first voice lies under its second, which turns
+	// the stems round and so changes which voices have to step aside. See
+	// voiceShift.
+	reach := map[int][2]int{}
+	for _, en := range entries {
+		pl := e.placedOf(en.clef, en.v.el, en.at)
+		if pl.rest == nil {
+			widenReach(reach, en.v.voice, pl.lo, pl.hi)
+		}
+	}
+	inverted := voicesInverted(reach)
 
 	// Room for the clefs written inside the bar, booked in the order they
 	// are read rather than voice by voice, because that is the order they
@@ -3298,7 +3378,7 @@ func (e *engraver) measureBox(p *model.Part, m *model.Measure, index int) measur
 		// left into whatever stood there, and at the start of a bar what
 		// stands there is the barline. The Altes prints its bar 10 that way
 		// — a chord of half notes written on top of the barline.
-		col.lead += e.voiceShift(p.Clef, col)
+		col.lead += e.voiceShift(p.Clef, col, inverted)
 		// And room for the accidentals of everything sounding here, which
 		// are set out in files together. Booked per note, the outer files
 		// of a column whose signs step out were printed over whatever
@@ -3468,18 +3548,17 @@ func (e *engraver) measureBox(p *model.Part, m *model.Measure, index int) measur
 	box.ideal += sp.BetweenMeasures + sp.AfterBarline + left + right
 	box.minimum += sp.BetweenMeasures + sp.AfterBarline + left + right
 
-	// What the bar's own chords leave for its neighbours. See measureBox's
-	// chordOver and chordInto: a bar cannot see the one after it from here,
-	// so it records how far its last symbol overhangs and how far its first
-	// one stands in, and they are set apart once both are measured.
-	box.chordInto = -1
-	for i, d := 0, 0.0; i < len(box.slots); i++ {
-		if names[i] > 0 {
-			box.chordInto = d + box.slots[i].lead
-			break
-		}
-		d += box.slots[i].lead + box.slots[i].width
-	}
+	// The bar's last chord symbol ends inside its bar. The symbols before
+	// it were measured against the next name; the last is measured against
+	// the barline, and whatever it lacks the bar is given, at its last
+	// column, so that the barline moves out past the name rather than the
+	// name running over the barline. It used to be let over, and held off
+	// only the next bar's first chord: "G#7#5(b9) G#7b5(b9) C#7" over a bar
+	// of rests ran on across the barline into a bar that had no chord to
+	// stop it. A chart keeps a bar's chords in the bar, and the bar is as
+	// wide as that takes. In the minimum as well as the ideal, for the
+	// reason given above: a name through a barline is not a tighter
+	// setting, it is a wrong one.
 	for i := len(box.slots) - 1; i >= 0; i-- {
 		if names[i] == 0 {
 			continue
@@ -3489,7 +3568,13 @@ func (e *engraver) measureBox(p *model.Part, m *model.Measure, index int) measur
 			rest += box.slots[k].lead + box.slots[k].width
 		}
 		rest += sp.BetweenMeasures + sp.AfterBarline + left + right
-		box.chordOver = names[i] + chordSymbolGap - rest
+		if over := names[i] + chordSymbolGap - rest; over > 0 {
+			last := &box.slots[len(box.slots)-1]
+			last.width += over
+			last.least += over
+			box.ideal += over
+			box.minimum += over
+		}
 		break
 	}
 	return box
@@ -3999,10 +4084,14 @@ func (e *engraver) elementWidth(el model.Element) float64 {
 // carried is how much of prefix is blank held back for the ties and slurs
 // coming in from the system above: it sits after the meter, before the music.
 func (e *engraver) drawSystem(parts []*model.Part, boxes [][]measureBox,
-	widths, least []float64, start, end int, prefix, carried float64,
+	widths, least []float64, start, end int, prefix, carried, indent float64,
 	last, forced bool) {
 
 	sp := e.opt.Spacings
+	// Where this system begins: the margin, or further in for a line set
+	// in from it — the coda's. Everything that starts at the margin starts
+	// here instead; the margin itself is still where the page ends.
+	left := sp.Margin + indent
 
 	ideal, floor := 0.0, 0.0
 	for mi := start; mi < end; mi++ {
@@ -4030,7 +4119,7 @@ func (e *engraver) drawSystem(parts []*model.Part, boxes [][]measureBox,
 	// pulled out to full width.
 	stretch := 1.0
 	if e.opt.Mode == Paginated && ink > 0 {
-		avail := e.opt.LineWidth - prefix
+		avail := e.opt.LineWidth - prefix - indent
 		switch {
 		case !last && avail > ink:
 			stretch = avail / ink
@@ -4061,7 +4150,7 @@ func (e *engraver) drawSystem(parts []*model.Part, boxes [][]measureBox,
 
 	// The column each measure starts in, shared by every staff.
 	columns := make([]float64, end-start+1)
-	x := sp.Margin + prefix
+	x := left + prefix
 	for mi := start; mi < end; mi++ {
 		columns[mi-start] = x
 		x += widths[mi] * stretch
@@ -4251,7 +4340,7 @@ func (e *engraver) drawSystem(parts []*model.Part, boxes [][]measureBox,
 		e.tabGaps = e.tabGaps[:0]
 		// A hairpin or an octave line cut off at the end of the last system
 		// starts again here, at this system's left edge.
-		e.resumeSpans(e.staffNumber(pi), sp.Margin+prefix-carried)
+		e.resumeSpans(e.staffNumber(pi), left+prefix-carried)
 
 		// Where this staff's neighbours are, for the notes written on
 		// them. Known before anything is drawn because the gaps are
@@ -4287,7 +4376,7 @@ func (e *engraver) drawSystem(parts []*model.Part, boxes [][]measureBox,
 		staffTop := e.y
 		staffMark := e.marked()
 		e.staffMark, e.staffTop = staffMark, staffTop
-		e.staffX0, e.staffX1 = sp.Margin, right
+		e.staffX0, e.staffX1 = left, right
 		// A new staff, so the outline kept for the last one is of no use.
 		e.staffSky, e.staffInk, e.staffMusic = nil, nil, nil
 		staffTops = append(staffTops, e.y)
@@ -4312,7 +4401,7 @@ func (e *engraver) drawSystem(parts []*model.Part, boxes [][]measureBox,
 				widest = w
 			}
 		}
-		column := sp.Margin + prefix - carried
+		column := left + prefix - carried
 		px := column - widest + sp.ClefBefore
 		// Each of the three is recorded as it is drawn, so that clicking one
 		// changes the thing it is: the clef, the key or the meter.
@@ -4394,7 +4483,7 @@ func (e *engraver) drawSystem(parts []*model.Part, boxes [][]measureBox,
 		// music. Nothing can hang off the end of them. They start after the
 		// names and the bracket: a staff ruled through its own name is how
 		// a name looks crossed out.
-		e.staffLines(sp.Margin+lead, right-sp.Margin-lead)
+		e.staffLines(left+lead, right-left-lead)
 		// To the end of the staff, which is where right is. staffLines takes
 		// a width and this takes a place, and passing it the width left every
 		// hairpin, octave line and tie stopping four spaces short of the end
@@ -4430,11 +4519,11 @@ func (e *engraver) drawSystem(parts []*model.Part, boxes [][]measureBox,
 		}
 		// The chord symbols first, because they are a row above the music
 		// and everything else is a row above them.
-		e.placeChords(sky, sp.Margin, right)
+		e.placeChords(sky, left, right)
 		// The row of beat marks joins the queue now rather than when the
 		// beats were met, because it is one row across the whole system and
 		// only the finished staff says how high that row has to be.
-		e.drawBeatMarks(sp.Margin, right)
+		e.drawBeatMarks(left, right)
 		e.placeWaiting(sky)
 		// How far down this staff's music and marks actually went. The room
 		// reserved for them was counted from the model before anything was
@@ -4442,7 +4531,7 @@ func (e *engraver) drawSystem(parts []*model.Part, boxes [][]measureBox,
 		// dips low ends up lower than any estimate of "there is a dynamic
 		// here" can know. This is the measurement, and the system's own
 		// bottom is taken from it.
-		if low := sky.reach(sp.Margin, right, true); low > lowest {
+		if low := sky.reach(left, right, true); low > lowest {
 			lowest = low
 		}
 		if pi == 0 {
@@ -4451,7 +4540,7 @@ func (e *engraver) drawSystem(parts []*model.Part, boxes [][]measureBox,
 			// Taken after this staff is finished and before the next is
 			// begun, which is the only moment it is both measured and
 			// still the top staff's.
-			e.systemTopReach = sky.reach(sp.Margin, right, false)
+			e.systemTopReach = sky.reach(left, right, false)
 		}
 		outlines = append(outlines, sky)
 		bottoms = append(bottoms, e.y+partH(p))
@@ -4483,7 +4572,7 @@ func (e *engraver) drawSystem(parts []*model.Part, boxes [][]measureBox,
 
 	// The names and the brace reach across every staff of the system, so they
 	// are drawn once the staves' positions are all known.
-	e.drawGroups(parts, sp.Margin+lead, staffTops, start == 0)
+	e.drawGroups(parts, left+lead, staffTops, start == 0)
 	// Down the gaps between the staves, at exactly the x the staves put
 	// their own barlines at. A column is where the next bar begins; the
 	// barline stands a little before it, by the room its style needs. The
@@ -4500,7 +4589,7 @@ func (e *engraver) drawSystem(parts []*model.Part, boxes [][]measureBox,
 			// simply wrong. What belongs at the head of a system is the
 			// line down its left edge, beside the brace, which is where
 			// the staves actually begin.
-			x = sp.Margin + lead
+			x = left + lead
 		} else {
 			if mi := start + i - 1; mi >= 0 && mi < len(parts[0].Measures) {
 				style = parts[0].Measures[mi].RightBarline

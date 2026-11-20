@@ -1512,7 +1512,15 @@ type keyedNote struct {
 	// to the key signature.
 	part    *model.Part
 	measure int
-	index   int
+	// voice and index are its line of music and its place in it. The
+	// voice was left out, and every note was asked about as though it
+	// stood in the first voice: a D sharp in the second voice, after a D
+	// sharp with its sign earlier in the same bar, was told the sign was
+	// not in force, so asking for it did not count as insisting on it and
+	// the rules took it straight off again. Reported as "I want to have a
+	// sharp sign in this note that is visible because I want to".
+	voice int
+	index int
 }
 
 // inForce is what this note's letter is altered by where it stands, when
@@ -1522,7 +1530,7 @@ func (n keyedNote) inForce() int {
 	if n.part == nil {
 		return n.key.AlterFor(n.Pitch.Step)
 	}
-	return n.part.AlterInForce(n.measure, 0, n.index, n.Pitch)
+	return n.part.AlterInForce(n.measure, n.voice, n.index, n.Pitch)
 }
 
 // notesOf resolves a selection to the notes in it, a chord counting as all of
@@ -1549,11 +1557,11 @@ func (a *App) notesOf(q url.Values) ([]keyedNote, error) {
 	}
 
 	var out []keyedNote
-	collect := func(p *model.Part, measure, index int, el model.Element, head *int) {
+	collect := func(p *model.Part, measure, voice, index int, el model.Element, head *int) {
 		switch e := el.(type) {
 		case *model.Note:
 			out = append(out, keyedNote{Note: e, key: p.Key,
-				part: p, measure: measure, index: index})
+				part: p, measure: measure, voice: voice, index: index})
 		case *model.Chord:
 			// A tablature staff writes fret numbers where noteheads would
 			// go, and their height is which string rather than which pitch.
@@ -1571,7 +1579,7 @@ func (a *App) notesOf(q url.Values) ([]keyedNote, error) {
 					continue
 				}
 				out = append(out, keyedNote{Note: n, key: p.Key,
-					part: p, measure: measure, index: index})
+					part: p, measure: measure, voice: voice, index: index})
 			}
 		}
 	}
@@ -1607,11 +1615,11 @@ func (a *App) notesOf(q url.Values) ([]keyedNote, error) {
 				}
 				out = append(out, keyedNote{
 					Note: mk.Grace.Notes[t.graceOrd()], key: p.Key,
-					part: p, measure: t.measure, index: t.index,
+					part: p, measure: t.measure, voice: t.voice, index: t.index,
 				})
 				continue
 			}
-			collect(p, t.measure, t.index, v.Elements[t.index], head)
+			collect(p, t.measure, t.voice, t.index, v.Elements[t.index], head)
 		}
 		if len(out) == 0 {
 			if head != nil {
@@ -1643,7 +1651,7 @@ func (a *App) notesOf(q url.Values) ([]keyedNote, error) {
 	if at <= 0 || at > len(v.Elements) {
 		at = len(v.Elements)
 	}
-	collect(p, measIdx, at-1, v.Elements[at-1], head)
+	collect(p, measIdx, voiceParam(q), at-1, v.Elements[at-1], head)
 	if len(out) == 0 {
 		if head != nil {
 			return nil, editError("there is no notehead there")
@@ -2850,11 +2858,62 @@ func (a *App) handleHairpin(w http.ResponseWriter, r *http.Request) {
 	}
 	q := r.URL.Query()
 
+	// Written as the wedge, or as the word with a broken line after it:
+	// "cresc." and "dim." name the second, as they are printed, and words=1
+	// says the same of either kind.
+	// The line after the word of a hairpin written as words: "end" runs
+	// it to where the hairpin stops, "none" leaves the word alone, and a
+	// number is that many dashes. See model.Hairpin.Dashes. Asked for on
+	// its own it changes the hairpin already there, which is what the
+	// dialog on a double click does.
+	dashes, setDashes := 0, false
+	if v := q.Get("dashes"); v != "" {
+		setDashes = true
+		switch v {
+		case "end", "all":
+		case "none", "0":
+			dashes = -1
+		default:
+			n, err := strconv.Atoi(v)
+			if err != nil || n < 0 {
+				http.Error(w, "dashes is end, none or a number", http.StatusBadRequest)
+				return
+			}
+			dashes = n
+		}
+	}
+	if setDashes && q.Get("hairpin") == "" {
+		marks, err := a.marksOf(q)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		changed := 0
+		for _, m := range marks {
+			if m.Hairpin == nil || !m.Hairpin.Words {
+				continue
+			}
+			m.Hairpin.Dashes = dashes
+			changed++
+		}
+		if changed == 0 {
+			http.Error(w, "there is no hairpin written as words here", http.StatusBadRequest)
+			return
+		}
+		writeJSON(w, map[string]int{"changed": changed})
+		return
+	}
+
 	kind := model.Crescendo
+	words := q.Get("words") == "1"
 	switch q.Get("hairpin") {
 	case "crescendo", "cresc", "<":
+	case "cresc.", "cresc-words", "crescendo-words":
+		words = true
 	case "diminuendo", "dim", "decrescendo", ">":
 		kind = model.Diminuendo
+	case "dim.", "decresc.", "dim-words", "diminuendo-words":
+		kind, words = model.Diminuendo, true
 	case "none", "":
 		marks, err := a.marksOf(q)
 		if err != nil {
@@ -2883,15 +2942,17 @@ func (a *App) handleHairpin(w http.ResponseWriter, r *http.Request) {
 	// marking one whole note had to pick up the note after it as well, and
 	// got a hairpin reaching into the next bar.
 	if len(marks) == 1 {
-		marks[0].Hairpin = &model.Hairpin{Kind: kind, Start: true, Stop: true, Alone: true}
+		marks[0].Hairpin = &model.Hairpin{Kind: kind, Start: true, Stop: true, Alone: true, Words: words, Dashes: dashes}
 		writeJSON(w, map[string]int{"changed": 1})
 		return
 	}
 	for i, m := range marks {
 		h := &model.Hairpin{
-			Kind:  kind,
-			Start: i == 0,
-			Stop:  i == len(marks)-1,
+			Kind:   kind,
+			Start:  i == 0,
+			Stop:   i == len(marks)-1,
+			Words:  words,
+			Dashes: dashes,
 		}
 		// Where this one begins, another may end — a diminuendo running
 		// into a crescendo, which every edition writes point to point. The
@@ -2907,7 +2968,7 @@ func (a *App) handleHairpin(w http.ResponseWriter, r *http.Request) {
 				h.Stop = true
 			}
 			if h.Stop && was.Start && !was.Stop {
-				h.Start, h.Kind = true, was.Kind
+				h.Start, h.Kind, h.Words = true, was.Kind, was.Words
 			}
 		}
 		m.Hairpin = h
@@ -4366,6 +4427,13 @@ func (a *App) handleText(w http.ResponseWriter, r *http.Request) {
 	case "above":
 		place = model.PlacementAbove
 	}
+	// Where along the bar the words are set: beside the note unless asked
+	// for the left, the middle or the right of the bar.
+	align, ok := model.TextAlignFromName(q.Get("align"))
+	if v := q.Get("align"); v != "" && !ok {
+		http.Error(w, "align is left, centre or right", http.StatusBadRequest)
+		return
+	}
 	// Which of the note's texts this is about, where the editor is working
 	// on one it picked up by clicking it. A note may carry more than one —
 	// "pizz." over the staff and "dolce" under it — and changing the one
@@ -4409,11 +4477,13 @@ func (a *App) handleText(w http.ResponseWriter, r *http.Request) {
 				Text: text, Style: style, Placement: place, Runs: runs,
 				Italic: q.Get("italic") == "1", Bold: q.Get("bold") == "1",
 				OffsetX: m.Texts[index].OffsetX, OffsetY: m.Texts[index].OffsetY,
+				Align: align,
 			}
 		default:
 			m.Texts = append(m.Texts, model.TextMark{
 				Text: text, Style: style, Placement: place, Runs: runs,
 				Italic: q.Get("italic") == "1", Bold: q.Get("bold") == "1",
+				Align: align,
 			})
 		}
 		// Words go on one note, not on every note of a passage.

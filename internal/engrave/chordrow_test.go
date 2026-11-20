@@ -214,3 +214,34 @@ func TestTheWordsAndTheMusicStandAtOppositeEnds(t *testing.T) {
 		t.Errorf("the words sit at y=%.2f and the music at %.2f", words.Y, music.Y)
 	}
 }
+
+// The last chord of a bar ends inside the bar, whatever comes after it. It
+// used to be held off only the next bar's first chord, so over a bar with
+// none to hold it off it ran across the barline: "G#7#5(b9) G#7b5(b9) C#7"
+// over a bar of rests, with the last bar of the piece after it. The bar is
+// made wider instead, which is what the printed copy does.
+func TestTheLastChordOfABarEndsBeforeItsBarline(t *testing.T) {
+	sc := eighths()
+	m := sc.Parts[0].Measures[0]
+	last := m.Voices[0].Elements[7]
+	marksOf(last).Chord = &model.ChordSymbol{Root: "G#", Quality: "7#5(b9) G#7b5(b9) C#7"}
+	second := &model.Measure{
+		Voices: []*model.Voice{{Elements: []model.Element{
+			&model.Rest{Dur: model.Duration{Num: 1, Den: 1}},
+		}}},
+		RightBarline: model.BarFinal,
+	}
+	sc.Parts[0].Measures = []*model.Measure{m, second}
+
+	lay := Engrave(sc, DefaultOptions())
+	if len(lay.Chords) != 1 || len(lay.Strips) < 2 {
+		t.Fatalf("%d chords and %d bars drawn", len(lay.Chords), len(lay.Strips))
+	}
+	c, bar := lay.Chords[0], lay.Strips[0]
+	if end := c.X + c.Width; end > bar.X1-chordSymbolGap+0.01 {
+		t.Errorf("%q ends at %.2f and its bar at %.2f: the name runs over the barline", c.Name, end, bar.X1)
+	}
+	if c.X < bar.X0 {
+		t.Errorf("%q starts at %.2f, before its bar at %.2f", c.Name, c.X, bar.X0)
+	}
+}

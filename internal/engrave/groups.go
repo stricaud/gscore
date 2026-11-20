@@ -194,6 +194,12 @@ func boldWidth(s string, size float64) float64 {
 	return textmetric.Width(s, size, textmetric.Style{Bold: true})
 }
 
+// italicWidth is the same for text set italic: the "cresc." of a hairpin
+// written as a word.
+func italicWidth(s string, size float64) float64 {
+	return textmetric.Width(s, size, textmetric.Style{Italic: true})
+}
+
 // boldItalicWidth is the same again for the face the signs are set in — a
 // "To Coda" or a "D.S." — which is bold and italic both.
 func boldItalicWidth(s string, size float64) float64 {

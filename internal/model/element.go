@@ -14,6 +14,7 @@ package model
 import (
 	"sort"
 	"strconv"
+	"strings"
 )
 
 // Element is anything that takes up time in a voice.
@@ -812,6 +813,13 @@ type TextMark struct {
 	// Offsets are in staff spaces from where the engraver would put it.
 	OffsetX, OffsetY float64
 
+	// Align is where along the bar the words are set: beside the note they
+	// are written on, which is the zero value and the usual thing, or at
+	// the left, the middle or the right of the bar — a "Fine" at the end
+	// of a bar, a section's name over the middle of one. The offsets are
+	// measured from wherever that puts it.
+	Align TextAlign
+
 	// Italic and Bold are set ON TOP of the style rather than instead of
 	// it. They can add a slant or a weight and cannot take one away:
 	// taking one away would need a third state for "not set", and a mark
@@ -827,6 +835,47 @@ type TextMark struct {
 	// title and the credits use, and for the same reason. A mark with no
 	// runs is plain, which is nearly every mark of nearly every score.
 	Runs []Span
+}
+
+// TextAlign is where along its bar a text mark is set.
+type TextAlign int
+
+const (
+	// AlignNote sets the words beside the note they are written on.
+	AlignNote TextAlign = iota
+	// AlignLeft sets them at the head of the bar, where its music begins.
+	AlignLeft
+	// AlignCentre sets them over the middle of the bar.
+	AlignCentre
+	// AlignRight sets them against the barline that ends the bar.
+	AlignRight
+)
+
+var textAlignNames = [...]string{"", "left", "centre", "right"}
+
+// String names the alignment, and says nothing for the usual one.
+func (a TextAlign) String() string {
+	if a < 0 || int(a) >= len(textAlignNames) {
+		return ""
+	}
+	return textAlignNames[a]
+}
+
+// TextAlignFromName reads an alignment as it is written, in either
+// spelling of the middle one. Anything it does not know is beside the
+// note, which is what a mark that says nothing means.
+func TextAlignFromName(s string) (TextAlign, bool) {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "", "note":
+		return AlignNote, true
+	case "left", "start":
+		return AlignLeft, true
+	case "centre", "center", "middle":
+		return AlignCentre, true
+	case "right", "end":
+		return AlignRight, true
+	}
+	return AlignNote, false
 }
 
 // Spans is the words as they are drawn: their runs where those spell them,
@@ -910,6 +959,19 @@ type Hairpin struct {
 	// the meeting of two hairpins are the same mark, and one of them has
 	// to be drawn wrongly.
 	Alone bool
+	// Words writes it as the word instead of the wedge: "cresc." or "dim."
+	// at the note it starts on and a broken line from there to where it
+	// stops. It is the same marking, played the same way — the word is
+	// how a long crescendo is written, where a wedge across half a page
+	// would read as a mistake, and it is what many an edition prefers.
+	Words bool
+	// Dashes is how long the broken line after the word is: 0 runs it to
+	// where the hairpin stops, which is the usual thing and what a file
+	// that says nothing gets; -1 is no line, the word alone; and a count
+	// above zero is that many dashes and no more, however far the hairpin
+	// reaches. A line of three dashes after "cresc." is a way of writing
+	// it too, and somebody may want none.
+	Dashes int
 }
 
 // Trill is an ornament held over a stretch of music: "tr" at the note it

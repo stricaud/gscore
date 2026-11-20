@@ -1406,6 +1406,11 @@ async function action(name) {
     case "acc-parens": await bracketAccidental(); break;
     case "hairpin-cresc": await setHairpin("crescendo", "Crescendo"); break;
     case "hairpin-dim": await setHairpin("diminuendo", "Diminuendo"); break;
+    // The same markings written as the word and a broken line, which is
+    // how a long crescendo is printed and what some editions use throughout.
+    // Played exactly as the wedge is.
+    case "hairpin-cresc-words": await setHairpin("cresc.", "cresc."); break;
+    case "hairpin-dim-words": await setHairpin("dim.", "dim."); break;
     case "hairpin-none": await setHairpin("none", "Hairpin removed"); break;
 
     case "octave-8va": await setOctave("8va", "8va"); break;
@@ -5469,6 +5474,28 @@ function setupCanvasClicks() {
       window.getSelection()?.removeAllRanges();
       selectSign(sign);
       await signSideDialog(sign);
+      return;
+    }
+    // A hairpin written as words opens the dialog for the line after the
+    // word: to the end, none, or so many dashes. A wedge has no such
+    // choice to make.
+    const hair = hairpinAt(x, y);
+    if (hair && hair.words) {
+      e.preventDefault();
+      window.getSelection()?.removeAllRanges();
+      selectHairpin(hair);
+      await hairpinLineDialog(hair);
+      return;
+    }
+    // Words written on a note open the window that changes them, as
+    // Enter does once they are picked up: the words, the kind, the side
+    // of the staff and where along the bar.
+    const words = textMarkAt(x, y);
+    if (words) {
+      e.preventDefault();
+      window.getSelection()?.removeAllRanges();
+      selectTextMark(words);
+      await textDialog();
     }
   });
 
@@ -8733,6 +8760,51 @@ async function signSideDialog(s) {
   }
   await refreshScore();
   status(`${name} at the ${side === "right" ? "end" : "head"} of bar ${barNumberOf(s.measure)}`);
+}
+
+// hairpinLineDialog asks how long the broken line after a "cresc." or
+// "dim." is — to where the marking stops, none at all, or so many dashes —
+// and writes the answer on the hairpin picked up.
+async function hairpinLineDialog(h) {
+  const dlg = $("#hairpin-line");
+  const word = h.kind === "diminuendo" ? "dim." : "cresc.";
+  $("#hairpin-line-what").textContent =
+    `${word} at bar ${barNumberOf(h.measure)}.`;
+  const now = h.dashes < 0 ? "none" : h.dashes > 0 ? "count" : "end";
+  $$('#hairpin-line-form input[name="hairpin-line"]').forEach(
+    (r) => (r.checked = r.value === now),
+  );
+  if (h.dashes > 0) $("#hairpin-line-count").value = String(h.dashes);
+  const answer = await new Promise((resolve) => {
+    const done = () => {
+      dlg.removeEventListener("close", done);
+      resolve(dlg.returnValue);
+    };
+    dlg.addEventListener("close", done);
+    dlg.showModal();
+  });
+  if (answer !== "ok") return;
+  let dashes = $('#hairpin-line-form input[name="hairpin-line"]:checked')?.value || "end";
+  if (dashes === "count") {
+    dashes = String(Math.max(1, parseInt($("#hairpin-line-count").value, 10) || 1));
+  }
+  // The hairpin is written on the note it starts from.
+  const from = refTarget(h.from);
+  if (!from) {
+    status("Could not find that hairpin any more");
+    return;
+  }
+  const res = await fetch(
+    `/api/hairpin?dashes=${dashes}&sel=${encodeURIComponent(from)}`,
+    { method: "POST" });
+  if (!res.ok) {
+    status("Could not change it: " + (await res.text()).trim());
+    return;
+  }
+  await refreshScore();
+  status(dashes === "none" ? `${word} alone, no line`
+       : dashes === "end" ? `${word} with its line to the end`
+       : `${word} with ${dashes} dashes`);
 }
 
 // A slur arcs over a passage and a tie joins neighbours, so both want a range
@@ -13040,6 +13112,7 @@ async function textDialog() {
   richSet(richBoxes["tm-words"], editing && editing.runs,
           editing ? editing.text : "");
   $("#tm-place").value = editing ? (editing.place || "") : "";
+  $("#tm-align").value = editing ? (editing.align || "") : "";
 
   // What the choice means, in the words a reader would use rather than as
   // a list of font settings: where it goes and who it is for.
@@ -13085,6 +13158,7 @@ async function textDialog() {
   const p = new URLSearchParams({
     part: String(sel.part), measure: String(sel.measure), at: String(sel.at),
     text: words, style: pick.value, placement: $("#tm-place").value,
+    align: $("#tm-align").value,
   });
   // The words go beside the note that was clicked, which is on the line it
   // is on. Left out, a staff whose music is written in the second voice
@@ -22409,6 +22483,13 @@ const typeBudget = 256;
 const REMOVE_MARK = '<circle cx="12" cy="12" r="8.5"/><path d="M6 18 18 6"/>';
 
 const MENU_DRAWINGS = {
+  // A hairpin written as the word: the wedge's two lines, broken, which
+  // is the marking it stands for drawn the way it is printed — a word and
+  // a broken line. The open end says which of the two it is.
+  "hairpin-cresc-words": '<path d="M3 12 21 6" stroke-dasharray="2.5 2"/>' +
+    '<path d="M3 12 21 18" stroke-dasharray="2.5 2"/>',
+  "hairpin-dim-words": '<path d="M21 12 3 6" stroke-dasharray="2.5 2"/>' +
+    '<path d="M21 12 3 18" stroke-dasharray="2.5 2"/>',
   // A fingering chart: the row of holes along an instrument, some
   // stopped and some open, which is what every chart in every method
   // book looks like and what the window draws.

@@ -197,12 +197,14 @@ func (e *engraver) spanAt(m *model.Marks, p *placed, measure int) {
 			e.drawHairpin(&openSpan{
 				x: openAt, kind: h.Kind, toRef: p.index, row: r,
 				ref: p.index, part: e.partIndex, measure: measure,
+				words: h.Words, dashes: h.Dashes,
 			}, to, true)
 			ended(to, r)
 		case h.Start && open.hairpin == nil:
 			open.hairpin = &openSpan{
 				x: openAt, kind: h.Kind, row: row(),
 				ref: p.index, part: e.partIndex, measure: measure,
+				words: h.Words, dashes: h.Dashes,
 			}
 		}
 	}
@@ -313,6 +315,7 @@ func (e *engraver) breakSpansOf(open *openSpans, right float64) {
 	if open.hairpin != nil {
 		e.drawHairpin(open.hairpin, right, false)
 		open.hairpin.x = -1 // resumed at the start of the next system
+		open.hairpin.carried = true
 	}
 	if open.octave != nil {
 		e.drawOctave(open.octave, right, false)
@@ -426,9 +429,14 @@ func (e *engraver) resumeSpansOf(open *openSpans, left float64) {
 }
 
 // drawHairpin draws the wedge. A crescendo opens to the right from a point; a
-// diminuendo starts open and closes to a point.
+// diminuendo starts open and closes to a point. A hairpin asked for as words
+// is drawn by drawHairpinWords instead.
 func (e *engraver) drawHairpin(h *openSpan, to float64, complete bool) {
 	if to <= h.x {
+		return
+	}
+	if h.words {
+		e.drawHairpinWords(h, to, complete)
 		return
 	}
 	t := e.opt.Defaults.StaffLineThickness * 1.2
@@ -497,6 +505,84 @@ func (e *engraver) drawHairpin(h *openSpan, to float64, complete bool) {
 		},
 	})
 }
+
+// hairpinWordSize is the size "cresc." and "dim." are set at: the size of a
+// word in a dynamic, which is what they are.
+const hairpinWordSize = dynamicTextSize
+
+// drawHairpinWords draws a hairpin written as its word: "cresc." or "dim."
+// in italics where it begins, and a broken line from the word to where it
+// stops, the way an edition writes a crescendo too long for a wedge. A
+// piece carried over from an earlier system has had its word already and
+// carries the line alone, as an octave line does.
+//
+// It takes the same room under the music as a wedge would, on the same
+// row, and is reported to the editor as the same kind of thing: a click on
+// the word or the line picks it up and Backspace takes it away.
+func (e *engraver) drawHairpinWords(h *openSpan, to float64, complete bool) {
+	word := "cresc."
+	kind := "crescendo"
+	if h.kind == model.Diminuendo {
+		word, kind = "dim.", "diminuendo"
+	}
+	size := hairpinWordSize
+	wordWidth := 0.0
+	if !h.carried {
+		wordWidth = italicWidth(word, size)
+	}
+	t := e.opt.Defaults.StaffLineThickness * 1.2
+	// Where the broken line begins and ends. After the word, where there
+	// is one; to where the hairpin stops, or for exactly the dashes asked
+	// for — the renderers draw a dash and then eight tenths of one of air,
+	// so n dashes are n dashes and n-1 gaps long — or not at all.
+	x0 := h.x
+	if wordWidth > 0 {
+		x0 += wordWidth + 0.6
+	}
+	x1 := to
+	switch {
+	case h.dashes < 0 || (h.dashes > 0 && h.carried):
+		x1 = x0
+	case h.dashes > 0:
+		x1 = x0 + hairpinDash*(1.8*float64(h.dashes)-0.8)
+	}
+	reach := math.Max(math.Max(to, h.x+wordWidth), x1)
+	e.wait(waitingMark{
+		x0: h.x, x1: reach, height: size, gap: 0.6,
+		join:  h.row,
+		below: true, rank: rankHairpin,
+		draw: func(top float64) {
+			if complete {
+				e.lay.Hairpins = append(e.lay.Hairpins, HairpinPos{
+					Part: h.part, Measure: h.measure,
+					From: h.ref, To: h.toRef,
+					X: h.x, Y: top, Width: reach - h.x, Height: size,
+					Kind: kind, Words: true, Dashes: h.dashes,
+				})
+			}
+			// The word sits on a baseline a little above the bottom of its
+			// band, so that its descender and the line's dashes both fit.
+			if !h.carried {
+				e.lay.Texts = append(e.lay.Texts, Text{
+					S: word, X: h.x, Y: top + size*0.8, Size: size,
+					Anchor: "start", Italic: true,
+				})
+			}
+			// The broken line, at the height of the word's middle. Not
+			// drawn where there is no room for a dash: a swell on one note
+			// is the word alone.
+			if x1-x0 >= hairpinDash {
+				y := top + size*0.5
+				e.lay.Lines = append(e.lay.Lines, Line{
+					X1: x0, Y1: y, X2: x1, Y2: y, Thickness: t, Dash: hairpinDash,
+				})
+			}
+		},
+	})
+}
+
+// hairpinDash is the length of one dash of the line after "cresc.".
+const hairpinDash = 0.6
 
 // drawOctave draws the broken line with its name at the left, and the hook at
 // the end that says where the shift stops.

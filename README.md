@@ -211,6 +211,7 @@ For anybody using gscore:
 | [`docs/only-gscore.md`](docs/only-gscore.md) | the nine things no other notation editor does |
 | [`docs/manual.md`](docs/manual.md) | the user manual, in full |
 | [`docs/curl.md`](docs/curl.md) | writing, engraving and recording a score with `curl` alone |
+| [`docs/scanned-pages.md`](docs/scanned-pages.md) | opening scans and photographs of pages, where homr comes from, and the `-omr` packages |
 | [`docs/glossary.md`](docs/glossary.md) | an index of the musical terms used |
 
 For anybody changing it:

@@ -578,7 +578,10 @@ These change what *you* see. None of them changes the music.
 Reads: ABC, Finale `.musx` and the older `.mus`, GUIDO, MuseScore
 `.mscz`/`.mscx`, MusicXML (`.musicxml`, `.xml`, `.mxl`), NoteWorthy
 `.nwctxt`/`.nwc`, Guitar Pro (`.gp3`, `.gp4`, `.gp5`), ASCII tablature (`.tab`,
-`.btab`, `.txt`), and `.gscore`.
+`.btab`, `.txt`), and `.gscore`. Pictures of pages — `.png`, `.jpg`, scans
+and photographs — are read by homr, a separate program Gscore runs for you,
+several pages at once from files or from web addresses; [scanned
+pages](scanned-pages.md) says where it comes from and what to expect.
 
 Writes: PDF, SVG, web page, MIDI, MusicXML (compressed or not), ABC,
 LilyPond, GUIDO, and audio as FLAC.

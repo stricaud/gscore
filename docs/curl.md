@@ -486,6 +486,14 @@ curl -s -G -X POST "$G/api/openpath" --data-urlencode "path=$1" > /dev/null
 curl -s "$G/api/pdf" -o "${1%.*}.pdf"
 ```
 
+Pictures of pages — scans, photographs — go to `/api/openscan`, several at
+once, as files or as addresses the server fetches; they are read by homr,
+which [scanned pages](scanned-pages.md) explains how to get:
+
+```sh
+curl -X POST "$G/api/openscan" -F page=@page1.jpg -F page=@page2.jpg
+```
+
 <p class="note"><b>One file in, one file out</b> does not need a server at
 all: <code>gscore -o out.pdf in.mscz</code> and <code>gscore -convert
 out.musicxml in.abc</code> do that directly. The server is for the jobs where

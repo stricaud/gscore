@@ -177,6 +177,14 @@ type App struct {
 	password    string
 	askPassword string
 
+	// pasteboard reads the system clipboard, for music copied in another
+	// program; nil where there is no reaching it. copiedAt is the
+	// clipboard's change count when gscore last copied, so that a copy
+	// made since in another program can be told from one made before.
+	// See pastemusescore.go.
+	pasteboard func(kind string) ([]byte, int)
+	copiedAt   int
+
 	// mux is this document's own router, built once when the App is made.
 	//
 	// One router per session rather than one for the whole server, because
@@ -285,6 +293,7 @@ func NewBook(scores []*model.Score, filename string) *App {
 		sheet:      -1,
 		engraveOpt: eo,
 		renderOpt:  ro,
+		pasteboard: desktop.Pasteboard,
 	}
 
 	// And whatever the file itself said about how it was last looked at.

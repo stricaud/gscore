@@ -933,6 +933,17 @@ paths:
                   pasted: { type: integer }
                   measure: { type: integer }
                   at: { type: integer }
+                  from:
+                    type: string
+                    description: |
+                      Present when the music came off the system clipboard
+                      rather than gscore's own: `MuseScore`, for a range
+                      copied there. Read only on the machine the editor runs
+                      on, and only when that copy is later than gscore's.
+                  skipped:
+                    type: array
+                    items: { type: string }
+                    description: What in such a copy could not be read.
         "400": { $ref: "#/components/responses/Error" }
 
   /api/abc:

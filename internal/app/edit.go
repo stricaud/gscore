@@ -3645,6 +3645,7 @@ func (a *App) handleCopy(w http.ResponseWriter, r *http.Request) {
 	}
 	clip := clipboard{elements: out, where: where}
 	*a.clipboard() = clip
+	a.copiedAt = a.pasteboardChange()
 	writeJSON(w, map[string]int{
 		"copied": len(out), "bars": bars(clip.pieces()), "voices": clip.voices()})
 }
@@ -3667,10 +3668,6 @@ func (a *App) handlePaste(w http.ResponseWriter, r *http.Request) {
 	a.lock()
 	defer a.mu.Unlock()
 
-	if len(a.clipboard().elements) == 0 {
-		http.Error(w, "nothing has been copied", http.StatusBadRequest)
-		return
-	}
 	// For writing, the same as a note is: pasting into a bar is putting
 	// music in it.
 	//
@@ -3681,8 +3678,25 @@ func (a *App) handlePaste(w http.ResponseWriter, r *http.Request) {
 	// measure" — on the one bar of the piece a reader is most likely to aim
 	// at, the empty one at the end, and on the staff just added under the
 	// one being copied from.
-	if _, _, err := a.locateForWriting(partIdx, measIdx); err != nil {
+	into, _, err := a.locateForWriting(partIdx, measIdx)
+	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	// What was copied last: in gscore, or in MuseScore, whose clipboard
+	// is read into the same shape. See pastemusescore.go.
+	clip := a.clipboard()
+	from := ""
+	var skipped []string
+	if outside, sk, err := a.outsideClipboard(into, measIdx); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	} else if outside != nil {
+		clip, skipped, from = outside, sk, "MuseScore"
+	}
+	if len(clip.elements) == 0 {
+		http.Error(w, "nothing has been copied", http.StatusBadRequest)
 		return
 	}
 
@@ -3694,7 +3708,6 @@ func (a *App) handlePaste(w http.ResponseWriter, r *http.Request) {
 	// insert=1 is the other way, for adding to a bar rather than replacing
 	// part of it.
 	insert := q.Get("insert") == "1"
-	clip := a.clipboard()
 	pieces := clip.pieces()
 	// A copy of one line of music goes wherever the pen is, which is how a
 	// phrase is moved from one voice to another. A copy of several keeps its
@@ -3791,10 +3804,16 @@ func (a *App) handlePaste(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	measure, idx := findElement(lastPart, lastBar, lastVoice, last)
-	writeJSON(w, map[string]any{
+	out := map[string]any{
 		"pasted": pasted, "measure": measure, "at": idx,
 		"bars": bars(pieces), "voices": clip.voices(),
-	})
+	}
+	if from != "" {
+		// Where it came from, and what of it could not be read.
+		out["from"] = from
+		out["skipped"] = skipped
+	}
+	writeJSON(w, out)
 }
 
 // bars is how many bars a copy was laid out over.

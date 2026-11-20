@@ -20914,7 +20914,14 @@ async function pasteClipboard() {
   state.multi = [];
   await refreshScore();
   markSelection();
-  status(`Pasted ${d.pasted} ${d.pasted === 1 ? "note" : "notes"}`);
+  // Where it came from, where that was another program, and what of it
+  // could not be read.
+  let msg = `Pasted ${d.pasted} ${d.pasted === 1 ? "note" : "notes"}`;
+  if (d.from) msg += ` from ${d.from}`;
+  if (d.skipped?.length) {
+    msg += `; ${d.skipped.length} ${d.skipped.length === 1 ? "thing" : "things"} could not be read`;
+  }
+  status(msg);
 }
 
 // selectionTargets spells what is selected the way the server wants it, or

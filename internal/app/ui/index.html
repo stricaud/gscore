@@ -1729,6 +1729,28 @@
   <h2>Transpose</h2>
   <p class="small" id="transpose-where">The whole piece.</p>
   <form method="dialog" id="transpose-form">
+    <!-- By an interval, or to a key. "Put it in B flat" is how a singer
+         asks; "up a tone" is how a player does. The distance to a key is
+         worked out from the key the music is in. -->
+    <div class="choices">
+      <label><input type="radio" name="transpose-how" value="interval" checked>
+        <span><b>By an interval</b></span></label>
+      <label><input type="radio" name="transpose-how" value="key">
+        <span><b>To a key</b></span></label>
+    </div>
+    <div id="transpose-by-key" hidden>
+      <label class="tempo-bar" for="transpose-tokey">Key
+        <select id="transpose-tokey"></select></label>
+      <div class="choices">
+        <label><input type="radio" name="transpose-way" value="closest" checked>
+          <span><b>Whichever is nearer</b></span></label>
+        <label><input type="radio" name="transpose-way" value="up">
+          <span><b>Up</b></span></label>
+        <label><input type="radio" name="transpose-way" value="down">
+          <span><b>Down</b></span></label>
+      </div>
+    </div>
+    <div id="transpose-by-interval">
     <div class="choices">
       <label><input type="radio" name="transpose-dir" value="up" checked>
         <span><b>Up</b></span></label>
@@ -1759,6 +1781,7 @@
         <span><b>Within the key</b><em>By letters alone, spelled by the key: a third
           up is the third degree of it, major or minor as the key says. The quality
           chosen above is then ignored.</em></span></label>
+    </div>
     </div>
     <div class="choices" id="transpose-key-row">
       <label><input type="checkbox" id="transpose-key" checked>

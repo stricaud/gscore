@@ -199,6 +199,64 @@ func (a *App) refretTabs() {
 	}
 }
 
+// keyToMoveFrom is the key the music to be transposed is in now: the key
+// at the first selected bar of its staff, or, for the whole piece, the key
+// of its first staff that sounds as written — a piano or a voice — and
+// failing one of those the first staff that can be moved at all. It
+// reports whether there was a staff to read.
+func (a *App) keyToMoveFrom(sel string) (int, bool) {
+	if sel != "" {
+		targets, err := parseTargets(sel)
+		if err != nil {
+			return 0, false
+		}
+		for _, tg := range targets {
+			p, _, err := a.locate(tg.part, tg.measure)
+			if err != nil {
+				continue
+			}
+			return p.KeyAt(tg.measure).Fifths, true
+		}
+		return 0, false
+	}
+	var first *model.Part
+	for _, p := range a.score.Parts {
+		if !transposable(p) {
+			continue
+		}
+		if p.Transpose.IsZero() {
+			return p.Key.Fifths, true
+		}
+		if first == nil {
+			first = p
+		}
+	}
+	if first != nil {
+		return first.Key.Fifths, true
+	}
+	return 0, false
+}
+
+// intervalToKey is the distance from one key to another, in letters and
+// semitones: up, down, or whichever is nearer. Keys a fifth apart are also
+// a fourth apart the other way, and a singer putting a song down for their
+// voice wants the nearer one. Nothing at all where the keys are the same.
+func intervalToKey(from, to int, direction string) (steps, semis int) {
+	d := to - from
+	// Each fifth around the circle is four letters and seven semitones.
+	steps = ((4*d)%7 + 7) % 7
+	semis = ((7*d)%12 + 12) % 12
+	if steps == 0 && semis == 0 {
+		return 0, 0
+	}
+	down := direction == "down" ||
+		(direction != "up" && (semis > 6 || (semis == 6 && steps > 3)))
+	if down {
+		return steps - 7, semis - 12
+	}
+	return steps, semis
+}
+
 // handleTranspose moves the selection, or the whole piece, to another key.
 func (a *App) handleTranspose(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -234,6 +292,40 @@ func (a *App) handleTranspose(w http.ResponseWriter, r *http.Request) {
 	if !diatonic && !haveSteps {
 		steps = lettersFor(semis)
 	}
+	// Or to a key rather than by an interval: "put it in B flat" is how a
+	// singer asks, and the distance from the key the music is in is worked
+	// out here rather than by whoever is asking. Up, down, or whichever is
+	// nearer, which is what the voice usually wants.
+	toKey, haveToKey := 0, false
+	if v := q.Get("tokey"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < -7 || n > 7 {
+			http.Error(w, "tokey is a key signature, from -7 flats to 7 sharps", http.StatusBadRequest)
+			return
+		}
+		toKey, haveToKey = n, true
+	}
+	direction := q.Get("direction")
+	sel := q.Get("sel")
+
+	a.lock()
+	defer a.mu.Unlock()
+
+	from := 0
+	if haveToKey {
+		var ok bool
+		from, ok = a.keyToMoveFrom(sel)
+		if !ok {
+			http.Error(w, "there is no staff to read the key from", http.StatusBadRequest)
+			return
+		}
+		steps, semis = intervalToKey(from, toKey, direction)
+		haveSteps, diatonic = true, false
+		if steps == 0 && semis == 0 {
+			http.Error(w, "the music is in that key already", http.StatusBadRequest)
+			return
+		}
+	}
 	if steps == 0 && semis == 0 {
 		http.Error(w, "that is no distance at all", http.StatusBadRequest)
 		return
@@ -249,12 +341,8 @@ func (a *App) handleTranspose(w http.ResponseWriter, r *http.Request) {
 	// moving. Part of a piece lifted a tone is still in the key it was in,
 	// written with accidentals; and a move by letters alone stays in the
 	// key by definition.
-	sel := q.Get("sel")
 	moveKey := sel == "" && !diatonic && q.Get("key") != "0"
 	t := transposer{steps: steps, semis: semis, diatonic: diatonic, keyMoves: moveKey}
-
-	a.lock()
-	defer a.mu.Unlock()
 
 	changed, skipped := 0, 0
 	if sel != "" {
@@ -289,7 +377,8 @@ func (a *App) handleTranspose(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		a.refretTabs()
-		writeJSON(w, map[string]any{"changed": changed, "left": skipped})
+		writeJSON(w, map[string]any{"changed": changed, "left": skipped,
+			"steps": steps, "semitones": semis})
 		return
 	}
 
@@ -298,6 +387,12 @@ func (a *App) handleTranspose(w http.ResponseWriter, r *http.Request) {
 	// a part written a tone up from the piece is still a tone up from it
 	// after the piece has moved.
 	fifths := model.Transposition{Chromatic: semis}.Fifths()
+	// Asked for a key, the signature lands on that key and not on the
+	// nearest spelling of the distance: C sharp major when C sharp major
+	// was asked for, however the same seven sharps might be written.
+	if haveToKey {
+		fifths = toKey - from
+	}
 	for _, p := range a.score.Parts {
 		if !transposable(p) {
 			skipped++
@@ -339,7 +434,8 @@ func (a *App) handleTranspose(w http.ResponseWriter, r *http.Request) {
 	// The fingers follow the notes. Without this the numbers on a
 	// tablature are where the hand went for the music as it was.
 	a.refretTabs()
-	out := map[string]any{"changed": changed, "left": skipped}
+	out := map[string]any{"changed": changed, "left": skipped,
+		"steps": steps, "semitones": semis}
 	if moveKey && len(a.score.Parts) > 0 {
 		out["fifths"] = a.score.Parts[0].Key.Fifths
 	}

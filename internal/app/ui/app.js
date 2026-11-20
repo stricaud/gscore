@@ -11486,6 +11486,13 @@ async function transposeBy(steps, semitones, opt) {
   if (steps !== null && steps !== undefined) p.set("steps", String(steps));
   if (sel) p.set("sel", sel);
   if (opt.diatonic) p.set("mode", "diatonic");
+  // To a key: the distance is worked out on the other side, from the key
+  // the music is in, and comes back with the answer.
+  if (opt.toKey !== undefined && opt.toKey !== null) {
+    p.delete("semitones");
+    p.set("tokey", String(opt.toKey));
+    p.set("direction", opt.direction || "closest");
+  }
   // The signature only ever moves when the whole piece does; the server
   // holds to that as well, and says so here so the two cannot drift.
   p.set("key", !sel && opt.key !== false && !opt.diatonic ? "1" : "0");
@@ -11499,6 +11506,11 @@ async function transposeBy(steps, semitones, opt) {
   await refreshScore();
   markSelection();
 
+  // Moved to a key, the distance is the server's to say.
+  if (d && opt.toKey !== undefined && opt.toKey !== null) {
+    steps = d.steps;
+    semitones = d.semitones;
+  }
   const name = (steps === null || steps === undefined
     ? null
     : intervalNames[`${Math.abs(steps)},${Math.abs(semitones)}`]) ||
@@ -11544,6 +11556,24 @@ async function transposeDialog() {
   // in the key it was in, and is written with accidentals.
   $("#transpose-key-row").hidden = !!sel;
 
+  // The keys to choose from, named both ways round as the key window
+  // names them, opening on the key the music is in now.
+  keyOptions = keyOptions || (await (await fetch("/api/keysignatures")).json());
+  const part = state.selection?.part ?? 0;
+  const now = keyFifthsOf(state.info?.parts?.[part], state.selection?.measure ?? 0) ?? 0;
+  $("#transpose-tokey").innerHTML = keyOptions.map((k) =>
+    `<option value="${k.fifths}">${escapeHTML(k.major)} major — ` +
+    `${escapeHTML(k.minor.replace(/m$/, ""))} minor</option>`).join("");
+  $("#transpose-tokey").value = String(now);
+  const howChanged = () => {
+    const byKey = $$('#transpose-form input[name="transpose-how"]')
+      .find((r) => r.checked)?.value === "key";
+    $("#transpose-by-key").hidden = !byKey;
+    $("#transpose-by-interval").hidden = byKey;
+  };
+  $$('#transpose-form input[name="transpose-how"]').forEach((r) => (r.onchange = howChanged));
+  howChanged();
+
   const answer = await new Promise((resolve) => {
     const done = () => {
       dlg.removeEventListener("close", done);
@@ -11557,6 +11587,13 @@ async function transposeDialog() {
     return;
   }
 
+  if ($$('#transpose-form input[name="transpose-how"]').find((r) => r.checked)?.value === "key") {
+    const toKey = Number($("#transpose-tokey").value);
+    const direction = $$('#transpose-form input[name="transpose-way"]')
+      .find((r) => r.checked)?.value || "closest";
+    await transposeBy(null, 0, { toKey, direction, key: $("#transpose-key").checked });
+    return;
+  }
   const picked = $("#transpose-interval").value.split(",");
   let steps = Number(picked[0]), semitones = Number(picked[1]);
   const down = $$('#transpose-form input[name="transpose-dir"]')

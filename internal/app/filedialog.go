@@ -219,7 +219,17 @@ func (a *App) handlePickFile(w http.ResponseWriter, r *http.Request) {
 		writePictureGrid(w, data, name, fit, true)
 		return
 	}
-	if err := a.openPath(path); err != nil {
+	// A locked file is put aside for the interface to ask the password
+	// of, as a file the shell opens is: the dialog has closed, and a 401
+	// here would only reopen it. See info.AskPassword.
+	if err := a.openPath(path, ""); err != nil {
+		if errors.Is(err, gscorefmt.ErrPasswordNeeded) {
+			a.lock()
+			a.askPassword = path
+			a.mu.Unlock()
+			writeJSON(w, map[string]any{"status": "askPassword", "filename": filepath.Base(path)})
+			return
+		}
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -238,7 +248,10 @@ func (a *App) handleOpenPath(w http.ResponseWriter, r *http.Request) {
 			http.StatusForbidden)
 		return
 	}
-	if err := a.openPath(path); err != nil {
+	if err := a.openPath(path, passwordOf(r)); err != nil {
+		if passwordTrouble(w, err) {
+			return
+		}
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -252,9 +265,22 @@ func (a *App) handleOpenPath(w http.ResponseWriter, r *http.Request) {
 // A file the importer only half understands is still opened, with the
 // trouble recorded for the log window, because a score with one bad bar in
 // it is still a score.
-func (a *App) OpenPath(path string) error { return a.openPath(path) }
+//
+// A file locked under a password cannot be opened from here, where there
+// is nobody to ask. It is put aside for the interface, which asks and
+// opens it: see info.AskPassword.
+func (a *App) OpenPath(path string) error {
+	err := a.openPath(path, "")
+	if errors.Is(err, gscorefmt.ErrPasswordNeeded) {
+		a.lock()
+		a.askPassword = path
+		a.mu.Unlock()
+		return nil
+	}
+	return err
+}
 
-func (a *App) openPath(path string) error {
+func (a *App) openPath(path, password string) error {
 	// A PDF goes a different way: its bytes are kept so the reading can be
 	// reviewed and done again with the grouping said out loud. See
 	// pdfimport.go.
@@ -273,17 +299,11 @@ func (a *App) openPath(path string) error {
 		a.remember(path)
 		return nil
 	}
-	imp, err := format.ImporterFor(path)
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return err
 	}
-	f, err := os.Open(path)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-
-	scores, err := format.ImportAll(imp, f)
+	scores, err := a.readScores(path, data, password)
 	// A format may understand part of a file and hand back what it got. That
 	// is worth showing, so only a read that produced nothing is fatal.
 	if len(scores) == 0 {
@@ -292,17 +312,17 @@ func (a *App) openPath(path string) error {
 	a.lock()
 	a.forgetPDF()
 	a.setBook(scores, path, err)
-	a.mu.Unlock()
-
+	if isGscoreName(path) {
+		a.password = password
+	}
+	if a.askPassword == path {
+		a.askPassword = ""
+	}
 	// And the drawings the file carries. Opening read the music and left
 	// the artwork in the zip: a symbol placed, sized and saved was gone
 	// the moment the score was opened again.
-	if sf, err := os.Open(path); err == nil {
-		a.lock()
-		a.adoptSymbols(sf)
-		a.mu.Unlock()
-		sf.Close()
-	}
+	a.adoptSymbols(bytes.NewReader(data), password)
+	a.mu.Unlock()
 	a.remember(path)
 	return nil
 }
@@ -1012,10 +1032,15 @@ func (a *App) writeDocument(out io.Writer, ext string, r *http.Request) error {
 	}
 
 	a.mu.RLock()
-	score, symbols := a.score, a.symbols
+	score, symbols, password := a.score, a.symbols, a.password
 	a.mu.RUnlock()
 
 	if strings.EqualFold(ext, ".gscore") {
+		// Locked under a password, the file is the sealed music alone: a
+		// PDF in front of it would show anyone what the password keeps.
+		if password != "" {
+			return gscorefmt.WriteEncrypted(out, score, symbols, password)
+		}
 		// The one format that can carry the drawings gets handed them, and
 		// a PDF of the score in front of them unless that was turned off.
 		// Renamed .pdf, the same file opens in anything that reads one.

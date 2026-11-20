@@ -41,6 +41,7 @@
            key printed beside it that does something else is worse than one
            with no key at all. -->
       <button data-action="save-as"><span>Save as…</span></button>
+      <button data-action="protect"><span>Protect with a password…</span></button>
       <!-- Everything that leaves gscore for another program, in one place.
            Six of them in the File menu made saving hard to find among the
            ways of not quite saving. -->
@@ -1258,6 +1259,29 @@
 <!-- The line after a "cresc." or "dim." written as words: to where the
      marking stops, none, or so many dashes. Opened by a double click on
      the word. -->
+<!-- A password on the score. The file is locked under it when it is
+     saved and the password asked for when it is opened again. A locked
+     file carries no PDF in front of it: nothing of the piece is readable
+     without the word. -->
+<dialog id="protect">
+  <h2>Protect with a password</h2>
+  <p class="small" id="protect-what">The score is saved locked under this
+     password and opens only to somebody who has it. A locked file carries
+     no PDF of the music in front of it. There is no way back in without
+     the password.</p>
+  <form method="dialog" id="protect-form">
+    <label class="tempo-bar" for="protect-pw">Password
+      <input type="password" id="protect-pw" autocomplete="new-password"></label>
+    <label class="tempo-bar" for="protect-again">Again
+      <input type="password" id="protect-again" autocomplete="new-password"></label>
+    <div class="ask-buttons">
+      <button value="ok" type="submit" class="primary">Protect</button>
+      <button value="remove" type="submit" formnovalidate id="protect-remove">Remove the password</button>
+      <button value="cancel" type="submit" formnovalidate>Cancel</button>
+    </div>
+  </form>
+</dialog>
+
 <dialog id="hairpin-line">
   <h2>The line after the word</h2>
   <p class="small" id="hairpin-line-what">cresc.</p>

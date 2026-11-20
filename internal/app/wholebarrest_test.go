@@ -173,7 +173,7 @@ func writeAndOpen(t *testing.T, h *harness) *harness {
 	f.Close()
 
 	open := newHarness(t)
-	if err := open.app.openPath(path); err != nil {
+	if err := open.app.openPath(path, ""); err != nil {
 		t.Fatal(err)
 	}
 	return open

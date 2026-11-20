@@ -322,7 +322,7 @@ func TestASecondVoiceSurvivesSavingAndOpening(t *testing.T) {
 	// A fresh editor, as though the program had been closed and started
 	// again.
 	open := newHarness(t)
-	if err := open.app.openPath(path); err != nil {
+	if err := open.app.openPath(path, ""); err != nil {
 		t.Fatal(err)
 	}
 	m := firstBar(t, open)
@@ -356,7 +356,7 @@ func TestASecondVoiceCanBeEditedAfterOpening(t *testing.T) {
 	f.Close()
 
 	open := newHarness(t)
-	if err := open.app.openPath(path); err != nil {
+	if err := open.app.openPath(path, ""); err != nil {
 		t.Fatal(err)
 	}
 	// A second note into the line that came out of the file, and then a

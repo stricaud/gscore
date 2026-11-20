@@ -98,7 +98,7 @@ func defaultSaveName(from string) string {
 // without going through HTTP to do it.
 func (a *App) writeScore(path string) error {
 	a.mu.RLock()
-	score, symbols := a.score, a.symbols
+	score, symbols, password := a.score, a.symbols, a.password
 	a.mu.RUnlock()
 
 	f, err := os.Create(path)
@@ -108,6 +108,11 @@ func (a *App) writeScore(path string) error {
 	defer f.Close()
 
 	if strings.EqualFold(filepath.Ext(path), ".gscore") {
+		// Locked, the file is the sealed music alone, with no PDF in
+		// front of it. See gscorefmt.WriteEncrypted.
+		if password != "" {
+			return gscorefmt.WriteEncrypted(f, score, symbols, password)
+		}
 		var preview []byte
 		if SaveScorePDF() {
 			var buf bytes.Buffer

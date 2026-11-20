@@ -1669,6 +1669,9 @@ async function action(name) {
     case "save-as":
       await saveScore(true);
       break;
+    case "protect":
+      await protectDialog();
+      break;
     case "settings":
       await settingsDialog();
       break;
@@ -2602,6 +2605,15 @@ async function selectTune(i) {
 async function loadInfo() {
   const res = await fetch("/api/info");
   state.info = await res.json();
+  // A locked file the shell was handed waits here for its password: the
+  // Finder opened it and had nobody to ask. See info.AskPassword.
+  if (state.info.askPassword && !askingPassword) {
+    const path = state.info.askPassword;
+    askingPassword = true;
+    setTimeout(() => {
+      openRecent(path).finally(() => { askingPassword = false; });
+    }, 0);
+  }
   const i = state.info;
 
   // What the score carries, read with the score rather than when the
@@ -4098,9 +4110,14 @@ async function openRecent(path) {
   status("Opening " + path + "…");
   busy("Opening " + path + "…");
   try {
-    const res = await fetch("/api/openpath?path=" + encodeURIComponent(path), {
-      method: "POST",
-    });
+    const res = await openWithPassword((password) =>
+      fetch("/api/openpath?path=" + encodeURIComponent(path), {
+        method: "POST", headers: passwordHeader(password),
+      }));
+    if (!res) {
+      status("Not opened");
+      return;
+    }
     if (!res.ok) {
       status("Could not open it: " + (await res.text()).trim());
       // Gone or unreadable: the list says so next time it is asked.
@@ -10190,11 +10207,13 @@ async function startLanguage(now) {
 // so prompt() quietly returns null and whatever asked for the value does
 // nothing at all.
 function ask({ title, label, value = "", note = "", options = null,
-               search = false, many = false }) {
+               search = false, many = false, secret = false }) {
   const dlg = $("#ask");
   const input = $("#ask-input");
   const select = $("#ask-select");
   const filter = $("#ask-filter");
+  // A password is typed unseen.
+  input.type = secret ? "password" : "text";
 
   $("#ask-title").textContent = title;
   $("#ask-label").textContent = label;
@@ -16513,10 +16532,15 @@ async function openFile(file) {
   status("Opening " + file.name + "…");
   busy("Opening " + file.name + "…");
   try {
-    const res = await fetch("/api/open?name=" + encodeURIComponent(file.name), {
-      method: "POST",
-      body: await file.arrayBuffer(),
-    });
+    const body = await file.arrayBuffer();
+    const res = await openWithPassword((password) =>
+      fetch("/api/open?name=" + encodeURIComponent(file.name), {
+        method: "POST", body, headers: passwordHeader(password),
+      }));
+    if (!res) {
+      status("Not opened");
+      return false;
+    }
     if (!res.ok) {
       status("Could not open: " + (await res.text()).trim());
       return false;
@@ -16530,6 +16554,85 @@ async function openFile(file) {
     // window that has given up is worse than no mascot at all.
     idle();
   }
+}
+
+/* ---------- passwords ---------- */
+
+// askingPassword says a password is being asked for already, so that the
+// info that keeps arriving while the window is open does not ask again.
+let askingPassword = false;
+
+// passwordHeader is how a password travels with a request: in a header and
+// not in the address, which gets written in logs.
+function passwordHeader(password) {
+  return password ? { "X-Gscore-Password": password } : {};
+}
+
+// openWithPassword runs an open, asking for the password as often as the
+// server says one is needed or the one given was wrong. It hands back the
+// response that was not about passwords, or null where the asking was
+// given up.
+async function openWithPassword(attempt) {
+  let password = "";
+  let note = "This score is protected by a password.";
+  for (;;) {
+    const res = await attempt(password);
+    if (res.status !== 401 || !res.headers.get("X-Needs-Password")) return res;
+    if (password) note = "That is not the password.";
+    const given = await ask({
+      title: "Password", label: "Password", note, secret: true,
+    });
+    if (given === null || given === "") return null;
+    password = given;
+  }
+}
+
+// protectDialog sets, changes or removes the password the score is saved
+// under.
+async function protectDialog() {
+  const dlg = $("#protect");
+  const protectedNow = !!state.info?.protected;
+  $("#protect-remove").hidden = !protectedNow;
+  $("#protect-pw").value = "";
+  $("#protect-again").value = "";
+  const answer = await new Promise((resolve) => {
+    const done = () => {
+      dlg.removeEventListener("close", done);
+      resolve(dlg.returnValue);
+    };
+    dlg.addEventListener("close", done);
+    dlg.showModal();
+    $("#protect-pw").focus();
+  });
+  if (answer === "remove") {
+    const res = await fetch("/api/password?clear=1", { method: "POST" });
+    if (!res.ok) {
+      status("Could not remove it: " + (await res.text()).trim());
+      return;
+    }
+    await loadInfo();
+    status("Password removed — the score is saved unlocked from now on");
+    return;
+  }
+  if (answer !== "ok") return;
+  const pw = $("#protect-pw").value;
+  if (!pw) {
+    status("No password typed, so nothing was changed");
+    return;
+  }
+  if (pw !== $("#protect-again").value) {
+    status("The two passwords are not the same — nothing was changed");
+    return;
+  }
+  const res = await fetch("/api/password", {
+    method: "POST", headers: passwordHeader(pw),
+  });
+  if (!res.ok) {
+    status("Could not set it: " + (await res.text()).trim());
+    return;
+  }
+  await loadInfo();
+  status("Protected — the score is locked under the password when you save it");
 }
 
 // openScore asks the system for a file when gscore is running as an
@@ -22483,6 +22586,9 @@ const typeBudget = 256;
 const REMOVE_MARK = '<circle cx="12" cy="12" r="8.5"/><path d="M6 18 18 6"/>';
 
 const MENU_DRAWINGS = {
+  // A padlock: the score saved under a password.
+  protect: '<rect x="5" y="11" width="14" height="10" rx="2"/>' +
+    '<path d="M8 11V8a4 4 0 0 1 8 0v3"/>',
   // A hairpin written as the word: the wedge's two lines, broken, which
   // is the marking it stands for drawn the way it is printed — a word and
   // a broken line. The open end says which of the two it is.

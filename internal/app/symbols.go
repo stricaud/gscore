@@ -661,8 +661,8 @@ func (a *App) handleImportSymbols(w http.ResponseWriter, r *http.Request) {
 // a symbol of the same name that happens to be in the registry from some
 // other score is a different drawing, and preferring it would redraw
 // somebody's music with a stranger's artwork.
-func (a *App) adoptSymbols(src io.Reader) int {
-	incoming, err := gscorefmt.ReadSymbols(src)
+func (a *App) adoptSymbols(src io.Reader, password string) int {
+	incoming, err := gscorefmt.ReadSymbolsWithPassword(src, password)
 	if err != nil || incoming == nil {
 		return 0 // not a .gscore, or one with no drawings in it
 	}

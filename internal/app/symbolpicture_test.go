@@ -178,7 +178,7 @@ func TestASymbolSurvivesSavingAndOpening(t *testing.T) {
 	if _, ok := open.app.symbols.Lookup("device"); ok {
 		t.Fatal("the fresh registry already had it, so this proves nothing")
 	}
-	if err := open.app.openPath(path); err != nil {
+	if err := open.app.openPath(path, ""); err != nil {
 		t.Fatal(err)
 	}
 	if _, ok := open.app.symbols.Lookup("device"); !ok {

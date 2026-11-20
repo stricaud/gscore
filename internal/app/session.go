@@ -262,7 +262,9 @@ func (s *Server) open(path string) (*App, string, error) {
 	}
 	app := s.newApp()
 	if path != "" {
-		if err := app.openPath(path); err != nil {
+		// A locked file opens empty, with its password to be asked for
+		// by the interface: see OpenPath.
+		if err := app.OpenPath(path); err != nil {
 			return nil, "", err
 		}
 	}

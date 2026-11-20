@@ -73,6 +73,8 @@ type formatInfo struct {
 	Format    string `json:"format"`
 	Version   int    `json:"version"`
 	Generator string `json:"generator"`
+	// Encryption says the container is locked, and how. See crypt.go.
+	Encryption *encryptionInfo `json:"encryption,omitempty"`
 }
 
 /*
@@ -315,35 +317,31 @@ func PDFPrefix(data []byte) []byte {
 	return nil
 }
 
-// Read loads a score and any symbols stored with it.
+// Read loads a score and any symbols stored with it. A file locked under a
+// password is refused with ErrPasswordNeeded: see ReadWithPassword.
 func Read(r io.Reader) (*model.Score, *symbol.Registry, error) {
+	return ReadWithPassword(r, "")
+}
+
+// ReadWithPassword loads a score, unlocking the file with the password
+// where it is locked. An unlocked file ignores the password; a locked one
+// read with the wrong password is refused with ErrWrongPassword.
+func ReadWithPassword(r io.Reader, password string) (*model.Score, *symbol.Registry, error) {
 	data, err := io.ReadAll(r)
 	if err != nil {
 		return nil, nil, fmt.Errorf("gscore: %w", err)
 	}
-	zr, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
+	files, info, err := openContainer(data, password)
 	if err != nil {
-		return nil, nil, fmt.Errorf("gscore: not a .gscore container: %w", err)
+		return nil, nil, err
 	}
-
-	files := map[string]*zip.File{}
-	for _, f := range zr.File {
-		files[f.Name] = f
+	if info.Format != "" && info.Format != "gscore" {
+		return nil, nil, fmt.Errorf("gscore: this is a %q file", info.Format)
 	}
-
-	if f, ok := files["META-INF/format.json"]; ok {
-		var info formatInfo
-		if b, err := readAll(f); err == nil {
-			_ = json.Unmarshal(b, &info)
-		}
-		if info.Format != "" && info.Format != "gscore" {
-			return nil, nil, fmt.Errorf("gscore: this is a %q file", info.Format)
-		}
-		if info.Version > FormatVersion {
-			return nil, nil, fmt.Errorf(
-				"gscore: the file is version %d and this is gscore %s, which reads up to version %d",
-				info.Version, version.Version, FormatVersion)
-		}
+	if info.Version > FormatVersion {
+		return nil, nil, fmt.Errorf(
+			"gscore: the file is version %d and this is gscore %s, which reads up to version %d",
+			info.Version, version.Version, FormatVersion)
 	}
 
 	sf, ok := files["score.json"]
@@ -374,24 +372,21 @@ func Read(r io.Reader) (*model.Score, *symbol.Registry, error) {
 // .gscore and take the marks out of it, whether the file was made as a pack
 // or is simply a piece that happens to use them.
 func ReadSymbols(r io.Reader) (*symbol.Registry, error) {
+	return ReadSymbolsWithPassword(r, "")
+}
+
+// ReadSymbolsWithPassword is ReadSymbols for a file that may be locked.
+func ReadSymbolsWithPassword(r io.Reader, password string) (*symbol.Registry, error) {
 	data, err := io.ReadAll(r)
 	if err != nil {
 		return nil, fmt.Errorf("gscore: %w", err)
 	}
-	zr, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
+	files, _, err := openContainer(data, password)
 	if err != nil {
-		return nil, fmt.Errorf("gscore: not a .gscore container: %w", err)
-	}
-
-	files := map[string]*zip.File{}
-	for _, f := range zr.File {
-		files[f.Name] = f
+		return nil, err
 	}
 	reg := symbol.NewRegistry()
 	loadSymbols(files, reg)
-	if reg.Len() == 0 {
-		return nil, errors.New("gscore: that file carries no symbols")
-	}
 	return reg, nil
 }
 

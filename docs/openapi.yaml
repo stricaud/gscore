@@ -3157,6 +3157,31 @@ paths:
         "200": { $ref: "#/components/responses/Changed" }
         "400": { $ref: "#/components/responses/Error" }
 
+  /api/password:
+    post:
+      tags: [file]
+      summary: Lock the score under a password, or unlock it
+      description: >-
+        The password travels in the X-Gscore-Password header. With it, the
+        score is saved locked from then on: the music sealed under a key
+        made from the password, with no PDF in front of the file. With
+        clear=1 the password is taken off. Opening a
+        locked file sends the same header to /api/open or /api/openpath;
+        without it, or with the wrong one, those answer 401 with an
+        X-Needs-Password header.
+      parameters:
+        - { name: clear, in: query, schema: { type: string, enum: ["1"] } }
+      responses:
+        "200":
+          description: Whether the score is locked now.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  protected: { type: boolean }
+        "400": { $ref: "#/components/responses/Error" }
+
   /api/marker:
     post:
       tags: [structure]

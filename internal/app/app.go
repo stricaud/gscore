@@ -170,6 +170,12 @@ type App struct {
 	// disk. Set by the wrapper every edit goes through and cleared where the
 	// score is written or replaced, so no handler has to remember to.
 	unsaved bool
+	// password is the one the open score is locked under, and is used
+	// when it is saved: empty for a score that is not locked. askPassword
+	// is a file the shell asked to open that turned out to be locked, for
+	// the interface to ask the password of. See password.go.
+	password    string
+	askPassword string
 
 	// mux is this document's own router, built once when the App is made.
 	//
@@ -304,7 +310,7 @@ func NewBook(scores []*model.Score, filename string) *App {
 	// opened from the command line did not.
 	if filename != "" {
 		if f, err := os.Open(filename); err == nil {
-			app.adoptSymbols(f)
+			app.adoptSymbols(f, "")
 			f.Close()
 		}
 	}
@@ -580,6 +586,7 @@ func (a *App) APIRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/new", a.handleNew)
 	mux.HandleFunc("/api/open", a.handleOpen)
 	mux.HandleFunc("/api/openpath", a.handleOpenPath)
+	mux.HandleFunc("/api/password", a.handlePassword)
 	mux.HandleFunc("/api/pdfsurvey", a.handlePDFSurvey)
 	mux.HandleFunc("/api/pdfreread", a.handlePDFReread)
 	mux.HandleFunc("/api/importsymbols", a.handleImportSymbols)
@@ -954,10 +961,15 @@ type info struct {
 	Filename  string `json:"filename"`
 	// Unsaved says the score has been edited since it was last written out.
 	// The interface asks before letting the window close on it.
-	Unsaved  bool   `json:"unsaved"`
-	Title    string `json:"title"`
-	Subtitle string `json:"subtitle"`
-	Composer string `json:"composer"`
+	Unsaved bool `json:"unsaved"`
+	// Protected says the score is locked under a password, which saving
+	// uses; AskPassword names a file waiting to be opened once the
+	// interface has asked for its password.
+	Protected   bool   `json:"protected"`
+	AskPassword string `json:"askPassword,omitempty"`
+	Title       string `json:"title"`
+	Subtitle    string `json:"subtitle"`
+	Composer    string `json:"composer"`
 	// Arranger is its own field and not a second line of the composer:
 	// two people, credited in two places and on two lines of the page.
 	Arranger string `json:"arranger"`
@@ -1145,6 +1157,8 @@ func (a *App) handleInfo(w http.ResponseWriter, r *http.Request) {
 		Version:      version.Version,
 		Filename:     a.filename,
 		Unsaved:      a.unsaved,
+		Protected:    a.password != "",
+		AskPassword:  a.askPassword,
 		CanUndo:      len(a.undoStack) > 0,
 		CanRedo:      len(a.redoStack) > 0,
 		Title:        a.score.Identity.Title,
@@ -1349,6 +1363,9 @@ func (a *App) setBook(scores []*model.Score, filename string, err error) {
 	// A document just opened has nothing in it that is not on disk, and a
 	// new one has nothing in it at all.
 	a.unsaved = false
+	// And no password, until whoever opened it says otherwise: a locked
+	// file's is set by the opening once this has run.
+	a.password = ""
 }
 
 // readProblems splits an importer's error into the one line the status bar
@@ -1411,6 +1428,7 @@ func (a *App) handleOpen(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var scores []*model.Score
+	password := passwordOf(r)
 	if isPDFName(name) {
 		// A PDF keeps its bytes and its grouping, so the reading can be
 		// looked at and done again. See pdfimport.go.
@@ -1422,14 +1440,17 @@ func (a *App) handleOpen(w http.ResponseWriter, r *http.Request) {
 		}
 		err = nil
 	} else {
-		imp, ierr := format.ImporterFor(name)
-		if ierr != nil {
-			http.Error(w, ierr.Error(), http.StatusUnsupportedMediaType)
-			return
-		}
-		scores, err = format.ImportAll(imp, bytesReader(body))
+		scores, err = a.readScores(name, body, password)
 		if len(scores) == 0 {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			if passwordTrouble(w, err) {
+				return
+			}
+			status := http.StatusBadRequest
+			var unsupported unsupportedFormat
+			if errors.As(err, &unsupported) {
+				status = http.StatusUnsupportedMediaType
+			}
+			http.Error(w, err.Error(), status)
 			return
 		}
 	}
@@ -1438,10 +1459,13 @@ func (a *App) handleOpen(w http.ResponseWriter, r *http.Request) {
 		a.forgetPDF()
 	}
 	a.setBook(scores, name, err)
+	if isGscoreName(name) {
+		a.password = password
+	}
 	// And the drawings the file carries, for the same reason the other way
 	// in takes them: a score that refers to symbols the registry has not
 	// got is a score with holes in it.
-	a.adoptSymbols(bytesReader(body))
+	a.adoptSymbols(bytesReader(body), password)
 	a.mu.Unlock()
 	writeJSON(w, map[string]any{"status": "ok", "filename": name, "tunes": len(scores)})
 }

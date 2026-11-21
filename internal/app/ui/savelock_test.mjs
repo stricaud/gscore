@@ -39,7 +39,8 @@ test("Save as asks whether to lock, a plain save does not", () => {
   assert.match(body, /<input type="password" id="savelock-again"/);
   assert.match(body, /carries no PDF of the\s+music in front of it/);
   const save = fnBody("saveScore");
-  assert.match(save, /if \(saveAs\) \{\s*lock = await saveLockDialog\(\);/);
+  // Before the panel only where the panel cannot ask it itself.
+  assert.match(save, /if \(saveAs && !state\.info\?\.savePanelLocks\) \{\s*lock = await saveLockDialog\(\);/);
   assert.match(save, /withLock\(""\), "Saving…", lock\.headers/);
 });
 

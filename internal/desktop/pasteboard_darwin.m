@@ -33,3 +33,14 @@ char *gscore_pasteboard(const char *kind, int *n, long *change)
 		return out;
 	}
 }
+
+long gscore_set_pasteboard(const char *kind, const void *bytes, int n)
+{
+	@autoreleasepool {
+		NSPasteboard *pb = [NSPasteboard generalPasteboard];
+		NSString *type = [NSString stringWithUTF8String:kind];
+		[pb clearContents];
+		[pb setData:[NSData dataWithBytes:bytes length:(NSUInteger)n] forType:type];
+		return (long)[pb changeCount];
+	}
+}

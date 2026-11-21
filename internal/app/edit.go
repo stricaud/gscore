@@ -3645,7 +3645,7 @@ func (a *App) handleCopy(w http.ResponseWriter, r *http.Request) {
 	}
 	clip := clipboard{elements: out, where: where}
 	*a.clipboard() = clip
-	a.copiedAt = a.pasteboardChange()
+	a.copiedAt = a.publishClip(&clip)
 	writeJSON(w, map[string]int{
 		"copied": len(out), "bars": bars(clip.pieces()), "voices": clip.voices()})
 }
@@ -3684,16 +3684,17 @@ func (a *App) handlePaste(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// What was copied last: in gscore, or in MuseScore, whose clipboard
-	// is read into the same shape. See pastemusescore.go.
+	// What was copied last: in this gscore, in another one running beside
+	// it, or in MuseScore, whose clipboard is read into the same shape. See
+	// pastegscore.go and pastemusescore.go.
 	clip := a.clipboard()
 	from := ""
 	var skipped []string
-	if outside, sk, err := a.outsideClipboard(into, measIdx); err != nil {
+	if outside, sk, src, err := a.outsideClipboard(into, measIdx); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	} else if outside != nil {
-		clip, skipped, from = outside, sk, "MuseScore"
+		clip, skipped, from = outside, sk, src
 	}
 	if len(clip.elements) == 0 {
 		http.Error(w, "nothing has been copied", http.StatusBadRequest)

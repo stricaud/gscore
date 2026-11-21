@@ -184,6 +184,10 @@ type App struct {
 	// See pastemusescore.go.
 	pasteboard func(kind string) ([]byte, int)
 	copiedAt   int
+	// setPasteboard puts gscore's own copy on the system clipboard, for
+	// another gscore running beside this one to paste; nil where there is
+	// no reaching it. See pastegscore.go.
+	setPasteboard func(kind string, data []byte) int
 
 	// scan is how far the page reader has got, while it reads. See
 	// scanprogress.go. scanNote is the warning its last reading of a PDF
@@ -301,6 +305,8 @@ func NewBook(scores []*model.Score, filename string) *App {
 		engraveOpt: eo,
 		renderOpt:  ro,
 		pasteboard: desktop.Pasteboard,
+
+		setPasteboard: desktop.SetPasteboard,
 	}
 
 	// And whatever the file itself said about how it was last looked at.
@@ -969,7 +975,10 @@ type info struct {
 	Sequenced   []int          `json:"sequenced,omitempty"`
 	Current     int            `json:"current"`
 	Native      bool           `json:"native"`
-	Local       bool           `json:"local"`
+	// SavePanelLocks says Save as asks about the password in the system's
+	// own save panel, so the editor does not ask before it.
+	SavePanelLocks bool `json:"savePanelLocks,omitempty"`
+	Local          bool `json:"local"`
 	// InBrowser says the core is running inside the page as WebAssembly,
 	// with no server and no disk. It is not "local" — there is no machine
 	// to save to — but it can still make a sound, because the synthesizer
@@ -1166,37 +1175,38 @@ func (a *App) handleInfo(w http.ResponseWriter, r *http.Request) {
 	defer a.mu.RUnlock()
 
 	out := info{
-		Warning:      a.warning,
-		Log:          a.importLog,
-		Current:      a.current,
-		Native:       a.native,
-		Local:        a.local,
-		InBrowser:    a.inBrowser,
-		Version:      version.Version,
-		Filename:     a.filename,
-		Unsaved:      a.unsaved,
-		Protected:    a.password != "",
-		AskPassword:  a.askPassword,
-		CanUndo:      len(a.undoStack) > 0,
-		CanRedo:      len(a.redoStack) > 0,
-		Title:        a.score.Identity.Title,
-		Subtitle:     a.score.Identity.Subtitle,
-		Composer:     a.score.Identity.Composer,
-		Arranger:     a.score.Identity.Arranger,
-		Lyricist:     a.score.Identity.Lyricist,
-		TitleRuns:    a.score.Identity.TitleRuns,
-		SubtitleRuns: a.score.Identity.SubtitleRuns,
-		ComposerRuns: a.score.Identity.ComposerRuns,
-		ArrangerRuns: a.score.Identity.ArrangerRuns,
-		LyricistRuns: a.score.Identity.LyricistRuns,
-		Cover:        artworkInfoOf(a.score.Cover),
-		Stamp:        artworkInfoOf(a.score.Stamp),
-		Copyright:    a.score.Identity.Copyright,
-		Tags:         append([]string{}, a.score.Tags...),
-		Description:  a.score.Description,
-		Reference:    a.score.Reference,
-		AIAssistant:  assistantOn,
-		Tempo:        a.score.Tempo.BPM,
+		Warning:        a.warning,
+		Log:            a.importLog,
+		Current:        a.current,
+		Native:         a.native,
+		SavePanelLocks: a.native && desktop.SavePanelLocks,
+		Local:          a.local,
+		InBrowser:      a.inBrowser,
+		Version:        version.Version,
+		Filename:       a.filename,
+		Unsaved:        a.unsaved,
+		Protected:      a.password != "",
+		AskPassword:    a.askPassword,
+		CanUndo:        len(a.undoStack) > 0,
+		CanRedo:        len(a.redoStack) > 0,
+		Title:          a.score.Identity.Title,
+		Subtitle:       a.score.Identity.Subtitle,
+		Composer:       a.score.Identity.Composer,
+		Arranger:       a.score.Identity.Arranger,
+		Lyricist:       a.score.Identity.Lyricist,
+		TitleRuns:      a.score.Identity.TitleRuns,
+		SubtitleRuns:   a.score.Identity.SubtitleRuns,
+		ComposerRuns:   a.score.Identity.ComposerRuns,
+		ArrangerRuns:   a.score.Identity.ArrangerRuns,
+		LyricistRuns:   a.score.Identity.LyricistRuns,
+		Cover:          artworkInfoOf(a.score.Cover),
+		Stamp:          artworkInfoOf(a.score.Stamp),
+		Copyright:      a.score.Identity.Copyright,
+		Tags:           append([]string{}, a.score.Tags...),
+		Description:    a.score.Description,
+		Reference:      a.score.Reference,
+		AIAssistant:    assistantOn,
+		Tempo:          a.score.Tempo.BPM,
 	}
 	for _, sec := range a.score.Sections() {
 		out.Movements = append(out.Movements, movementInfo{

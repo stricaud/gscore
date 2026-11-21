@@ -46,6 +46,9 @@ func pianoAndVoice(t *testing.T, data []byte, n int) *harness {
 	}
 	h.app.local = true
 	h.app.pasteboard = func(kind string) ([]byte, int) {
+		if kind == gscoreClipboardType {
+			return nil, n // no other gscore has copied anything
+		}
 		if kind != "application/musescore/stafflist" {
 			t.Errorf("the clipboard was asked for %q", kind)
 		}

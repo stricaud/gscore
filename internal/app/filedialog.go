@@ -25,6 +25,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/stricaud/gscore/internal/desktop"
 	"github.com/stricaud/gscore/internal/engrave"
 	"github.com/stricaud/gscore/internal/format"
 	gscorefmt "github.com/stricaud/gscore/internal/format/gscore"
@@ -456,8 +457,38 @@ func (a *App) handleSave(w http.ResponseWriter, r *http.Request) {
 			suggested = strings.TrimSuffix(suggested, filepath.Ext(suggested)) + "." + ext
 		}
 		var shown bool
-		path, shown, err = saveDialog(suggested)
-		if err != nil || (!shown && path == "") {
+		if a.native && desktop.SavePanelLocks {
+			// The system's own panel, with the password in it for a
+			// .gscore: lock it, keep the lock it has, or save it open.
+			dir, name := filepath.Split(suggested)
+			if dir == "" {
+				dir = a.saveDirectory()
+			}
+			lockable := strings.EqualFold(filepath.Ext(name), ".gscore")
+			a.mu.RLock()
+			locked := a.password != ""
+			a.mu.RUnlock()
+			var lock desktop.Lock
+			var password string
+			path, lock, password = desktop.SavePanel(dir, name, lockable, locked)
+			if path == "" {
+				writeJSON(w, map[string]any{"cancelled": true})
+				return
+			}
+			if lockable {
+				a.mu.Lock()
+				switch lock {
+				case desktop.LockOpen:
+					a.password = ""
+				case desktop.LockNew:
+					a.password = password
+				}
+				a.mu.Unlock()
+			}
+		} else {
+			path, shown, err = saveDialog(suggested)
+		}
+		if err != nil || (!shown && path == "" && !(a.native && desktop.SavePanelLocks)) {
 			// No panel: gscore asks for the name itself. Saving is not
 			// something to be defeated by a missing system dialog.
 			writeJSON(w, map[string]any{

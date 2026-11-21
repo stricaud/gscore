@@ -48,18 +48,28 @@ func (a *App) pasteboardChange() int {
 //
 // Whatever in the copy could not be read is returned beside it, for the
 // person to be told, as when a file is opened.
-func (a *App) outsideClipboard(p *model.Part, measIdx int) (*clipboard, []string, error) {
+//
+// The name of the program it came from is returned too, for the person to
+// be told where what they pasted was found.
+func (a *App) outsideClipboard(p *model.Part, measIdx int) (*clipboard, []string, string, error) {
 	// The machine's own clipboard, which a server reached from elsewhere
 	// has no business showing anybody.
 	if !a.local || a.pasteboard == nil {
-		return nil, nil, nil
+		return nil, nil, "", nil
+	}
+	// Another gscore's copy first: it is gscore's own shape already, and
+	// nothing of it is lost on the way.
+	if clip, change := a.otherGscoreClip(); clip != nil {
+		return clip, nil, "another gscore", nil
+	} else if len(a.clipboard().elements) > 0 && change == a.copiedAt {
+		return nil, nil, "", nil // this gscore's own copy is the later one
 	}
 	data, change := a.pasteboard(musescore.ClipboardType)
 	if len(data) == 0 {
-		return nil, nil, nil
+		return nil, nil, "", nil
 	}
 	if len(a.clipboard().elements) > 0 && change == a.copiedAt {
-		return nil, nil, nil // gscore's own copy is the later one
+		return nil, nil, "", nil // gscore's own copy is the later one
 	}
 
 	pasted, err := musescore.ReadPasted(data)
@@ -69,7 +79,7 @@ func (a *App) outsideClipboard(p *model.Part, measIdx int) (*clipboard, []string
 	case errors.As(err, &partial):
 		skipped = partial.Skipped
 	case err != nil:
-		return nil, nil, fmt.Errorf("what MuseScore copied could not be read: %w", err)
+		return nil, nil, "", fmt.Errorf("what MuseScore copied could not be read: %w", err)
 	}
 
 	bar := p.TimeAt(measIdx).BarDuration()
@@ -82,7 +92,7 @@ func (a *App) outsideClipboard(p *model.Part, measIdx int) (*clipboard, []string
 			}
 		}
 	}
-	return clip, skipped, nil
+	return clip, skipped, "MuseScore", nil
 }
 
 // barIndexOf is which bar, counting from nought, a point that far into the copy

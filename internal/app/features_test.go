@@ -67,6 +67,8 @@ type harness struct {
 func newHarness(t *testing.T) *harness {
 	t.Helper()
 	a := New(model.NewScore(), "")
+	// Never the clipboard of the machine the tests run on.
+	a.setPasteboard = nil
 	mux := http.NewServeMux()
 	a.routes(mux)
 	return &harness{t: t, app: a, mux: mux}

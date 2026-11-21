@@ -9661,7 +9661,9 @@ async function saveScore(saveAs) {
   // Save as is where a .gscore is locked or unlocked; a plain save keeps
   // the file as it was opened.
   let lock = { query: "", headers: {} };
-  if (saveAs) {
+  // Where the system's save panel asks about the password itself, it is
+  // not asked before the panel as well.
+  if (saveAs && !state.info?.savePanelLocks) {
     lock = await saveLockDialog();
     if (!lock) {
       status("Save cancelled");

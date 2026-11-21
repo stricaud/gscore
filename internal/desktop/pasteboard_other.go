@@ -15,3 +15,7 @@ package desktop
 // Pasteboard is what the system clipboard holds under a type. Off macOS, or
 // built without cgo, the clipboard cannot be reached and there is nothing.
 func Pasteboard(kind string) ([]byte, int) { return nil, 0 }
+
+// SetPasteboard puts data on the system clipboard. Off macOS, or built
+// without cgo, there is no clipboard to put it on, and nothing is done.
+func SetPasteboard(kind string, data []byte) int { return 0 }

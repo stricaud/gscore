@@ -22,6 +22,10 @@ package desktop
 // into malloc'd memory, or returns NULL. The pasteboard's change count,
 // which goes up every time anything is put on it, comes back in *change.
 char *gscore_pasteboard(const char *kind, int *n, long *change);
+
+// gscore_set_pasteboard puts data on the general pasteboard under a type,
+// in place of whatever was there, and returns the change count after.
+long gscore_set_pasteboard(const char *kind, const void *bytes, int n);
 */
 import "C"
 
@@ -54,4 +58,21 @@ func Pasteboard(kind string) ([]byte, int) {
 		return data, int(change)
 	}
 	return nil, 0
+}
+
+// SetPasteboard puts data on the system clipboard under a type, in place of
+// whatever was on it, and returns the clipboard's change count after — the
+// number Pasteboard will answer for as long as nothing else is copied.
+//
+// This is how a copy made in one gscore reaches another one running beside
+// it: each holds its own copy in memory, which no other program can see.
+func SetPasteboard(kind string, data []byte) int {
+	if len(data) == 0 {
+		return 0
+	}
+	ckind := C.CString(kind)
+	defer C.free(unsafe.Pointer(ckind))
+	cdata := C.CBytes(data)
+	defer C.free(cdata)
+	return int(C.gscore_set_pasteboard(ckind, cdata, C.int(len(data))))
 }

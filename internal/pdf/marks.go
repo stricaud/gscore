@@ -30,6 +30,13 @@ type Glyph struct {
 	Base string  // the font's own name, e.g. "Leland"
 	Size float64 // in points, after the transform
 	X, Y float64 // the glyph's origin, in page points from the bottom left
+	// Advance is how far the glyph moves the pen, in page points, from
+	// the font's own width table; zero where the font gives none. The
+	// reader does not use it to place the next glyph — the files it
+	// reads place every glyph themselves — but a reader of words needs
+	// it to tell the gap between two letters from the gap between two
+	// words.
+	Advance float64
 }
 
 // Named reports a name for the glyph if the file gave one, either way round.
@@ -137,6 +144,18 @@ type fontInfo struct {
 	names   map[byte]string
 	uni     map[uint32]rune
 	twoByte bool
+	// widths is the font's own advance for each code, in thousandths of
+	// the em, and dw the advance of a code it does not list.
+	widths map[uint32]float64
+	dw     float64
+}
+
+// advance is a code's width in thousandths of the em, or nothing known.
+func (f fontInfo) advance(code uint32) float64 {
+	if w, ok := f.widths[code]; ok {
+		return w
+	}
+	return f.dw
 }
 
 // fonts reads a resource dictionary's fonts, keeping each one's encoding.
@@ -179,6 +198,7 @@ func (d *Doc_) fonts(res Dict) map[string]fontInfo {
 				parseCMap(body, info.uni)
 			}
 		}
+		info.widths, info.dw = d.widthsOf(f)
 		enc := d.dict(f["Encoding"])
 		if enc != nil {
 			if diff, ok := d.Resolve(enc["Differences"]).(Array); ok {
@@ -268,6 +288,7 @@ func (d *Doc_) run(content []byte, res Dict, gs state, c *Content, depth int) {
 				Base: font.base,
 				Size: trm.scale(),
 				X:    x, Y: y,
+				Advance: font.advance(code) / 1000 * trm.scale(),
 			})
 			// We do not advance by the glyph's width: the files this reads
 			// position every glyph with its own Tm or Td, so the advance is
@@ -568,4 +589,62 @@ func beRune(s String) rune {
 		return rune(s[0])
 	}
 	return 0
+}
+
+// widthsOf reads a font's advance widths, in thousandths of the em.
+//
+// A simple font lists them in /Widths from /FirstChar on; a Type0 font
+// keeps them on its descendant as /W, a run of either "c [w w w]" — the
+// widths of the codes from c on — or "c1 c2 w" — one width for the whole
+// range — with /DW for every code it leaves out, a thousand when it says
+// nothing. A font with no table at all, such as one of the standard
+// fourteen, has nothing known.
+func (d *Doc_) widthsOf(f Dict) (map[uint32]float64, float64) {
+	out := map[uint32]float64{}
+	if ws, ok := d.Resolve(f["Widths"]).(Array); ok {
+		first := uint32(num(d.Resolve(f["FirstChar"])))
+		for i, w := range ws {
+			out[first+uint32(i)] = num(d.Resolve(w))
+		}
+		return out, 0
+	}
+	desc, ok := d.Resolve(f["DescendantFonts"]).(Array)
+	if !ok || len(desc) == 0 {
+		return out, 0
+	}
+	cid := d.dict(desc[0])
+	if cid == nil {
+		return out, 0
+	}
+	dw := 1000.0
+	if v, ok := d.Resolve(cid["DW"]).(float64); ok {
+		dw = v
+	}
+	w, _ := d.Resolve(cid["W"]).(Array)
+	for i := 0; i < len(w); {
+		start := uint32(num(d.Resolve(w[i])))
+		if i+1 >= len(w) {
+			break
+		}
+		switch v := d.Resolve(w[i+1]).(type) {
+		case Array:
+			for k, x := range v {
+				out[start+uint32(k)] = num(d.Resolve(x))
+			}
+			i += 2
+		default:
+			if i+2 >= len(w) {
+				return out, dw
+			}
+			last := uint32(num(v))
+			width := num(d.Resolve(w[i+2]))
+			if last >= start && last-start < 65536 {
+				for c := start; c <= last; c++ {
+					out[c] = width
+				}
+			}
+			i += 3
+		}
+	}
+	return out, dw
 }

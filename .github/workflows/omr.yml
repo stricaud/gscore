@@ -198,9 +198,15 @@ jobs:
           go-version-file: go.mod
           cache: true
       - name: Install the cross-compiler and NSIS
+        # Bounded, as in the Release workflow: a mirror that stops answering
+        # must not hold the packages for hours.
+        timeout-minutes: 10
+        env:
+          DEBIAN_FRONTEND: noninteractive
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends mingw-w64 nsis p7zip-full
+          apt="sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30"
+          $apt update -qq
+          $apt install -y --no-install-recommends mingw-w64 nsis p7zip-full
       - uses: actions/cache@v4
         with:
           path: build/soundfonts

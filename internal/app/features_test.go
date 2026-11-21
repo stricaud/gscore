@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/stricaud/gscore/internal/engrave"
+	"github.com/stricaud/gscore/internal/format/scanned"
 	"github.com/stricaud/gscore/internal/model"
 )
 
@@ -47,6 +48,10 @@ func TestMain(m *testing.M) {
 	stored.Lock()
 	stored.settings, stored.read = settings{}, true
 	stored.Unlock()
+	// No page reader, whatever this machine has: a test that opens a PDF
+	// or a picture must not run uv and homr for a minute. A test that
+	// wants one stands in a script of its own; see fakePageReader.
+	scanned.Find = func() (scanned.Engine, error) { return scanned.Engine{}, errNoScanEngine }
 
 	code := m.Run()
 	os.RemoveAll(dir)

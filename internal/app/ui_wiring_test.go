@@ -910,20 +910,25 @@ func TestTheMultiMeasureRestBoxReachesThePrinterAndTheExporter(t *testing.T) {
 	}
 }
 
-// A PDF opens through Open score, like everything else, and says what it
-// could not bring with it.
+// A PDF read glyph by glyph says what it could not bring with it.
 //
-// There is no menu entry of its own. One would put reading a PDF beside
-// reading a MusicXML, and they are not comparable: the second reads a file
-// that says what it contains, the first measures a drawing of a page. So the
-// difference is told at the moment it matters — when a PDF has just been
-// opened — rather than advertised beforehand.
+// For a long while there was no menu entry for a PDF, on the reasoning
+// that reading one is measuring a drawing of a page and does not belong
+// beside reading a MusicXML. Now that a PDF goes to the page reader, which
+// reads it as pictures with the slurs and dynamics in, it has an entry
+// under File ▸ Import with the other things that are not score files; and
+// the notice is still shown when the glyph reader did the reading, which
+// is the case where something was lost.
 func TestOpeningAPDFSaysWhatItLoses(t *testing.T) {
 	html := readUI(t, "index.html")
 	js := readUI(t, "app.js")
 
-	if strings.Contains(html, `data-action="import-pdf"`) {
-		t.Error("there is an Import PDF menu entry again")
+	if !strings.Contains(html, `data-action="import-pdf"`) {
+		t.Error("File ▸ Import has no PDF entry")
+	}
+	// Shown only for a reading with a loss to tell of: the glyph reader's.
+	if !strings.Contains(js, `d.engraved !== false) tellAboutPDF()`) {
+		t.Error("the PDF notice is not kept to a PDF read glyph by glyph")
 	}
 	if !strings.Contains(html, `id="pdf-note"`) {
 		t.Fatal("nothing tells the person what a PDF does not carry")

@@ -43,14 +43,17 @@
 package engraved
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"math"
 	"sort"
+	"strings"
 
 	"github.com/stricaud/gscore/internal/format"
 	"github.com/stricaud/gscore/internal/model"
 	"github.com/stricaud/gscore/internal/pdf"
+	"github.com/stricaud/gscore/internal/textmetric"
 )
 
 func init() { format.RegisterImporter(importer{}) }
@@ -83,6 +86,10 @@ type Options struct {
 }
 
 // Import reads every page of an engraved PDF into one score.
+// ErrScan says the PDF held no music to read glyph by glyph: it is a
+// picture of a page, which is read another way — see internal/format/scanned.
+var ErrScan = errors.New("no staves found — a scan rather than an engraving?")
+
 func Import(r io.Reader) (*model.Score, error) {
 	return ImportWith(r, Options{})
 }
@@ -124,6 +131,11 @@ func ImportWith(r io.Reader, opt Options) (*model.Score, error) {
 					})
 				}
 				part := s.Parts[k]
+				// Its name, where one is written beside the staff: the
+				// first system of a score names every part in full.
+				if part.Name == "" {
+					part.Name = partName(c, st)
+				}
 				// The first staff of a part sets its signatures; a later
 				// one only records them if they have changed, which is what
 				// a signature written again mid-piece means.
@@ -147,8 +159,7 @@ func ImportWith(r io.Reader, opt Options) (*model.Score, error) {
 		}
 	}
 	if len(s.Parts) == 0 {
-		return nil, fmt.Errorf("engraved: no staves found — a scan rather " +
-			"than an engraving?")
+		return nil, fmt.Errorf("engraved: %w", ErrScan)
 	}
 	s.Identity.Title = "Imported from PDF — slurs, ties and dynamics not read"
 	return s, nil
@@ -168,23 +179,20 @@ type staff struct {
 // page rather than absolute, so it holds for a pocket score and a folio
 // alike.
 func staves(c *pdf.Content) []staff {
+	rules := joinedRules(c)
 	var longest float64
-	for _, s := range c.Segments {
-		if s.Horizontal() {
-			longest = math.Max(longest, math.Abs(s.X2-s.X1))
-		}
+	for _, r := range rules {
+		longest = math.Max(longest, r.x1-r.x0)
 	}
 	if longest == 0 {
 		return nil
 	}
-	type line struct{ y, x0, x1 float64 }
-	var lines []line
-	for _, s := range c.Segments {
-		if !s.Horizontal() || math.Abs(s.X2-s.X1) < 0.6*longest {
+	var lines []rule
+	for _, r := range rules {
+		if r.x1-r.x0 < 0.6*longest {
 			continue
 		}
-		x0, x1 := math.Min(s.X1, s.X2), math.Max(s.X1, s.X2)
-		lines = append(lines, line{(s.Y1 + s.Y2) / 2, x0, x1})
+		lines = append(lines, r)
 	}
 	// A staff line is not always one stroke. LilyPond strokes it; MuseScore
 	// fills a thin rectangle, whose top and bottom edges both arrive here, so
@@ -221,7 +229,7 @@ func staves(c *pdf.Content) []staff {
 		wide := gaps[len(gaps)/2:]
 		tol = math.Max(0.3, wide[len(wide)/2]/3)
 	}
-	var uniq []line
+	var uniq []rule
 	for _, l := range lines {
 		if n := len(uniq); n > 0 && math.Abs(l.y-uniq[n-1].y) < tol {
 			// keep the midpoint, which is where the line really is
@@ -264,6 +272,118 @@ func staves(c *pdf.Content) []staff {
 	}
 	// reading order is down the page, which is the opposite of PDF order
 	sort.Slice(out, func(i, j int) bool { return out[i].y[0] > out[j].y[0] })
+	return out
+}
+
+// partName is what is written to the left of a staff, which on the first
+// system of a score is the instrument's name: "Flûte", "Clarinette en Sib 1".
+//
+// The name is text — glyphs of a text font, not the music font — sitting
+// before the staff begins and level with it. The letters arrive one glyph
+// each, in order of position, and a gap wider than a letter's worth between
+// two of them is a space; the file carries no space characters as such.
+func partName(c *pdf.Content, st staff) string {
+	type letter struct {
+		x, size, advance float64
+		r                rune
+	}
+	var letters []letter
+	lo, hi := st.y[0]-st.inter, st.y[4]+st.inter
+	for _, g := range c.Glyphs {
+		if g.Rune == 0 || isMusicRune(g.Rune) || g.X >= st.x0 || g.Y < lo || g.Y > hi {
+			continue
+		}
+		if g.Rune < 0x20 { // a tab or the like, written to position words
+			continue
+		}
+		letters = append(letters, letter{g.X, g.Size, g.Advance, g.Rune})
+	}
+	if len(letters) == 0 {
+		return ""
+	}
+	sort.Slice(letters, func(i, j int) bool { return letters[i].x < letters[j].x })
+	var b strings.Builder
+	for i, l := range letters {
+		if i > 0 {
+			// A gap wider than the letter before it is a space. Measured
+			// against that letter's own advance where the font gives one,
+			// since an m is three times an i; against a typical letter's
+			// width where it does not.
+			prev := letters[i-1]
+			room := 0.75 * math.Max(l.size, prev.size)
+			switch est := textmetric.StdWidth("Times-Roman", prev.r); {
+			case prev.advance > 0:
+				room = prev.advance + 0.15*prev.size
+			case est > 0:
+				// No table in the file: a Roman face's width for the
+				// letter is near enough to tell an m from an i.
+				room = float64(est)/1000*prev.size + 0.2*prev.size
+			}
+			if l.x-prev.x > room {
+				b.WriteByte(' ')
+			}
+		}
+		b.WriteRune(l.r)
+	}
+	return strings.TrimSpace(b.String())
+}
+
+// isMusicRune says a code point is one of a music font's own, in the range
+// SMuFL reserves, or is one of the musical signs ordinary text borrows.
+func isMusicRune(r rune) bool {
+	return (r >= 0xE000 && r <= 0xF8FF) || (r >= 0x1D100 && r <= 0x1D1FF)
+}
+
+// rule is a horizontal stroke, or several of them laid end to end.
+type rule struct{ y, x0, x1 float64 }
+
+// joinedRules is the page's horizontal strokes, with those that continue
+// one another joined into one, and the frame around the page left out.
+//
+// MuseScore 4 strokes a staff line a measure at a time, so a line that
+// runs the width of the system arrives as a row of strokes each a measure
+// long — and measured one by one against the longest stroke on the page,
+// none of them is long enough to be a staff line, so no staff was found and
+// the file was reported as a scan. Joined end to end they are the line
+// they were drawn as.
+//
+// The same files carry a rectangle the size of the paper, drawn by Qt
+// around the page. It is the longest stroke there is, and measuring the
+// staff lines against it would throw out every one of them.
+func joinedRules(c *pdf.Content) []rule {
+	var rules []rule
+	for _, s := range c.Segments {
+		if !s.Horizontal() {
+			continue
+		}
+		x0, x1 := math.Min(s.X1, s.X2), math.Max(s.X1, s.X2)
+		if x1-x0 < 0.5 {
+			continue // a dot, not a line
+		}
+		if c.Width > 0 && x1-x0 >= 0.98*c.Width {
+			continue // the frame
+		}
+		rules = append(rules, rule{(s.Y1 + s.Y2) / 2, x0, x1})
+	}
+	sort.Slice(rules, func(i, j int) bool {
+		if rules[i].y != rules[j].y {
+			return rules[i].y < rules[j].y
+		}
+		return rules[i].x0 < rules[j].x0
+	})
+	var out []rule
+	for _, r := range rules {
+		if n := len(out); n > 0 {
+			last := &out[n-1]
+			// On the same line, and starting where the last left off or
+			// before: a barline's width apart at most.
+			if math.Abs(r.y-last.y) < 0.05 && r.x0 <= last.x1+2 {
+				last.x1 = math.Max(last.x1, r.x1)
+				continue
+			}
+		}
+		out = append(out, r)
+	}
 	return out
 }
 

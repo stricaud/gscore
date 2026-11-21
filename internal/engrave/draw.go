@@ -849,6 +849,32 @@ func (e *engraver) drawTuplets(items []*placed, t model.TimeSignature) {
 		}
 	}
 
+	// One voice at a time. The bar's items come in time order with the
+	// voices interleaved, and a tuplet's start and stop belong to the voice
+	// that wrote them: read straight through, two voices playing triplets
+	// together — a melody under a run of chords, as homr reads a piano
+	// piece — made a group out of one voice's start and the other's stop,
+	// bracketed it, and then drew what was left of the second as a group
+	// of its own. Two figures over the chords and none under the melody.
+	most := 0
+	for _, p := range items {
+		if p.voice > most {
+			most = p.voice
+		}
+	}
+	for v := 0; v <= most; v++ {
+		var mine []*placed
+		for _, p := range items {
+			if p.voice == v {
+				mine = append(mine, p)
+			}
+		}
+		e.drawVoiceTuplets(mine, beam)
+	}
+}
+
+// drawVoiceTuplets draws the tuplets of one voice's items, in order.
+func (e *engraver) drawVoiceTuplets(items []*placed, beam map[*placed]*placed) {
 	start := -1
 	for i, p := range items {
 		m := p.marks()

@@ -21,14 +21,28 @@ to start from than an empty score.
 
 ## Opening a picture
 
-Three ways in, all ending in the same place:
+<span class="menu-path">File → Import</span> gathers everything that is not
+a score file yet, and all of it goes through the page reader:
 
-- <span class="menu-path">File → Open score…</span> takes `.png`, `.jpg` and
-  `.jpeg`, and several at once for several pages. Pick them in the order
-  they are read.
-- Drop the pictures on the window.
-- <span class="menu-path">File → Open pages from the web…</span> takes their
-  addresses, one to a line:
+- <span class="menu-path">Import → PDF…</span> takes one PDF, scanned or
+  engraved. A scan goes to the page reader. A PDF drawn by a notation
+  program, with glyphs to read, raises a question when there is a page
+  reader, because the two readings want opposite answers: *from its
+  glyphs* keeps every staff and part with the notes exact and reads no
+  slurs, dynamics or words; *as pictures* reads those but may fold the
+  staves of several instruments into a piano part and misread a note. The
+  window says how many staves each system has and suggests the glyphs for
+  more than two — an eighteen-stave *Non, je ne regrette rien* came back as
+  a piano part the other way. Without a page reader the glyphs are read as
+  they always were, and a scan is refused with a word on what to install.
+- <span class="menu-path">Import → Pictures of pages…</span> takes `.png`,
+  `.jpg` and `.jpeg`, several at once. With more than one, a window lists
+  them in the order they will be read — by the numbers in their names to
+  start with, so `page2` comes before `page10` — with arrows to move any
+  of them.
+- <span class="menu-path">Import → From the web…</span> takes their
+  addresses, one to a line, pictures or a PDF. The usual keys paste into
+  the box:
 
   ```
   https://www.ninasimone.com/wp-content/uploads/2021/04/iputaspellonyousheetmusic1.jpg
@@ -42,10 +56,15 @@ Three ways in, all ending in the same place:
   elsewhere does not go and get things for whoever asks, any more than it
   opens paths.
 
-The status line says *Reading…* while homr works, and *Read* with what could
-not be read when it is done. A page takes a few seconds on an Apple Silicon
-Mac, where homr uses CoreML without being told, and about a minute on a
-plain processor.
+<span class="menu-path">File → Open score…</span> still takes a picture or
+a PDF like any other file, and several pictures dropped on the window are
+put in order the same way.
+
+While homr works the mascot is up with *Importing…* and a percentage, and
+the status line says which page of how many and which staff of how many
+it is on, read from what homr itself reports. A page takes a few seconds on
+an Apple Silicon Mac, where homr uses CoreML without being told, and about
+a minute on a plain processor.
 
 ## Where homr comes from
 
@@ -104,13 +123,15 @@ thing, open a picture.
 ## From the command line
 
 With Gscore serving — `gscore -headless`, or `gscore -serve 127.0.0.1:8099`
-as the examples assume — pictures go to `/api/openscan`, either as the
-parts of a multipart request named `page` or as `url=` addresses:
+as the examples assume — pictures go to `/api/openscan`, as the parts of a
+multipart request named `page`, as `url=` addresses, or as `path=` files on
+the machine the server runs on:
 
 ```sh
 G=http://127.0.0.1:8099
 curl -X POST "$G/api/openscan" -F page=@page1.jpg -F page=@page2.jpg
 curl -X POST "$G/api/openscan?url=https://…/sheet1.jpg&url=https://…/sheet2.jpg"
+curl -X POST "$G/api/openscan?path=$PWD/page1.jpg&path=$PWD/page2.jpg"
 curl "$G/api/pdf" -o score.pdf
 ```
 
@@ -119,13 +140,20 @@ the native window gives up on a reply that has gone quiet for a minute —
 and is then the answer: `{"status":"ok","pages":2,"filename":"page1.gscore",…}`,
 or `{"error":"…"}` when the pages could not be read. A request with no
 reader to run, or with files that are not pictures, is refused outright
-with a 400. Fetching by address is refused with a 403 unless the server is
-bound to this machine. `GET /api/settings` reports `scanEngine`, the
-command Gscore would run and where it found it, or its `error`.
+with a 400. Fetching by address and reading by path are refused with a 403
+unless the server is bound to this machine. `GET /api/settings` reports
+`scanEngine`, the command Gscore would run and where it found it, or its
+`error`.
 
-A single picture also opens through the ordinary `/api/open` and
-`/api/openpath`, which route `.png` and `.jpg` to the same reader, but
-without the kept-alive reply; from a script that is fine.
+A single picture or a PDF also opens through the ordinary `/api/open` and
+`/api/openpath`, kept alive the same way. For a PDF, `reader=glyphs` or
+`reader=pages` says which way, and `ask=1` has a PDF that could go either
+way answered with `status: choose` and the `staves` to a system instead of
+being opened; the answer's `engraved` says whether a PDF was read glyph by
+glyph, with a reading to review, or as pictures. `GET /api/scanprogress`
+says how far the reader has got while it works. `/api/pickfile`, the system's open dialog, hands several pictures
+back as `pages` to be put in order rather than opening them, and does so
+for any number with `list=1`.
 
 ## Shipping it: the `-omr` packages
 

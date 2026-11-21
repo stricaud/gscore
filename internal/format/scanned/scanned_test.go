@@ -146,7 +146,7 @@ func TestWithoutAReaderNothingIsRead(t *testing.T) {
 		t.Errorf("with no reader: %v", err)
 	}
 	_, err = Import(strings.NewReader("<html>a page of the other kind</html>"))
-	if err == nil || !strings.Contains(err.Error(), "neither a PNG nor a JPEG") {
+	if err == nil || !strings.Contains(err.Error(), "neither a PNG") {
 		t.Errorf("a web page was answered %v", err)
 	}
 }
@@ -174,7 +174,68 @@ func TestAReaderThatFailsSaysWhy(t *testing.T) {
 }
 
 func TestKind(t *testing.T) {
-	if Kind(pngBytes) != ".png" || Kind(jpegBytes) != ".jpg" || Kind([]byte("%PDF-1.4")) != "" {
+	if Kind(pngBytes) != ".png" || Kind(jpegBytes) != ".jpg" || Kind([]byte("%PDF-1.4")) != ".pdf" || Kind([]byte("<svg/>")) != "" {
 		t.Error("the kinds are not told apart by their first bytes")
 	}
+}
+
+// The reader's own account of its work is read into a position, line by
+// line, as homr writes it.
+func TestTheReadersProgressIsFollowed(t *testing.T) {
+	var seen []Progress
+	w := &progressWriter{report: func(p Progress) { seen = append(seen, p) }}
+	lines := []string{
+		"Merging 2 files: ['page-01.jpg', 'page-02.jpg']",
+		"=========================================",
+		"Processing page-01.jpg",
+		"Starting Inference.",
+		"Found 936 staff line fragments",
+		"Found 4 staffs",
+		"Dewarping staff 0",
+		"Running TrOmr inference on staff image 0",
+		"Running TrOmr inference on staff image 1",
+		"Running TrOmr inference on staff image 2",
+		"Running TrOmr inference on staff image 3",
+		"Finished parsing 2 staves",
+		"Finished page-01.jpg",
+		"Processing page-02.jpg",
+		"Found 2 staffs",
+		"Running TrOmr inference on staff image 0",
+	}
+	// In pieces, as a pipe delivers them: a line may arrive in two writes.
+	text := strings.Join(lines, "\n") + "\n"
+	w.Write([]byte(text[:40]))
+	w.Write([]byte(text[40:]))
+	if len(seen) == 0 {
+		t.Fatal("nothing was reported")
+	}
+	last := seen[len(seen)-1]
+	if last.Page != 2 || last.Pages != 2 || last.Staff != 1 || last.Staves != 2 {
+		t.Errorf("the position at the end is %+v", last)
+	}
+	// Half a page through the second of two: a little over three quarters.
+	if last.Percent < 70 || last.Percent > 80 {
+		t.Errorf("the percentage at the end is %d", last.Percent)
+	}
+	if last.String() != "page 2 of 2, staff 1 of 2" {
+		t.Errorf("said as %q", last.String())
+	}
+	// The percentage only ever climbs, and never says done.
+	for i := 1; i < len(seen); i++ {
+		if seen[i].Percent < seen[i-1].Percent {
+			t.Errorf("the percentage fell from %d to %d at %+v", seen[i-1].Percent, seen[i].Percent, seen[i])
+		}
+		if seen[i].Percent >= 100 {
+			t.Errorf("the percentage reached %d before the end", seen[i].Percent)
+		}
+	}
+	// Reported from the reader itself, when it is given somewhere to say so.
+	eng, _ := fakeReader(t)
+	page := filepath.Join(t.TempDir(), "p.png")
+	os.WriteFile(page, pngBytes, 0o600)
+	var told int
+	if _, err := ImportFilesWith(context.Background(), eng, []string{page}, func(Progress) { told++ }); err != nil {
+		t.Fatal(err)
+	}
+	_ = told // the stand-in says only "Finished", which is no position
 }

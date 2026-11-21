@@ -1241,8 +1241,14 @@ async function action(name) {
     case "open":
       await openScore();
       break;
-    case "open-web":
+    case "import-web":
       await openWebDialog();
+      break;
+    case "import-pdf":
+      await importPDF();
+      break;
+    case "import-images":
+      await importImages();
       break;
     case "save-pdf":
       await exportPDF();
@@ -1671,9 +1677,6 @@ async function action(name) {
       break;
     case "save-as":
       await saveScore(true);
-      break;
-    case "protect":
-      await protectDialog();
       break;
     case "settings":
       await settingsDialog();
@@ -4127,9 +4130,18 @@ async function openRecent(path) {
       await loadRecent();
       return;
     }
+    // A slow answer carries its error in the body; see slowreply.go.
+    const d = await res.json().catch(() => ({}));
+    if (d.error) {
+      status("Could not open it: " + d.error);
+      return;
+    }
     await reopen();
     await loadRecent();
     status("Opened " + (state.info?.filename || path));
+    if (d.warning && await scanNoteDialog(d.warning)) {
+      await importByPath(path, path.split("/").pop(), "glyphs");
+    }
   } finally {
     idle();
   }
@@ -9638,19 +9650,34 @@ async function exportSymbolPack() {
 async function saveScore(saveAs) {
   const here = state.info?.filename || "";
 
+  // Save as is where a .gscore is locked or unlocked; a plain save keeps
+  // the file as it was opened.
+  let lock = { query: "", headers: {} };
+  if (saveAs) {
+    lock = await saveLockDialog();
+    if (!lock) {
+      status("Save cancelled");
+      return;
+    }
+  }
+  const withLock = (q) => [q, lock.query].filter(Boolean).join("&");
+  const saved = (where) => status(lock.query === "lock=1"
+    ? "Saved " + where + " — locked under the password"
+    : "Saved " + where);
+
   // Nowhere to write to: the file comes back and the browser asks where it
   // goes, so saving in a page is always a save-as. The bytes are the ones
   // the desktop would have written — the drawings and the PDF of the page
   // are in there, which the plain exporter does not carry.
   if (!state.info?.local && !state.info?.native) {
-    const res = await saveRequest("", "Saving…");
+    const res = await saveRequest(withLock(""), "Saving…", lock.headers);
     if (!res.ok) {
       status("Could not save: " + (await res.text()).trim());
       return;
     }
     const name = await keepFile(res, "score.gscore");
     await loadInfo();
-    status("Saved " + name);
+    saved(name);
     return;
   }
 
@@ -9664,7 +9691,7 @@ async function saveScore(saveAs) {
     }
     // gscore cannot write that format back. Ask where it should go instead.
   }
-  let res = await saveRequest("", "Saving…");
+  let res = await saveRequest(withLock(""), "Saving…", lock.headers);
   if (!res.ok) {
     status("Could not save: " + (await res.text()).trim());
     return;
@@ -9685,8 +9712,8 @@ async function saveScore(saveAs) {
       status("Ready");
       return;
     }
-    res = await saveRequest("path=" + encodeURIComponent(where.trim()),
-                          "Saving…");
+    res = await saveRequest(withLock("path=" + encodeURIComponent(where.trim())),
+                          "Saving…", lock.headers);
     if (!res.ok) {
       status("Could not save: " + (await res.text()).trim());
       return;
@@ -9699,7 +9726,7 @@ async function saveScore(saveAs) {
     return;
   }
   await loadInfo();
-  status("Saved " + d.path);
+  saved(d.path);
 }
 
 // splitMeasure ends the bar where the cursor is.
@@ -16595,27 +16622,57 @@ async function openFile(file) {
   if (!file) return;
   status("Opening " + file.name + "…");
   busy("Opening " + file.name + "…");
+  const stop = watchScanProgress("Importing " + file.name + "…");
   try {
     const body = await file.arrayBuffer();
-    const res = await openWithPassword((password) =>
-      fetch("/api/open?name=" + encodeURIComponent(file.name), {
-        method: "POST", body, headers: passwordHeader(password),
-      }));
-    if (!res) {
-      status("Not opened");
-      return false;
+    // A PDF that could be read either way is asked about first; the
+    // bytes go again with the answer.
+    let reader = isPDF(file.name) ? "&ask=1" : "";
+    for (;;) {
+      const res = await openWithPassword((password) =>
+        fetch("/api/open?name=" + encodeURIComponent(file.name) + reader, {
+          method: "POST", body, headers: passwordHeader(password),
+        }));
+      if (!res) {
+        status("Not opened");
+        return false;
+      }
+      if (!res.ok) {
+        status("Could not open: " + (await res.text()).trim());
+        return false;
+      }
+      // A slow answer — a picture read by the page reader — carries its
+      // error in the body; see slowreply.go.
+      const d = await res.json().catch(() => ({}));
+      if (d.error) {
+        status("Could not open: " + d.error);
+        return false;
+      }
+      if (d.status === "choose") {
+        const how = await pdfReaderDialog(d);
+        if (!how) {
+          status("Ready");
+          return false;
+        }
+        reader = "&reader=" + how;
+        continue;
+      }
+      await reopen();
+      status("Opened " + file.name);
+      // Parts dropped by the page reader: said, with the way to keep them.
+      if (d.warning && await scanNoteDialog(d.warning)) {
+        reader = "&reader=glyphs";
+        continue;
+      }
+      // A PDF read glyph by glyph has a reading to show; one read as a
+      // picture by the page reader has not.
+      if (isPDF(file.name) && d.engraved !== false) tellAboutPDF();
+      return true;
     }
-    if (!res.ok) {
-      status("Could not open: " + (await res.text()).trim());
-      return false;
-    }
-    await reopen();
-    status("Opened " + file.name);
-    if (isPDF(file.name)) tellAboutPDF();
-    return true;
   } finally {
     // Whatever happened, including nothing: a mascot left spinning over a
     // window that has given up is worse than no mascot at all.
+    stop();
     idle();
   }
 }
@@ -16632,18 +16689,292 @@ function isScanName(name) {
 // the first of them.
 async function openChosen(files) {
   if (!files.length) return false;
-  if (files.every((f) => isScanName(f.name))) return openScans(files);
+  if (files.every((f) => isScanName(f.name))) {
+    if (files.length === 1) return openScans(files);
+    const ordered = await pageOrderDialog(files.map((f) => ({ name: f.name, file: f })));
+    if (!ordered) return false;
+    return openScans(ordered.map((p) => p.file));
+  }
   return openFile(files[0]);
 }
 
+// watchScanProgress keeps the mascot and the status line told how far the
+// page reader has got, while something that may run it is under way. It
+// asks the server every so often and says nothing until the reader is
+// actually at work, so an ordinary open shows none of it. The function it
+// returns stops the watching, and must be called.
+function watchScanProgress(label) {
+  let shown = false;
+  let asking = false;
+  const tick = async () => {
+    if (asking) return;
+    asking = true;
+    try {
+      const d = await (await fetch("/api/scanprogress")).json();
+      if (!d.active) return;
+      if (!shown) {
+        shown = true;
+        busy(label);
+      }
+      const pct = d.percent > 0 ? ` ${d.percent}%` : "";
+      const t = $("#busy-text");
+      if (t) t.textContent = `${label}${pct}`;
+      status(`${label}${pct}${d.what ? " — " + d.what : ""}`);
+    } catch (_) {
+      /* the server will answer next time, or the import is over */
+    } finally {
+      asking = false;
+    }
+  };
+  const timer = setInterval(tick, 700);
+  return () => {
+    clearInterval(timer);
+    if (shown) idle();
+  };
+}
+
+// pdfReaderDialog asks how a PDF that could be read either way is to be
+// read: from its glyphs, or as pictures by the page reader. The staves to
+// a system decide the suggestion: a lead sheet or a piano piece reads well
+// as pictures, and anything with more instruments than that is kept
+// apart only by its glyphs. Answers "glyphs", "pages", or null.
+async function pdfReaderDialog(d) {
+  const dlg = $("#pdfreader");
+  if (!dlg) return "glyphs";
+  const staves = d.staves || 0;
+  const suggest = staves > 2 ? "glyphs" : "pages";
+  const radio = dlg.querySelector(`input[name="pdfreader"][value="${suggest}"]`);
+  if (radio) radio.checked = true;
+  // Why one is suggested over the other, in the terms of this file.
+  let why = t("homr is installed, and this PDF was drawn by a notation program, so it can be read two ways.");
+  if (staves > 2) {
+    why += ` ${t("With")} ${staves} ${t("staves to a system, only the glyphs keep the parts apart.")}`;
+  } else if (staves > 0) {
+    why += ` ${t("With")} ${staves} ${t("staves to a system, homr reads it well.")}`;
+  }
+  $("#pdfreader-what").textContent = why;
+  const answer = await new Promise((resolve) => {
+    const done = () => {
+      dlg.removeEventListener("close", done);
+      resolve(dlg.returnValue);
+    };
+    dlg.addEventListener("close", done);
+    dlg.showModal();
+  });
+  if (answer !== "ok") return null;
+  return dlg.querySelector('input[name="pdfreader"]:checked')?.value || "glyphs";
+}
+
+// scanNoteDialog shows what the page reader dropped — the staves of a
+// system beyond the ones it models — and offers the glyph reading, which
+// keeps every part. Answers true to read again from the glyphs.
+async function scanNoteDialog(warning) {
+  const dlg = $("#scan-note");
+  if (!dlg) {
+    status(warning);
+    return false;
+  }
+  $("#scan-note-what").textContent = warning;
+  const answer = await new Promise((resolve) => {
+    const done = () => {
+      dlg.removeEventListener("close", done);
+      resolve(dlg.returnValue);
+    };
+    dlg.addEventListener("close", done);
+    dlg.showModal();
+  });
+  return answer === "ok";
+}
+
+// importByPath opens a file on this machine by its path, with the mascot
+// up and the page reader's progress shown while it reads; a PDF that
+// could be read either way is asked about first.
+async function importByPath(path, name, how) {
+  const label = `Importing ${name}…`;
+  status(label);
+  busy(label);
+  const stop = watchScanProgress(label);
+  try {
+    let reader = how ? "&reader=" + how : "&ask=1";
+    for (;;) {
+      const res = await openWithPassword((password) =>
+        fetch("/api/openpath?path=" + encodeURIComponent(path) + reader, {
+          method: "POST", headers: passwordHeader(password),
+        }));
+      if (!res) {
+        status("Not opened");
+        return false;
+      }
+      if (!res.ok) {
+        status("Could not open: " + (await res.text()).trim());
+        return false;
+      }
+      const d = await res.json().catch(() => ({}));
+      if (d.error) {
+        status("Could not open: " + d.error);
+        return false;
+      }
+      if (d.status === "choose") {
+        const how = await pdfReaderDialog(d);
+        if (!how) {
+          status("Ready");
+          return false;
+        }
+        reader = "&reader=" + how;
+        continue;
+      }
+      await reopen();
+      status("Opened " + name);
+      // Parts dropped by the page reader: said, with the way to keep them.
+      if (d.warning && await scanNoteDialog(d.warning)) {
+        reader = "&reader=glyphs";
+        continue;
+      }
+      if (isPDF(name) && d.engraved !== false) tellAboutPDF();
+      return true;
+    }
+  } finally {
+    stop();
+    idle();
+  }
+}
+
+// importPDF opens a PDF: the system's dialog where there is one, the
+// page's own box where there is not. The dialog only picks; the reading
+// is a request of its own, so that the mascot and the progress can be
+// shown for it rather than the status still saying "choose".
+async function importPDF() {
+  if (state.info?.local) {
+    status("Choose a PDF…");
+    const res = await fetch("/api/pickfile?list=1", { method: "POST" });
+    if (res.ok) {
+      const d = await res.json();
+      if (d.cancelled) {
+        status("Ready");
+        return;
+      }
+      if (d.status !== "pages" || !d.pages?.length) {
+        status("Could not open: " + (d.error || "nothing was picked"));
+        return;
+      }
+      const [first] = d.pages;
+      if (d.pages.length === 1 && isPDF(first.name)) {
+        await importByPath(first.path, first.name);
+      } else {
+        await readPagesInOrder(d.pages);
+      }
+      return;
+    }
+    if (res.status !== 501) {
+      status("Could not open: " + ((await res.text()).trim() || res.statusText));
+      return;
+    }
+  }
+  $("#pdf-input").click();
+}
+
+// importImages reads pictures of pages as one score, asking what order
+// they go in: the system's dialog where there is one, the page's own box
+// where there is not.
+async function importImages() {
+  if (state.info?.local) {
+    status("Choose the pictures of the pages…");
+    const res = await fetch("/api/pickfile?list=1", { method: "POST" });
+    if (res.ok) {
+      const d = await res.json();
+      if (d.cancelled) {
+        status("Ready");
+        return;
+      }
+      if (d.status === "pages") await readPagesInOrder(d.pages);
+      return;
+    }
+    if (res.status !== 501) {
+      status("Could not open: " + ((await res.text()).trim() || res.statusText));
+      return;
+    }
+  }
+  $("#images-input").click();
+}
+
+// readPagesInOrder asks the order of pictures the server has by path, and
+// has them read.
+async function readPagesInOrder(pages) {
+  const ordered = await pageOrderDialog(pages);
+  if (!ordered) {
+    status("Ready");
+    return;
+  }
+  await openScans(null, null, ordered);
+}
+
+// byPageNumber orders names the way their numbers read: page2 before
+// page10, which is where the plain alphabet puts them the other way
+// round, and a scanner names its pages by number.
+function byPageNumber(a, b) {
+  return a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: "base" });
+}
+
+// pageOrderDialog shows the pages in the order they will be read, with
+// arrows to move one, and answers the order chosen or null. One page
+// needs no asking.
+async function pageOrderDialog(pages) {
+  if (pages.length < 2) return pages;
+  const dlg = $("#pageorder");
+  const list = $("#pageorder-list");
+  if (!dlg || !list) return pages.slice().sort(byPageNumber);
+  let order = pages.slice().sort(byPageNumber);
+  const draw = () => {
+    list.innerHTML = "";
+    order.forEach((p, i) => {
+      const li = document.createElement("li");
+      const name = document.createElement("span");
+      name.textContent = p.name;
+      const up = document.createElement("button");
+      up.type = "button";
+      up.textContent = "▲";
+      up.title = t("Earlier");
+      up.disabled = i === 0;
+      up.addEventListener("click", () => {
+        [order[i - 1], order[i]] = [order[i], order[i - 1]];
+        draw();
+      });
+      const down = document.createElement("button");
+      down.type = "button";
+      down.textContent = "▼";
+      down.title = t("Later");
+      down.disabled = i === order.length - 1;
+      down.addEventListener("click", () => {
+        [order[i], order[i + 1]] = [order[i + 1], order[i]];
+        draw();
+      });
+      li.append(name, up, down);
+      list.append(li);
+    });
+  };
+  draw();
+  const answer = await new Promise((resolve) => {
+    const done = () => {
+      dlg.removeEventListener("close", done);
+      resolve(dlg.returnValue);
+    };
+    dlg.addEventListener("close", done);
+    dlg.showModal();
+  });
+  return answer === "ok" ? order : null;
+}
+
 // openScans has pictures of pages read into one score, in the order given:
-// files from this machine, or addresses on the web the server fetches.
-// Reading takes a while, so the mascot works and the status says so.
-async function openScans(files, urls) {
-  const n = files ? files.length : urls.length;
-  const what = n === 1 ? (files ? files[0].name : urls[0]) : `${n} pages`;
+// files handed over by the browser, addresses on the web the server
+// fetches, or paths on this machine the server reads. Reading takes a
+// while, so the mascot works and the status says so.
+async function openScans(files, urls, paths) {
+  const n = files ? files.length : (urls || paths).length;
+  const first = files ? files[0].name : urls ? urls[0] : paths[0].name;
+  const what = n === 1 ? first : `${n} pages`;
   status(`Reading ${what}…`);
-  busy(`Reading ${what}… a page takes a while`);
+  busy(`Reading ${what}…`);
+  const stop = watchScanProgress(`Reading ${what}…`);
   try {
     let res;
     if (files) {
@@ -16652,7 +16983,8 @@ async function openScans(files, urls) {
       res = await fetch("/api/openscan", { method: "POST", body });
     } else {
       const p = new URLSearchParams();
-      for (const u of urls) p.append("url", u);
+      for (const u of urls || []) p.append("url", u);
+      for (const f of paths || []) p.append("path", f.path);
       res = await fetch("/api/openscan?" + p.toString(), { method: "POST" });
     }
     if (!res.ok) {
@@ -16670,11 +17002,13 @@ async function openScans(files, urls) {
     status(d.partial ? `Read ${what} — not all of it: ${d.partial}` : `Read ${what}`);
     return true;
   } finally {
+    stop();
     idle();
   }
 }
 
-// openWebDialog asks for the addresses of pages on the web, one to a line.
+// openWebDialog asks for the addresses of pages on the web — pictures, or a
+// PDF — one to a line, and has them read as one score.
 async function openWebDialog() {
   const dlg = $("#openweb");
   const box = $("#openweb-urls");
@@ -16727,52 +17061,47 @@ async function openWithPassword(attempt) {
   }
 }
 
-// protectDialog sets, changes or removes the password the score is saved
-// under.
-async function protectDialog() {
-  const dlg = $("#protect");
-  const protectedNow = !!state.info?.protected;
-  $("#protect-remove").hidden = !protectedNow;
-  $("#protect-pw").value = "";
-  $("#protect-again").value = "";
-  const answer = await new Promise((resolve) => {
-    const done = () => {
-      dlg.removeEventListener("close", done);
-      resolve(dlg.returnValue);
-    };
-    dlg.addEventListener("close", done);
-    dlg.showModal();
-    $("#protect-pw").focus();
-  });
-  if (answer === "remove") {
-    const res = await fetch("/api/password?clear=1", { method: "POST" });
-    if (!res.ok) {
-      status("Could not remove it: " + (await res.text()).trim());
-      return;
+// saveLockDialog asks, on Save as, whether the .gscore is saved open or
+// locked under a password, and answers with the query and the headers the
+// save carries — or null where the saving was given up. A score opened
+// locked keeps its password unless a new one is typed or it is saved open.
+async function saveLockDialog() {
+  const dlg = $("#savelock");
+  if (!dlg) return { query: "", headers: {} };
+  const locked = !!state.info?.protected;
+  const choice = () => dlg.querySelector('input[name="savelock"]:checked')?.value;
+  const radio = dlg.querySelector(`input[name="savelock"][value="${locked ? "locked" : "open"}"]`);
+  if (radio) radio.checked = true;
+  $("#savelock-pw").value = "";
+  $("#savelock-again").value = "";
+  $("#savelock-kept").hidden = !locked;
+  const fields = $("#savelock-fields");
+  const show = () => { fields.hidden = choice() !== "locked"; };
+  show();
+  for (const r of dlg.querySelectorAll('input[name="savelock"]')) r.onchange = show;
+  for (;;) {
+    const answer = await new Promise((resolve) => {
+      const done = () => {
+        dlg.removeEventListener("close", done);
+        resolve(dlg.returnValue);
+      };
+      dlg.addEventListener("close", done);
+      dlg.showModal();
+    });
+    if (answer !== "ok") return null;
+    if (choice() !== "locked") return { query: "lock=0", headers: {} };
+    const pw = $("#savelock-pw").value;
+    if (!pw && locked) return { query: "lock=1", headers: {} };
+    if (!pw) {
+      status("Type the password, or save it open");
+      continue;
     }
-    await loadInfo();
-    status("Password removed — the score is saved unlocked from now on");
-    return;
+    if (pw !== $("#savelock-again").value) {
+      status("The two passwords are not the same");
+      continue;
+    }
+    return { query: "lock=1", headers: passwordHeader(pw) };
   }
-  if (answer !== "ok") return;
-  const pw = $("#protect-pw").value;
-  if (!pw) {
-    status("No password typed, so nothing was changed");
-    return;
-  }
-  if (pw !== $("#protect-again").value) {
-    status("The two passwords are not the same — nothing was changed");
-    return;
-  }
-  const res = await fetch("/api/password", {
-    method: "POST", headers: passwordHeader(pw),
-  });
-  if (!res.ok) {
-    status("Could not set it: " + (await res.text()).trim());
-    return;
-  }
-  await loadInfo();
-  status("Protected — the score is locked under the password when you save it");
 }
 
 // openScore asks the system for a file when gscore is running as an
@@ -16783,11 +17112,34 @@ async function openScore() {
   if (state.info?.local) {
     status("Choose a score…");
     try {
-      const res = await fetch("/api/pickfile", { method: "POST" });
+      // ask=1: a PDF that could be read either way comes back as a
+      // question rather than being opened one way or the other.
+      const res = await fetch("/api/pickfile?ask=1", { method: "POST" });
       if (res.ok) {
         const d = await res.json();
         if (d.cancelled) {
           status("Ready");
+          return;
+        }
+        if (d.error) {
+          status("Could not open: " + d.error);
+          return;
+        }
+        // Several pictures of pages: they are put in order first, then
+        // read as one score.
+        if (d.status === "pages") {
+          await readPagesInOrder(d.pages);
+          return;
+        }
+        // A PDF with a choice to make: asked, then opened by its path,
+        // with the reading's progress shown.
+        if (d.status === "choose") {
+          const how = await pdfReaderDialog(d);
+          if (!how) {
+            status("Ready");
+            return;
+          }
+          await importByPath(d.filename, d.filename.split("/").pop(), how);
           return;
         }
         // From here on it is reading and laying out, which is the part that
@@ -16799,7 +17151,11 @@ async function openScore() {
           idle();
         }
         status("Opened " + d.filename);
-        if (isPDF(d.filename)) tellAboutPDF();
+        if (d.warning && await scanNoteDialog(d.warning)) {
+          await importByPath(d.filename, d.filename.split("/").pop(), "glyphs");
+          return;
+        }
+        if (isPDF(d.filename) && d.engraved !== false) tellAboutPDF();
         return;
       }
       // A file that was chosen and could not be read is not the same as
@@ -16846,6 +17202,14 @@ function freeTheFilePanels() {
 function setupFileInput() {
   freeTheFilePanels();
   $("#file-input").addEventListener("change", async (e) => {
+    await openChosen([...e.target.files]);
+    e.target.value = "";
+  });
+  $("#pdf-input")?.addEventListener("change", async (e) => {
+    await openChosen([...e.target.files]);
+    e.target.value = "";
+  });
+  $("#images-input")?.addEventListener("change", async (e) => {
     await openChosen([...e.target.files]);
     e.target.value = "";
   });
@@ -18669,11 +19033,11 @@ function busy(msg) {
 // while somebody is still choosing a name. That is the panel's own
 // moment and he is behind it; when it closes he is already there, which
 // is when he is wanted.
-async function saveRequest(query, saying) {
+async function saveRequest(query, saying, headers = {}) {
   busy(saying);
   try {
     return await fetch("/api/save" + (query ? "?" + query : ""),
-                       { method: "POST" });
+                       { method: "POST", headers });
   } finally {
     idle();
   }
@@ -22734,11 +23098,13 @@ const REMOVE_MARK = '<circle cx="12" cy="12" r="8.5"/><path d="M6 18 18 6"/>';
 
 const MENU_DRAWINGS = {
   // A globe: pages fetched from the web.
-  "open-web": '<circle cx="12" cy="12" r="8.5"/>' +
+  "import-web": '<circle cx="12" cy="12" r="8.5"/>' +
     '<path d="M3.5 12h17M12 3.5c3.2 3 3.2 14 0 17M12 3.5c-3.2 3-3.2 14 0 17"/>',
-  // A padlock: the score saved under a password.
-  protect: '<rect x="5" y="11" width="14" height="10" rx="2"/>' +
-    '<path d="M8 11V8a4 4 0 0 1 8 0v3"/>',
+  // A page with its corner turned, for a PDF.
+  "import-pdf": '<path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4"/>',
+  // Two pictures, one behind the other, for the pages of a scan.
+  "import-images": '<rect x="3" y="7" width="13" height="13" rx="1"/>' +
+    '<path d="M7 4h13v13"/><path d="M5 17l3.5-4 2.5 3 2-2 3 3"/>',
   // A hairpin written as the word: the wedge's two lines, broken, which
   // is the marking it stands for drawn the way it is printed — a word and
   // a broken line. The open end says which of the two it is.

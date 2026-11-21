@@ -12,11 +12,17 @@ package app
 
 import (
 	"bytes"
+	"context"
+	"errors"
+	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 
 	"github.com/stricaud/gscore/internal/format/engraved"
+	"github.com/stricaud/gscore/internal/format/scanned"
 	"github.com/stricaud/gscore/internal/model"
 )
 
@@ -49,12 +55,71 @@ func isPDFName(name string) bool {
 }
 
 // readPDF imports a PDF and keeps what is needed to read it again.
-func (a *App) readPDF(name string, data []byte, per int) ([]*model.Score, error) {
-	s, err := engraved.ImportWith(bytes.NewReader(data),
+// pdfChoice is the question a PDF raises when it could be read either way:
+// an answer rather than a failure. See readPDF.
+type pdfChoice struct {
+	name   string
+	staves int
+}
+
+func (c *pdfChoice) Error() string {
+	return fmt.Sprintf("%s can be read from its glyphs or as pictures; say which with reader=", c.name)
+}
+
+// Answer is what the page is told: that there is a choice, and how many
+// staves each system has, which is what decides it.
+func (c *pdfChoice) Answer() any {
+	return map[string]any{"status": "choose", "filename": c.name, "staves": c.staves}
+}
+
+// readPDF reads a PDF the way reader says: "glyphs", glyph by glyph, which
+// is exact and keeps every part but reads no slurs, dynamics or words;
+// "pages", through the page reader, which reads those but may fold the
+// staves of several instruments into a piano part and misread a note; or
+// "ask", which stops to ask when both are possible, since a nine-stave
+// score and a lead sheet want opposite answers. Nothing said is the page
+// reader where there is one, the glyph reader where there is not — and
+// the glyph reader when the page reader fails on the file.
+func (a *App) readPDF(name string, data []byte, per int, reader string) ([]*model.Score, error) {
+	eng, found := scanned.Find()
+	if found != nil || reader == "glyphs" {
+		s, err := engraved.ImportWith(bytes.NewReader(data),
+			engraved.Options{StavesPerSystem: per})
+		if errors.Is(err, engraved.ErrScan) && found != nil {
+			return nil, fmt.Errorf("%w — and there is no page reader to read it as a picture: "+
+				"install uv, or set %s", err, scanEngineEnv)
+		}
+		if err != nil {
+			return nil, err
+		}
+		return a.keepPDF(name, data, per, s), nil
+	}
+	if reader == "ask" {
+		if glyphs, err := engraved.ImportWith(bytes.NewReader(data),
+			engraved.Options{StavesPerSystem: per}); err == nil {
+			return nil, &pdfChoice{name: name, staves: len(glyphs.Parts)}
+		}
+		// No glyphs to read: nothing to ask, the page reader it is.
+	}
+	s, err := a.readScan(eng, data)
+	if err == nil {
+		a.lock()
+		a.forgetPDF()
+		a.scanNote = partsLost(data, per, s)
+		a.mu.Unlock()
+		return []*model.Score{s}, nil
+	}
+	glyphs, glyphErr := engraved.ImportWith(bytes.NewReader(data),
 		engraved.Options{StavesPerSystem: per})
-	if err != nil {
+	if glyphErr != nil {
 		return nil, err
 	}
+	return a.keepPDF(name, data, per, glyphs), nil
+}
+
+// keepPDF keeps a PDF the glyph reader read, so the reading can be looked
+// at and done again, and hands back the score.
+func (a *App) keepPDF(name string, data []byte, per int, s *model.Score) []*model.Score {
 	a.lock()
 	// A copy, not the caller's slice: the caller owns a request body that is
 	// recycled the moment the handler returns.
@@ -62,7 +127,7 @@ func (a *App) readPDF(name string, data []byte, per int) ([]*model.Score, error)
 	a.sourceName = name
 	a.perSystem = per
 	a.mu.Unlock()
-	return []*model.Score{s}, nil
+	return []*model.Score{s}
 }
 
 // forgetPDF drops the kept bytes, which is what opening anything else means.
@@ -125,7 +190,7 @@ func (a *App) handlePDFReread(w http.ResponseWriter, r *http.Request) {
 			http.StatusBadRequest)
 		return
 	}
-	scores, err := a.readPDF(name, data, n)
+	scores, err := a.readPDF(name, data, n, "glyphs")
 	if err != nil || len(scores) == 0 {
 		msg := "could not read the PDF"
 		if err != nil {
@@ -180,4 +245,63 @@ func (a *App) KeepPDFSource(name string, data []byte) {
 	a.sourceName = name
 	a.perSystem = 0
 	a.mu.Unlock()
+}
+
+// readScan has the page reader read a PDF of scanned pages, from a copy
+// in a folder of its own.
+func (a *App) readScan(eng scanned.Engine, data []byte) (*model.Score, error) {
+	dir, err := os.MkdirTemp("", "gscore-scan-")
+	if err != nil {
+		return nil, err
+	}
+	defer os.RemoveAll(dir)
+	path := filepath.Join(dir, "pages.pdf")
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		return nil, err
+	}
+	a.scan.begin()
+	defer a.scan.end()
+	return scanned.ImportFilesWith(context.Background(), eng, []string{path}, a.scan.report)
+}
+
+// pdfReaderParam is which way a request wants a PDF read: reader=glyphs or
+// reader=pages, or ask=1 to be asked when both would do. See readPDF.
+func pdfReaderParam(r *http.Request) string {
+	switch v := r.URL.Query().Get("reader"); v {
+	case "glyphs", "pages":
+		return v
+	}
+	if r.URL.Query().Get("ask") == "1" {
+		return "ask"
+	}
+	return ""
+}
+
+// partsLost is the warning when the page reader read fewer parts than the
+// PDF has staves to a system, which is what it does to a score of more
+// instruments than a piano and a voice: the top staff is kept and the rest
+// folded into an empty piano part. The glyphs say how many staves there
+// were, where there are glyphs; a scan says nothing and gets no warning.
+// Empty where nothing was lost.
+func partsLost(data []byte, per int, got *model.Score) string {
+	glyphs, err := engraved.ImportWith(bytes.NewReader(data), engraved.Options{StavesPerSystem: per})
+	if err != nil || got == nil || len(glyphs.Parts) <= len(got.Parts) {
+		return ""
+	}
+	parts := "part"
+	if len(got.Parts) != 1 {
+		parts = "parts"
+	}
+	return fmt.Sprintf("homr read %d %s from systems of %d staves; the other staves were dropped. "+
+		"To keep every part, read the PDF from its glyphs instead.",
+		len(got.Parts), parts, len(glyphs.Parts))
+}
+
+// takeScanNote is the warning the last PDF reading left, taken once.
+func (a *App) takeScanNote() string {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	note := a.scanNote
+	a.scanNote = ""
+	return note
 }

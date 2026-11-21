@@ -185,6 +185,13 @@ type App struct {
 	pasteboard func(kind string) ([]byte, int)
 	copiedAt   int
 
+	// scan is how far the page reader has got, while it reads. See
+	// scanprogress.go. scanNote is the warning its last reading of a PDF
+	// left — parts dropped from a system of many staves — for the answer
+	// to carry; see partsLost.
+	scan     scanState
+	scanNote string
+
 	// mux is this document's own router, built once when the App is made.
 	//
 	// One router per session rather than one for the whole server, because
@@ -594,6 +601,7 @@ func (a *App) APIRoutes(mux *http.ServeMux) {
 	// no longer here, so the history goes with it.
 	mux.HandleFunc("/api/new", a.handleNew)
 	mux.HandleFunc("/api/openscan", a.handleOpenScan)
+	mux.HandleFunc("/api/scanprogress", a.handleScanProgress)
 	mux.HandleFunc("/api/open", a.handleOpen)
 	mux.HandleFunc("/api/openpath", a.handleOpenPath)
 	mux.HandleFunc("/api/password", a.handlePassword)
@@ -1437,47 +1445,63 @@ func (a *App) handleOpen(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	var scores []*model.Score
 	password := passwordOf(r)
-	if isPDFName(name) {
-		// A PDF keeps its bytes and its grouping, so the reading can be
-		// looked at and done again. See pdfimport.go.
-		per, _ := stavesParam(r)
-		scores, err = a.readPDF(name, body, per)
-		if len(scores) == 0 {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+	reader := pdfReaderParam(r)
+	// Slowly, because a picture of a page — a PNG, or a PDF that turns out
+	// to be a scan — is read by the page reader, which takes a minute a
+	// page. See slowreply.go.
+	slowly(w, func() (any, error) {
+		var scores []*model.Score
+		var err error
+		if isPDFName(name) {
+			// A PDF keeps its bytes and its grouping, so the reading can
+			// be looked at and done again. See pdfimport.go.
+			per, _ := stavesParam(r)
+			scores, err = a.readPDF(name, body, per, reader)
+			if len(scores) == 0 {
+				return nil, err
+			}
+			err = nil
+		} else {
+			scores, err = a.readScores(name, body, password)
+			if len(scores) == 0 {
+				return nil, err
+			}
+		}
+		a.lock()
+		if !isPDFName(name) || a.sourceName == "" {
+			a.forgetPDF()
+		}
+		a.setBook(scores, name, err)
+		if isGscoreName(name) {
+			a.password = password
+		}
+		// And the drawings the file carries, for the same reason the
+		// other way in takes them: a score that refers to symbols the
+		// registry has not got is a score with holes in it.
+		a.adoptSymbols(bytesReader(body), password)
+		a.mu.Unlock()
+		out := map[string]any{
+			"status": "ok", "filename": name, "tunes": len(scores),
+			// Whether the PDF was read glyph by glyph, with a reading to
+			// review, or as a picture by the page reader.
+			"engraved": isPDFName(name) && a.sourceName != "",
+		}
+		if note := a.takeScanNote(); note != "" {
+			out["warning"] = note
+		}
+		return out, nil
+	}, func(w http.ResponseWriter, err error) {
+		if passwordTrouble(w, err) {
 			return
 		}
-		err = nil
-	} else {
-		scores, err = a.readScores(name, body, password)
-		if len(scores) == 0 {
-			if passwordTrouble(w, err) {
-				return
-			}
-			status := http.StatusBadRequest
-			var unsupported unsupportedFormat
-			if errors.As(err, &unsupported) {
-				status = http.StatusUnsupportedMediaType
-			}
-			http.Error(w, err.Error(), status)
-			return
+		status := http.StatusBadRequest
+		var unsupported unsupportedFormat
+		if errors.As(err, &unsupported) {
+			status = http.StatusUnsupportedMediaType
 		}
-	}
-	a.lock()
-	if !isPDFName(name) {
-		a.forgetPDF()
-	}
-	a.setBook(scores, name, err)
-	if isGscoreName(name) {
-		a.password = password
-	}
-	// And the drawings the file carries, for the same reason the other way
-	// in takes them: a score that refers to symbols the registry has not
-	// got is a score with holes in it.
-	a.adoptSymbols(bytesReader(body), password)
-	a.mu.Unlock()
-	writeJSON(w, map[string]any{"status": "ok", "filename": name, "tunes": len(scores)})
+		http.Error(w, err.Error(), status)
+	})
 }
 
 // handleLayout reports the engraved size, which the canvas uses to size

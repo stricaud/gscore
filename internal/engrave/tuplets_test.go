@@ -329,3 +329,62 @@ func TestTheFigureClearsTheBeamOfAGroupItDoesNotBegin(t *testing.T) {
 	lay := Engrave(score, DefaultOptions())
 	figureClearsBeams(t, lay, "4")
 }
+
+// Two voices playing triplets together each get their own figure, on their
+// own side: the upper voice's over its beam, the lower voice's under.
+//
+// Read as one run of items, a start from one voice and a stop from the
+// other were taken for a group: homr's reading of Ellington's Black Beauty
+// opens with a chord triplet over a melody triplet, and came out with two
+// figures over the chords, one bracketed, and nothing under the melody.
+func TestTwoVoicesTripletsTogetherKeepTheirOwnFigures(t *testing.T) {
+	triplet := func(step model.Step, octave int, stem model.Stem) []model.Element {
+		var els []model.Element
+		for i := 0; i < 3; i++ {
+			n := &model.Note{
+				Pitch: model.Pitch{Step: step, Octave: octave},
+				Dur:   model.Duration{Num: 1, Den: 12},
+			}
+			n.Tuplet = &model.Tuplet{Actual: 3, Normal: 2, Start: i == 0, Stop: i == 2}
+			n.Marks.Stem = stem
+			els = append(els, n)
+		}
+		return els
+	}
+	rest := func() model.Element {
+		return &model.Rest{Dur: model.Duration{Num: 3, Den: 4}}
+	}
+	s := &model.Score{
+		Tempo: model.Tempo{BPM: 120, Unit: model.Duration{Num: 1, Den: 4}},
+		Parts: []*model.Part{{
+			Clef: model.Treble,
+			Time: model.TimeSignature{Beats: 4, BeatValue: 4},
+			Measures: []*model.Measure{{
+				Voices: []*model.Voice{
+					{Elements: append(triplet(model.StepD, 5, model.StemUp), rest())},
+					{Elements: append(triplet(model.StepF, 4, model.StemDown), rest())},
+				},
+				RightBarline: model.BarSingle,
+			}},
+		}},
+	}
+	lay := Engrave(s, DefaultOptions())
+	nums := textsAt(lay, "3")
+	if len(nums) != 2 {
+		t.Fatalf("the figure was drawn %d times, want once a voice", len(nums))
+	}
+	// Both groups are beamed, so neither is bracketed.
+	for _, tp := range lay.Tuplets {
+		if tp.Bracketed {
+			t.Errorf("a beamed triplet was bracketed: %+v", tp)
+		}
+	}
+	// One figure above the staff, one below it.
+	top, bottom := math.Min(nums[0].Y, nums[1].Y), math.Max(nums[0].Y, nums[1].Y)
+	staffTop := lay.Systems[0].Staff
+	staffBottom := staffTop + 4
+	if top >= staffTop || bottom <= staffBottom {
+		t.Errorf("the figures are at %.2f and %.2f; the staff runs %.2f to %.2f, and one "+
+			"should be on each side", top, bottom, staffTop, staffBottom)
+	}
+}

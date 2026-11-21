@@ -75,9 +75,10 @@ cannot be read this way; it says so rather than guessing. A photograph is
 read another way, below.
 
 What is read: notes with their lengths, accidentals and dots, clefs, key and
-time signatures, rests, barlines. What is not, and has to be put back by
-hand: slurs and ties, which are curves carrying no pitch, and the dynamics,
-articulations, lyrics, tuplets and directions.
+time signatures, rests, barlines, and the parts' names from the text beside
+the first system. What is not, and has to be put back by hand: slurs and
+ties, which are curves carrying no pitch, and the dynamics, articulations,
+lyrics, tuplets and directions.
 
 One thing a PDF never says is **how many staves make a system** — which is to
 say how many players are reading at once. It has to be inferred from a line
@@ -127,9 +128,10 @@ A PNG or a JPEG of a page — a scan, a phone photograph, a picture on a
 website — holds ink and no notes, and turning the one into the other is
 optical music recognition. gscore does not do it itself; it runs
 [homr](https://github.com/liebharc/homr), which does, as a separate program,
-and opens the MusicXML it writes. File ▸ Open takes pictures, several at
-once for several pages, and *Open pages from the web* takes their addresses,
-one to a line; the pages are read in order into one score. Expect a correct
+and opens the MusicXML it writes. File ▸ Import takes a PDF, pictures of
+pages — several at once, put in order first — or their addresses on the web;
+the pages are read in order into one score. With homr there every PDF goes
+to it; without, an engraved PDF is read glyph by glyph as above. Expect a correct
 skeleton to correct rather than a finished engraving: homr reads notes,
 rests, voices, keys and meters well, and leaves lyrics, chord symbols and
 some marks to be put back.

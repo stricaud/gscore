@@ -160,6 +160,26 @@ paths:
         what could not be read is reported in `info.log`, never refused
         wholesale.
       parameters:
+        - name: ask
+          in: query
+          description: |
+            `1`: a PDF that could be read either way — it has glyphs to read
+            and there is a page reader — is not opened but answered with
+            `status: choose` and `staves`, the staves to a system, for the
+            person to decide; send the file again with `reader=`.
+          schema: { type: string, enum: ["1"] }
+        - name: reader
+          in: query
+          description: |
+            How a PDF is read: `glyphs`, glyph by glyph, exact and keeping
+            every part but without slurs, dynamics or words; `pages`,
+            through the page reader, which reads those but may fold the
+            staves of several instruments into a piano part. Left out, the
+            page reader where there is one, the glyph reader where not.
+            When the page reader read fewer parts than the PDF's glyphs
+            have staves to a system, the answer carries a `warning` saying
+            so and how to keep them all.
+          schema: { type: string, enum: [glyphs, pages] }
         - name: name
           in: query
           required: true
@@ -191,6 +211,26 @@ paths:
       summary: Open a score by path
       description: Only on this machine. A browser somewhere else is refused.
       parameters:
+        - name: ask
+          in: query
+          description: |
+            `1`: a PDF that could be read either way — it has glyphs to read
+            and there is a page reader — is not opened but answered with
+            `status: choose` and `staves`, the staves to a system, for the
+            person to decide; send the file again with `reader=`.
+          schema: { type: string, enum: ["1"] }
+        - name: reader
+          in: query
+          description: |
+            How a PDF is read: `glyphs`, glyph by glyph, exact and keeping
+            every part but without slurs, dynamics or words; `pages`,
+            through the page reader, which reads those but may fold the
+            staves of several instruments into a piano part. Left out, the
+            page reader where there is one, the glyph reader where not.
+            When the page reader read fewer parts than the PDF's glyphs
+            have staves to a system, the answer carries a `warning` saying
+            so and how to keep them all.
+          schema: { type: string, enum: [glyphs, pages] }
         - name: path
           in: query
           required: true
@@ -316,6 +356,15 @@ paths:
           in: query
           description: "`0` writes a .gscore with no PDF of itself in front of the music."
           schema: { type: string, enum: ["0", "1"] }
+        - name: lock
+          in: query
+          description: |
+            Decided on Save as, for a `.gscore`: `1` with the password in
+            the `X-Gscore-Password` header saves it locked under that
+            password; `1` alone keeps the password it was opened with; `0`
+            takes the password off. Left out, the file is saved as it was
+            opened. A locked file carries no PDF in front of it.
+          schema: { type: string, enum: ["0", "1"] }
       responses:
         "200":
           description: |
@@ -341,6 +390,35 @@ paths:
       tags: [score]
       summary: Ask the platform for a file to open
       parameters:
+        - name: ask
+          in: query
+          description: |
+            `1`: a PDF that could be read either way — it has glyphs to read
+            and there is a page reader — is not opened but answered with
+            `status: choose` and `staves`, the staves to a system, for the
+            person to decide; send the file again with `reader=`.
+          schema: { type: string, enum: ["1"] }
+        - name: reader
+          in: query
+          description: |
+            How a PDF is read: `glyphs`, glyph by glyph, exact and keeping
+            every part but without slurs, dynamics or words; `pages`,
+            through the page reader, which reads those but may fold the
+            staves of several instruments into a piano part. Left out, the
+            page reader where there is one, the glyph reader where not.
+            When the page reader read fewer parts than the PDF's glyphs
+            have staves to a system, the answer carries a `warning` saying
+            so and how to keep them all.
+          schema: { type: string, enum: [glyphs, pages] }
+        - name: list
+          in: query
+          description: >
+            Hand the pictures picked back as `pages` — their paths and
+            names, for the page to put in order and send to `/api/openscan`
+            as `path=` — rather than opening them. This is what happens
+            anyway when more than one file is picked; `list=1` asks for it
+            of one, which is File ▸ Import ▸ Pictures of pages.
+          schema: { type: string, enum: ["1"] }
         - name: symbols
           in: query
           description: Offer symbol packs rather than scores.
@@ -946,15 +1024,41 @@ paths:
                     description: What in such a copy could not be read.
         "400": { $ref: "#/components/responses/Error" }
 
+  /api/scanprogress:
+    get:
+      tags: [files]
+      summary: How far the page reader has got
+      description: |
+        For the page to show while an import waits on the page reader:
+        `active` while it reads, with `page` of `pages`, `staff` of
+        `staves` on that page, the `percent` they come to, and `what`,
+        the same in words. Read from what homr itself says as it works.
+      responses:
+        "200":
+          description: Where the reader is.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  active: { type: boolean }
+                  percent: { type: integer }
+                  page: { type: integer }
+                  pages: { type: integer }
+                  staff: { type: integer }
+                  staves: { type: integer }
+                  what: { type: string }
+
   /api/openscan:
     post:
       tags: [files]
       summary: Read pictures of pages as one score
       description: |
-        Scanned or photographed pages, PNG or JPEG, read by the page reader
-        into one score in the order given: either the request's multipart
-        parts named `page`, or web addresses in `url=`, which are fetched
-        only by a server running on the machine the editor is used on.
+        Scanned or photographed pages — PNG, JPEG, or a PDF of them — read
+        by the page reader into one score in the order given: the request's
+        multipart parts named `page`; web addresses in `url=`, fetched; or
+        files in `path=`, read. Fetching and reading by path are only for a
+        server running on the machine the editor is used on.
 
         The reader takes a while. The reply is opened at once and kept open
         with spaces until the reader finishes, then carries the answer: an
@@ -966,6 +1070,12 @@ paths:
       parameters:
         - name: url
           in: query
+          schema: { type: array, items: { type: string } }
+          style: form
+          explode: true
+        - name: path
+          in: query
+          description: Files on the machine the editor runs on, read in this order; only from that machine.
           schema: { type: array, items: { type: string } }
           style: form
           explode: true

@@ -58,29 +58,45 @@ func closed(err error) bool {
 }
 
 // pickFile shows the system's open dialog and returns the chosen path.
+// pickFiles shows the system's open dialog and returns the paths chosen:
+// none when it was closed, several when several pictures of pages were
+// picked together to be read as one score. A variable, so that a test can
+// stand in for the dialog.
+var pickFiles = pickFilesNative
+
+// pickFile is the dialog for one file: the first chosen.
 func pickFile() (string, error) {
+	paths, err := pickFiles()
+	if err != nil || len(paths) == 0 {
+		return "", err
+	}
+	return paths[0], nil
+}
+
+func pickFilesNative() ([]string, error) {
 	switch runtime.GOOS {
 	case "darwin":
-		// AppleScript gives a real Finder panel with no extra dependency.
-		//
-		// No "of type" filter: that clause wants uniform type identifiers, and
-		// handing it bare extensions makes the dialog match nothing and fail,
-		// which looks exactly like the user cancelling.
-		script := `POSIX path of (choose file with prompt "Open score"` +
-			appleScriptLocation(ScoresDir()) + `)`
+		// Several allowed, which makes the answer a list; POSIX path of a
+		// list is nothing, so the list is walked and joined by newlines.
+		script := "set ps to {}\n" +
+			"repeat with f in (choose file with prompt \"Open score\" with multiple selections allowed" +
+			appleScriptLocation(ScoresDir()) + ")\n" +
+			"\tset end of ps to POSIX path of f\n" +
+			"end repeat\n" +
+			"set AppleScript's text item delimiters to linefeed\n" +
+			"ps as text"
 		cmd := exec.Command("osascript", "-e", script)
 		var stderr strings.Builder
 		cmd.Stderr = &stderr
 		out, err := cmd.Output()
 		if err != nil {
-			// Cancelling is error -128 and is not a failure; anything else is.
 			if strings.Contains(stderr.String(), "-128") ||
 				strings.Contains(stderr.String(), "User canceled") {
-				return "", nil
+				return nil, nil
 			}
-			return "", fmt.Errorf("file dialog failed: %s", strings.TrimSpace(stderr.String()))
+			return nil, fmt.Errorf("file dialog failed: %s", strings.TrimSpace(stderr.String()))
 		}
-		return strings.TrimSpace(string(out)), nil
+		return pathLines(string(out)), nil
 
 	case "linux":
 		for _, tool := range []string{"zenity", "kdialog"} {
@@ -93,47 +109,48 @@ func pickFile() (string, error) {
 			// the folder to start in rather than a file to select.
 			start := ScoresDir() + string(os.PathSeparator)
 			if tool == "zenity" {
-				cmd = exec.Command(path, "--file-selection",
-					"--title=Open score", "--filename="+start)
+				cmd = exec.Command(path, "--file-selection", "--multiple",
+					"--separator=\n", "--title=Open score", "--filename="+start)
 			} else {
-				cmd = exec.Command(path, "--getopenfilename", start)
+				cmd = exec.Command(path, "--getopenfilename", start,
+					"--multiple", "--separate-output")
 			}
 			out, err := cmd.Output()
 			if err == nil {
-				return strings.TrimSpace(string(out)), nil
+				return pathLines(string(out)), nil
 			}
-			// Closing the dialog and failing to open one look the same from
-			// here: both come back with nothing and a status that is not
-			// zero. Reading every one of them as a cancellation is what
-			// made File > Open do nothing at all on a machine where the
-			// dialog could not start — no score, no message, no sign that
-			// anything had been asked for. "It does not show or do
-			// anything, not even an error."
-			//
-			// The exit code tells them apart. Both tools answer 1 when the
-			// person closes the panel and something else when they could
-			// not show one — zenity says 255 — and a tool that cannot be
-			// started at all never gets a code.
 			if closed(err) {
-				return "", nil
+				return nil, nil
 			}
-			return "", fmt.Errorf("%s could not open a file dialog: %w", tool, err)
+			return nil, fmt.Errorf("%s could not open a file dialog: %w", tool, err)
 		}
-		return "", errNoDialog
+		return nil, errNoDialog
 
 	case "windows":
 		script := `Add-Type -AssemblyName System.Windows.Forms;` +
 			`$d = New-Object System.Windows.Forms.OpenFileDialog;` +
 			`$d.InitialDirectory = '` + powershellQuote(ScoresDir()) + `';` +
+			`$d.Multiselect = $true;` +
 			`$d.Filter = 'Scores|*.abc;*.mscz;*.mscx;*.musicxml;*.xml;*.mxl;*.gscore;*.nwctxt;*.nwc;*.mus;*.musx;*.gmn;*.ly;*.dorico;*.tab;*.btab;*.txt;*.gp3;*.gp4;*.gp5;*.png;*.jpg;*.jpeg|All files|*.*';` +
-			`if ($d.ShowDialog() -eq 'OK') { $d.FileName }`
+			"if ($d.ShowDialog() -eq 'OK') { $d.FileNames -join \"`n\" }"
 		out, err := exec.Command("powershell", "-NoProfile", "-Command", script).Output()
 		if err != nil {
-			return "", nil
+			return nil, nil
 		}
-		return strings.TrimSpace(string(out)), nil
+		return pathLines(string(out)), nil
 	}
-	return "", errNoDialog
+	return nil, errNoDialog
+}
+
+// pathLines is what a dialog printed, one path to a line.
+func pathLines(out string) []string {
+	var paths []string
+	for _, l := range strings.Split(out, "\n") {
+		if l = strings.TrimSpace(l); l != "" {
+			paths = append(paths, l)
+		}
+	}
+	return paths
 }
 
 // handlePickFile shows the dialog and opens whatever is chosen, in one step,
@@ -151,15 +168,18 @@ func (a *App) handlePickFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	path, err := pickFile()
+	paths, err := pickFiles()
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusNotImplemented)
 		return
 	}
-	if path == "" {
+	if len(paths) == 0 {
 		writeJSON(w, map[string]any{"cancelled": true})
 		return
 	}
+	// One file, for everything but opening pictures of pages, which takes
+	// several; see openPicked.
+	path := paths[0]
 
 	// The same dialog serves opening a score and taking symbols out of one.
 	if r.URL.Query().Get("symbols") == "1" {
@@ -219,10 +239,39 @@ func (a *App) handlePickFile(w http.ResponseWriter, r *http.Request) {
 		writePictureGrid(w, data, name, fit, true)
 		return
 	}
-	// A locked file is put aside for the interface to ask the password
-	// of, as a file the shell opens is: the dialog has closed, and a 401
-	// here would only reopen it. See info.AskPassword.
-	if err := a.openPath(path, ""); err != nil {
+	// Several pictures of pages are not opened from here: they go back
+	// to the page, which asks what order they are read in, and come in
+	// again through /api/openscan. list=1 asks for that whatever was
+	// picked, which is what File ▸ Import ▸ Images does.
+	if len(paths) > 1 || r.URL.Query().Get("list") == "1" {
+		if !allPages(paths) {
+			http.Error(w, "pick one score, or pictures of pages to read as one",
+				http.StatusBadRequest)
+			return
+		}
+		pages := make([]map[string]string, 0, len(paths))
+		for _, p := range paths {
+			pages = append(pages, map[string]string{"path": p, "name": filepath.Base(p)})
+		}
+		writeJSON(w, map[string]any{"status": "pages", "pages": pages})
+		return
+	}
+	a.openPicked(w, paths[0], pdfReaderParam(r))
+}
+
+// openPicked opens the one file the dialog gave. Slowly, since a picture
+// or a PDF goes to the page reader. See slowreply.go.
+func (a *App) openPicked(w http.ResponseWriter, path, reader string) {
+	slowly(w, func() (any, error) {
+		if err := a.openPathWith(path, "", reader); err != nil {
+			return nil, err
+		}
+		return a.openedByPath(path), nil
+	}, func(w http.ResponseWriter, err error) {
+		// A locked file is put aside for the interface to ask the
+		// password of, as a file the shell opens is: the dialog has
+		// closed, and a 401 here would only reopen it. See
+		// info.AskPassword.
 		if errors.Is(err, gscorefmt.ErrPasswordNeeded) {
 			a.lock()
 			a.askPassword = path
@@ -231,9 +280,41 @@ func (a *App) handlePickFile(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
+	})
+}
+
+// openedByPath is the answer to a file opened by its path: its name,
+// whether a PDF was read from its glyphs, and any warning the page reader
+// left about parts it dropped.
+func (a *App) openedByPath(path string) map[string]any {
+	out := map[string]any{
+		"status": "ok", "filename": filepath.Base(path), "engraved": a.engravedPDF(),
 	}
-	writeJSON(w, map[string]any{"status": "ok", "filename": filepath.Base(path)})
+	if note := a.takeScanNote(); note != "" {
+		out["warning"] = note
+	}
+	return out
+}
+
+// allPages says every path names pages for the page reader: pictures, or
+// PDFs of them.
+func allPages(paths []string) bool {
+	for _, p := range paths {
+		switch strings.ToLower(filepath.Ext(p)) {
+		case ".png", ".jpg", ".jpeg", ".pdf":
+		default:
+			return false
+		}
+	}
+	return len(paths) > 0
+}
+
+// engravedPDF says the open score was read glyph by glyph out of a PDF,
+// with a reading to review, rather than as a picture.
+func (a *App) engravedPDF() bool {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	return a.sourceName != ""
 }
 
 // handleOpenPath opens a file the interface already knows the path of.
@@ -248,14 +329,19 @@ func (a *App) handleOpenPath(w http.ResponseWriter, r *http.Request) {
 			http.StatusForbidden)
 		return
 	}
-	if err := a.openPath(path, passwordOf(r)); err != nil {
+	password := passwordOf(r)
+	reader := pdfReaderParam(r)
+	slowly(w, func() (any, error) {
+		if err := a.openPathWith(path, password, reader); err != nil {
+			return nil, err
+		}
+		return a.openedByPath(path), nil
+	}, func(w http.ResponseWriter, err error) {
 		if passwordTrouble(w, err) {
 			return
 		}
 		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-	writeJSON(w, map[string]any{"status": "ok", "filename": filepath.Base(path)})
+	})
 }
 
 // OpenPath reads a file into the editor, for a shell that opens documents
@@ -281,6 +367,11 @@ func (a *App) OpenPath(path string) error {
 }
 
 func (a *App) openPath(path, password string) error {
+	return a.openPathWith(path, password, "")
+}
+
+// openPathWith is openPath with a say in how a PDF is read: see readPDF.
+func (a *App) openPathWith(path, password, reader string) error {
 	// A PDF goes a different way: its bytes are kept so the reading can be
 	// reviewed and done again with the grouping said out loud. See
 	// pdfimport.go.
@@ -289,7 +380,7 @@ func (a *App) openPath(path, password string) error {
 		if err != nil {
 			return err
 		}
-		scores, err := a.readPDF(path, data, 0)
+		scores, err := a.readPDF(path, data, 0, reader)
 		if len(scores) == 0 {
 			return err
 		}
@@ -336,6 +427,20 @@ func (a *App) handleSave(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "POST required", http.StatusMethodNotAllowed)
 		return
+	}
+	// Whether a .gscore is saved locked, decided on Save as: lock=1 with
+	// the password in its header locks it, lock=1 alone keeps the password
+	// it was opened with, lock=0 takes it off, and nothing said saves the
+	// file as it was opened. See the savelock window.
+	if lock := r.URL.Query().Get("lock"); lock != "" {
+		a.mu.Lock()
+		switch {
+		case lock == "0":
+			a.password = ""
+		case passwordOf(r) != "":
+			a.password = passwordOf(r)
+		}
+		a.mu.Unlock()
 	}
 	path := r.URL.Query().Get("path")
 	if path == "" {

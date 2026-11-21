@@ -22,11 +22,20 @@
     <div class="menu-items">
       <button data-action="new"><span>New score…</span><kbd>N</kbd></button>
       <button data-action="open"><span>Open score…</span><kbd>O</kbd></button>
-      <!-- Pictures of pages — scans and photographs — read into a score by
-           the page reader, a separate program; see Settings. The addresses
-           are fetched by the machine the editor runs on, which is why the
+      <!-- Music that is not a score file yet: a PDF, pictures of pages,
+           addresses on the web. All of it goes through the page reader, a
+           separate program — see Settings — so it is gathered here rather
+           than left to be guessed at under Open. The web addresses are
+           fetched by the machine the editor runs on, which is why that
            entry goes with the files. -->
-      <button data-action="open-web" data-needs-files><span>Open pages from the web…</span></button>
+      <div class="submenu" id="import-menu">
+        <button class="submenu-title"><span>Import</span><kbd>▸</kbd></button>
+        <div class="menu-items">
+          <button data-action="import-pdf"><span>PDF…</span></button>
+          <button data-action="import-images"><span>Pictures of pages…</span></button>
+          <button data-action="import-web" data-needs-files><span>From the web…</span></button>
+        </div>
+      </div>
       <!-- The files opened before, on the machine they are on. Served to a
            browser there is no such machine and the paths would be somebody
            else's, so the whole submenu goes. Its items are built when the
@@ -46,7 +55,6 @@
            key printed beside it that does something else is worse than one
            with no key at all. -->
       <button data-action="save-as"><span>Save as…</span></button>
-      <button data-action="protect"><span>Protect with a password…</span></button>
       <!-- Everything that leaves gscore for another program, in one place.
            Six of them in the File menu made saving hard to find among the
            ways of not quite saving. -->
@@ -939,6 +947,10 @@
 </div>
 
 <input type="file" id="file-input" accept=".abc,.mscz,.mscx,.musicxml,.xml,.mxl,.gscore,.nwctxt,.nwc,.mus,.musx,.gmn,.pdf,.png,.jpg,.jpeg" multiple hidden>
+<!-- The imports' own boxes, where there is no system dialog: a PDF, and
+     pictures of pages, several at once. -->
+<input type="file" id="pdf-input" accept=".pdf" hidden>
+<input type="file" id="images-input" accept=".png,.jpg,.jpeg" multiple hidden>
 <!-- A soundfont off the disk, for the page: there is no file panel to open,
      so the browser's own picker does it. -->
 <input type="file" id="sf2-input" accept=".sf2,.SF2" hidden>
@@ -1269,11 +1281,11 @@
      file carries no PDF in front of it: nothing of the piece is readable
      without the word. -->
 <dialog id="openweb">
-  <h2>Open pages from the web</h2>
-  <p class="small">The addresses of the pictures of the pages, one to a line
-     and in the order they are read. They are fetched and read by the page
-     reader into one score, which takes a while: about a minute a page on a
-     processor.</p>
+  <h2>Import from the web</h2>
+  <p class="small">The addresses of the pages — pictures, or a PDF — one to a
+     line and in the order they are read. They are fetched and read by the
+     page reader into one score, which takes a while: about a minute a page
+     on a processor. Paste them in with the usual keys.</p>
   <form method="dialog" id="openweb-form">
     <textarea id="openweb-urls" rows="5" spellcheck="false"
       placeholder="https://example.org/sheet-music-1.jpg&#10;https://example.org/sheet-music-2.jpg"></textarea>
@@ -1284,20 +1296,70 @@
   </form>
 </dialog>
 
-<dialog id="protect">
-  <h2>Protect with a password</h2>
-  <p class="small" id="protect-what">The score is saved locked under this
-     password and opens only to somebody who has it. A locked file carries
-     no PDF of the music in front of it. There is no way back in without
-     the password.</p>
-  <form method="dialog" id="protect-form">
-    <label class="tempo-bar" for="protect-pw">Password
-      <input type="password" id="protect-pw" autocomplete="new-password"></label>
-    <label class="tempo-bar" for="protect-again">Again
-      <input type="password" id="protect-again" autocomplete="new-password"></label>
+<dialog id="pdfreader">
+  <h2>How to read this PDF</h2>
+  <p class="small" id="pdfreader-what">homr is installed, and this PDF was
+     drawn by a notation program, so it can be read two ways.</p>
+  <form method="dialog" id="pdfreader-form">
+    <label><input type="radio" name="pdfreader" value="pages">
+      <span>With homr, as pictures of the pages — slurs, dynamics and words
+        are read; the staves of several instruments may be folded into one
+        piano part, and a note may be misread</span></label>
+    <label><input type="radio" name="pdfreader" value="glyphs">
+      <span>From the glyphs the PDF was drawn with — every staff and part,
+        the notes exact; slurs, ties, dynamics and words are not read</span></label>
     <div class="ask-buttons">
-      <button value="ok" type="submit" class="primary">Protect</button>
-      <button value="remove" type="submit" formnovalidate id="protect-remove">Remove the password</button>
+      <button value="ok" type="submit" class="primary">Read</button>
+      <button value="cancel" type="submit" formnovalidate>Cancel</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="scan-note">
+  <h2>Not every part was read</h2>
+  <p class="small" id="scan-note-what"></p>
+  <form method="dialog">
+    <div class="ask-buttons">
+      <button value="ok" type="submit" class="primary">Read it from the glyphs instead</button>
+      <button value="cancel" type="submit" formnovalidate>Keep this reading</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="pageorder">
+  <h2>The order of the pages</h2>
+  <p class="small">The pictures are read into one score in this order. Move
+     one with the arrows; the names put them in order of their numbers to
+     start with.</p>
+  <form method="dialog" id="pageorder-form">
+    <ol id="pageorder-list" class="pageorder"></ol>
+    <div class="ask-buttons">
+      <button value="ok" type="submit" class="primary">Read</button>
+      <button value="cancel" type="submit" formnovalidate>Cancel</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="savelock">
+  <h2>Save as .gscore</h2>
+  <p class="small">A <code>.gscore</code> can be locked under a password. Locked,
+     it opens only to somebody who has the password, and carries no PDF of the
+     music in front of it. There is no way back in without the password.</p>
+  <form method="dialog" id="savelock-form">
+    <label><input type="radio" name="savelock" value="open" checked>
+      <span>Save it open</span></label>
+    <label><input type="radio" name="savelock" value="locked">
+      <span>Lock it under a password</span></label>
+    <div id="savelock-fields">
+      <label class="tempo-bar" for="savelock-pw">Password
+        <input type="password" id="savelock-pw" autocomplete="new-password"></label>
+      <label class="tempo-bar" for="savelock-again">Again
+        <input type="password" id="savelock-again" autocomplete="new-password"></label>
+      <p class="small" id="savelock-kept" hidden>It was opened locked. Leave the
+         boxes empty to keep its password.</p>
+    </div>
+    <div class="ask-buttons">
+      <button value="ok" type="submit" class="primary">Save</button>
       <button value="cancel" type="submit" formnovalidate>Cancel</button>
     </div>
   </form>

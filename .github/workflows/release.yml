@@ -160,14 +160,21 @@ jobs:
           cache: true
 
       - name: Install the cross-compiler and NSIS
+        # Ten minutes for a step that takes one. apt has no overall timeout
+        # of its own, and a runner handed a mirror that stops answering sat
+        # in this step for hours once, with the rest of the release waiting
+        # on it. The retries and the per-connection timeout get past a
+        # mirror that is merely slow; the limit ends one that is dead.
+        timeout-minutes: 10
+        env:
+          DEBIAN_FRONTEND: noninteractive
         run: |
-          sudo apt-get update -qq
-          # mingw-w64 to compile against WebView2, NSIS to build the
-          # installer around it.
-          # mingw to compile, NSIS to wrap, p7zip to look inside what came
-          # out and check it is all in there.
-          sudo apt-get install -y --no-install-recommends \
-            mingw-w64 nsis p7zip-full
+          apt="sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30"
+          $apt update -qq
+          # mingw to compile against WebView2, NSIS to wrap the installer
+          # around it, p7zip to look inside what came out and check it is
+          # all in there.
+          $apt install -y --no-install-recommends mingw-w64 nsis p7zip-full
 
       - uses: actions/cache@v4
         with:

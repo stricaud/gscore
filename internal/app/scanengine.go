@@ -28,7 +28,6 @@ package app
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -165,15 +164,14 @@ func splitCommand(s string) []string {
 }
 
 // handleOpenScan reads pictures of pages as one score: the files sent as
-// the request's "page" parts, in their order, or the addresses url= names,
-// fetched in their order. Fetching is for the machine the editor runs on,
-// as opening by path is: a server reached from elsewhere does not go and
-// get things for whoever asks.
+// the request's "page" parts, in their order; or the addresses url= names,
+// fetched, and the files path= names, read, in their order. Fetching and
+// reading by path are for the machine the editor runs on, as opening by
+// path is: a server reached from elsewhere does not go and get things for
+// whoever asks.
 //
-// The reply is held open while the reader works, a space at a time, and is
-// then the answer: {"status":"ok",...} or {"error":"..."}. An error after
-// the first byte cannot change the status line, which is why it is in the
-// body.
+// The reply is held open while the reader works — see slowreply.go — and
+// is then the answer: {"status":"ok",...} or {"error":"..."}.
 func (a *App) handleOpenScan(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "POST required", http.StatusMethodNotAllowed)
@@ -203,16 +201,26 @@ func (a *App) handleOpenScan(w http.ResponseWriter, r *http.Request) {
 		paths, names = append(paths, p), append(names, name)
 		return nil
 	}
-	if urls := r.URL.Query()["url"]; len(urls) > 0 {
+	if urls, files := r.URL.Query()["url"], r.URL.Query()["path"]; len(urls) > 0 || len(files) > 0 {
 		if !a.local {
-			http.Error(w, "fetching pages from the web is for the machine the editor runs on",
-				http.StatusForbidden)
+			http.Error(w, "fetching pages from the web, or reading them by path, "+
+				"is for the machine the editor runs on", http.StatusForbidden)
 			return
 		}
 		for _, u := range urls {
 			name, data, err := fetchPage(r.Context(), u)
 			if err == nil {
 				err = keep(name, data)
+			}
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+		}
+		for _, f := range files {
+			data, err := os.ReadFile(f)
+			if err == nil {
+				err = keep(filepath.Base(f), data)
 			}
 			if err != nil {
 				http.Error(w, err.Error(), http.StatusBadRequest)
@@ -253,58 +261,38 @@ func (a *App) handleOpenScan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// From here the reply is open: see the function comment.
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	flusher, _ := w.(http.Flusher)
-	type result struct {
-		s   *model.Score
-		err error
-	}
-	ch := make(chan result, 1)
-	go func() {
-		s, err := scanned.ImportFiles(r.Context(), eng, paths)
-		ch <- result{s, err}
-	}()
-	tick := time.NewTicker(scanKeepalive)
-	defer tick.Stop()
-	var res result
-wait:
-	for {
-		select {
-		case res = <-ch:
-			break wait
-		case <-tick.C:
-			io.WriteString(w, " ")
-			if flusher != nil {
-				flusher.Flush()
-			}
-		}
-	}
-	if res.s == nil {
-		msg := "the page could not be read"
-		if res.err != nil {
-			msg = res.err.Error()
-		}
-		json.NewEncoder(w).Encode(map[string]string{"error": msg})
-		return
-	}
+	first := names[0]
+	slowly(w, func() (any, error) {
+		return a.openPictures(r.Context(), eng, paths, first)
+	}, badRequest)
+}
 
-	// Named after the first page, which is what somebody will look for
-	// when they save it.
-	name := strings.TrimSuffix(names[0], filepath.Ext(names[0])) + ".gscore"
+// openPictures has the page reader read pictures of pages as one score and
+// makes it the document, named after the first page, which is what
+// somebody will look for when they save it.
+func (a *App) openPictures(ctx context.Context, eng scanned.Engine, paths []string, first string) (map[string]any, error) {
+	a.scan.begin()
+	s, err := scanned.ImportFilesWith(ctx, eng, paths, a.scan.report)
+	a.scan.end()
+	if s == nil {
+		if err == nil {
+			err = errors.New("the pages could not be read")
+		}
+		return nil, err
+	}
+	name := strings.TrimSuffix(first, filepath.Ext(first)) + ".gscore"
 	a.lock()
 	a.forgetPDF()
-	a.setBook([]*model.Score{res.s}, name, res.err)
+	a.setBook([]*model.Score{s}, name, err)
 	a.mu.Unlock()
 	out := map[string]any{
 		"status": "ok", "filename": name, "tunes": 1,
 		"pages": len(paths), "engine": eng.String(),
 	}
-	if res.err != nil {
-		out["partial"] = res.err.Error()
+	if err != nil {
+		out["partial"] = err.Error()
 	}
-	json.NewEncoder(w).Encode(out)
+	return out, nil
 }
 
 // fetchPage gets one page from the web, and names it after the end of its

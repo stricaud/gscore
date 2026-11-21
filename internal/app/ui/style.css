@@ -1320,6 +1320,7 @@ body.player #canvas text.g[data-ref] { cursor: default; }
  * did nothing at all, because what Enter had pressed was Cancel. Every
  * dialog in the program that asks a question behaved the same way. */
 .ask-buttons button[value="remove"] { order: 1; }
+.ask-buttons button[value="discard"] { order: 1; }
 .ask-buttons button[value="cancel"] { order: 2; }
 .ask-buttons button.primary { order: 3; }
 

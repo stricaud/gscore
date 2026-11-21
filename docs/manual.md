@@ -150,6 +150,14 @@ the next bar and the arithmetic stays right, which is what makes typing music
 in feel like typing. Off, bars may be any length, which plenty of old music
 barred by phrase needs and no amount of correction will fix.
 
+A rest — or a note — can be made invisible: select it and choose
+<span class="menu-path">Edit → Invisible</span>. It keeps its room and its
+time, so the bar still adds up, but prints nothing: the page shows what the
+original showed, which is often empty space where the arithmetic wants a
+rest — a second voice that falls silent, a bar that opens on an upbeat. The
+editor draws it grey so it can be found and picked up again; the PDF and the
+exports show nothing. The same entry makes it visible again.
+
 A bar you are part-way through keeps the room the rest of it will take, so
 there is somewhere to put the cursor. There is always one empty bar drawn past
 the end of the music, so there is somewhere to click to carry on; it becomes

@@ -43,6 +43,8 @@ function load() {
   };
   const opened = [];
   const scope = {
+    // Nothing unsaved in these: the score may be replaced without asking.
+    async offerToSave() { return true; },
     $: () => element,
     window: win,
     freeTheFilePanels() {},

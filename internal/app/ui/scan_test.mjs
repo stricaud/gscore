@@ -64,7 +64,7 @@ test("pictures of pages can be picked, several at once", () => {
   assert.match(body, /return openFile\(files\[0\]\)/);
   // Picking and dropping both go through it.
   assert.match(src, /openChosen\(\[\.\.\.e\.target\.files\]\)/);
-  assert.match(src, /if \(files\.length\) await openChosen\(files\)/);
+  assert.match(src, /await openChosen\(files\);/);
 });
 
 test("the pages go to the reader as one request, in order", () => {

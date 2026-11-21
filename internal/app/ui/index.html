@@ -1340,6 +1340,18 @@
   </form>
 </dialog>
 
+<dialog id="unsaved">
+  <h2>Save the changes?</h2>
+  <p class="small" id="unsaved-what">This score has changes that are not saved.</p>
+  <form method="dialog">
+    <div class="ask-buttons">
+      <button value="ok" type="submit" class="primary">Save</button>
+      <button value="discard" type="submit" formnovalidate>Don’t save</button>
+      <button value="cancel" type="submit" formnovalidate>Cancel</button>
+    </div>
+  </form>
+</dialog>
+
 <dialog id="savelock">
   <h2>Save as .gscore</h2>
   <p class="small">A <code>.gscore</code> can be locked under a password. Locked,

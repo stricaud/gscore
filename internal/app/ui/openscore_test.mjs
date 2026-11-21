@@ -39,6 +39,8 @@ function load(answer) {
   let clicked = false;
   let warned = false;
   const scope = {
+    // Nothing unsaved in these: the score may be replaced without asking.
+    async offerToSave() { return true; },
     state: { info: { local: true } },
     status: (s) => said.push(s),
     $: () => ({ click() { clicked = true; } }),

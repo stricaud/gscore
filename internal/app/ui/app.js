@@ -1234,6 +1234,10 @@ async function action(name) {
   }
   switch (name) {
     case "new":
+      if (!(await offerToSave("Start a new score"))) {
+        status("Not started: the score is as it was");
+        break;
+      }
       await fetch("/api/new", { method: "POST" });
       await reopen();
       status("New score");
@@ -4113,6 +4117,10 @@ function rebuildNativeMenus() {
 }
 
 async function openRecent(path) {
+  if (!(await offerToSave("Open another score"))) {
+    status("Not opened: the score is as it was");
+    return;
+  }
   status("Opening " + path + "…");
   busy("Opening " + path + "…");
   try {
@@ -16844,6 +16852,10 @@ async function importByPath(path, name, how) {
 // is a request of its own, so that the mascot and the progress can be
 // shown for it rather than the status still saying "choose".
 async function importPDF() {
+  if (!(await offerToSave("Open another score"))) {
+    status("Not opened: the score is as it was");
+    return;
+  }
   if (state.info?.local) {
     status("Choose a PDF…");
     const res = await fetch("/api/pickfile?list=1", { method: "POST" });
@@ -16877,6 +16889,10 @@ async function importPDF() {
 // they go in: the system's dialog where there is one, the page's own box
 // where there is not.
 async function importImages() {
+  if (!(await offerToSave("Open another score"))) {
+    status("Not opened: the score is as it was");
+    return;
+  }
   if (state.info?.local) {
     status("Choose the pictures of the pages…");
     const res = await fetch("/api/pickfile?list=1", { method: "POST" });
@@ -17027,6 +17043,10 @@ async function openWebDialog() {
     status("No addresses given");
     return;
   }
+  if (!(await offerToSave("Open another score"))) {
+    status("Not opened: the score is as it was");
+    return;
+  }
   if (await openScans(null, urls)) box.value = "";
 }
 
@@ -17059,6 +17079,33 @@ async function openWithPassword(attempt) {
     if (given === null || given === "") return null;
     password = given;
   }
+}
+
+// offerToSave asks what to do with unsaved changes before the score is
+// replaced: save them first, throw them away, or stay. Answers true when it
+// is all right to go on — nothing unsaved, saved now, or let go on purpose.
+async function offerToSave(doing) {
+  if (state.readOnly || !state.info?.unsaved) return true;
+  const dlg = $("#unsaved");
+  if (!dlg) return false;
+  const name = state.info?.filename ? state.info.filename.split("/").pop() : t("this score");
+  $("#unsaved-what").textContent =
+    `${t(doing)}: ${name} ${t("has changes that are not saved.")}`;
+  const answer = await new Promise((resolve) => {
+    const done = () => {
+      dlg.removeEventListener("close", done);
+      resolve(dlg.returnValue);
+    };
+    dlg.addEventListener("close", done);
+    dlg.showModal();
+  });
+  if (answer === "discard") return true;
+  if (answer !== "ok") return false;
+  await saveScore(false);
+  await loadInfo();
+  // A save given up — the panel cancelled, the write refused — is not a
+  // save, and the changes are still the only copy.
+  return !state.info?.unsaved;
 }
 
 // saveLockDialog asks, on Save as, whether the .gscore is saved open or
@@ -17109,6 +17156,10 @@ async function saveLockDialog() {
 // The native window has no file panel behind <input type="file">, so that
 // element alone would do nothing at all.
 async function openScore() {
+  if (!(await offerToSave("Open another score"))) {
+    status("Not opened: the score is as it was");
+    return;
+  }
   if (state.info?.local) {
     status("Choose a score…");
     try {
@@ -17232,7 +17283,12 @@ function setupFileInput() {
   window.addEventListener("drop", async (e) => {
     e.preventDefault();
     const files = [...(e.dataTransfer?.files || [])];
-    if (files.length) await openChosen(files);
+    if (!files.length) return;
+    if (!(await offerToSave("Open another score"))) {
+      status("Not opened: the score is as it was");
+      return;
+    }
+    await openChosen(files);
   });
 }
 
@@ -20025,7 +20081,9 @@ const KEY_BINDINGS = [
     label: "Play from the beginning", run: () => void playFromStart() },
 
   // The file, and the window.
-  { id: "new", menu: "new", keys: "n", group: "The file",
+  // With the modifier, as everywhere else: a bare n is a key typed while
+  // writing music, and one slip of it threw the whole score away.
+  { id: "new", menu: "new", keys: "Mod+n", group: "The file",
     label: "New score", run: () => action("new") },
   { id: "open", menu: "open", keys: "o", group: "The file",
     label: "Open", run: () => action("open") },

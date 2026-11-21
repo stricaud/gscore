@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Gscore</title>
+<!--
+  The tabs: one for each score this server has open, each the editor itself
+  in a frame of its own, talking to its own score. One menu bar over all of
+  them, for the score in front. See tabs.js.
+-->
+<link rel="stylesheet" href="style.css">
+<style>
+  /* The menu bar, then the tabs, then the score in front. */
+  body { grid-template-rows: auto auto 1fr; }
+  /* Each in its own row by name, so a bar that is hidden leaves its row
+     empty rather than handing it to the score, which would get no height. */
+  #menubar { grid-row: 1; }
+  #tabs { grid-row: 2; }
+  #frames { grid-row: 3; }
+  /* In the Mac application the menus are the application's own, at the
+     top of the screen. */
+  #menubar[hidden] { display: none; }
+  #tabs {
+    display: flex;
+    gap: 2px;
+    padding: 4px 6px 0;
+    background: var(--panel-dark);
+    border-bottom: 1px solid var(--line);
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  #tabs[hidden] { display: none; }
+  #tabs::-webkit-scrollbar { display: none; }
+  /* Under the Mac application's title bar, clear of its three buttons. */
+  .native-menu #tabs { padding-left: 78px; }
+  .tab {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+    max-width: 220px;
+    padding: 4px 6px 4px 10px;
+    border: 1px solid transparent;
+    border-bottom: none;
+    border-radius: 6px 6px 0 0;
+    color: var(--muted);
+    cursor: default;
+  }
+  .tab:hover { background: color-mix(in srgb, var(--panel) 50%, transparent); }
+  .tab.active {
+    background: var(--panel);
+    border-color: var(--line);
+    color: var(--ink);
+    margin-bottom: -1px;
+  }
+  .tab .name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .tab .close {
+    flex: none;
+    width: 18px;
+    height: 18px;
+    padding: 0;
+    border: none;
+    border-radius: 4px;
+    background: transparent;
+    color: inherit;
+    font: 14px/1 inherit;
+    opacity: 0.6;
+  }
+  .tab .close:hover { opacity: 1; background: var(--panel-dark); }
+  #frames { position: relative; min-height: 0; }
+  #frames iframe {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    border: none;
+    background: var(--bg);
+  }
+</style>
+</head>
+<body>
+<div id="menubar" hidden></div>
+<div id="tabs" role="tablist" hidden></div>
+<div id="frames"></div>
+<script src="tabs.js"></script>
+</body>
+</html>

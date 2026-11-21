@@ -274,11 +274,18 @@ func TestClosingASession(t *testing.T) {
 	if code, _ := do(t, s, http.MethodGet, "/api/info?"+sessionParam+"="+token); code != http.StatusNotFound {
 		t.Errorf("a closed session still answers %d", code)
 	}
-	// And the default one cannot be closed: it is what every request that
-	// names nothing is talking to.
-	code, _ := do(t, s, http.MethodPost, "/api/session?close="+defaultSession)
-	if code != http.StatusBadRequest {
-		t.Errorf("closing the default session answered %d, want 400", code)
+	// And the default one is never gone: it is what every request that
+	// names nothing is talking to. Closed, it is the empty score again.
+	s.Default().lock()
+	s.Default().unsaved = true
+	s.Default().mu.Unlock()
+	mustPost(t, s, "/api/session?close="+defaultSession)
+	code, info := do(t, s, http.MethodGet, "/api/info")
+	if code != http.StatusOK {
+		t.Fatalf("after closing it, the default session answered %d", code)
+	}
+	if info["pristine"] != true || info["unsaved"] != false {
+		t.Errorf("the default session closed is %v, want an untouched score", info)
 	}
 }
 

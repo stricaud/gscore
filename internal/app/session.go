@@ -121,6 +121,39 @@ type session struct {
 	// has a file. Empty for a score that has never been saved.
 	doc  string
 	used time.Time
+	// opened is when the session was made, which is the order its tab
+	// stands in.
+	opened time.Time
+}
+
+// byOpening puts sessions in the order they were opened, the default one
+// first: the order of the tabs.
+func byOpening(all []*session) {
+	sort.SliceStable(all, func(i, j int) bool {
+		if all[i].token == defaultSession || all[j].token == defaultSession {
+			return all[i].token == defaultSession
+		}
+		if !all[i].opened.Equal(all[j].opened) {
+			return all[i].opened.Before(all[j].opened)
+		}
+		return all[i].token < all[j].token
+	})
+}
+
+// Apps is every document the server has open, in the order of the tabs.
+func (s *Server) Apps() []*App {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	all := make([]*session, 0, len(s.sessions))
+	for _, got := range s.sessions {
+		all = append(all, got)
+	}
+	byOpening(all)
+	out := make([]*App, len(all))
+	for i, got := range all {
+		out[i] = got.app
+	}
+	return out
 }
 
 // NewServer wraps an App as the default session and serves the rest beside
@@ -137,7 +170,7 @@ func NewServer(first *App, newApp func() *App) *Server {
 		newApp:   newApp,
 	}
 	s.sessions[defaultSession] = &session{
-		app: first, token: defaultSession, used: time.Now(),
+		app: first, token: defaultSession, used: time.Now(), opened: time.Now(),
 	}
 	if first != nil {
 		if key := documentKey(first.filename); key != "" {
@@ -209,11 +242,6 @@ func (s *Server) handleSession(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 
 	if token := q.Get("close"); token != "" {
-		if token == defaultSession {
-			http.Error(w, "the default session cannot be closed",
-				http.StatusBadRequest)
-			return
-		}
 		unsaved, ok := s.close(token)
 		if !ok {
 			http.Error(w, "no session "+token, http.StatusNotFound)
@@ -285,7 +313,7 @@ func (s *Server) open(path string) (*App, string, error) {
 					"unsaved changes", len(s.sessions))
 		}
 	}
-	got := &session{app: app, token: token, used: time.Now()}
+	got := &session{app: app, token: token, used: time.Now(), opened: time.Now()}
 	if key := documentKey(app.filename); key != "" {
 		got.doc = key
 		s.byDoc[key] = token
@@ -308,10 +336,22 @@ func (s *Server) close(token string) (unsaved bool, ok bool) {
 		return false, false
 	}
 	unsaved = got.app.hasUnsaved()
-	delete(s.sessions, token)
 	if got.doc != "" && s.byDoc[got.doc] == token {
 		delete(s.byDoc, got.doc)
 	}
+	// The default session is never gone: a request that names no session
+	// is talking to it, and everything written before sessions existed
+	// sends none. Closed, it starts again as the empty score gscore opens
+	// on — which is what closing its tab means.
+	if token == defaultSession {
+		if s.newApp == nil {
+			return unsaved, false
+		}
+		got.app = s.newApp()
+		got.doc = ""
+		return unsaved, true
+	}
+	delete(s.sessions, token)
 	return unsaved, true
 }
 
@@ -320,21 +360,27 @@ func (s *Server) handleSessions(w http.ResponseWriter, r *http.Request) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	out := make([]map[string]any, 0, len(s.sessions))
-	for token, got := range s.sessions {
+	// A stable order, so that a script reading this twice sees the same
+	// thing twice: a map's own order is deliberately not one. The order they
+	// were opened in, which is the order of the tabs. See tabs.js.
+	all := make([]*session, 0, len(s.sessions))
+	for _, got := range s.sessions {
+		all = append(all, got)
+	}
+	byOpening(all)
+	out := make([]map[string]any, 0, len(all))
+	for _, got := range all {
+		got.app.mu.RLock()
 		out = append(out, map[string]any{
-			"session":  token,
+			"session":  got.token,
 			"filename": got.app.filename,
 			"title":    got.app.score.Identity.Title,
-			"unsaved":  got.app.hasUnsaved(),
-			"default":  token == defaultSession,
+			"unsaved":  got.app.unsaved,
+			"default":  got.token == defaultSession,
+			"pristine": got.app.pristineLocked(),
 		})
+		got.app.mu.RUnlock()
 	}
-	// A stable order, so that a script reading this twice sees the same
-	// thing twice: a map's own order is deliberately not one.
-	sort.Slice(out, func(i, j int) bool {
-		return out[i]["session"].(string) < out[j]["session"].(string)
-	})
 	writeJSON(w, map[string]any{"sessions": out})
 }
 

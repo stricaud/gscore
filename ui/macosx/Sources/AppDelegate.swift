@@ -180,17 +180,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate,
             pending = path
             return
         }
-        if let problem = Engine.open(path: path) {
-            fail("Gscore could not open that file.", problem)
-            return
-        }
-        window.title = (path as NSString).lastPathComponent + " — Gscore"
-        window.representedFilename = path
         NSDocumentController.shared.noteNewRecentDocumentURL(URL(fileURLWithPath: path))
-        // The score changed underneath the page, so the page is told to go
-        // and look again rather than being reloaded: a reload would lose the
-        // zoom, the selection and where you were on the page.
-        run("reopen-file")
+        // Handed to the editor by its path, which opens it in a tab of its
+        // own — or in the one in front, where that is the empty score gscore
+        // opened on — or brings forward the tab it is already open in. The
+        // editor says what went wrong where it went wrong, and names the
+        // window after the score in front. See tabs.js.
+        run("open-path:" + path)
     }
 
     // MARK: - Commands
@@ -206,8 +202,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate,
         // does. Sent to the editor either way, the words could not be
         // pasted into at all: ⌘V in the chat prompt pasted bars.
         if let sel = AppDelegate.editingSelectors[name] {
+            // The page is the tabs, and each score is a frame inside it, so
+            // what has the focus is looked for inside the frame that has it.
             web.evaluateJavaScript(
-                "!!(document.activeElement && document.activeElement.matches('input, textarea'))"
+                "(() => { let d = document; try { while (d.activeElement && d.activeElement.tagName === 'IFRAME') d = d.activeElement.contentDocument; } catch (_) {} return !!(d && d.activeElement && d.activeElement.matches('input, textarea')); })()"
             ) { result, _ in
                 if (result as? Bool) == true {
                     NSApp.sendAction(sel, to: nil, from: nil)

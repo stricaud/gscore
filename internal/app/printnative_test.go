@@ -52,10 +52,16 @@ func TestTheMacApplicationIsAskedToPrint(t *testing.T) {
 	// The page asks the application, and only where the application said it
 	// can print. An older application than this page does not answer the
 	// message at all, and silently printing nothing is the bug this fixes.
-	if !strings.Contains(body, "window.gscoreNativePrint") {
+	//
+	// Asked through nativePrinting, which reads the application's word on the
+	// page or on the tabs around it, and sent through postToApplication,
+	// which goes by way of the tabs where there are some — naming this tab's
+	// score, since the application fetches the pages itself.
+	if !strings.Contains(body, "nativePrinting()") ||
+		!strings.Contains(js, "window.gscoreNativePrint") {
 		t.Error("printScore no longer asks whether the application can print")
 	}
-	if !strings.Contains(body, `postMessage("print:/api/pdf?what="`) {
+	if !strings.Contains(body, `postToApplication("print:" + withSession("/api/pdf?what="`) {
 		t.Error("printScore no longer sends the pages to the application")
 	}
 	// What was chosen in the dialog has to travel with them, or printing is

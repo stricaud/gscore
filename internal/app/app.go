@@ -170,6 +170,11 @@ type App struct {
 	// disk. Set by the wrapper every edit goes through and cleared where the
 	// score is written or replaced, so no handler has to remember to.
 	unsaved bool
+	// loaded records that a score has been opened or started here since
+	// the document was made. A document that has had neither, and no edit,
+	// is the empty one gscore opens on: the place a new score or a file
+	// goes instead of a tab of its own. See info.Pristine.
+	loaded bool
 	// password is the one the open score is locked under, and is used
 	// when it is saved: empty for a score that is not locked. askPassword
 	// is a file the shell asked to open that turned out to be locked, for
@@ -222,6 +227,14 @@ func (a *App) clipboard() *clipboard {
 		return &a.server.clip
 	}
 	return &a.clip
+}
+
+// pristineLocked says nothing has happened in this document yet: no file,
+// no score started or opened, no edit. It is the empty score gscore opens
+// on, which a new score or a file goes into rather than a tab beside it.
+// The caller holds the lock.
+func (a *App) pristineLocked() bool {
+	return !a.loaded && a.filename == "" && !a.unsaved && len(a.undoStack) == 0
 }
 
 // New returns an app showing the given score.
@@ -455,7 +468,15 @@ func (a *App) Run(addr string, mode UIMode) error {
 		// cannot refuse to be left here the way it can in a browser: the
 		// close button belongs to the system and the view offers no hook
 		// into it. See OfferToSaveOnExit.
-		return a.OfferToSaveOnExit()
+		//
+		// Every score the server has open, one after another: each tab
+		// is a score of its own, and closing the window closed them all.
+		for _, doc := range a.server.Apps() {
+			if err := doc.OfferToSaveOnExit(); err != nil {
+				return err
+			}
+		}
+		return nil
 	case Browser:
 		launch(url)
 		select {}
@@ -499,7 +520,22 @@ func (a *App) routes(mux *http.ServeMux) {
 	// no-cache and not no-store: the file is still kept and still
 	// answered from the cache, the browser simply asks first, which over
 	// a socket to the same machine costs nothing worth counting.
-	mux.Handle("/", noCache(http.FileServer(http.FS(ui))))
+	//
+	// The address itself, asked for with nothing after it, is the tabs: one
+	// for each score this server has open, each showing the editor at that
+	// score. Everything else is the editor's own files as they were — the
+	// editor in a tab asks for "/?frame=1", and a page embedding a score
+	// always says which, so neither is ever handed the tabs. See tabs.js.
+	files := noCache(http.FileServer(http.FS(ui)))
+	mux.Handle("/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/" && r.URL.RawQuery == "" {
+			r2 := r.Clone(r.Context())
+			r2.URL.Path = "/tabs.html"
+			files.ServeHTTP(w, r2)
+			return
+		}
+		files.ServeHTTP(w, r)
+	}))
 	// The mascot is served from the one place he is kept, rather than from a
 	// second copy sitting in the interface's own files: the PDF writer
 	// stamps the same drawing on paper and the two must not drift apart.
@@ -989,6 +1025,10 @@ type info struct {
 	// Unsaved says the score has been edited since it was last written out.
 	// The interface asks before letting the window close on it.
 	Unsaved bool `json:"unsaved"`
+	// Pristine says nothing has happened here yet: no file, no score
+	// started, no edit. A new score or a file opened goes into a document
+	// like this rather than into a tab beside it.
+	Pristine bool `json:"pristine"`
 	// Protected says the score is locked under a password, which saving
 	// uses; AskPassword names a file waiting to be opened once the
 	// interface has asked for its password.
@@ -1185,6 +1225,7 @@ func (a *App) handleInfo(w http.ResponseWriter, r *http.Request) {
 		Version:        version.Version,
 		Filename:       a.filename,
 		Unsaved:        a.unsaved,
+		Pristine:       a.pristineLocked(),
 		Protected:      a.password != "",
 		AskPassword:    a.askPassword,
 		CanUndo:        len(a.undoStack) > 0,
@@ -1375,6 +1416,7 @@ func (a *App) setBook(scores []*model.Score, filename string, err error) {
 	a.book = scores
 	a.current = 0
 	a.score = scores[0]
+	a.loaded = true
 	// A newly opened score decides this for itself, the way it decides its
 	// own clefs and its own key: a quartet opened after a solo gets its
 	// staves named.

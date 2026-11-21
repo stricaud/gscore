@@ -29,15 +29,17 @@ const grab = (name) => {
 
 // The editor's own functions, with the application replaced by a note of
 // what it was told.
-function load({ native = true } = {}) {
+function load({ native = true, tabs = null } = {}) {
   const posted = [];
   const window = native
     ? { webkit: { messageHandlers: { gscore: { postMessage: (m) => posted.push(m) } } } }
     : {};
+  const postToApplication = (m) => window.webkit?.messageHandlers?.gscore?.postMessage(m);
   const body = grab("documentName") + "\n" + grab("tellNativeTitle") +
     "\nreturn { documentName, tellNativeTitle };";
-  const api = new Function("window", body)(window);
-  return { posted, ...api };
+  const api = new Function("window", "tabsHost", "postToApplication", body)(
+    window, tabs, postToApplication);
+  return { posted, window, ...api };
 }
 
 test("a saved score is called by its name", () => {
@@ -68,4 +70,13 @@ test("outside the application it is nothing at all", () => {
   const { posted, tellNativeTitle } = load({ native: false });
   tellNativeTitle("untitled *"); // must not throw in a plain browser
   assert.deepEqual(posted, []);
+});
+
+test("in a tab, the name goes to the tabs, which tell the application", () => {
+  const titled = [];
+  const tabs = { title: (win, name) => titled.push(name) };
+  const { posted, tellNativeTitle } = load({ tabs });
+  tellNativeTitle("altes-2e-solo-op21.gscore *");
+  assert.deepEqual(titled, ["altes-2e-solo-op21.gscore *"]);
+  assert.deepEqual(posted, [], "a tab behind the others told the application its name");
 });

@@ -9,6 +9,89 @@
 
 const $ = (sel) => document.querySelector(sel);
 
+/* ---------- one tab of several ---------- */
+
+// tabSession is the score this page is about, where it is one of several the
+// server has open: each tab is this editor in a frame, given its score's
+// session in the address. Empty for the first score, which is the server's
+// default session and is talked to by naming none. See tabs.js.
+const tabSession = new URLSearchParams(location.search).get("session") || "";
+
+// tabsHost is the page holding the tabs, where this is one of them, and
+// null where it is not: a browser tab of its own, an embedded score, the
+// site build.
+const tabsHost = (() => {
+  try {
+    return window.parent !== window && window.parent.gscoreTabs ? window.parent.gscoreTabs : null;
+  } catch (_) {
+    return null; // a frame on somebody else's page, which is not ours to read
+  }
+})();
+
+// withSession names this page's score in a request to the server.
+function withSession(path) {
+  if (!tabSession) return path;
+  const u = new URL(path, location.origin);
+  if (!u.searchParams.has("session")) u.searchParams.set("session", tabSession);
+  return u.pathname + u.search;
+}
+
+// Every request the editor makes goes to its own score. All of them go
+// through fetch, so naming the session there is naming it everywhere, and a
+// request written tomorrow cannot forget to.
+//
+// Every request to this server, not only those under /api/: the drawing is
+// /score.svg, and with only /api/ named a new tab drew the score of the
+// first one over its own. A file that is the same for every score ignores
+// the name.
+if (tabSession) {
+  const fetchFromTheServer = window.fetch.bind(window);
+  window.fetch = (input, init) => {
+    if (typeof input === "string" && input.startsWith("/") && !input.startsWith("//")) {
+      input = withSession(input);
+    } else if (input instanceof URL && input.origin === location.origin) {
+      input = new URL(withSession(input.pathname + input.search), location.origin);
+    }
+    return fetchFromTheServer(input, init);
+  };
+}
+
+// startingTab is set while a tab opened for a command is running it, so
+// that the command runs here rather than asking for yet another tab.
+let startingTab = false;
+// choosingInThePage is set once the browser's own file picker has been
+// shown, whose answer comes after the command that showed it has finished.
+let choosingInThePage = false;
+
+// bringsAScore is a command that puts a score in front of the person: a new
+// one, or one read from somewhere. Each goes to a tab of its own unless the
+// tab it was asked in is the empty score gscore opened on. See tabs.js.
+function bringsAScore(name) {
+  return name === "new" || name === "open" || name.startsWith("open-recent-") ||
+    name.startsWith("open-path:") || name.startsWith("import-");
+}
+
+// postToApplication sends one of the Mac application's messages: through
+// the tabs where there are some, so that only the score in front is heard.
+function postToApplication(message) {
+  if (tabsHost) {
+    tabsHost.native(window, message);
+    return;
+  }
+  try {
+    window.webkit?.messageHandlers?.gscore?.postMessage(message);
+  } catch (_) {
+    /* not inside the application */
+  }
+}
+
+// nativeApplication and nativePrinting say whether the Mac application is
+// around this page. It says so to the page it loads, which is the tabs
+// where there are some.
+const nativeApplication = () => !!(window.gscoreNativeMenu || tabsHost?.nativeMenu);
+const nativePrinting = () => !!(window.gscoreNativePrint || tabsHost?.nativePrint) &&
+  !!(tabsHost || window.webkit?.messageHandlers?.gscore);
+
 // importLog holds the lines the importer could not read, for the log window.
 let importLog = [];
 
@@ -1211,6 +1294,28 @@ function placeSubmenu(sub) {
 }
 
 async function action(name) {
+  // A score brought in goes to a tab of its own, unless this one is the
+  // empty score gscore opened on. A file opened before is named by its path
+  // on the way, since the list it is numbered in belongs to this tab.
+  if (tabsHost && !startingTab && bringsAScore(name)) {
+    if (name.startsWith("open-recent-")) {
+      const path = recentPaths[Number(name.slice("open-recent-".length))];
+      if (!path) return;
+      name = "open-path:" + path;
+    }
+    try {
+      if ((await tabsHost.route(name, window)) === "elsewhere") return;
+    } catch (e) {
+      status("Could not open another tab: " + (e?.message || e));
+      return;
+    }
+  }
+  // A file named by its path: the Finder handing one to the application,
+  // or one opened before, on its way to a tab of its own.
+  if (name.startsWith("open-path:")) {
+    await openRecent(name.slice("open-path:".length));
+    return;
+  }
   // The files opened before are a list that changes, so their commands are
   // numbered rather than named. Everything that drives the editor comes
   // through here — the page's menus and the application's — so they have to
@@ -4097,11 +4202,13 @@ function documentName(i) {
 // a file opened from inside the page. Everywhere but the Mac application
 // nothing is listening and this does nothing.
 function tellNativeTitle(name) {
-  try {
-    window.webkit?.messageHandlers?.gscore?.postMessage("title:" + name);
-  } catch (_) {
-    /* not inside the application */
+  // A tab's name is its tab's, and the application hears it only for the
+  // tab in front. See tabs.js.
+  if (tabsHost) {
+    tabsHost.title(window, name);
+    return;
   }
+  postToApplication("title:" + name);
 }
 
 // rebuildNativeMenus asks the application to read the page's menus again.
@@ -4109,11 +4216,11 @@ function tellNativeTitle(name) {
 // Only the Mac application has a menu bar of its own and only it is
 // listening; everywhere else this is nothing.
 function rebuildNativeMenus() {
-  try {
-    window.webkit?.messageHandlers?.gscore?.postMessage("menus");
-  } catch (_) {
-    /* not inside the application */
+  if (tabsHost) {
+    tabsHost.menus(window);
+    return;
   }
+  postToApplication("menus");
 }
 
 async function openRecent(path) {
@@ -16087,9 +16194,10 @@ async function printScore() {
 
   const picked = partsQuery(choice)
     .map(([k, v]) => "&" + k + "=" + encodeURIComponent(v)).join("");
-  const path = "/print?what=" + encodeURIComponent(choice.what) + picked +
+  // Named for this tab's score: the system's browser is given it to open.
+  const path = withSession("/print?what=" + encodeURIComponent(choice.what) + picked +
     (choice.multiRests ? "&multirest=1" : "") +
-    (choice.concert ? "&concert=1" : "");
+    (choice.concert ? "&concert=1" : ""));
 
   // A native window has no print machinery: window.print() does nothing and
   // window.open answers with nothing, so none of what follows can work in
@@ -16098,12 +16206,14 @@ async function printScore() {
     // Where the application can print for us, it does, and it prints the
     // PDF rather than this page: the engraver has already cut those pages
     // to the paper, so the panel's preview is the sheet that comes out.
-    if (window.gscoreNativePrint && window.webkit?.messageHandlers?.gscore) {
-      window.webkit.messageHandlers.gscore.postMessage("print:/api/pdf?what=" +
+    if (nativePrinting()) {
+      // The application fetches these pages itself, so they name this
+      // tab's score: fetch is not what asks for them.
+      postToApplication("print:" + withSession("/api/pdf?what=" +
         encodeURIComponent(choice.what) + picked +
         (choice.multiRests ? "&multirest=1" : "") +
         (choice.concert ? "&concert=1" : "") +
-        (choice.cover === false ? "&cover=0" : ""));
+        (choice.cover === false ? "&cover=0" : "")));
       status("Opening the print panel…");
       return;
     }
@@ -16147,8 +16257,7 @@ async function printScore() {
 // prints the engraved PDF, where the cover is the first sheet that comes out
 // of the printer and somebody had better have been asked.
 function nativePDFPrint() {
-  return !!(state.info?.local && state.info?.native &&
-            window.gscoreNativePrint && window.webkit?.messageHandlers?.gscore);
+  return !!(state.info?.local && state.info?.native && nativePrinting());
 }
 
 // partsQuery is what the dialog's choice of staves adds to a request, as
@@ -17229,6 +17338,10 @@ async function openScore() {
       /* no answer at all: the browser picker is the next thing to try */
     }
   }
+  // The browser's own picker answers after this has returned, so a tab
+  // opened for the file cannot tell from here whether one is coming. See
+  // startTab.
+  choosingInThePage = true;
   $("#file-input").click();
 }
 
@@ -21731,7 +21844,11 @@ async function main() {
   // with these same commands on it, so the page's own goes away: two menu
   // bars is the same list twice, and one of them in the place a Mac does not
   // put menus.
-  if (window.gscoreNativeMenu) {
+  //
+  // And in a tab: the menus are the tabs' one bar over all the scores, for
+  // the score in front, and each score keeps only its play and stop. See
+  // tabs.js.
+  if (nativeApplication() || tabsHost) {
     document.documentElement.classList.add("native-menu");
   }
 
@@ -21790,6 +21907,41 @@ async function main() {
   window.dispatchEvent(new CustomEvent("gscore:ready", { detail: window.gscore }));
   setupEmbedMessages();
   announceToParent();
+  await startTab();
+}
+
+// startTab is this page saying to the tabs it is up, and running the command
+// its tab was opened for: a new score, a file, an import.
+//
+// A tab opened for a file that never came — the panel cancelled — goes away
+// again. Untouched after its command is how that is known: every way of
+// opening waits for the score to arrive before it returns.
+async function startTab() {
+  if (!tabsHost) return;
+  // Closing a tab asks about its unsaved work in the tab itself.
+  window.gscoreTab = {
+    offerToSave: () => offerToSave("Close this score"),
+  };
+  tabsHost.ready(window);
+  const run = new URLSearchParams(location.search).get("run");
+  if (!run) return;
+  // Once: a reload of this frame is not asked to open the file again.
+  history.replaceState(null, "", location.pathname + "?" +
+    new URLSearchParams([...new URLSearchParams(location.search)]
+      .filter(([k]) => k !== "run")).toString());
+  startingTab = true;
+  try {
+    await action(run);
+  } finally {
+    startingTab = false;
+  }
+  if (choosingInThePage) return;
+  try {
+    const res = await fetch("/api/info");
+    if (res.ok && (await res.json()).pristine) tabsHost.done(window);
+  } catch (_) {
+    /* left open: an empty tab is closed with a click */
+  }
 }
 
 // Being driven from the page that embeds it.

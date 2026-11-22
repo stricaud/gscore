@@ -6,7 +6,7 @@ abc/boite-musique.abc 3127898a97d198d5 514
 abc/decoration.abc c8f4673a8e66ca93 31
 abc/pitch.abc 376aa6d8311eb1d1 227
 abc/sunshine.abc 7702bcad8c455962 136
-samples/altes-10e-solo.abc e174386d60f703cb 9781
+samples/altes-10e-solo.abc ff1c938f86a6b13b 9622
 samples/boite-musique.abc 3127898a97d198d5 514
 scores/Bumpty-Bump.gscore 0f501da2787b2b91 2969
 suite/01a-Pitches-Pitches.musicxml 5177aba21f65c2bd 548

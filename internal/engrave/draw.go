@@ -442,11 +442,20 @@ func (e *engraver) drawMeasure(part *model.Part, b measureBox, x, end float64, s
 		return end
 	}
 
+	// The meter in force in this bar, which is what its beams are grouped
+	// by. Not the one the part opened in: after a change from 4/4 to 12/8
+	// the bar was beamed by quarter notes, so an eighth that ends a dotted-
+	// quarter beat came off its beam and was drawn with a flag — while the
+	// spacing, which asked the bar, had booked no room for one, and the flag
+	// was drawn through the next notehead. See flagRoom, which asks the same
+	// question the same way.
+	time := part.TimeAt(b.index)
+
 	// Which way the stems point is settled before anything is drawn: the
 	// dots, the articulations and the slurs all sit on the side away from
 	// the stem, and all of them used to work it out again from the note
 	// alone — which gave a different answer from the beam.
-	e.setStemDirections(items, part.Time)
+	e.setStemDirections(items, time)
 	// Then the voices that would be written on top of each other are set
 	// apart — after the stems, because a stem through the other voice's
 	// notehead is one of the ways that happens. See separateColumn.
@@ -469,7 +478,7 @@ func (e *engraver) drawMeasure(part *model.Part, b measureBox, x, end float64, s
 		e.drawGrace(part, p, i)
 		e.drawLoneSymbol(p)
 	}
-	e.drawStemsAndBeams(items, part.Time)
+	e.drawStemsAndBeams(items, time)
 	for i, p := range items {
 		if m := p.marks(); m != nil {
 			e.articMeasure = b.index
@@ -506,7 +515,7 @@ func (e *engraver) drawMeasure(part *model.Part, b measureBox, x, end float64, s
 	}
 
 	e.drawWholeNoteTremolos(items)
-	e.drawTuplets(items, part.Time)
+	e.drawTuplets(items, time)
 
 	// How far the bar can be clicked in: to the end of its music, or to the
 	// barline where the bar is not full yet.

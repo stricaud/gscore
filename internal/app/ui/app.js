@@ -5750,7 +5750,11 @@ function setupCanvasClicks() {
     const bar = barlineAt(x, y);
     if (bar) {
       if (e.shiftKey) {
-        selectMeasure(bar.part, bar.measure);
+        // And with a bar already picked up on that staff, everything from
+        // it to this one: shift-clicking a second barline started again
+        // from the bar it closes, so a run of bars could not be picked up
+        // the way a bar is.
+        if (!extendBars(bar.part, bar.measure)) selectMeasure(bar.part, bar.measure);
       } else {
         await openBarlinePicker(bar);
       }
@@ -5875,6 +5879,10 @@ function setupCanvasClicks() {
       status("Ready");
       return;
     }
+    // Shift with bars picked up means more bars: from the first one to the
+    // bar this click is in, whatever in the bar it landed on. Read as a
+    // click on a note it picked the note up and dropped the bars.
+    if (e.shiftKey && extendBars(hit.part, hit.measure)) return;
 
     const step = stepAt(hit, y);
     // A click picks music up, unless writing with the mouse has been turned
@@ -5930,6 +5938,13 @@ function setupCanvasClicks() {
       select(hit, el, step);
       return;
     }
+
+    // Shift in the empty part of a bar, with a note or the cursor standing
+    // in another bar of this staff: the bars from that one to this one.
+    // The cursor's bar is drawn boxed and is the bar Copy takes, so it reads
+    // as a bar picked up — and shift-clicking a later bar only moved the
+    // cursor there. Shift on a note still picks up the notes between.
+    if (e.shiftKey && startBarsFrom(hit.part, hit.measure)) return;
 
     state.multi = [];
     // Where in the bar the click fell, and whether there is already
@@ -6565,6 +6580,30 @@ function selectMeasure(part, measure, to) {
     (has.length ? ` — ${has.join(" and ")} here` : "") +
     " · Shift-click another to take in the bars between, " +
     modKeyName() + "-click to add one");
+}
+
+// extendBars takes a bar selection on to another bar of the same staff,
+// taking in every bar between it and the bar the selection began from. It
+// reports whether there was a bar selection there to extend.
+function extendBars(part, measure) {
+  const anchor = state.barAnchor;
+  if (!state.selection?.bar || !anchor || anchor.part !== part) return false;
+  selectMeasure(part, anchor.measure, measure);
+  return true;
+}
+
+// startBarsFrom picks up the bars from the one the selection is standing in
+// — a note, a place in a bar — to measure, on the same staff, and reports
+// whether there was a selection on that staff to start from. The bar it
+// started from is where shift-clicking carries on from.
+function startBarsFrom(part, measure) {
+  const sel = state.selection;
+  if (!sel || sel.bar || sel.part !== part ||
+      sel.measure === undefined || sel.measure === null) return false;
+  const from = sel.measure;
+  selectMeasure(part, from, measure);
+  state.barAnchor = { part, measure: from };
+  return true;
 }
 
 // selectedBars is every bar a bar selection holds, as the staff it is on

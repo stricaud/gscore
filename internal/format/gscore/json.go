@@ -427,6 +427,9 @@ type marksDoc struct {
 	Glissando *glissDoc    `json:"glissando,omitempty"`
 	Pedal     *pedalDoc    `json:"pedal,omitempty"`
 	Small     bool         `json:"small,omitempty"`
+	// StaffLine is the line to or from an element on another staff. See
+	// model.StaffLine.
+	StaffLine *staffLineDoc `json:"staffLine,omitempty"`
 	// Hidden keeps the note off the printed page. See model.Marks.Hidden.
 	Hidden bool `json:"hidden,omitempty"`
 }
@@ -440,6 +443,11 @@ type glissDoc struct {
 	Stop  bool   `json:"stop,omitempty"`
 	Wavy  bool   `json:"wavy,omitempty"`
 	Text  string `json:"text,omitempty"`
+}
+
+type staffLineDoc struct {
+	Start bool `json:"start,omitempty"`
+	Stop  bool `json:"stop,omitempty"`
 }
 
 type pedalDoc struct {
@@ -887,6 +895,7 @@ func encodeMarks(m *model.Marks) *marksDoc {
 		m.Beam == model.BeamAuto && m.Chord == nil && len(m.Texts) == 0 &&
 		m.Arpeggio == nil && m.Break == model.NoBreath &&
 		len(m.Fingering) == 0 && m.Glissando == nil && m.Pedal == nil &&
+		m.StaffLine == nil &&
 		m.Clef == nil && m.Key == nil && m.Grace == nil &&
 		!m.Small && !m.Hidden {
 		return nil
@@ -968,6 +977,9 @@ func encodeMarks(m *model.Marks) *marksDoc {
 		out.Glissando = &glissDoc{
 			Start: g.Start, Stop: g.Stop, Wavy: g.Wavy, Text: g.Text,
 		}
+	}
+	if l := m.StaffLine; l != nil && (l.Start || l.Stop) {
+		out.StaffLine = &staffLineDoc{Start: l.Start, Stop: l.Stop}
 	}
 	if pd := m.Pedal; pd != nil {
 		out.Pedal = &pedalDoc{
@@ -1448,6 +1460,9 @@ func decodeMarks(md *marksDoc, m *model.Marks) {
 		m.Glissando = &model.Glissando{
 			Start: g.Start, Stop: g.Stop, Wavy: g.Wavy, Text: g.Text,
 		}
+	}
+	if l := md.StaffLine; l != nil && (l.Start || l.Stop) {
+		m.StaffLine = &model.StaffLine{Start: l.Start, Stop: l.Stop}
 	}
 	if pd := md.Pedal; pd != nil {
 		m.Pedal = &model.PedalMark{

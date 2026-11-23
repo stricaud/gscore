@@ -580,6 +580,10 @@ type Marks struct {
 	Glissando *Glissando
 	Pedal     *PedalMark
 
+	// StaffLine is the line showing a line of music going on in another
+	// staff. See StaffLine.
+	StaffLine *StaffLine
+
 	// Small draws the element at cue size: a note that is printed but is
 	// not yours to play.
 	//
@@ -663,6 +667,22 @@ type Glissando struct {
 	Start, Stop bool
 	Wavy        bool
 	Text        string
+}
+
+// StaffLine is a straight line from one element to another on a different
+// staff: one line of music carrying on in the other hand.
+//
+// A piano part hands a melody from one staff to the other, and where the
+// change would otherwise be lost among the other notes of the staff it lands
+// on, the engravers draw a line from where it leaves to where it goes on —
+// a rest as often as a note, because the line can arrive at a silence.
+//
+// Start and Stop mark the two ends, the way a slur's do, rather than one end
+// pointing at the other: an end that named its partner by position would
+// point at the wrong note the moment a note was written before it. The
+// engraver joins each start to the next stop after it on the page.
+type StaffLine struct {
+	Start, Stop bool
 }
 
 // PedalMark is the sustaining pedal, held across a stretch of music.

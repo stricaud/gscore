@@ -587,6 +587,30 @@ func (e *engraver) drawMeasure(part *model.Part, b measureBox, x, end float64, s
 		default:
 			kind = "symbol"
 		}
+		// Where it is drawn, which for a note written on the other staff is
+		// that staff. Recorded at its own staff's height, it answered a
+		// click on empty paper there and none on the notehead.
+		if p.rest == nil {
+			y += p.crossDY
+			y2 += p.crossDY
+		}
+		if m := p.marks(); m != nil && m.StaffLine != nil && !p.hidden() {
+			w := noteheadWidth(p.value)
+			if p.rest != nil {
+				w = 1
+			}
+			end := lineEnd{
+				start: m.StaffLine.Start, stop: m.StaffLine.Stop,
+				measure: b.index, at: p.start.Float(), staff: e.partIndex,
+				x0: p.x, x1: p.x + w,
+				top: math.Min(y, y2), bottom: math.Max(y, y2), rest: p.rest != nil,
+				ref: p.index,
+			}
+			if p.rest == nil {
+				end.tipX, end.tipY, end.tip = e.stemReach(p, math.Min(y, y2), math.Max(y, y2))
+			}
+			e.lineEnds = append(e.lineEnds, end)
+		}
 		// Against the bar's real length, which is the model's one answer to
 		// that question — the same one playback uses to decide when the bar
 		// begins. Measuring against the meter instead left the cursor and

@@ -2574,6 +2574,59 @@ paths:
                   text: { type: string }
         "400": { $ref: "#/components/responses/Error" }
 
+  /api/textmove:
+    post:
+      tags: [marks]
+      summary: Move words from where the engraver put them
+      description: >-
+        Moves one of a note's texts by dx and dy staff spaces, right and
+        down. The offset is saved with the text. With absolute=1 it is set
+        rather than added to, and 0,0 puts the words back where the
+        engraver would.
+      parameters:
+        - $ref: "#/components/parameters/part"
+        - $ref: "#/components/parameters/measure"
+        - $ref: "#/components/parameters/at"
+        - $ref: "#/components/parameters/sel"
+        - { name: index, in: query, required: true, description: Which of the note's texts, counting from zero., schema: { type: integer, minimum: 0 } }
+        - { name: dx, in: query, required: true, schema: { type: number } }
+        - { name: dy, in: query, required: true, schema: { type: number } }
+        - { name: absolute, in: query, schema: { type: string, enum: ["0", "1"] } }
+      responses:
+        "200":
+          description: Where the text now stands from where the engraver put it.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  offsetX: { type: number }
+                  offsetY: { type: number }
+        "400": { $ref: "#/components/responses/Error" }
+
+  /api/staffline:
+    post:
+      tags: [marks]
+      summary: A line from one staff to the other
+      description: >-
+        Joins two elements on different staves with a straight line, the
+        way a part shows a line of music carrying on in the other hand.
+        Whichever comes first in the music is where the line starts. With
+        remove=1 the line is taken away.
+      parameters:
+        - { name: sel, in: query, required: true, description: The two elements, as staff:measure:index., schema: { type: string } }
+        - { name: remove, in: query, schema: { type: string, enum: ["0", "1"] } }
+      responses:
+        "200":
+          description: Done.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string }
+        "400": { $ref: "#/components/responses/Error" }
+
   /api/lyrics:
     post:
       tags: [marks]

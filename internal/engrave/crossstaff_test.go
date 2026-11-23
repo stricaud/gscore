@@ -391,3 +391,60 @@ func TestALoneNoteWrittenAboveStemsDown(t *testing.T) {
 	}
 	t.Fatal("no stem found at the note")
 }
+
+// A note written on the other staff is clicked where it is drawn: the place
+// the editor is told about is its notehead, not where it would have been on
+// its own staff.
+func TestANoteWrittenAboveIsClickedWhereItIsDrawn(t *testing.T) {
+	n := &model.Note{Pitch: model.Pitch{Step: model.StepD, Octave: 4},
+		Dur: model.Duration{Num: 1, Den: 4}}
+	n.Cross = model.OnStaffAbove
+	lay := Engrave(pianoWith(
+		[]model.Element{&model.Rest{Dur: model.Duration{Num: 1, Den: 1}}},
+		[]model.Element{n, &model.Rest{Dur: model.Duration{Num: 3, Den: 4}}}),
+		DefaultOptions())
+	head := headYOf(t, lay, 0)
+	for _, h := range lay.Hits {
+		if h.Part != 1 {
+			continue
+		}
+		for _, el := range h.Elements {
+			if el.Kind == "note" {
+				if math.Abs(el.Y-head) > 0.01 {
+					t.Errorf("the note answers clicks at %.2f; its head is at %.2f", el.Y, head)
+				}
+				return
+			}
+		}
+	}
+	t.Fatal("the bass staff's bar has no note")
+}
+
+// The beam of a left hand written up onto the treble staff hangs midway
+// between the staves, with stems of a proper length on the notes over it.
+// It was measured from the treble staff's top line rather than its bottom,
+// so it ran along just under the staff and the notes hung off it on stubs.
+func TestACrossStaffBeamHangsBetweenTheStaves(t *testing.T) {
+	low := eighth(model.StepB, 2)
+	var up []model.Element
+	for _, s := range []model.Step{model.StepC, model.StepD, model.StepE} {
+		n := eighth(s, 4)
+		n.Cross = model.OnStaffAbove
+		up = append(up, n)
+	}
+	lay := Engrave(pianoWith(
+		[]model.Element{&model.Rest{Dur: model.Duration{Num: 1, Den: 1}}},
+		append([]model.Element{low}, up...)), DefaultOptions())
+	upper, lower := staffTopsOf(t, lay)
+	if len(lay.Quads) == 0 {
+		t.Fatal("no beam drawn")
+	}
+	top := math.Inf(1)
+	for _, y := range lay.Quads[0].Y {
+		top = math.Min(top, y)
+	}
+	mid := (upper + 4 + lower) / 2
+	if math.Abs(top-mid) > 1.5 {
+		t.Errorf("the beam is at %.2f; the middle between the staves is %.2f", top, mid)
+	}
+}

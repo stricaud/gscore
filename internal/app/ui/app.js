@@ -1736,6 +1736,8 @@ async function action(name) {
     case "grace-slur": await slurGrace("1"); break;
     case "gliss": await setGlissando("on"); break;
     case "gliss-none": await setGlissando("none"); break;
+    case "staff-line": await setStaffLine(false); break;
+    case "staff-line-none": await setStaffLine(true); break;
     case "staff-lines":
       await setStaffLinesDialog(state.selection?.part ?? 0);
       break;
@@ -5024,6 +5026,8 @@ async function loadHits() {
   state.tempos = d.tempos || [];
   state.hairpins = d.hairpins || [];
   state.arcs = d.arcs || [];
+  state.staffLines = d.staffLines || [];
+  state.arpeggios = d.arpeggios || [];
   state.tremolos = d.tremolos || [];
   state.tuplets = d.tuplets || [];
   state.graces = d.graces || [];
@@ -5205,6 +5209,80 @@ function arcAt(x, y) {
     away = d;
   }
   return best;
+}
+
+// staffLineAt finds the line from one staff to another under a point.
+//
+// Its ends are left out, as a slur's are: they stand beside the note and
+// the rest it joins, where a click means the note or the rest.
+function staffLineAt(x, y) {
+  let best = null;
+  let away = Infinity;
+  for (const l of state.staffLines || []) {
+    const d = awayFromSegment(l, x, y);
+    if (d === null || d > 0.7 || d >= away) continue;
+    best = l;
+    away = d;
+  }
+  return best;
+}
+
+// awayFromSegment is how far a point is from a straight line between its
+// two ends, or null where the nearest place on it is within a space of
+// either end.
+function awayFromSegment(l, x, y) {
+  const dx = l.x2 - l.x1;
+  const dy = l.y2 - l.y1;
+  const len = Math.hypot(dx, dy);
+  if (len < 2) return null;
+  const t = ((x - l.x1) * dx + (y - l.y1) * dy) / (len * len);
+  const end = 1 / len;
+  if (t < end || t > 1 - end) return null;
+  return Math.hypot(x - (l.x1 + t * dx), y - (l.y1 + t * dy));
+}
+
+// arpeggioAt finds the rolled-chord sign under a point. The sign is a thin
+// wavy line, so the box round it is given a little room either side.
+function arpeggioAt(x, y) {
+  for (const a of state.arpeggios || []) {
+    if (x >= a.x - 0.4 && x <= a.x + a.width + 0.4 &&
+        y >= a.y - 0.3 && y <= a.y + a.height + 0.3) return a;
+  }
+  return null;
+}
+
+// selectArpeggio picks up the sign that rolls a chord. What is picked up is
+// the roll and not the chord: Backspace takes the roll off and leaves the
+// notes.
+function selectArpeggio(a) {
+  state.multi = [];
+  state.anchor = state.focus = null;
+  let at = 1;
+  const target = refTarget(a.ref);
+  if (target) at = readSel(target).index + 1;
+  state.selection = {
+    part: a.part, measure: a.measure, ref: a.ref, at, step: 0, arpeggio: a,
+  };
+  markSelection();
+  status(`Rolled chord${a.down ? ", downwards" : ""} \u2014 ` +
+         "press Backspace to take the roll off");
+}
+
+// selectStaffLine picks up a line from one staff to the other. What is
+// picked up is the line, not the notes at its ends: Backspace takes the line
+// away and leaves them.
+function selectStaffLine(l) {
+  state.multi = [];
+  state.anchor = state.focus = null;
+  state.selection = { part: 0, measure: 0, at: 0, step: 0, ref: l.from, staffLine: l };
+  const from = refTarget(l.from);
+  if (from) {
+    const s = readSel(from);
+    state.selection.part = s.part;
+    state.selection.measure = s.measure;
+  }
+  markSelection();
+  status("Line to the other staff \u2014 press Backspace to take it away");
 }
 
 // arcReach is how near a click has to be to a curve to count as on it, in
@@ -5391,6 +5469,8 @@ function hitAt(x, y) {
   // selecting a long run across the top of the staff a struggle.
   let best = null;
   let bestDist = Infinity;
+  let onNote = null;
+  let onNoteDist = Infinity;
   for (const h of state.hits) {
     if (x < h.x0 || x > h.x1) continue;
     const staffBottom = h.staffTop + staffHeightOf(h);
@@ -5403,6 +5483,20 @@ function hitAt(x, y) {
       if (b > bottom) bottom = b;
     }
     if (y < top || y > bottom) continue;
+    // A note under the pointer settles it, whichever staff it belongs to.
+    // A left-hand note written on the treble staff is drawn among the right
+    // hand's notes and belongs to the bass staff's bar; giving the click to
+    // the nearer staff gave it to the treble, which has no such note, and
+    // the notehead could not be picked up at all.
+    const el = elementAt(h, x, y);
+    if (el) {
+      const [dx, dy] = awayFromElement(el, x, y);
+      const d = dx * dx + dy * dy;
+      if (!onNote || d < onNoteDist) {
+        onNote = h;
+        onNoteDist = d;
+      }
+    }
     // Where two staves reach the same place — the two hands of a piano, a
     // run below one and a run above the other — the nearer staff owns it.
     const d = y < h.staffTop ? h.staffTop - y
@@ -5412,7 +5506,7 @@ function hitAt(x, y) {
       bestDist = d;
     }
   }
-  return best;
+  return onNote || best;
 }
 
 // stepAt converts a y position into a staff step: 0 is the bottom line, and
@@ -5868,6 +5962,21 @@ function setupCanvasClicks() {
     // for a tie. A slur keeps the plain rule: it is drawn in open air and
     // what it passes over belongs to the music, not to the curve.
     const under = hit && elementAt(hit, x, y);
+    // A line from one staff to the other is drawn across the empty gap
+    // between them, so a click near it means it, unless there is a note
+    // right under the pointer.
+    const join = staffLineAt(x, y);
+    if (join && !under) {
+      selectStaffLine(join);
+      return;
+    }
+    // The wavy line rolling a chord stands in front of it, clear of the
+    // noteheads, so a click on it is a click on it.
+    const roll = arpeggioAt(x, y);
+    if (roll && !under) {
+      selectArpeggio(roll);
+      return;
+    }
     const arc = arcAt(x, y);
     if (arc && (!under || (arc.kind === "tie" &&
         awayFromArc(arc, x, y) < Math.hypot(...awayFromElement(under, x, y))))) {
@@ -6482,7 +6591,47 @@ function selectTextMark(t) {
   };
   markSelection();
   status(`\u201c${t.text}\u201d \u2014 press Enter to change it, ` +
-         `Backspace to take it away`);
+         `Backspace to take it away, the arrows to move it`);
+}
+
+// textPicked says words written on a note are what was clicked.
+function textPicked() {
+  return !!(state.selection?.textMark && !state.multi.length);
+}
+
+// textStep is how far one press of an arrow moves words, in staff spaces;
+// with Shift it is a whole space.
+const textStep = 0.25;
+
+// moveTextMark moves the words that were clicked by dx and dy staff spaces,
+// right and down. The engraver sets words by rule, beside their note and
+// clear of the staff, and on a crowded page the rule puts an "l.h." against
+// the noteheads it is about; the arrows are how it is moved somewhere
+// clearer. The words stay picked up, so each press moves them on.
+async function moveTextMark(dx, dy) {
+  const t = state.selection?.textMark;
+  if (!t) return;
+  const p = new URLSearchParams({
+    part: String(state.selection.part), measure: String(state.selection.measure),
+    at: String(state.selection.at), index: String(t.index ?? 0),
+    dx: String(dx), dy: String(dy),
+  });
+  withVoice(p, state.selection.voice);
+  const target = refTarget(t.ref);
+  if (target) p.set("sel", target);
+  const res = await fetch("/api/textmove?" + p.toString(), { method: "POST" });
+  if (!res.ok) {
+    status("Could not move it: " + (await res.text()).trim());
+    return;
+  }
+  await refreshScore();
+  // Picked up again from where it is now drawn, so the outline follows it.
+  const now = (state.textMarks || []).find(
+    (x) => x.ref === t.ref && x.index === t.index);
+  if (now && state.selection) state.selection.textMark = now;
+  markSelection();
+  status(`\u201c${t.text}\u201d moved \u2014 arrows move it on, ` +
+         `Shift with an arrow a whole space`);
 }
 
 // selectTempo picks up a tempo marking.
@@ -7776,6 +7925,33 @@ async function deleteSelected() {
     status(`${hair.kind} removed`);
     return;
   }
+  // A roll was picked up by clicking its sign: the roll comes off and the
+  // chord stays.
+  if (state.selection?.arpeggio && !state.multi.length) {
+    const d = await mark("arpeggio", { arpeggio: "none" }, "Roll removed");
+    if (d && state.selection) state.selection.arpeggio = null;
+    return;
+  }
+  // A line from one staff to the other was picked up by clicking it: the
+  // line goes and the note and the rest it joined stay.
+  const join = state.selection?.staffLine;
+  if (join && !state.multi.length) {
+    const ends = [refTarget(join.from), refTarget(join.to)].filter(Boolean);
+    if (ends.length !== 2) {
+      status("Could not find that line any more");
+      return;
+    }
+    const p = new URLSearchParams({ sel: ends.join(","), remove: "1" });
+    const res = await fetch("/api/staffline?" + p.toString(), { method: "POST" });
+    if (!res.ok) {
+      status("Could not remove it: " + (await res.text()).trim());
+      return;
+    }
+    state.selection.staffLine = null;
+    await refreshScore();
+    status("Line to the other staff taken away");
+    return;
+  }
   // A tie or a slur was picked up by clicking it. Both of its ends go, and
   // only its own ends: a note in the middle of a phrase closes one slur and
   // opens the next, and a note held through three bars stops one tie and
@@ -8202,6 +8378,19 @@ function markSelection() {
   // Backspace was about to take those away.
   if (sel.arc) {
     svg.insertBefore(selectionArc(sel.arc, z), svg.firstChild);
+    return;
+  }
+  if (sel.arpeggio) {
+    const a = (state.arpeggios || []).find((x) => x.ref === sel.ref) || sel.arpeggio;
+    svg.insertBefore(selectionRect(a.x - 0.3, a.y - 0.3, a.width + 0.6,
+      a.height + 0.6, z), svg.firstChild);
+    return;
+  }
+  if (sel.staffLine) {
+    const l = sel.staffLine;
+    // A straight curve is a straight line: the control point halfway.
+    svg.insertBefore(selectionArc({ x1: l.x1, y1: l.y1, x2: l.x2, y2: l.y2,
+      cx: (l.x1 + l.x2) / 2, cy: (l.y1 + l.y2) / 2 }, z), svg.firstChild);
     return;
   }
 
@@ -8645,7 +8834,7 @@ function pickedNotes() {
   const sel = state.selection;
   if (!sel || sel.ref === null || sel.ref === undefined) return false;
   if (sel.bar) return false;
-  return !(sel.arc || sel.hairpin || sel.tremolo || sel.tuplet || sel.dynamic ||
+  return !(sel.arc || sel.staffLine || sel.arpeggio || sel.hairpin || sel.tremolo || sel.tuplet || sel.dynamic ||
     sel.chordSymbol || sel.textMark || sel.marker || sel.articulation ||
     sel.sign || sel.ending ||
     (sel.tempo !== undefined && sel.tempo !== null));
@@ -8989,6 +9178,31 @@ async function setGlissando(what) {
   }
   await mark("glissando", { glissando: what },
              what === "none" ? "Glissando removed" : "Glissando");
+}
+
+// setStaffLine joins two things on different staves with a line, or takes
+// the line away: a line of music shown going on in the other hand. The two
+// are picked up the way any two things on two staves are — click the one,
+// then shift-drag a box round the other.
+async function setStaffLine(remove) {
+  const two = state.multi;
+  if (two.length !== 2 || two[0].part === two[1].part) {
+    status("Pick up the two ends, one on each staff: click one, " +
+           "then shift-drag a box round the other");
+    return;
+  }
+  const p = new URLSearchParams({
+    sel: two.map((m) => selOf(m.part, m.measure, m.index, m.voice)).join(","),
+  });
+  if (remove) p.set("remove", "1");
+  const res = await fetch("/api/staffline?" + p.toString(), { method: "POST" });
+  if (!res.ok) {
+    status("Could not draw it: " + (await res.text()).trim());
+    return;
+  }
+  await refreshScore();
+  status(remove ? "Line to the other staff taken away"
+                : "Line to the other staff drawn");
 }
 
 // setJump writes a sign or a direction at the bar the cursor is in.
@@ -20686,16 +20900,22 @@ const KEY_BINDINGS = [
   // Moving about, and what is picked up.
   { id: "cursor-left", keys: "ArrowLeft", group: "Selecting and moving",
     label: "Back one note — or move the selection back",
-    run: () => { if (state.multi.length) slideSelection(-1); else moveCursorBy(-1); } },
+    run: () => {
+      if (textPicked()) void moveTextMark(-textStep, 0);
+      else if (state.multi.length) slideSelection(-1); else moveCursorBy(-1);
+    } },
   { id: "cursor-right", keys: "ArrowRight", group: "Selecting and moving",
     label: "On one note — or move the selection on",
-    run: () => { if (state.multi.length) slideSelection(1); else moveCursorBy(1); } },
+    run: () => {
+      if (textPicked()) void moveTextMark(textStep, 0);
+      else if (state.multi.length) slideSelection(1); else moveCursorBy(1);
+    } },
   { id: "extend-left", keys: "Shift+ArrowLeft", group: "Selecting and moving",
     label: "Take the selection one note further back",
-    run: () => extendSelection(-1) },
+    run: () => { if (textPicked()) void moveTextMark(-1, 0); else extendSelection(-1); } },
   { id: "extend-right", keys: "Shift+ArrowRight", group: "Selecting and moving",
     label: "Take the selection one note further on",
-    run: () => extendSelection(1) },
+    run: () => { if (textPicked()) void moveTextMark(1, 0); else extendSelection(1); } },
   // One note picked up is picked up, the same as twenty. Asked of the
   // dragged selection alone, these moved the cursor instead wherever a note
   // had been picked up by clicking it — and moving the cursor lets go of
@@ -20704,21 +20924,29 @@ const KEY_BINDINGS = [
   { id: "cursor-up", menu: "pitch-up", keys: "ArrowUp", group: "Selecting and moving",
     label: "Up a step — or move the selected notes up",
     run: () => {
-      if (articulationPicked()) void moveArticulation(1);
+      if (textPicked()) void moveTextMark(0, -textStep);
+      else if (articulationPicked()) void moveArticulation(1);
       else if (heldForMoving()) void nudge(1); else moveCursorPitch(1);
     } },
   { id: "cursor-down", menu: "pitch-down", keys: "ArrowDown", group: "Selecting and moving",
     label: "Down a step — or move the selected notes down",
     run: () => {
-      if (articulationPicked()) void moveArticulation(-1);
+      if (textPicked()) void moveTextMark(0, textStep);
+      else if (articulationPicked()) void moveArticulation(-1);
       else if (heldForMoving()) void nudge(-1); else moveCursorPitch(-1);
     } },
   { id: "cursor-up-octave", menu: "octave-up", keys: "Shift+ArrowUp", group: "Selecting and moving",
     label: "Up an octave",
-    run: () => { if (heldForMoving()) void nudge(7); else moveCursorPitch(7); } },
+    run: () => {
+      if (textPicked()) void moveTextMark(0, -1);
+      else if (heldForMoving()) void nudge(7); else moveCursorPitch(7);
+    } },
   { id: "cursor-down-octave", menu: "octave-down", keys: "Shift+ArrowDown", group: "Selecting and moving",
     label: "Down an octave",
-    run: () => { if (heldForMoving()) void nudge(-7); else moveCursorPitch(-7); } },
+    run: () => {
+      if (textPicked()) void moveTextMark(0, 1);
+      else if (heldForMoving()) void nudge(-7); else moveCursorPitch(-7);
+    } },
   { id: "nudge-up", keys: "Alt+ArrowUp", group: "Selecting and moving",
     label: "Move the note or rest up a step",
     run: () => { if (articulationPicked()) void moveArticulation(1); else void nudge(1); } },
@@ -21727,7 +21955,7 @@ function moveCursorBy(delta) {
       p.measure === sel.measure && p.index === sel.at - 1 &&
       (p.grace ?? null) === here);
   }
-  at = at < 0 ? (delta > 0 ? 0 : line.length - 1) : at + delta;
+  at = at < 0 ? placeNear(line, sel, delta) : at + delta;
   at = Math.max(0, Math.min(line.length - 1, at));
 
   const p = line[at];
@@ -21760,6 +21988,38 @@ function moveCursorBy(delta) {
   status(p.ref === null
     ? `Bar ${barNumberOf(p.measure)} — nothing written here yet`
     : `Bar ${barNumberOf(p.measure)}, note ${p.index + 1}`);
+}
+
+// placeNear is where an arrow goes from a selection that is not standing on
+// a note: a whole bar picked up, or a place in a bar before its first note.
+//
+// It used to go to the far end of the score — the last place for left, the
+// first for right — because not finding where the caret stood was taken to
+// mean it was nowhere. A bar picked up and then left pressed, to put the
+// caret between two notes, sent it to the last bar of the piece. From a bar
+// the caret leaves by the side the arrow points: left to just before the
+// bar, after the last note of the bar in front of it, and right to the end
+// of the bars picked up. From a place in a bar, the note on that side.
+function placeNear(line, sel, delta) {
+  const first = sel.measure;
+  const last = sel.bar ? (sel.barTo ?? sel.measure) : sel.measure;
+  // The caret stands after element at-1; a bar picked up stands before
+  // the first of its notes going left and after the last going right.
+  const before = (p) => p.measure < first ||
+    (!sel.bar && p.measure === first && p.index < (sel.at ?? 0) - 1);
+  const upTo = (p) => p.measure < last ||
+    (p.measure === last && (sel.bar || p.index <= (sel.at ?? 0) - 1));
+  if (delta < 0 || sel.bar) {
+    const want = delta < 0 ? before : upTo;
+    for (let i = line.length - 1; i >= 0; i--) {
+      if (want(line[i])) return i;
+    }
+    return 0;
+  }
+  for (let i = 0; i < line.length; i++) {
+    if (!upTo(line[i])) return i;
+  }
+  return line.length - 1;
 }
 
 // scrollSelectionIntoView keeps the cursor on screen as it walks the music.
@@ -24034,6 +24294,13 @@ const MENU_DRAWINGS = {
     '<path d="M3 15.5H21"/><path d="M3 18.5H21"/>' +
     '<circle cx="9" cy="9" r="2.6"/><path d="M11.6 9V17"/>',
   "cross-own": REMOVE_MARK,
+  // Two staves, a note on the upper and a rest on the lower, and the line
+  // that joins them: the mark itself.
+  "staff-line": '<path d="M3 2.5H21"/><path d="M3 5.5H21"/>' +
+    '<path d="M3 15.5H21"/><path d="M3 18.5H21"/>' +
+    '<circle cx="6.5" cy="8" r="2.4"/><path d="M9.5 10 15.5 14.5"/>' +
+    '<path d="M17.5 12.5l2 1.5-1.8 3"/>',
+  "staff-line-none": REMOVE_MARK,
 
   /* Playing the music in: the keyboard it is played on.
    *

@@ -65,6 +65,8 @@ func (a *App) handleHits(w http.ResponseWriter, r *http.Request) {
 		"tempos":        lay.Tempos,
 		"hairpins":      lay.Hairpins,
 		"arcs":          lay.Arcs,
+		"staffLines":    lay.StaffLines,
+		"arpeggios":     lay.Arpeggios,
 		"tremolos":      lay.Tremolos,
 		"tuplets":       lay.Tuplets,
 		"graces":        lay.Graces,
@@ -4737,6 +4739,54 @@ func (a *App) handleGroup(w http.ResponseWriter, r *http.Request) {
 	}
 	a.score.Groups = append(a.score.Groups, group)
 	writeJSON(w, map[string]any{"status": "ok", "groups": len(a.score.Groups)})
+}
+
+// handleMoveText moves one of a note's texts from where the engraver put it.
+//
+//	POST /api/textmove?part=0&measure=27&at=1&index=0&dx=-0.5&dy=0
+//
+// index is which of the note's texts, dx and dy how far in staff spaces,
+// right and down. The engraver puts words by rule — beside their note,
+// clear of the staff — and a rule is wrong as often as the page is crowded:
+// an "l.h." set against the noteheads it belongs to reads as part of the
+// chord. Moved, it stays moved: the offset is saved with the text, and
+// changing the words keeps it. absolute=1 sets the offset rather than
+// adding to it; dx=0&dy=0&absolute=1 puts the words back where the rule
+// says.
+func (a *App) handleMoveText(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST required", http.StatusMethodNotAllowed)
+		return
+	}
+	q := r.URL.Query()
+	dx, err1 := strconv.ParseFloat(q.Get("dx"), 64)
+	dy, err2 := strconv.ParseFloat(q.Get("dy"), 64)
+	index, err3 := strconv.Atoi(q.Get("index"))
+	if err1 != nil || err2 != nil || err3 != nil || index < 0 {
+		http.Error(w, "dx and dy are how far to move it, index which text",
+			http.StatusBadRequest)
+		return
+	}
+	marks, err := a.marksOf(q)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	a.lock()
+	defer a.mu.Unlock()
+	m := marks[0]
+	if index >= len(m.Texts) {
+		http.Error(w, "there is no such text on that note", http.StatusBadRequest)
+		return
+	}
+	t := &m.Texts[index]
+	if q.Get("absolute") == "1" {
+		t.OffsetX, t.OffsetY = dx, dy
+	} else {
+		t.OffsetX += dx
+		t.OffsetY += dy
+	}
+	writeJSON(w, map[string]float64{"offsetX": t.OffsetX, "offsetY": t.OffsetY})
 }
 
 // handleBeam beams the selection as one group, breaks it apart, or opens a

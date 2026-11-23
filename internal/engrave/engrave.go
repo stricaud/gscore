@@ -349,6 +349,11 @@ type Layout struct {
 	// of everything beneath it and on how high it had to climb to clear
 	// them — so it says.
 	Arcs []ArcPos `json:"arcs"`
+	// StaffLines are the lines from one staff to another, so the editor
+	// can let one be clicked. See drawStaffLines.
+	StaffLines []StaffLinePos `json:"staffLines"`
+	// Arpeggios are the rolled-chord signs' boxes, so one can be clicked.
+	Arpeggios []ArpeggioPos `json:"arpeggios"`
 	// Chords are the chord symbols' boxes, for the same reason: a symbol is
 	// written on a line of its own above the staff, as far up as that
 	// stretch of music pushed it, and the editor cannot point at one it
@@ -420,6 +425,17 @@ type SpanPos struct {
 // and a box enclosing it encloses all of that music too: a click anywhere
 // near the notes under a slur would have found the slur. So the quadratic is
 // given as it was drawn and a click is measured against the curve.
+// StaffLinePos is a line from one staff to another where it was drawn:
+// the elements at its two ends, by ref, and the line itself.
+type StaffLinePos struct {
+	From int     `json:"from"`
+	To   int     `json:"to"`
+	X1   float64 `json:"x1"`
+	Y1   float64 `json:"y1"`
+	X2   float64 `json:"x2"`
+	Y2   float64 `json:"y2"`
+}
+
 type ArcPos struct {
 	Part    int `json:"part"`
 	Measure int `json:"measure"`
@@ -444,6 +460,19 @@ type ArcPos struct {
 }
 
 // TremoloPos is one two-note tremolo's beams on the page, in staff spaces.
+// ArpeggioPos is a rolled-chord sign as a box on the page, with the chord
+// it rolls.
+type ArpeggioPos struct {
+	Part    int     `json:"part"`
+	Measure int     `json:"measure"`
+	Ref     int     `json:"ref"`
+	X       float64 `json:"x"`
+	Y       float64 `json:"y"`
+	Width   float64 `json:"width"`
+	Height  float64 `json:"height"`
+	Down    bool    `json:"down"`
+}
+
 type TremoloPos struct {
 	Part    int `json:"part"`
 	Measure int `json:"measure"`
@@ -1258,6 +1287,9 @@ type engraver struct {
 	// round, by glyph, with where each is in lay.Articulations: an accent,
 	// and any mark written past the end of its note's stem. See liftOutside.
 	outsideSlur map[int]int
+	// lineEnds is where each end of a line to another staff stands, on
+	// the system being drawn. See drawStaffLines.
+	lineEnds []lineEnd
 	// lines and lineGap describe the staff being drawn: five lines a space
 	// apart for ordinary music, one per string and wider for tablature.
 	lines   int
@@ -1666,6 +1698,11 @@ type measureBox struct {
 	// to click to carry on writing. It has no barline of its own and is not
 	// numbered, because it is not a bar of the piece yet.
 	ahead bool
+
+	// aligned says the columns were set against the other staves' by
+	// alignMoments, so that a key or clef written at its head is room the
+	// other staves leave too. See drawSystem.
+	aligned bool
 
 	// change is the key or meter change written at the head of this measure,
 	// and prefix how much room it takes. Music changes key in the middle of a
@@ -2215,6 +2252,11 @@ func (e *engraver) layout() {
 			boxes[pi] = append(boxes[pi], b)
 		}
 		maxMeasures++
+	}
+
+	// The same moment at the same x on every staff. See alignMoments.
+	for mi := 0; mi < maxMeasures; mi++ {
+		e.alignMoments(boxes, mi)
 	}
 
 	// A measure is as wide as the part that needs the most room for it, and
@@ -4489,7 +4531,17 @@ func (e *engraver) drawSystem(parts []*model.Part, boxes [][]measureBox,
 			// in the system's head: a new key is announced once, not twice.
 			ideal := b.ideal
 			if mi == start && b.prefix > 0 {
-				ideal -= b.prefix
+				if b.aligned {
+					// Only what every staff gave up comes out: a clef
+					// change on one staff alone was room the others left
+					// too, and the first beat still lines up with theirs.
+					drop := startPrefix(boxes, mi)
+					b.slots = append([]slot(nil), b.slots...)
+					b.slots[0].lead += b.prefix - drop
+					ideal -= drop
+				} else {
+					ideal -= b.prefix
+				}
 				b.prefix = 0
 			}
 			slotWidth := widths[mi] * stretch
@@ -4601,6 +4653,9 @@ func (e *engraver) drawSystem(parts []*model.Part, boxes [][]measureBox,
 	// The names and the brace reach across every staff of the system, so they
 	// are drawn once the staves' positions are all known.
 	e.drawGroups(parts, left+lead, staffTops, start == 0)
+	// The lines from one staff to another, now that every staff of the
+	// system has been drawn and both ends of each are on the page.
+	e.drawStaffLines()
 	// Down the gaps between the staves, at exactly the x the staves put
 	// their own barlines at. A column is where the next bar begins; the
 	// barline stands a little before it, by the room its style needs. The

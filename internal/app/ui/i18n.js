@@ -875,6 +875,8 @@ const MESSAGES = {
   "No pedal": "Pas de pédale",
   "Glissando": "Glissando",
   "No glissando": "Pas de glissando",
+  "Line to the other staff": "Ligne vers l’autre portée",
+  "No line to the other staff": "Pas de ligne vers l’autre portée",
   "Seven flats — C♭ major": "Sept bémols — do♭ majeur",
   "Six flats — G♭ major": "Six bémols — sol♭ majeur",
   "Five flats — D♭ major": "Cinq bémols — ré♭ majeur",

@@ -10,7 +10,11 @@
 
 package engrave
 
-import "github.com/stricaud/gscore/internal/model"
+import (
+	"math"
+
+	"github.com/stricaud/gscore/internal/model"
+)
 
 // Notes written on the staff next door.
 //
@@ -135,13 +139,45 @@ func (e *engraver) crossBeamY(g []*placed) (float64, bool) {
 			above = true
 		}
 	}
+	// Short of a stem's length from no notehead on either side, wherever
+	// the middle falls: staves set close together would otherwise give
+	// the notes stubs of stems, and a beam hugging the notes it joins
+	// reads as a line ruled under them rather than as their beam.
+	const shortest = 2.5
+	// From the staves' near lines, not from their tops. Measured from the
+	// upper staff's top line, the middle was two spaces up — the beam ran
+	// along under the treble staff and the left hand's notes written up
+	// there hung off it on stems a space long.
+	clamp := func(y float64, crossDown bool) float64 {
+		// The heads on each side: the ones written across, and the ones at
+		// home, with the beam to stay a stem's length from both.
+		near, far := math.Inf(-1), math.Inf(1)
+		for _, p := range g {
+			top := e.y + p.crossDY + stepY(float64(p.hi))
+			bot := e.y + p.crossDY + stepY(float64(p.lo))
+			if (p.cross != model.OnOwnStaff) == crossDown {
+				near = math.Max(near, bot) // above the beam
+			} else {
+				far = math.Min(far, top) // below the beam
+			}
+		}
+		if !math.IsInf(near, -1) {
+			y = math.Max(y, near+shortest)
+		}
+		if !math.IsInf(far, 1) {
+			y = math.Min(y, far-shortest)
+		}
+		return y
+	}
 	switch {
 	case below && !above:
 		// This staff and the one under it: between this staff's bottom
 		// line and that staff's top line.
-		return e.y + e.staffH() + e.cross.dyBelow/2, true
+		return clamp(e.y+(e.staffH()+e.cross.dyBelow)/2, false), true
 	case above && !below:
-		return e.y + e.cross.dyAbove/2, true
+		// The staff above and this one: between that staff's bottom line
+		// and this one's top.
+		return clamp(e.y+(e.cross.dyAbove+e.staffH())/2, true), true
 	case above && below:
 		// Both at once is a figure spread over three staves, which is not
 		// a thing a pianist's hands can do and not a thing this draws.

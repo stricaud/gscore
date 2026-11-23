@@ -721,6 +721,8 @@ func (a *App) APIRoutes(mux *http.ServeMux) {
 		"/api/marker":           a.handleMarker,
 		"/api/review":           a.handleReview,
 		"/api/text":             a.handleText,
+		"/api/textmove":         a.handleMoveText,
+		"/api/staffline":        a.handleStaffLine,
 		"/api/lyrics":           a.handleLyrics,
 		"/api/chordsymbol":      a.handleChordSymbol,
 		"/api/setkey":           a.handleSetKey,

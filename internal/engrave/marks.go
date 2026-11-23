@@ -129,6 +129,14 @@ func (e *engraver) drawArpeggio(p *placed, a *model.Arpeggio) {
 			Name: "arpeggiato", X: x, Y: y, Size: e.glyphSize(),
 		})
 	}
+	// Where it is, so it can be clicked: the sign is a thing on the page
+	// of its own, and taking it away should not mean finding the chord
+	// and the menu that rolls it.
+	e.lay.Arpeggios = append(e.lay.Arpeggios, ArpeggioPos{
+		Part: e.partIndex, Measure: e.barIndex, Ref: p.index,
+		X: x, Y: top, Width: e.adv("arpeggiato"), Height: bottom - top,
+		Down: a.Down,
+	})
 }
 
 // displacedLeft reports whether a chord has a notehead pushed out to the

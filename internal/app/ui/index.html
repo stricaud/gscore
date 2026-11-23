@@ -743,6 +743,10 @@
            computer wants the marks and no click. Off by default — nobody
            asks for a metronome by pressing Play. -->
       <button data-action="metronome"><span>Metronome click</span><kbd id="metronome-tick"></kbd></button>
+      <!-- A piano along the bottom of the window that shows the notes as
+           they are played: both hands, every staff, a key going down for
+           each note sounding. -->
+      <button data-action="play-keyboard"><span>Piano keyboard</span><kbd id="playkeys-tick"></kbd></button>
       <hr>
       <!-- What the editor plays through. Only where there is a disk to keep
            a soundfont on. -->
@@ -918,6 +922,10 @@
      keyboard says it at a glance where a list of twenty-six letters does
      not. Filled in by renderPianoKeys, which builds it from the same table
      the keys themselves obey. -->
+<!-- The piano that shows what is being played. Filled in by
+     renderPlayKeys; the keys go down as the notes sound. -->
+<div id="playkeys" hidden></div>
+
 <div id="pianokeys" hidden>
   <div id="pianokeys-head">
     <span class="pianokeys-title">Piano mode</span>

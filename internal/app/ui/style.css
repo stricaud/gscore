@@ -1672,6 +1672,31 @@ body.player.bare { grid-template-rows: 1fr; }
 
 .pad.on .pad-midi { color: inherit; opacity: 0.8; }
 
+/* ---------- the piano that shows what is played ---------- */
+
+/* Every key of a piano, A to C, along the bottom of the window. A key that
+   is sounding is coloured: the upper staff in one colour and the lower in
+   another, so the two hands can be told apart at a glance. */
+#playkeys {
+  border-top: 1px solid var(--line);
+  background: var(--panel);
+  padding: 6px 10px 8px;
+}
+
+#playkeys svg {
+  display: block;
+  width: 100%;
+  height: calc(70px * var(--ui-scale));
+}
+
+#playkeys .pk-white { fill: #f6f4f0; stroke: #8a857d; stroke-width: 0.6; }
+#playkeys .pk-black { fill: #1c1a18; stroke: #1c1a18; stroke-width: 0.6; }
+#playkeys .pk-c { fill: #8a857d; font: 7px sans-serif; text-anchor: middle; }
+#playkeys .pk-on-0 { fill: #3b7dd8; }
+#playkeys .pk-on-1 { fill: #e0893a; }
+#playkeys .pk-on-2 { fill: #4caf6a; }
+#playkeys .pk-on-3 { fill: #b5579a; }
+
 /* ---------- piano mode ---------- */
 
 /* A piano along the bottom of the window, with the letter that plays each

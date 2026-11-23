@@ -1458,6 +1458,7 @@ async function action(name) {
     case "metronome":
       setMetronome(!state.metronome);
       break;
+    case "play-keyboard": setPlayKeys(!playKeys.on); break;
     case "type-music": toggleTypeBar(); break;
     case "typing-help": openTypingHelp(); break;
     case "show-score": await showSheet("score"); break;
@@ -13339,6 +13340,8 @@ function markViewTicks() {
   if (nc) nc.textContent = state.colourNotes ? "✓" : "";
   const rv = $("#review-tick");
   if (rv) rv.textContent = state.review.show ? "✓" : "";
+  const pk = $("#playkeys-tick");
+  if (pk) pk.textContent = playKeys.on ? "✓" : "";
   const w = $("#mouse-tick");
   if (w) w.textContent = state.mouseWrites ? "✓" : "";
   const pn = $("#piano-tick");
@@ -18044,6 +18047,99 @@ let live = null;
 let current = new Set();
 let cursorEl = null;
 
+/* ---------- the piano that shows what is played ---------- */
+
+// playKeys is the piano along the bottom of the window that shows the notes
+// as they are played. on is whether it is showing, lit which keys are down
+// now, by MIDI number, and the staff each was played from — the colour.
+const playKeys = { on: false, lit: new Map() };
+
+// The piano's own range: A0 to C8, the eighty-eight keys.
+const PLAYKEYS_LOW = 21;
+const PLAYKEYS_HIGH = 108;
+
+// isBlackKey says whether a MIDI note is a black key.
+function isBlackKey(midi) {
+  return [1, 3, 6, 8, 10].includes(((midi % 12) + 12) % 12);
+}
+
+// renderPlayKeys draws the eighty-eight keys: the white ones side by side,
+// the black ones over the gaps between them, and each C named so that the
+// octaves can be found.
+function renderPlayKeys() {
+  const box = $("#playkeys");
+  if (!box) return;
+  const whiteW = 10, whiteH = 60, blackW = 6, blackH = 38;
+  let whites = 0;
+  for (let m = PLAYKEYS_LOW; m <= PLAYKEYS_HIGH; m++) if (!isBlackKey(m)) whites++;
+  const parts = [];
+  const blacks = [];
+  let x = 0;
+  for (let m = PLAYKEYS_LOW; m <= PLAYKEYS_HIGH; m++) {
+    if (isBlackKey(m)) {
+      blacks.push(`<rect class="pk-black" data-midi="${m}" x="${x - blackW / 2}" ` +
+        `y="0" width="${blackW}" height="${blackH}" rx="1"/>`);
+      continue;
+    }
+    parts.push(`<rect class="pk-white" data-midi="${m}" x="${x}" y="0" ` +
+      `width="${whiteW}" height="${whiteH}" rx="1.5"/>`);
+    if (m % 12 === 0) {
+      parts.push(`<text class="pk-c" x="${x + whiteW / 2}" y="${whiteH - 4}">` +
+        `C${m / 12 - 1}</text>`);
+    }
+    x += whiteW;
+  }
+  box.innerHTML = `<svg viewBox="0 0 ${whites * whiteW} ${whiteH}" ` +
+    `preserveAspectRatio="none" role="img" aria-label="Piano keyboard">` +
+    parts.join("") + blacks.join("") + "</svg>";
+  playKeys.lit = new Map();
+}
+
+// lightPlayKeys puts down the keys that are sounding and lets the others up.
+// down is MIDI number to the staff it was played from. Only what changed is
+// touched: at sixty frames a second a chord held for a bar is sixty calls
+// that should do nothing.
+function lightPlayKeys(down) {
+  if (!playKeys.on) {
+    playKeys.lit = new Map();
+    return;
+  }
+  const box = $("#playkeys");
+  if (!box) return;
+  const key = (m) => box.querySelector(`rect[data-midi="${m}"]`);
+  for (const [m, part] of playKeys.lit) {
+    if (down.get(m) === part) continue;
+    key(m)?.classList.remove(`pk-on-${part % 4}`);
+  }
+  for (const [m, part] of down) {
+    if (playKeys.lit.get(m) === part) continue;
+    key(m)?.classList.add(`pk-on-${part % 4}`);
+  }
+  playKeys.lit = new Map(down);
+}
+
+// setPlayKeys shows the piano or puts it away, and remembers which, so it
+// is there again next time.
+function setPlayKeys(on) {
+  playKeys.on = !!on;
+  const box = $("#playkeys");
+  if (box) {
+    box.hidden = !playKeys.on;
+    if (playKeys.on) renderPlayKeys();
+    else box.innerHTML = "";
+  }
+  playKeys.lit = new Map();
+  try {
+    localStorage.setItem("gscore.playKeys", playKeys.on ? "1" : "0");
+  } catch (_) {
+    /* a browser that keeps nothing still has the piano for this session */
+  }
+  markViewTicks();
+  status(playKeys.on
+    ? "Piano keyboard on \u2014 the keys go down as the notes are played"
+    : "Piano keyboard off");
+}
+
 // sameSet avoids redrawing when nothing has changed, which at sixty frames a
 // second across five staves is most of the time.
 function sameSet(a, b) {
@@ -19202,6 +19298,17 @@ function follow(pb) {
       current = sounding;
       if (lead) updateFingering(lead);
     }
+    // And the keys going down on the piano along the bottom, where it is
+    // showing: every note sounding, whatever staff it is on.
+    if (playKeys.on) {
+      const down = new Map();
+      for (const ev of soundingAt(when, shown)) {
+        if (shown >= ev.start && shown < ev.start + ev.dur && ev.midi !== undefined) {
+          if (!down.has(ev.midi)) down.set(ev.midi, ev.part || 0);
+        }
+      }
+      lightPlayKeys(down);
+    }
 
     if (now >= total + 0.3) {
       stop();
@@ -19577,6 +19684,8 @@ function silence() {
   svg?.querySelectorAll(".playing").forEach((n) => n.classList.remove("playing"));
   svg?.querySelectorAll("circle.ping").forEach((n) => n.remove());
   current = new Set();
+  // The keys come up: nothing is sounding.
+  lightPlayKeys(new Map());
   state.playing = false;
   // The harmonics panel goes back to following what is picked up: with
   // nothing playing, the moment it should show is the one being written.
@@ -22605,6 +22714,19 @@ async function main() {
     // Whether a note is sounded as it is written. On unless it has been
     // turned off: see soundAsWritten.
     state.entrySound = kept.entrySound !== false;
+    // The piano that shows what is played, where it was left on.
+    try {
+      if (localStorage.getItem("gscore.playKeys") === "1") {
+        playKeys.on = true;
+        const box = $("#playkeys");
+        if (box) {
+          box.hidden = false;
+          renderPlayKeys();
+        }
+      }
+    } catch (_) {
+      /* nothing remembered: it starts put away */
+    }
     // Before anything is drawn, so the interface does not come up at one
     // size and jump to another.
     applyUIScale(rememberedUIScale(kept));
@@ -24301,6 +24423,12 @@ const MENU_DRAWINGS = {
     '<circle cx="6.5" cy="8" r="2.4"/><path d="M9.5 10 15.5 14.5"/>' +
     '<path d="M17.5 12.5l2 1.5-1.8 3"/>',
   "staff-line-none": REMOVE_MARK,
+  // An octave of a keyboard, two of its keys down.
+  "play-keyboard": '<rect x="2.5" y="5" width="19" height="14" rx="1"/>' +
+    '<path d="M6.3 5v14M10.1 5v14M13.9 5v14M17.7 5v14"/>' +
+    '<rect x="5" y="5" width="2.6" height="8" fill="currentColor"/>' +
+    '<rect x="8.8" y="5" width="2.6" height="8"/>' +
+    '<rect x="16.4" y="5" width="2.6" height="8" fill="currentColor"/>',
 
   /* Playing the music in: the keyboard it is played on.
    *

@@ -2136,6 +2136,15 @@ func (e *engraver) setStemDirections(items []*placed, t model.TimeSignature) {
 	for _, p := range items {
 		if p.stemDir == 0 && p.rest == nil {
 			switch {
+			// A note written on the other staff points back at its own: a
+			// left-hand note drawn on the treble staff stems down, under
+			// the right hand's notes there, and not up through them. It is
+			// the same way its stem goes when it is beamed to the notes it
+			// left behind.
+			case p.cross == model.OnStaffAbove && !stemForced(p):
+				p.stemDir = -1
+			case p.cross == model.OnStaffBelow && !stemForced(p):
+				p.stemDir = 1
 			case multi:
 				p.stemDir = byVoice(p)
 			case e.stemUp(p):
@@ -2145,6 +2154,12 @@ func (e *engraver) setStemDirections(items []*placed, t model.TimeSignature) {
 			}
 		}
 	}
+}
+
+// stemForced says the score asks for a stem direction on this element.
+func stemForced(p *placed) bool {
+	m := p.marks()
+	return m != nil && m.Stem != model.StemAuto
 }
 
 // widenReach takes a note's steps into the lowest and highest its voice

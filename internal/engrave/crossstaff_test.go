@@ -360,3 +360,34 @@ func TestTwoSystemMarkingsDoNotCollide(t *testing.T) {
 			ys["Allegro"])
 	}
 }
+
+// A left-hand note on its own, written on the treble staff, stems down: back
+// towards the staff it belongs to and under the right hand's notes, not up
+// through them. Bar 28 of Black and Tan Fantasy, where three of them had
+// their flags drawn through the right hand's chords.
+func TestALoneNoteWrittenAboveStemsDown(t *testing.T) {
+	q := func(s model.Step, o int) *model.Note {
+		return &model.Note{Pitch: model.Pitch{Step: s, Octave: o},
+			Dur: model.Duration{Num: 1, Den: 4}}
+	}
+	up := q(model.StepE, 4) // low in the treble: it would stem up there
+	up.Cross = model.OnStaffAbove
+	rest := &model.Rest{Dur: model.Duration{Num: 3, Den: 4}}
+	lay := Engrave(pianoWith(
+		[]model.Element{&model.Rest{Dur: model.Duration{Num: 1, Den: 1}}},
+		[]model.Element{up, rest}), DefaultOptions())
+	head := headYOf(t, lay, 0)
+	for _, l := range lay.Lines {
+		if math.Abs(l.X1-l.X2) > 0.01 || l.Thickness > DefaultOptions().Defaults.StemThickness {
+			continue
+		}
+		lo, hi := math.Min(l.Y1, l.Y2), math.Max(l.Y1, l.Y2)
+		if lo > head-1 && lo < head+1 && hi > head+2 {
+			return // a stem from the head downwards
+		}
+		if hi > head-1 && hi < head+1 && lo < head-2 {
+			t.Fatalf("the stem goes up from the head, to %.2f", lo)
+		}
+	}
+	t.Fatal("no stem found at the note")
+}

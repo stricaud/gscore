@@ -509,6 +509,18 @@ type Measure struct {
 	// most of what the sign is for.
 	Repeat int
 
+	// Review is where somebody checking the score has got to with this
+	// bar: ReviewGood, ReviewCheck or ReviewFix, or nothing yet.
+	//
+	// Not music and never printed — the editor tints the bar behind the
+	// notes while the review colours are shown, and that is all. Kept in
+	// the file because it is work: a score being checked against its
+	// source over a week has to remember on Thursday which bars were
+	// already found right on Monday, or every one of them is checked twice.
+	// Per staff, as a bar is picked up per staff: the right hand can be
+	// right while the left still needs looking at.
+	Review string `json:",omitempty"`
+
 	// Marker is a rehearsal mark written out as itself — the boxed A, B, C
 	// that a conductor calls out. It belongs to the bar across the whole
 	// score, because "from B" has to mean the same bar to everybody in the
@@ -1173,6 +1185,23 @@ type Cursor struct {
 	// music. Nought for every score written before this was kept, which is
 	// the first line and what they all meant.
 	Voice int
+}
+
+// The marks a bar can carry while a score is being checked. See
+// Measure.Review.
+const (
+	ReviewGood  = "good"  // checked and right
+	ReviewCheck = "check" // to look at again
+	ReviewFix   = "fix"   // known to be wrong
+)
+
+// ValidReview says whether s is one of the review marks, or none.
+func ValidReview(s string) bool {
+	switch s {
+	case "", ReviewGood, ReviewCheck, ReviewFix:
+		return true
+	}
+	return false
 }
 
 // ViewState is how a score was last being looked at.

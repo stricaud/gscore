@@ -3370,6 +3370,38 @@ paths:
                   text: { type: string }
         "400": { $ref: "#/components/responses/Error" }
 
+  /api/review:
+    post:
+      tags: [structure]
+      summary: Mark bars while the score is being checked
+      description: >
+        A bar is marked good, to check again, or to fix, and the editor tints
+        it in that mark's colour on the screen only. The marks are saved with
+        the score. `all=1` with `review=none` takes every mark off.
+      parameters:
+        - name: review
+          in: query
+          required: true
+          schema: { type: string, enum: [good, check, fix, none] }
+        - name: bars
+          in: query
+          description: "The bars as staff:bar, from zero, separated by commas: `0:3,1:3`."
+          schema: { type: string }
+        - name: all
+          in: query
+          description: "`1` with `review=none` clears every bar of the score."
+          schema: { type: string }
+      responses:
+        "200":
+          description: How many bars changed.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  changed: { type: integer }
+        "400": { $ref: "#/components/responses/Error" }
+
   /api/setkey:
     post:
       tags: [structure]

@@ -297,7 +297,10 @@ type measureDoc struct {
 	NumberFrom *int `json:"numberFrom,omitempty"`
 	// SystemBreak starts a new line of music at this bar.
 	SystemBreak bool `json:"systemBreak,omitempty"`
-	Repeat      int  `json:"repeat,omitempty"`
+	// Review is how far checking this bar has got: "good", "check" or
+	// "fix". See model.Measure.Review.
+	Review string `json:"review,omitempty"`
+	Repeat int    `json:"repeat,omitempty"`
 
 	// Sign is the segno, coda, Fine or To Coda written at this bar, and Jump
 	// the direction written at the end of it. Both are stored by name rather
@@ -792,6 +795,7 @@ func encodeScore(s *model.Score) *scoreDoc {
 				}
 			}
 			md.Marker, md.Repeat = m.Marker, m.Repeat
+			md.Review = m.Review
 			md.MarkerAuto = m.MarkerAuto
 			md.NumberFrom = m.NumberFrom
 			md.SystemBreak = m.SystemBreak
@@ -1218,6 +1222,11 @@ func decodeScore(doc *scoreDoc) (*model.Score, error) {
 				}
 			}
 			m.Marker, m.Repeat = md.Marker, md.Repeat
+			// A mark this version does not know is dropped rather than
+			// shown as something it is not.
+			if model.ValidReview(md.Review) {
+				m.Review = md.Review
+			}
 			m.MarkerAuto = md.MarkerAuto
 			m.NumberFrom = md.NumberFrom
 			m.SystemBreak = md.SystemBreak

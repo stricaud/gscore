@@ -193,6 +193,11 @@ const state = {
   showAllDecided: false,
   // Everything a dragged selection picked up, as staff:measure:index.
   multi: [],
+  // The bars marked while the score is being checked, as the server reports
+  // them with the bars' positions, and whether and in what colours they are
+  // tinted. See setReview.
+  reviews: [],
+  review: { show: true, colours: { good: "#2e9e44", check: "#f08c00", fix: "#d6332e" } },
   // Where a shift-click measures from: the last note picked up on its own.
   anchor: null,
   // Player mode: nothing edits, and playing may go round again at the end.
@@ -1434,6 +1439,9 @@ async function action(name) {
         .catch(() => { /* the drawing still carries the mode */ });
       await drawScore();
       await loadHits();
+      // And the selection, which was drawn with the other mode's
+      // positions while the new drawing went in.
+      markSelection();
       status(state.mode === "strip" ? "Continuous strip" : "Paginated");
       break;
     case "play":
@@ -1773,6 +1781,13 @@ async function action(name) {
     case "view-tempomark": await setView("tempomark", !state.view.tempomark); break;
     case "view-beatmarks": await setView("beatmarks", !state.view.beatmarks); break;
     case "note-colours": await noteColoursDialog(); break;
+    case "review-good": await setReview("good"); break;
+    case "review-check": await setReview("check"); break;
+    case "review-fix": await setReview("fix"); break;
+    case "review-none": await setReview("none"); break;
+    case "review-erase": await eraseReviews(); break;
+    case "view-review": await showReviews(!state.review.show); break;
+    case "review-colours": await reviewColoursDialog(); break;
     case "view-concert": await setView("concert", !state.view.concert); break;
 
     case "insert-chord": await chordSymbolDialog(); break;
@@ -4998,6 +5013,7 @@ async function loadHits() {
   const res = await fetch("/api/hits?" + viewParams().toString());
   const d = await res.json();
   state.hits = d.hits || [];
+  state.reviews = d.reviews || [];
   state.dynamics = d.dynamics || [];
   state.textMarks = d.textMarks || [];
   state.markers = d.markers || [];
@@ -5016,6 +5032,13 @@ async function loadHits() {
   state.strips = d.strips || [];
   state.stripIndex = indexStrips(state.strips);
   state.hitsByBar = indexHits(state.hits);
+  // The review tints are placed from these positions, so they are placed
+  // again whenever these arrive. Left to the next selection, they stayed
+  // where the last drawing had its bars: switching from pages to the strip
+  // drew every marked bar at a page's coordinates, off the strip, and the
+  // marks looked lost.
+  const svg = currentSVG();
+  if (svg) drawReviews(svg);
 }
 
 // indexHits files the clickable regions by which bar they are part of.
@@ -8037,6 +8060,9 @@ function markSelection() {
   // without taking the old one away left a trail of them down the bar: every
   // place the cursor had been was still on the page.
   svg.querySelectorAll(".write-cursor").forEach((n) => n.remove());
+  // The review tints, which are redrawn with everything else that is laid
+  // over the music rather than engraved in it.
+  drawReviews(svg);
 
   const sel = state.selection;
   if (!sel) return;
@@ -10004,6 +10030,160 @@ const NOTE_LETTERS = ["C", "D", "E", "F", "G", "A", "B"];
 // remembered for the person and they have to reach the engraver, which is
 // where the PDF and the printed page are drawn: a palette that lived in the
 // browser would colour the screen and print black.
+/* ---------- marking bars while checking a score ---------- */
+
+// reviewBars is every bar a review mark goes on: the bars picked up by their
+// bands, the bars of the notes picked up, or the bar the cursor stands in.
+function reviewBars() {
+  const sel = state.selection;
+  const out = new Map();
+  const add = (part, measure) => out.set(`${part}:${measure}`, { part, measure });
+  if (sel?.bar) for (const b of selectedBars(sel)) add(b.part, b.measure);
+  for (const m of state.multi) add(m.part, m.measure);
+  for (const m of sel?.boxed || []) {
+    if (m.item.part !== undefined && m.item.measure !== undefined) {
+      add(m.item.part, m.item.measure);
+    }
+  }
+  if (!out.size && sel && sel.measure !== undefined) add(sel.part ?? 0, sel.measure);
+  return [...out.values()];
+}
+
+const reviewWords = { good: "good", check: "to check", fix: "to fix" };
+
+// setReview marks the bars picked up as good, to check again or to fix, or
+// takes the mark off ("none").
+//
+// A score is checked against its source a bar at a time, over more than one
+// sitting; the marks are what say on the next day which bars were already
+// found right. They are tinted behind the music on the screen only, and
+// saved with the score. See review.go.
+async function setReview(what) {
+  const bars = reviewBars();
+  if (!bars.length) {
+    status("Pick a bar first — click the band over it, or a note in it");
+    return;
+  }
+  const res = await fetch("/api/review?" + new URLSearchParams({
+    review: what, bars: bars.map((b) => `${b.part}:${b.measure}`).join(","),
+  }), { method: "POST" });
+  if (!res.ok) {
+    status("Could not mark it: " + (await res.text()).trim());
+    return;
+  }
+  // Marking a bar with the marks hidden would look like nothing happened.
+  if (what !== "none" && !state.review.show) await showReviews(true, true);
+  await refreshScore();
+  const nums = [...new Set(bars.map((b) => barNumberOf(b.measure)))];
+  const which = (nums.length === 1 ? "Bar " : "Bars ") + nums.join(", ");
+  status(what === "none" ? `${which}: mark taken off`
+                         : `${which} marked ${reviewWords[what]}`);
+}
+
+// eraseReviews takes every review mark off the score, for when the checking
+// is done. An edit like any other, so Undo puts them back.
+async function eraseReviews() {
+  if (!state.reviews.length) {
+    status("No bar is marked");
+    return;
+  }
+  const res = await fetch("/api/review?review=none&all=1", { method: "POST" });
+  if (!res.ok) {
+    status("Could not erase them: " + (await res.text()).trim());
+    return;
+  }
+  const d = await res.json().catch(() => ({}));
+  await refreshScore();
+  const n = d.changed || 0;
+  status(`${n} ${n === 1 ? "mark" : "marks"} erased — Undo brings them back`);
+}
+
+// showReviews shows or hides the tints, and remembers which for next time.
+async function showReviews(on, quiet = false) {
+  state.review.show = !!on;
+  markViewTicks();
+  markSelection();
+  try {
+    await fetch("/api/settings?reviewMarks=" + (on ? "1" : "0"), { method: "POST" });
+  } catch (_) {
+    /* still holds for this session */
+  }
+  if (!quiet) status(on ? "Review marks shown" : "Review marks hidden");
+}
+
+// drawReviews tints each marked bar in its mark's colour, behind the music.
+//
+// The band over the staff the bar is on, as tall as the staff and a little
+// more: on the screen alone, so nothing printed or exported carries it.
+function drawReviews(svg) {
+  svg.querySelectorAll("rect.review-band").forEach((n) => n.remove());
+  if (!state.review.show || !state.reviews.length) return;
+  const z = state.zoom;
+  for (const r of state.reviews) {
+    const hit = (state.hitsByBar?.get(r.measure) || []).find((h) => h.part === r.part);
+    if (!hit) continue;
+    const top = hit.staffTop - 1;
+    const height = staffHeightOf(hit) + 2;
+    const band = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+    band.setAttribute("class", "review-band");
+    band.setAttribute("x", String(hit.x0 * z));
+    band.setAttribute("y", String(top * z));
+    band.setAttribute("width", String((hit.x1 - hit.x0) * z));
+    band.setAttribute("height", String(height * z));
+    band.style.fill = state.review.colours[r.review] || "transparent";
+    svg.insertBefore(band, svg.firstChild);
+  }
+}
+
+// reviewColoursDialog picks the colour of each mark.
+async function reviewColoursDialog() {
+  const dlg = $("#reviewcolours");
+  const list = $("#reviewcolours-list");
+  const send = async (colours) => {
+    const res = await fetch("/api/settings?" + new URLSearchParams({
+      reviewColours: JSON.stringify(colours),
+    }), { method: "POST" });
+    if (!res.ok) {
+      status("Could not change the colours");
+      return;
+    }
+    const now = await res.json().catch(() => ({}));
+    if (now.reviewColours) state.review.colours = { ...now.reviewColours };
+    draw();
+    markSelection();
+  };
+  const draw = () => {
+    list.innerHTML = "";
+    for (const mark of ["good", "check", "fix"]) {
+      const row = document.createElement("label");
+      row.className = "tempo-bar";
+      const says = document.createElement("span");
+      says.textContent = t({ good: "Good", check: "To check", fix: "To fix" }[mark]);
+      row.appendChild(says);
+      const pick = document.createElement("input");
+      pick.type = "color";
+      pick.value = state.review.colours[mark] || "#000000";
+      // On change, as for the note colours: one choice, one round trip.
+      pick.onchange = () => {
+        void send({ ...state.review.colours, [mark]: pick.value });
+      };
+      row.appendChild(pick);
+      list.appendChild(row);
+    }
+  };
+  draw();
+  const answer = await new Promise((resolve) => {
+    const done = () => {
+      dlg.removeEventListener("close", done);
+      resolve(dlg.returnValue);
+    };
+    dlg.addEventListener("close", done);
+    dlg.showModal();
+  });
+  if (answer === "reset") await send({});
+  status("Ready");
+}
+
 async function noteColoursDialog() {
   const dlg = $("#notecolours");
   const on = $("#notecolours-on");
@@ -12876,6 +13056,8 @@ function markViewTicks() {
   if (k) k.textContent = state.metronome ? "✓" : "";
   const nc = $("#notecolours-tick");
   if (nc) nc.textContent = state.colourNotes ? "✓" : "";
+  const rv = $("#review-tick");
+  if (rv) rv.textContent = state.review.show ? "✓" : "";
   const w = $("#mouse-tick");
   if (w) w.textContent = state.mouseWrites ? "✓" : "";
   const pn = $("#piano-tick");
@@ -22078,6 +22260,10 @@ async function main() {
     // the colours are remembered for the person, so a score opened today
     // comes up coloured if that is how it was left.
     state.colourNotes = !!kept.colourNotes;
+    // The review tints: shown unless they were hidden, in the colours the
+    // person chose.
+    state.review.show = kept.reviewMarks !== false;
+    if (kept.reviewColours) state.review.colours = { ...kept.reviewColours };
     // How far behind the sound is, where the browser will not say and
     // somebody has measured it. See outputLag.
     state.playLag = Number(kept.playLag) || 0;
@@ -23742,6 +23928,8 @@ const MENU_DRAWINGS = {
   "arpeggio-none": REMOVE_MARK,
   "gliss-none": REMOVE_MARK,
   "grace-none": REMOVE_MARK,
+  "review-none": REMOVE_MARK,
+  "review-erase": REMOVE_MARK,
   "slur-none": REMOVE_MARK,
   "tie-none": REMOVE_MARK,
   "dyn-none": REMOVE_MARK,
@@ -23986,6 +24174,20 @@ const MENU_DRAWINGS = {
   // writing and not its notes.
   "find-text": '<path d="M3 5.5h9M3 9.5h7"/>' +
     '<circle cx="14" cy="14" r="5"/><path d="M17.8 17.8 21.5 21.5"/>',
+
+  // A bar, ticked, questioned or crossed: the three review marks. And
+  // bars side by side for showing them, and three swatches for their
+  // colours.
+  "review-good": '<rect x="3.5" y="5" width="17" height="14" rx="2"/>' +
+    '<path d="M8 12.5l3 3 5.5-6"/>',
+  "review-check": '<rect x="3.5" y="5" width="17" height="14" rx="2"/>' +
+    '<path d="M10 10a2 2 0 1 1 2.6 1.9c-.4.2-.6.5-.6 1v.6"/><path d="M12 15.6v.2"/>',
+  "review-fix": '<rect x="3.5" y="5" width="17" height="14" rx="2"/>' +
+    '<path d="M9 9l6 6M15 9l-6 6"/>',
+  "view-review": '<rect x="3.5" y="5" width="17" height="14" rx="2"/>' +
+    '<path d="M9.2 5v14M14.8 5v14"/>',
+  "review-colours": '<circle cx="8" cy="9" r="3"/><circle cx="16" cy="9" r="3"/>' +
+    '<circle cx="12" cy="16" r="3"/>',
 
   // A label, which is what a staff name is.
   "view-names": '<path d="M3 8.5a2 2 0 0 1 2-2h8l6 5.5-6 5.5H5a2 2 0 0 1-2-2z"/>' +

@@ -1123,6 +1123,13 @@ body.player #canvas text.g[data-ref] { cursor: default; }
   pointer-events: none;
 }
 
+/* A bar's review mark: its colour, faint, behind the notes and never in
+   the way of a click. The colour itself is the person's, set from script. */
+#canvas rect.review-band {
+  fill-opacity: .22;
+  pointer-events: none;
+}
+
 #canvas rect.marquee {
   fill: var(--accent);
   fill-opacity: .14;

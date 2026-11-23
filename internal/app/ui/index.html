@@ -673,6 +673,23 @@
            by looking at it. Kept for the person rather than in the score,
            and printed as well as shown: see the dialog. -->
       <button data-action="note-colours"><span>Note colours…</span><kbd id="notecolours-tick"></kbd></button>
+      <!-- Where checking the score has got to: a bar marked good, to check
+           again, or to fix, tinted behind the music. On the screen only —
+           nothing printed or exported carries it — and saved with the
+           score, so the next sitting starts where this one stopped. -->
+      <div class="submenu">
+        <button class="submenu-title"><span>Review</span><kbd>▸</kbd></button>
+        <div class="menu-items">
+          <button data-action="review-good"><span>Mark the bars good</span></button>
+          <button data-action="review-check"><span>Mark the bars to check</span></button>
+          <button data-action="review-fix"><span>Mark the bars to fix</span></button>
+          <button data-action="review-none"><span>No mark</span></button>
+          <button data-action="review-erase"><span>Erase all review marks</span></button>
+          <hr>
+          <button data-action="view-review"><span>Show the marks</span><kbd id="review-tick"></kbd></button>
+          <button data-action="review-colours"><span>Review colours…</span></button>
+        </div>
+      </div>
       <!-- The score as it sounds, rather than as each player reads it. A
            clarinet in B flat reads a C and a B flat comes out; three staves
            in three keys playing the same line look like three lines until
@@ -1707,6 +1724,19 @@
      The colours are listed C to B, the order they are spelled in and the
      order the palette is indexed in, so that what the window shows and
      what the engraver draws cannot get out of step. -->
+<dialog id="reviewcolours">
+  <h2>Review colours</h2>
+  <p class="small">The colour a bar is tinted with for each mark. On the
+     screen only: printing and exporting leave the bars as they are.</p>
+  <form method="dialog">
+    <div id="reviewcolours-list"></div>
+    <div class="ask-buttons">
+      <button value="cancel" type="submit" formnovalidate>Close</button>
+      <button value="reset" type="submit" class="linklike" formnovalidate>Back to the usual colours</button>
+    </div>
+  </form>
+</dialog>
+
 <dialog id="notecolours">
   <h2>Note colours</h2>
   <p class="small">A colour for each note, so a line can be read before its

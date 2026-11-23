@@ -46,8 +46,14 @@ func (a *App) handleHits(w http.ResponseWriter, r *http.Request) {
 	// is measured as though it were not wrapped at all.
 	score, opt, _ := a.viewOptions(r)
 	lay := a.layout(score, opt)
+	// The marks of a score being checked, which the editor tints the bars
+	// with. Not part of the drawing: see review.go.
+	a.mu.RLock()
+	reviews := reviewMarks(score)
+	a.mu.RUnlock()
 
 	writeJSON(w, map[string]any{
+		"reviews":       reviews,
 		"hits":          lay.Hits,
 		"dynamics":      lay.Dynamics,
 		"textMarks":     lay.TextMarks,

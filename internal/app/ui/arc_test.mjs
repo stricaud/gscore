@@ -259,6 +259,7 @@ test("a new selection takes away the last one's marks", () => {
     currentSVG: () => svg,
     rememberCursor() {}, placeTypeBar() {}, showDrumPad() {},
     refreshHarmonics() {}, drawInsertCursor() {}, selectionRect: () => el("rect"),
+    drawReviews() {},
     staffHeightOf: () => 4, headGlyphAt: () => null, barNumberOf: (m) => m + 1,
   };
   const body = [grab("markSelection"), grab("selectionArc")].join("\n") +

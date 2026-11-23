@@ -27,6 +27,7 @@ import (
 	"sync"
 
 	"github.com/stricaud/gscore/internal/engrave"
+	"github.com/stricaud/gscore/internal/model"
 )
 
 // settings is everything kept between sessions.
@@ -133,6 +134,18 @@ type settings struct {
 	// naming one colour changes one colour.
 	ColourNotes bool `json:"colourNotes,omitempty"`
 
+	// HideReview keeps the review colours off the bars, and ReviewColours
+	// is the colour of each mark, "good", "check" and "fix", as a CSS hex
+	// colour. See review.go.
+	//
+	// Shown by default, which is why this is the negative: a bar somebody
+	// has just marked and cannot see marked is a command that seems not to
+	// have worked. Hidden is for looking at the music alone. Both are the
+	// person's and not the score's, like the note colours: whoever marks
+	// bars picks colours they can tell apart, and has them in every score.
+	HideReview    bool              `json:"hideReview,omitempty"`
+	ReviewColours map[string]string `json:"reviewColours,omitempty"`
+
 	// Assistant is the model that writes music on request, and where it
 	// is. Only read when gscore is started with AI_ASSISTANT=1; see
 	// assistant.go.
@@ -215,6 +228,47 @@ func cleanNoteColours(in map[string]string) map[string]string {
 			continue
 		}
 		out[letter] = v
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// defaultReviewColours are the marks' colours until somebody chooses: green
+// for right, orange for to look at again, red for wrong.
+var defaultReviewColours = map[string]string{
+	model.ReviewGood:  "#2e9e44",
+	model.ReviewCheck: "#f08c00",
+	model.ReviewFix:   "#d6332e",
+}
+
+// ReviewColourMap is the colour of every review mark, the chosen ones over
+// the defaults: always all three, so the picker can show what is drawn.
+func ReviewColourMap() map[string]string {
+	out := map[string]string{}
+	for k, v := range defaultReviewColours {
+		out[k] = v
+	}
+	for k, v := range loadSettings().ReviewColours {
+		out[k] = v
+	}
+	return out
+}
+
+// cleanReviewColours keeps the entries that name a mark and a colour gscore
+// can draw. See cleanNoteColours for why they are checked.
+func cleanReviewColours(in map[string]string) map[string]string {
+	out := map[string]string{}
+	for k := range defaultReviewColours {
+		v := strings.TrimSpace(in[k])
+		if v == "" {
+			continue
+		}
+		if _, _, _, good := engrave.RGB(v); !good {
+			continue
+		}
+		out[k] = v
 	}
 	if len(out) == 0 {
 		return nil
@@ -581,6 +635,17 @@ func (a *App) handleSettings(w http.ResponseWriter, r *http.Request) {
 				s.NoteColours = cleanNoteColours(cols)
 			}
 		}
+		if v, ok := r.URL.Query()["reviewMarks"]; ok && len(v) > 0 {
+			s.HideReview = v[0] == "0"
+		}
+		if v, ok := r.URL.Query()["reviewColours"]; ok && len(v) > 0 {
+			// The whole set each time; going back to the defaults is
+			// sending none. Unreadable is left alone, as for the notes.
+			var cols map[string]string
+			if err := json.Unmarshal([]byte(v[0]), &cols); err == nil {
+				s.ReviewColours = cleanReviewColours(cols)
+			}
+		}
 		if v, ok := r.URL.Query()["keys"]; ok && len(v) > 0 {
 			// The whole set each time, so taking a binding back to its
 			// default is sending a set without it. Unreadable means a
@@ -637,6 +702,8 @@ func (a *App) handleSettings(w http.ResponseWriter, r *http.Request) {
 		"lang":             loadSettings().Lang,
 		"colourNotes":      loadSettings().ColourNotes,
 		"noteColours":      NoteColourMap(),
+		"reviewMarks":      !loadSettings().HideReview,
+		"reviewColours":    ReviewColourMap(),
 		"uiScale":          UIScale(),
 		"playLag":          PlayLag(),
 	})

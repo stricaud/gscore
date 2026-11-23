@@ -321,7 +321,15 @@ func (e *engraver) addSince(s *skyline, from mark) {
 // addSinceExcept is the same, leaving out the curves, texts and lines named
 // in the three skip sets.
 func (e *engraver) addSinceExcept(s *skyline, from mark, skip, skipText, skipLine map[int]bool) {
-	for _, g := range e.lay.Glyphs[from.glyphs:] {
+	for i, g := range e.lay.Glyphs[from.glyphs:] {
+		if skip != nil {
+			// The slurs' own outline: a mark past the end of a stem is
+			// not something a slur hung off that stem goes round. See
+			// liftPastStem.
+			if _, ok := e.pastStem[from.glyphs+i]; ok {
+				continue
+			}
+		}
 		up, down := glyphHeight(g)
 		w := glyphWidth(g)
 		s.add(g.X, g.X+w, g.Y-up, g.Y+down)

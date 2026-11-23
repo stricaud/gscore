@@ -1518,10 +1518,10 @@ async function action(name) {
     case "beam-break": await mark("beam", { beam: "break" }, "Beam broken"); break;
     case "beam-auto": await mark("beam", { beam: "auto" }, "Beaming left to the engraver"); break;
 
-    case "pitch-up": await nudge(1); break;
-    case "pitch-down": await nudge(-1); break;
-    case "octave-up": await nudge(7); break;
-    case "octave-down": await nudge(-7); break;
+    case "pitch-up": if (!(await moveArticulation(1))) await nudge(1); break;
+    case "pitch-down": if (!(await moveArticulation(-1))) await nudge(-1); break;
+    case "octave-up": if (!(await moveArticulation(7))) await nudge(7); break;
+    case "octave-down": if (!(await moveArticulation(-7))) await nudge(-7); break;
 
     case "acc-sharp": await setAccidental("sharp", "Sharp"); break;
     case "acc-flat": await setAccidental("flat", "Flat"); break;
@@ -6380,7 +6380,35 @@ function selectArticulation(a) {
   markSelection();
   status(`${t(articulationLabel(a.mark))} \u2014 ` +
          `${a.above ? "over" : "under"} the note. Press Backspace to take ` +
-         `it away, or the palette to move it.`);
+         `it away, or Up and Down to move it over or under the note.`);
+}
+
+// articulationPicked says a mark on a note is what was clicked.
+function articulationPicked() {
+  return !!(state.selection?.articulation && !state.multi.length);
+}
+
+// moveArticulation puts a mark that was clicked over the note or under it:
+// up puts it over, down under. The engraver's choice is a default — an
+// accent goes on the side away from the stem — and a part written with its
+// accents over the notes whatever the stems do is a choice the person
+// copying it makes. Says whether there was a mark to move.
+async function moveArticulation(steps) {
+  if (!articulationPicked() || !steps) return false;
+  const a = state.selection.articulation;
+  const above = steps > 0;
+  if (a.above === above) {
+    status(`${t(articulationLabel(a.mark))} is already ${above ? "over" : "under"} the note`);
+    return true;
+  }
+  const d = await mark("articulation",
+    { articulation: a.mark, placement: above ? "above" : "below", ...pickedHead() },
+    `${t(articulationLabel(a.mark))} moved ${above ? "over" : "under"} the note`);
+  if (d) {
+    a.above = above;
+    markSelection();
+  }
+  return true;
 }
 
 // articulationLabel is what a mark is called in front of somebody, from the
@@ -20675,10 +20703,16 @@ const KEY_BINDINGS = [
   // selection as well.
   { id: "cursor-up", menu: "pitch-up", keys: "ArrowUp", group: "Selecting and moving",
     label: "Up a step — or move the selected notes up",
-    run: () => { if (heldForMoving()) void nudge(1); else moveCursorPitch(1); } },
+    run: () => {
+      if (articulationPicked()) void moveArticulation(1);
+      else if (heldForMoving()) void nudge(1); else moveCursorPitch(1);
+    } },
   { id: "cursor-down", menu: "pitch-down", keys: "ArrowDown", group: "Selecting and moving",
     label: "Down a step — or move the selected notes down",
-    run: () => { if (heldForMoving()) void nudge(-1); else moveCursorPitch(-1); } },
+    run: () => {
+      if (articulationPicked()) void moveArticulation(-1);
+      else if (heldForMoving()) void nudge(-1); else moveCursorPitch(-1);
+    } },
   { id: "cursor-up-octave", menu: "octave-up", keys: "Shift+ArrowUp", group: "Selecting and moving",
     label: "Up an octave",
     run: () => { if (heldForMoving()) void nudge(7); else moveCursorPitch(7); } },
@@ -20686,9 +20720,11 @@ const KEY_BINDINGS = [
     label: "Down an octave",
     run: () => { if (heldForMoving()) void nudge(-7); else moveCursorPitch(-7); } },
   { id: "nudge-up", keys: "Alt+ArrowUp", group: "Selecting and moving",
-    label: "Move the note or rest up a step", run: () => void nudge(1) },
+    label: "Move the note or rest up a step",
+    run: () => { if (articulationPicked()) void moveArticulation(1); else void nudge(1); } },
   { id: "nudge-down", keys: "Alt+ArrowDown", group: "Selecting and moving",
-    label: "Move the note or rest down a step", run: () => void nudge(-1) },
+    label: "Move the note or rest down a step",
+    run: () => { if (articulationPicked()) void moveArticulation(-1); else void nudge(-1); } },
   // Moving the music to another key, which is not the same thing as moving
   // notes about the staff: a semitone here is a minor second, so the notes
   // land spelled the way the new key spells them — C to D flat going up,

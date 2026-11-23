@@ -478,7 +478,7 @@ func (e *engraver) drawMeasure(part *model.Part, b measureBox, x, end float64, s
 		e.drawGrace(part, p, i)
 		e.drawLoneSymbol(p)
 	}
-	e.drawStemsAndBeams(items, time)
+	e.drawStemsAndBeams(part, items, time)
 	e.barItems = items
 	for i, p := range items {
 		if m := p.marks(); m != nil {
@@ -2101,6 +2101,20 @@ func (e *engraver) setStemDirections(items []*placed, t model.TimeSignature) {
 			p.stemDir = dir
 		}
 	}
+	// A group finishing a beam begun in the bar before points the way that
+	// beam already does: one beam, one direction.
+	for _, p := range items {
+		if open, ok := e.continuing(p, items); ok {
+			for _, g := range beamGroups(items, t) {
+				if g[0] == p {
+					for _, q := range g {
+						q.stemDir = open.g[0].stemDir
+					}
+				}
+			}
+			p.stemDir = open.g[0].stemDir
+		}
+	}
 	// A rest on a shared staff keeps out of the other voice's way, on the
 	// same side as its own voice's stems. Two voices write a rest in the
 	// same place as readily as they write a note there, and the middle of
@@ -2184,19 +2198,23 @@ func beamGroupUp(g []*placed) bool {
 	return below >= above
 }
 
-func (e *engraver) drawStemsAndBeams(items []*placed, t model.TimeSignature) {
+func (e *engraver) drawStemsAndBeams(part *model.Part, items []*placed, t model.TimeSignature) {
 	groups := beamGroups(items, t)
 	// A two-note tremolo is a group of its own. Its beams are drawn
 	// between the two stems, which means the two stems have to arrive at
 	// one line — and arriving at one line is the whole of what a beam
 	// group does to a stem. So it is one, and the stems come out right for
 	// the same reason a beamed pair's do.
+	groups, held := e.carryBeams(part, items, groups)
 	groups = append(groups, tremoloPairs(items)...)
 	inGroup := map[*placed]bool{}
 	for _, g := range groups {
 		for _, p := range g {
 			inGroup[p] = true
 		}
+	}
+	for _, p := range held {
+		inGroup[p] = true
 	}
 
 	for _, p := range items {
@@ -2210,28 +2228,247 @@ func (e *engraver) drawStemsAndBeams(items []*placed, t model.TimeSignature) {
 		if p.rest != nil || p.symbol != nil || inGroup[p] {
 			continue
 		}
-		// A hidden note has no stem on the page, and a grey one in the
-		// editor, like its head. See drawHeads.
-		if p.hidden() && !e.opt.ShowHidden {
-			continue
-		}
-		glyphs, lines := len(e.lay.Glyphs), len(e.lay.Lines)
-		// On the staff it is drawn on, which for a note written across
-		// is the one next door: a stem left behind on the home staff is
-		// a stem joined to nothing.
-		e.onCrossStaff(p, func() {
-			e.drawingAt(p.scaleOf(), func() { e.drawSingleStem(p) })
-		})
-		if p.hidden() {
-			e.greyFrom(glyphs, lines)
-		}
+		e.drawLoneStem(p)
 	}
 	for _, g := range groups {
-		// A group is beamed together, so it is drawn at one size: the
-		// first note's. A cue is whole bars of somebody else's line, so a
-		// group with one small note in it is a group of small notes.
-		e.drawingAt(g[0].scaleOf(), func() { e.drawBeamGroup(g) })
+		e.drawGroup(g)
 	}
+}
+
+// drawLoneStem is the stem of a note on no beam, with its flag.
+func (e *engraver) drawLoneStem(p *placed) {
+	// A hidden note has no stem on the page, and a grey one in the
+	// editor, like its head. See drawHeads.
+	if p.hidden() && !e.opt.ShowHidden {
+		return
+	}
+	glyphs, lines := len(e.lay.Glyphs), len(e.lay.Lines)
+	// On the staff it is drawn on, which for a note written across
+	// is the one next door: a stem left behind on the home staff is
+	// a stem joined to nothing.
+	e.onCrossStaff(p, func() {
+		e.drawingAt(p.scaleOf(), func() { e.drawSingleStem(p) })
+	})
+	if p.hidden() {
+		e.greyFrom(glyphs, lines)
+	}
+}
+
+// drawGroup draws a beamed group, or the stem of a note left on its own.
+func (e *engraver) drawGroup(g []*placed) {
+	if len(g) == 1 {
+		e.drawLoneStem(g[0])
+		return
+	}
+	// A group is beamed together, so it is drawn at one size: the
+	// first note's. A cue is whole bars of somebody else's line, so a
+	// group with one small note in it is a group of small notes.
+	e.drawingAt(g[0].scaleOf(), func() { e.drawBeamGroup(g) })
+}
+
+/*
+ * A beam across the barline.
+ *
+ * Not something the engraver does on its own: a beam stops at the barline,
+ * because the bar is how the beat is counted. But a run phrased over the
+ * bar is written with one beam often enough — the last eighths of a bar
+ * swept into the downbeat of the next — and that is a decision whoever is
+ * writing it has made. It is said the way any beam is said by hand: the
+ * note that opens it is marked start, the notes inside continue, the one
+ * that closes it stop, and those can sit in two bars.
+ *
+ * The bars are drawn one at a time, so the part of the group in the first
+ * bar is held back until the second is drawn and the two are drawn as one.
+ * A group that the next bar does not take up — the line ends, or the next
+ * bar does not begin with a continuation — is drawn as it stands.
+ */
+
+// beamLine names a line of music for a beam held over the barline: the
+// staff and the voice.
+type beamLine struct{ staff, voice int }
+
+// openBeam is the part of a group drawn in the bar before.
+type openBeam struct {
+	g       []*placed
+	measure int
+}
+
+// beamOf is how a note is beamed by hand.
+func beamOf(p *placed) model.Beam {
+	if m := p.marks(); m != nil {
+		return m.Beam
+	}
+	return model.BeamAuto
+}
+
+// voiceEnds is the first and the last element of each voice in a bar. A
+// symbol standing on its own is not in the line of music.
+func voiceEnds(items []*placed) (first, last map[int]*placed) {
+	first, last = map[int]*placed{}, map[int]*placed{}
+	for _, p := range items {
+		if p.symbol != nil {
+			continue
+		}
+		if first[p.voice] == nil {
+			first[p.voice] = p
+		}
+		last[p.voice] = p
+	}
+	return first, last
+}
+
+// opensOnBeam reports whether a voice of a bar begins by carrying on a beam
+// from the bar before.
+func opensOnBeam(part *model.Part, measure, voice int) bool {
+	if part == nil || measure >= len(part.Measures) || part.Measures[measure] == nil {
+		return false
+	}
+	m := part.Measures[measure]
+	if voice >= len(m.Voices) || m.Voices[voice] == nil {
+		return false
+	}
+	for _, el := range m.Voices[voice].Elements {
+		var mk *model.Marks
+		switch x := el.(type) {
+		case *model.SymbolElement:
+			continue
+		case *model.Note:
+			mk = &x.Marks
+		case *model.Chord:
+			mk = &x.Marks
+		}
+		return mk != nil && (mk.Beam == model.BeamContinue || mk.Beam == model.BeamStop)
+	}
+	return false
+}
+
+// voicesOf is the voices of a bar in order.
+func voicesOf(ends map[int]*placed) []int {
+	var out []int
+	for v := range ends {
+		out = append(out, v)
+	}
+	sort.Ints(out)
+	return out
+}
+
+// continuing reports whether p opens its bar by finishing a beam held over
+// from the bar before, and which.
+func (e *engraver) continuing(p *placed, items []*placed) (openBeam, bool) {
+	open, ok := e.openBeams[beamLine{e.partIndex, p.voice}]
+	if !ok || open.measure != e.barIndex-1 || !p.beamable() {
+		return openBeam{}, false
+	}
+	if b := beamOf(p); b != model.BeamContinue && b != model.BeamStop {
+		return openBeam{}, false
+	}
+	first, _ := voiceEnds(items)
+	if first[p.voice] != p {
+		return openBeam{}, false
+	}
+	return open, true
+}
+
+// carryBeams joins the group held over from the bar before to the one that
+// finishes it here, and holds back a group this bar leaves open. It hands
+// back what is to be drawn now and what is held.
+func (e *engraver) carryBeams(part *model.Part, items []*placed, groups [][]*placed) ([][]*placed, []*placed) {
+	first, last := voiceEnds(items)
+	groupOf := func(p *placed) int {
+		for i, g := range groups {
+			for _, q := range g {
+				if q == p {
+					return i
+				}
+			}
+		}
+		return -1
+	}
+	// What was held for a line this bar does not take up is drawn as it
+	// stands.
+	for _, line := range e.openLines() {
+		open := e.openBeams[line]
+		if line.staff != e.partIndex {
+			continue
+		}
+		if f := first[line.voice]; f != nil {
+			if _, ok := e.continuing(f, items); ok {
+				continue
+			}
+		}
+		e.drawGroup(open.g)
+		delete(e.openBeams, line)
+	}
+	// Joined to what was held.
+	for _, v := range voicesOf(first) {
+		f := first[v]
+		line := beamLine{e.partIndex, v}
+		open, ok := e.continuing(f, items)
+		if !ok {
+			continue
+		}
+		delete(e.openBeams, line)
+		if i := groupOf(f); i >= 0 {
+			groups[i] = append(append([]*placed{}, open.g...), groups[i]...)
+		} else {
+			groups = append(groups, append(append([]*placed{}, open.g...), f))
+		}
+	}
+	// And held for the next bar.
+	var held []*placed
+	for _, v := range voicesOf(last) {
+		l := last[v]
+		if !l.beamable() {
+			continue
+		}
+		if b := beamOf(l); b != model.BeamStart && b != model.BeamContinue {
+			continue
+		}
+		// Only where the next bar takes it up. A note marked to open a
+		// group that has nothing after it in its own bar is a note on
+		// its own, and is drawn now like one.
+		if !opensOnBeam(part, e.barIndex+1, v) {
+			continue
+		}
+		var g []*placed
+		if i := groupOf(l); i >= 0 {
+			g = groups[i]
+			groups = append(groups[:i], groups[i+1:]...)
+		} else {
+			g = []*placed{l}
+		}
+		if e.openBeams == nil {
+			e.openBeams = map[beamLine]openBeam{}
+		}
+		e.openBeams[beamLine{e.partIndex, v}] = openBeam{g: g, measure: e.barIndex}
+		held = append(held, g...)
+	}
+	return groups, held
+}
+
+// flushBeams draws whatever is still held at the end of a line: a beam is
+// not carried from one system to the next.
+func (e *engraver) flushBeams() {
+	for _, line := range e.openLines() {
+		e.drawGroup(e.openBeams[line].g)
+		delete(e.openBeams, line)
+	}
+}
+
+// openLines is the lines with a beam held open, in order, so that what is
+// drawn comes out the same every time.
+func (e *engraver) openLines() []beamLine {
+	var out []beamLine
+	for line := range e.openBeams {
+		out = append(out, line)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].staff != out[j].staff {
+			return out[i].staff < out[j].staff
+		}
+		return out[i].voice < out[j].voice
+	})
+	return out
 }
 
 // stemEnd is where a stem finishes, given the notehead at the far end of it
@@ -3461,6 +3698,65 @@ func (e *engraver) drawLyrics(m *model.Marks, p *placed, after []*placed) {
 	}
 }
 
+// lowerLyrics moves the words of the staff just drawn down, all of them
+// together, until they clear the music over them.
+//
+// The verses are written at a set distance under the staff, which is right
+// for music that keeps to the staff and wrong for music that does not: a
+// second voice stemming down from under the staff, and the slur hung off the
+// end of that stem, came down through the words. A line of words is read
+// across as one line, so it is moved as one, and only as far as the deepest
+// thing over it needs.
+func (e *engraver) lowerLyrics() {
+	const air = 0.4
+	from := e.staffMark
+	if len(e.wordText) == 0 || from.texts >= len(e.lay.Texts) {
+		return
+	}
+	// The music, slurs and all, without the words themselves.
+	ink := newInkline(e.staffX0, e.staffX1)
+	e.addSinceExcept(ink, from, nil, e.wordText, e.wordLine)
+	staffBottom := e.y + e.staffH()
+	shift := 0.0
+	for i := from.texts; i < len(e.lay.Texts); i++ {
+		if !e.wordText[i] {
+			continue
+		}
+		t := e.lay.Texts[i]
+		if t.Y < staffBottom {
+			continue // words over the staff are not this line
+		}
+		w := textWidth(t.S, t.Size)
+		x := t.X
+		switch t.Anchor {
+		case "middle":
+			x -= w / 2
+		case "end":
+			x -= w
+		}
+		top := t.Y - t.Size*0.8
+		if need := ink.reach(x, x+w, true) + air - top; need > shift {
+			shift = need
+		}
+	}
+	if shift <= 0 {
+		return
+	}
+	for i := from.texts; i < len(e.lay.Texts); i++ {
+		if e.wordText[i] && e.lay.Texts[i].Y >= staffBottom {
+			e.lay.Texts[i].Y += shift
+		}
+	}
+	for i := from.lines; i < len(e.lay.Lines); i++ {
+		if e.wordLine[i] && e.lay.Lines[i].Y1 >= staffBottom {
+			e.lay.Lines[i].Y1 += shift
+			e.lay.Lines[i].Y2 += shift
+		}
+	}
+	// The outlines kept for this staff hold the words where they were.
+	e.staffSky, e.staffInk, e.staffMusic = nil, nil, nil
+}
+
 // lyricY is the baseline a verse is written on.
 func (e *engraver) lyricY(verse int) float64 {
 	return e.y + e.staffH() + lyricDrop + float64(verse-1)*lyricLine
@@ -3763,6 +4059,11 @@ func (e *engraver) drawArticulations(m *model.Marks, x float64, lo, hi int, stem
 		otherY = math.Min(otherY-gap, e.y-1.2)
 	}
 	otherY = e.clearOfNoteheads(x, otherY, !above)
+	// That side is the stem's, and a mark there goes past the end of it —
+	// past the beam, where there is one. Set by the notehead alone, an
+	// accent asked over a stem-up note was written in among the stem and
+	// the beam above it, where it reads as part of neither.
+	otherY = e.clearOfStems(x, otherY, e.y+stepY(float64(hi)), e.y+stepY(float64(lo)), !above)
 
 	emit := func(a model.Articulation, name string, over bool) {
 		if name == "" {
@@ -3774,6 +4075,12 @@ func (e *engraver) drawArticulations(m *model.Marks, x float64, lo, hi int, stem
 		at := y
 		if over != above {
 			at = otherY
+		}
+		if over != above {
+			if e.pastStem == nil {
+				e.pastStem = map[int]int{}
+			}
+			e.pastStem[len(e.lay.Glyphs)] = len(e.lay.Articulations)
 		}
 		e.lay.Glyphs = append(e.lay.Glyphs, Glyph{
 			Name: name, X: origin, Y: at, Ref: ref,
@@ -3930,6 +4237,66 @@ func (e *engraver) clearOfNoteheads(x, y float64, above bool) float64 {
 		}
 	}
 	return y
+}
+
+// clearOfStems moves y out past the note's own stem and the beam on the end
+// of it: up past them when above, down past them otherwise. The note is the
+// one at x whose heads run from headTop to headBot. Only its own: another
+// voice's stem at the same x is that voice's business, and the marks over
+// two voices are already kept apart by clearOfNoteheads.
+func (e *engraver) clearOfStems(x, y, headTop, headBot float64, above bool) float64 {
+	const (
+		reach = 0.9 // a notehead's half width and a little
+		touch = 0.6 // how near a stem's root is to the head it grows from
+		air   = 0.8 // between the end of the stem or beam and the mark
+	)
+	if e.staffStrokes > len(e.lay.Lines) || e.staffQuads > len(e.lay.Quads) {
+		return y
+	}
+	tip, found := 0.0, false
+	for _, l := range e.lay.Lines[e.staffStrokes:] {
+		if math.Abs(l.X1-l.X2) > 0.01 || math.Abs(l.X1-x) > reach {
+			continue
+		}
+		lo, hi := math.Min(l.Y1, l.Y2), math.Max(l.Y1, l.Y2)
+		// A stem up has its root at the lowest head and its tip above;
+		// a stem down the other way round.
+		if above && hi > headBot-touch && hi < headBot+touch && lo < headTop {
+			if !found || lo < tip {
+				tip, found = lo, true
+			}
+		}
+		if !above && lo > headTop-touch && lo < headTop+touch && hi > headBot {
+			if !found || hi > tip {
+				tip, found = hi, true
+			}
+		}
+	}
+	if !found {
+		return y
+	}
+	out := tip
+	// The beam on the end of it, where there is one.
+	for _, q := range e.lay.Quads[e.staffQuads:] {
+		x0, x1 := q.X[0], q.X[0]
+		lo, hi := q.Y[0], q.Y[0]
+		for i := range q.X {
+			x0, x1 = math.Min(x0, q.X[i]), math.Max(x1, q.X[i])
+			lo, hi = math.Min(lo, q.Y[i]), math.Max(hi, q.Y[i])
+		}
+		if x < x0-reach || x > x1+reach || tip < lo-touch || tip > hi+touch {
+			continue
+		}
+		if above {
+			out = math.Min(out, lo)
+		} else {
+			out = math.Max(out, hi)
+		}
+	}
+	if above {
+		return math.Min(y, out-air)
+	}
+	return math.Max(y, out+air)
 }
 
 // ornament writes a mordent, a turn or the like above the staff.

@@ -1065,6 +1065,12 @@ func (e *engraver) slurAt(part *model.Part, m *model.Marks, p *placed, measure i
 		sl.toRef = p.index
 		toY := e.slurEndClear(x, toBase, sl.above)
 		e.drawTieOrSlur(sl, x, toY, slurLift, true, true)
+		if c := e.lay.Curves[len(e.lay.Curves)-1]; c.X2 == x {
+			if !carried {
+				e.liftPastStem(c.X1, c.Y1, sl.above)
+			}
+			e.liftPastStem(c.X2, c.Y2, sl.above)
+		}
 		open.slurs = open.slurs[:len(open.slurs)-1]
 	}
 	for n := m.SlurStart; n > 0; n-- {
@@ -1463,11 +1469,16 @@ func (e *engraver) slurEndClear(x, y float64, above bool) float64 {
 	if from > len(e.lay.Glyphs) {
 		from = len(e.lay.Glyphs)
 	}
-	for _, g := range e.lay.Glyphs[from:] {
+	for i, g := range e.lay.Glyphs[from:] {
 		if !strings.HasPrefix(g.Name, "artic") {
 			continue
 		}
 		if math.Abs(g.X-x) > near {
+			continue
+		}
+		// Past the stem the mark goes outside the slur, which is lifted
+		// over it afterwards. See liftPastStem.
+		if _, ok := e.pastStem[from+i]; ok {
 			continue
 		}
 		up, down := glyphHeight(g)
@@ -1480,6 +1491,65 @@ func (e *engraver) slurEndClear(x, y float64, above bool) float64 {
 		}
 	}
 	return y
+}
+
+// liftPastStem moves the marks written past a stem's end out over the end of
+// a slur hung off that stem, at x and y.
+//
+// On the side away from the stem the marks go between the note and the
+// curve, which is slurEndClear's business. On the stem's own side the slur
+// is hung off the end of the stem, and a mark already standing past it there
+// had the curve's end pushed out over it — the slur started up in the air
+// beside an accent. Printed music writes it the other way round: the slur
+// leaves the stem end, and the accent stands over the slur.
+func (e *engraver) liftPastStem(x, y float64, above bool) {
+	const (
+		near = 1.0 // from the middle of the mark to the end of the slur
+		air  = 0.5
+	)
+	var mine []int
+	shift := 0.0
+	from := e.staffGlyphs
+	for gi := range e.pastStem {
+		if gi < from || gi >= len(e.lay.Glyphs) {
+			continue
+		}
+		g := e.lay.Glyphs[gi]
+		mid := g.X + smufl.Advance(g.Name)/2
+		if math.Abs(mid-x) > near {
+			continue
+		}
+		up, down := glyphHeight(g)
+		if above {
+			if bottom := g.Y + down; bottom > y-air {
+				shift = math.Min(shift, y-air-bottom)
+			}
+		} else if top := g.Y - up; top < y+air {
+			shift = math.Max(shift, y+air-top)
+		}
+		mine = append(mine, gi)
+	}
+	if shift == 0 {
+		return
+	}
+	// All of them by the same amount, so that two marks stacked on the
+	// note stay stacked rather than landing on each other.
+	for _, gi := range mine {
+		e.lay.Glyphs[gi].Y += shift
+		if ai := e.pastStem[gi]; ai < len(e.lay.Articulations) {
+			e.lay.Articulations[ai].Y += shift
+		}
+		// The outlines already holding it hold it where it was. They only
+		// ever grow, so where it is now is added and what comes after is
+		// placed clear of both.
+		if e.staffSky != nil && gi < e.staffSkyAt.glyphs {
+			g := e.lay.Glyphs[gi]
+			up, down := glyphHeight(g)
+			w := glyphWidth(g)
+			e.staffSky.add(g.X, g.X+w, g.Y-up, g.Y+down)
+			e.staffInk.add(g.X, g.X+w, g.Y-up, g.Y+down)
+		}
+	}
 }
 
 // slurEndColumn moves a slur's end out past whatever else is written in the

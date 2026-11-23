@@ -1189,6 +1189,9 @@ type engraver struct {
 	// a mark settled on one element can ask what sounds beside it in the
 	// other voices. See slurAt, where a tie looks for its note.
 	barItems []*placed
+	// openBeams is a beam written by hand that runs on past the barline,
+	// waiting for the bar after to finish it. See carryBeams.
+	openBeams map[beamLine]openBeam
 	// key is the signature in force as a bar is drawn, which a change
 	// written inside that bar moves on. See drawMeasure.
 	key model.KeySignature
@@ -1248,6 +1251,13 @@ type engraver struct {
 	// that a mark looking for the noteheads under it need not walk the
 	// whole drawing to find them.
 	staffGlyphs int
+	// staffStrokes and staffQuads are the same for the strokes and the
+	// beams. See clearOfStems.
+	staffStrokes, staffQuads int
+	// pastStem is the articulations written past the end of their note's
+	// stem, by glyph, with where each is in lay.Articulations. A slur hung
+	// off that stem goes inside them. See liftPastStem.
+	pastStem map[int]int
 	// lines and lineGap describe the staff being drawn: five lines a space
 	// apart for ordinary music, one per string and wider for tablature.
 	lines   int
@@ -4343,6 +4353,8 @@ func (e *engraver) drawSystem(parts []*model.Part, boxes [][]measureBox,
 		}
 		// Where this staff's own ink begins. See clearOfNoteheads.
 		e.staffGlyphs = len(e.lay.Glyphs)
+		e.staffStrokes, e.staffQuads = len(e.lay.Lines), len(e.lay.Quads)
+		e.pastStem = nil
 		e.clef = e.clefAt(p, start)
 		// How this staff is ruled: five lines of pitches, or one line per
 		// string with the frets written on them.
@@ -4489,6 +4501,8 @@ func (e *engraver) drawSystem(parts []*model.Part, boxes [][]measureBox,
 			}
 			e.drawMeasure(p, b, columns[mi-start], columns[mi-start+1], s)
 		}
+		// A beam left open at the end of the line ends there.
+		e.flushBeams()
 
 		// The staff lines are drawn last, reaching exactly as far as the
 		// music. Nothing can hang off the end of them. They start after the
@@ -4500,6 +4514,9 @@ func (e *engraver) drawSystem(parts []*model.Part, boxes [][]measureBox,
 		// hairpin, octave line and tie stopping four spaces short of the end
 		// of the line it was supposed to run to.
 		e.breakSpans(e.staffNumber(pi), right)
+		// Now that everything under the staff is drawn, the words go under
+		// it. See lowerLyrics.
+		e.lowerLyrics()
 
 		// The staff is finished, so the marks that go outside it now know
 		// what they have to clear. They are placed outwards from the staff

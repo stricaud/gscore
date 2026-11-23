@@ -446,3 +446,91 @@ func TestNotationCanBeAddedOverTheTabFromTheEditor(t *testing.T) {
 		t.Errorf("refused with %q", msg)
 	}
 }
+
+// A grace note picked up on its own can be slurred into the note it leans
+// on, through the ordinary slur command, and the slur taken away again.
+// The slur command used to refuse a grace note outright, so the commonest
+// slur in ornamented music — crushed note into chord — could not be written.
+func TestAGraceNoteSlursIntoTheNoteItLeansOn(t *testing.T) {
+	h := newHarness(t)
+	h.note(0, 0, 2, "quarter")
+	h.note(0, 0, 4, "quarter")
+	h.post("/api/grace?part=0&measure=0&at=1")
+	carrier := marksOfElement(h.elements(0, 0)[0])
+	small := carrier.Grace.Notes[0]
+
+	h.post("/api/slur?slur=on&sel=0:0:0:0")
+	if small.Marks.SlurStart != 1 || carrier.SlurStop != 1 {
+		t.Fatalf("slur opens %d on the grace note and closes %d on its note, "+
+			"want 1 and 1", small.Marks.SlurStart, carrier.SlurStop)
+	}
+	// Asking twice draws it once.
+	h.post("/api/grace?slur=1&sel=0:0:0")
+	if small.Marks.SlurStart != 1 || carrier.SlurStop != 1 {
+		t.Error("slurring a slurred grace note doubled the slur")
+	}
+
+	h.post("/api/slur?slur=none&sel=0:0:0:0")
+	if small.Marks.SlurStart != 0 || carrier.SlurStop != 0 {
+		t.Error("the slur from the grace note is still there")
+	}
+}
+
+// The slash goes on and off a group that already exists, with either the
+// small note or the note it leans on picked up. An imported crush that came
+// in without its slash could not be given one.
+func TestSlashingGraceNotesThatAreAlreadyThere(t *testing.T) {
+	h := newHarness(t)
+	h.note(0, 0, 2, "quarter")
+	h.note(0, 0, 4, "quarter")
+	h.post("/api/grace?part=0&measure=0&at=1&slashed=0&make=1")
+	g := graceOf(h.elements(0, 0)[0])
+	if g.Slashed {
+		t.Fatal("an appoggiatura came out slashed")
+	}
+	h.post("/api/grace?slashed=1&sel=0:0:0:0")
+	if !g.Slashed {
+		t.Error("picking the grace note up and asking for the slash did not slash it")
+	}
+	h.post("/api/grace?slashed=0&sel=0:0:0")
+	if g.Slashed {
+		t.Error("the slash is still there")
+	}
+}
+
+// And it is drawn: a curve from the small note to its note, which is what
+// the click and the Delete key then find.
+func TestASlurredGraceNoteIsDrawn(t *testing.T) {
+	h := newHarness(t)
+	h.note(0, 0, 2, "quarter")
+	h.note(0, 0, 4, "quarter")
+	h.note(0, 0, 5, "quarter")
+	h.post("/api/grace?part=0&measure=0&at=1")
+	h.post("/api/grace?slur=1&sel=0:0:0:0")
+	slurs := 0
+	for _, a := range h.layoutField("arcs") {
+		if a["kind"] == "slur" {
+			slurs++
+		}
+	}
+	if slurs != 1 {
+		t.Errorf("%d slurs drawn, want the one from the grace note", slurs)
+	}
+}
+
+// A grace note read in opening a slur that nothing closes — the stray that
+// runs across the system — is repaired by asking for the slur: it closes on
+// the note the grace leans on.
+func TestSlurringAGraceNoteClosesAStraySlur(t *testing.T) {
+	h := newHarness(t)
+	h.note(0, 0, 2, "quarter")
+	h.note(0, 0, 4, "quarter")
+	h.post("/api/grace?part=0&measure=0&at=1")
+	carrier := marksOfElement(h.elements(0, 0)[0])
+	carrier.Grace.Notes[0].Marks.SlurStart = 1 // as a file left it
+
+	h.post("/api/slur?slur=on&sel=0:0:0:0")
+	if carrier.SlurStop != 1 {
+		t.Error("the stray slur is still not closed on the note the grace leans on")
+	}
+}

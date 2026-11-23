@@ -15,6 +15,7 @@ import (
 	"net/url"
 	"sort"
 	"strconv"
+	"strings"
 
 	"github.com/stricaud/gscore/internal/engrave"
 
@@ -52,6 +53,8 @@ import (
 //	POST /api/grace?sel=0:3:1,0:3:2            make these two into grace notes
 //	POST /api/grace?sel=0:3:3&grace=none       take the group off that note
 //	POST /api/grace?sel=0:3:3&slashed=0        an appoggiatura, not a crush
+//	POST /api/grace?sel=0:3:3&slur=1           slur the group to its note
+//	POST /api/grace?sel=0:3:3&slur=none        and take that slur away
 func (a *App) handleGrace(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "POST required", http.StatusMethodNotAllowed)
@@ -74,8 +77,15 @@ func (a *App) handleGrace(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		writeJSON(w, map[string]int{"changed": n})
+	case q.Has("slur"):
+		n, err := a.slurGrace(q, q.Get("slur") != "none")
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		writeJSON(w, map[string]int{"changed": n})
 	case q.Has("slashed") && !q.Has("make"):
-		n, err := a.slashGrace(q, q.Get("slashed") != "0")
+		n, err := a.slashGrace(withoutGrace(q), q.Get("slashed") != "0")
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
@@ -247,6 +257,93 @@ func (a *App) slashGrace(q url.Values, slashed bool) (int, error) {
 		return 0, editError("there are no grace notes on that note")
 	}
 	return n, nil
+}
+
+// slurGrace draws the slur from a group of grace notes to the note they
+// lean on, or takes it away.
+//
+// A slur is written between two notes of the voice, and a grace note is not
+// one: it hangs off the note after it. So the general slur command, which
+// refuses a grace note rather than put the mark on the wrong one, could not
+// say the commonest slur there is — the curve from a crushed note into the
+// chord it is crushed into. It opens on the first small note and closes on
+// the carrier, which is where the engraver looks for it.
+//
+// The carrier names the group whether it was the carrier or one of its small
+// notes that was picked up.
+func (a *App) slurGrace(q url.Values, on bool) (int, error) {
+	marks, err := a.marksOf(withoutGrace(q))
+	if err != nil {
+		return 0, err
+	}
+	a.lock()
+	defer a.mu.Unlock()
+	n := 0
+	for _, mk := range marks {
+		if mk.Grace == nil || len(mk.Grace.Notes) == 0 {
+			continue
+		}
+		if on {
+			// The close as well as the open, even when the open is there
+			// already: a slur read in from a file with its far end lost is
+			// a grace note opening a slur that nothing closes, and it runs
+			// on across the system. Closing it on its note is the repair.
+			first := mk.Grace.Notes[0]
+			if first.Marks.SlurStart == 0 {
+				first.Marks.SlurStart = 1
+			}
+			if mk.SlurStop == 0 {
+				mk.SlurStop = 1
+			}
+			n++
+			continue
+		}
+		had := false
+		for _, g := range mk.Grace.Notes {
+			if g.Marks.SlurStart > 0 {
+				g.Marks.SlurStart = 0
+				had = true
+			}
+		}
+		if had {
+			if mk.SlurStop > 0 {
+				mk.SlurStop--
+			}
+			n++
+		}
+	}
+	if n == 0 {
+		if on {
+			return 0, editError("there are no grace notes on that note")
+		}
+		return 0, editError("there is no slur from a grace note there")
+	}
+	return n, nil
+}
+
+// withoutGrace names the notes a selection's grace notes lean on, in place of
+// the grace notes themselves.
+//
+// For the commands that act on a whole group — its slash, its slur — a small
+// note picked up is a way of pointing at the group, and the group is kept on
+// the note it leans on.
+func withoutGrace(q url.Values) url.Values {
+	sel := q.Get("sel")
+	if sel == "" {
+		return q
+	}
+	items := strings.Split(sel, ",")
+	for i, it := range items {
+		if f := strings.Split(it, ":"); len(f) > 3 {
+			items[i] = strings.Join(f[:3], ":")
+		}
+	}
+	out := url.Values{}
+	for k, v := range q {
+		out[k] = v
+	}
+	out.Set("sel", strings.Join(items, ","))
+	return out
 }
 
 // addGrace hangs one more small note on the note that is picked up.

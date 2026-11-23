@@ -278,3 +278,32 @@ func TestAnOrdinaryBeamIsNotATremolo(t *testing.T) {
 		t.Errorf("%d tremolo regions over a plain beam", len(lay.Tremolos))
 	}
 }
+
+// The strokes of a pair of dotted whole notes start after the dot.
+//
+// Reported from bar 31 of "I put a spell on you": a 12/8 bar shaken between
+// two dotted whole notes. Measured from the notehead alone, the strokes were
+// drawn over the dot of the first note.
+func TestTheStrokesStandClearOfTheDots(t *testing.T) {
+	opt := DefaultOptions()
+	opt.Mode = Strip
+	lay := Engrave(tremoloPair(3, model.Duration{Num: 3, Den: 2}, model.StepC, model.StepG), opt)
+	dotEnd := math.Inf(-1)
+	for _, g := range lay.Glyphs {
+		if g.Name == "augmentationDot" && dotEnd == math.Inf(-1) {
+			dotEnd = g.X + glyphWidth(g)
+		}
+	}
+	if math.IsInf(dotEnd, -1) {
+		t.Fatal("no dot was drawn")
+	}
+	if len(lay.Quads) == 0 {
+		t.Fatal("no strokes were drawn")
+	}
+	for _, q := range lay.Quads {
+		if left := math.Min(q.X[0], q.X[1]); left < dotEnd+0.3 {
+			t.Errorf("a stroke starts at %.2f, %.2f after the dot ends; want air between them",
+				left, left-dotEnd)
+		}
+	}
+}

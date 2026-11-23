@@ -479,6 +479,7 @@ func (e *engraver) drawMeasure(part *model.Part, b measureBox, x, end float64, s
 		e.drawLoneSymbol(p)
 	}
 	e.drawStemsAndBeams(items, time)
+	e.barItems = items
 	for i, p := range items {
 		if m := p.marks(); m != nil {
 			e.articMeasure = b.index
@@ -1442,6 +1443,27 @@ func (e *engraver) planAccidentals(items []*placed) {
 		g.notes = append(g.notes, notes...)
 		g.steps = append(g.steps, steps...)
 	}
+	// Clear of every notehead sounding at that moment, not only of those
+	// that carry a sign. Two voices crossing at a second put the lower one
+	// a notehead to the left, and where only the upper one had a sign, its
+	// file was measured from the upper voice alone and drawn on the head
+	// of the other: a flat on an A♭ over the B♭ beside it, which needs
+	// none in two flats.
+	for _, p := range items {
+		if p.rest != nil || (p.note == nil && p.chord == nil) ||
+			(p.hidden() && !e.opt.ShowHidden) {
+			continue
+		}
+		for _, g := range groups {
+			if g.at.Cmp(p.start) != 0 {
+				continue
+			}
+			if l := e.headsLeft(p); l < g.left {
+				g.left = l
+			}
+			break
+		}
+	}
 
 	for _, g := range groups {
 		files := accidentalFiles(g.notes, g.steps)
@@ -2328,8 +2350,16 @@ func (e *engraver) drawWholeNoteTremolos(items []*placed) {
 			continue
 		}
 		// Between the heads, with a little air at each end so the beams do
-		// not grow out of the noteheads.
-		x0 := a.x + noteheadWidth(a.value) + 0.5
+		// not grow out of the noteheads — and out of the dots of the first,
+		// where it has them. Measured from the head alone, the strokes of a
+		// pair of dotted whole notes ran into the dots: a 12/8 bar shaken
+		// between a chord and a note is exactly that, and its strokes
+		// covered the dot of the bass note under them.
+		x0 := a.x + noteheadWidth(a.value)
+		if a.dots > 0 {
+			x0 += e.dotGap(false) + float64(a.dots)*e.drawnDotStep()
+		}
+		x0 += 0.5
 		x1 := b.x - 0.5
 		if x1-x0 < 1 {
 			continue // nothing readable would fit

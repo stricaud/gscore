@@ -6,7 +6,7 @@ abc/boite-musique.abc 3127898a97d198d5 514
 abc/decoration.abc c8f4673a8e66ca93 31
 abc/pitch.abc 376aa6d8311eb1d1 227
 abc/sunshine.abc 7702bcad8c455962 136
-samples/altes-10e-solo.abc ff1c938f86a6b13b 9622
+samples/altes-10e-solo.abc 55f74b1c000dc2d0 9622
 samples/boite-musique.abc 3127898a97d198d5 514
 scores/Bumpty-Bump.gscore 0f501da2787b2b91 2969
 suite/01a-Pitches-Pitches.musicxml 5177aba21f65c2bd 548
@@ -71,12 +71,12 @@ suite/23c-Tuplet-Display-NonStandard.musicxml aa128e1d985a191e 125
 suite/23d-Tuplets-Nested.musicxml d3c46e826a36e1cd 93
 suite/23e-Tuplets-Tremolo.musicxml a2f1b6f3d03818ae 90
 suite/23f-Tuplets-DurationButNoBracket.musicxml dbe2e3458cdd4be1 77
-suite/24a-GraceNotes.musicxml b39fbb5041ba1f4f 83
+suite/24a-GraceNotes.musicxml 8c174e412c0b96d9 83
 suite/24b-ChordAsGraceNote.musicxml 3353bb566a64b2c9 42
 suite/24c-GraceNote-MeasureEnd.musicxml 51f01e0e058de261 15
 suite/24d-AfterGrace.musicxml aefdcfa513645fe8 24
 suite/24e-GraceNote-StaffChange.musicxml 3113191105053a90 37
-suite/24f-GraceNote-Slur.musicxml 4c8aaecae2739d6a 19
+suite/24f-GraceNote-Slur.musicxml 9c7d114303c3fc15 19
 suite/24g-GraceNote-Dynamics.musicxml 7c37b3e3f2263baa 25
 suite/24h-GraceNote-Simultaneous.musicxml 9596a43122f88b90 76
 suite/31a-Directions.musicxml 5eceb5775347af7d 328
@@ -100,7 +100,7 @@ suite/33g-Slur-ChordedNotes.musicxml 6a9d3361df421e8f 25
 suite/33h-Spanners-Glissando.musicxml 57ccd8c8d442afb5 135
 suite/33i-Ties-NotEnded.musicxml a363b50287cb7375 27
 suite/33j-Beams-Tremolos.musicxml 8b05666073754eac 69
-suite/33k-Tie-Types.musicxml b457bca72c4025c9 63
+suite/33k-Tie-Types.musicxml 3163d6a9b58fb8b0 63
 suite/34a-Print-Object-Spanners.musicxml e461b0d5f64c8180 164
 suite/34b-Colors.musicxml 0dce3896e54a1e97 307
 suite/34c-Font-Size.musicxml 941c496d55f7cadd 176

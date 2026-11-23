@@ -1185,6 +1185,10 @@ func (e *engraver) keyAt(p *model.Part, i int) model.KeySignature {
 type engraver struct {
 	opt   Options
 	score *model.Score
+	// barItems is everything on the staff in the bar being drawn, so that
+	// a mark settled on one element can ask what sounds beside it in the
+	// other voices. See slurAt, where a tie looks for its note.
+	barItems []*placed
 	// key is the signature in force as a bar is drawn, which a change
 	// written inside that bar moves on. See drawMeasure.
 	key model.KeySignature
@@ -1498,6 +1502,10 @@ type openSpan struct {
 	// and which side of the music it arcs over.
 	y     float64
 	above bool
+	// grace is a slur leaving a grace note for the note it leans on, which
+	// is drawn as the short curve under the two and not as a phrase. See
+	// slurAt.
+	grace bool
 
 	// step is which notehead of a chord a tie left from, so that taking the
 	// curve away takes it off that note and leaves the chord's others tied.

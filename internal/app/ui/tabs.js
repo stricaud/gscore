@@ -184,10 +184,36 @@
   const menus = () => [...bar.querySelectorAll(":scope > .menu")];
   const openMenu = () => bar.querySelector(":scope > .menu.open");
 
+  // Each open panel, and the submenu it was taken out of.
+  //
+  // An open panel is lifted out of its menu onto the bar, for the reason
+  // openSubmenu in app.js gives: a menu too tall for the window scrolls,
+  // and WebKit clips a fixed panel inside a scrolling box away to nothing —
+  // open, measured where it should be, and not drawn. So the submenus of
+  // the Edit menu, the one long enough to scroll, could not be opened from
+  // this bar while those of the File menu could. The bar scrolls nothing
+  // and clips nothing, and the bar's own listeners still hear the panel.
+  const panels = new WeakMap(); // submenu -> its panel
+  const owners = new Map();     // open panel -> its submenu
+
+  function panelOf(sub) {
+    let p = panels.get(sub);
+    if (!p) {
+      p = sub.querySelector(":scope > .menu-items");
+      if (p) panels.set(sub, p);
+    }
+    return p;
+  }
+
   function closeFlyouts(keep) {
     for (const f of bar.querySelectorAll(".menu-items.flyout")) {
       if (keep && f.contains(keep)) continue;
       f.classList.remove("flyout");
+      const sub = owners.get(f);
+      if (sub) {
+        owners.delete(f);
+        sub.appendChild(f);
+      }
     }
   }
 
@@ -204,10 +230,14 @@
   // showFlyout opens a submenu beside the entry that owns it, held to the
   // window. Its panel is fixed to the window, so it is placed here.
   function showFlyout(sub) {
-    const items = sub.querySelector(":scope > .menu-items");
+    const items = panelOf(sub);
     if (!items) return;
     closeFlyouts(sub);
     const r = sub.getBoundingClientRect();
+    if (items.parentNode !== bar) {
+      owners.set(items, sub);
+      bar.appendChild(items);
+    }
     items.classList.add("flyout");
     let left = r.right - 2;
     if (left + items.offsetWidth > window.innerWidth - 8) {

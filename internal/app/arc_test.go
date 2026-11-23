@@ -147,3 +147,27 @@ func TestTheHitsCarryTheCurves(t *testing.T) {
 		t.Errorf("no tie among the curves reported:\n%s", d)
 	}
 }
+
+// A slur that opens on a grace note goes when it is clicked and deleted.
+//
+// The engraver reports the curve against the note the grace leans on, so
+// that is what the editor names as its first end — and that note's own
+// mark was cleared, which was already nothing. The curve stayed, and with
+// the stop at its far end gone it ran on to the next one.
+func TestTakingAwayASlurThatOpensOnAGraceNote(t *testing.T) {
+	h := newHarness(t)
+	for i := 0; i < 3; i++ {
+		h.note(0, 0, 2, "quarter")
+	}
+	els := h.app.score.Parts[0].Measures[0].Voices[0].Elements
+	grace := &model.Note{Pitch: els[0].(*model.Note).Pitch, Dur: model.Duration{Num: 1, Den: 8}}
+	grace.Marks.SlurStart = 1
+	marksOfElement(els[0]).Grace = &model.GraceGroup{Notes: []*model.Note{grace}}
+	marksOfElement(els[2]).SlurStop = 1
+
+	h.post("/api/slur?slur=none&ends=1&sel=0:0:0,0:0:2")
+	if grace.Marks.SlurStart != 0 {
+		t.Error("the grace note still opens the slur, so it is still drawn")
+	}
+	sameMarks(t, marksAt(t, h), ".", ".", ".")
+}

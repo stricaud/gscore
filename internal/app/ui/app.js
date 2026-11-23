@@ -1723,6 +1723,9 @@ async function action(name) {
     case "grace": await setGrace("slashed"); break;
     case "grace-appoggiatura": await setGrace("appoggiatura"); break;
     case "grace-none": await setGrace("none"); break;
+    case "grace-slash": await slashGrace(true); break;
+    case "grace-unslash": await slashGrace(false); break;
+    case "grace-slur": await slurGrace("1"); break;
     case "gliss": await setGlissando("on"); break;
     case "gliss-none": await setGlissando("none"); break;
     case "staff-lines":
@@ -5198,8 +5201,14 @@ const arcReach = { slur: 1.2, tie: 0.7 };
 // awayFromArc is how far a point is from a quadratic, by walking it.
 //
 // Sampled rather than solved: the exact distance from a point to a quadratic
-// is the root of a cubic, and a curve two or three spaces wide is answered
-// to well within a notehead by thirty steps along it.
+// is the root of a cubic, and walking it a quarter of a space at a time
+// answers to well within a notehead.
+//
+// The steps are counted from the curve's length. A fixed thirty answered a
+// slur two or three spaces wide and not one that runs across the system:
+// over a hundred spaces the samples were three spaces apart, and a click
+// right on the line between two of them was further from both than the
+// reach — so a long slur could only be picked up by luck.
 function awayFromArc(a, x, y) {
   // The ends belong to the notes the curve joins. A ring is left clear
   // around each of them, wider than the reach — so no click near enough to
@@ -5209,13 +5218,16 @@ function awayFromArc(a, x, y) {
   const free = (arcReach[a.kind] ?? arcReach.tie) + 0.1;
   let best = Infinity;
   let middle = Infinity;
-  for (let i = 0; i <= 30; i++) {
-    const t = i / 30;
+  // The control polygon is never shorter than the curve it holds.
+  const reach = Math.hypot(a.cx - a.x1, a.cy - a.y1) + Math.hypot(a.x2 - a.cx, a.y2 - a.cy);
+  const steps = Math.max(30, 2 * Math.ceil(reach / 0.5));
+  for (let i = 0; i <= steps; i++) {
+    const t = i / steps;
     const u = 1 - t;
     const px = u * u * a.x1 + 2 * u * t * a.cx + t * t * a.x2;
     const py = u * u * a.y1 + 2 * u * t * a.cy + t * t * a.y2;
     const d = Math.hypot(px - x, py - y);
-    if (i === 15) middle = d;
+    if (i === steps / 2) middle = d;
     if (Math.hypot(px - a.x1, py - a.y1) < free) continue;
     if (Math.hypot(px - a.x2, py - a.y2) < free) continue;
     if (d < best) best = d;
@@ -7624,6 +7636,11 @@ async function addPitch(hit, el, step) {
 }
 
 async function deleteSelected() {
+  // A box that took in markings as well as notes: everything in it goes.
+  if (state.selection?.boxed?.length) {
+    await deleteBoxed();
+    return;
+  }
   // A symbol was picked up by clicking it. It is picked the way a
   // hairpin is and is not part of the note selection, so it has to be
   // asked about here — and it comes first, because a symbol sitting over
@@ -8024,6 +8041,22 @@ function markSelection() {
   const sel = state.selection;
   if (!sel) return;
   const z = state.zoom;
+
+  // What a box took in besides notes, each lit the way it is lit when it
+  // is clicked on its own; the notes are lit below, as any are.
+  for (const m of sel.boxed || []) {
+    if (m.kind === "arc") {
+      svg.insertBefore(selectionArc(m.item, z), svg.firstChild);
+      continue;
+    }
+    const b = m.box || (m.kind === "grace"
+      ? { x: m.item.x, y: m.item.y - 0.5, width: m.item.width, height: 1 }
+      : m.item);
+    svg.insertBefore(
+      selectionRect(b.x - 0.3, b.y - 0.3, b.width + 0.6, b.height + 0.6, z),
+      svg.firstChild);
+  }
+  if (sel.boxed?.length && !state.multi.length) return;
 
   // A dynamic picked up by clicking it: the box goes round the marking
   // itself, under the staff, not round the note it is written on. Seeing a
@@ -8818,6 +8851,19 @@ async function setGrace(what) {
              slashed === "1" ? "Grace note" : "Appoggiatura");
 }
 
+// slurGrace slurs a group of grace notes into the note they lean on, or
+// takes that slur away; the grace note or its note may be picked up.
+const slurGrace = (what) =>
+  mark("grace", { slur: what },
+       what === "none" ? "Slur from the grace note removed"
+                       : "Grace note slurred to its note");
+
+// slashGrace puts the stroke through a group that is already there, or
+// takes it off: a crush, or an appoggiatura.
+const slashGrace = (on) =>
+  mark("grace", { slashed: on ? "1" : "0" },
+       on ? "Grace notes slashed" : "Grace notes without a slash");
+
 // addGraceNote hangs one more small note on the note that is picked up.
 //
 // The other verb, and both are wanted. Turning written notes into ornaments
@@ -8957,12 +9003,59 @@ async function hairpinLineDialog(h) {
 // A slur arcs over a passage and a tie joins neighbours, so both want a range
 // selected: click a note, then shift-click a later one.
 async function setSlur(what) {
+  // A grace note picked up on its own has one slur it can have: from it
+  // into the note it leans on. The server knows the grace note by its
+  // position and draws that one.
+  const sel = state.selection;
+  const onGrace = !state.multi.length && sel &&
+    sel.grace !== null && sel.grace !== undefined;
+  if (onGrace) {
+    await slurGrace(what === "none" ? "none" : "1");
+    return;
+  }
+  // A box round a grace note and the note it leans on is the same request:
+  // the grace note is in what the box took in, and the only note beside it
+  // is its own. Read as a phrase it was one note, which is no phrase, and
+  // nothing happened.
+  const carriers = boxedGraceCarriers();
+  if (carriers) {
+    const res = await fetch("/api/grace?" + new URLSearchParams({
+      slur: what === "none" ? "none" : "1", sel: carriers.join(","),
+    }), { method: "POST" });
+    if (!res.ok) {
+      status("Could not slur it: " + (await res.text()).trim());
+      return;
+    }
+    await refreshScore();
+    status(what === "none" ? "Slur from the grace note removed"
+                           : "Grace note slurred to its note");
+    return;
+  }
   if (what !== "none" && state.multi.length < 2) {
     status("A slur covers a passage — click a note, then shift-click a later one");
     return;
   }
   await mark("slur", { slur: what },
              what === "none" ? "Slur removed" : "Slurred");
+}
+
+// boxedGraceCarriers is the notes a box's grace notes lean on, as positions
+// for the server, where the box took in grace notes and no note other than
+// those; null otherwise. A box round a passage that happens to hold a grace
+// note is a phrase to slur, and this leaves it to be one.
+function boxedGraceCarriers() {
+  const graces = (state.selection?.boxed || [])
+    .filter((m) => m.kind === "grace").map((m) => m.item);
+  if (!graces.length) return null;
+  const refs = new Set(graces.map((g) => g.ref));
+  if (!state.multi.every((m) => refs.has(m.ref))) return null;
+  const out = new Set();
+  for (const g of graces) {
+    const hit = state.hits.find((h) => h.part === g.part && h.measure === g.measure);
+    const el = hit && (hit.elements || []).find((e) => e.ref === g.ref);
+    if (el) out.add(selOf(g.part, g.measure, el.index, el.voice || 0));
+  }
+  return out.size ? [...out] : null;
 }
 
 // setTie joins the selected notes. "head" ties only the notehead that was
@@ -19242,117 +19335,336 @@ let suppressClick = false;
 
 // The rubber band.
 //
-// selection.c:320 tests only the x range — "(object_x + start_x - 30) >=
-// x_origin && <= x" — against the staff the press landed on. So a drag picks
-// up everything between two points on one staff, not a two-dimensional box,
-// and that is what is reproduced here.
+// A drag with the left button draws a box, and every note, chord and rest
+// any part of which falls inside it is picked up — on every staff the box
+// crosses, so the two hands of a piano come up together. A press that does
+// not move is still a click and picks up the one note under it, so the box
+// only appears once the pointer has travelled a few pixels. With shift held
+// the box adds to what is already picked up instead of starting afresh.
+//
+// Ctrl and Command drag to pan and a drawn symbol drags to move, so those
+// presses are left to them.
 function setupMarquee() {
   const wrap = $("#canvas-wrap");
+  // Where the button went down, in staff spaces and in screen pixels, from
+  // the press until it is let go.
+  let press = null;
   let band = null;
-  let startX = 0, startHit = null;
+  let svg = null;
+
+  const at = (e) => {
+    const r = svg.getBoundingClientRect();
+    return { x: (e.clientX - r.left) / state.zoom, y: (e.clientY - r.top) / state.zoom };
+  };
+  const cancel = () => {
+    press = null;
+    band?.remove();
+    band = null;
+  };
 
   wrap.addEventListener("mousedown", (e) => {
-    // Shift and the left button. Ctrl and
-    // Command are already panning and zooming, so Shift is the one left —
-    // and holding it to select is what every other editor does anyway.
-    if (!e.shiftKey) return;
-    if (e.button !== 0 || e.ctrlKey || e.metaKey) return;
-    // Even with selection off, a drag can still begin one in some browsers.
-    e.preventDefault();
-    const svg = currentSVG();
+    if (e.button !== 0 || e.ctrlKey || e.metaKey || e.altKey) return;
+    const t = e.target;
+    if (t.closest?.("[data-symbol], .symbol-handle, input, textarea, select, button")) return;
+    // The scrollbars belong to the wrapper too, and dragging one is
+    // scrolling, not selecting.
+    if (t === wrap && (e.offsetX >= wrap.clientWidth || e.offsetY >= wrap.clientHeight)) return;
+    svg = currentSVG();
     if (!svg) return;
-    const r = svg.getBoundingClientRect();
-    const x = (e.clientX - r.left) / state.zoom;
-    const y = (e.clientY - r.top) / state.zoom;
-
-    const hit = hitAt(x, y);
-    if (!hit) return;
-    startHit = hit;
-    startX = x;
-
-    // As tall as the staff's music, not a fixed band around the staff.
-    //
-    // Seven spaces covers a staff and a ledger line either side, which is
-    // most music and not this: a cadenza running four or five spaces above
-    // the staff was selected correctly — the drag picks notes by where they
-    // are along the bar, not by height — while the band drawn under the
-    // pointer stopped short of them. So it looked as though the notes were
-    // being missed, and the natural response is to drag again more
-    // carefully, which changes nothing.
-    let top = hit.staffTop - 1.6;
-    let bottom = hit.staffTop + staffHeightOf(hit) + 1.6;
-    for (const h of state.hits) {
-      if (h.part !== hit.part || h.staffTop !== hit.staffTop) continue;
-      for (const el of h.elements || []) {
-        const a = Math.min(el.y, el.y2 ?? el.y) - 1.4;
-        const b = Math.max(el.y, el.y2 ?? el.y) + 1.4;
-        if (a < top) top = a;
-        if (b > bottom) bottom = b;
-      }
-    }
-    band = document.createElementNS("http://www.w3.org/2000/svg", "rect");
-    band.setAttribute("class", "marquee");
-    band.setAttribute("y", String(top * state.zoom));
-    band.setAttribute("height", String((bottom - top) * state.zoom));
-    band.setAttribute("rx", String(0.45 * state.zoom));
-    svg.appendChild(band);
-    e.preventDefault();
+    // In a book, only the tune being edited: the hits are that tune's.
+    const tune = t.closest?.(".tune");
+    if (tune && !tune.contains(svg)) return;
+    press = { ...at(e), cx: e.clientX, cy: e.clientY, add: e.shiftKey };
   });
 
   window.addEventListener("mousemove", (e) => {
-    if (!band) return;
-    const svg = currentSVG();
-    const r = svg.getBoundingClientRect();
-    const x = (e.clientX - r.left) / state.zoom;
-    const lo = Math.min(startX, x), hi = Math.max(startX, x);
-    band.setAttribute("x", String(lo * state.zoom));
-    band.setAttribute("width", String((hi - lo) * state.zoom));
+    if (!press) return;
+    // Let go outside the window, where the mouseup never arrives.
+    if (!(e.buttons & 1)) {
+      cancel();
+      return;
+    }
+    if (!band) {
+      if (Math.abs(e.clientX - press.cx) < 4 && Math.abs(e.clientY - press.cy) < 4) return;
+      band = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+      band.setAttribute("class", "marquee");
+      svg.appendChild(band);
+    }
+    window.getSelection()?.removeAllRanges();
+    const p = at(e);
+    const z = state.zoom;
+    band.setAttribute("x", String(Math.min(press.x, p.x) * z));
+    band.setAttribute("y", String(Math.min(press.y, p.y) * z));
+    band.setAttribute("width", String(Math.abs(p.x - press.x) * z));
+    band.setAttribute("height", String(Math.abs(p.y - press.y) * z));
   });
 
   window.addEventListener("mouseup", (e) => {
-    if (!band) return;
-    const svg = currentSVG();
-    const r = svg.getBoundingClientRect();
-    const x = (e.clientX - r.left) / state.zoom;
-    // Clear anything the browser managed to select despite the above.
+    if (!press) return;
+    const from = press;
+    if (!band) {
+      // A click, which the click handler has.
+      press = null;
+      return;
+    }
+    const p = at(e);
+    cancel();
     window.getSelection()?.removeAllRanges();
-    band.remove();
-    band = null;
-
-    const lo = Math.min(startX, x), hi = Math.max(startX, x);
-    if (hi - lo < 0.5) return; // a click, not a drag
+    // The click that ends the drag is not a click. Cleared once it has
+    // gone by, because a drag let go outside the canvas fires no click and
+    // the flag would otherwise swallow the next real one.
     suppressClick = true;
+    setTimeout(() => { suppressClick = false; }, 0);
 
-    // One staff, every element whose position falls in the range. The drag
-    // may run past the measure it began in, so every measure of that staff is
-    // considered.
-    state.multi = [];
-    for (const h of state.hits) {
-      if (h.part !== startHit.part || h.staffTop !== startHit.staffTop) continue;
-      for (const el of h.elements || []) {
-        if (el.x >= lo && el.x <= hi) {
-          state.multi.push({ part: h.part, measure: h.measure, index: el.index, voice: el.voice, ref: el.ref });
-        }
+    const x0 = Math.min(from.x, p.x), y0 = Math.min(from.y, p.y);
+    const x1 = Math.max(from.x, p.x), y1 = Math.max(from.y, p.y);
+    let picked = elementsInBox(x0, y0, x1, y1);
+    let marks = marksInBox(x0, y0, x1, y1, currentSVG());
+    if (from.add) {
+      let had = state.multi;
+      if (!had.length) {
+        const one = selectedElement();
+        had = one ? [{ part: one.hit.part, measure: one.hit.measure,
+          index: one.el.index, voice: one.el.voice, ref: one.el.ref }] : [];
+      }
+      const key = (m) => `${m.part}:${m.measure}:${m.voice || 0}:${m.index}`;
+      const seen = new Set(had.map(key));
+      picked = had.concat(picked.filter((m) => !seen.has(key(m))));
+      const kept = state.selection?.boxed || [];
+      marks = kept.concat(marks.filter((m) => !kept.some((k) => k.item === m.item)));
+    }
+    if (picked.length + marks.length > selectBudget) {
+      status(`That is ${picked.length + marks.length} things; ${selectBudget} ` +
+        `is the most that can be picked up at once`);
+      return;
+    }
+    if (!picked.length && !marks.length) {
+      clearSelection();
+      status("Nothing in that box");
+      return;
+    }
+    // One thing is picked up the way a click picks it up, so that typing or
+    // Enter changes it: a slur boxed in open air is a slur picked up.
+    if (!picked.length && marks.length === 1) {
+      selectBoxed(marks[0]);
+      return;
+    }
+    if (picked.length === 1 && !marks.length) {
+      const m = picked[0];
+      const hit = state.hits.find((h) => h.part === m.part && h.measure === m.measure);
+      const el = hit && (hit.elements || []).find((x) => x.ref === m.ref);
+      if (el) {
+        select(hit, el);
+        return;
       }
     }
-    state.multi = orderedSelection();
-    if (state.multi.length) {
-      const f = state.multi[0];
-      state.selection = {
-        part: f.part, measure: f.measure, at: f.index + 1, step: 0, ref: f.ref,
-      };
-      // The far end of the drag is where shift with an arrow carries on
-      // from, so a dragged selection grows the way a dragged one in a line
-      // of text does.
-      const l = state.multi[state.multi.length - 1];
-      state.anchor = { part: f.part, measure: f.measure, index: f.index };
-      state.focus = { part: l.part, measure: l.measure, index: l.index };
+    // A symbol picked up by clicking is held apart from the selection;
+    // boxed, it is one of the things in the box, and the click's pick goes.
+    if (pickedSymbol) {
+      pickedSymbol = null;
+      markPickedSymbol();
     }
+    state.multi = picked;
+    state.multi = orderedSelection();
+    const f = state.multi[0];
+    const l = state.multi[state.multi.length - 1];
+    const where = f || marks.find((m) => m.item.part !== undefined)?.item ||
+      { part: state.selection?.part ?? 0, measure: marks[0].item.measure ?? 0 };
+    state.selection = {
+      part: where.part ?? 0, measure: where.measure ?? 0,
+      at: f ? f.index + 1 : 0, step: 0, ref: f ? f.ref : null,
+      // Everything else the box took in, which only Delete acts on.
+      boxed: marks.length ? marks : undefined,
+    };
+    // The far end is where shift with an arrow carries on from.
+    state.anchor = f ? { part: f.part, measure: f.measure, index: f.index, voice: f.voice } : null;
+    state.focus = l ? { part: l.part, measure: l.measure, index: l.index, voice: l.voice } : null;
     markSelection();
-    status(state.multi.length
-      ? `${state.multi.length} selected`
-      : "Nothing in that range");
+    const staves = new Set(state.multi.map((m) => m.part)).size;
+    const n = state.multi.length + marks.length;
+    status(`${n} selected` + (staves > 1 ? ` on ${staves} staves` : "") +
+      (marks.length && state.multi.length
+        ? ` — ${state.multi.length} ${state.multi.length === 1 ? "note" : "notes"}` +
+          ` and ${marks.length} ${marks.length === 1 ? "marking" : "markings"}`
+        : ""));
   });
+}
+
+// arcPoints walks a slur or tie a quarter of a space at a time.
+function arcPoints(a) {
+  const reach = Math.hypot(a.cx - a.x1, a.cy - a.y1) + Math.hypot(a.x2 - a.cx, a.y2 - a.cy);
+  const steps = Math.max(30, Math.ceil(reach / 0.25));
+  const out = [];
+  for (let i = 0; i <= steps; i++) {
+    const t = i / steps;
+    const u = 1 - t;
+    out.push([u * u * a.x1 + 2 * u * t * a.cx + t * t * a.x2,
+              u * u * a.y1 + 2 * u * t * a.cy + t * t * a.y2]);
+  }
+  return out;
+}
+
+// boxKinds is every marking a box picks up by its own rectangle: what the
+// selection calls it, and where the drawing's report of them is kept.
+const boxKinds = [
+  ["hairpin", "hairpins"], ["tremolo", "tremolos"], ["tuplet", "tuplets"],
+  ["dynamic", "dynamics"], ["articulation", "articulations"],
+  ["chordSymbol", "chordMarks"], ["textMark", "textMarks"],
+  ["tempo", "tempos"], ["sign", "signs"], ["ending", "endings"],
+  ["marker", "markers"],
+];
+
+// marksInBox is everything other than notes, chords and rests that a box
+// given in staff spaces touches: the markings, the curves running through
+// it, the grace notes and the symbols drawn by hand. Each as {kind, item},
+// the item being what a click on it would have picked up.
+function marksInBox(x0, y0, x1, y1, svg) {
+  const out = [];
+  for (const [kind, list] of boxKinds) {
+    for (const it of state[list] || []) {
+      if (it.x + it.width < x0 || it.x > x1) continue;
+      if (it.y + it.height < y0 || it.y > y1) continue;
+      out.push({ kind, item: it });
+    }
+  }
+  // A curve broken at the end of a line is reported in two pieces, and it
+  // is one curve to take away.
+  const curves = new Set();
+  for (const a of state.arcs || []) {
+    const id = `${a.kind}:${a.from}:${a.to}:${a.step}`;
+    if (curves.has(id)) continue;
+    if (arcPoints(a).some(([px, py]) => px >= x0 && px <= x1 && py >= y0 && py <= y1)) {
+      curves.add(id);
+      out.push({ kind: "arc", item: a });
+    }
+  }
+  for (const g of state.graces || []) {
+    if (g.x + g.width < x0 || g.x > x1 || g.y + 0.5 < y0 || g.y - 0.5 > y1) continue;
+    out.push({ kind: "grace", item: g });
+  }
+  // The symbols are known only to the drawing, so they are measured on it.
+  if (svg) {
+    const r = svg.getBoundingClientRect();
+    const z = state.zoom;
+    for (const img of svg.querySelectorAll("[data-symbol]")) {
+      const b = img.getBoundingClientRect();
+      const sx = (b.left - r.left) / z, sy = (b.top - r.top) / z;
+      if (sx + b.width / z < x0 || sx > x1 || sy + b.height / z < y0 || sy > y1) continue;
+      const where = elementByRef(Number(img.dataset.ref || 0));
+      if (!where) continue;
+      out.push({ kind: "symbol", item: { ...where, name: img.dataset.symbol },
+        box: { x: sx, y: sy, width: b.width / z, height: b.height / z } });
+    }
+  }
+  return out;
+}
+
+// selectBoxed picks up one thing a box took in, the way clicking it would.
+function selectBoxed(m) {
+  const it = m.item;
+  switch (m.kind) {
+    case "hairpin": selectHairpin(it); break;
+    case "tremolo": selectTremolo(it); break;
+    case "tuplet": selectTuplet(it); break;
+    case "dynamic": selectDynamic(it); break;
+    case "articulation": selectArticulation(it); break;
+    case "chordSymbol": selectChordSymbol(it); break;
+    case "textMark": selectTextMark(it); break;
+    case "tempo": selectTempo(it); break;
+    case "sign": selectSign(it); break;
+    case "ending": selectEnding(it); break;
+    case "marker": selectMarker(it); break;
+    case "arc": selectArc(it); break;
+    case "grace": {
+      const hit = state.hits.find((h) => h.part === it.part && h.measure === it.measure);
+      if (!hit) return false;
+      selectGrace(hit, it);
+      break;
+    }
+    case "symbol":
+      clearSelection();
+      pickSymbol(it);
+      break;
+    default:
+      return false;
+  }
+  return true;
+}
+
+// boxedOrder is the order the things in a box are taken away in.
+//
+// The curves, the swells and the marks on notes are found again by the
+// numbers the notes are drawn under, and a grace note has one of those
+// numbers too: taking one away renumbers everything after it. So everything
+// found by number goes first, then what belongs to a bar, then the grace
+// notes — the last of a group first, so the ones before keep their place —
+// and the notes themselves after all of it, by where they stand.
+const boxedRank = {
+  arc: 0, hairpin: 0, tremolo: 0, tuplet: 0, dynamic: 0, articulation: 0,
+  chordSymbol: 0, textMark: 0, tempo: 1, sign: 1, ending: 1, marker: 1,
+  symbol: 1, grace: 2,
+};
+function boxedOrder(marks) {
+  return marks.slice().sort((a, b) =>
+    (boxedRank[a.kind] - boxedRank[b.kind]) ||
+    (a.kind === "grace" && b.kind === "grace"
+      ? (b.item.part - a.item.part) || (b.item.measure - a.item.measure) ||
+        (b.item.index - a.item.index) || (b.item.ord - a.item.ord)
+      : 0));
+}
+
+// deleteBoxed takes away everything a box picked up, as one undo.
+//
+// Each thing goes the way it goes when it is clicked and deleted on its
+// own — a slur both its ends, a hairpin both of its, a tuplet its figure
+// and not its notes — so a box is not a second set of rules about what
+// deleting means.
+async function deleteBoxed() {
+  const marks = boxedOrder(state.selection.boxed || []);
+  const notes = state.multi.slice();
+  const total = marks.length + notes.length;
+  await fetch("/api/script/begin", { method: "POST" });
+  try {
+    for (const m of marks) {
+      state.multi = [];
+      if (!selectBoxed(m)) continue;
+      if (state.selection) state.selection.boxed = undefined;
+      await deleteSelected();
+    }
+    if (pickedSymbol) {
+      pickedSymbol = null;
+      markPickedSymbol();
+    }
+    if (notes.length) {
+      state.multi = notes;
+      state.selection = { part: notes[0].part, measure: notes[0].measure,
+        at: notes[0].index + 1, step: 0, ref: notes[0].ref };
+      await deleteSelected();
+    }
+  } finally {
+    await fetch("/api/script/end?changed=1", { method: "POST" });
+  }
+  clearSelection();
+  status(`Deleted ${total} ${total === 1 ? "thing" : "things"}`);
+}
+
+// elementsInBox is every note, chord and rest any part of which lies inside
+// a box given in staff spaces, on whichever staves it crosses. Half a space
+// either side of the outermost noteheads, so a box drawn to the edge of a
+// notehead takes it rather than grazing its centre and missing.
+function elementsInBox(x0, y0, x1, y1) {
+  const picked = [];
+  for (const h of state.hits) {
+    if (h.x1 < x0 || h.x0 > x1) continue;
+    for (const el of h.elements || []) {
+      if (el.x + el.width < x0 || el.x > x1) continue;
+      const top = Math.min(el.y, el.y2 ?? el.y) - 0.5;
+      const bottom = Math.max(el.y, el.y2 ?? el.y) + 0.5;
+      if (bottom < y0 || top > y1) continue;
+      picked.push({ part: h.part, measure: h.measure, index: el.index, voice: el.voice, ref: el.ref });
+    }
+  }
+  return picked;
 }
 
 // Dragging a symbol.
@@ -20479,6 +20791,9 @@ const MENU_ICONS = {
   "grace": "\ue560",               // graceNoteAcciaccaturaStemUp
   "grace-add": "\ue564",           // graceNoteSlashStemUp
   "grace-appoggiatura": "\ue562",  // graceNoteAppoggiaturaStemUp
+  "grace-slash": "\ue560",         // graceNoteAcciaccaturaStemUp
+  "grace-unslash": "\ue562",       // graceNoteAppoggiaturaStemUp
+  "grace-slur": "\ue560\ue1fd",    // graceNoteAcciaccaturaStemUp textTie
   // A staff of pitches, which is the thing this adds: the tab it goes over
   // is already there.
   // A picture used as it is, rather than a grid traced from one. The

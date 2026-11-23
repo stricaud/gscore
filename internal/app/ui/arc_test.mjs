@@ -291,3 +291,20 @@ test("a new selection takes away the last one's marks", () => {
   api.markSelection();
   assert.equal(lit().length, 0, "a curve stayed lit with nothing picked up");
 });
+
+// A slur that runs across a whole system — a stray one, whose far end was
+// lost, drawn from a grace note on to whatever closed next. It is nearly
+// flat and a hundred and twenty spaces long, and it is exactly the one that
+// wants clicking, to take it away.
+test("a click anywhere along a long slur finds it", () => {
+  const LONG = {
+    part: 0, measure: 0, from: 3, to: 6, step: 0, kind: "slur",
+    x1: 20, y1: 10, cx: 80, cy: 8, x2: 140, y2: 9,
+  };
+  const t = load(["awayFromArc", "arcAt"], { state: { arcs: [LONG] } });
+  // Every point a little apart along it, so none can fall between samples.
+  for (let t0 = 0.1; t0 <= 0.9; t0 += 0.0137) {
+    const p = at(LONG, t0);
+    assert.equal(t.arcAt(p.x, p.y)?.kind, "slur", `a click at t=${t0.toFixed(3)}`);
+  }
+});

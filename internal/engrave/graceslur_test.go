@@ -214,3 +214,50 @@ func TestAGraceSlurDoesNotPushTheStavesApart(t *testing.T) {
 			"not use", with, without)
 	}
 }
+
+// A grace note slurred into a chord: the short curve under the two, from
+// under the small note into the lowest notehead of the chord, whichever way
+// the chord's stem points. Taken through the rules for a phrase it was turned
+// over by a stem pointing down, pushed out past the accent, and drawn as a
+// hook over the chord's top note. Reported from bar 30 of Black and Tan
+// Fantasy: "I want a slur to the note that is at the bottom, not the top
+// one".
+func TestAGraceSlurRunsUnderIntoTheChordsLowestNote(t *testing.T) {
+	e8 := model.Duration{Num: 1, Den: 8}
+	grace := &model.Note{Pitch: model.Pitch{Step: model.StepC, Octave: 5, Alter: 1}, Dur: e8}
+	grace.Marks.SlurStart = 1
+	chord := &model.Chord{Dur: model.Duration{Num: 1, Den: 2}, Notes: []*model.Note{
+		{Pitch: model.Pitch{Step: model.StepF, Octave: 4}, Dur: e8},
+		{Pitch: model.Pitch{Step: model.StepD, Octave: 5}, Dur: e8},
+	}}
+	chord.Stem = model.StemDown
+	chord.Articulations = []model.Articulation{model.Accent}
+	chord.Grace = &model.GraceGroup{Notes: []*model.Note{grace}, Slashed: true}
+	chord.SlurStop = 1
+
+	s := model.NewScore()
+	s.Parts[0].Measures[0].Voices[0].Elements = []model.Element{
+		chord, &model.Rest{Dur: model.Duration{Num: 1, Den: 2}},
+	}
+	lay := Engrave(s, DefaultOptions())
+	if len(lay.Curves) != 1 {
+		t.Fatalf("%d curves drawn, want the grace note's slur", len(lay.Curves))
+	}
+	c := lay.Curves[0]
+	// The lowest notehead of the chord, which is the full-size head lowest
+	// on the page.
+	low := -1e9
+	for _, g := range lay.Glyphs {
+		if g.Name == "noteheadBlack" && g.Size >= 1 && g.Y > low {
+			low = g.Y
+		}
+	}
+	if c.CY <= c.Y1 || c.CY <= c.Y2 {
+		t.Errorf("the curve arches upward (ends %.2f and %.2f, middle %.2f); "+
+			"it belongs under the two notes", c.Y1, c.Y2, c.CY)
+	}
+	if c.Y2 < low {
+		t.Errorf("the curve ends at y %.2f, above the chord's lowest notehead "+
+			"at %.2f: it is aimed at the top of the chord", c.Y2, low)
+	}
+}

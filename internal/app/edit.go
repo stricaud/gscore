@@ -5341,6 +5341,18 @@ func (a *App) handleSlur(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "POST required", http.StatusMethodNotAllowed)
 		return
 	}
+	// A grace note picked up on its own: the slur it can have runs from it
+	// to the note it leans on, and that is the one meant.
+	if ts, err := parseTargets(r.URL.Query().Get("sel")); err == nil &&
+		len(ts) == 1 && ts[0].isGrace() {
+		n, err := a.slurGrace(r.URL.Query(), r.URL.Query().Get("slur") != "none")
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		writeJSON(w, map[string]int{"changed": n})
+		return
+	}
 	marks, err := a.marksOf(r.URL.Query())
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -5360,6 +5372,16 @@ func (a *App) handleSlur(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			if i == 0 {
+				// A slur drawn from a grace note is reported against the
+				// note it leans on, but it is the small note that opens
+				// it. Clearing the carrier's own mark, which is already
+				// nothing, left the curve on the page — and the stop
+				// below taken away from under it, so it ran on further.
+				if m.SlurStart == 0 && m.Grace != nil {
+					for _, g := range m.Grace.Notes {
+						g.Marks.SlurStart = 0
+					}
+				}
 				m.SlurStart = 0
 			}
 			if i == len(marks)-1 {
@@ -6635,11 +6657,19 @@ func (a *App) handleTremolo(w http.ResponseWriter, r *http.Request) {
 	}
 	a.lock()
 	for _, m := range marks {
+		// One end of a pair made a tremolo of its own, or none, is a note
+		// of its whole length again. See tremoloShare.
+		wasPaired := m.Tremolo.Paired()
 		if strokes == 0 && !buzz {
 			m.Tremolo = nil
-			continue
+		} else {
+			m.Tremolo = &model.Tremolo{Strokes: strokes, Buzz: buzz}
 		}
-		m.Tremolo = &model.Tremolo{Strokes: strokes, Buzz: buzz}
+		if wasPaired {
+			if el := a.elementOfMarks(m); el != nil {
+				leaveTremolo(el)
+			}
+		}
 	}
 	// Taking a two-note tremolo off one of its notes leaves the other
 	// holding half a mark. Nothing is drawn, because half a pair is not a
@@ -6649,6 +6679,22 @@ func (a *App) handleTremolo(w http.ResponseWriter, r *http.Request) {
 	n := len(marks) + clearHalfTremolos(a.score)
 	a.mu.Unlock()
 	writeJSON(w, map[string]int{"changed": n})
+}
+
+// elementOfMarks is the note, chord or rest that carries these marks, or nil.
+func (a *App) elementOfMarks(mk *model.Marks) model.Element {
+	for _, p := range a.score.Parts {
+		for _, m := range p.Measures {
+			for _, v := range m.Voices {
+				for _, el := range v.Elements {
+					if marksOfElement(el) == mk {
+						return el
+					}
+				}
+			}
+		}
+	}
+	return nil
 }
 
 // clearHalfTremolos takes off every two-note tremolo mark whose partner is
@@ -6677,6 +6723,7 @@ func clearHalfTremolos(s *model.Score) int {
 						}
 					}
 					mk.Tremolo = nil
+					leaveTremolo(el)
 					n++
 				}
 			}
@@ -6744,20 +6791,77 @@ func (a *App) pairTremolo(q url.Values, strokes int, buzz bool) (int, error) {
 		return 0, editError("a two-note tremolo needs the note after this one, " +
 			"and this is the last in the bar")
 	}
-	first, second := marksOfElement(v.Elements[i]), marksOfElement(v.Elements[i+1])
+	a1, a2 := v.Elements[i], v.Elements[i+1]
+	first, second := marksOfElement(a1), marksOfElement(a2)
 	if first == nil || second == nil {
 		return 0, editError("both of them have to be notes")
 	}
-	if v.Elements[i].Duration() != v.Elements[i+1].Duration() {
+	// Written the same length: what the two heads show, which for a pair
+	// already made is twice the time each one takes. See tremoloShare.
+	if first.WrittenDuration(a1.Duration()) != second.WrittenDuration(a2.Duration()) {
 		return 0, editError("the two notes of a tremolo are written the same length")
 	}
 	if strokes == 0 && !buzz {
 		first.Tremolo, second.Tremolo = nil, nil
+		leaveTremolo(a1)
+		leaveTremolo(a2)
 		return 2, nil
+	}
+	for _, el := range []model.Element{a1, a2} {
+		if mk := marksOfElement(el); mk.Tuplet != nil && !tremoloShare(mk) {
+			return 0, editError("a two-note tremolo cannot be made inside a tuplet")
+		}
 	}
 	first.Tremolo = &model.Tremolo{Strokes: strokes, Buzz: buzz, Start: true}
 	second.Tremolo = &model.Tremolo{Strokes: strokes, Buzz: buzz, Stop: true}
+	joinTremolo(a1)
+	joinTremolo(a2)
+	// The bar is shorter by what the two gave back, and what came after
+	// them is where it was: the bar is not pulled together here, any more
+	// than it is when a note is shortened by hand.
 	return 2, nil
+}
+
+// A two-note tremolo is written with each note at the length of the whole
+// tremolo, and each note takes half of it.
+//
+// A bar of 12/8 shaken between a chord and a note is printed as two dotted
+// whole notes with the strokes between them — and the two together last the
+// bar, not twice it. Marked as they were drawn, the two dotted wholes made a
+// bar twice as long as its meter, and it played for twice as long.
+//
+// So each note of the pair is written in the time of half of itself: two in
+// the time of one, the ratio the MusicXML reader gives a tremolo from a file
+// already, and hidden, because what a reader sees is the strokes and not a
+// 2. The heads still show what was written; the bar adds up to its meter.
+
+// tremoloShare says a note is written at twice the time it takes, as one end
+// of a two-note tremolo.
+func tremoloShare(mk *model.Marks) bool {
+	t := mk.Tuplet
+	return t != nil && t.Hidden && t.Actual == 2 && t.Normal == 1
+}
+
+// joinTremolo makes a note one end of a pair: half the time, the same head.
+// A note that is already one is left as it is.
+func joinTremolo(el model.Element) {
+	mk := marksOfElement(el)
+	if mk == nil || tremoloShare(mk) {
+		return
+	}
+	setDuration(el, el.Duration().Scale(1, 2))
+	mk.Tuplet = &model.Tuplet{Hidden: true, Actual: 2, Normal: 1, Start: true, Stop: true}
+}
+
+// leaveTremolo gives a note that was one end of a pair its whole time back,
+// so that taking the tremolo off leaves the note that was written.
+func leaveTremolo(el model.Element) {
+	mk := marksOfElement(el)
+	if mk == nil || !tremoloShare(mk) {
+		return
+	}
+	setDuration(el, el.Duration().Scale(2, 1))
+	mk.Tuplet = nil
 }
 
 // handleDot lengthens the selected note by half, or takes that back.

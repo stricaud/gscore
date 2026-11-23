@@ -172,3 +172,65 @@ func TestTheTremolosBeamsAreReportedAsAPlaceToClick(t *testing.T) {
 		t.Errorf("the region is %.2f by %.2f, which cannot be clicked", tr.Width, tr.Height)
 	}
 }
+
+// Each note of a two-note tremolo is written with the length of the whole
+// tremolo and takes half of it.
+//
+// Reported from bar 31 of "I put a spell on you": a 12/8 bar shaken between
+// a chord and a note, printed as two dotted whole notes with the strokes
+// between them. Marked as they were drawn, the two dotted wholes were a bar
+// twice as long as its meter, and it played for twice as long.
+func TestATremoloPairLastsWhatItsBarHolds(t *testing.T) {
+	h := newHarness(t)
+	h.app.score.Parts[0].Time = model.TimeSignature{Beats: 12, BeatValue: 8}
+	dottedWhole := model.Duration{Num: 3, Den: 2}
+	h.app.score.Parts[0].Measures[0].Voices[0].Elements = []model.Element{
+		&model.Chord{Dur: dottedWhole, Notes: []*model.Note{
+			{Pitch: model.Pitch{Step: model.StepB, Octave: 4}, Dur: dottedWhole},
+			{Pitch: model.Pitch{Step: model.StepD, Octave: 5}, Dur: dottedWhole},
+		}},
+		&model.Note{Pitch: model.Pitch{Step: model.StepA, Octave: 4}, Dur: dottedWhole},
+	}
+	bar := func() (written, lasts []model.Duration, total model.Duration) {
+		h.app.mu.RLock()
+		defer h.app.mu.RUnlock()
+		total = model.Duration{Num: 0, Den: 1}
+		for _, el := range h.app.score.Parts[0].Measures[0].Voices[0].Elements {
+			written = append(written, marksOfElement(el).WrittenDuration(el.Duration()))
+			lasts = append(lasts, el.Duration())
+			total = total.Add(el.Duration())
+		}
+		return
+	}
+
+	h.post("/api/tremolo?strokes=3&pair=1&sel=0:0:0,0:0:1")
+	written, lasts, total := bar()
+	for i := range written {
+		if written[i] != dottedWhole {
+			t.Errorf("note %d is drawn as %v, want the dotted whole it was written as", i, written[i])
+		}
+		if lasts[i] != (model.Duration{Num: 3, Den: 4}) {
+			t.Errorf("note %d lasts %v, want half the bar", i, lasts[i])
+		}
+	}
+	if total != dottedWhole {
+		t.Errorf("the bar lasts %v, want the 12/8 it is in", total)
+	}
+
+	// Taken off, the two are the notes that were written: whole length each.
+	h.post("/api/tremolo?strokes=0&pair=1&sel=0:0:0,0:0:1")
+	written, lasts, _ = bar()
+	for i := range written {
+		if written[i] != dottedWhole || lasts[i] != dottedWhole {
+			t.Errorf("after taking the tremolo off, note %d is drawn %v and lasts %v, want %v both",
+				i, written[i], lasts[i], dottedWhole)
+		}
+	}
+
+	// And made again, it is halved once, not twice.
+	h.post("/api/tremolo?strokes=3&pair=1&sel=0:0:0,0:0:1")
+	h.post("/api/tremolo?strokes=2&pair=1&sel=0:0:0,0:0:1")
+	if _, _, total := bar(); total != dottedWhole {
+		t.Errorf("a pair made twice lasts %v, want %v", total, dottedWhole)
+	}
+}

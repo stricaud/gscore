@@ -973,7 +973,7 @@ func (e *engraver) slurAt(part *model.Part, m *model.Marks, p *placed, measure i
 		if gx, gstep, gstem, ok := e.graceSlurAnchor(part, p); ok {
 			gy := e.y + stepY(float64(gstep))
 			open.slurs = append(open.slurs, &openSpan{
-				x: gx, y: gy, rel: gy - e.y, above: true,
+				x: gx, y: gy, rel: gy - e.y, above: true, grace: true,
 				fromHi: gstep, fromLo: gstep,
 				// A grace note's stem always points up, whatever the note
 				// it leans on does. Saying so matters because the side the
@@ -990,6 +990,19 @@ func (e *engraver) slurAt(part *model.Part, m *model.Marks, p *placed, measure i
 	for n := m.SlurStop; n > 0 && len(open.slurs) > 0; n-- {
 		// The innermost: the one opened most recently and still open.
 		sl := open.slurs[len(open.slurs)-1]
+		// A grace note slurred into the note it leans on: the small curve
+		// under the two of them, from under the grace note into the lowest
+		// notehead of its note, as printed copies write it. Through the
+		// phrase's rules it was turned over by the note's stem and pushed
+		// out past the accent above, and came out as a hook over the
+		// chord's top note — when the curve belongs to the bottom one.
+		if sl.grace && sl.ref == p.index && sl.measure == measure {
+			sl.above = false
+			sl.toRef = p.index
+			e.drawTieOrSlur(sl, p.x-tieGap, e.y+stepY(float64(p.lo)), graceSlurLift, true, true)
+			open.slurs = open.slurs[:len(open.slurs)-1]
+			continue
+		}
 		// A slur that came over a line break has no note at its left end.
 		//
 		// That end is the margin this system started at, put there by
@@ -1120,7 +1133,13 @@ func (e *engraver) slurAt(part *model.Part, m *model.Marks, p *placed, measure i
 		leaves = math.Max(leaves, p.dotsEnd+tieGap)
 	}
 
-	for _, h := range e.tiedHeads(p, m) {
+	heads := e.tiedHeads(p, m)
+	// Which noteheads this element has to arrive on.
+	has := map[int]bool{}
+	for _, h := range heads {
+		has[h.step] = true
+	}
+	for _, h := range heads {
 		if h.stop {
 			if t, ok := tied.ties[h.step]; ok {
 				t.toRef = p.index
@@ -1153,11 +1172,94 @@ func (e *engraver) slurAt(part *model.Part, m *model.Marks, p *placed, measure i
 		if t.ref == p.index && t.measure == measure {
 			continue // opened by this element, on another notehead
 		}
+		// Arriving where the note of that pitch is drawn, which is not
+		// always this element's own column. A chord held into a bar where
+		// its notes have parted arrives partly in the other voice — and
+		// where that voice stepped a notehead to the left, a curve ended
+		// at this column ran on into its notehead.
+		to := arrives
+		if !has[step] {
+			if q := e.headBeside(p, step); q != nil {
+				to = math.Min(to, q.x-tieGap)
+				to = e.clearOfSigns(p, to, e.y+stepY(float64(step)))
+			}
+		}
 		t.toRef = p.index
-		e.closeTie(t, arrives, e.y+stepY(float64(step)))
+		e.closeTie(t, to, e.y+stepY(float64(step)))
 		delete(tied.ties, step)
 	}
 }
+
+// clearOfSigns moves the end of a tie arriving at height y back in front of
+// any accidental written at the moment p is struck that stands at that
+// height between where the tie set out and where it is arriving.
+//
+// The signs of a moment are set in files to the left of every notehead
+// struck then, so a tie arriving on the voice that stepped aside comes in
+// across them: the flat of the voice above was drawn on the curve.
+func (e *engraver) clearOfSigns(p *placed, to, y float64) float64 {
+	for _, q := range e.barItems {
+		if q.start.Cmp(p.start) != 0 {
+			continue
+		}
+		var notes []*model.Note
+		switch {
+		case q.note != nil:
+			notes = []*model.Note{q.note}
+		case q.chord != nil:
+			notes = q.chord.Notes
+		}
+		for _, n := range notes {
+			spot, ok := e.accSpots[n]
+			g := smufl.AccidentalGlyph(n.Accidental)
+			if !ok || g == "" {
+				continue
+			}
+			gy := e.y + stepY(float64(e.noteStep(q.clef, n)))
+			up, down := glyphReach(g)
+			if y < gy-up-tieGap || y > gy+down+tieGap {
+				continue
+			}
+			x := spot.left - spot.shift - e.opt.Spacings.AccidentalToNote - e.adv(g)
+			if n.Parens {
+				x -= e.adv("accidentalParensLeft") + e.adv("accidentalParensRight")
+			}
+			to = math.Min(to, x-tieGap)
+		}
+	}
+	return to
+}
+
+// headBeside is the element on the staff, struck at the same moment as p,
+// that has a notehead at step, or nil.
+func (e *engraver) headBeside(p *placed, step int) *placed {
+	for _, q := range e.barItems {
+		if q == p || q.rest != nil || q.start.Cmp(p.start) != 0 {
+			continue
+		}
+		var notes []*model.Note
+		switch {
+		case q.note != nil:
+			notes = []*model.Note{q.note}
+		case q.chord != nil:
+			notes = q.chord.Notes
+		}
+		for _, n := range notes {
+			if e.noteStep(q.clef, n) == step {
+				return q
+			}
+		}
+	}
+	return nil
+}
+
+// graceSlurLift is how far below the two noteheads a grace note's slur
+// runs, in staff spaces: clear of the heads, and no further.
+const graceSlurLift = 0.6
+
+// graceSlurArch is how far below the lower of its ends the curve's control
+// point is set, which bows it by half as much.
+const graceSlurArch = 0.8
 
 // closeTie draws a tie that has found the note it runs to.
 //
@@ -1268,8 +1370,15 @@ func (e *engraver) drawTieOrSlur(from *openSpan, toX, toY, lift float64, slur, c
 	if lid := span * archPerWidth; tieArch > lid {
 		cy = (y1+y2)/2 + dir*lid*2
 	}
-	if slur {
+	// A grace note's curve is the short one under it, not a phrase to be
+	// fitted over the music. See slurAt. It bows below the lower of its two
+	// ends: into a note well under the small one, a curve bowed from the
+	// midway height is a straight line drawn down between them.
+	if slur && !from.grace {
 		y1, y2, cy = e.fitSlur(from.x, toX, y1, y2, dir)
+	}
+	if from.grace {
+		cy = math.Max(y1, y2) + graceSlurArch
 	}
 
 	if slur {

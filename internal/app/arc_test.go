@@ -1,9 +1,12 @@
 package app
 
 import (
+	"fmt"
+	"net/http"
 	"strings"
 	"testing"
 
+	"github.com/stricaud/gscore/internal/engrave"
 	"github.com/stricaud/gscore/internal/model"
 )
 
@@ -170,4 +173,68 @@ func TestTakingAwayASlurThatOpensOnAGraceNote(t *testing.T) {
 		t.Error("the grace note still opens the slur, so it is still drawn")
 	}
 	sameMarks(t, marksAt(t, h), ".", ".", ".")
+}
+
+// heldIntoTheOtherVoice is two bars of a piano's right hand: a chord of F and
+// the F an octave up, then the upper F held on in the tune while the lower
+// one is held as the bottom of the accompaniment's chord, in the other voice.
+// Bars 24 and 25 of Black and Tan Fantasy.
+func heldIntoTheOtherVoice(t *testing.T) (*harness, *model.Chord, *model.Chord, *model.Chord) {
+	t.Helper()
+	half := model.Duration{Num: 1, Den: 2}
+	n := func(step model.Step, oct int) *model.Note {
+		return &model.Note{Pitch: model.Pitch{Step: step, Octave: oct}, Dur: half}
+	}
+	held := &model.Chord{Dur: half, Notes: []*model.Note{n(model.StepF, 4), n(model.StepF, 5)}}
+	tune := &model.Chord{Dur: half, Notes: []*model.Note{n(model.StepA, 4), n(model.StepF, 5)}}
+	under := &model.Chord{Dur: half, Notes: []*model.Note{n(model.StepF, 4), n(model.StepB, 4)}}
+	s := model.NewScore()
+	p := s.Parts[0]
+	p.Time = model.TimeSignature{Beats: 2, BeatValue: 4}
+	p.Measures = []*model.Measure{
+		{Voices: []*model.Voice{{Elements: []model.Element{held}}}},
+		{Voices: []*model.Voice{
+			{Elements: []model.Element{tune}},
+			{Elements: []model.Element{under}},
+		}},
+	}
+	a := New(s, "")
+	a.setPasteboard = nil
+	mux := http.NewServeMux()
+	a.routes(mux)
+	return &harness{t: t, app: a, mux: mux}, held, tune, under
+}
+
+// Tying the lower notehead holds it into the other voice's F, which is where
+// that note goes on. It was refused: the next note of its own voice has no F
+// at that height.
+func TestTyingANoteheadIntoTheOtherVoice(t *testing.T) {
+	h, held, tune, under := heldIntoTheOtherVoice(t)
+	f4 := engrave.StaffStep(model.Treble, model.Pitch{Step: model.StepF, Octave: 4})
+	h.post(fmt.Sprintf("/api/tie?tie=on&step=%d&sel=0:0:0", f4))
+	if !held.Notes[0].TieStart {
+		t.Error("the held F does not start a tie")
+	}
+	if !under.Notes[0].TieStop {
+		t.Error("the tie does not end on the other voice's F")
+	}
+	if tune.TieStop || tune.Notes[0].TieStop || tune.Notes[1].TieStop {
+		t.Error("the tune's chord was marked, which has no F at that height")
+	}
+}
+
+// And the whole chord: the upper F into the tune, the lower into the other
+// voice.
+func TestTyingAChordWhoseNotesPartIntoTwoVoices(t *testing.T) {
+	h, held, tune, under := heldIntoTheOtherVoice(t)
+	h.post("/api/tie?tie=on&sel=0:0:0")
+	if !held.TieStart {
+		t.Error("the chord does not start its ties")
+	}
+	if !tune.TieStop {
+		t.Error("the upper F is not held into the tune")
+	}
+	if !under.Notes[0].TieStop {
+		t.Error("the lower F is not held into the other voice")
+	}
 }

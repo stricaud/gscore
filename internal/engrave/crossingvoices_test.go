@@ -119,6 +119,12 @@ func TestATieIntoAVoiceThatSteppedAsideEndsInFrontOfIt(t *testing.T) {
 			t.Errorf("the F's tie ends at %.2f, inside the notehead that "+
 				"starts at %.2f", a.X2, left)
 		}
+		// Hung under, on the side of the voice it arrives in: arched over,
+		// it ran through the noteheads of that voice between the two Fs.
+		if a.CY <= a.Y1 {
+			t.Errorf("the F's tie arches upward (ends %.2f, middle %.2f); it "+
+				"ends in the lower voice and belongs under", a.Y1, a.CY)
+		}
 		// And in front of the upper voice's flat, which stands in the way.
 		for _, g := range signsDrawn(lay) {
 			if a.X2 > g.X {

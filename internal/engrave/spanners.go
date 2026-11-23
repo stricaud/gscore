@@ -1143,6 +1143,9 @@ func (e *engraver) slurAt(part *model.Part, m *model.Marks, p *placed, measure i
 		if h.stop {
 			if t, ok := tied.ties[h.step]; ok {
 				t.toRef = p.index
+				if t.voice != p.voice {
+					e.crossingSide(t, p)
+				}
 				e.closeTie(t, arrives, e.y+stepY(float64(h.step)))
 				delete(tied.ties, h.step)
 			}
@@ -1155,7 +1158,7 @@ func (e *engraver) slurAt(part *model.Part, m *model.Marks, p *placed, measure i
 				tied.ties[h.step] = &openSpan{
 					x: leaves, y: e.y + stepY(float64(h.step)),
 					rel: stepY(float64(h.step)), above: h.above,
-					voice: p.voice, step: h.step,
+					voice: p.voice, step: h.step, sideFixed: h.fixed,
 					ref: p.index, part: e.partIndex, measure: measure,
 				}
 			}
@@ -1182,6 +1185,7 @@ func (e *engraver) slurAt(part *model.Part, m *model.Marks, p *placed, measure i
 			if q := e.headBeside(p, step); q != nil {
 				to = math.Min(to, q.x-tieGap)
 				to = e.clearOfSigns(p, to, e.y+stepY(float64(step)))
+				e.crossingSide(t, q)
 			}
 		}
 		t.toRef = p.index
@@ -1228,6 +1232,20 @@ func (e *engraver) clearOfSigns(p *placed, to, y float64) float64 {
 		}
 	}
 	return to
+}
+
+// crossingSide puts a tie that ends in another voice on that voice's side of
+// the staff: below where it ends in the lower voice, above in the upper.
+//
+// It set out on the side of the voice it began in, and a held note that
+// goes on in the voice below arched up over the notes between — through the
+// noteheads of the very voice it was arriving in. Printed copies hang it
+// under. A side asked for is left as it is.
+func (e *engraver) crossingSide(t *openSpan, to *placed) {
+	if t.sideFixed {
+		return
+	}
+	t.above = e.curveAbove(to)
 }
 
 // headBeside is the element on the staff, struck at the same moment as p,
@@ -1293,6 +1311,8 @@ type tiedHead struct {
 	step        int
 	above       bool
 	start, stop bool
+	// fixed is a side that was asked for, on the note or the notehead.
+	fixed bool
 }
 
 // tiedHeads lists the noteheads of an element that carry a tie.
@@ -1315,6 +1335,7 @@ func (e *engraver) tiedHeads(p *placed, m *model.Marks) []tiedHead {
 		return []tiedHead{{
 			step: p.step, above: tieSide(m.TieDir, e.curveAbove(p)),
 			start: m.TieStart, stop: m.TieStop,
+			fixed: m.TieDir != model.StemAuto,
 		}}
 	}
 	if p.chord == nil {
@@ -1339,6 +1360,7 @@ func (e *engraver) tiedHeads(p *placed, m *model.Marks) []tiedHead {
 			// mark covers just itself.
 			start: m.TieStart || n.TieStart,
 			stop:  m.TieStop || n.TieStop,
+			fixed: m.TieDir != model.StemAuto || n.TieDir != model.StemAuto,
 		})
 	}
 	return out

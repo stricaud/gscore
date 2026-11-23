@@ -1502,6 +1502,9 @@ type openSpan struct {
 	// and which side of the music it arcs over.
 	y     float64
 	above bool
+	// sideFixed says the side above was asked for rather than worked out,
+	// so nothing later turns the curve over. See slurAt.
+	sideFixed bool
 	// grace is a slur leaving a grace note for the note it leans on, which
 	// is drawn as the short curve under the two and not as a phrase. See
 	// slurAt.

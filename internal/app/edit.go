@@ -5464,10 +5464,32 @@ func (a *App) handleTie(w http.ResponseWriter, r *http.Request) {
 	// to say it: the note it runs to is the one that follows, across the
 	// barline if that is where it is. Asking for both was asking the reader
 	// to say something the mark already says.
+	//
+	// The note after it is looked for in the same line of music, and a held
+	// note does not always stay in it: in piano writing a chord's lower note
+	// is often held into the other voice — the F of a chord in the tune
+	// held as the bottom of the accompaniment's chord in the next bar. Where
+	// the next note of the line has no head at a held pitch, the other
+	// voices are asked for one struck at the same moment, and the tie ends
+	// there. Refused before, with "there is no notehead there to tie", and
+	// there was no other way to say it.
+	type crossing struct {
+		to   tieTarget
+		step int
+	}
+	var crossings []crossing
 	if len(targets) == 1 && q.Get("tie") != "none" {
 		a.lock()
 		if next, ok := a.noteAfter(targets[0]); ok {
 			targets = append(targets, next)
+			for _, st := range headSteps(targets[0], step, hasStep) {
+				if headAt(next, st) {
+					continue
+				}
+				if b, ok := a.headBeside(next, st); ok {
+					crossings = append(crossings, crossing{b, st})
+				}
+			}
 		}
 		a.mu.Unlock()
 	}
@@ -5499,13 +5521,89 @@ func (a *App) handleTie(w http.ResponseWriter, r *http.Request) {
 	}
 
 	for i, t := range targets {
+		// The one notehead being held, gone on into another voice: its end
+		// is marked there, below, and not on this note, which has none.
+		if i == len(targets)-1 && hasStep && len(crossings) > 0 && !headAt(t, step) {
+			continue
+		}
 		if !setTie(t, step, hasStep, i < len(targets)-1, i > 0) && hasStep {
 			http.Error(w, "there is no notehead there to tie",
 				http.StatusBadRequest)
 			return
 		}
 	}
-	writeJSON(w, map[string]int{"changed": len(targets)})
+	for _, c := range crossings {
+		setTie(c.to, c.step, true, false, true)
+	}
+	writeJSON(w, map[string]int{"changed": len(targets) + len(crossings)})
+}
+
+// headSteps is the noteheads a tie from t holds: the one asked for, or every
+// one it has.
+func headSteps(t tieTarget, step int, hasStep bool) []int {
+	if hasStep {
+		return []int{step}
+	}
+	clef := t.part.ClefAt(t.measure)
+	switch e := t.el.(type) {
+	case *model.Note:
+		return []int{engrave.StaffStep(clef, e.Pitch)}
+	case *model.Chord:
+		out := make([]int, 0, len(e.Notes))
+		for _, n := range e.Notes {
+			out = append(out, engrave.StaffStep(clef, n.Pitch))
+		}
+		return out
+	}
+	return nil
+}
+
+// headAt says whether t has a notehead at step.
+func headAt(t tieTarget, step int) bool {
+	clef := t.part.ClefAt(t.measure)
+	switch e := t.el.(type) {
+	case *model.Note:
+		return engrave.StaffStep(clef, e.Pitch) == step
+	case *model.Chord:
+		for _, n := range e.Notes {
+			if engrave.StaffStep(clef, n.Pitch) == step {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// headBeside finds, in another voice of t's bar, a note or chord struck at
+// the same moment as t with a notehead at step.
+func (a *App) headBeside(t tieTarget, step int) (tieTarget, bool) {
+	m := t.part.Measures[t.measure]
+	onset := func(v *model.Voice, index int) model.Duration {
+		at := model.Duration{Num: 0, Den: 1}
+		for i := 0; i < index && i < len(v.Elements); i++ {
+			at = at.Add(v.Elements[i].Duration())
+		}
+		return at
+	}
+	when := onset(lineOf(m, t.voice), t.index)
+	for vi, v := range m.Voices {
+		if vi == t.voice || v == nil {
+			continue
+		}
+		at := model.Duration{Num: 0, Den: 1}
+		for i, el := range v.Elements {
+			if c := at.Cmp(when); c > 0 {
+				break
+			} else if c == 0 {
+				cand := tieTarget{part: t.part, el: el, measure: t.measure, index: i, voice: vi}
+				if headAt(cand, step) {
+					return cand, true
+				}
+			}
+			at = at.Add(el.Duration())
+		}
+	}
+	return tieTarget{}, false
 }
 
 // tieTarget is one element of the selection, with the staff it is on so a

@@ -1254,10 +1254,10 @@ type engraver struct {
 	// staffStrokes and staffQuads are the same for the strokes and the
 	// beams. See clearOfStems.
 	staffStrokes, staffQuads int
-	// pastStem is the articulations written past the end of their note's
-	// stem, by glyph, with where each is in lay.Articulations. A slur hung
-	// off that stem goes inside them. See liftPastStem.
-	pastStem map[int]int
+	// outsideSlur is the articulations a slur goes inside of rather than
+	// round, by glyph, with where each is in lay.Articulations: an accent,
+	// and any mark written past the end of its note's stem. See liftOutside.
+	outsideSlur map[int]int
 	// lines and lineGap describe the staff being drawn: five lines a space
 	// apart for ordinary music, one per string and wider for tablature.
 	lines   int
@@ -4354,7 +4354,7 @@ func (e *engraver) drawSystem(parts []*model.Part, boxes [][]measureBox,
 		// Where this staff's own ink begins. See clearOfNoteheads.
 		e.staffGlyphs = len(e.lay.Glyphs)
 		e.staffStrokes, e.staffQuads = len(e.lay.Lines), len(e.lay.Quads)
-		e.pastStem = nil
+		e.outsideSlur = nil
 		e.clef = e.clefAt(p, start)
 		// How this staff is ruled: five lines of pitches, or one line per
 		// string with the frets written on them.

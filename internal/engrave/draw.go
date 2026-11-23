@@ -483,7 +483,11 @@ func (e *engraver) drawMeasure(part *model.Part, b measureBox, x, end float64, s
 	for i, p := range items {
 		if m := p.marks(); m != nil {
 			e.articMeasure = b.index
-			e.drawArticulations(m, p.x+noteheadWidth(p.value)/2, p.lo, p.hi, e.stemUp(p), p.index)
+			// On the side its curves go: away from the stem, except on a
+			// staff two voices share, where each voice keeps to its own
+			// side — the upper voice's accent over it, not down among the
+			// lower voice's notes and through their stems.
+			e.drawArticulations(m, p.x+noteheadWidth(p.value)/2, p.lo, p.hi, !e.curveAbove(p), p.index)
 			e.drawDynamic(m, p, b.index)
 			e.spanAt(m, p, b.index)
 			e.slurAt(part, m, p, b.index)
@@ -4043,6 +4047,8 @@ func (e *engraver) drawArticulations(m *model.Marks, x float64, lo, hi int, stem
 	// now, so the question can be asked of the drawing rather than guessed
 	// at from the model.
 	y = e.clearOfNoteheads(x, y, above)
+	// Which on a shared staff can be the stem's side. See clearOfStems.
+	y = e.clearOfStems(x, y, e.y+stepY(float64(hi)), e.y+stepY(float64(lo)), above)
 
 	// The other side of the note, for a mark that was asked to go there
 	// and for the ones that always do. Found the same way as the side the
@@ -4076,11 +4082,13 @@ func (e *engraver) drawArticulations(m *model.Marks, x float64, lo, hi int, stem
 		if over != above {
 			at = otherY
 		}
-		if over != above {
-			if e.pastStem == nil {
-				e.pastStem = map[int]int{}
+		// An accent stands over a slur, not under it, and so does any
+		// mark past the end of a stem.
+		if over != above || a == model.Accent {
+			if e.outsideSlur == nil {
+				e.outsideSlur = map[int]int{}
 			}
-			e.pastStem[len(e.lay.Glyphs)] = len(e.lay.Articulations)
+			e.outsideSlur[len(e.lay.Glyphs)] = len(e.lay.Articulations)
 		}
 		e.lay.Glyphs = append(e.lay.Glyphs, Glyph{
 			Name: name, X: origin, Y: at, Ref: ref,

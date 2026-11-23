@@ -6,9 +6,9 @@ abc/boite-musique.abc 3127898a97d198d5 514
 abc/decoration.abc c8f4673a8e66ca93 31
 abc/pitch.abc 376aa6d8311eb1d1 227
 abc/sunshine.abc 7702bcad8c455962 136
-samples/altes-10e-solo.abc 2b9469052ae059ae 9622
+samples/altes-10e-solo.abc 11f9658841cb3ca5 9622
 samples/boite-musique.abc 3127898a97d198d5 514
-scores/Bumpty-Bump.gscore 0f501da2787b2b91 2969
+scores/Bumpty-Bump.gscore e6d4b320d01017a7 2969
 suite/01a-Pitches-Pitches.musicxml 5177aba21f65c2bd 548
 suite/01b-Pitches-Intervals.musicxml 6f4787733f66de48 405
 suite/01c-Pitches-NoVoiceElement.musicxml e4827d8a899bf0f3 14
@@ -118,8 +118,8 @@ suite/41i-PartNameDisplay-Override.musicxml 61e51d04a9e8a1a4 30
 suite/41j-PartNameDisplay-Multiple-DisplayText-Children.musicxml d15f880bbc29f364 13
 suite/41k-PartName-Print.musicxml a71518ffdaffa1ed 16
 suite/41l-GroupNameDisplay-Override.musicxml 54a3d4d4630780e5 58
-suite/42a-MultiVoice-TwoVoicesOnStaff-Lyrics.musicxml 63bf90c14b6aeda9 66
-suite/42b-MultiVoice-MidMeasureClefChange.musicxml 50087744b61586b6 109
+suite/42a-MultiVoice-TwoVoicesOnStaff-Lyrics.musicxml c8024557089fb854 66
+suite/42b-MultiVoice-MidMeasureClefChange.musicxml 9e72e65128c5f238 109
 suite/43a-PianoStaff.musicxml b265204262c59e9b 25
 suite/43b-MultiStaff-DifferentKeys.musicxml 82a9936fef99b726 27
 suite/43c-MultiStaff-DifferentKeysAfterBackup.musicxml 82a9936fef99b726 27

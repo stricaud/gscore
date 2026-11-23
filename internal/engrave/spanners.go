@@ -1066,10 +1066,7 @@ func (e *engraver) slurAt(part *model.Part, m *model.Marks, p *placed, measure i
 		toY := e.slurEndClear(x, toBase, sl.above)
 		e.drawTieOrSlur(sl, x, toY, slurLift, true, true)
 		if c := e.lay.Curves[len(e.lay.Curves)-1]; c.X2 == x {
-			if !carried {
-				e.liftPastStem(c.X1, c.Y1, sl.above)
-			}
-			e.liftPastStem(c.X2, c.Y2, sl.above)
+			e.liftOutside(c, sl.above)
 		}
 		open.slurs = open.slurs[:len(open.slurs)-1]
 	}
@@ -1408,6 +1405,14 @@ func (e *engraver) drawTieOrSlur(from *openSpan, toX, toY, lift float64, slur, c
 	if from.grace {
 		cy = math.Max(y1, y2) + graceSlurArch
 	}
+	// A tie that has music between its two notes arches over it. Between
+	// two notes side by side there is nothing, and a tie keeps its flat
+	// shape; but a tie into the next bar, or into the other voice, can run
+	// past a note of the other voice whose stem comes down across it — and
+	// a curve cutting a stem reads as neither.
+	if !slur && !from.grace {
+		cy = e.tieOverStems(from.x, toX, y1, y2, cy, dir)
+	}
 
 	if slur {
 		// Named before it is drawn, so the outline the next slur is
@@ -1477,8 +1482,8 @@ func (e *engraver) slurEndClear(x, y float64, above bool) float64 {
 			continue
 		}
 		// Past the stem the mark goes outside the slur, which is lifted
-		// over it afterwards. See liftPastStem.
-		if _, ok := e.pastStem[from+i]; ok {
+		// over it afterwards. See liftOutside.
+		if _, ok := e.outsideSlur[from+i]; ok {
 			continue
 		}
 		up, down := glyphHeight(g)
@@ -1493,61 +1498,145 @@ func (e *engraver) slurEndClear(x, y float64, above bool) float64 {
 	return y
 }
 
-// liftPastStem moves the marks written past a stem's end out over the end of
-// a slur hung off that stem, at x and y.
+// tieOverStems deepens a tie's arch so that it passes the end of any stem
+// standing between its two notes and running across it, and says where the
+// control point is then.
 //
-// On the side away from the stem the marks go between the note and the
-// curve, which is slurEndClear's business. On the stem's own side the slur
-// is hung off the end of the stem, and a mark already standing past it there
-// had the curve's end pushed out over it — the slur started up in the air
-// beside an accent. Printed music writes it the other way round: the slur
-// leaves the stem end, and the accent stands over the slur.
-func (e *engraver) liftPastStem(x, y float64, above bool) {
+// Only a stem that crosses the curve as it is: one that stops short of it is
+// not in its way, and the tie keeps its shape. And only between the notes,
+// not at them — a tie leaves its note beside the stem, not through it.
+func (e *engraver) tieOverStems(x0, x1, y1, y2, cy, dir float64) float64 {
 	const (
-		near = 1.0 // from the middle of the mark to the end of the slur
+		inset = 0.8  // the tie's own notes, at either end
+		air   = 0.35 // between the end of the stem and the curve
+		least = 0.15 // nearer the ends than this the arch cannot help
+	)
+	if x1-x0 <= 2*inset || e.staffStrokes > len(e.lay.Lines) {
+		return cy
+	}
+	// The curve's x is near enough even along it: its control point is
+	// halfway across, so t is how far along it is.
+	at := func(t, c float64) float64 {
+		return (1-t)*(1-t)*y1 + 2*t*(1-t)*c + t*t*y2
+	}
+	for _, l := range e.lay.Lines[e.staffStrokes:] {
+		if math.Abs(l.X1-l.X2) > 0.01 || l.X1 < x0+inset || l.X1 > x1-inset {
+			continue
+		}
+		// A stem, not a barline: a tie over the bar crosses its barline
+		// by being a tie over the bar.
+		if l.Thickness > e.opt.Defaults.StemThickness+1e-9 || e.atBarline(l.X1) {
+			continue
+		}
+		t := (l.X1 - x0) / (x1 - x0)
+		if t < least || t > 1-least {
+			continue
+		}
+		lo, hi := math.Min(l.Y1, l.Y2), math.Max(l.Y1, l.Y2)
+		y := at(t, cy)
+		if y < lo-air || y > hi+air {
+			continue // it stops short of the curve
+		}
+		// The end of the stem on the side the tie bows to.
+		want := hi + air
+		if dir < 0 {
+			want = lo - air
+		}
+		c := (want - (1-t)*(1-t)*y1 - t*t*y2) / (2 * t * (1 - t))
+		if (dir > 0 && c > cy) || (dir < 0 && c < cy) {
+			cy = c
+		}
+	}
+	return cy
+}
+
+// atBarline says a barline of the staff being drawn stands at x.
+func (e *engraver) atBarline(x float64) bool {
+	for i := len(e.lay.Barlines) - 1; i >= 0; i-- {
+		b := e.lay.Barlines[i]
+		if b.Part != e.partIndex {
+			break
+		}
+		if math.Abs(b.X-x) < 0.3 {
+			return true
+		}
+	}
+	return false
+}
+
+// liftOutside moves the marks that go outside a slur out over it, where the
+// slur c runs past them on their side of the notes.
+//
+// Which marks those are is the engraver's convention as much as anything,
+// and this one is the printed parts': an accent stands over the slur, which
+// runs from the note under it. Set the other way, the curve's end was pushed
+// out over the accent and the slur started up in the air beside it. And a
+// mark past the end of a stem, where the slur is hung off that stem, goes
+// outside for the same reason. A staccato dot or a tenuto stays between the
+// note and the curve; see slurEndClear.
+func (e *engraver) liftOutside(c Curve, above bool) {
+	const (
+		near = 1.0 // past the ends, a mark on the end note still counts
 		air  = 0.5
 	)
-	var mine []int
-	shift := 0.0
+	if c.X2 <= c.X1 {
+		return
+	}
+	// Where the curve is at x. Its control point is halfway across, so x
+	// runs evenly with t.
+	curveAt := func(x float64) float64 {
+		t := (x - c.X1) / (c.X2 - c.X1)
+		t = math.Max(0, math.Min(1, t))
+		return (1-t)*(1-t)*c.Y1 + 2*t*(1-t)*c.CY + t*t*c.Y2
+	}
+	// By note, so that two marks stacked on one note move together and
+	// stay stacked rather than landing on each other.
+	shift := map[int]float64{}
+	mine := map[int][]int{}
 	from := e.staffGlyphs
-	for gi := range e.pastStem {
-		if gi < from || gi >= len(e.lay.Glyphs) {
+	for gi, ai := range e.outsideSlur {
+		if gi < from || gi >= len(e.lay.Glyphs) || ai >= len(e.lay.Articulations) {
+			continue
+		}
+		if e.lay.Articulations[ai].Above != above {
 			continue
 		}
 		g := e.lay.Glyphs[gi]
 		mid := g.X + smufl.Advance(g.Name)/2
-		if math.Abs(mid-x) > near {
+		if mid < c.X1-near || mid > c.X2+near {
 			continue
 		}
+		y := curveAt(mid)
 		up, down := glyphHeight(g)
+		s := shift[g.Ref]
 		if above {
 			if bottom := g.Y + down; bottom > y-air {
-				shift = math.Min(shift, y-air-bottom)
+				s = math.Min(s, y-air-bottom)
 			}
 		} else if top := g.Y - up; top < y+air {
-			shift = math.Max(shift, y+air-top)
+			s = math.Max(s, y+air-top)
 		}
-		mine = append(mine, gi)
+		shift[g.Ref] = s
+		mine[g.Ref] = append(mine[g.Ref], gi)
 	}
-	if shift == 0 {
-		return
-	}
-	// All of them by the same amount, so that two marks stacked on the
-	// note stay stacked rather than landing on each other.
-	for _, gi := range mine {
-		e.lay.Glyphs[gi].Y += shift
-		if ai := e.pastStem[gi]; ai < len(e.lay.Articulations) {
-			e.lay.Articulations[ai].Y += shift
+	for ref, gis := range mine {
+		s := shift[ref]
+		if s == 0 {
+			continue
 		}
-		// The outlines already holding it hold it where it was. They only
-		// ever grow, so where it is now is added and what comes after is
-		// placed clear of both.
-		if e.staffSky != nil && gi < e.staffSkyAt.glyphs {
-			g := e.lay.Glyphs[gi]
-			up, down := glyphHeight(g)
-			w := glyphWidth(g)
-			e.staffSky.add(g.X, g.X+w, g.Y-up, g.Y+down)
-			e.staffInk.add(g.X, g.X+w, g.Y-up, g.Y+down)
+		for _, gi := range gis {
+			e.lay.Glyphs[gi].Y += s
+			e.lay.Articulations[e.outsideSlur[gi]].Y += s
+			// The outlines already holding it hold it where it was. They
+			// only ever grow, so where it is now is added and what comes
+			// after is placed clear of both.
+			if e.staffSky != nil && gi < e.staffSkyAt.glyphs {
+				g := e.lay.Glyphs[gi]
+				up, down := glyphHeight(g)
+				w := glyphWidth(g)
+				e.staffSky.add(g.X, g.X+w, g.Y-up, g.Y+down)
+				e.staffInk.add(g.X, g.X+w, g.Y-up, g.Y+down)
+			}
 		}
 	}
 }

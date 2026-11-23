@@ -325,8 +325,8 @@ func (e *engraver) addSinceExcept(s *skyline, from mark, skip, skipText, skipLin
 		if skip != nil {
 			// The slurs' own outline: a mark past the end of a stem is
 			// not something a slur hung off that stem goes round. See
-			// liftPastStem.
-			if _, ok := e.pastStem[from.glyphs+i]; ok {
+			// liftOutside.
+			if _, ok := e.outsideSlur[from.glyphs+i]; ok {
 				continue
 			}
 		}

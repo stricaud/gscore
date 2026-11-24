@@ -8,6 +8,7 @@ abc/pitch.abc 376aa6d8311eb1d1 227
 abc/sunshine.abc 7702bcad8c455962 136
 samples/altes-10e-solo.abc 042d5a74cb2949ca 9739
 samples/boite-musique.abc e3d37dbecd95fa3f 514
+scores/Black-and-Tan-Fantasy.gscore 5c1ebaf938652623 2412
 scores/Bumpty-Bump.gscore b8dfd5f689587c8e 3015
 suite/01a-Pitches-Pitches.musicxml 5177aba21f65c2bd 548
 suite/01b-Pitches-Intervals.musicxml 6f4787733f66de48 405

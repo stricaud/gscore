@@ -3485,6 +3485,15 @@ func (e *engraver) measureBox(p *model.Part, m *model.Measure, index int) measur
 			least = math.Max(least, col.width)
 		}
 		col.width = math.Max(e.spanWidth(span, col.elems), col.width)
+		// The first of two stemless notes shaken against each other has
+		// the strokes after it, between the two heads, and they need room
+		// to read as an alternation rather than as a smudge between two
+		// notes set side by side.
+		if tremoloPairOpens(col.elems) {
+			need := noteheadWidth(model.Whole) + tremoloPairRoom
+			col.width = math.Max(col.width, need)
+			least = math.Max(least, need)
+		}
 		// A sung bar is spaced by its words where they are wider than its
 		// notes. Spaced by the notes alone, "Our lit-tle dream cas-tle"
 		// came out as one black word: eight syllables over eight eighth

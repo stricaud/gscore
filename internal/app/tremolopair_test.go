@@ -234,3 +234,36 @@ func TestATremoloPairLastsWhatItsBarHolds(t *testing.T) {
 		t.Errorf("a pair made twice lasts %v, want %v", total, dottedWhole)
 	}
 }
+
+// Two whole notes each put in the time of half themselves by hand, with a
+// "2" over each, are made a pair without a fuss: the 2s were the pair's
+// arithmetic all along, and are hidden rather than refused. Bar 55 of Black
+// and Tan Fantasy, written that way before there was anything else to do.
+func TestWholeNotesHalvedByHandBecomeATremoloPair(t *testing.T) {
+	h := newHarness(t)
+	w := model.Duration{Num: 1, Den: 2} // a whole note in the time of a half
+	mk := func(s model.Step, o int) *model.Note {
+		n := &model.Note{Pitch: model.Pitch{Step: s, Octave: o}, Dur: w}
+		n.Tuplet = &model.Tuplet{Actual: 2, Normal: 1, Start: true, Stop: true}
+		n.Tremolo = &model.Tremolo{Strokes: 3}
+		return n
+	}
+	h.app.score.Parts[0].Measures[0].Voices[0].Elements = []model.Element{
+		mk(model.StepF, 4), mk(model.StepD, 4)}
+
+	h.post("/api/tremolo?part=0&measure=0&at=1&strokes=3&pair=1&sel=0:0:0,0:0:1")
+	els := h.app.score.Parts[0].Measures[0].Voices[0].Elements
+	for i, el := range els {
+		n := el.(*model.Note)
+		if !n.Tuplet.Hidden {
+			t.Errorf("note %d still shows its 2", i+1)
+		}
+		if n.Dur != w {
+			t.Errorf("note %d lasts %v now; it was %v and should be still", i+1, n.Dur, w)
+		}
+	}
+	tr := tremolosOf(t, h.app)
+	if !tr[0].Start || !tr[1].Stop {
+		t.Errorf("not a pair: %+v %+v", tr[0], tr[1])
+	}
+}

@@ -85,6 +85,8 @@ const MESSAGES = {
   "Add a grand staff": "Ajouter une double portée",
   "Add a staff…": "Ajouter une portée…",
   "Add another notehead to the note just written": "Ajouter une tête de note à la note qui vient d’être écrite",
+  "Add a note above the chord picked up — then the arrows move it": "Ajouter une note au-dessus de l’accord choisi — les flèches la déplacent ensuite",
+  "Add a note below the chord picked up — then the arrows move it": "Ajouter une note au-dessous de l’accord choisi — les flèches la déplacent ensuite",
   "Alto": "Clé d’ut 3e",
   "Analysis": "Analyse",
   "and press the keys you would rather use. Escape while it is waiting leaves the binding alone.": "et appuyez sur les touches que vous préférez. Échap pendant l’attente laisse le raccourci tel quel.",

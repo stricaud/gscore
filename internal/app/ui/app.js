@@ -21056,6 +21056,12 @@ const KEY_BINDINGS = [
       if (textPicked()) void moveTextMark(0, 1);
       else if (heldForMoving()) void nudge(-7); else moveCursorPitch(-7);
     } },
+  { id: "chord-above", keys: "Mod+ArrowUp", group: "Writing",
+    label: "Add a note above the chord picked up \u2014 then the arrows move it",
+    run: () => void growChord(1) },
+  { id: "chord-below", keys: "Mod+ArrowDown", group: "Writing",
+    label: "Add a note below the chord picked up \u2014 then the arrows move it",
+    run: () => void growChord(-1) },
   { id: "nudge-up", keys: "Alt+ArrowUp", group: "Selecting and moving",
     label: "Move the note or rest up a step",
     run: () => { if (articulationPicked()) void moveArticulation(1); else void nudge(1); } },
@@ -21971,6 +21977,45 @@ function pitchAtCursor() {
 // A chord is built from the bottom up, a note at a time: write the lowest,
 // move the cursor, add the next. That is how it is played and how it reads
 // to type.
+// growChord adds a note to the chord picked up: a step above its top note,
+// or a step below its bottom one, and leaves that note picked up on its own
+// so that the arrows walk it to the pitch that was meant.
+//
+// Adding to a chord from the keyboard used to mean getting the caret to the
+// right pitch first — and with the chord picked up, the arrows move the
+// chord, so the caret could not be got there without stepping off it and
+// coming back. This needs no aiming at all: click the chord, add a note,
+// and move the new note.
+async function growChord(dir) {
+  if (state.multi.length > 1) {
+    status("Pick up one note or chord to add to");
+    return;
+  }
+  const one = selectedElement() || elementBeforeCaret();
+  if (!one || (one.el.kind !== "note" && one.el.kind !== "chord")) {
+    status("Click a note or a chord first");
+    return;
+  }
+  const { hit, el } = one;
+  const steps = el.steps || [];
+  if (!steps.length) return;
+  const step = dir > 0 ? Math.max(...steps) + 1 : Math.min(...steps) - 1;
+  if (step > 18 || step < -10) {
+    status("That is as far as the staff goes");
+    return;
+  }
+  await addPitch(hit, el, step);
+  // Picked up again, with the new notehead as the one pointed at, the way
+  // clicking it would: the arrows then move that note and not the chord.
+  const now = drawnAt(hit.part, hit.measure, el.index, el.voice || 0);
+  const bar = state.hits.find((h) => h.part === hit.part && h.measure === hit.measure);
+  if (now && bar && (now.steps || []).includes(step)) {
+    select(bar, now, step);
+    status(`Added ${dir > 0 ? "above" : "below"} \u2014 \u2191 \u2193 move the new note, ` +
+           `${modKeyName()}${dir > 0 ? "\u2191" : "\u2193"} adds another`);
+  }
+}
+
 async function chordAtCursor() {
   const sel = state.selection;
   if (!sel) {

@@ -69,7 +69,12 @@ func corpus(t *testing.T) map[string]string {
 		// Whole scores, as people write them: Bumpty Bump is a song with
 		// a piano part, two voices on one staff, lyrics held across the
 		// voices, chord symbols and repeats, which no sample exercises
-		// together. Public domain, so it can live here.
+		// together. Public domain, so it can live here. Black and Tan
+		// Fantasy, also public domain, is a piano part of the kind that
+		// tries an engraver hardest: two voices to a staff, a left hand
+		// written up on the treble staff with its beam across the gap,
+		// lines from one staff to the other, beams over the barline and
+		// tremolos between whole notes.
 		{"scores", "testdata/scores/*.gscore"},
 	}
 	for _, g := range groups {

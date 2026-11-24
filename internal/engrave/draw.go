@@ -2640,20 +2640,39 @@ func (e *engraver) drawWholeNoteTremolos(items []*placed) {
 			x0 += e.dotGap(false) + float64(a.dots)*e.drawnDotStep()
 		}
 		x0 += 0.5
-		x1 := b.x - 0.5
+		// And short of the second note's accidental, which stands in front
+		// of its head: measured to the head, the strokes were drawn
+		// straight through the flat of a D flat shaken against a chord.
+		var bel model.Element = b.chord
+		if b.note != nil {
+			bel = b.note
+		}
+		x1 := b.x - e.accidentalLead(b.clef, bel) - 0.5
 		if x1-x0 < 1 {
 			continue // nothing readable would fit
 		}
-		y := (e.y + stepY(float64(a.step)) + e.y + stepY(float64(b.step))) / 2
+		// Leaning from the one note towards the other, the way a beam
+		// follows its notes: level, it says nothing about where the hand
+		// goes, and the movement between the two is the whole of the
+		// mark. From the middle of each — a chord is shaken as a whole —
+		// and held back the way a beam's slant is, so a wide leap tilts
+		// it and does not stand it on end.
+		ya := e.y + stepY(float64(a.lo+a.hi)/2)
+		yb := e.y + stepY(float64(b.lo+b.hi)/2)
+		mid := (ya + yb) / 2
+		// No steeper than a beam is let be: a third of its length.
+		most := math.Min(tremoloPairSlant, (x1-x0)/3)
+		rise := math.Max(-most, math.Min(most, yb-ya))
+		y0, y1 := mid-rise/2, mid+rise/2
 		top, bottom := math.Inf(1), math.Inf(-1)
 		for level := 1; level <= levels; level++ {
 			// Centred on that line: the stack grows evenly either side
 			// rather than hanging off it.
 			off := (float64(level) - float64(levels+1)/2) *
 				(d.BeamThickness + d.BeamSpacing)
-			e.beamQuad(x0, y+off, x1, y+off, d.BeamThickness, 1)
-			top = math.Min(top, y+off)
-			bottom = math.Max(bottom, y+off+d.BeamThickness)
+			e.beamQuad(x0, y0+off, x1, y1+off, d.BeamThickness, 1)
+			top = math.Min(top, math.Min(y0, y1)+off)
+			bottom = math.Max(bottom, math.Max(y0, y1)+off+d.BeamThickness)
 		}
 		e.markTremolo([]*placed{a, b}, ma.Tremolo, x0, top, x1-x0, bottom-top)
 		i++
@@ -2683,7 +2702,42 @@ const (
 	// Never more than this share of the gap between the stems, so a close
 	// pair keeps a beam long enough to read as one.
 	tremoloPairShare = 0.2
+	// How far the strokes between two stemless notes may fall or rise
+	// from one end to the other, in spaces: enough to say which way the
+	// hand goes.
+	tremoloPairSlant = 1.25
+	// The room the strokes between two stemless notes are given, past the
+	// first one's head: the strokes and the air either side of them, and
+	// the second note's accidental.
+	tremoloPairRoom = 4.5
 )
+
+// tremoloPairOpens says a column opens a two-note tremolo between stemless
+// notes, which draws its strokes in the gap after it.
+func tremoloPairOpens(elems []voiced) bool {
+	for _, v := range elems {
+		var m *model.Marks
+		var dur model.Duration
+		switch x := v.el.(type) {
+		case *model.Note:
+			m, dur = &x.Marks, x.Dur
+		case *model.Chord:
+			m, dur = &x.Marks, x.Dur
+		default:
+			continue
+		}
+		if m.Tremolo == nil || !m.Tremolo.Paired() || !m.Tremolo.Start {
+			continue
+		}
+		// By the head it shows, which for one end of a pair is twice the
+		// time it takes: two whole notes shaken through a bar of four each
+		// take a half of it.
+		if val, _, ok := m.WrittenDuration(dur).Written(); ok && val <= model.Whole {
+			return true
+		}
+	}
+	return false
+}
 
 // roomForTremolo lengthens a stem until the slashes on it have somewhere to
 // go.

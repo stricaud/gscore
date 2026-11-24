@@ -6962,7 +6962,18 @@ func (a *App) pairTremolo(q url.Values, strokes int, buzz bool) (int, error) {
 		return 2, nil
 	}
 	for _, el := range []model.Element{a1, a2} {
-		if mk := marksOfElement(el); mk.Tuplet != nil && !tremoloShare(mk) {
+		mk := marksOfElement(el)
+		// A note already put in the time of half itself by hand — a "2"
+		// written over it alone, which is how a bar of two whole notes
+		// shaken against each other gets to add up without this command —
+		// is the share the pair takes. It is taken as that and hidden: what
+		// a reader sees is the strokes, and the 2 over each note was only
+		// ever arithmetic.
+		if t := mk.Tuplet; t != nil && !t.Hidden && t.Actual == 2 && t.Normal == 1 &&
+			t.Start && t.Stop {
+			t.Hidden = true
+		}
+		if mk.Tuplet != nil && !tremoloShare(mk) {
 			return 0, editError("a two-note tremolo cannot be made inside a tuplet")
 		}
 	}

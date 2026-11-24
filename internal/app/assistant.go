@@ -72,6 +72,21 @@ type assistantSettings struct {
 	APIKey  string `json:"apiKey,omitempty"`
 	// Model is which of the service's models to ask.
 	Model string `json:"model,omitempty"`
+	// TimeoutMinutes is how long a request is given before it is given up
+	// on. Zero is the default. A whole score rewritten for a band by a big
+	// model can take longer than the default, and a slow service longer
+	// still; how long to wait is a choice about the service, not a fact
+	// the program knows.
+	TimeoutMinutes int `json:"timeoutMinutes,omitempty"`
+}
+
+// timeout is how long a request is given: the setting, kept between a
+// minute and two hours, or the default.
+func (s assistantSettings) timeout() time.Duration {
+	if s.TimeoutMinutes <= 0 {
+		return assistantTimeout
+	}
+	return time.Duration(min(max(s.TimeoutMinutes, 1), 120)) * time.Minute
 }
 
 // providerBases are where each service answers unless told otherwise.
@@ -261,6 +276,11 @@ func assistantAsk(ctx context.Context, s assistantSettings, system, user string,
 			Choices []struct {
 				Delta struct {
 					Content textContent `json:"content"`
+					// Where the services that keep the reasoning apart
+					// from the answer put it: DeepSeek and the servers
+					// that follow it, and others under the shorter name.
+					ReasoningContent string `json:"reasoning_content"`
+					Reasoning        string `json:"reasoning"`
 				} `json:"delta"`
 				FinishReason string `json:"finish_reason"`
 			} `json:"choices"`
@@ -276,6 +296,7 @@ func assistantAsk(ctx context.Context, s assistantSettings, system, user string,
 		}
 		for _, c := range ev.Choices {
 			text, thinking := c.Delta.Content.Text, c.Delta.Content.Thinking
+			thinking += c.Delta.ReasoningContent + c.Delta.Reasoning
 			if text != "" || thinking != "" {
 				out.WriteString(text)
 				onDelta(text, thinking)
@@ -740,6 +761,15 @@ func (a *App) handleAssistantSettings(w http.ResponseWriter, r *http.Request) {
 		if q.Has("model") {
 			s.Assistant.Model = strings.TrimSpace(q.Get("model"))
 		}
+		if q.Has("timeout") {
+			n, err := strconv.Atoi(strings.TrimSpace(q.Get("timeout")))
+			if err != nil || n < 0 || n > 120 {
+				http.Error(w, "how long to wait is a number of minutes, up to 120",
+					http.StatusBadRequest)
+				return
+			}
+			s.Assistant.TimeoutMinutes = n
+		}
 		if err := saveSettings(s); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -750,6 +780,7 @@ func (a *App) handleAssistantSettings(w http.ResponseWriter, r *http.Request) {
 		"baseURL":  s.Assistant.BaseURL,
 		"apiKey":   s.Assistant.APIKey,
 		"model":    s.Assistant.Model,
+		"timeout":  int(s.Assistant.timeout() / time.Minute),
 		"defaults": providerBases,
 	})
 }
@@ -889,15 +920,26 @@ func (a *App) handleAssistantCompose(w http.ResponseWriter, r *http.Request) {
 		return at, count, nil
 	}
 
-	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Minute)
+	ctx, cancel := context.WithTimeout(r.Context(), s.timeout())
 	defer cancel()
+	// The question goes in the log as it is asked, so that a request that
+	// is taking its time can be seen in it while it does.
+	began := time.Now()
+	logAssistantAsked(assistantEntry{
+		When: began, Provider: s.provider(), Model: s.model(),
+		Prompt: prompt, Bar: cursor + 1, Score: export.Len(),
+	})
 	var sofar, thought strings.Builder
 	last := time.Time{}
 	var stopped error
 	lastAt := cursor
+	var stream logStream
 	onDelta := func(delta, thinking string) {
 		sofar.WriteString(delta)
 		thought.WriteString(thinking)
+		// Into the log as it comes, the thinking and then the reply.
+		stream.add("thinking", thinking)
+		stream.add("reply", delta)
 		// A few times a second is as often as anybody can read.
 		if stopped != nil || time.Since(last) < 400*time.Millisecond {
 			return
@@ -940,25 +982,37 @@ func (a *App) handleAssistantCompose(w http.ResponseWriter, r *http.Request) {
 		sofar.Reset()
 		thought.Reset()
 		excerpted = true
+		stream.note("the whole score was too long; asked again with the bars around the cursor")
 		reply, err = assistantAsk(ctx, s, assistantSystem,
 			assistantExcerptRequest(excerpt.String(), prompt, cursor+1, exFrom+1, exTo), onDelta)
 	}
 	if stopped != nil {
 		err = stopped
 	}
+	stream.end()
 	// Whatever happens next, it goes in the log: what was asked, what came
 	// back, and what was done with it.
 	entry := assistantEntry{
-		When: time.Now(), Provider: s.provider(), Model: s.model(),
+		When: began, Took: time.Since(began), Provider: s.provider(), Model: s.model(),
 		Prompt: prompt, Bar: cursor + 1, Score: export.Len(),
-		Reply: reply, Thinking: thought.String(),
+		Reply: reply, Thinking: thought.String(), Excerpted: excerpted,
+		Streamed: true,
 	}
 	if entry.Reply == "" {
 		entry.Reply = sofar.String() // as much as arrived before it stopped
 	}
 	if err != nil {
 		msg := err.Error()
-		if contextOverflow(err) {
+		if timedOut(err) {
+			msg = fmt.Sprintf("the model did not finish within %s "+
+				"(Settings, Assistant: how long to wait)", s.timeout())
+			if sofar.Len() == 0 && thought.Len() == 0 {
+				msg += ": nothing arrived from it at all, which is the service " +
+					"being slow or busy rather than the request being too long"
+			} else {
+				msg += fmt.Sprintf(" (%d characters of answer had arrived)", sofar.Len())
+			}
+		} else if contextOverflow(err) {
 			msg = fmt.Sprintf("the request was too long for the model (%s). "+
 				"The score goes with every request — %d characters of it — "+
 				"and the answer has to fit as well.", msg, export.Len())
@@ -1026,7 +1080,7 @@ func (a *App) handleAssistantCompose(w http.ResponseWriter, r *http.Request) {
 // contextOverflow says a service refused a request for being longer than the
 // model can take in. Every service says it in its own words.
 func contextOverflow(err error) bool {
-	if err == nil {
+	if err == nil || timedOut(err) {
 		return false
 	}
 	m := strings.ToLower(err.Error())
@@ -1039,6 +1093,19 @@ func contextOverflow(err error) bool {
 		}
 	}
 	return false
+}
+
+// assistantTimeout is how long a request is given unless the settings say
+// otherwise. A long answer from a big model takes minutes.
+const assistantTimeout = 10 * time.Minute
+
+// timedOut says a request ran out of time, which Go says as "context
+// deadline exceeded" — a context that has nothing to do with the model's,
+// and was taken for it: a model that had not answered in ten minutes was
+// reported as a score too long for it.
+func timedOut(err error) bool {
+	return errors.Is(err, context.DeadlineExceeded) ||
+		strings.Contains(strings.ToLower(err.Error()), "deadline exceeded")
 }
 
 // excerptBars is how many bars are sent when the whole score is too long:

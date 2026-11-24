@@ -2223,6 +2223,10 @@
         <label for="setting-ai-model" class="small">or type one</label>
         <input type="text" id="setting-ai-model" autocomplete="off"
           placeholder="a model the list does not show">
+        <!-- How long a request is given before it is given up on: a whole
+             score rewritten for a band takes a big model minutes. -->
+        <label for="setting-ai-timeout">Wait up to (minutes)</label>
+        <input type="number" id="setting-ai-timeout" min="1" max="120" step="1" value="10">
       </div>
       <div class="small" id="setting-ai-status"></div>
     </div>

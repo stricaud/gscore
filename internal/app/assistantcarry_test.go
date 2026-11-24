@@ -134,3 +134,34 @@ func TestContextOverflowIsRecognised(t *testing.T) {
 type errString string
 
 func (e errString) Error() string { return string(e) }
+
+// How long a request is waited for is a setting, kept within reason, and a
+// request that runs out of time is said to have, not to have been too long.
+func TestHowLongToWaitIsASetting(t *testing.T) {
+	if d := (assistantSettings{}).timeout(); d != assistantTimeout {
+		t.Errorf("unset, the wait is %v; want the default %v", d, assistantTimeout)
+	}
+	if d := (assistantSettings{TimeoutMinutes: 30}).timeout(); d.Minutes() != 30 {
+		t.Errorf("set to 30 minutes, the wait is %v", d)
+	}
+	if d := (assistantSettings{TimeoutMinutes: 999}).timeout(); d.Minutes() != 120 {
+		t.Errorf("set past two hours, the wait is %v", d)
+	}
+	if contextOverflow(errString(`Post "https://api.mistral.ai/v1/chat/completions": context deadline exceeded`)) {
+		t.Error("a request that ran out of time was taken for one too long for the model")
+	}
+	if !timedOut(errString("context deadline exceeded")) {
+		t.Error("running out of time was not heard as that")
+	}
+
+	var saw []*http.Request
+	withAssistant(t, openAILike(t, twoVoices, &saw), "local")
+	h := newHarness(t)
+	h.post("/api/assistant/settings?timeout=45")
+	if got := loadSettings().Assistant.TimeoutMinutes; got != 45 {
+		t.Errorf("the setting saved as %d minutes", got)
+	}
+	if msg := h.postFails("/api/assistant/settings?timeout=500"); msg == "" {
+		t.Error("a wait of 500 minutes was accepted")
+	}
+}

@@ -10872,6 +10872,7 @@ async function loadAssistantSettings() {
   $("#setting-ai-url").value = s.baseURL || "";
   $("#setting-ai-key").value = s.apiKey || "";
   $("#setting-ai-model").value = "";
+  $("#setting-ai-timeout").value = String(s.timeout || 10);
   // The list holds what is known: the model in use, until the service
   // has been asked for the rest.
   fillAssistantPick(s.model ? [s.model] : [], s.model || "");
@@ -10921,8 +10922,11 @@ function assistantForm() {
 }
 
 async function saveAssistantSettings() {
-  await fetch("/api/assistant/settings?" + new URLSearchParams(assistantForm()),
-    { method: "POST" });
+  const q = new URLSearchParams(assistantForm());
+  // How long to wait, in whole minutes between one and two hours.
+  const mins = Math.round(Number($("#setting-ai-timeout")?.value));
+  if (mins >= 1) q.set("timeout", String(Math.min(120, mins)));
+  await fetch("/api/assistant/settings?" + q, { method: "POST" });
 }
 
 // listAssistantModels asks the service what it has, with what is typed

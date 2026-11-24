@@ -14,3 +14,9 @@ package app
 
 // logAssistant has nowhere to write in a build with no disk.
 func logAssistant(assistantEntry) {}
+
+// logAssistantAsked has nowhere to write either.
+func logAssistantAsked(assistantEntry) {}
+
+// writeAssistantLog has nowhere to write either.
+func writeAssistantLog(string) {}

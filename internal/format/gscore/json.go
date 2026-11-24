@@ -517,6 +517,11 @@ type octaveDoc struct {
 type tremoloDoc struct {
 	Strokes int  `json:"strokes,omitempty"`
 	Buzz    bool `json:"buzz,omitempty"`
+	// Start and Stop make it one end of a two-note tremolo. Left out of
+	// the file, a pair saved and opened again came back as two notes each
+	// shaken on its own.
+	Start bool `json:"start,omitempty"`
+	Stop  bool `json:"stop,omitempty"`
 }
 
 type trillDoc struct {
@@ -538,6 +543,11 @@ type tupletDoc struct {
 	Normal int  `json:"normal"`
 	Start  bool `json:"start,omitempty"`
 	Stop   bool `json:"stop,omitempty"`
+	// Hidden is a ratio kept for the arithmetic and not printed: the half
+	// of its time each note of a two-note tremolo takes, the sixteenths of
+	// a measured tremolo. Left out, every one of them came back with a 2
+	// or a 6 printed over it.
+	Hidden bool `json:"hidden,omitempty"`
 }
 
 /*
@@ -948,7 +958,7 @@ func encodeMarks(m *model.Marks) *marksDoc {
 	if m.Tuplet != nil {
 		out.Tuplet = &tupletDoc{
 			Actual: m.Tuplet.Actual, Normal: m.Tuplet.Normal,
-			Start: m.Tuplet.Start, Stop: m.Tuplet.Stop,
+			Start: m.Tuplet.Start, Stop: m.Tuplet.Stop, Hidden: m.Tuplet.Hidden,
 		}
 	}
 	if m.Hairpin != nil {
@@ -996,6 +1006,7 @@ func encodeMarks(m *model.Marks) *marksDoc {
 	if m.Tremolo != nil {
 		out.Tremolo = &tremoloDoc{
 			Strokes: m.Tremolo.Strokes, Buzz: m.Tremolo.Buzz,
+			Start: m.Tremolo.Start, Stop: m.Tremolo.Stop,
 		}
 	}
 	for _, ly := range m.Lyrics {
@@ -1421,7 +1432,7 @@ func decodeMarks(md *marksDoc, m *model.Marks) {
 	if md.Tuplet != nil && md.Tuplet.Actual > 0 && md.Tuplet.Normal > 0 {
 		m.Tuplet = &model.Tuplet{
 			Actual: md.Tuplet.Actual, Normal: md.Tuplet.Normal,
-			Start: md.Tuplet.Start, Stop: md.Tuplet.Stop,
+			Start: md.Tuplet.Start, Stop: md.Tuplet.Stop, Hidden: md.Tuplet.Hidden,
 		}
 	}
 	if h := md.Hairpin; h != nil {
@@ -1441,7 +1452,8 @@ func decodeMarks(md *marksDoc, m *model.Marks) {
 		m.Octave = &model.OctaveShift{Amount: o.Amount, Start: o.Start, Stop: o.Stop}
 	}
 	if tm := md.Tremolo; tm != nil {
-		m.Tremolo = &model.Tremolo{Strokes: tm.Strokes, Buzz: tm.Buzz}
+		m.Tremolo = &model.Tremolo{Strokes: tm.Strokes, Buzz: tm.Buzz,
+			Start: tm.Start, Stop: tm.Stop}
 	}
 	if tr := md.Trill; tr != nil {
 		m.Trill = &model.Trill{Start: tr.Start, Stop: tr.Stop,

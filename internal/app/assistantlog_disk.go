@@ -33,7 +33,12 @@ var assistantLogPath = func() (string, error) {
 //
 // A log that cannot be written is said on the terminal and is not a reason
 // to fail the request: the music was asked for, not the record of it.
-func logAssistant(e assistantEntry) {
+func logAssistant(e assistantEntry) { writeAssistantLog(e.Answered()) }
+
+// logAssistantAsked starts an entry: the question, written as it is asked.
+func logAssistantAsked(e assistantEntry) { writeAssistantLog(e.Asked()) }
+
+func writeAssistantLog(text string) {
 	path, err := assistantLogPath()
 	if err == nil {
 		err = folderFor(filepath.Dir(path))
@@ -43,7 +48,7 @@ func logAssistant(e assistantEntry) {
 		f, err = os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
 	}
 	if err == nil {
-		_, err = f.WriteString(e.String())
+		_, err = f.WriteString(text)
 		if cerr := f.Close(); err == nil {
 			err = cerr
 		}

@@ -635,6 +635,7 @@ const MESSAGES = {
   "Kept what was written before it stopped:": "Conservé ce qui était écrit avant l’arrêt :",
   "takes them off.": "les retire.",
   "Continue from bar": "Continuer à partir de la mesure",
+  "Wait up to (minutes)": "Attendre jusqu’à (minutes)",
   "The score is sent with every request, and this one did not fit. Ask for fewer bars at a time — “the next 8 bars” — or pick a model with a larger context in Settings. Everything asked and answered is kept in ~/.gscore/ai.log.": "La partition est envoyée avec chaque demande, et celle-ci ne tenait pas. Demandez moins de mesures à la fois — « les 8 mesures suivantes » — ou choisissez un modèle au contexte plus grand dans les Réglages. Tout ce qui a été demandé et répondu est conservé dans ~/.gscore/ai.log.",
   "The assistant answered with nothing": "L’assistant n’a rien répondu",
   "Stopped.": "Arrêté.",

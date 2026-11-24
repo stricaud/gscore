@@ -83,6 +83,9 @@ func withAssistant(t *testing.T, srv *httptest.Server, provider string) {
 	t.Helper()
 	was := assistantOn
 	assistantOn = true
+	// The log goes somewhere of the test's own, not into the home folder
+	// of whoever runs the tests.
+	keepLog(t)
 	stored.Lock()
 	stored.settings.Assistant = assistantSettings{Provider: provider, BaseURL: srv.URL, APIKey: "k-test"}
 	stored.read = true

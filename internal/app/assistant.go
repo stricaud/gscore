@@ -22,6 +22,7 @@ import (
 	"os"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -814,6 +815,18 @@ func (a *App) handleAssistantCompose(w http.ResponseWriter, r *http.Request) {
 	if a.score.Cursor != nil {
 		cursor = a.score.Cursor.Measure
 	}
+	// Where to write, where the window says: a request carried on from
+	// where the last one stopped names the bar it carries on from.
+	if n, berr := strconv.Atoi(r.URL.Query().Get("bar")); berr == nil && n >= 1 {
+		cursor = min(n-1, a.score.MeasureCount())
+	}
+	// The bars around the cursor, ready in case the whole score is more
+	// than the model can take in. See scoreExcerpt.
+	var excerpt bytes.Buffer
+	exFrom, exTo := excerptRange(a.score.MeasureCount(), cursor)
+	if err == nil {
+		err = abc.Export(&excerpt, scoreExcerpt(a.score, exFrom, exTo))
+	}
 	a.mu.Unlock()
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -881,51 +894,113 @@ func (a *App) handleAssistantCompose(w http.ResponseWriter, r *http.Request) {
 	var sofar, thought strings.Builder
 	last := time.Time{}
 	var stopped error
-	reply, err := assistantAsk(ctx, s, assistantSystem, assistantRequest(export.String(), prompt, cursor+1),
-		func(delta, thinking string) {
-			sofar.WriteString(delta)
-			thought.WriteString(thinking)
-			// A few times a second is as often as anybody can read.
-			if stopped != nil || time.Since(last) < 400*time.Millisecond {
-				return
-			}
-			last = time.Now()
-			text := sofar.String()
-			prog := progressOf(text)
-			if th := thought.String(); th != "" {
-				prog["thinking"] = tailOf(th, 160)
-			}
-			// The bars that are whole so far go onto the page.
-			if n, _ := prog["bars"].(int); n > placed {
-				if partial := wholeBars(text); partial != "" {
-					a.lock()
-					_, count, perr := place(partial, hasField(partial, "%%whole"))
-					a.mu.Unlock()
-					if perr != nil && strings.Contains(perr.Error(), "changed while") {
-						stopped = perr
-						cancel()
-					} else if perr == nil {
-						placed = count
-						prog["placed"] = count
-					}
+	lastAt := cursor
+	onDelta := func(delta, thinking string) {
+		sofar.WriteString(delta)
+		thought.WriteString(thinking)
+		// A few times a second is as often as anybody can read.
+		if stopped != nil || time.Since(last) < 400*time.Millisecond {
+			return
+		}
+		last = time.Now()
+		text := sofar.String()
+		prog := progressOf(text)
+		if th := thought.String(); th != "" {
+			prog["thinking"] = tailOf(th, 160)
+		}
+		// The bars that are whole so far go onto the page.
+		if n, _ := prog["bars"].(int); n > placed {
+			if partial := wholeBars(text); partial != "" {
+				a.lock()
+				at, count, perr := place(partial, hasField(partial, "%%whole"))
+				a.mu.Unlock()
+				if perr != nil && strings.Contains(perr.Error(), "changed while") {
+					stopped = perr
+					cancel()
+				} else if perr == nil {
+					placed, lastAt = count, at
+					prog["placed"] = count
 				}
 			}
-			send(map[string]any{"progress": prog})
-		})
+		}
+		send(map[string]any{"progress": prog})
+	}
+	reply, err := assistantAsk(ctx, s, assistantSystem,
+		assistantRequest(export.String(), prompt, cursor+1), onDelta)
+	// Too long for the model to take in, and nothing written yet: asked
+	// again with only the bars around the cursor. The whole score goes with
+	// every request, so a piece grows out of a small model's reach on its
+	// own; the bars nearest the cursor are what new bars follow from.
+	excerpted := false
+	if err != nil && placed == 0 && stopped == nil && contextOverflow(err) &&
+		excerpt.Len() < export.Len() {
+		send(map[string]any{"progress": map[string]any{
+			"note": fmt.Sprintf("the whole score is too long for this model; "+
+				"asking again with bars %d to %d only", exFrom+1, exTo)}})
+		sofar.Reset()
+		thought.Reset()
+		excerpted = true
+		reply, err = assistantAsk(ctx, s, assistantSystem,
+			assistantExcerptRequest(excerpt.String(), prompt, cursor+1, exFrom+1, exTo), onDelta)
+	}
 	if stopped != nil {
 		err = stopped
 	}
+	// Whatever happens next, it goes in the log: what was asked, what came
+	// back, and what was done with it.
+	entry := assistantEntry{
+		When: time.Now(), Provider: s.provider(), Model: s.model(),
+		Prompt: prompt, Bar: cursor + 1, Score: export.Len(),
+		Reply: reply, Thinking: thought.String(),
+	}
+	if entry.Reply == "" {
+		entry.Reply = sofar.String() // as much as arrived before it stopped
+	}
 	if err != nil {
+		msg := err.Error()
+		if contextOverflow(err) {
+			msg = fmt.Sprintf("the request was too long for the model (%s). "+
+				"The score goes with every request — %d characters of it — "+
+				"and the answer has to fit as well.", msg, export.Len())
+		}
 		a.lock()
-		if placed > 0 {
+		// Bars already on the page are kept when the model gives out
+		// partway — out of room, or the connection lost — so that what it
+		// did write is not thrown away with what it did not; one undo still
+		// takes them off. Not when they were stopped on purpose, nor when
+		// somebody edited meanwhile: that is a no to what was being written.
+		userStopped := r.Context().Err() != nil || stopped != nil
+		var kept map[string]any
+		if placed > 0 && !userStopped && !excerpted {
+			a.recordEdit(before)
+			kept = map[string]any{"bars": placed, "at": lastAt + 1, "next": lastAt + placed + 1}
+		} else if placed > 0 {
 			a.restore(before)
 		}
 		a.mu.Unlock()
-		send(map[string]any{"error": err.Error()})
+		entry.Err = msg
+		if kept != nil {
+			entry.Err += fmt.Sprintf(" (kept %d bars from bar %d)", placed, lastAt+1)
+		}
+		logAssistant(entry)
+		out := map[string]any{"error": msg, "overflow": contextOverflow(err)}
+		if kept != nil {
+			out["kept"] = kept
+		}
+		send(out)
 		return
 	}
 	abcText, prose := abcOfReply(reply, header)
 	whole := hasField(abcText, "%%whole")
+	// A rewrite of the whole score made from an excerpt of it would put
+	// the excerpt in the score's place.
+	if whole && excerpted {
+		entry.Err = "a rewrite of the whole score, made from part of it"
+		logAssistant(entry)
+		send(map[string]any{"error": "the score is too long for this model to rewrite as a whole: " +
+			"ask for changes to a few bars at a time", "overflow": true})
+		return
+	}
 
 	a.lock()
 	defer a.mu.Unlock()
@@ -934,14 +1009,84 @@ func (a *App) handleAssistantCompose(w http.ResponseWriter, r *http.Request) {
 		if placed > 0 {
 			a.restore(before)
 		}
+		entry.Err = err.Error()
+		logAssistant(entry)
 		send(map[string]any{"error": err.Error()})
 		return
 	}
+	entry.Placed, entry.At, entry.Whole = count, at+1, whole
+	logAssistant(entry)
 	a.recordEdit(before)
 	send(map[string]any{"done": map[string]any{
 		"bars": count, "at": at + 1, "whole": whole, "prose": prose, "abc": abcText,
 		"voices": len(a.score.Parts), "staves": len(a.score.Parts),
 	}})
+}
+
+// contextOverflow says a service refused a request for being longer than the
+// model can take in. Every service says it in its own words.
+func contextOverflow(err error) bool {
+	if err == nil {
+		return false
+	}
+	m := strings.ToLower(err.Error())
+	for _, s := range []string{"context window", "context length", "context_length",
+		"maximum context", "too many tokens", "prompt is too long", "exceeds the context",
+		"input is too long", "context size", "exceed_context", "exceeded"} {
+		if strings.Contains(m, s) && (strings.Contains(m, "context") ||
+			strings.Contains(m, "token") || strings.Contains(m, "too long")) {
+			return true
+		}
+	}
+	return false
+}
+
+// excerptBars is how many bars are sent when the whole score is too long:
+// enough before the cursor for the music to be carried on from, and a few
+// after it for what it has to lead into.
+const excerptBefore, excerptAfter = 12, 4
+
+// excerptRange is the bars sent around the cursor, from and to, counted
+// from zero, to not included.
+func excerptRange(bars, cursor int) (int, int) {
+	from := max(0, cursor-excerptBefore)
+	to := min(bars, cursor+excerptAfter)
+	if to <= from {
+		to = min(bars, from+1)
+	}
+	return from, to
+}
+
+// scoreExcerpt is the score cut down to bars from to to: the same staves,
+// in the key, meter and clef in force at the first of them.
+func scoreExcerpt(s *model.Score, from, to int) *model.Score {
+	out := s.Clone()
+	for _, p := range out.Parts {
+		if from >= len(p.Measures) {
+			p.Measures = nil
+			continue
+		}
+		p.Key = p.KeyAt(from)
+		p.Time = p.TimeAt(from)
+		for i := 0; i <= from && i < len(p.Measures); i++ {
+			if c := p.Measures[i].Clef; c != nil {
+				p.Clef = *c
+			}
+		}
+		p.Measures = p.Measures[from:min(to, len(p.Measures))]
+	}
+	return out
+}
+
+// assistantExcerptRequest is the prompt for a score sent in part: what it
+// is part of, and that only new bars can be answered from it.
+func assistantExcerptRequest(score, prompt string, bar, from, to int) string {
+	score = beamMarks.ReplaceAllString(score, "")
+	return fmt.Sprintf("The score is too long to send whole. Here are bars %d to %d of it, "+
+		"in ABC — an excerpt, not the whole piece:\n\n%s\n\n"+
+		"The cursor is at bar %d. Answer with new bars only: the whole score cannot be "+
+		"rewritten from an excerpt, so do not use %%%%whole.\n\nRequest: %s",
+		from, to, strings.TrimSpace(score), bar, strings.TrimSpace(prompt))
 }
 
 // tailOf is the last n characters of a text, from a word boundary, for

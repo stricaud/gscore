@@ -6583,11 +6583,20 @@ function selectTextMark(t) {
   state.multi = [];
   state.anchor = state.focus = null;
   let at = 1;
+  // And which line of the staff the note is on. Words written on a note of
+  // the second voice were picked up as though they were on the first: the
+  // note at the same place in the first voice was asked to give up words
+  // it did not have, it said it had, and "Page 4" stayed where it was.
+  let voice = 0;
   const target = refTarget(t.ref);
-  if (target) at = readSel(target).index + 1;
+  if (target) {
+    const r = readSel(target);
+    at = r.index + 1;
+    voice = r.voice || 0;
+  }
 
   state.selection = {
-    part: t.part, measure: t.measure, ref: t.ref,
+    part: t.part, measure: t.measure, ref: t.ref, voice,
     at, step: 0, textMark: t,
   };
   markSelection();
@@ -10643,6 +10652,30 @@ function chatSay(kind, text) {
   return p;
 }
 
+// chatOffer puts a button under a message in the chat: the next step,
+// offered rather than left for somebody to work out and type.
+function chatOffer(p, label, run) {
+  const b = document.createElement("button");
+  b.className = "chat-offer";
+  b.textContent = label;
+  b.addEventListener("click", () => {
+    b.disabled = true;
+    void run();
+  });
+  p.append(document.createElement("br"), b);
+  const log = $("#chat-log");
+  log.scrollTop = log.scrollHeight;
+  return b;
+}
+
+// carryOnPrompt is what is asked to carry on a request that stopped partway:
+// the request itself, and where the music already written ends.
+function carryOnPrompt(asked, next) {
+  return `Carry on with what you were writing. The request was: \u201c${asked}\u201d. ` +
+    `It is written up to bar ${next - 1}; continue from bar ${next}, ` +
+    `writing only the bars still missing.`;
+}
+
 // chatBusy is the request on its way, so it can be stopped.
 let chatBusy = null;
 
@@ -10709,18 +10742,23 @@ function chatProgress(wait, began, p) {
 // button is a Stop button. Stopping ends the request on the server too,
 // which ends its request to the service and takes the half-written bars
 // off the page.
-async function askAssistant() {
+async function askAssistant(again) {
   if (chatBusy) {
     chatBusy.abort();
     return;
   }
   const box = $("#chat-prompt");
-  const prompt = box.value.trim();
+  // again is a request offered by the chat itself — carrying on from where
+  // the last one stopped — with the bar it is to be written from.
+  const prompt = again ? again.prompt : box.value.trim();
   if (!prompt) return;
+  const original = again?.original || prompt;
   const send = $("#chat-send");
   chatSay("you", prompt);
-  rememberAsked(prompt);
-  box.value = "";
+  if (!again) {
+    rememberAsked(prompt);
+    box.value = "";
+  }
   const wait = chatSay("wait", t("Writing…"));
   const began = Date.now();
   let latest = null;
@@ -10730,7 +10768,9 @@ async function askAssistant() {
   status("Asking the assistant…");
   let redrawn = 0;
   try {
-    const res = await fetch("/api/assistant/compose?" + new URLSearchParams({ prompt }),
+    const q = new URLSearchParams({ prompt });
+    if (again?.bar) q.set("bar", String(again.bar));
+    const res = await fetch("/api/assistant/compose?" + q,
       { method: "POST", signal: chatBusy.signal });
     if (!res.ok) {
       chatSay("err", (await res.text()).trim());
@@ -10738,10 +10778,13 @@ async function askAssistant() {
       return;
     }
     // A line at a time as they come: progress, then done or error.
-    let done = null, failed = null;
+    let done = null, failed = null, kept = null, overflow = false;
     for await (const line of readLines(res.body)) {
       let msg;
       try { msg = JSON.parse(line); } catch (_) { continue; }
+      // Something the server is doing about the request, said as it
+      // happens: asking again with less of the score, say.
+      if (msg.progress?.note) chatSay("wait", msg.progress.note);
       if (msg.progress) {
         latest = msg.progress;
         chatProgress(wait, began, latest);
@@ -10752,12 +10795,17 @@ async function askAssistant() {
         }
       }
       if (msg.done) done = msg.done;
-      if (msg.error) failed = msg.error;
+      if (msg.error) {
+        failed = msg.error;
+        kept = msg.kept || null;
+        overflow = !!msg.overflow;
+      }
     }
     if (failed || !done) {
       chatSay("err", failed || t("The assistant answered with nothing"));
       status("The assistant could not write that");
-      if (redrawn) await refreshScore();
+      if (redrawn || kept) await refreshScore();
+      chatGuide(original, kept, overflow);
       return;
     }
     let said = done.whole
@@ -10775,6 +10823,28 @@ async function askAssistant() {
     wait.remove();
     chatBusy = null;
     send.textContent = t("Write");
+  }
+}
+
+// chatGuide says what can be done after a request that did not finish: what
+// was kept of it, and the next step, as a button where there is one.
+function chatGuide(original, kept, overflow) {
+  if (kept) {
+    const last = kept.at + kept.bars - 1;
+    const p = chatSay("them",
+      `${t("Kept what was written before it stopped:")} ` +
+      `${kept.bars} ${kept.bars === 1 ? t("bar") : t("bars")} ` +
+      `(${t("bars")} ${kept.at}\u2013${last}). ${modKeyName()}Z ${t("takes them off.")}`);
+    chatOffer(p, `${t("Continue from bar")} ${kept.next}`, () =>
+      askAssistant({ prompt: carryOnPrompt(original, kept.next), bar: kept.next, original }));
+    return;
+  }
+  if (overflow) {
+    chatSay("them",
+      t("The score is sent with every request, and this one did not fit. " +
+        "Ask for fewer bars at a time \u2014 \u201cthe next 8 bars\u201d \u2014 " +
+        "or pick a model with a larger context in Settings. " +
+        "Everything asked and answered is kept in ~/.gscore/ai.log."));
   }
 }
 

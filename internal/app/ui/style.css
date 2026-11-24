@@ -494,6 +494,8 @@ body.chat #main {
 #chat-log .chat-them { margin: 0 0 6px; white-space: pre-wrap; }
 #chat-log .chat-err { margin: 0 0 6px; color: #b02020; white-space: pre-wrap; }
 #chat-log .chat-wait { margin: 0 0 6px; color: var(--muted); font-style: italic; }
+/* The next step after a request that stopped partway, offered as a button. */
+#chat-log .chat-offer { margin-top: 4px; font-size: inherit; }
 #chat-prompt { width: 100%; box-sizing: border-box; resize: vertical; font: inherit; }
 
 /* The assistant's settings: a label and its field on each row, the fields

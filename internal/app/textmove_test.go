@@ -53,3 +53,29 @@ func TestWordsOnANoteCanBeMoved(t *testing.T) {
 		t.Error("a text the note does not have was moved")
 	}
 }
+
+// Words on a note of the second voice are taken away from that note, and
+// asking to take away words a note does not have is refused rather than
+// answered with success. "Page 4" in Black and Tan Fantasy, on the second
+// voice, could not be removed: the request went to the first voice's note,
+// which had none, and said it had worked.
+func TestWordsOnTheSecondVoiceCanBeTakenAway(t *testing.T) {
+	h := newHarness(t)
+	q := model.Duration{Num: 1, Den: 4}
+	upper := &model.Note{Pitch: model.Pitch{Step: model.StepE, Octave: 5}, Dur: q}
+	lower := &model.Note{Pitch: model.Pitch{Step: model.StepC, Octave: 4}, Dur: q}
+	lower.Texts = []model.TextMark{{Text: "Page 4"}}
+	m := h.app.score.Parts[0].Measures[0]
+	m.Voices = []*model.Voice{{Elements: []model.Element{upper}}, {Elements: []model.Element{lower}}}
+
+	if msg := h.postFails("/api/text?part=0&measure=0&at=1&text=&index=0"); msg == "" {
+		t.Error("taking words off a note that has none was answered with success")
+	}
+	if len(lower.Texts) != 1 {
+		t.Fatal("the words on the second voice went, asked of the first")
+	}
+	h.post("/api/text?part=0&measure=0&at=1&voice=1&text=&index=0")
+	if len(lower.Texts) != 0 {
+		t.Errorf("the words are still there: %+v", lower.Texts)
+	}
+}

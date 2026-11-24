@@ -52,3 +52,14 @@ test("with no words picked up nothing is sent", async () => {
   await move(1, 0);
   assert.equal(sent.length, 0);
 });
+
+test("words picked up on the second voice keep its voice", () => {
+  const state = { multi: [] };
+  const pick = new Function("state", "refTarget", "readSel", "markSelection", "status", "t",
+    grab("selectTextMark") + "; return selectTextMark;")(
+    state, () => "0:16:1/0", new Function(grab("readSel") + "; return readSel;")(),
+    () => {}, () => {}, (s) => s);
+  pick({ ref: 5, part: 0, measure: 16, index: 0, text: "Page 4" });
+  assert.equal(state.selection.voice, 1);
+  assert.equal(state.selection.at, 1);
+});

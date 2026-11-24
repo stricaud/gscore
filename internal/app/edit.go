@@ -4493,6 +4493,14 @@ func (a *App) handleText(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Taking away words the note does not have is a mistake about which
+	// note was meant, and is said: cleared regardless, it took away the
+	// words of whatever note it landed on, and answered that all was well
+	// while the words that were pointed at stayed on the page.
+	if text == "" && index >= 0 && (len(marks) == 0 || index >= len(marks[0].Texts)) {
+		http.Error(w, "there are no such words on that note", http.StatusBadRequest)
+		return
+	}
 	for _, m := range marks {
 		switch {
 		case index >= 0 && index < len(m.Texts) && text == "":

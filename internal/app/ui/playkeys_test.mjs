@@ -66,3 +66,12 @@ test("black keys are the sharps", () => {
   assert.deepEqual([60, 61, 62, 63, 64, 65, 66].map(isBlackKey),
     [false, true, false, true, false, false, true]);
 });
+
+test("a pause leaves the keys down and a stop lifts them", () => {
+  const pause = grab("pause");
+  const stop = grab("stop");
+  const silence = grab("silence");
+  assert.doesNotMatch(silence, /lightPlayKeys/, "silence is what a pause does too");
+  assert.doesNotMatch(pause, /lightPlayKeys/);
+  assert.match(stop, /lightPlayKeys\(new Map\(\)\)/);
+});

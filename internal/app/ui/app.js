@@ -19758,8 +19758,6 @@ function silence() {
   svg?.querySelectorAll(".playing").forEach((n) => n.classList.remove("playing"));
   svg?.querySelectorAll("circle.ping").forEach((n) => n.remove());
   current = new Set();
-  // The keys come up: nothing is sounding.
-  lightPlayKeys(new Map());
   state.playing = false;
   // The harmonics panel goes back to following what is picked up: with
   // nothing playing, the moment it should show is the one being written.
@@ -19773,6 +19771,10 @@ function silence() {
 // stop goes back to the beginning.
 function stop() {
   silence();
+  // The keys come up: the music is over. Not on a pause, which is where
+  // somebody learning a passage stops to look at the hands — the keys of
+  // the chord they stopped on stay down until playing carries on.
+  lightPlayKeys(new Map());
   state.pausedAt = null;
   removeCursors();
   lastMeasure = null;

@@ -1394,6 +1394,9 @@ async function action(name) {
     case "save-audio":
       await recordAudio();
       break;
+    case "save-video":
+      await exportVideo();
+      break;
     case "clear-recent":
       await fetch("/api/recent?clear=1", { method: "POST" });
       await loadRecent();
@@ -4469,6 +4472,52 @@ const record = { fonts: [], catalogue: [], font: "", assign: {}, voices: [] };
 // file, and whether the one you have covers the instruments in this
 // particular score is a real question with a real answer — a brass band
 // scored into a piano soundfont comes out as nine pianos, silently.
+// exportVideo makes a film of the score playing, after making sure the two
+// programs it needs are there — and saying which are not, and how to get
+// them, where they are not.
+async function exportVideo() {
+  const tools = await (await fetch("/api/videotools")).json().catch(() => null);
+  if (!tools) {
+    status("Could not ask whether a video can be made");
+    return;
+  }
+  if (tools.missing?.length) {
+    const dlg = $("#videotools");
+    $("#videotools-what").textContent = tools.missing.length === 1
+      ? `${tools.missing[0]} ${t("is not installed on this computer.")}`
+      : `${tools.missing.join(t(" and "))} ${t("are not installed on this computer.")}`;
+    $("#videotools-cmd").textContent = tools.install || "";
+    $("#videotools-ok").onclick = () => dlg.close();
+    dlg.showModal();
+    return;
+  }
+  // Through the soundfont chosen for recording, as the audio export is.
+  const p = new URLSearchParams({ as: "mp4", font: await rememberedRecordFont() || "" });
+  status("Making the video… a minute or two for a few minutes of music");
+  // How far it has got, in the busy window, a couple of times a second.
+  const said = { sound: t("Making the sound…"), pictures: t("Drawing the score…"),
+    frames: t("Making the video…"), finishing: t("Finishing the video…") };
+  const ticker = setInterval(async () => {
+    const d = await (await fetch("/api/videoprogress")).json().catch(() => null);
+    const box = $("#busy-text");
+    if (!d || !d.phase || !box) return;
+    box.textContent = d.phase === "frames" || d.phase === "finishing"
+      ? `${said[d.phase]} ${d.percent}%` : said[d.phase];
+  }, 500);
+  let res;
+  try {
+    res = await saveRequest(p.toString(), t("Making the video…"));
+  } finally {
+    clearInterval(ticker);
+  }
+  if (!res.ok) {
+    status("Could not make the video: " + (await res.text()).trim());
+    return;
+  }
+  const d = await res.json();
+  status(d.cancelled ? "Ready" : "Video saved: " + d.path);
+}
+
 async function recordAudio() {
   if (!canSound()) {
     // The menu item is not there where gscore cannot make a sound, so this
@@ -24544,6 +24593,9 @@ const MENU_DRAWINGS = {
     '<circle cx="6.5" cy="8" r="2.4"/><path d="M9.5 10 15.5 14.5"/>' +
     '<path d="M17.5 12.5l2 1.5-1.8 3"/>',
   "staff-line-none": REMOVE_MARK,
+  // A frame of film with the play mark in it.
+  "save-video": '<rect x="2.5" y="5" width="19" height="14" rx="2"/>' +
+    '<path d="M10 9.2v5.6l4.8-2.8z" fill="currentColor"/>',
   // An octave of a keyboard, two of its keys down.
   "play-keyboard": '<rect x="2.5" y="5" width="19" height="14" rx="1"/>' +
     '<path d="M6.3 5v14M10.1 5v14M13.9 5v14M17.7 5v14"/>' +

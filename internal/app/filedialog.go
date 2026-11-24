@@ -1157,6 +1157,18 @@ func (a *App) writeDocument(out io.Writer, ext string, r *http.Request) error {
 		score := a.score
 		a.mu.RUnlock()
 		return recordFLAC(out, score, readRecording(r.URL.Query()))
+	case ".mp4":
+		// A film of the score playing: the music going past, a piano with
+		// its keys going down, and the recording under it. See video.go.
+		a.mu.RLock()
+		score := a.score
+		rec := readRecording(r.URL.Query())
+		if rec.Font == "" {
+			rec.Font = a.recordFont()
+		}
+		rec.Assign = a.partFonts(rec.Assign, rec.Font)
+		a.mu.RUnlock()
+		return recordVideo(r.Context(), out, score, rec)
 	case ".mid", ".midi":
 		// Nor is a performance. This is the music as it is played rather
 		// than as it is written, which is what another program wants when
@@ -1239,7 +1251,7 @@ func (a *App) sendDocument(w http.ResponseWriter, r *http.Request) {
 // document, and writing one leaves the edits still unsaved.
 func savesTheScore(ext string) bool {
 	switch strings.ToLower(ext) {
-	case ".svg", ".html", ".htm", ".pdf", ".flac", ".mid", ".midi":
+	case ".svg", ".html", ".htm", ".pdf", ".flac", ".mp4", ".mid", ".midi":
 		return false
 	}
 	return true

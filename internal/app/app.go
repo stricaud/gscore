@@ -583,6 +583,8 @@ func (a *App) APIRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/midi", a.handleMIDI)
 	mux.HandleFunc("/api/convert", a.handleConvert)
 	mux.HandleFunc("/api/record", a.handleRecord)
+	mux.HandleFunc("/api/videotools", a.handleVideoTools)
+	mux.HandleFunc("/api/videoprogress", a.handleVideoProgress)
 	mux.HandleFunc("/api/soundfonts", a.handleSoundfonts)
 	mux.HandleFunc("/api/soundfont/fetch", a.handleSoundfontFetch)
 	mux.HandleFunc("/api/soundfont/progress", a.handleSoundfontProgress)

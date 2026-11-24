@@ -86,6 +86,9 @@
                is the page and the soundfont has been fetched into it.
                Hidden rather than shown and refused. -->
           <button data-action="save-audio" data-needs-instruments hidden><span>Audio…</span></button>
+          <!-- A film of the score playing, for a video site: the music
+               going past, a piano with its keys going down, the sound. -->
+          <button data-action="save-video" data-needs-instruments hidden><span>Video…</span></button>
         </div>
       </div>
       <hr>
@@ -1035,6 +1038,20 @@
      ten seconds and five minutes. A sentence that says "downloading" and
      never changes is indistinguishable from a program that has stopped, so
      this says how much has arrived, how fast, and how long is left. -->
+<!-- What a video needs that gscore does not carry: ffmpeg to make the film
+     and rsvg-convert to draw the score for it. Said, with the command that
+     installs them, rather than a film that fails halfway. -->
+<dialog id="videotools">
+  <h2>A video needs two more programs</h2>
+  <p id="videotools-what"></p>
+  <p>They install with:</p>
+  <pre id="videotools-cmd" class="copyable"></pre>
+  <p class="small">Then choose File ▸ Export ▸ Video… again.</p>
+  <div class="ask-buttons">
+    <button type="button" id="videotools-ok" class="primary">OK</button>
+  </div>
+</dialog>
+
 <dialog id="sfdownload">
   <h2 id="sfdownload-title">Downloading</h2>
   <p class="small" id="sfdownload-what"></p>

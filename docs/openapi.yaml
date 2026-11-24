@@ -2627,6 +2627,44 @@ paths:
                   status: { type: string }
         "400": { $ref: "#/components/responses/Error" }
 
+  /api/videotools:
+    get:
+      tags: [export]
+      summary: Whether a video of the score can be made here
+      description: >-
+        A video (POST /api/save?as=mp4) needs ffmpeg and rsvg-convert on the
+        machine. This says which of them are missing, and the command that
+        installs them.
+      responses:
+        "200":
+          description: What is missing, and how to install it.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  missing: { type: array, items: { type: string } }
+                  install: { type: string }
+
+  /api/videoprogress:
+    get:
+      tags: [export]
+      summary: How far the video being made has got
+      description: >-
+        While POST /api/save?as=mp4 is making a film: which part of the work
+        it is on (sound, pictures, frames, finishing; empty when none is
+        being made) and how much of it is done.
+      responses:
+        "200":
+          description: The phase and the percentage.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  phase: { type: string }
+                  percent: { type: integer }
+
   /api/lyrics:
     post:
       tags: [marks]

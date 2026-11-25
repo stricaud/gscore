@@ -2562,6 +2562,10 @@ paths:
           schema: { type: string, enum: [above, below] }
         - { name: italic, in: query, schema: { type: string, enum: ["0", "1"] } }
         - { name: bold, in: query, schema: { type: string, enum: ["0", "1"] } }
+        - name: dashes
+          in: query
+          description: A broken line of this many dashes after the words, as after "accel.".
+          schema: { type: integer, minimum: 0, maximum: 200 }
       responses:
         "200":
           description: What was written.
@@ -3545,6 +3549,7 @@ paths:
         - { name: parens, in: query, schema: { type: string, enum: ["0", "1"] } }
         - { name: measure, in: query, description: "A change partway through.", schema: { type: integer } }
         - { name: remove, in: query, schema: { type: string } }
+        - { name: hidden, in: query, schema: { type: string, enum: ["1", "0", "toggle"] }, description: "keep the marking off the page (1), put it back (0), or toggle" }
       responses:
         "200":
           description: What it is now.

@@ -3546,7 +3546,7 @@ func (e *engraver) textWasDrawn(t model.TextMark, p *placed, measure, index int,
 		Part: e.partIndex, Measure: measure, Ref: p.index, Index: index,
 		X: x, Y: top, Width: width, Height: height,
 		Text: t.Text, Style: t.Style.String(), Place: place, Runs: t.Runs,
-		Align: t.Align.String(),
+		Align: t.Align.String(), Dashes: t.Dashes,
 	})
 }
 
@@ -3687,7 +3687,7 @@ func (e *engraver) drawTexts(m *model.Marks, p *placed, measure int) {
 			// came out written through the ledger lines and the noteheads
 			// they belong to.
 			e.wait(waitingMark{
-				x0: x, x1: x + widest,
+				x0: x, x1: x + widest + textDashReach(t),
 				height: textSize + float64(len(lines)-1)*textLine,
 				gap:    0.6, below: true, rank: rankText,
 				draw: func(y float64) {
@@ -3699,6 +3699,8 @@ func (e *engraver) drawTexts(m *model.Marks, p *placed, measure int) {
 							y+textSize+t.OffsetY+float64(i)*textLine,
 							textSize, look)
 					}
+					e.drawTextDashes(t, lines, x, look,
+						y+textSize+t.OffsetY+float64(len(lines)-1)*textLine)
 					e.textWasDrawn(t, p, measure, ti, x, y+t.OffsetY, widest,
 						textSize+float64(len(lines)-1)*textLine)
 				},
@@ -3735,7 +3737,7 @@ func (e *engraver) drawTexts(m *model.Marks, p *placed, measure int) {
 		// The whole block claims its room at once, so that the lines stay
 		// together and whatever is placed next clears all of them.
 		e.wait(waitingMark{
-			x0: x, x1: x + widest,
+			x0: x, x1: x + widest + textDashReach(t),
 			height: textSize + float64(len(lines)-1)*textLine,
 			gap:    textAir(look), rank: rankText,
 			draw: func(y float64) {
@@ -3746,6 +3748,7 @@ func (e *engraver) drawTexts(m *model.Marks, p *placed, measure int) {
 					e.writeSpanLine(line, x,
 						top+t.OffsetY+float64(i)*textLine, textSize, look)
 				}
+				e.drawTextDashes(t, lines, x, look, y+t.OffsetY)
 				// Words are drawn from their baselines, so the block's own
 				// top is a line's height above the first of them.
 				e.textWasDrawn(t, p, measure, ti, x,
@@ -4695,6 +4698,7 @@ func (e *engraver) placeSystemTexts() {
 				widest = w
 			}
 		}
+		widest += textDashReach(p.t)
 		height := p.look.Size + float64(len(p.lines)-1)*p.line
 		// The room under the block, which has to hold the tail of a
 		// letter as well: these are placed by their baselines. See
@@ -4748,12 +4752,42 @@ func (e *engraver) writeSystemText(p pendingSystemText, y, height float64) {
 		Part: p.part, Measure: p.measure, Ref: p.ref, Index: p.index,
 		X: p.x, Y: top + p.t.OffsetY - p.look.Size, Width: widest, Height: height,
 		Text: p.t.Text, Style: p.t.Style.String(), Place: place,
-		Runs: p.t.Runs,
+		Runs: p.t.Runs, Dashes: p.t.Dashes,
 	})
 	for i, line := range p.lines {
 		e.writeSpanLine(line, p.x, top+p.t.OffsetY+float64(i)*p.line,
 			p.look.Size, p.look)
 	}
+	e.drawTextDashes(p.t, p.lines, p.x, p.look,
+		top+p.t.OffsetY+float64(len(p.lines)-1)*p.line)
+}
+
+// textDashReach is how far past the words their broken line reaches, the
+// gap before it included: see model.TextMark.Dashes. The renderers draw a
+// dash and then eight tenths of one of air, as after "cresc.", so n dashes
+// are n dashes and n-1 gaps long.
+func textDashReach(t model.TextMark) float64 {
+	if t.Dashes <= 0 {
+		return 0
+	}
+	return 0.6 + hairpinDash*(1.8*float64(t.Dashes)-0.8)
+}
+
+// drawTextDashes draws the broken line after a text mark's last line of
+// words, whose baseline is at y, at the height of the middle of the letters.
+func (e *engraver) drawTextDashes(t model.TextMark, lines [][]model.Span,
+	x float64, look model.TextLook, y float64) {
+
+	if t.Dashes <= 0 || len(lines) == 0 {
+		return
+	}
+	x0 := x + spanLineWidth(lines[len(lines)-1], look.Size, look) + 0.6
+	x1 := x + spanLineWidth(lines[len(lines)-1], look.Size, look) + textDashReach(t)
+	mid := y - look.Size*0.3
+	e.lay.Lines = append(e.lay.Lines, Line{
+		X1: x0, Y1: mid, X2: x1, Y2: mid,
+		Thickness: e.opt.Defaults.StaffLineThickness * 1.2, Dash: hairpinDash,
+	})
 }
 
 const (

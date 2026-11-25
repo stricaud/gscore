@@ -703,6 +703,11 @@ type PedalMark struct {
 	Change      bool
 	Text        bool
 	Half        bool
+	// Hidden is a pedal that is played and not printed: the one that
+	// starts here keeps the sound held and draws nothing. A MuseScore file
+	// writes one under every bass note of a piano part to make its
+	// playback ring, and drawn they were a "Ped." on top of every low note.
+	Hidden bool
 }
 
 // GraceGroup is the small notes played before the note they belong to.
@@ -855,6 +860,11 @@ type TextMark struct {
 	// title and the credits use, and for the same reason. A mark with no
 	// runs is plain, which is nearly every mark of nearly every score.
 	Runs []Span
+
+	// Dashes is a broken line of that many dashes after the words, which
+	// is how "accel." or "rit." says it carries on over the bars that
+	// follow. Nought is the words alone.
+	Dashes int `json:",omitempty"`
 }
 
 // TextAlign is where along its bar a text mark is set.

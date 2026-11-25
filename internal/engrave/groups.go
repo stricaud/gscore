@@ -694,9 +694,11 @@ func (e *engraver) drawMarkRow(m *model.Measure, tempo *model.Tempo,
 	// the head of the score is the same thing written over bar one, so
 	// this is drawn the same way and looks like it.
 	if tempo != nil && e.opt.ShowTempoMark {
-		w := e.drawTempoAt(*tempo, x, row-0.6)
-		e.noteTempoBox(mi, *tempo, x, row-0.6, w)
-		x += w + afterMark
+		// Nothing drawn, nothing to click: a hidden marking off the page.
+		if w := e.drawTempoAt(*tempo, x, row-0.6); w > 0 {
+			e.noteTempoBox(mi, *tempo, x, row-0.6, w)
+			x += w + afterMark
+		}
 	}
 
 	// The direction is written at the end of the bar, because that is

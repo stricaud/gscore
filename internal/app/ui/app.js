@@ -5078,6 +5078,7 @@ async function loadHits() {
   state.arcs = d.arcs || [];
   state.staffLines = d.staffLines || [];
   state.arpeggios = d.arpeggios || [];
+  state.spans = d.spans || [];
   state.tremolos = d.tremolos || [];
   state.tuplets = d.tuplets || [];
   state.graces = d.graces || [];
@@ -5299,6 +5300,35 @@ function arpeggioAt(x, y) {
         y >= a.y - 0.3 && y <= a.y + a.height + 0.3) return a;
   }
   return null;
+}
+
+// pedalAt finds the pedal mark under a point: its line, or the "Ped." and
+// the star. The box is given room round the signs, which stand clear of the
+// line the engraver records, and a pedal held for one note, whose two ends
+// are one place, still has the width of its "Ped.".
+function pedalAt(x, y) {
+  for (const p of state.spans || []) {
+    if (p.kind !== "pedal") continue;
+    const right = Math.max(p.x2, p.x1 + 3.5);
+    if (x >= p.x1 - 0.5 && x <= right + 0.5 &&
+        y >= p.y1 - 1.2 && y <= p.y2 + 0.6) return p;
+  }
+  return null;
+}
+
+// selectPedal picks up a pedal mark. What is picked up is the pedal, not the
+// notes under it: Backspace lifts the pedal and leaves the notes.
+function selectPedal(p) {
+  state.multi = [];
+  state.anchor = state.focus = null;
+  let at = 1;
+  const target = refTarget(p.from);
+  if (target) at = readSel(target).index + 1;
+  state.selection = {
+    part: p.part, measure: p.measure, ref: p.from, at, step: 0, pedal: p,
+  };
+  markSelection();
+  status("Pedal \u2014 press Backspace to take it away");
 }
 
 // selectArpeggio picks up the sign that rolls a chord. What is picked up is
@@ -6025,6 +6055,13 @@ function setupCanvasClicks() {
     const roll = arpeggioAt(x, y);
     if (roll && !under) {
       selectArpeggio(roll);
+      return;
+    }
+    // The pedal runs under the staff, below the notes: a click on it is
+    // a click on it unless a note is right under the pointer.
+    const ped = pedalAt(x, y);
+    if (ped && !under) {
+      selectPedal(ped);
       return;
     }
     const arc = arcAt(x, y);
@@ -7984,6 +8021,27 @@ async function deleteSelected() {
     status(`${hair.kind} removed`);
     return;
   }
+  // A pedal was picked up by clicking it. Both of its ends go: a pedal
+  // left with its start and no end is held to the end of the piece.
+  const ped = state.selection?.pedal;
+  if (ped && !state.multi.length) {
+    const ends = [refTarget(ped.from), refTarget(ped.to)].filter(Boolean);
+    if (!ends.length) {
+      status("Could not find that pedal any more");
+      return;
+    }
+    const res = await fetch(
+      "/api/pedal?pedal=none&sel=" + encodeURIComponent([...new Set(ends)].join(",")),
+      { method: "POST" });
+    if (!res.ok) {
+      status("Could not remove it: " + (await res.text()).trim());
+      return;
+    }
+    state.selection.pedal = null;
+    await refreshScore();
+    status("Pedal removed");
+    return;
+  }
   // A roll was picked up by clicking its sign: the roll comes off and the
   // chord stays.
   if (state.selection?.arpeggio && !state.multi.length) {
@@ -8437,6 +8495,14 @@ function markSelection() {
   // Backspace was about to take those away.
   if (sel.arc) {
     svg.insertBefore(selectionArc(sel.arc, z), svg.firstChild);
+    return;
+  }
+  if (sel.pedal) {
+    const p = (state.spans || []).find((x) => x.kind === "pedal" &&
+      x.from === sel.pedal.from) || sel.pedal;
+    const right = Math.max(p.x2, p.x1 + 3.5);
+    svg.insertBefore(selectionRect(p.x1 - 0.4, p.y1 - 1.1, right - p.x1 + 0.8,
+      p.y2 - p.y1 + 1.6, z), svg.firstChild);
     return;
   }
   if (sel.arpeggio) {
@@ -8893,7 +8959,7 @@ function pickedNotes() {
   const sel = state.selection;
   if (!sel || sel.ref === null || sel.ref === undefined) return false;
   if (sel.bar) return false;
-  return !(sel.arc || sel.staffLine || sel.arpeggio || sel.hairpin || sel.tremolo || sel.tuplet || sel.dynamic ||
+  return !(sel.arc || sel.staffLine || sel.arpeggio || sel.pedal || sel.hairpin || sel.tremolo || sel.tuplet || sel.dynamic ||
     sel.chordSymbol || sel.textMark || sel.marker || sel.articulation ||
     sel.sign || sel.ending ||
     (sel.tempo !== undefined && sel.tempo !== null));
@@ -9638,6 +9704,22 @@ async function setStem(dir) {
 // rest the original never wrote. In the editor it is drawn grey, so it can
 // be found again and picked up. The server says which way it went.
 async function toggleHidden() {
+  // A tempo marking picked up by clicking it: the marking goes off the
+  // page, words and number, and the music is still played at it.
+  const tempo = state.selection?.tempo;
+  if (tempo !== undefined && tempo !== null && !state.multi.length) {
+    const res = await fetch("/api/tempo?hidden=toggle&measure=" + tempo,
+                            { method: "POST" });
+    if (!res.ok) {
+      status("Could not hide it: " + (await res.text()).trim());
+      return;
+    }
+    const d = await res.json();
+    await refreshScore();
+    status(d.hidden ? "Tempo invisible \u2014 still played at, printed nowhere"
+                    : "Tempo visible again");
+    return;
+  }
   const d = await mark("hidden", { hidden: "toggle" }, "");
   if (!d) return;
   status(d.hidden ? "Invisible — it keeps its room and prints nothing"
@@ -14022,6 +14104,7 @@ async function textDialog() {
           editing ? editing.text : "");
   $("#tm-place").value = editing ? (editing.place || "") : "";
   $("#tm-align").value = editing ? (editing.align || "") : "";
+  $("#tm-dashes").value = String(editing ? (editing.dashes || 0) : 0);
 
   // What the choice means, in the words a reader would use rather than as
   // a list of font settings: where it goes and who it is for.
@@ -14068,6 +14151,8 @@ async function textDialog() {
     part: String(sel.part), measure: String(sel.measure), at: String(sel.at),
     text: words, style: pick.value, placement: $("#tm-place").value,
     align: $("#tm-align").value,
+    dashes: String(Math.max(0, Math.min(200,
+      parseInt($("#tm-dashes").value, 10) || 0))),
   });
   // The words go beside the note that was clicked, which is on the line it
   // is on. Left out, a staff whose music is written in the second voice

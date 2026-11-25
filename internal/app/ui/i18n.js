@@ -337,6 +337,7 @@ const MESSAGES = {
   "dim. — as a word": "dim. — en toutes lettres",
   "The line after the word": "La ligne après le mot",
   "Along the bar": "Dans la mesure",
+  "Dashes after the words": "Tirets après le texte",
   "Beside the note": "À côté de la note",
   "At the left of the bar": "À gauche de la mesure",
   "In the middle of the bar": "Au milieu de la mesure",

@@ -632,6 +632,8 @@ type TextPos struct {
 	// Align is "left", "centre" or "right" along the bar, or empty for
 	// beside the note. See model.TextAlign.
 	Align string `json:"align,omitempty"`
+	// Dashes is the broken line after the words. See model.TextMark.Dashes.
+	Dashes int `json:"dashes,omitempty"`
 }
 
 // Hit is one measure's region on the page, in staff spaces.
@@ -1528,6 +1530,7 @@ type openSpan struct {
 	measure int
 	amount  int    // octaves, for an octave line
 	label   string // what is written over an octave line
+	hidden  bool   // a pedal that plays and is not drawn
 	// accidental is written small before the "tr" of a trill.
 	accidental model.Accidental
 	// row is the line this hairpin shares with whatever it meets, where it
@@ -2947,6 +2950,20 @@ func (e *engraver) drawTempoMark(x float64) {
 // places from one piece of code is what keeps "a tempo" at the last chorus
 // looking like the mark at the top rather than like a different program.
 func (e *engraver) drawTempoAt(t model.Tempo, x, y float64) float64 {
+	// A marking kept off the page is not drawn at all, except in the
+	// editor, which shows it in grey so it can be clicked and shown again.
+	if t.Hidden {
+		if !e.opt.ShowHidden {
+			return 0
+		}
+		texts, glyphs, lines := len(e.lay.Texts), len(e.lay.Glyphs), len(e.lay.Lines)
+		defer func() {
+			for i := texts; i < len(e.lay.Texts); i++ {
+				e.lay.Texts[i].Colour = hiddenColour
+			}
+			e.greyFrom(glyphs, lines)
+		}()
+	}
 	text := strings.TrimSpace(t.Text)
 	bpm := t.BPM
 	// A speed that is played and not printed. See model.Tempo.Silent.

@@ -219,6 +219,8 @@ type tempoDoc struct {
 	// Silent keeps the number off the page while still playing at it:
 	// "Tempo I" prints its words and no metronome mark.
 	Silent bool `json:"silent,omitempty"`
+	// Hidden keeps the whole marking off the page. See model.Tempo.Hidden.
+	Hidden bool `json:"hidden,omitempty"`
 	// ToBPM and OverBars are a ritardando or an accelerando — the speed it
 	// arrives at and the bars it takes to get there. Without them a saved
 	// score plays the slowing once and never again.
@@ -456,6 +458,7 @@ type pedalDoc struct {
 	Change bool `json:"change,omitempty"`
 	Text   bool `json:"text,omitempty"`
 	Half   bool `json:"half,omitempty"`
+	Hidden bool `json:"hidden,omitempty"`
 }
 
 type chordDoc struct {
@@ -489,6 +492,8 @@ type textDoc struct {
 	// Runs is how the words are set, where somebody has set them in
 	// anything. The words themselves stay in Text.
 	Runs []spanDoc `json:"runs,omitempty"`
+	// Dashes is the broken line after the words. See model.TextMark.Dashes.
+	Dashes int `json:"dashes,omitempty"`
 }
 
 type hairpinDoc struct {
@@ -667,8 +672,8 @@ func encodeScore(s *model.Score) *scoreDoc {
 		Cursor:       cursorToDoc(s.Cursor),
 		Tempo: tempoDoc{
 			BPM: s.Tempo.BPM, Unit: durString(s.Tempo.Unit), Text: s.Tempo.Text,
-			Silent: s.Tempo.Silent,
-			ToBPM:  s.Tempo.ToBPM, OverBars: s.Tempo.OverBars,
+			Silent: s.Tempo.Silent, Hidden: s.Tempo.Hidden,
+			ToBPM: s.Tempo.ToBPM, OverBars: s.Tempo.OverBars,
 			From: fromString(s.Tempo.From),
 		},
 	}
@@ -801,7 +806,7 @@ func encodeScore(s *model.Score) *scoreDoc {
 			if m.Tempo != nil {
 				md.Tempo = &tempoDoc{
 					BPM: m.Tempo.BPM, Unit: durString(m.Tempo.Unit),
-					Text: m.Tempo.Text, Silent: m.Tempo.Silent,
+					Text: m.Tempo.Text, Silent: m.Tempo.Silent, Hidden: m.Tempo.Hidden,
 					ToBPM: m.Tempo.ToBPM, OverBars: m.Tempo.OverBars,
 					From: fromString(m.Tempo.From),
 				}
@@ -994,7 +999,7 @@ func encodeMarks(m *model.Marks) *marksDoc {
 	if pd := m.Pedal; pd != nil {
 		out.Pedal = &pedalDoc{
 			Start: pd.Start, Stop: pd.Stop, Change: pd.Change,
-			Text: pd.Text, Half: pd.Half,
+			Text: pd.Text, Half: pd.Half, Hidden: pd.Hidden,
 		}
 	}
 	out.Small = m.Small
@@ -1035,7 +1040,7 @@ func encodeMarks(m *model.Marks) *marksDoc {
 			OffsetX:   t.OffsetX, OffsetY: t.OffsetY,
 			Italic: t.Italic, Bold: t.Bold,
 			Align: t.Align.String(),
-			Runs:  spansToDoc(t.Runs),
+			Runs:  spansToDoc(t.Runs), Dashes: t.Dashes,
 		})
 	}
 	return out
@@ -1089,8 +1094,8 @@ func decodeScore(doc *scoreDoc) (*model.Score, error) {
 	}
 	s.Tempo = model.Tempo{
 		BPM: bpm, Unit: unit, Text: doc.Tempo.Text,
-		Silent: doc.Tempo.Silent,
-		ToBPM:  doc.Tempo.ToBPM, OverBars: doc.Tempo.OverBars,
+		Silent: doc.Tempo.Silent, Hidden: doc.Tempo.Hidden,
+		ToBPM: doc.Tempo.ToBPM, OverBars: doc.Tempo.OverBars,
 		From: parseFrom(doc.Tempo.From),
 	}
 	if c := doc.Cursor; c != nil {
@@ -1233,8 +1238,8 @@ func decodeScore(doc *scoreDoc) (*model.Score, error) {
 				}
 				m.Tempo = &model.Tempo{
 					BPM: td.BPM, Unit: unit, Text: td.Text,
-					Silent: td.Silent,
-					ToBPM:  td.ToBPM, OverBars: td.OverBars,
+					Silent: td.Silent, Hidden: td.Hidden,
+					ToBPM: td.ToBPM, OverBars: td.OverBars,
 					From: parseFrom(td.From),
 				}
 			}
@@ -1479,7 +1484,7 @@ func decodeMarks(md *marksDoc, m *model.Marks) {
 	if pd := md.Pedal; pd != nil {
 		m.Pedal = &model.PedalMark{
 			Start: pd.Start, Stop: pd.Stop, Change: pd.Change,
-			Text: pd.Text, Half: pd.Half,
+			Text: pd.Text, Half: pd.Half, Hidden: pd.Hidden,
 		}
 	}
 	m.Small = md.Small
@@ -1511,7 +1516,7 @@ func decodeMarks(md *marksDoc, m *model.Marks) {
 			OffsetX:   t.OffsetX, OffsetY: t.OffsetY,
 			Italic: t.Italic, Bold: t.Bold,
 			Align: align,
-			Runs:  spansFromDoc(t.Runs),
+			Runs:  spansFromDoc(t.Runs), Dashes: t.Dashes,
 		})
 	}
 	for _, ly := range md.Lyrics {

@@ -265,6 +265,7 @@ func (e *engraver) spanAt(m *model.Marks, p *placed, measure int) {
 			open.pedal = &openSpan{
 				x: x, ref: p.index, part: e.partIndex, measure: measure,
 				above: pd.Text, amount: boolToInt(pd.Half),
+				hidden: pd.Hidden,
 			}
 			open.notches = nil
 		}
@@ -273,7 +274,9 @@ func (e *engraver) spanAt(m *model.Marks, p *placed, measure int) {
 		}
 		if pd.Stop && open.pedal != nil {
 			open.pedal.toRef = p.index
-			e.drawPedal(open.pedal, x, open.notches, true)
+			if !open.pedal.hidden {
+				e.drawPedal(open.pedal, x, open.notches, true)
+			}
 			open.pedal = nil
 			open.notches = nil
 		}

@@ -288,6 +288,11 @@ type Tempo struct {
 	// Drawing a crotchet and a number there puts a mark on the page that
 	// nobody wrote.
 	Silent bool
+
+	// Hidden keeps the whole marking off the page, words and number, while
+	// the music is still played at it. The editor draws it in grey so it
+	// can be found and shown again.
+	Hidden bool `json:",omitempty"`
 }
 
 // Identity is the bibliographic header of a score, from the 0.0.9 Identity_t.

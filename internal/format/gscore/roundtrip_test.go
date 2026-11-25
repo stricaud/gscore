@@ -31,7 +31,8 @@ func TestRoundTripKeepsEverything(t *testing.T) {
 	n.Break = model.BreathComma
 	n.Fingering = []string{"1-2", "4"}
 	n.Glissando = &model.Glissando{Start: true, Wavy: true, Text: "gliss."}
-	n.Pedal = &model.PedalMark{Start: true, Half: true}
+	n.Pedal = &model.PedalMark{Start: true, Half: true, Hidden: true}
+	n.Texts = []model.TextMark{{Text: "accel.", Dashes: 5}}
 	n.Small = true
 
 	m2 := &model.Note{
@@ -57,6 +58,7 @@ func TestRoundTripKeepsEverything(t *testing.T) {
 		// the table of plain note values at all.
 		Tempo: &model.Tempo{
 			BPM: 72, Unit: model.Duration{Num: 3, Den: 8}, Text: "Slower",
+			Hidden: true,
 		},
 	})
 	bass := model.Bass
@@ -98,6 +100,12 @@ func TestRoundTripKeepsEverything(t *testing.T) {
 		first.Lyrics[0].Syllabic != model.SyllableBegin {
 		t.Errorf("the lyric did not survive: %+v", first.Lyrics)
 	}
+	if first.Pedal == nil || !first.Pedal.Hidden {
+		t.Errorf("the pedal kept for playback came back as %+v", first.Pedal)
+	}
+	if len(first.Texts) != 1 || first.Texts[0].Dashes != 5 {
+		t.Errorf("the dashes after the words did not survive: %+v", first.Texts)
+	}
 	if !els[1].(*model.Note).Lyrics[0].Extend {
 		t.Error("the held syllable did not survive")
 	}
@@ -123,7 +131,7 @@ func TestRoundTripKeepsEverything(t *testing.T) {
 	if m.Tempo == nil {
 		t.Fatal("the tempo change did not survive")
 	}
-	if m.Tempo.BPM != 72 || m.Tempo.Text != "Slower" {
+	if m.Tempo.BPM != 72 || m.Tempo.Text != "Slower" || !m.Tempo.Hidden {
 		t.Errorf("the tempo change came back as %+v", m.Tempo)
 	}
 	if want := (model.Duration{Num: 3, Den: 8}); m.Tempo.Unit.Reduced() != want {

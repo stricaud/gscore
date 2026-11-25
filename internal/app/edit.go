@@ -2476,6 +2476,35 @@ func (a *App) handleTempo(w http.ResponseWriter, r *http.Request) {
 		bar = n
 	}
 
+	// Kept off the page, or put back on it: the marking stays, and so
+	// does the speed. See model.Tempo.Hidden.
+	if v := q.Get("hidden"); v != "" {
+		a.lock()
+		defer a.mu.Unlock()
+		var marks []*model.Tempo
+		if bar == 0 {
+			marks = append(marks, &a.score.Tempo)
+		}
+		for _, p := range a.score.Parts {
+			if bar < len(p.Measures) && p.Measures[bar].Tempo != nil {
+				marks = append(marks, p.Measures[bar].Tempo)
+			}
+		}
+		if len(marks) == 0 {
+			http.Error(w, "there is no tempo marking at that bar", http.StatusBadRequest)
+			return
+		}
+		hidden := v == "1"
+		if v == "toggle" {
+			hidden = !marks[0].Hidden
+		}
+		for _, t := range marks {
+			t.Hidden = hidden
+		}
+		writeJSON(w, map[string]any{"status": "ok", "measure": bar, "hidden": hidden})
+		return
+	}
+
 	// Taking a change away is not setting one: the bar goes back to carrying
 	// on at whatever speed it was given earlier.
 	if q.Get("remove") == "1" {
@@ -4462,6 +4491,16 @@ func (a *App) handleText(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "align is left, centre or right", http.StatusBadRequest)
 		return
 	}
+	// The broken line after the words, in dashes: "accel. - - - -".
+	dashes := 0
+	if v := q.Get("dashes"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 0 || n > 200 {
+			http.Error(w, "dashes is how many, from 0 to 200", http.StatusBadRequest)
+			return
+		}
+		dashes = n
+	}
 	// Which of the note's texts this is about, where the editor is working
 	// on one it picked up by clicking it. A note may carry more than one —
 	// "pizz." over the staff and "dolce" under it — and changing the one
@@ -4513,13 +4552,13 @@ func (a *App) handleText(w http.ResponseWriter, r *http.Request) {
 				Text: text, Style: style, Placement: place, Runs: runs,
 				Italic: q.Get("italic") == "1", Bold: q.Get("bold") == "1",
 				OffsetX: m.Texts[index].OffsetX, OffsetY: m.Texts[index].OffsetY,
-				Align: align,
+				Align: align, Dashes: dashes,
 			}
 		default:
 			m.Texts = append(m.Texts, model.TextMark{
 				Text: text, Style: style, Placement: place, Runs: runs,
 				Italic: q.Get("italic") == "1", Bold: q.Get("bold") == "1",
-				Align: align,
+				Align: align, Dashes: dashes,
 			})
 		}
 		// Words go on one note, not on every note of a passage.

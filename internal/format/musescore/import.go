@@ -1870,8 +1870,16 @@ func (r *reader) timeSig(m *model.Measure) error {
 func (r *reader) tempo(doc *document, st *msStaff, vs *voiceState) error {
 	var qps float64
 	words := ""
+	visible := true
 	err := r.children(func(c xml.StartElement) error {
 		switch c.Name.Local {
+		case "visible":
+			// A speed for playback only. Summertime has a run of them,
+			// each a few beats a minute faster, to play its "Poco
+			// accel."; printed, they were a metronome mark every bar.
+			n, err := r.number()
+			visible = n != 0
+			return err
 		case "tempo":
 			s, err := r.text()
 			if err != nil {
@@ -1893,9 +1901,10 @@ func (r *reader) tempo(doc *document, st *msStaff, vs *voiceState) error {
 	// MuseScore keeps a tempo as quarter notes per second, which is the
 	// metronome mark over sixty.
 	t := model.Tempo{
-		BPM:  int(qps*60 + 0.5),
-		Unit: model.Duration{Num: 1, Den: 4},
-		Text: tempoWords(words),
+		BPM:    int(qps*60 + 0.5),
+		Unit:   model.Duration{Num: 1, Den: 4},
+		Text:   tempoWords(words),
+		Hidden: !visible,
 	}
 
 	// The one written over the first bar is the speed the piece starts at,
@@ -2334,7 +2343,7 @@ func (r *reader) measureRepeat(vs *voiceState) error {
 func (r *reader) spanner(st *msStaff, vs *voiceState, kind string) error {
 	start, stop := false, false
 	sub, label := "", ""
-	lineVisible := true
+	lineVisible, visible := true, true
 	err := r.children(func(c xml.StartElement) error {
 		switch c.Name.Local {
 		case "next":
@@ -2356,6 +2365,10 @@ func (r *reader) spanner(st *msStaff, vs *voiceState, kind string) error {
 				case "lineVisible":
 					n, err := r.number()
 					lineVisible = n != 0
+					return err
+				case "visible":
+					n, err := r.number()
+					visible = n != 0
 					return err
 				case "beginText", "endings":
 					s, err := r.text()
@@ -2417,9 +2430,17 @@ func (r *reader) spanner(st *msStaff, vs *voiceState, kind string) error {
 	case "Pedal":
 		// The old form — "Ped." and a star, no line — is a pedal line
 		// whose line is not drawn.
+		// Not visible at all is a pedal for playback only. See
+		// model.PedalMark.Hidden.
 		text := !lineVisible
 		if start {
-			vs.markNext(func(m *model.Marks) { pedalMark(m).Start = true; pedalMark(m).Text = text })
+			vs.markNext(func(m *model.Marks) {
+				pedalMark(m).Start = true
+				// Asked again: a start on the note a pedal stops on is the
+				// change of pedal, which pedalMark marks as it is reached.
+				pd := pedalMark(m)
+				pd.Text, pd.Hidden = text, !visible
+			})
 		}
 		if stop {
 			vs.markNext(func(m *model.Marks) { pedalMark(m).Stop = true })

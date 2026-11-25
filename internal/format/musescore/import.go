@@ -394,6 +394,9 @@ type msPart struct {
 	// clefs it gives particular staves — a piano names F for its second.
 	instClef  string
 	instClefN map[int]string
+	// instClefWritten says instClef is the transposing clef, which a
+	// concert clef read after it must not replace.
+	instClefWritten bool
 
 	// drums is the kit the file draws its drum staff with: for each key,
 	// the line it is written on and the head it is written with. See
@@ -660,6 +663,7 @@ func (r *reader) part(doc *document) error {
 }
 
 func (r *reader) partStaff(p *msPart) (clef, group string, lines int, err error) {
+	written := false
 	err = r.children(func(e xml.StartElement) error {
 		switch e.Name.Local {
 		case "bracket":
@@ -673,8 +677,16 @@ func (r *reader) partStaff(p *msPart) (clef, group string, lines int, err error)
 			return err
 		case "defaultClef", "defaultConcertClef":
 			s, err := r.text()
-			if s != "" {
+			if s != "" && !written {
 				clef = s
+			}
+			return err
+		case "defaultTransposingClef":
+			// The clef the player reads, which is the one for the written
+			// pitches gscore keeps. See transposingClef.
+			s, err := r.text()
+			if s != "" {
+				clef, written = s, true
 			}
 			return err
 		case "StaffType":
@@ -778,8 +790,21 @@ func (r *reader) instrument(p *msPart) error {
 			return err
 		case "concertClef":
 			s, err := r.text()
-			if s != "" {
+			if s != "" && !p.instClefWritten {
 				p.instClef = s
+			}
+			return err
+		case "transposingClef":
+			// A transposing instrument has two clefs: one for its part
+			// shown at concert pitch and one for the part as the player
+			// reads it. gscore keeps the written pitches, so the second is
+			// the one. A tenor saxophone taken in its concert clef, the
+			// treble with an 8 under it, had every note drawn an octave
+			// and more above the staff; the baritone's concert clef is the
+			// bass, and its part came out in it.
+			s, err := r.text()
+			if s != "" {
+				p.instClef, p.instClefWritten = s, true
 			}
 			return err
 		case "clef":
@@ -1678,9 +1703,18 @@ func (r *reader) clef(st *msStaff, vs *voiceState) error {
 	name := ""
 	err := r.children(func(c xml.StartElement) error {
 		switch c.Name.Local {
-		case "concertClefType", "transposingClefType", "subtype":
+		case "concertClefType", "subtype":
 			s, err := r.text()
 			if name == "" {
+				name = s
+			}
+			return err
+		case "transposingClefType":
+			// What the player reads, which is what gscore draws: see
+			// transposingClef. It wins over the concert clef written
+			// before it.
+			s, err := r.text()
+			if s != "" {
 				name = s
 			}
 			return err

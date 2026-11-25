@@ -394,6 +394,26 @@ type msPart struct {
 	// clefs it gives particular staves — a piano names F for its second.
 	instClef  string
 	instClefN map[int]string
+
+	// drums is the kit the file draws its drum staff with: for each key,
+	// the line it is written on and the head it is written with. See
+	// msDrum.
+	drums map[int]msDrum
+}
+
+// msDrum is one <Drum> of a MuseScore drumset: where the instrument on that
+// key is written and how its head is drawn.
+//
+// A drum note in the file is a MIDI key and nothing else — 42 for the closed
+// hi-hat — and read as a pitch that is the F sharp two ledger lines under the
+// bass clef. Where it goes on the staff is the kit's business, and the kit is
+// in the file, so the part is drawn as its author drew it rather than as
+// gscore's own kit would have it.
+type msDrum struct {
+	// line counts half spaces down from the top line, as MuseScore does: 0
+	// is the top line, 8 the bottom one, -1 the space above the staff.
+	line int
+	head model.NoteheadKind
 }
 
 type msStaff struct {
@@ -457,6 +477,9 @@ type msStaff struct {
 	// sounding, taken from the part that owns it. MuseScore records the
 	// sounding pitch of every note and gscore records the written one.
 	transChr int
+
+	// drums is the kit of the part that owns this staff, where it has one.
+	drums map[int]msDrum
 
 	// octave is the ottava in force, in octaves. The same difference again:
 	// MuseScore records what sounds and draws it shifted, so the line has to
@@ -743,6 +766,8 @@ func (r *reader) instrument(p *msPart) error {
 			return err
 		case "StringData":
 			return r.stringData(p)
+		case "Drum":
+			return r.drum(p, e)
 		case "transposeDiatonic":
 			n, err := r.number()
 			p.transDia = n
@@ -785,6 +810,42 @@ func (r *reader) instrument(p *msPart) error {
 	})
 }
 
+// drum reads one instrument of a drumset.
+func (r *reader) drum(p *msPart, e xml.StartElement) error {
+	key, err := strconv.Atoi(attr(e, "pitch"))
+	if err != nil {
+		r.report("a drum with no key is not read")
+		return r.dec.Skip()
+	}
+	d, haveLine := msDrum{}, false
+	err = r.children(func(c xml.StartElement) error {
+		switch c.Name.Local {
+		case "line":
+			v, err := r.number()
+			d.line, haveLine = v, err == nil
+			return err
+		case "head":
+			s, err := r.text()
+			if k, ok := headKinds[s]; ok {
+				d.head = k
+			}
+			return err
+		}
+		return r.dec.Skip()
+	})
+	if err != nil {
+		return err
+	}
+	if !haveLine {
+		return nil
+	}
+	if p.drums == nil {
+		p.drums = map[int]msDrum{}
+	}
+	p.drums[key] = d
+	return nil
+}
+
 /*
  * The music
  */
@@ -792,7 +853,7 @@ func (r *reader) instrument(p *msPart) error {
 func (r *reader) staff(doc *document, id string) error {
 	st, ok := doc.staves[id]
 	if !ok {
-		st = &msStaff{id: id, transChr: doc.transposeOf(id)}
+		st = &msStaff{id: id, transChr: doc.transposeOf(id), drums: doc.drumsOf(id)}
 		st.clef = doc.defaultClef(id)
 		// Four four until the score says otherwise, which is what a
 		// MuseScore file with no TimeSig in its first bar means.
@@ -960,6 +1021,18 @@ func (doc *document) transposeOf(id string) int {
 		}
 	}
 	return 0
+}
+
+// drumsOf finds the drumset of whichever part owns a staff.
+func (doc *document) drumsOf(id string) map[int]msDrum {
+	for _, p := range doc.parts {
+		for _, s := range p.staffIDs {
+			if s == id {
+				return p.drums
+			}
+		}
+	}
+	return nil
 }
 
 // defaultClef is the clef a staff starts in when its bars do not say.
@@ -3111,6 +3184,11 @@ func (r *reader) noteElement(st *msStaff, ch *chordData) error {
 	if !havePitch {
 		return nil
 	}
+	if st.clef == model.Percussion {
+		r.drumNote(st, n, pitch)
+		ch.notes = append(ch.notes, n)
+		return nil
+	}
 
 	// <pitch> is what sounds. gscore stores what is written, which on a
 	// transposing staff is a different note: an alto saxophone's written C
@@ -3134,6 +3212,34 @@ func (r *reader) noteElement(st *msStaff, ch *chordData) error {
 	ch.notes = append(ch.notes, n)
 	return nil
 }
+
+// drumNote places a note of a drum staff, whose <pitch> is the key of the
+// drum struck. The file's own kit says where that drum is written; a file
+// with no kit, or a key its kit leaves out, falls back on gscore's.
+func (r *reader) drumNote(st *msStaff, n *model.Note, key int) {
+	n.Percussion = key
+	if d, ok := st.drums[key]; ok {
+		n.Pitch = model.PitchFromDiatonicIndex(8 - d.line - percussionMiddle)
+		if n.Head == model.HeadNormal {
+			n.Head = d.head
+		}
+		return
+	}
+	if pn, ok := model.PercussionByKey(key); ok {
+		n.Pitch = model.PitchFromDiatonicIndex(pn.Step - percussionMiddle)
+		if n.Head == model.HeadNormal {
+			n.Head = pn.Head
+		}
+		return
+	}
+	r.report("drum key %d has no place on the staff; written on the middle line", key)
+	n.Pitch = model.PitchFromDiatonicIndex(0)
+}
+
+// percussionMiddle is the staff step of the middle line, counting half
+// spaces from the bottom line, which is where model.DrumSet's positions are
+// measured from. The middle line of a percussion staff is diatonic index 0.
+const percussionMiddle = 4
 
 func (r *reader) accidental(n *model.Note) error {
 	sub, bracket := "", 0
@@ -3795,6 +3901,7 @@ var headKinds = map[string]model.NoteheadKind{
 	"cross": model.HeadX, "x": model.HeadX,
 	"circled": model.HeadCircleX, "cross-circled": model.HeadCircleX,
 	"triangle": model.HeadTriangle, "triangle-down": model.HeadTriangle,
+	"xcircle": model.HeadCircleX, "triangle-up": model.HeadTriangle,
 	"diamond": model.HeadDiamond,
 	"slash":   model.HeadSlash,
 }

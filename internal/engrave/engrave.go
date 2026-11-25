@@ -2371,8 +2371,12 @@ func (e *engraver) layout() {
 		// system or put more on it than would fit by themselves, which is
 		// the whole point of asking: "four bars to this line" is said
 		// about a line that would otherwise hold five.
+		//
+		// Not in the strip, which has no lines to end: a break there cut
+		// the one run of music into a short system per line of the page,
+		// each sitting under the last with nothing to its right.
 		forced := false
-		if to := e.breakBefore(parts, start, maxMeasures); to > start {
+		if to := e.breakBefore(parts, start, maxMeasures); to > start && e.opt.Mode != Strip {
 			forced = true
 			n = to - start
 		}

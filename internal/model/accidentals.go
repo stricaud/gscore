@@ -265,7 +265,7 @@ func (sp *speller) alteredUnisons(ch *Chord) {
 				if n.Parens {
 					continue
 				}
-				if sign := accidentalFor(n.Pitch.Alter); sign != NoAccidental {
+				if sign := AccidentalFor(n.Pitch.Alter); sign != NoAccidental {
 					n.Accidental = sign
 				}
 			}
@@ -320,6 +320,16 @@ func (sp *speller) spell(n *Note) {
 			// no sharp was ever printed.
 			sp.ties(n, at, want)
 			return
+		} else if tied && !n.Forced && !n.Parens {
+			// Tied from the same letter at another alteration: an F sharp
+			// tied to an F. The curve tells the reader the sharp is still
+			// sounding, so the note has to say it is not, whatever the bar
+			// has or has not done to the letter so far.
+			if sign := AccidentalFor(want); sign != NoAccidental {
+				n.Accidental = sign
+				sp.remember(n, at, want)
+				return
+			}
 		}
 	}
 
@@ -342,7 +352,7 @@ func (sp *speller) spell(n *Note) {
 		return
 	}
 
-	sign := accidentalFor(want)
+	sign := AccidentalFor(want)
 	if sign == NoAccidental && want != 0 {
 		// Altered further than any accidental gscore can draw. The sign
 		// that is there is left alone rather than rubbed out, since
@@ -383,12 +393,12 @@ func (sp *speller) ties(n *Note, at [2]int, alter int) {
 	}
 }
 
-// accidentalFor is the sign that says a note is altered this far.
+// AccidentalFor is the sign that says a note is altered this far.
 //
 // A natural is the sign for no alteration at all, which is why this is not
 // quite a table of the obvious: 0 prints something, and it is the one case
 // where the sign and the alteration do not look alike.
-func accidentalFor(alter int) Accidental {
+func AccidentalFor(alter int) Accidental {
 	switch alter {
 	case 0:
 		return Natural

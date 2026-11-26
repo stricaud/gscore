@@ -1336,32 +1336,23 @@ var stemByName = map[string]model.Stem{
 }
 
 // handleStem sets, or clears, the stem direction of the element at the cursor.
-// sharpenBy moves an accidental one step towards the sharps or the flats,
-// coming back to nothing at either end.
+// cycleFrom is the accidental that moves a note sounding at alter one step
+// sharper or flatter, where inForce is what the bar would make it unasked.
 //
 // Pressing + on a plain note sharpens it, pressing it again double-sharpens
 // it, and pressing it once more takes it off: three presses and you are back
-// where you started, which is what makes a key safe to lean on.
-func sharpenBy(a model.Accidental, dir int) model.Accidental {
-	order := []model.Accidental{
-		model.DoubleFlat, model.Flat, model.NoAccidental,
-		model.Sharp, model.DoubleSharp,
+// where you started, which is what makes a key safe to lean on. Landing on
+// what the bar already says is landing on no sign at all, for the rules to
+// decide.
+func cycleFrom(alter, inForce int, up bool) model.Accidental {
+	next := alter - 1
+	if up {
+		next = alter + 1
 	}
-	// Natural is written rather than implied, so it counts as nothing here:
-	// a natural sharpened is a sharp.
-	at := 2
-	if a != model.Natural {
-		for i, x := range order {
-			if x == a {
-				at = i
-			}
-		}
-	}
-	at += dir
-	if at < 0 || at >= len(order) {
+	if next < -2 || next > 2 || next == inForce {
 		return model.NoAccidental
 	}
-	return order[at]
+	return model.AccidentalFor(next)
 }
 
 // handleAccidental writes an accidental on what is selected.
@@ -1463,10 +1454,14 @@ func (a *App) handleAccidental(w http.ResponseWriter, r *http.Request) {
 		}
 
 		switch {
-		case cycle == "up":
-			n.Accidental = sharpenBy(n.Accidental, 1)
-		case cycle == "down":
-			n.Accidental = sharpenBy(n.Accidental, -1)
+		case cycle == "up" || cycle == "down":
+			// One step sharper or flatter than the note sounds, not than
+			// the sign printed in front of it. The rules hide a sign the
+			// bar or a tie already gives — the second F sharp of a bar, the
+			// F sharp a tie lands on — and stepping from the printed sign
+			// stepped from nothing every time: + wrote a sharp the rules
+			// took straight back off, and the note never moved.
+			n.Accidental = cycleFrom(n.Pitch.Alter, inForce, cycle == "up")
 		case n.Accidental == acc:
 			// Asking for the accidental a note already has is asking for it
 			// to go. Anything else means the sharp button has to be read as
@@ -1503,6 +1498,16 @@ func (a *App) handleAccidental(w http.ResponseWriter, r *http.Request) {
 		} else {
 			n.Pitch.Alter = n.Accidental.Semitones()
 		}
+		// A sign clicked is a sign wanted. Where it lands on what the bar or
+		// a tie already says — the F natural under a tie from an F sharp,
+		// made sharp — the rules would take it straight back off, and the
+		// one thing the click visibly did was nothing.
+		if cycle == "" && acc != model.NoAccidental && n.Accidental == acc &&
+			n.Pitch.Alter == inForce {
+			n.Forced = true
+			forced++
+		}
+		n.holdAlong()
 	}
 	writeJSON(w, map[string]int{
 		"changed": len(notes), "forced": forced, "unforced": unforced,
@@ -1534,11 +1539,42 @@ type keyedNote struct {
 // inForce is what this note's letter is altered by where it stands, when
 // nobody has said otherwise: the key signature, and whatever an accidental
 // earlier in the bar has made of it.
+//
+// A note a tie lands on is the note the tie left, still sounding, so what is
+// in force there is whatever that note was: an F sharp tied over the barline
+// is an F sharp on the other side, though the new bar has said nothing yet.
 func (n keyedNote) inForce() int {
 	if n.part == nil {
 		return n.key.AlterFor(n.Pitch.Step)
 	}
+	if from := n.part.HeldFrom(n.measure, n.voice, n.index, n.Note); from != nil {
+		return from.Pitch.Alter
+	}
 	return n.part.AlterInForce(n.measure, n.voice, n.index, n.Pitch)
+}
+
+// holdAlong carries this note's alteration on along any tie from it. A tie
+// is one sound, so sharpening the note it leaves sharpens the note it lands
+// on; left behind, the second note became an F under a curve from an F
+// sharp, which sounds wrong and reads right.
+func (n keyedNote) holdAlong() {
+	if n.part == nil {
+		return
+	}
+	holdAlong(n.part.HeldInto(n.measure, n.voice, n.index, n.Note), n.Pitch.Alter)
+}
+
+// holdAlong gives held notes the alteration they are held at. A sign one of
+// them carried was about the pitch it had, so it goes with it.
+func holdAlong(held []*model.Note, alter int) {
+	for _, h := range held {
+		if h.Pitch.Alter == alter {
+			continue
+		}
+		h.Pitch.Alter = alter
+		h.Accidental = model.NoAccidental
+		h.Forced, h.Parens = false, false
+	}
 }
 
 // notesOf resolves a selection to the notes in it, a chord counting as all of
@@ -5638,6 +5674,15 @@ func (a *App) handleTie(w http.ResponseWriter, r *http.Request) {
 	for _, c := range crossings {
 		setTie(c.to, c.step, true, false, true)
 	}
+	// What is tied is held, so the note a tie lands on takes the pitch of
+	// the note it leaves. Typed into the next bar, an F after an F sharp is
+	// an F — the barline put the sharp away — and a tie drawn to it then
+	// was a curve from an F sharp to an F natural with nothing to say so.
+	for _, t := range targets[:len(targets)-1] {
+		for _, n := range headsOf(t.el) {
+			holdAlong(t.part.HeldInto(t.measure, t.voice, t.index, n), n.Pitch.Alter)
+		}
+	}
 	writeJSON(w, map[string]int{"changed": len(targets) + len(crossings)})
 }
 
@@ -8489,4 +8534,15 @@ func (a *App) handleRemoveMeasure(w http.ResponseWriter, r *http.Request) {
 		"status": "ok", "removed": gone,
 		"measures": a.score.MeasureCount(), "at": at,
 	})
+}
+
+// headsOf is the noteheads of a note or chord.
+func headsOf(el model.Element) []*model.Note {
+	switch e := el.(type) {
+	case *model.Note:
+		return []*model.Note{e}
+	case *model.Chord:
+		return e.Notes
+	}
+	return nil
 }

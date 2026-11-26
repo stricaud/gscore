@@ -181,7 +181,7 @@ func (d directions) play(from, to, budget int) []int {
 			if j <= i {
 				j = i + 1
 			}
-			i = j
+			i = runToRepeat(d, j, to)
 			continue
 		}
 
@@ -336,4 +336,37 @@ func playsOn(e *Ending, pass, lastEnding int) bool {
 		}
 	}
 	return false
+}
+
+// runToRepeat is where a skipped ending really ends, from the bar after its
+// bracket.
+//
+// A bracket is often drawn shorter than the music it stands over: the "1."
+// over one bar, and the bar after it — the one that leads back, with the
+// repeat sign at its end — left uncovered. Read literally, the second time
+// through skipped the bracketed bar and played the uncovered one, then went
+// on to the second ending. A player reads it the other way: everything up to
+// the repeat sign is first-time music, because the second ending starts
+// right after that sign.
+//
+// So where the bars that follow the bracket, bracket-less, run to a closing
+// repeat, and another ending opens straight after it, those bars are skipped
+// with the bracket. Anything that changes the reading on the way — an opening
+// repeat, a jump, a sign — stops the search and leaves the bars alone.
+func runToRepeat(d directions, from, to int) int {
+	for k := from; k < to && d.endings[k] == nil; k++ {
+		if d.jumps[k] != nil || d.signs[k] != NoSign {
+			return from
+		}
+		switch d.closing[k] {
+		case BarRepeatStart:
+			return from
+		case BarRepeatEnd, BarRepeatBoth:
+			if k+1 < to && d.endings[k+1] != nil {
+				return k + 1
+			}
+			return from
+		}
+	}
+	return from
 }

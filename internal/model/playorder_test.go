@@ -425,3 +425,20 @@ func TestABreakOnTheLastBarAddsNoMovement(t *testing.T) {
 			"piece rather than opening a movement with no bars in it", len(got))
 	}
 }
+
+// |: 1 2 [1. 3 ] 4 :|[2. 5 ] 6 — a first-time bracket drawn short of the
+// repeat sign.
+//
+// The bar between the end of the bracket and the repeat is still first-time
+// music: it leads back to the start, and the second ending begins right after
+// it. Reported as: the second time round, bar 16 was played before going on
+// to the second ending at 17.
+func TestAFirstEndingRunsToItsRepeat(t *testing.T) {
+	s := bars(6)
+	s.bar(2).Ending = &Ending{Numbers: []int{1}, Start: true, Stop: true}
+	s.bar(3).RightBarline = BarRepeatEnd
+	s.bar(4).Ending = &Ending{Numbers: []int{2}, Start: true, Stop: true}
+	if got, want := order(s), "1 2 3 4 1 2 5 6"; got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}

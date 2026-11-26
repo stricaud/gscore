@@ -171,10 +171,8 @@ jobs:
         run: |
           apt="sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30"
           $apt update -qq
-          # mingw to compile against WebView2, NSIS to wrap the installer
-          # around it, p7zip to look inside what came out and check it is
-          # all in there.
-          $apt install -y --no-install-recommends mingw-w64 nsis p7zip-full
+          $apt install -y --no-install-recommends \
+            g++-mingw-w64-x86-64 binutils-mingw-w64-x86-64 nsis p7zip-full
 
       - uses: actions/cache@v4
         with:

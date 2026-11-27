@@ -4969,8 +4969,13 @@ func (e *engraver) drawBarline(style model.BarlineStyle, x float64) {
 	if style == model.BarRepeatEnd || style == model.BarRepeatBoth {
 		e.repeatDots(x - 0.7)
 	}
-	if style == model.BarRepeatStart || style == model.BarRepeatBoth {
+	if style == model.BarRepeatStart {
 		e.repeatDots(x + 1.1)
+	}
+	if style == model.BarRepeatBoth {
+		// As far past its last line as an opening repeat's are past its
+		// own, which is one stroke further along here.
+		e.repeatDots(x + 1.1 + d.BarlineSeparation + d.ThickBarlineThickness/2)
 	}
 }
 
@@ -5007,14 +5012,14 @@ func barlineStrokes(d smufl.EngravingDefaults, style model.BarlineStyle) []barSt
 	case model.BarRepeatStart, model.BarHeavyLight:
 		return []barStroke{{0, thick}, {after, thin}}
 	case model.BarRepeatBoth:
-		// One repeat closing where the next opens: the dots of the one
-		// that ends, a heavy line, and the dots of the one that begins.
+		// One repeat closing where the next opens: the end of the one
+		// and the start of the other sharing their heavy line, so thin,
+		// thick, thin, with the dots outside.
 		//
-		// It fell through to a plain thin line, so a bar the music turns
-		// at was drawn like every other bar and there was nothing on the
-		// page to say it turned. The Badinerie goes back at bar 16 and
-		// showed a single line there.
-		return []barStroke{{0, thick}}
+		// It was the heavy line alone, with the dots hard against it:
+		// neither repeat sign, and the dots of the opening one sitting
+		// where its thin line should be.
+		return []barStroke{{0, thin}, {after, thick}, {2 * after, thin}}
 	}
 	return []barStroke{{0, thin}}
 }
@@ -5042,7 +5047,9 @@ func (e *engraver) barlineRoom(style model.BarlineStyle) (left, right float64) {
 	case model.BarRepeatStart:
 		return 0, dots
 	case model.BarRepeatBoth:
-		return 0.7 + smufl.Advance("augmentationDot"), dots
+		// The opening half starts a stroke later than it does on its own.
+		return 0.7 + smufl.Advance("augmentationDot"),
+			d.BarlineSeparation + d.ThickBarlineThickness/2 + dots
 	}
 	return 0, 0
 }

@@ -158,3 +158,44 @@ test("with nothing picked up it is the caret", () => {
   const got = aimAt([], { part: 0, measure: 3, at: 2, voice: 1, ref: null });
   assert.deepEqual(got, { part: 0, measure: 3, at: 2, voice: 1 });
 });
+
+// picked asks emptyBarPicked which bar Delete would take away.
+function picked(hits, selection, multi = []) {
+  const state = { hits, selection, multi };
+  return new Function("state",
+    grab("emptyBarPicked") + "\n" + grab("barHasMusic") + "\n" +
+    grab("selectedBars") + "\nreturn emptyBarPicked;")(state)();
+}
+
+test("delete on an empty bar means the bar", () => {
+  const note = { kind: "note", index: 0 };
+  const rest = { kind: "rest", index: 0 };
+  const hits = [
+    { part: 0, measure: 3, elements: [note] },
+    { part: 0, measure: 4, elements: [] },
+    { part: 0, measure: 5, elements: [rest] },
+    { part: 1, measure: 3, elements: [] },
+    { part: 1, measure: 4, elements: [] },
+    { part: 1, measure: 5, elements: [] },
+    { part: 0, measure: 6, elements: [] },
+    { part: 1, measure: 6, elements: [note] },
+  ];
+  // Clicked into, which draws the bar boxed: that bar, not the note before.
+  assert.equal(picked(hits, { part: 0, measure: 4, at: 0, ref: null, placed: true }), 4);
+  // A bar of rest is an empty bar.
+  assert.equal(picked(hits, { part: 0, measure: 5, at: 1, ref: null, placed: true }), 5);
+  // Picked up as a bar.
+  assert.equal(picked(hits, { part: 0, measure: 4, bar: true, barTo: 4 }), 4);
+  // Something in it: Delete empties it, as it did.
+  assert.equal(picked(hits, { part: 0, measure: 3, bar: true, barTo: 3 }), null);
+  // Empty on this staff and not on another: the bar stays.
+  assert.equal(picked(hits, { part: 0, measure: 6, at: 0, ref: null, placed: true }), null);
+  // A run of bars is emptied, not removed.
+  assert.equal(picked(hits, { part: 0, measure: 4, bar: true, barTo: 5 }), null);
+  // The caret carried on by writing is still behind the note it wrote.
+  assert.equal(picked(hits, { part: 0, measure: 4, at: 0, ref: null }), null);
+  assert.equal(
+    carry([{ part: 0, measure: 3, elements: [{ voice: 0 }], full: true },
+           { part: 0, measure: 4, elements: [] }],
+          { part: 0, measure: 3, at: 1, placed: true }).placed, false);
+});

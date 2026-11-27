@@ -149,3 +149,24 @@ test("a keystroke reads the way it is pressed", () => {
   assert.equal(f.shortcutText("Mod+s", true), "⌘S");
   assert.equal(f.shortcutText("T", true), "⇧T");
 });
+
+test("repeat is on a key, and keeps only what is done to the music", () => {
+  const f = load();
+  assert.equal(f.boundKeys().get(f.chordOf(press("r", "m")))?.id, "repeat-last");
+  // The plain r is still the bar repeated, which is a different thing.
+  assert.equal(f.boundKeys().get(f.chordOf(press("r")))?.id, "repeat-bar");
+
+  const at = src.indexOf("const REPEATABLE = ");
+  const repeatable = new Function(
+    src.slice(at, src.indexOf("\n}", src.indexOf("function repeatable(", at)) + 2) +
+    "\nreturn repeatable;")();
+  for (const name of ["tuplet-3", "tuplet-none", "tie", "slur", "artic-accent",
+    "dyn-mf", "acc-sharp", "hairpin-cresc", "ending-1", "jump-dc", "paste"]) {
+    assert.ok(repeatable(name), name + " should be kept for Repeat");
+  }
+  for (const name of ["repeat-last", "undo", "redo", "copy", "cut", "jump",
+    "save", "open", "play", "zoom-in", "select-all", "settings",
+    "tab", "tab-transposition", "hidden-x"]) {
+    assert.ok(!repeatable(name), name + " should not be kept for Repeat");
+  }
+});

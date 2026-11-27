@@ -431,6 +431,7 @@ const MESSAGES = {
   "Read from the notes, not from the key signature.": "Lu dans les notes, non dans l’armature.",
   "Ready": "Prêt",
   "Redo": "Rétablir",
+  "Repeat the last action": "Répéter la dernière action",
   "Rehearsal mark…": "Repère de répétition…",
   "Rehearsal marks…": "Repères de répétition…",
   "Remove": "Retirer",

@@ -51,6 +51,7 @@ const NAMES = [
   "hasSelection", "pickedNotes", "pickedUpIsPitched", "pickedHead",
   "selectionTargets", "measureTargets", "carryCaretOn", "moveCursorPitch",
   "pitchAtCursor", "addPitch", "chordAtCursor", "deleteSelected",
+  "emptyBarPicked", "barHasMusic", "selectedBars",
 ];
 
 // Four quarters fill bar 0; bar 1 is the empty one the editor keeps after

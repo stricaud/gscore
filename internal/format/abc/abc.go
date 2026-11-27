@@ -2996,7 +2996,10 @@ func (p *parser) finish() (*model.Score, error) {
 	s.Identity.Composer = p.composer
 	s.Identity.Copyright = p.copyright
 
-	s.Tempo = model.Tempo{BPM: 120, Unit: model.Duration{Num: 1, Den: 4}}
+	// A tune that states no speed is played at one all the same, but it is
+	// not printed with one: the mark would be a number nobody wrote, set
+	// above the first bar as though it were the composer's.
+	s.Tempo = model.Tempo{BPM: 120, Unit: model.Duration{Num: 1, Den: 4}, Hidden: true}
 	if p.tempoSet {
 		s.Tempo = model.Tempo{BPM: p.tempoBPM, Unit: p.tempoUnit, Text: p.tempoText}
 	}

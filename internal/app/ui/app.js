@@ -270,6 +270,11 @@ function unhint() {
 // The palette lives in palette.js, which holds what is in it. This is what
 // happens when one is clicked.
 async function paletteAction(item) {
+  // A button that writes something, kept for Repeat. The ones named for a
+  // menu entry are kept by that entry, and a pen is a choice, not an edit.
+  if (!item.action && item.tool === undefined && item.drum === undefined) {
+    rememberAction(t(item.label), () => paletteAction(item));
+  }
   // A mark picked up by clicking it on the page, and then an articulation
   // chosen from the palette: that is asking for this mark to be written
   // there instead — which, when it is the same mark, means move it to the
@@ -544,6 +549,26 @@ function barHasMusic(measure) {
     }
   }
   return false;
+}
+
+// emptyBarPicked is the bar Delete should take away altogether: one bar
+// picked up, or the bar a click put the cursor in, with nothing written in
+// it on any staff.
+//
+// Delete on a bar empties it and leaves the bar, which is right while there
+// is something in it. With nothing in it there is nothing left to mean but
+// the bar itself — and a cursor clicked into an empty bar is drawn as that
+// bar boxed, where Delete went looking behind the caret and took the last
+// note of the bar before.
+function emptyBarPicked() {
+  const sel = state.selection;
+  if (!sel || state.multi.length) return null;
+  if (sel.bar) {
+    if (selectedBars(sel).length !== 1) return null;
+  } else if (!sel.placed || (sel.ref !== null && sel.ref !== undefined)) {
+    return null;
+  }
+  return barHasMusic(sel.measure) ? null : sel.measure;
 }
 
 // dotSelection lengthens the note that is selected by half.
@@ -1298,6 +1323,46 @@ function placeSubmenu(sub) {
   items.style.top = top + "px";
 }
 
+// What "Repeat the last action" does again.
+//
+// The last thing done to the music: a menu entry, a palette button or a key
+// that writes a mark. Not the file, the window, the playing or the moving
+// about, and not Undo, Copy and their kind, which have keys of their own —
+// repeating is for the tenth triplet, three levels down a menu each time.
+// It is the command that is kept and not what it did, so it runs again on
+// whatever is picked up now.
+let lastAction = null;
+
+const REPEATABLE = new RegExp("^(" + [
+  "tuplet-", "tremolo-", "slur", "tie", "beam-", "pitch-", "octave-", "acc-",
+  "hairpin-", "ending-", "sign-", "jump-", "bar-", "stem-", "hidden$",
+  "dyn-", "artic-", "breath-", "cross-", "tab-", "repeat-", "trill",
+  "pedal", "arpeggio-", "grace", "gliss", "staff-line", "string-",
+  "fingering", "review-(good|check|fix|none)$", "insert-note$",
+  "insert-rest$", "split-measure$", "add-measure$", "paste$",
+].join("|") + ")");
+
+function repeatable(name) {
+  // Two that only look the part: a dialog about the staff, and Repeat
+  // itself, which would otherwise be the thing it does again.
+  return REPEATABLE.test(name) &&
+    name !== "tab-transposition" && name !== "repeat-last";
+}
+
+function rememberAction(label, run) {
+  lastAction = { label, run };
+  const b = $('[data-action="repeat-last"]');
+  if (b) b.disabled = false;
+}
+
+async function repeatLast() {
+  if (!lastAction) {
+    status("Nothing to repeat yet");
+    return;
+  }
+  await lastAction.run();
+}
+
 async function action(name) {
   // A score brought in goes to a tab of its own, unless this one is the
   // empty score gscore opened on. A file opened before is named by its path
@@ -1341,6 +1406,10 @@ async function action(name) {
   if (name.startsWith("show-part-")) {
     await showSheet(Number(name.slice("show-part-".length)));
     return;
+  }
+  if (repeatable(name)) {
+    const said = $(`[data-action="${name}"] span`)?.textContent || name;
+    rememberAction(said, () => action(name));
   }
   switch (name) {
     case "new":
@@ -1495,6 +1564,7 @@ async function action(name) {
     case "delete":
       await deleteSelected();
       break;
+    case "repeat-last": await repeatLast(); break;
     case "undo": await stepHistory("undo"); break;
     case "redo": await stepHistory("redo"); break;
 
@@ -6160,6 +6230,9 @@ function setupCanvasClicks() {
       at: over ? Math.max(1, idx) : idx,
       step: step, ref: null,
       replace: over,
+      // Put here by a click and not carried here by writing: see
+      // emptyBarPicked.
+      placed: true,
     };
 
     // Picking up never writes. What is left is a cursor in the bar, which
@@ -8276,6 +8349,12 @@ async function deleteSelected() {
   }
   const sel = state.selection;
 
+  // A bar with nothing in it: the bar is what goes.
+  if (emptyBarPicked() !== null) {
+    await removeMeasure();
+    return;
+  }
+
   // A whole bar picked up: everything in it goes and the empty bar stays.
   // A bar has no element of its own to point at, so this used to fall
   // through to "nothing selected to delete" — which is the one thing
@@ -8318,6 +8397,15 @@ async function deleteSelected() {
   // knows to be untrue. By the caret and not by what is picked up, because
   // aiming the next note with an arrow lets go of this one on purpose and
   // Backspace after that still means the note behind the caret.
+  //
+  // Not a caret a click put at the front of a bar, though. Nothing was
+  // written a moment ago there, and the bar before is not what was pointed
+  // at.
+  if (sel && sel.placed && sel.at === 0 &&
+      (sel.ref === null || sel.ref === undefined)) {
+    status("Nothing before the cursor in this bar to delete");
+    return;
+  }
   const gone = !sel ? null : elementBeforeCaret();
   if (!gone) {
     status("Nothing selected to delete");
@@ -8926,6 +9014,7 @@ function carryCaretOn(sel) {
   sel.measure += 1;
   sel.at = 0;
   sel.replace = false;
+  sel.placed = false;
 }
 
 // refTarget says where a note is, as the server names places.
@@ -21307,6 +21396,8 @@ const KEY_BINDINGS = [
     label: "Undo", run: () => void stepHistory("undo") },
   { id: "redo", menu: "redo", keys: "Mod+Z", group: "Editing",
     label: "Redo", run: () => void stepHistory("redo") },
+  { id: "repeat-last", menu: "repeat-last", keys: "Mod+r", group: "Editing",
+    label: "Repeat the last action", run: () => void repeatLast() },
   { id: "redo-y", keys: "Mod+y", group: "Editing",
     label: "Redo", run: () => void stepHistory("redo") },
 
@@ -21911,6 +22002,10 @@ function bindingFor(e) {
   return null;
 }
 
+// The groups of keys Repeat keeps. Writing a note, moving about and the
+// clipboard are left out: each is one key already.
+const REPEATED_GROUPS = new Set(["Tuplets", "Marks", "Accidentals", "Voices"]);
+
 function setupKeys() {
   document.addEventListener("keydown", (e) => {
     if (e.target.matches("input, textarea")) return;
@@ -22037,6 +22132,9 @@ function setupKeys() {
     // keeping: Tab would move the focus off the music and Backspace would
     // ask the browser to go back a page.
     e.preventDefault();
+    // The keys that write on what is picked up are kept for Repeat, like
+    // the menu entries they stand for.
+    if (REPEATED_GROUPS.has(bound.group)) rememberAction(bound.label, bound.run);
     bound.run();
   });
 
@@ -24546,6 +24644,9 @@ const MENU_DRAWINGS = {
     '<circle cx="18" cy="12" r="2.6" fill="currentColor"/>',
   undo: '<path d="M4.5 11h9.5a5 5 0 0 1 0 10H9"/><path d="M8.5 6.5 4 11l4.5 4.5"/>',
   redo: '<path d="M19.5 11H10a5 5 0 0 0 0 10h4.5"/><path d="M15.5 6.5 20 11l-4.5 4.5"/>',
+  // Round and back to where it started: the same again.
+  "repeat-last": '<path d="M19.5 12a7.5 7.5 0 1 1-2.6-5.7"/>' +
+    '<path d="M17.5 2.5v4.5H13"/>',
   // Blades and handles, which is the one picture everybody reads as cut.
   cut: '<circle cx="6.5" cy="18" r="2.7"/><circle cx="17.5" cy="18" r="2.7"/>' +
     '<path d="M8.4 16 18 4"/><path d="M15.6 16 6 4"/>',

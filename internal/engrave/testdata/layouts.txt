@@ -5,7 +5,7 @@
 abc/boite-musique.abc e3d37dbecd95fa3f 514
 abc/decoration.abc c8f4673a8e66ca93 31
 abc/pitch.abc 376aa6d8311eb1d1 227
-abc/sunshine.abc 7702bcad8c455962 136
+abc/sunshine.abc 0d2285bfb06dfc23 134
 samples/altes-10e-solo.abc 042d5a74cb2949ca 9739
 samples/boite-musique.abc e3d37dbecd95fa3f 514
 scores/Black-and-Tan-Fantasy.gscore 5c1ebaf938652623 2412
@@ -137,12 +137,12 @@ suite/45c-RepeatMultipleTimes.musicxml 2a10ee23ef9c9a75 35
 suite/45c-SimpleRepeat-Nested.musicxml 2a10ee23ef9c9a75 35
 suite/45d-Repeats-MultipleEndings.musicxml d78472bf08797932 63
 suite/45d-Repeats-Nested-Alternatives.musicxml 19c02c6b34914aeb 63
-suite/45e-Repeats-Combination.musicxml 1c9b22bed146aa12 59
-suite/45e-Repeats-Nested-Alternatives.musicxml 082322854bac38cf 61
+suite/45e-Repeats-Combination.musicxml 509d7efece3ef167 63
+suite/45e-Repeats-Nested-Alternatives.musicxml e7587a21ec72fb19 65
 suite/45f-Repeats-InvalidEndings.musicxml 023c669a0c508624 65
 suite/45g-Repeats-NotEnded.musicxml 65c002f07890691d 17
-suite/45h-Repeats-Partial.musicxml cc373f5a8766a5e2 27
-suite/45i-Repeats-Nested.musicxml 8ebd2f3dbb12e877 44
+suite/45h-Repeats-Partial.musicxml d2b9bd1980ca92cf 29
+suite/45i-Repeats-Nested.musicxml cd54cf84a0e062f9 46
 suite/45j-SimpleRepeat-Start.musicxml d6492c2bf3032aaa 17
 suite/45k-Repeats-Chords-FiguredBass.musicxml 13d9ad11a36f14ee 30
 suite/46a-Barlines.musicxml 2f397e676dbdfc96 37

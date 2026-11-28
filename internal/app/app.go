@@ -1518,7 +1518,6 @@ func (a *App) handleOpen(w http.ResponseWriter, r *http.Request) {
 			if len(scores) == 0 {
 				return nil, err
 			}
-			err = nil
 		} else {
 			scores, err = a.readScores(name, body, password)
 			if len(scores) == 0 {

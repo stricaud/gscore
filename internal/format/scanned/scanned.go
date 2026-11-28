@@ -271,7 +271,55 @@ func ImportFilesWith(ctx context.Context, eng Engine, paths []string, report fun
 		return nil, fmt.Errorf("scanned: the page reader wrote no music%s", tail(said.String()))
 	}
 	defer f.Close()
-	return musicxml.Import(f)
+	s, err := musicxml.Import(f)
+	if s != nil && err == nil {
+		if out := leftOut(said.String()); len(out) > 0 {
+			return s, &LeftOut{What: out}
+		}
+	}
+	return s, err
+}
+
+// LeftOut is the page reader having read the page but not all of it: the
+// staves it could not make out, which it passed over and said so. The
+// music it did read comes back with this, as a format.Partial.
+type LeftOut struct{ What []string }
+
+func (e *LeftOut) Error() string {
+	if len(e.What) == 1 {
+		return "the page reader left out one staff it could not read"
+	}
+	return fmt.Sprintf("the page reader left out %d staves it could not read", len(e.What))
+}
+
+// Partial marks this as an incomplete read rather than a failure.
+func (e *LeftOut) Partial() {}
+
+// Details is what the reader said about each staff.
+func (e *LeftOut) Details() []string { return e.What }
+
+// leftOut picks the staves passed over out of what the reader said. The
+// line is gscore_homr.py's, which is what turns a staff that fails into a
+// staff left out; staves are counted from one here, as people count them.
+func leftOut(said string) []string {
+	var out []string
+	for _, line := range strings.Split(said, "\n") {
+		line = strings.TrimSpace(line)
+		var n int
+		if _, err := fmt.Sscanf(line, "Could not read staff %d", &n); err != nil {
+			continue
+		}
+		why := ""
+		if i := strings.Index(line, "left it out:"); i >= 0 {
+			why = strings.TrimSpace(line[i+len("left it out:"):])
+		}
+		entry := fmt.Sprintf("staff %d, counting down the pages, was left out", n+1)
+		if why != "" {
+			entry += ": " + why
+		}
+		out = append(out, entry)
+	}
+	return out
 }
 
 // tail is the last few lines of what the reader said, for an error message:

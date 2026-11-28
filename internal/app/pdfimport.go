@@ -21,6 +21,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/stricaud/gscore/internal/format"
 	"github.com/stricaud/gscore/internal/format/engraved"
 	"github.com/stricaud/gscore/internal/format/scanned"
 	"github.com/stricaud/gscore/internal/model"
@@ -102,12 +103,15 @@ func (a *App) readPDF(name string, data []byte, per int, reader string) ([]*mode
 		// No glyphs to read: nothing to ask, the page reader it is.
 	}
 	s, err := a.readScan(eng, data)
-	if err == nil {
+	// Read, or read but for a staff or two: the music is kept either way
+	// and what was left out goes back with it, to be said.
+	var partial format.Partial
+	if s != nil && (err == nil || errors.As(err, &partial)) {
 		a.lock()
 		a.forgetPDF()
 		a.scanNote = partsLost(data, per, s)
 		a.mu.Unlock()
-		return []*model.Score{s}, nil
+		return []*model.Score{s}, err
 	}
 	glyphs, glyphErr := engraved.ImportWith(bytes.NewReader(data),
 		engraved.Options{StavesPerSystem: per})

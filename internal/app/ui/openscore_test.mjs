@@ -43,6 +43,9 @@ function load(answer) {
     async offerToSave() { return true; },
     state: { info: { local: true } },
     status: (s) => said.push(s),
+    // What could not be opened is said in a dialog as well as on the
+    // status line; here it is only what was said that matters.
+    async couldNotOpen(why) { said.push("Could not open: " + why); },
     $: () => ({ click() { clicked = true; } }),
     async fetch() {
       if (answer instanceof Error) throw answer;
@@ -139,4 +142,32 @@ test("the name decides, whatever its case", async () => {
   const t = load(answer(200, "", { filename: "SCORE.PDF" }));
   await t.openScore();
   assert.equal(t.warned(), true, "an upper-case .PDF was not recognised");
+});
+
+test("what was left out of a reading is said once, in a dialog", async () => {
+  const told = [];
+  const scope = {
+    async tellThat(what) { told.push(what); return true; },
+    async action() {},
+  };
+  const at = src.indexOf('let warnedOf = "";');
+  const body = src.slice(at, src.indexOf("\n}", at) + 2) + "\nreturn warnOfReading;";
+  const warn = new Function(...Object.keys(scope), body)(...Object.values(scope));
+
+  const info = {
+    filename: "dance.pdf",
+    warning: "the page reader left out one staff it could not read",
+    log: ["staff 14, counting down the pages, was left out"],
+  };
+  await warn(info);
+  assert.equal(told.length, 1);
+  assert.ok(told[0].note.includes("staff 14"), told[0].note);
+  // Every edit asks the server about the score again; the dialog does not
+  // come back with each of them.
+  await warn(info);
+  assert.equal(told.length, 1);
+  // A file read whole says nothing, and the same file opened again warns again.
+  await warn({ filename: "other.abc" });
+  await warn(info);
+  assert.equal(told.length, 2);
 });

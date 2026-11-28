@@ -21,12 +21,15 @@
 # Built on the platform it is for: the packages are compiled, and so is the
 # interpreter. uv does the fetching: https://docs.astral.sh/uv/
 #
-# homr is AGPL-3.0, unmodified, run as a separate process. Its licence and
-# its source archive go in the folder with it.
+# homr is AGPL-3.0, run as a separate process, and its files are as PyPI
+# ships them. Its licence and its source archive go in the folder with it.
+# It is started through gscore_homr.py, which changes two things as it runs
+# so that a staff homr cannot read does not cost the page; see that file.
 
 set -eu
 
 dest=${1:?usage: build.sh DEST [cpu|cuda]}
+here=$(cd "$(dirname "$0")" && pwd)
 extra=${2:-cpu}
 version=${HOMR_VERSION:-0.7.1}
 python=${HOMR_PYTHON:-3.12}
@@ -84,11 +87,14 @@ cat > "$dest/bin/homr" <<'SH'
 #!/bin/sh
 # homr, shipped beside gscore: run by the Python next to this script.
 here=$(cd "$(dirname "$0")/.." && pwd)
-exec "$here/python/bin/python3" -I -c 'from homr.main import main; main()' "$@"
+exec "$here/python/bin/python3" -I "$here/gscore_homr.py" "$@"
 SH
 chmod 755 "$dest/bin/homr"
-printf '@echo off\r\n"%%~dp0python\\python.exe" -I -c "from homr.main import main; main()" %%*\r\n' \
+printf '@echo off\r\n"%%~dp0python\\python.exe" -I "%%~dp0gscore_homr.py" %%*\r\n' \
 	> "$dest/homr.cmd"
+# The same file gscore runs a homr fetched by uv through; it lives with the
+# code that embeds it.
+cp "$here/../../internal/app/gscore_homr.py" "$dest/gscore_homr.py"
 
 echo "== the licence and the source"
 site=$("$py" -I -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])')
@@ -120,8 +126,10 @@ which gscore then opens. gscore runs it as a separate program: bin/homr
 
 homr is free software under the GNU Affero General Public License,
 version 3 — see LICENSE-homr.txt — by Christian Liebhardt and the homr
-contributors, https://github.com/liebharc/homr. It is unmodified; its
-source is beside this file as homr-$version.tar.gz and at
+contributors, https://github.com/liebharc/homr. Its files are unmodified;
+gscore_homr.py, beside this file, starts it and changes at run time how
+it cuts out a staff set beside another, and has it carry on past a staff
+it cannot read. Its source is beside this file as homr-$version.tar.gz and at
 https://pypi.org/project/homr/$version/. The models it uses are under
 the same licence; the data they were trained on is listed in the
 project's LICENSE_FAQ.md.

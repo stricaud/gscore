@@ -2982,6 +2982,10 @@ async function loadInfo() {
     status("Opened with warnings — " + i.warning +
            " — see Help ▸ Lines that could not be read");
   }
+  // And in a dialog the first time, since a status line is easy to miss
+  // and half a score is not something to find out about later. Not waited
+  // for: the score is drawn behind it.
+  void warnOfReading(i);
 }
 
 // reload re-reads everything after the file itself has changed.
@@ -4334,7 +4338,7 @@ async function openRecent(path) {
       return;
     }
     if (!res.ok) {
-      status("Could not open it: " + (await res.text()).trim());
+      await couldNotOpen((await res.text()).trim());
       // Gone or unreadable: the list says so next time it is asked.
       await loadRecent();
       return;
@@ -4342,7 +4346,7 @@ async function openRecent(path) {
     // A slow answer carries its error in the body; see slowreply.go.
     const d = await res.json().catch(() => ({}));
     if (d.error) {
-      status("Could not open it: " + d.error);
+      await couldNotOpen(d.error);
       return;
     }
     await reopen();
@@ -11411,6 +11415,54 @@ function confirmThat({ title, note = "", ok = "OK" }) {
   });
 }
 
+// tellThat says something that has to be read, and waits for it to be.
+//
+// The status line is one line, and the things said here are not: what a
+// page reader printed before it gave up is six lines, and squeezed into
+// the status bar it was two rows of small grey type with the reason at
+// the far end of the second. One button, since there is nothing to choose.
+function tellThat({ title, note = "", ok = "OK" }) {
+  const dlg = $("#ask");
+  const noteEl = $("#ask-note");
+  const cancel = dlg.querySelector('button[value="cancel"]');
+  // The lines as they were written: a list is a list.
+  noteEl.style.whiteSpace = "pre-line";
+  if (cancel) cancel.hidden = true;
+  return confirmThat({ title, note, ok }).finally(() => {
+    noteEl.style.whiteSpace = "";
+    if (cancel) cancel.hidden = false;
+  });
+}
+
+// couldNotOpen says a file was not opened, and why, where it will be read.
+async function couldNotOpen(why) {
+  why = String(why || "").trim() || "nothing was said about why";
+  status("Could not open: " + why.split("\n")[0]);
+  await tellThat({ title: "This could not be opened", note: why });
+}
+
+// warnOfReading says, once for each opening, that a file was read but not
+// all of it — and what was passed over, as far as a dialog has room for.
+// The whole list stays in Help ▸ Lines that could not be read.
+let warnedOf = "";
+async function warnOfReading(i) {
+  const key = i.warning ? (i.filename || "") + "\n" + i.warning : "";
+  if (key === warnedOf) return;
+  warnedOf = key;
+  if (!key) return;
+  const lines = (i.log || []).slice(0, 8);
+  const more = (i.log || []).length - lines.length;
+  const note = [i.warning, "", ...lines,
+    ...(more > 0 ? [`… and ${more} more`] : []),
+    "", "Compare it with the original before relying on it."].join("\n");
+  const show = (i.log || []).length > lines.length;
+  const seen = await tellThat({
+    title: "Opened, but not all of it was read",
+    note, ok: show ? "Show the whole list" : "OK",
+  });
+  if (show && seen) await action("import-log");
+}
+
 // The things that belong to the score or the staff rather than to a note.
 // Each asks for one value and sends it; nothing here is worth a panel.
 
@@ -17613,14 +17665,14 @@ async function openFile(file) {
         return false;
       }
       if (!res.ok) {
-        status("Could not open: " + (await res.text()).trim());
+        await couldNotOpen((await res.text()).trim());
         return false;
       }
       // A slow answer — a picture read by the page reader — carries its
       // error in the body; see slowreply.go.
       const d = await res.json().catch(() => ({}));
       if (d.error) {
-        status("Could not open: " + d.error);
+        await couldNotOpen(d.error);
         return false;
       }
       if (d.status === "choose") {
@@ -17781,12 +17833,12 @@ async function importByPath(path, name, how) {
         return false;
       }
       if (!res.ok) {
-        status("Could not open: " + (await res.text()).trim());
+        await couldNotOpen((await res.text()).trim());
         return false;
       }
       const d = await res.json().catch(() => ({}));
       if (d.error) {
-        status("Could not open: " + d.error);
+        await couldNotOpen(d.error);
         return false;
       }
       if (d.status === "choose") {
@@ -17833,7 +17885,7 @@ async function importPDF() {
         return;
       }
       if (d.status !== "pages" || !d.pages?.length) {
-        status("Could not open: " + (d.error || "nothing was picked"));
+        await couldNotOpen((d.error || "nothing was picked"));
         return;
       }
       const [first] = d.pages;
@@ -17845,7 +17897,7 @@ async function importPDF() {
       return;
     }
     if (res.status !== 501) {
-      status("Could not open: " + ((await res.text()).trim() || res.statusText));
+      await couldNotOpen(((await res.text()).trim() || res.statusText));
       return;
     }
   }
@@ -17873,7 +17925,7 @@ async function importImages() {
       return;
     }
     if (res.status !== 501) {
-      status("Could not open: " + ((await res.text()).trim() || res.statusText));
+      await couldNotOpen(((await res.text()).trim() || res.statusText));
       return;
     }
   }
@@ -17971,14 +18023,14 @@ async function openScans(files, urls, paths) {
       res = await fetch("/api/openscan?" + p.toString(), { method: "POST" });
     }
     if (!res.ok) {
-      status("Could not read the pages: " + (await res.text()).trim());
+      await couldNotOpen((await res.text()).trim());
       return false;
     }
     // The answer arrives when the reader finishes, behind the spaces that
     // kept the line open; an error after that point is in the body.
     const d = await res.json().catch(() => ({ error: "the answer could not be read" }));
     if (d.error) {
-      status("Could not read the pages: " + d.error);
+      await couldNotOpen(d.error);
       return false;
     }
     await reopen();
@@ -18140,7 +18192,7 @@ async function openScore() {
           return;
         }
         if (d.error) {
-          status("Could not open: " + d.error);
+          await couldNotOpen(d.error);
           return;
         }
         // Several pictures of pages: they are put in order first, then
@@ -18187,7 +18239,7 @@ async function openScore() {
       // no score arrived, and the status line still read "Choose a score…".
       // The server had said why in the answer that was thrown away.
       if (res.status !== 501) {
-        status("Could not open: " + ((await res.text()).trim() || res.statusText));
+        await couldNotOpen(((await res.text()).trim() || res.statusText));
         return;
       }
     } catch (_) {

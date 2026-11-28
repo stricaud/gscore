@@ -143,8 +143,9 @@ there is nothing else to install; [uv](https://docs.astral.sh/uv/), which
 fetches homr the first time it is needed, for the processor or for an NVIDIA
 card as Settings says; and `homr` on the PATH. The `-omr` packages are built
 by `packaging/homr/build.sh` and the Makefile's `OMR_SIDECAR`. homr is
-AGPL-3.0, unmodified, with its licence and source beside it in those
-packages.
+AGPL-3.0, its files unmodified, with its licence and source beside it in
+those packages; `internal/app/gscore_homr.py` starts it, and changes two
+things as it runs so that one unreadable staff does not cost the page.
 
 ## What changed, and why
 

@@ -21,6 +21,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -132,7 +133,7 @@ func pickFilesNative() ([]string, error) {
 			`$d = New-Object System.Windows.Forms.OpenFileDialog;` +
 			`$d.InitialDirectory = '` + powershellQuote(ScoresDir()) + `';` +
 			`$d.Multiselect = $true;` +
-			`$d.Filter = 'Scores|*.abc;*.mscz;*.mscx;*.musicxml;*.xml;*.mxl;*.gscore;*.nwctxt;*.nwc;*.mus;*.musx;*.gmn;*.ly;*.dorico;*.tab;*.btab;*.txt;*.gp3;*.gp4;*.gp5;*.png;*.jpg;*.jpeg|All files|*.*';` +
+			`$d.Filter = 'Scores|` + scorePatterns() + `|All files|*.*';` +
 			"if ($d.ShowDialog() -eq 'OK') { $d.FileNames -join \"`n\" }"
 		out, err := exec.Command("powershell", "-NoProfile", "-Command", script).Output()
 		if err != nil {
@@ -386,7 +387,7 @@ func (a *App) openPathWith(path, password, reader string) error {
 			return err
 		}
 		a.lock()
-		a.setBook(scores, path, nil)
+		a.setBook(scores, path, err)
 		a.mu.Unlock()
 		a.remember(path)
 		return nil
@@ -1306,4 +1307,35 @@ func paperFor(page model.Page) gpdf.Options {
 		o.StaffSpace = page.StaffSpace
 	}
 	return o
+}
+
+// scorePatterns is every kind of file gscore opens, as the Windows file
+// dialog wants them: *.abc;*.gscore;… — read from the importers that are
+// registered, with the PDF, which is read by a door of its own.
+//
+// It was a list written out here by hand, and the PDF was not on it: the
+// dialog opened on a folder of PDFs and showed none of them, until "All
+// files" was chosen.
+func scorePatterns() string {
+	seen := map[string]bool{".pdf": true}
+	// The kinds opened by a door of their own, or by an importer that is
+	// only linked into the program and not into this package.
+	for _, e := range strings.Fields(".abc .mscz .mscx .musicxml .xml .mxl .gscore .nwctxt .nwc " +
+		".mus .musx .gmn .ly .dorico .tab .btab .txt .gp3 .gp4 .gp5 .png .jpg .jpeg") {
+		seen[e] = true
+	}
+	for _, imp := range format.Importers() {
+		for _, e := range imp.Extensions() {
+			seen[strings.ToLower(e)] = true
+		}
+	}
+	var out []string
+	for e := range seen {
+		// Nothing that could end the quoted string it is written into.
+		if strings.HasPrefix(e, ".") && !strings.ContainsAny(e, "'|;*") {
+			out = append(out, "*"+e)
+		}
+	}
+	sort.Strings(out)
+	return strings.Join(out, ";")
 }

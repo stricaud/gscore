@@ -18,7 +18,8 @@
  *   3. A copy shipped beside the gscore binary, in the package that carries
  *      one.
  *   4. uv, where it is installed: uvx fetches homr the first time and keeps
- *      it. Settings chooses between the processor and an NVIDIA card here,
+ *      it — the version and the Python named below, started through
+ *      gscore_homr.py. Settings chooses between the processor and an NVIDIA card here,
  *      which is a matter of which build of the runtime uv fetches; homr
  *      picks the device itself once it runs.
  *   5. homr on the PATH.
@@ -27,7 +28,9 @@
 package app
 
 import (
+	"bytes"
 	"context"
+	_ "embed"
 	"errors"
 	"fmt"
 	"io"
@@ -88,15 +91,55 @@ func scanEngine() (scanned.Engine, error) {
 		if s.ScanReader == "cuda" {
 			extra = "cuda"
 		}
-		return scanned.Engine{
-			Command: []string{uvx, "--from", "homr[" + extra + "]", "homr"},
-			Source:  "uv on this machine",
-		}, nil
+		return scanned.Engine{Command: uvxHomr(uvx, extra), Source: "uv on this machine"}, nil
 	}
 	if p, err := exec.LookPath("homr"); err == nil {
 		return scanned.Engine{Command: []string{p}, Source: "the PATH"}, nil
 	}
 	return scanned.Engine{}, errNoScanEngine
+}
+
+// The homr uv is asked for, and the Python it is run by. Named, both:
+// left to itself uv takes the newest homr the machine's own Python can run,
+// and on a Python newer than homr supports that is a release years old
+// that does not know the options it is given — "unrecognized arguments:
+// --no-title". The same version packaging/homr/build.sh ships.
+const (
+	homrVersion = "0.7.1"
+	homrPython  = "3.12"
+)
+
+// homrStart is how a homr is started: see the file.
+//
+//go:embed gscore_homr.py
+var homrStart []byte
+
+// uvxHomr is the command that runs homr through uv: that version, on that
+// Python, started by homrStart where it can be written somewhere to run
+// from.
+func uvxHomr(uvx, extra string) []string {
+	cmd := []string{uvx, "--python", homrPython, "--from", "homr[" + extra + "]==" + homrVersion}
+	if start := homrStartPath(); start != "" {
+		return append(cmd, "python", "-I", start)
+	}
+	return append(cmd, "homr")
+}
+
+// homrStartPath is homrStart as a file, in the user's cache; empty where
+// there is nowhere to keep it.
+func homrStartPath() string {
+	dir, err := os.UserCacheDir()
+	if err != nil {
+		return ""
+	}
+	path := filepath.Join(dir, "gscore", "gscore_homr.py")
+	if had, err := os.ReadFile(path); err == nil && bytes.Equal(had, homrStart) {
+		return path
+	}
+	if os.MkdirAll(filepath.Dir(path), 0o755) != nil || os.WriteFile(path, homrStart, 0o644) != nil {
+		return ""
+	}
+	return path
 }
 
 // scanEngineBeside is a homr shipped beside the binary, as
@@ -109,20 +152,28 @@ func scanEngineBeside() string {
 	if err != nil {
 		return ""
 	}
-	return scanEngineIn(filepath.Dir(exe), runtime.GOARCH)
+	return scanEngineIn(filepath.Dir(exe), runtime.GOARCH, runtime.GOOS)
 }
 
 // scanEngineIn looks for the shipped homr from the folder the binary is
-// in, for this architecture.
-func scanEngineIn(dir, arch string) string {
+// in, for this architecture and this system.
+//
+// The folder carries both launchers whatever it was built for: bin/homr,
+// a shell script, and homr.cmd. On Windows the first is a file that is
+// there and cannot be run — it was found first all the same, and every
+// page ended in "executable file not found in %PATH%".
+func scanEngineIn(dir, arch, goos string) string {
+	launchers := []string{"bin/homr"}
+	if goos == "windows" {
+		launchers = []string{"homr.cmd", "Scripts/homr.exe"}
+	}
 	for _, folder := range []string{"homr-" + arch, "homr"} {
-		for _, rel := range []string{
-			folder + "/bin/homr", "../Resources/" + folder + "/bin/homr",
-			folder + "/homr.cmd", folder + "/Scripts/homr.exe",
-		} {
-			p := filepath.Join(dir, rel)
-			if fi, err := os.Stat(p); err == nil && !fi.IsDir() {
-				return p
+		for _, launcher := range launchers {
+			for _, rel := range []string{folder + "/" + launcher, "../Resources/" + folder + "/" + launcher} {
+				p := filepath.Join(dir, rel)
+				if fi, err := os.Stat(p); err == nil && !fi.IsDir() {
+					return p
+				}
 			}
 		}
 	}

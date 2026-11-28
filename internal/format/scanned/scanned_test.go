@@ -16,6 +16,7 @@ package scanned
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -238,4 +239,33 @@ func TestTheReadersProgressIsFollowed(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = told // the stand-in says only "Finished", which is no position
+}
+
+// A staff the reader passed over comes back with the music that was read,
+// as a partial reading and not as a failure.
+func TestAStaffLeftOutIsSaidAndTheRestKept(t *testing.T) {
+	eng, _ := fakeReader(t)
+	body, err := os.ReadFile(eng.Command[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	said := "echo 'Could not read staff 13 and left it out: inv_scale_x > 0' >&2\n"
+	if err := os.WriteFile(eng.Command[0], append(body, said...), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	page := filepath.Join(t.TempDir(), "p.png")
+	os.WriteFile(page, pngBytes, 0o600)
+
+	s, err := ImportFiles(context.Background(), eng, []string{page})
+	if s == nil || pitchesOf(s) == "" {
+		t.Fatalf("the music that was read was not kept: %v", err)
+	}
+	var partial format.Partial
+	if !errors.As(err, &partial) {
+		t.Fatalf("a staff left out was reported as %v", err)
+	}
+	got := partial.Details()
+	if len(got) != 1 || !strings.Contains(got[0], "staff 14") || !strings.Contains(got[0], "inv_scale_x") {
+		t.Errorf("what was left out: %q", got)
+	}
 }

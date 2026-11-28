@@ -89,8 +89,12 @@ pages*, shows which one that was.
    executable, or in a macOS bundle's `Resources`. The `-omr` downloads
    carry one; see below.
 4. **uv**, where it is installed: Gscore runs
-   `uvx --from 'homr[cpu]' homr`, and uv fetches homr the first time and
-   keeps it. Settings chooses between *The processor* and *An NVIDIA
+   `uvx --python 3.12 --from 'homr[cpu]==0.7.1' python -I gscore_homr.py`,
+   and uv fetches homr the first time and keeps it. The version and the
+   Python are named because uv otherwise takes the newest homr your own
+   Python can run, which on a recent Python is an old release that does
+   not know `--no-title`; `gscore_homr.py` is the same starter the `-omr`
+   packages use, written to your cache folder. Settings chooses between *The processor* and *An NVIDIA
    graphics card*, which only changes `cpu` to `cuda` here — which build
    of the ONNX runtime uv fetches. homr picks the device itself once it
    runs. An AMD card goes through a command of your own, with the line
@@ -108,7 +112,7 @@ and for homr to fetch its models, about 200 MB, so do that once beforehand
 and watch it happen:
 
 ```sh
-uvx --from 'homr[cpu]' homr --init --no-title
+uvx --python 3.12 --from 'homr[cpu]==0.7.1' homr --init --no-title
 ```
 
 `--init` fetches what is missing and stops; `--no-title` skips a second
@@ -198,7 +202,10 @@ is unchanged: the packages without homr are built as they always were.
 ## The licence
 
 homr is free software under the AGPL-3.0, by Christian Liebhardt and its
-contributors. Gscore runs it unmodified as a separate process, which its
+contributors. Gscore runs it as a separate process, its files unmodified
+and started through `gscore_homr.py` (which changes, as it runs, how a staff
+set beside another is cut out, and carries on past a staff it cannot read) —
+a separate process being what its
 authors' licence FAQ names as a clear separation, and Gscore stays MIT. Each
 `-omr` package carries homr's licence as `LICENSE-homr.txt` and its source
 as `homr-<version>.tar.gz` in the reader's folder, with a `README.txt`

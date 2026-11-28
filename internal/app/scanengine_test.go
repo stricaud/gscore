@@ -87,8 +87,16 @@ func TestThePageReaderIsFoundInOrder(t *testing.T) {
 	// uv beats it, and fetches the processor build unless told otherwise.
 	fakeTool(t, tools, "uvx")
 	eng, _ = scanEngine()
-	if eng.Source != "uv on this machine" || strings.Join(eng.Command[1:], " ") != "--from homr[cpu] homr" {
+	// That homr on that Python, and not whatever the machine's own Python
+	// resolves to; started through gscore_homr.py, written to the cache.
+	said := strings.Join(eng.Command[1:], " ")
+	if eng.Source != "uv on this machine" ||
+		!strings.HasPrefix(said, "--python 3.12 --from homr[cpu]==0.7.1 python -I ") ||
+		!strings.HasSuffix(said, "gscore_homr.py") {
 		t.Errorf("with uv: %v", eng)
+	}
+	if got, err := os.ReadFile(eng.Command[len(eng.Command)-1]); err != nil || !bytes.Equal(got, homrStart) {
+		t.Errorf("the file homr is started through was not written: %v", err)
 	}
 	h.post("/api/settings?scanReader=cuda")
 	if eng, _ = scanEngine(); !strings.Contains(eng.String(), "homr[cuda]") {
@@ -119,20 +127,20 @@ func TestThePageReaderIsFoundInOrder(t *testing.T) {
 // in: for this architecture first, then for any.
 func TestAReaderBesideTheBinaryIsFound(t *testing.T) {
 	dir := t.TempDir()
-	if got := scanEngineIn(dir, "arm64"); got != "" {
+	if got := scanEngineIn(dir, "arm64", "darwin"); got != "" {
 		t.Errorf("an empty folder yields %q", got)
 	}
 	os.MkdirAll(filepath.Join(dir, "homr", "bin"), 0o755)
 	os.WriteFile(filepath.Join(dir, "homr", "bin", "homr"), []byte("#!/bin/sh\n"), 0o755)
-	if got := scanEngineIn(dir, "arm64"); got != filepath.Join(dir, "homr", "bin", "homr") {
+	if got := scanEngineIn(dir, "arm64", "darwin"); got != filepath.Join(dir, "homr", "bin", "homr") {
 		t.Errorf("the plain folder yields %q", got)
 	}
 	os.MkdirAll(filepath.Join(dir, "homr-arm64", "bin"), 0o755)
 	os.WriteFile(filepath.Join(dir, "homr-arm64", "bin", "homr"), []byte("#!/bin/sh\n"), 0o755)
-	if got := scanEngineIn(dir, "arm64"); got != filepath.Join(dir, "homr-arm64", "bin", "homr") {
+	if got := scanEngineIn(dir, "arm64", "darwin"); got != filepath.Join(dir, "homr-arm64", "bin", "homr") {
 		t.Errorf("with a folder for the architecture: %q", got)
 	}
-	if got := scanEngineIn(dir, "amd64"); got != filepath.Join(dir, "homr", "bin", "homr") {
+	if got := scanEngineIn(dir, "amd64", "darwin"); got != filepath.Join(dir, "homr", "bin", "homr") {
 		t.Errorf("another architecture falls back to %q", got)
 	}
 	// Windows lays it out with a .cmd at the top; a macOS bundle keeps it
@@ -140,14 +148,21 @@ func TestAReaderBesideTheBinaryIsFound(t *testing.T) {
 	win := t.TempDir()
 	os.MkdirAll(filepath.Join(win, "homr"), 0o755)
 	os.WriteFile(filepath.Join(win, "homr", "homr.cmd"), []byte("@echo off\r\n"), 0o755)
-	if got := scanEngineIn(win, "amd64"); got != filepath.Join(win, "homr", "homr.cmd") {
+	// With the shell script in it too, as every built folder has: a file
+	// Windows cannot run, which must not be the one found there.
+	os.MkdirAll(filepath.Join(win, "homr", "bin"), 0o755)
+	os.WriteFile(filepath.Join(win, "homr", "bin", "homr"), []byte("#!/bin/sh\n"), 0o755)
+	if got := scanEngineIn(win, "amd64", "windows"); got != filepath.Join(win, "homr", "homr.cmd") {
 		t.Errorf("the Windows layout yields %q", got)
+	}
+	if got := scanEngineIn(win, "amd64", "linux"); got != filepath.Join(win, "homr", "bin", "homr") {
+		t.Errorf("the same folder elsewhere yields %q", got)
 	}
 	app := t.TempDir()
 	os.MkdirAll(filepath.Join(app, "Contents", "MacOS"), 0o755)
 	os.MkdirAll(filepath.Join(app, "Contents", "Resources", "homr-arm64", "bin"), 0o755)
 	os.WriteFile(filepath.Join(app, "Contents", "Resources", "homr-arm64", "bin", "homr"), []byte("#!/bin/sh\n"), 0o755)
-	if got := scanEngineIn(filepath.Join(app, "Contents", "MacOS"), "arm64"); !strings.HasSuffix(got, "Resources/homr-arm64/bin/homr") {
+	if got := scanEngineIn(filepath.Join(app, "Contents", "MacOS"), "arm64", "darwin"); !strings.HasSuffix(got, "Resources/homr-arm64/bin/homr") {
 		t.Errorf("the bundle layout yields %q", got)
 	}
 }
@@ -305,5 +320,15 @@ func TestWithoutAReaderTheRequestSaysWhatToInstall(t *testing.T) {
 	h := newHarness(t)
 	if msg := h.postFails("/api/openscan"); !strings.Contains(msg, "uv") || !strings.Contains(msg, scanEngineEnv) {
 		t.Errorf("with no reader: %q", msg)
+	}
+}
+
+// The Windows file dialog shows what gscore opens, the PDF with the rest.
+func TestTheFileDialogShowsEveryKindOfScore(t *testing.T) {
+	got := ";" + scorePatterns() + ";"
+	for _, want := range []string{"*.pdf", "*.abc", "*.musicxml", "*.gscore", "*.png", "*.gp5"} {
+		if !strings.Contains(got, ";"+want+";") {
+			t.Errorf("%s is not among %s", want, got)
+		}
 	}
 }

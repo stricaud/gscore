@@ -12,6 +12,7 @@ package app
 
 import (
 	"bytes"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
@@ -134,12 +135,16 @@ func pickFilesNative() ([]string, error) {
 			`$d.InitialDirectory = '` + powershellQuote(ScoresDir()) + `';` +
 			`$d.Multiselect = $true;` +
 			`$d.Filter = 'Scores|` + scorePatterns() + `|All files|*.*';` +
-			"if ($d.ShowDialog() -eq 'OK') { $d.FileNames -join \"`n\" }"
+			"if ($d.ShowDialog() -eq 'OK') { " + powershellSay("($d.FileNames -join \"`n\")") + " }"
 		out, err := exec.Command("powershell", "-NoProfile", "-Command", script).Output()
 		if err != nil {
 			return nil, nil
 		}
-		return pathLines(string(out)), nil
+		said, err := powershellSaid(out)
+		if err != nil {
+			return nil, fmt.Errorf("file dialog failed: %w", err)
+		}
+		return pathLines(said), nil
 	}
 	return nil, errNoDialog
 }
@@ -995,13 +1000,17 @@ POSIX path of (choose file name with prompt "Save score" default name "` +
 			`$d = New-Object System.Windows.Forms.SaveFileDialog;` +
 			`$d.FileName = '` + powershellQuote(suggested) + `';` +
 			`$d.Filter = 'gscore|*.gscore|MusicXML|*.musicxml|All files|*.*';` +
-			`if ($d.ShowDialog() -eq 'OK') { $d.FileName }`
+			`if ($d.ShowDialog() -eq 'OK') { ` + powershellSay(`$d.FileName`) + ` }`
 		started := time.Now()
 		out, err := exec.Command("powershell", "-NoProfile", "-Command", script).Output()
 		if err != nil {
 			return "", time.Since(started) > panelShownAfter, nil
 		}
-		return strings.TrimSpace(string(out)), true, nil
+		said, err := powershellSaid(out)
+		if err != nil {
+			return "", true, fmt.Errorf("save dialog failed: %w", err)
+		}
+		return strings.TrimSpace(said), true, nil
 	}
 	return "", false, errNoDialog
 }
@@ -1026,6 +1035,32 @@ func appleScriptLocation(dir string) string {
 // the one character that matters is the quote itself, doubled.
 func powershellQuote(s string) string {
 	return strings.ReplaceAll(s, "'", "''")
+}
+
+// powershellSay is the PowerShell that prints a string so that all of it
+// comes back: as base64 of its UTF-8, which is letters and digits only.
+//
+// What PowerShell writes to a pipe it writes in the console's code page, and
+// on a French Windows that is 850, where é is one byte that is not UTF-8 at
+// all. A path printed plainly came back as "poup\x82e.pdf", was opened as
+// "poup�e.pdf", and Windows said, truthfully, that there was no such
+// file. So any score with an accent in its name or in a folder above it
+// could not be opened from the dialog, nor saved to. Asking PowerShell to
+// write UTF-8 instead depends on there being a console to ask, and a
+// program with a window has none; plain ASCII reads the same in every code
+// page there is.
+func powershellSay(expr string) string {
+	return `[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes(` + expr + `))`
+}
+
+// powershellSaid reads back what powershellSay printed. Nothing printed is
+// nothing said: the panel was closed.
+func powershellSaid(out []byte) (string, error) {
+	text, err := base64.StdEncoding.DecodeString(strings.TrimSpace(string(out)))
+	if err != nil {
+		return "", fmt.Errorf("the dialog answered something that could not be read: %w", err)
+	}
+	return string(text), nil
 }
 
 // panelShownAfter is how long a system panel has to have been up for somebody
